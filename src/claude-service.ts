@@ -246,6 +246,7 @@ interface ClaudeSessionFacts {
   size: number;
   cwds: Set<string>;
   title: string;
+  firstEventAt: string;
   lastEventAt: string;
   contextUsage?: ContextUsage;
 }
@@ -271,16 +272,16 @@ function meaningfulClaudePrompt(record: UnknownRecord): string {
 
 // Timestamps can arrive out of order, so the newest one wins rather than the last line, and
 // the trailing `last-prompt` and `cost-state` records Claude appends carry none at all.
-function newestEventTime(records: UnknownRecord[]): string {
-  let newest = "";
+function transcriptEventTime(records: UnknownRecord[], pick: "first" | "last"): string {
+  let selected = "";
   for (const record of records) {
     if (typeof record.timestamp !== "string") continue;
     const time = Date.parse(record.timestamp);
     if (Number.isNaN(time)) continue;
     const normalized = new Date(time).toISOString();
-    if (normalized > newest) newest = normalized;
+    if (!selected || (pick === "first" ? normalized < selected : normalized > selected)) selected = normalized;
   }
-  return newest;
+  return selected;
 }
 
 async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<ClaudeSessionFacts> {
@@ -300,7 +301,8 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<Cl
     size: fileStat.size,
     cwds: new Set(records.map((record) => String(record.cwd ?? ""))),
     title: customTitle || aiTitle || prompt || "Claude conversation",
-    lastEventAt: newestEventTime(records),
+    firstEventAt: transcriptEventTime(records, "first"),
+    lastEventAt: transcriptEventTime(records, "last"),
     contextUsage: claudeContextUsage(records),
   };
   claudeSessionFactsCache.set(filePath, facts);
@@ -327,7 +329,7 @@ async function summarizeClaudeTranscript(project: SessionProjectPaths, filePath:
     agentId: "claude",
     agentLabel: "Claude",
     title: `[Claude] ${facts.title}`,
-    createdAt: fileStat.birthtime.toISOString(),
+    createdAt: facts.firstEventAt || fileStat.birthtime.toISOString(),
     // Syncthing rewrites mtime when a peer advertises new metadata, so transcript events own recency.
     updatedAt: facts.lastEventAt || fileStat.mtime.toISOString(),
     firstMessage: facts.title,
@@ -411,7 +413,7 @@ export async function claudeSessionContextUsage(sessionPath: string): Promise<Co
 export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessage[]> {
   const filePath = resolveClaudeSessionPath(sessionPath);
   const lines = (await readFile(filePath, "utf8")).split("\n").filter(Boolean);
-  const toolNames = new Map<string, string>();
+  const tools = new Map<string, { name: string; startedAt?: number }>();
   const messages: ChatMessage[] = [];
   for (const [index, line] of lines.entries()) {
     const record = JSON.parse(line) as UnknownRecord;
@@ -422,16 +424,21 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
     // prose around a tool call reading in the order the turn streamed it.
     for (const part of Array.isArray(message.content) ? message.content : []) {
       const block = asRecord(part);
-      if (block.type === "tool_use") toolNames.set(String(block.id ?? ""), String(block.name ?? "tool"));
+      const recordedAt = timestamp ? Date.parse(timestamp) : NaN;
+      if (block.type === "tool_use") tools.set(String(block.id ?? ""), { name: String(block.name ?? "tool"), ...(Number.isFinite(recordedAt) ? { startedAt: recordedAt } : {}) });
       if (block.type !== "tool_result") continue;
       const result = blockText(block.content);
       if (!result.trim()) continue;
+      const tool = tools.get(String(block.tool_use_id ?? ""));
+      const finishedAt = timestamp ? Date.parse(timestamp) : NaN;
+      const durationMs = tool?.startedAt !== undefined && Number.isFinite(finishedAt) ? Math.max(0, finishedAt - tool.startedAt) : undefined;
       messages.push({
         id: `${index}:${messages.length}`,
         role: "toolResult",
-        toolName: toolNames.get(String(block.tool_use_id ?? "")) ?? "tool",
+        toolName: tool?.name ?? "tool",
         text: result,
         ...(block.is_error === true ? { isError: true } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
         ...stamp,
       });
     }

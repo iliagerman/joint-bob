@@ -115,6 +115,7 @@ interface LiveSession {
   activeOperations: number;
   loginVerificationEpoch: number;
   credentialOrigins: string[];
+  skipLoginPause: boolean;
   viewportOverrides: Set<Page>;
   loginDetection?: Promise<void>;
   stopped: boolean;
@@ -216,7 +217,7 @@ export class BrowserRuntime {
       const existing = associated.find(row => row.state === "running" && row.profileId === start.profileId);
       if (existing) {
         const live = this.sessions.get(existing.id);
-        if (live) { live.credentialOrigins = credentialOrigins; this.checkpoint(live); }
+        if (live) { live.credentialOrigins = credentialOrigins; live.skipLoginPause = start.skipLoginPause === true; live.loginVerificationEpoch++; this.checkpoint(live); }
         return this.view(existing.id);
       }
       const pending = associated.find(row => row.restoreOnRestart && row.profileId === start.profileId);
@@ -271,7 +272,7 @@ export class BrowserRuntime {
       context.setDefaultNavigationTimeout(20000);
       const row = this.store.get(id);
       this.store.resume(id);
-      session = { id: row.id, projectId: row.projectId, conversationId: row.conversationId, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, lastActivityAt: Date.now(), activeOperations: 0, loginVerificationEpoch: 0, credentialOrigins, viewportOverrides: new Set(), stopped: false, stopSignal: new AbortController() };
+      session = { id: row.id, projectId: row.projectId, conversationId: row.conversationId, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, lastActivityAt: Date.now(), activeOperations: 0, loginVerificationEpoch: 0, credentialOrigins, skipLoginPause: start.skipLoginPause === true, viewportOverrides: new Set(), stopped: false, stopSignal: new AbortController() };
       this.sessions.set(row.id, session);
       const live = session;
       context.on("page", page => this.addPage(live, page));
@@ -806,7 +807,7 @@ export class BrowserRuntime {
       // A stored credential means the agent can sign in itself. The form often lives on a
       // separate identity provider, so the credential for the site the browser was sent to
       // suppresses the handoff as well. A challenge (MFA, CAPTCHA) still needs the human.
-      if (result === "credentials" && (credentialOrigins.includes(current.origin) || (returnOrigin !== undefined && credentialOrigins.includes(returnOrigin)))) return;
+      if (result === "credentials" && (session.skipLoginPause || credentialOrigins.includes(current.origin) || (returnOrigin !== undefined && credentialOrigins.includes(returnOrigin)))) return;
       this.store.setLoginRequest(session.id, { id: randomUUID(), expectedOrigin: current.origin, readySelector: "body", loginSelector: null, label: `Sign in to ${current.hostname}`.slice(0, 80), automatic: true, ...(returnOrigin ? { returnOrigin } : {}) });
       this.broadcastState(session);
     }).catch(error => {
@@ -820,7 +821,7 @@ export class BrowserRuntime {
     let current: URL;
     try { current = new URL(page.url()); } catch { return; }
     // A credential for Google's sign-in origin or for Gmail itself lets the agent sign in.
-    if (current.origin !== "https://accounts.google.com" || session.credentialOrigins.includes(current.origin) || session.credentialOrigins.includes("https://mail.google.com")) return;
+    if (session.skipLoginPause || current.origin !== "https://accounts.google.com" || session.credentialOrigins.includes(current.origin) || session.credentialOrigins.includes("https://mail.google.com")) return;
     let gmail = false;
     try { gmail = new URL(this.store.get(session.id).url ?? "about:blank").origin === "https://mail.google.com"; } catch {}
     if (!gmail) try { gmail = new URL(current.searchParams.get("continue") ?? "about:blank").origin === "https://mail.google.com"; } catch {}

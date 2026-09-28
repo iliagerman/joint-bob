@@ -131,7 +131,7 @@ app.post("/api/browser/agent",route(async (request,response)=>{
   if (!response.locals.browserAgent) throw new BrowserRequestError(401,"Browser agent token required");
   const identity=await canonicalBrowserIdentity(browserIdentitySchema.parse(response.locals.browserAgent));
   const body=z.discriminatedUnion("operation",[
-    z.object({operation:z.literal("start"),nodeId:id.optional(),url:z.string().url().optional(),profileId:id.optional(),profileName:z.string().trim().min(1).max(80).optional()}),
+    z.object({operation:z.literal("start"),nodeId:id.optional(),url:z.string().url().optional(),profileId:id.optional(),profileName:z.string().trim().min(1).max(80).optional(),skipLoginPause:z.boolean().optional()}),
     z.object({operation:z.literal("status")}),
     z.object({operation:z.literal("profiles")}),
     z.object({operation:z.literal("command"),command:browserCommandSchema,profileId:id.optional()}),
@@ -140,7 +140,7 @@ app.post("/api/browser/agent",route(async (request,response)=>{
   ]).parse(request.body);
   const actor:BrowserActor={kind:"agent",credentialOrigins:browserAgentCredentialOrigins(response.locals.browserAgentToken as string)};
   if(body.operation==="start") {
-    response.json(await browserOperation({operation:"start",args:{...identity,appNodeId:(await getClusterNode()).id,url:body.url,profileId:body.profileId,profileName:body.profileName}},actor,body.nodeId,identity));return;
+    response.json(await browserOperation({operation:"start",args:{...identity,appNodeId:(await getClusterNode()).id,url:body.url,profileId:body.profileId,profileName:body.profileName,skipLoginPause:body.skipLoginPause}},actor,body.nodeId,identity));return;
   }
   const listed=await browserOperation({operation:"list",args:identity},actor,undefined,identity) as BrowserDiscovery;
   if(body.operation==="profiles") {

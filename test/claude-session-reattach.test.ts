@@ -50,7 +50,7 @@ test("server reattaches a dropped socket through the shared harness lifecycle", 
   assert.match(server, /liveEvents: HarnessEvent\[\];/);
 
   // In-flight turn events are buffered and replayed on reattach.
-  assert.match(server, /appendEvent\(shared\.liveEvents, event\)/);
+  assert.match(server, /appendEvent\(shared\.liveEvents, timed\)/);
   assert.match(server, /for \(const event of shared\.liveEvents\) send\(options\.socket, event\);/);
 
   // A runtime cannot silently adopt an ID different from the requested stable ID.

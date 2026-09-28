@@ -1,5 +1,6 @@
 import { harnessLabel } from "../harness-metadata.js";
 import { savePreferencesInBackground } from "./api.js";
+import { completedConversationDuration, formatDateTime, formatDuration } from "./chat-time.js";
 import { openQueuedModelPicker, queuedReasoningLevels } from "./composer-dialogs.js";
 import { renderMarkdown } from "../markdown.js";
 import { elements } from "./elements.js";
@@ -27,36 +28,25 @@ export function showChatEmptyState(title, copy) {
   elements.messages.append(empty);
 }
 
-// Durations read as "3.4s" under ten seconds, whole seconds up to a minute,
-// then "1m 08s" and "1h 04m", so a glance is enough to compare two runs.
-function formatDuration(ms) {
-  const seconds = Math.max(0, ms) / 1000;
-  if (seconds < 10) return `${seconds.toFixed(1)}s`;
-  const whole = Math.round(seconds);
-  if (whole < 60) return `${whole}s`;
-  const minutes = Math.floor(whole / 60);
-  if (minutes < 60) return `${minutes}m ${String(whole % 60).padStart(2, "0")}s`;
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
-}
-
-// toLocale* formats with the browser's own zone and locale, so the same
-// recorded instant reads correctly wherever the reader happens to be. A
-// message from another day names its date; another year names the year too.
-function formatMessageTime(date) {
-  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const now = new Date();
-  if (date.toDateString() === now.toDateString()) return time;
-  const sameYear = date.getFullYear() === now.getFullYear();
-  return `${date.toLocaleDateString([], { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) })}, ${time}`;
-}
 
 function messageTimestamp(date) {
   const stamp = document.createElement("time");
   stamp.className = "message-time";
   stamp.dataset.testid = "message-timestamp";
   stamp.dateTime = date.toISOString();
-  stamp.textContent = formatMessageTime(date);
+  stamp.textContent = formatDateTime(date);
   return stamp;
+}
+
+function appendConversationStart(timestamp) {
+  if (!timestamp) return;
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return;
+  const marker = document.createElement("div");
+  marker.className = "conversation-start";
+  marker.dataset.testid = "conversation-started-at";
+  marker.append("Started ", messageTimestamp(date));
+  elements.messages.append(marker);
 }
 
 // The check marks mirror a messenger: one check when the message left this
@@ -142,37 +132,50 @@ export function startDurationTicker() {
 }
 
 function tickDurations() {
+  const now = Date.now();
   for (const bubble of state.toolBubbles.values()) {
-    if (bubble._startedAt) bubble.querySelector(".tool-status").textContent = `Running ${formatDuration(Date.now() - bubble._startedAt)}`;
+    if (bubble._startedAt) bubble.querySelector(".tool-status").textContent = `Running ${formatDuration(now - bubble._startedAt)}`;
   }
-  if (state.lastTurnStartedAt) {
-    renderTurnTimer("Working", Date.now() - state.lastTurnStartedAt);
-  }
+  renderConversationTimer(now);
   if (!state.toolBubbles.size && !state.lastTurnStartedAt) {
     clearInterval(state.durationTicker);
     state.durationTicker = 0;
   }
 }
 
-// The finished turn's total belongs next to the answer it produced; the header
-// timer keeps it too, for a turn that ended with tool output and no prose.
-export function finishTurnTimer() {
-  const elapsed = Date.now() - state.lastTurnStartedAt;
+export function restoreConversationTimer(messages, activeTurnStartedAt = 0) {
+  state.conversationDurationMs = completedConversationDuration(messages, activeTurnStartedAt);
+  state.lastTurnStartedAt = activeTurnStartedAt;
+  renderConversationTimer();
+  if (activeTurnStartedAt) startDurationTicker();
+}
+
+export function startTurnTimer(startedAt = Date.now()) {
+  state.lastTurnStartedAt = startedAt;
+  startDurationTicker();
+  renderConversationTimer();
+}
+
+export function finishTurnTimer(finishedAt = Date.now()) {
+  const elapsed = Math.max(0, finishedAt - state.lastTurnStartedAt);
+  state.conversationDurationMs += elapsed;
   const stamps = elements.messages.querySelectorAll(".message.assistant .message-time");
   const stamp = stamps[stamps.length - 1];
   if (stamp && !stamp.dataset.turnDuration) {
     stamp.dataset.turnDuration = "true";
     stamp.append(` · took ${formatDuration(elapsed)}`);
   }
-  renderTurnTimer("Took", elapsed);
+  state.lastTurnStartedAt = 0;
+  renderConversationTimer(finishedAt);
 }
 
-function renderTurnTimer(label, elapsed) {
-  const prefix = document.createElement("span");
-  prefix.className = "turn-timer-label";
-  prefix.textContent = `${label} `;
+function renderConversationTimer(now = Date.now()) {
+  const running = state.lastTurnStartedAt ? Math.max(0, now - state.lastTurnStartedAt) : 0;
+  const label = document.createElement("span");
+  label.className = "turn-timer-label";
+  label.textContent = "Total ";
   elements.turnTimer.hidden = false;
-  elements.turnTimer.replaceChildren(prefix, formatDuration(elapsed));
+  elements.turnTimer.replaceChildren(label, formatDuration(state.conversationDurationMs + running));
 }
 
 export function clearChat() {
@@ -319,11 +322,11 @@ export function restoreChatScrollTop(top) {
 // Bracket the re-render so the follow listener ignores the churn; the flag
 // clears in the next frame, before any pin or restore settles.
 let rerenderingChat = false;
-export function rerenderChatTranscript(messages, segments) {
+export function rerenderChatTranscript(messages, segments, conversationStartedAt) {
   rerenderingChat = true;
   const resumeFromTop = elements.messages.scrollTop;
   clearChat();
-  appendTranscript(messages, segments);
+  appendTranscript(messages, segments, conversationStartedAt);
   requestAnimationFrame(() => { rerenderingChat = false; });
   return resumeFromTop;
 }
@@ -893,9 +896,9 @@ export function markPromptRouted(routing) {
   if (!note.isConnected) bubble.append(note);
 }
 
-// startedAt is 0 for a replayed transcript entry: it already finished, at a
-// time this client never saw, so it gets no elapsed label.
-export function appendToolMessage(toolName, toolCallId, startedAt = Date.now()) {
+// startedAt is 0 for a replayed transcript entry. Its persisted duration, when
+// available, is supplied separately instead of measuring from page load.
+export function appendToolMessage(toolName, toolCallId, startedAt = Date.now(), recordedAt = startedAt) {
   const bubble = document.createElement("details");
   bubble.className = "message tool-output";
   bubble.dataset.role = "tool-output";
@@ -916,7 +919,9 @@ export function appendToolMessage(toolName, toolCallId, startedAt = Date.now()) 
   chevron.className = "tool-chevron";
   chevron.setAttribute("aria-hidden", "true");
   chevron.textContent = "›";
-  summary.append(indicator, label, status, chevron);
+  summary.append(indicator, label, status);
+  if (recordedAt) summary.append(messageTimestamp(new Date(recordedAt)));
+  summary.append(chevron);
 
   const content = document.createElement("pre");
   content.className = "message-content";
@@ -926,9 +931,10 @@ export function appendToolMessage(toolName, toolCallId, startedAt = Date.now()) 
   return bubble;
 }
 
-export function updateToolMessage(bubble, text, status, isError = false) {
+export function updateToolMessage(bubble, text, status, isError = false, recordedDurationMs) {
   bubble.dataset.status = isError ? "error" : status.toLowerCase();
-  const elapsed = bubble._startedAt ? formatDuration(Date.now() - bubble._startedAt) : "";
+  const durationMs = recordedDurationMs ?? (bubble._startedAt ? Date.now() - bubble._startedAt : null);
+  const elapsed = durationMs === null ? "" : formatDuration(Math.max(1, durationMs));
   const label = !elapsed ? status : status === "Running" ? `${status} ${elapsed}` : `${status} in ${elapsed}`;
   bubble.querySelector(".tool-status").textContent = label;
   renderBubbleContent(bubble, text);
@@ -943,7 +949,8 @@ function markPendingReview(bubble, recordedAt) {
 // A saved transcript interleaves chat text with tool results. Rendering every
 // non-user entry as assistant markdown reflowed file dumps into prose, so each
 // role gets the same bubble the live stream would have produced.
-function appendTranscript(messages, segments) {
+function appendTranscript(messages, segments, conversationStartedAt) {
+  appendConversationStart(conversationStartedAt);
   let lastSegment = 0;
   for (const message of messages || []) {
     const segment = typeof message.segment === "number" ? message.segment : 0;
@@ -954,8 +961,8 @@ function appendTranscript(messages, segments) {
     const at = message.timestamp ? new Date(message.timestamp) : null;
     const recorded = at && Number.isFinite(at.getTime()) ? at : false;
     if (message.role === "toolResult" || message.role === "toolCall") {
-      const bubble = markPendingReview(appendToolMessage(message.toolName || "tool", `history-${message.id}`, 0), recorded);
-      updateToolMessage(bubble, message.text, message.isError ? "Failed" : "Done", message.isError === true);
+      const bubble = markPendingReview(appendToolMessage(message.toolName || "tool", `history-${message.id}`, 0, recorded || 0), recorded);
+      updateToolMessage(bubble, message.text, message.isError ? "Failed" : "Done", message.isError === true, message.durationMs);
       continue;
     }
     if (message.role === "error") {

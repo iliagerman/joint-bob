@@ -1,7 +1,7 @@
 import type { AuthSession } from "../../auth.js";
 import { getHarnessRuntime, listHarnesses } from "../../harnesses.js";
 import { addNtfyService, deleteNtfyService, getNtfyService, importNtfyService, listNtfyServices, setDefaultNtfyService } from "../../ntfy.js";
-import { isHarnessId } from "../../types.js";
+import { isHarnessId, type HarnessId } from "../../types.js";
 import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "../../push.js";
 import { sendError } from "../http-auth.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
@@ -108,11 +108,26 @@ app.delete("/api/ntfy/services/:id", (request, response) => {
   response.status(204).send();
 });
 
-app.get("/api/harnesses", (_request, response) => {
-  response.json({ harnesses: listHarnesses().map(({ id, label, paths, configuration, defaults, runtime }) => ({
-    id, label, newSessionPath: paths.newSession, defaults, runtimeConfigured: Boolean(runtime),
-    ...(configuration ? { configuration: { fixedProvider: configuration.fixedProvider, thinkingLevels: configuration.thinkingLevels } } : {}),
-  })) });
+async function harnessProblems(id: HarnessId): Promise<string[]> {
+  const runtime = await getHarnessRuntime(id);
+  const installation = await runtime.readiness(process.cwd());
+  return installation.length ? installation : runtime.signInProblems();
+}
+
+// `ready` means installed and signed in on this node; the UI offers only ready harnesses for new work.
+app.get("/api/harnesses", async (_request, response, next) => {
+  try {
+    response.json({ harnesses: await Promise.all(listHarnesses().map(async ({ id, label, paths, configuration, defaults, runtime }) => {
+      const problems = runtime ? await harnessProblems(id) : ["No runtime on this node"];
+      return {
+        id, label, newSessionPath: paths.newSession, defaults, runtimeConfigured: Boolean(runtime),
+        ready: !problems.length, ...(problems.length ? { unavailableReason: problems.join("\n") } : {}),
+        ...(configuration ? { configuration: { fixedProvider: configuration.fixedProvider, thinkingLevels: configuration.thinkingLevels } } : {}),
+      };
+    })) });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // The providers and models a harness can use on this node, for the Settings pickers.

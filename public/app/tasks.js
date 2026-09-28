@@ -1,5 +1,5 @@
 import { renderBoard } from "../board.js";
-import { harnessLabel } from "../harness-metadata.js";
+import { harnessLabel, harnessOption } from "../harness-metadata.js";
 import { api } from "./api.js";
 import { addTaskAttachments, clearTaskAttachments, renderTaskAttachments } from "./attachments.js";
 import { renderChatSessionControls, renderConversationLock, setComposerEnabled } from "./chat-controls.js";
@@ -98,9 +98,9 @@ function phaseSelectFor(phase) {
 
 function populateTaskEngines(selectedEngine = null) {
   const executable = state.harnesses.filter((harness) => harness.runtimeConfigured);
-  elements.taskEngineInput.replaceChildren(...executable.map((harness) => new Option(harness.label, harness.id)));
+  elements.taskEngineInput.replaceChildren(...executable.map(harnessOption));
   if (selectedEngine && !executable.some(({ id }) => id === selectedEngine)) elements.taskEngineInput.add(new Option(harnessLabel(state.harnesses, selectedEngine), selectedEngine));
-  elements.taskEngineInput.value = selectedEngine || executable[0]?.id || "";
+  elements.taskEngineInput.value = selectedEngine || executable.find(({ ready }) => ready)?.id || "";
 }
 
 function taskModelOptions(engine) {

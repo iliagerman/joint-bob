@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { buildHandoffContext } from "../src/handoff-context.js";
 import { listDiscoveredHarnesses } from "../src/harnesses/registry.js";
-import { simplifyMessages } from "../src/pi-service.js";
+import { simplifyMessages, simplifyTranscriptEntries } from "../src/pi-service.js";
 import { getSettings, updateSettings } from "../src/settings.js";
 import { addProject } from "../src/store.js";
 
@@ -124,6 +124,16 @@ test("Claude default reasoning suppresses configured effort on native spawn", as
   }
 });
 
+test("Pi tool durations survive transcript reload", () => {
+  const messages = simplifyTranscriptEntries([
+    { type: "message", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "sleep 2" } }] } },
+    { type: "message", timestamp: "2026-01-01T00:00:03.250Z", message: { role: "toolResult", toolCallId: "call-1", toolName: "bash", content: [{ type: "text", text: "done" }] } },
+  ]);
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].durationMs, 2250);
+});
+
 test("Pi display messages keep timestamps and strip handoff context only from user messages", () => {
   const prompt = `${buildHandoffContext([{ id: "old", role: "user", text: "prior history" }])}actual question`;
   assert.deepEqual(simplifyMessages([
@@ -149,11 +159,13 @@ test("Kiro persisted configuration and rename survive reopen", async () => {
   await session.configure({ provider: "kiro", modelId: "custom", reasoning: "high" });
   await session.rename("Persisted title");
   session.dispose();
+  await storage.appendKiroRecord(file, { type: "tool", toolName: "bash", text: "done", durationMs: 1250, timestamp: "2026-09-22T07:59:59.000Z" });
   await storage.appendKiroRecord(file, { type: "message", role: "assistant", text: "Attributed answer", timestamp: "2026-09-22T08:00:00.000Z" });
   const reopened = await runtime.open({ projectId: "project", cwd: root, sessionId: "persisted", sessionPath: `kiro:${file}` });
   assert.deepEqual(reopened.settings(), { provider: "kiro", modelId: "custom", reasoning: "high" });
   assert.equal(reopened.status().sessionName, "Persisted title");
   assert.deepEqual(reopened.messages.at(-1)?.attribution, { harnessId: "kiro", provider: "kiro", modelId: "custom", reasoning: "high" });
+  assert.equal(reopened.messages.find(({ role }) => role === "toolResult")?.durationMs, 1250);
   reopened.dispose();
 });
 

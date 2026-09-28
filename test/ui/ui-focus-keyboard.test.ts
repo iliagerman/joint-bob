@@ -29,7 +29,7 @@ async function assertNativeTap(page: Page, field: Locator) {
     }, { once: true });
   });
   await field.tap();
-  assert.equal(await field.getAttribute("data-tap-cancelled"), "false", "focus gestures must not cancel native input activation");
+  assert.equal(await field.getAttribute("data-tap-cancelled"), "false", "focus controls must not cancel native input activation");
   assert.equal(await field.getAttribute("data-native-click"), "true", "input must receive the trusted tap, not a delayed synthetic click");
   assert.equal(await field.getAttribute("data-focused-on-click"), "true", "input must focus during native activation, not from a timer");
   await page.keyboard.type("Mobile keyboard draft");
@@ -47,7 +47,7 @@ test("mobile focus mode preserves native keyboard activation in search and the c
   await assertNativeTap(page, page.getByTestId("chat-message-input"));
 });
 
-test("editing taps cancel pending focus gestures and retain native double-click selection", { timeout: 90_000 }, async t => {
+test("editing taps retain native double-click selection without opening focus actions", { timeout: 90_000 }, async t => {
   const page = await mobileFocusPage(t);
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card").first().click();
@@ -59,10 +59,8 @@ test("editing taps cancel pending focus gestures and retain native double-click 
   await page.touchscreen.tap(title.x + 10, title.y + 10);
   for (let i = 0; i < 3; i++) await input.tap();
   const selectionAllowed = await input.evaluate(element => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true })));
-  assert.equal(selectionAllowed, true, "editing double-click must not be cancelled by a recent gesture");
-  // Cross the gesture deadline before checking that no deferred navigation fired.
-  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 400)));
-  assert.equal(await page.getByTestId("focus-controls-button").isVisible(), true, "entering an editor cancels pending chrome gestures");
+  assert.equal(selectionAllowed, true, "editing double-click must not be cancelled by focus controls");
+  assert.equal(await page.getByTestId("focus-controls-button").isVisible(), true, "editing leaves the controls button available");
   assert.equal(await page.getByTestId("recent-sessions-dialog").isVisible(), false);
   assert.equal(await input.evaluate(element => document.activeElement === element), true);
 });

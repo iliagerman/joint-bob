@@ -51,6 +51,7 @@ test("CLI maps explicit start and browser commands without caller-selected ident
   const cases: Array<[string[], unknown]> = [
     [["start", "https://example.com", "--profile", "profile"], { operation: "start", url: "https://example.com", profileId: "profile" }],
     [["start"], { operation: "start" }],
+    [["start", "https://example.com", "--skip-login-pause"], { operation: "start", url: "https://example.com", skipLoginPause: true }],
     [["status"], { operation: "status" }],
     [["profiles"], { operation: "profiles" }],
     [["snapshot"], { operation: "command", command: { action: "snapshot" } }],

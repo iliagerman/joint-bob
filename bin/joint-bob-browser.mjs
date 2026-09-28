@@ -9,7 +9,7 @@ import { parseArgs } from "node:util";
 
 const token = process.env.JOINT_BOB_BROWSER_TOKEN;
 const endpoint = process.env.JOINT_BOB_BROWSER_URL;
-const usage = "Usage: start [url] [--profile ID | --name LABEL] [--node UUID] | status | tabs | profiles | snapshot | screenshot PATH | click SELECTOR | fill SELECTOR TEXT | login-fill SELECTOR ACCOUNT_ID VARIABLE | fill-secret SELECTOR ENV_NAME --origin URL | upload SELECTOR FILE... | download ID PATH | navigate URL | evaluate EXPRESSION | command JSON | close | save-login LABEL. Account commands accept --profile ID; required when multiple profiles run. Use -- before positional values beginning with --.";
+const usage = "Usage: start [url] [--profile ID | --name LABEL] [--node UUID] [--skip-login-pause] | status | tabs | profiles | snapshot | screenshot PATH | click SELECTOR | fill SELECTOR TEXT | login-fill SELECTOR ACCOUNT_ID VARIABLE | fill-secret SELECTOR ENV_NAME --origin URL | upload SELECTOR FILE... | download ID PATH | navigate URL | evaluate EXPRESSION | command JSON | close | save-login LABEL. Account commands accept --profile ID; required when multiple profiles run. Use -- before positional values beginning with --.";
 const uploadLimit = 20 * 1024 * 1024;
 let sensitiveValue;
 
@@ -117,7 +117,7 @@ async function save(output, source, extra = {}) {
 async function main() {
   const [verb, ...input] = process.argv.slice(2);
   const { positionals: args, values } = parseArgs({ args: input, allowPositionals: true, options: {
-    profile: { type: "string" }, ...(verb === "start" ? { name: { type: "string" }, node: { type: "string" } } : {}),
+    profile: { type: "string" }, ...(verb === "start" ? { name: { type: "string" }, node: { type: "string" }, "skip-login-pause": { type: "boolean" } } : {}),
     ...(verb === "fill-secret" ? { origin: { type: "string" } } : {}),
   } });
   const profileId = values.profile;
@@ -132,7 +132,7 @@ async function main() {
       const nodeId = values.node;
       if (nodeId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(nodeId)) throw new Error("--node requires a machine UUID from browser status");
       if (args.length > 1 || (values.name !== undefined && (!profileName || profileName.length > 80 || profileId))) throw new Error(usage);
-      result = await request({ operation: "start", ...(args[0] ? { url: args[0] } : {}), ...target, ...(profileName ? { profileName } : {}), ...(nodeId ? { nodeId } : {}) });
+      result = await request({ operation: "start", ...(args[0] ? { url: args[0] } : {}), ...target, ...(profileName ? { profileName } : {}), ...(nodeId ? { nodeId } : {}), ...(values["skip-login-pause"] ? { skipLoginPause: true } : {}) });
       break;
     }
     case "status": case "profiles":

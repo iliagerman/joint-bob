@@ -17,9 +17,8 @@ test("focus chat header stays one line with elapsed time and a working-only colo
   await page.waitForFunction(() => !document.querySelector<HTMLTextAreaElement>("#messageInput")!.disabled);
   await page.evaluate(async () => {
     const { state } = await import(new URL("/app/state.js", location.href).href);
-    const { startDurationTicker } = await import(new URL("/app/chat-transcript.js", location.href).href);
-    state.lastTurnStartedAt = Date.now() - 35_000;
-    startDurationTicker();
+    const { startTurnTimer } = await import(new URL("/app/chat-transcript.js", location.href).href);
+    startTurnTimer(Date.now() - 35_000);
   });
   await page.locator("#turnTimer").waitFor();
   for (const [percent, busy, color] of [[64, true, "--live"], [80, true, "--amber"], [95, false, "--danger"], [64, true, "--live"]] as const) {
@@ -40,7 +39,7 @@ test("focus chat header stays one line with elapsed time and a working-only colo
         overflow: document.documentElement.scrollWidth > innerWidth };
     }, color);
     assert.ok(Math.max(...metrics.rects.map(r => r.center)) - Math.min(...metrics.rects.map(r => r.center)) < 3, `one header row: ${JSON.stringify(metrics.rects)}`);
-    assert.match(metrics.timer, /^\d+s$/, "only elapsed seconds, no Working prefix");
+    assert.match(metrics.timer, /^\d+m \d{2}s$/, "mobile shows cumulative duration without the Total label");
     assert.equal(metrics.bar, false);
     assert.equal(metrics.color, metrics.expectedColor);
     assert.equal(metrics.animation !== "none", busy, "only working context number pulses");
@@ -55,5 +54,5 @@ test("focus chat header stays one line with elapsed time and a working-only colo
   assert.equal(await page.getByTestId("focus-controls-button").isVisible(), false, "desktop has no focus controls handle");
   assert.equal(await page.getByTestId("settings-focus-ui-toggle").isChecked(), true, "the saved preference stays on");
   assert.equal(await page.locator(".context-usage-bar").isVisible(), true, "desktop retains the context bar");
-  assert.match(await page.locator("#turnTimer").innerText(), /^Working /, "desktop retains its status label");
+  assert.match(await page.locator("#turnTimer").innerText(), /^Total /, "desktop labels the cumulative conversation time");
 });

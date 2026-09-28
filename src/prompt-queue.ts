@@ -116,15 +116,16 @@ function insert(db: DatabaseSync, row: Row): void {
     .run(row.id, row.queue_key, row.prompt, row.created_at, row.sequence, row.revision, row.origin_node_id);
 }
 
-export function enqueuePrompt(queueKey: string, promptText: string, displayText: string, metadata: Metadata): QueuedPrompt {
+export function enqueuePrompt(queueKey: string, promptText: string, displayText: string, metadata: Metadata): QueuedPrompt & { createdAt: string } {
   const db = queueDatabase();
   const prompt = promptSchema.parse({ id: randomUUID(), promptText, displayText, ...metadata, settings: metadata.settings ?? null, revision: 1 });
   const key = logicalQueueKey(queueKey);
+  const createdAt = new Date().toISOString();
   transaction(db, () => {
-    const row: Row = { id: prompt.id, queue_key: key, prompt: JSON.stringify(prompt), created_at: new Date().toISOString(), sequence: nextSequence(db, key), revision: 1, origin_node_id: origin(db) };
+    const row: Row = { id: prompt.id, queue_key: key, prompt: JSON.stringify(prompt), created_at: createdAt, sequence: nextSequence(db, key), revision: 1, origin_node_id: origin(db) };
     insert(db, row); publish(db, row, prompt);
   });
-  return prompt;
+  return { ...prompt, createdAt };
 }
 
 export function enqueueSystemPrompt(queueKey: string, id: string, text: string): "queued" | "consumed" {
@@ -181,8 +182,8 @@ export function listPendingSystemQueues(limit = 100): Array<{ queueKey: string; 
   } finally { if (owned) db.close(); }
 }
 
-export function listQueuedPrompts(queueKey: string): QueuedPrompt[] {
-  return (queueDatabase().prepare("SELECT prompt FROM queued_prompts WHERE queue_key = ? ORDER BY sequence, id").all(logicalQueueKey(queueKey)) as { prompt: string }[]).map((row) => promptSchema.parse(JSON.parse(row.prompt)));
+export function listQueuedPrompts(queueKey: string): Array<QueuedPrompt & { createdAt: string }> {
+  return (queueDatabase().prepare("SELECT prompt, created_at FROM queued_prompts WHERE queue_key = ? ORDER BY sequence, id").all(logicalQueueKey(queueKey)) as Array<{ prompt: string; created_at: string }>).map((row) => ({ ...promptSchema.parse(JSON.parse(row.prompt)), createdAt: row.created_at }));
 }
 
 function remove(db: DatabaseSync, row: Row): QueuedPrompt {

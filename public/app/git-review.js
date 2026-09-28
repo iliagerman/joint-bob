@@ -1,3 +1,4 @@
+import { harnessOption } from "../harness-metadata.js";
 import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
@@ -262,12 +263,13 @@ function renderReviewList(threads) {
 async function ensurePickers() {
   if (!git.harnesses.length) git.harnesses = (await api("/api/harnesses")).harnesses.filter((harness) => harness.runtimeConfigured);
   if (!git.models.length) git.models = (await api("/api/models")).models;
-  elements.gitReviewHarness.replaceChildren(...git.harnesses.map((harness) => new Option(harness.label, harness.id)));
+  elements.gitReviewHarness.replaceChildren(...git.harnesses.map(harnessOption));
+  elements.gitReviewHarness.value = git.harnesses.find(({ ready }) => ready)?.id ?? "";
   syncModelOptions();
 }
 
 function selectedHarness() {
-  return git.harnesses.find((harness) => harness.id === elements.gitReviewHarness.value) ?? git.harnesses[0];
+  return git.harnesses.find((harness) => harness.id === elements.gitReviewHarness.value);
 }
 
 function syncModelOptions() {

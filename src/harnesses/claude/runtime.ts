@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFile, access } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
+  claudeConfigPath,
   claudeSessionContextUsage,
   claudeSessionFilePath,
   ensureLocalClaudeTranscript,
@@ -32,7 +33,7 @@ const modelIds = ["fable", "claude-opus-5-5", "claude-opus-5", "opus", "sonnet",
 const effortIds = ["default", "low", "medium", "high", "xhigh", "max"];
 type Listener = (event: HarnessEvent) => void;
 /** Text spoken so far in the running turn, and the tool names its bubbles carry. */
-interface TurnTranscript { assistant: string; toolNames: Map<string, string> }
+interface TurnTranscript { assistant: string; tools: Map<string, { name: string; startedAt: number }> }
 
 function validate(settings: HarnessModelSettings): void {
   if (settings.provider !== "claude") throw new Error("Provider must be claude");
@@ -150,16 +151,20 @@ class ClaudeSession implements HarnessSession {
   private recordTurnEvent(event: HarnessEvent, turn: TurnTranscript): void {
     if (event.type === "textDelta") turn.assistant += String(event.text);
     if (event.type === "toolStart") {
-      turn.toolNames.set(String(event.toolCallId), String(event.toolName));
+      turn.tools.set(String(event.toolCallId), { name: String(event.toolName), startedAt: Date.now() });
       this.pushAssistant(turn);
     }
     if (event.type !== "toolEnd") return;
     const isError = event.isError === true;
+    const finishedAt = Date.now();
+    const tool = turn.tools.get(String(event.toolCallId));
     this.transcript.push({
       id: `${this.id}:tool:${this.transcript.length}`,
       role: "toolResult",
-      toolName: turn.toolNames.get(String(event.toolCallId)) ?? String(event.toolName),
+      toolName: tool?.name ?? String(event.toolName),
       text: String(event.text ?? ""),
+      timestamp: new Date(finishedAt).toISOString(),
+      ...(tool ? { durationMs: Math.max(0, finishedAt - tool.startedAt) } : {}),
       ...(isError ? { isError } : {}),
     });
   }
@@ -173,6 +178,7 @@ class ClaudeSession implements HarnessSession {
       id: `${this.id}:assistant:${this.transcript.length}`,
       role: "assistant",
       text,
+      timestamp: new Date().toISOString(),
       attribution: { harnessId: "claude", provider, modelId, reasoning },
     });
   }
@@ -180,7 +186,7 @@ class ClaudeSession implements HarnessSession {
   private markStarted(input: HarnessPrompt, state: { started: boolean }, event?: HarnessEvent): void {
     if (state.started || (event && !startsTurn(event))) return;
     state.started = true;
-    this.transcript.push({ id: `${this.id}:user:${this.transcript.length}`, role: "user", text: stripHandoffEnvelope(input.text) });
+    this.transcript.push({ id: `${this.id}:user:${this.transcript.length}`, role: "user", text: stripHandoffEnvelope(input.text), timestamp: new Date().toISOString() });
     input.onStarted?.();
   }
 
@@ -217,7 +223,7 @@ class ClaudeSession implements HarnessSession {
   ): Promise<void> {
     // Claude speaks again after each tool call. Recording every block and tool
     // result separately keeps the transcript in the pieces the live stream showed.
-    const turn: TurnTranscript = { assistant: "", toolNames: new Map() };
+    const turn: TurnTranscript = { assistant: "", tools: new Map() };
     const run = await runClaudeConversationPrompt({
       cwd: this.options.cwd,
       prompt: input.text,
@@ -370,6 +376,17 @@ const runtime: HarnessRuntime = {
       return [];
     } catch (error) {
       return [`Claude executable unavailable: ${error instanceof Error ? error.message : String(error)}`];
+    }
+  },
+
+  async signInProblems() {
+    const configPath = claudeConfigPath();
+    // `claude auth status` exits non-zero when no account or API provider is configured.
+    try {
+      await execute(getSettings().runtimes.claude.executable || "claude", ["auth", "status"], { env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) }, timeout: 5_000 });
+      return [];
+    } catch {
+      return ["Claude is not signed in on this node"];
     }
   },
 };

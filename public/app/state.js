@@ -162,6 +162,8 @@ export const state = {
   setupRequired: false,
   mustChangePassword: false,
   lastTurnStartedAt: 0,
+  conversationDurationMs: 0,
+  conversationStartedAt: null,
   csrfToken: "",
   preferencesLoaded: false,
   initialProjectId: bootParams.get("projectId"),

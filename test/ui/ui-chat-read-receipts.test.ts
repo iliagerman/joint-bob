@@ -102,6 +102,9 @@ interface TranscriptReadState {
   receiptReadCount: number;
   assistantCount: number;
   dotCount: number;
+  conversationStartedAt: string;
+  conversationStartedText: string;
+  conversationTotal: string;
 }
 
 /** One atomic read of the rendered transcript that also scrolls away from the bottom, so the dwell timer cannot clear the dots mid-measurement. */
@@ -116,13 +119,16 @@ function readTranscriptAndScrollAway(): Promise<TranscriptReadState> {
       chatBubbleCount: chatBubbles.length,
       firstStampIso: first ? first.dateTime : "",
       firstStampText: first ? first.textContent || "" : "",
-      expectedTimeText: first ? new Date(first.dateTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
+      expectedTimeText: first ? new Date(first.dateTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "",
       maxStampMs: Math.max(0, ...stamps.map((stamp) => Date.parse(stamp.dateTime))),
       userCount: document.querySelectorAll("#messages .message.user").length,
       receiptCount: document.querySelectorAll("#messages .message.user .message-receipt").length,
       receiptReadCount: document.querySelectorAll('#messages .message.user .message-receipt[data-read="true"]').length,
       assistantCount: document.querySelectorAll("#messages .message.assistant").length,
       dotCount: document.querySelectorAll("#messages .message-unread-dot").length,
+      conversationStartedAt: document.querySelector<HTMLTimeElement>('[data-testid="conversation-started-at"] time')?.dateTime || "",
+      conversationStartedText: document.querySelector<HTMLElement>('[data-testid="conversation-started-at"]')?.innerText || "",
+      conversationTotal: document.querySelector<HTMLElement>('[data-testid="chat-turn-timer"]')?.innerText || "",
     };
     box.scrollTop = Math.floor(box.scrollHeight * 0.2);
     return state;
@@ -145,9 +151,11 @@ test("replayed messages show their recorded time in the browser's zone and user 
     `the stamp is the recorded seed time, not "now" (got ${firstView.firstStampIso})`);
   assert.ok(firstView.firstStampText.includes(firstView.expectedTimeText),
     `the visible stamp "${firstView.firstStampText}" shows the browser-local time "${firstView.expectedTimeText}"`);
-  // A message from a past day names its date, not just a clock time.
   assert.ok(firstView.firstStampText.trim().length > firstView.expectedTimeText.length,
-    `an old message includes its date, got "${firstView.firstStampText}"`);
+    `every message timestamp includes its date, got "${firstView.firstStampText}"`);
+  assert.equal(firstView.conversationStartedAt, new Date(SEED_EPOCH_MS).toISOString(), "conversation start uses the transcript creation time");
+  assert.match(firstView.conversationStartedText, /^Started /);
+  assert.equal(firstView.conversationTotal, "Total 9m 00s", "header restores the sum of all completed turns");
 
   assert.ok(firstView.userCount > 0, "the seeded transcript has user messages");
   assert.equal(firstView.receiptCount, firstView.userCount, "every user message carries a receipt");

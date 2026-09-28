@@ -17,6 +17,14 @@ export function harnessIdFromPath(harnesses, sessionPath) {
   throw new Error(`Cannot resolve harness for session path: ${path}`);
 }
 
+/** A select option for starting work with a harness. One that is not installed and signed in stays listed but cannot be picked. */
+export function harnessOption(harness) {
+  const option = new Option(harness.label, harness.id);
+  option.disabled = !harness.ready;
+  if (!harness.ready) option.title = harness.unavailableReason;
+  return option;
+}
+
 export function harnessLabel(harnesses, id) {
   return harnesses.find((harness) => harness.id === id)?.label || id;
 }

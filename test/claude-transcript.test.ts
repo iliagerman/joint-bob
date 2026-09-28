@@ -90,11 +90,11 @@ test("a reloaded Claude transcript keeps the tool bubbles between the spoken blo
       // Compaction writes its summary as a user record; nobody typed it, so the chat never shows it.
       JSON.stringify({ type: "system", subtype: "compact_boundary", content: "Conversation compacted" }),
       JSON.stringify({ type: "user", isCompactSummary: true, message: { role: "user", content: "This session is being continued from a previous conversation that ran out of context. Summary: …" } }),
-      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [
+      JSON.stringify({ type: "assistant", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [
         { type: "text", text: "Reading the plan." },
         { type: "tool_use", id: "tool-1", name: "Read", input: { path: "plan.md" } },
       ] } }),
-      JSON.stringify({ type: "user", message: { role: "user", content: [
+      JSON.stringify({ type: "user", timestamp: "2026-01-01T00:00:04.000Z", message: { role: "user", content: [
         { type: "tool_result", tool_use_id: "tool-1", content: "plan body" },
       ] } }),
       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "The plan is parked." }] } }),
@@ -111,6 +111,7 @@ test("a reloaded Claude transcript keeps the tool bubbles between the spoken blo
       { role: "toolResult", text: "exit 1", toolName: "tool" },
     ], "a reload shows the same pieces the turn streamed");
     assert.deepEqual(messages.map(({ isError }) => isError), [undefined, undefined, undefined, undefined, true]);
+    assert.equal(messages.find(({ text }) => text === "plan body")?.durationMs, 3000, "tool runtime is restored from tool-use and result timestamps");
     assert.equal(new Set(messages.map(({ id }) => id)).size, messages.length, "every reloaded message keeps its own id");
   } finally {
     updateSettings({ runtimes: previous.runtimes, syncthing: { endpoint: previous.syncthing.endpoint } });

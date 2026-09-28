@@ -31,5 +31,7 @@ export interface HarnessRuntime {
   providers(): Promise<HarnessProvider[]>;
   validateSettings(settings: HarnessModelSettings): Promise<void>;
   readiness(cwd: string, env?: NodeJS.ProcessEnv): Promise<string[]>;
+  /** Node-level sign-in check for offering the harness in the UI. Project and conversation secrets are not considered. */
+  signInProblems(): Promise<string[]>;
   externalRunning?: () => Promise<Array<{ sessionId: string; runId: string }>>;
 }

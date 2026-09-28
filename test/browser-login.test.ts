@@ -82,6 +82,46 @@ async function cleanup(runtime: BrowserRuntime, id: string, owner = "owner") {
   await runtime.close();
 }
 
+test("skipLoginPause skips ordinary login but still pauses on challenges", async t => {
+  const f = fixture(t), runtime = f.runtime();
+  const session = await runtime.create({ ...start(), skipLoginPause: true });
+  const page = f.pages.at(-1)!;
+  try {
+    page.detectionResult = "credentials";
+    page.setUrl("https://accounts.google.com/v3/signin");
+    await runtime.get(session.id);
+    await (runtime as any).sessions.get(session.id).loginDetection;
+    assert.equal((await runtime.get(session.id)).loginRequest, null);
+    await runtime.execute(session.id, { action: "snapshot" }, agent);
+    page.detectionResult = "challenge";
+    page.setUrl("https://accounts.google.com/challenge");
+    await waitForAssertion(async () => assert.ok((await runtime.get(session.id)).loginRequest));
+    await assert.rejects(runtime.execute(session.id, { action: "snapshot" }, agent), /login required|paused/i);
+    await runtime.create({ ...start(), projectId: session.projectId, conversationId: session.conversationId, profileName: undefined, profileId: session.profileId, skipLoginPause: true });
+    await assert.rejects(runtime.execute(session.id, { action: "snapshot" }, agent), /login required|paused/i);
+  } finally { await cleanup(runtime, session.id); }
+});
+
+test("skipLoginPause handles arbitrary login forms without overriding human control", async t => {
+  const f = fixture(t), runtime = f.runtime();
+  const args = { ...start(), url: "https://login.example.test", skipLoginPause: true };
+  const session = await runtime.create(args), page = f.pages.at(-1)!;
+  try {
+    page.detectionResult = "credentials";
+    page.setUrl("https://login.example.test/sign-in");
+    await runtime.get(session.id);
+    await (runtime as any).sessions.get(session.id).loginDetection;
+    assert.equal((await runtime.get(session.id)).loginRequest, null);
+    await runtime.execute(session.id, { action: "takeControl" }, human("owner"));
+    const resume = { ...args, profileName: undefined, profileId: session.profileId };
+    await runtime.create(resume);
+    await assert.rejects(runtime.execute(session.id, { action: "text", text: "blocked" }, agent), /human control/i);
+    await runtime.execute(session.id, { action: "resumeAgent" }, human("owner"));
+    await runtime.create({ ...resume, skipLoginPause: false });
+    await waitForAssertion(async () => assert.ok((await runtime.get(session.id)).loginRequest));
+  } finally { await cleanup(runtime, session.id); }
+});
+
 test("Gmail sign-in navigation automatically persists and pauses login", async t => {
   const f = fixture(t), runtime = f.runtime();
   const session = await runtime.create(start());

@@ -7,7 +7,7 @@
 //
 // `scripts/dev-local.sh` runs this and then starts the servers against it.
 import { spawn } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +38,8 @@ const projectsRoot = path.join(root, "projects");
 const piSessionRoot = path.join(home, ".pi", "sessions");
 const claudeConfigRoot = path.join(home, ".claude");
 const claudeProjectsRoot = path.join(claudeConfigRoot, "projects");
+const kiroConfigRoot = path.join(home, ".kiro");
+const standInRoot = path.join(root, "bin");
 
 // Both nodes share HOME, the project folders, and the transcript roots. On a real
 // cluster Syncthing keeps those in step between machines; on one machine sharing
@@ -56,7 +58,27 @@ const nodeSpecs: NodeSpec[] = [
 }));
 
 if (force) await rm(root, { recursive: true, force: true });
-await Promise.all([home, projectsRoot, piSessionRoot, claudeProjectsRoot, ...nodeSpecs.map((spec) => spec.dataDir)].map((directory) => mkdir(directory, { recursive: true })));
+await Promise.all([home, projectsRoot, piSessionRoot, claudeProjectsRoot, kiroConfigRoot, standInRoot, ...nodeSpecs.map((spec) => spec.dataDir)].map((directory) => mkdir(directory, { recursive: true })));
+
+// The UI offers a harness only when it is installed and signed in, and nothing in
+// this disposable HOME is signed in. These stand-ins answer the version and
+// sign-in checks so every harness is offered; they cannot run a conversation.
+const standInScript = `#!/bin/sh
+case "$1" in
+  --version) echo "0.0.0-dev" ;;
+  auth) echo '{"loggedIn": true, "authMethod": "dev-environment"}' ;;
+  whoami) echo "Logged in (Joint Bob dev environment)" ;;
+  *) echo "Joint Bob dev-environment stand-in: cannot run conversations" >&2; exit 1 ;;
+esac
+`;
+for (const name of ["claude", "kiro-cli"]) {
+  await writeFile(path.join(standInRoot, name), standInScript);
+  await chmod(path.join(standInRoot, name), 0o755);
+}
+// Pi offers only models whose provider has a key; a dummy key on a loopback address is enough.
+await writeFile(path.join(home, ".pi", "models.json"), `${JSON.stringify({
+  providers: { "dev-environment": { baseUrl: "http://127.0.0.1:9/v1", api: "openai-completions", apiKey: "dev-environment", models: [{ id: "dev-model" }] } },
+}, null, 2)}\n`);
 
 const { claudeProjectDir } = await import("../src/session-paths.js");
 
@@ -264,7 +286,7 @@ for (const spec of nodeSpecs) {
     home,
     node: { name: spec.name, url: spec.url },
     admin: { username, password },
-    paths: { piSessions: piSessionRoot, claudeConfig: claudeConfigRoot, claudeProjects: claudeProjectsRoot, projectsHome: path.join(home, "JointBob") },
+    paths: { piSessions: piSessionRoot, claudeConfig: claudeConfigRoot, claudeProjects: claudeProjectsRoot, standIns: standInRoot, projectsHome: path.join(home, "JointBob") },
     projects: demoProjects.map((demo) => ({ name: demo.name, path: path.join(projectsRoot, demo.directory) })),
     ...(seeded.length ? { mirrorProjects: seeded[0].projects } : {}),
   }) as { nodeId: string; projects: SeededNode["projects"] };

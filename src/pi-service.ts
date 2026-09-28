@@ -306,6 +306,7 @@ export function simplifyTranscriptEntries(entries: unknown[]): ChatMessage[] {
   let modelId = "";
   let reasoning = "";
   const messages: ChatMessage[] = [];
+  const toolStarts = new Map<string, number>();
   for (const [index, entry] of entries.entries()) {
     const record = asRecord(entry);
     if (record.type === "model_change") {
@@ -320,14 +321,22 @@ export function simplifyTranscriptEntries(entries: unknown[]): ChatMessage[] {
     if (record.type !== "message") continue;
     const message = asRecord(record.message);
     const role = roleFromMessage(message);
-    if (!["user", "assistant", "toolCall", "toolResult"].includes(role)) continue;
+    if (!["user", "assistant", "toolResult"].includes(role)) continue;
+    const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
+    const recordedAt = timestamp ? Date.parse(timestamp) : NaN;
+    if (Number.isFinite(recordedAt) && Array.isArray(message.content)) {
+      for (const part of message.content) {
+        const block = asRecord(part);
+        if (block.type === "toolCall" && typeof block.id === "string") toolStarts.set(block.id, recordedAt);
+      }
+    }
     const text = role === "user" ? stripHandoffEnvelope(textFromMessage(message)) : textFromMessage(message);
     if (!text.trim()) continue;
     const answerProvider = String(message.provider ?? provider);
     const answerModel = String(message.model ?? modelId);
     const toolName = typeof message.toolName === "string" ? message.toolName : undefined;
-    const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
-    messages.push({
+    const toolCallId = String(message.toolCallId ?? "");
+    const display: ChatMessage = {
       id: `${index}`,
       role,
       text,
@@ -336,7 +345,12 @@ export function simplifyTranscriptEntries(entries: unknown[]): ChatMessage[] {
       ...(role === "assistant" && answerProvider && answerModel && reasoning
         ? { attribution: { harnessId: "pi", provider: answerProvider, modelId: answerModel, reasoning } }
         : {}),
-    });
+    };
+    if (toolCallId && Number.isFinite(recordedAt) && role === "toolResult") {
+      const startedAt = toolStarts.get(toolCallId);
+      if (startedAt !== undefined) display.durationMs = Math.max(0, recordedAt - startedAt);
+    }
+    messages.push(display);
   }
   return messages;
 }

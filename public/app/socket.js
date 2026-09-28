@@ -3,7 +3,7 @@ import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
-import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
+import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
@@ -40,8 +40,6 @@ function sendPendingQuickNotePrompt() {
     toast("Conversation connected, but the note could not be sent", 8000);
     return;
   }
-  state.lastTurnStartedAt = Date.now();
-  startDurationTicker();
   Promise.resolve(conversion.onStarted?.()).catch((error) => toast(error.message, 8000));
 }
 
@@ -135,9 +133,11 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     state.newSessionSecretAccountIds = [];
     state.spinOffSourceTaskId = null;
   }
-  // A turn left running on the conversation being left must not keep counting
-  // up in the header of the one being opened.
+  // Timers belong to the conversation being left. The ready payload restores
+  // persisted totals and any turn still running in the conversation being opened.
   state.lastTurnStartedAt = 0;
+  state.conversationDurationMs = 0;
+  state.conversationStartedAt = null;
   if (!preserveTask) state.activeTaskId = null;
   if (!preserveChat) state.conversationReadOnly = false;
   if (state.activeTaskId) {
@@ -276,7 +276,10 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
       characters: payload.messages?.reduce((total, message) => total + String(message.text || "").length, 0) || 0,
       segments: payload.segments?.length || 1,
     });
-    const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments);
+    state.conversationStartedAt = payload.conversationStartedAt || null;
+    const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments, state.conversationStartedAt);
+    const activeTurnStartedAt = Date.parse(payload.turnStartedAt || "");
+    restoreConversationTimer(payload.messages, Number.isFinite(activeTurnStartedAt) ? activeTurnStartedAt : 0);
     // A fresh open starts on the newest message; a reconnect re-render follows
     // if the reader was following and otherwise puts them back where they were.
     if (scrollOnReady || state.followChat) {
@@ -365,7 +368,8 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     // message always shows, even in a conversation a schedule also drives.
     if (payload.scheduled) return;
     state.spinOffSourceTaskId = null;
-    const bubble = appendMessage("user", payload.text, true, payload.attachments);
+    const sentAt = payload.timestamp ? new Date(payload.timestamp) : true;
+    const bubble = appendMessage("user", payload.text, sentAt, payload.attachments);
     if (payload.queued) markMessageQueued(bubble, payload.queueId, payload.editableText, payload.settings, payload.revision);
     state.thinkingBubble = null;
     return;
@@ -384,7 +388,8 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
         if (Number(existing.dataset.queueRevision) !== prompt.revision) updateQueuedMessage(prompt.id, prompt.text, prompt.editableText, prompt.settings, prompt.revision);
         continue;
       }
-      markMessageQueued(appendMessage("user", prompt.text, true, prompt.attachments), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
+      const sentAt = prompt.timestamp ? new Date(prompt.timestamp) : true;
+      markMessageQueued(appendMessage("user", prompt.text, sentAt, prompt.attachments), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
     }
     syncQueuedMessageOrder(prompts.map((prompt) => prompt.id));
     return;
@@ -461,7 +466,8 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     if (state.scheduledTurn) return;
     clearThinkingBubble();
     finalizeAssistantBubble();
-    const bubble = appendToolMessage(payload.toolName, payload.toolCallId);
+    const startedAt = Date.parse(payload.timestamp || "");
+    const bubble = appendToolMessage(payload.toolName, payload.toolCallId, Number.isFinite(startedAt) ? startedAt : Date.now());
     state.toolBubbles.set(payload.toolCallId, bubble);
     startDurationTicker();
     return;
@@ -475,8 +481,10 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "toolEnd") {
     if (state.scheduledTurn) return;
-    const bubble = state.toolBubbles.get(payload.toolCallId) || appendToolMessage(payload.toolName, payload.toolCallId);
-    updateToolMessage(bubble, payload.text || "", payload.isError ? "Failed" : "Done", payload.isError);
+    const finishedAt = Date.parse(payload.timestamp || "");
+    const bubble = state.toolBubbles.get(payload.toolCallId) || appendToolMessage(payload.toolName, payload.toolCallId, 0, Number.isFinite(finishedAt) ? finishedAt : Date.now());
+    const durationMs = bubble._startedAt && Number.isFinite(finishedAt) ? Math.max(0, finishedAt - bubble._startedAt) : undefined;
+    updateToolMessage(bubble, payload.text || "", payload.isError ? "Failed" : "Done", payload.isError, durationMs);
     state.toolBubbles.delete(payload.toolCallId);
     return;
   }
@@ -484,17 +492,17 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     if (state.scheduledTurn) return;
     clearThinkingBubble();
     finalizeAssistantBubble();
-    appendMessage("tool", `${harnessLabel(state.harnesses, state.engine)} error: ${payload.error}`);
+    appendErrorMessage(`${harnessLabel(state.harnesses, state.engine)} error: ${payload.error}`);
   }
   if (payload.type === "agent_start") {
     if (state.scheduledTurn) state.scheduledAssistantText = "";
     state.assistantRawText = "";
     setStatus(`${harnessLabel(state.harnesses, state.engine)} is working`, true);
-    state.lastTurnStartedAt = Date.now();
+    const startedAt = Date.parse(payload.timestamp || "");
+    startTurnTimer(Number.isFinite(startedAt) ? startedAt : Date.now());
     state.sessionBusy = true;
     // The turn starting means the agent has everything sent before it.
     markUserMessagesRead();
-    startDurationTicker();
     const session = state.sessions.find((candidate) => state.activeSessionId
       ? candidate.id === state.activeSessionId : candidate.path === state.activeSessionPath);
     if (session && !session.turnRunning) {
@@ -513,9 +521,9 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     setStatus("Connected", true);
     state.sessionBusy = false;
     if (state.lastTurnStartedAt) {
-      finishTurnTimer();
+      const finishedAt = Date.parse(payload.timestamp || "");
+      finishTurnTimer(Number.isFinite(finishedAt) ? finishedAt : Date.now());
       maybeNotifyTurnComplete().catch((error) => console.warn("Notification failed", error));
-      state.lastTurnStartedAt = 0;
     }
   }
   if (payload.type === "sessionInfoChanged" && payload.name) syncChatTitleFromSessions(payload.name);
@@ -523,7 +531,9 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "messages") {
     // Read-only Claude transcript synchronized from another node: re-render in
     // place, following if the reader was at the bottom, anchoring if not.
-    const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments || state.conversationSegments);
+    const segments = payload.segments || state.conversationSegments;
+    const resumeFromTop = rerenderChatTranscript(payload.messages, segments, state.conversationStartedAt);
+    restoreConversationTimer(payload.messages, state.lastTurnStartedAt);
     if (state.followChat) requestPinChat();
     else restoreChatScrollTop(resumeFromTop);
     return;

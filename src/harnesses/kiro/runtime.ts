@@ -91,7 +91,7 @@ class KiroSession implements HarnessSession {
   private replaying = false;
   private child: ChildProcessWithoutNullStreams | undefined;
   private connection: Connection | undefined;
-  private readonly toolCalls = new Map<string, { title: string; toolName: string; rawInput: unknown }>();
+  private readonly toolCalls = new Map<string, { title: string; toolName: string; rawInput: unknown; startedAt: number }>();
   private trustedTools: string[] | undefined;
   private pendingNotifications: JsonObject[] = [];
   private cancelRequested = false;
@@ -415,7 +415,7 @@ class KiroSession implements HarnessSession {
       const metadata = update._meta === undefined ? undefined : object(update._meta, "tool metadata");
       const kiro = metadata?.kiro === undefined ? undefined : object(metadata.kiro, "Kiro tool metadata");
       const toolName = kiro?.toolName === undefined ? title : requiredString(kiro.toolName, "native tool name");
-      this.toolCalls.set(id, { title, toolName, rawInput: update.rawInput });
+      this.toolCalls.set(id, { title, toolName, rawInput: update.rawInput, startedAt: Date.now() });
       // Kiro speaks again after a tool call. Closing the message here keeps the
       // saved transcript in the same pieces the live stream showed.
       if (this.currentInput) { this.markStarted(); this.persistAssistant(); }
@@ -452,10 +452,13 @@ class KiroSession implements HarnessSession {
       return;
     }
     const isError = update.status === "failed";
+    const finishedAt = Date.now();
+    const durationMs = Math.max(0, finishedAt - call.startedAt);
     this.emit({ type: "toolEnd", toolCallId: id, toolName: call.toolName, title: call.title, text, isError });
     if (!this.currentInput) return;
-    this.transcript.push({ id: `${this.id}:tool:${this.transcript.length}`, role: "toolResult", toolName: call.toolName, text, ...(isError ? { isError } : {}) });
-    this.queueRecord({ type: "tool", toolName: call.toolName, text, ...(isError ? { isError } : {}), timestamp: new Date().toISOString() });
+    const timestamp = new Date(finishedAt).toISOString();
+    this.transcript.push({ id: `${this.id}:tool:${this.transcript.length}`, role: "toolResult", toolName: call.toolName, text, timestamp, durationMs, ...(isError ? { isError } : {}) });
+    this.queueRecord({ type: "tool", toolName: call.toolName, text, durationMs, ...(isError ? { isError } : {}), timestamp });
   }
 
   private throwIfCancelled(): void {
@@ -472,6 +475,7 @@ class KiroSession implements HarnessSession {
       id: `${this.id}:assistant:${this.transcript.length}`,
       role: "assistant",
       text: this.assistant,
+      timestamp: new Date().toISOString(),
       attribution: { harnessId: "kiro", provider, modelId, reasoning },
     });
     this.queueRecord({ type: "message", role: "assistant", text: this.assistant, provider, modelId, reasoning, timestamp: new Date().toISOString() });
@@ -487,7 +491,7 @@ class KiroSession implements HarnessSession {
       this.handoffPending = false;
     }
     const text = stripHandoffEnvelope(input.text);
-    const message = { id: `${this.id}:user:${this.transcript.length}`, role: "user" as const, text };
+    const message = { id: `${this.id}:user:${this.transcript.length}`, role: "user" as const, text, timestamp: new Date().toISOString() };
     this.transcript.push(message);
     this.queueRecord({ type: "message", role: "user", text, timestamp: new Date().toISOString() });
     input.onStarted?.();
@@ -690,6 +694,17 @@ const runtime: HarnessRuntime = {
       return [];
     } catch (error) {
       return [`Kiro executable unavailable: ${error instanceof Error ? error.message : String(error)}`];
+    }
+  },
+
+  async signInProblems() {
+    const settings = runtimeSettings();
+    // `kiro-cli whoami` exits non-zero with "Not logged in" when no account is signed in.
+    try {
+      await execute(settings.executable || "kiro-cli", ["whoami"], { env: { ...process.env, KIRO_HOME: settings.configPath }, timeout: 5_000 });
+      return [];
+    } catch {
+      return ["Kiro is not signed in on this node"];
     }
   },
 };

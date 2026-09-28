@@ -37,7 +37,7 @@
         <div class="app-boot-tagline">Agents, together.</div>
       </div>
     </div>
-    <button type="button" id="focusControlsButton" data-testid="focus-controls-button" aria-label="Show controls" aria-controls="focusControls" aria-expanded="false" title="Tap for controls. Drag to move. Double-tap to hide or restore. Triple-tap for recent conversations." hidden><img src="/icon.svg" alt="" width="32" height="32" draggable="false" /><span id="focusPendingBadge" class="focus-pending-badge" data-testid="focus-pending-badge" aria-hidden="true" hidden>0</span></button>
+    <button type="button" id="focusControlsButton" data-testid="focus-controls-button" aria-label="Show controls" aria-controls="focusControls" aria-expanded="false" title="Tap for controls" hidden><img src="/icon.svg" alt="" width="32" height="32" draggable="false" /><span id="focusPendingBadge" class="focus-pending-badge" data-testid="focus-pending-badge" aria-hidden="true" hidden>0</span></button>
     <nav id="focusControls" class="focus-controls" aria-label="Focus controls" hidden>
       <header>
         <button type="button" id="focusBack" data-testid="focus-back" aria-label="Back to controls" hidden></button>
@@ -55,8 +55,9 @@
       <div class="focus-global-actions" aria-label="Workspace actions">
         <button type="button" id="focusNewConversation" data-testid="focus-new-conversation">New conversation…</button>
         <button type="button" id="focusNewNote" data-testid="focus-new-note">New note…</button>
-        <button type="button" id="focusReviews" data-testid="focus-reviews">Needs review<span id="focusReviewCount" class="focus-pending-badge" data-testid="focus-review-count" aria-hidden="true" hidden>0</span></button>
+        <button type="button" id="focusRecents" data-testid="focus-recents">Recent conversations</button>
         <button type="button" id="focusRunning" data-testid="focus-running">Running conversations<span id="focusRunningCount" class="focus-pending-badge running-badge" data-running-count data-testid="focus-running-count" aria-hidden="true" hidden>0</span></button>
+        <button type="button" id="focusReviews" data-testid="focus-reviews">Needs review<span id="focusReviewCount" class="focus-pending-badge" data-testid="focus-review-count" aria-hidden="true" hidden>0</span></button>
       </div>
       <div class="focus-navigation">
         <button type="button" id="focusProjects" data-testid="focus-projects">All projects</button>

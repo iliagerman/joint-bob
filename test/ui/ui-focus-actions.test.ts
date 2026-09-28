@@ -3,7 +3,7 @@ import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 import { api, signIn } from "../dev-nodes.js";
 
-const actions = ["focus-new-conversation", "focus-new-note", "focus-reviews", "focus-running"];
+const actions = ["focus-new-conversation", "focus-new-note", "focus-recents", "focus-reviews", "focus-running"];
 
 test("focus actions work before choosing a project, on lists and in chat; classic wizard stays unchanged", { timeout: 180_000 }, async t => {
   const { page, environment, node } = await nativeUiFixture(t);
@@ -42,6 +42,10 @@ test("focus actions work before choosing a project, on lists and in chat; classi
     await page.locator(`body.view-${view}`).waitFor();
     await page.getByTestId("focus-controls-button").click();
     for (const action of actions) assert.equal(await page.getByTestId(action).isVisible(), true, `${action} available on ${view}`);
+    await page.getByTestId("focus-recents").click();
+    await page.getByTestId("recent-sessions-dialog").waitFor();
+    await page.getByTestId("recent-sessions-close-button").click();
+    await page.getByTestId("focus-controls-button").click();
     await page.getByTestId("focus-reviews").click();
     await page.getByTestId("pending-reviews-dialog").waitFor();
     await page.getByTestId("pending-reviews-close-button").click();

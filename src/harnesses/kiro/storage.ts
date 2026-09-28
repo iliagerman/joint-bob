@@ -146,7 +146,7 @@ function applyRecord(session: KiroStoredSession, value: KiroRecord, index: numbe
   // A reloaded transcript shows the same collapsed tool bubble the live stream
   // did, so the prose around a tool call still reads in order.
   if (value.type === "tool") {
-    if (typeof value.text !== "string" || value.isError !== undefined && typeof value.isError !== "boolean") {
+    if (typeof value.text !== "string" || value.isError !== undefined && typeof value.isError !== "boolean" || value.durationMs !== undefined && (typeof value.durationMs !== "number" || !Number.isFinite(value.durationMs) || value.durationMs < 0)) {
       throw new Error("Invalid Kiro tool record");
     }
     session.messages.push({
@@ -155,6 +155,7 @@ function applyRecord(session: KiroStoredSession, value: KiroRecord, index: numbe
       toolName: nonempty(value.toolName, "tool record"),
       text: value.text,
       ...(value.isError === true ? { isError: true } : {}),
+      ...(typeof value.durationMs === "number" ? { durationMs: value.durationMs } : {}),
       timestamp: timestamp(value.timestamp),
     });
     return;

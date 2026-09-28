@@ -309,6 +309,11 @@ const runtime: HarnessRuntime = {
       throw error;
     }
   },
+
+  async signInProblems() {
+    // Pi lists only models whose provider has usable authentication.
+    return (await service.listAvailableModels()).length ? [] : ["Pi is not signed in to any model provider on this node"];
+  },
 };
 
 export default runtime;

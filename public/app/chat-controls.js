@@ -112,7 +112,7 @@ export function renderChatSessionControls() {
   const activeTicket = state.activeTaskId ? state.tasks.find((task) => task.id === state.activeTaskId) : null;
   elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length || conversationIsReadOnly();
 
-  syncSelectOptions(elements.chatHarnessSelect, state.harnesses.filter(({ runtimeConfigured }) => runtimeConfigured).map((harness) => ({ value: harness.id, label: harness.label })));
+  syncSelectOptions(elements.chatHarnessSelect, state.harnesses.filter(({ runtimeConfigured }) => runtimeConfigured).map((harness) => ({ value: harness.id, label: harness.label, disabled: !harness.ready })));
   elements.chatHarnessSelect.value = state.engine;
   elements.chatHarnessSelect.disabled = !state.activeProjectId || !state.harnesses.length || conversationIsReadOnly();
 

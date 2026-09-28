@@ -1266,6 +1266,8 @@ select.chat-toolbar-control {
 .message-meta { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .message.user .message-meta { justify-content: flex-end; }
 .message-time { color: var(--muted); font-family: var(--mono); font-size: 10.5px; opacity: 0.75; }
+.conversation-start { align-self: center; color: var(--muted); font: 10.5px/1.4 var(--mono); }
+.conversation-start .message-time { font-size: inherit; }
 .message-receipt { color: var(--muted); font-family: var(--mono); font-size: 10.5px; opacity: 0.75; }
 .message-receipt[data-read="true"] { color: var(--accent); opacity: 1; }
 .message-unread-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--danger); }

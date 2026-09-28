@@ -1,7 +1,6 @@
 import { dispatchComposerInput, executeComposerCommand } from "../composer-commands.js";
 import { addAttachments, clearAttachments } from "./attachments.js";
 import { sendSocket } from "./chat-controls.js";
-import { startDurationTicker } from "./chat-transcript.js";
 import { commandAutocompleteOpen, composerCommandHandlers, hideCommandAutocomplete, renderCommandAutocomplete, selectCommandSuggestion } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { toast } from "./shell.js";
@@ -31,8 +30,6 @@ function sendPrompt(message, attachments = state.attachments, clearComposer = tr
     toast("Conversation is not connected yet");
     return;
   }
-  state.lastTurnStartedAt = Date.now();
-  startDurationTicker();
   if (message) rememberPrompt(message);
   state.historyIndex = -1;
   state.historyDraft = "";

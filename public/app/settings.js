@@ -319,6 +319,7 @@ async function saveSettings(event) {
   elements.settingsRestartMessage.hidden = restartRequired.length === 0;
   elements.settingsRestartMessage.textContent = restartRequired.length ? `Restart required for ${restartRequired.join(" and ")} changes.` : "";
   if (!restartRequired.length) elements.settingsDialog.close();
+  // A toast inside a closed dialog is invisible, so close it before announcing success.
   toast("Settings saved");
 }
 

@@ -68,7 +68,7 @@ test("focus UI is opt-in, uses real conversations, and reverts without losing th
   assert.equal(await page.locator("body").evaluate(el => el.classList.contains("focus-ui")), false);
 });
 
-test("mobile focus gestures, fixed composer and cross-project creation use the live app", { timeout: 180_000 }, async t => {
+test("mobile focus controls, fixed composer and cross-project creation use the live app", { timeout: 180_000 }, async t => {
   const fixture = await nativeUiFixture(t);
   const session = await signIn(fixture.environment, fixture.node);
   for (const project of fixture.node.projects.filter(project => ["Internal Assistant", "Joint Bob"].includes(project.name))) {
@@ -112,24 +112,10 @@ test("mobile focus gestures, fixed composer and cross-project creation use the l
   assert.ok(await page.locator("#messages").evaluate(el => el.scrollTop) > 0);
   assert.deepEqual(await page.locator("#messageInput").boundingBox(), before, "scrolling transcript never moves composer");
   await page.setViewportSize({ width: 390, height: 844 });
-  const title = await page.locator("#sessionTitle").boundingBox();
-  assert.ok(title);
-  for (const visible of [false, true]) {
-    await page.touchscreen.tap(title.x + 10, title.y + 10);
-    await page.touchscreen.tap(title.x + 10, title.y + 10);
-    await page.waitForFunction(expected => !document.querySelector<HTMLElement>("#focusControlsButton")!.hidden === expected, visible);
-  }
   const fab = page.getByTestId("focus-controls-button");
-  const start = await fab.boundingBox();
-  assert.ok(start);
-  const cdp = await context.newCDPSession(page);
-  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: start.x + 20, y: start.y + 20 }] });
-  await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 70, y: 160 }] });
-  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  const moved = await fab.boundingBox();
-  assert.ok(moved && moved.x < 100 && moved.y < 180, "touch drag moves FAB");
-  assert.equal(await page.locator("#focusControls").isVisible(), false, "drag does not open menu");
+  assert.equal(await fab.isVisible(), true, "controls stay visible without a restore gesture");
   await fab.tap();
+  await page.locator("#focusControls").waitFor();
   await page.getByTestId("focus-new-conversation").click();
   await page.getByTestId("new-session-project-select").click();
   await page.getByTestId("new-session-project-select-search").fill("joint");

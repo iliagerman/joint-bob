@@ -254,7 +254,9 @@ Notes are paused conversation drafts. Save a title and prompt, choose the agent,
 
 Set a one-time **Start after** date to make a note eligible at that time. Scheduled notes wait for capacity even when automatic backlog processing is off. For recurring prompts, use Scheduled tasks instead.
 
-In Notes, enable automatic processing and choose the parallel limit. A limit of 1 runs notes one by one; 2 fills up to two running conversations. The limit includes existing conversations, not just notes. The oldest eligible drafts across every project on this node start as slots open. The queue runs on the server, even with the browser closed. Notes and queue settings remain node-local. Failed or interrupted launches stay available for review and are not automatically retried.
+In Notes, enable automatic processing and choose the parallel limit. A limit of 1 runs notes one by one; 2 fills up to two running conversations. The limit includes existing conversations, not just notes. The oldest eligible drafts across every project on this node start as slots open. The queue runs on the server, even with the browser closed. Failed or interrupted launches stay available for review and are not automatically retried.
+
+Notes follow the same project-sharing permissions as conversations, including twins and selected cluster projects. Shared notes can be read, edited, deleted, or started from another authorized node; images and launch settings travel with them. Cached notes remain readable when their home node is offline, but changes and starts require that node. Queue settings and automatic dispatch remain on each note's home node, so shared copies never launch twice.
 
 ## Scheduled tasks
 

@@ -62,7 +62,9 @@ export function renderSessions() {
   elements.chatProjectName.title = project?.name || "";
   const newSessionDisabled = !project || !state.sessionNodes.length;
   elements.newSessionButton.disabled = newSessionDisabled;
-  for (const button of elements.newSessionHarnesses.querySelectorAll("[data-new-session-harness]")) button.disabled = newSessionDisabled;
+  for (const button of elements.newSessionHarnesses.querySelectorAll("[data-new-session-harness]")) {
+    button.disabled = newSessionDisabled || !state.harnesses.find(({ id }) => id === button.dataset.harnessId).ready;
+  }
   renderClassificationFilter();
   updateChatFilterCounts();
   elements.markAllReviewedButton.disabled = !project || !reviewableSessions().length;

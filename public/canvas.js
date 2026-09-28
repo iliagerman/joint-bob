@@ -980,7 +980,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       for (const harness of harnesses.filter(({ runtimeConfigured }) => runtimeConfigured)) {
         const title = `Start a new ${harness.label} conversation`;
         if (!title.toLowerCase().includes(query)) continue;
-        pickerOption(title, "Opens an empty conversation in the new pane", `canvas-start-conversation-${harness.id}`, () => chooseDraft(harness)).disabled = !classificationReady;
+        pickerOption(title, harness.ready ? "Opens an empty conversation in the new pane" : harness.unavailableReason, `canvas-start-conversation-${harness.id}`, () => chooseDraft(harness)).disabled = !classificationReady || !harness.ready;
       }
     }
     const sessions = pickerSessions.filter((session) => !sessionTaken(session, projectId));

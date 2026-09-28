@@ -128,6 +128,7 @@ async function configureHarnessDefaults(page: Page) {
   await page.locator("#settingsClaudeDefaultThinking").selectOption("high");
   await page.getByTestId("settings-save-button").click();
   await page.locator('#settingsDialog[open]').waitFor({ state: "hidden" });
+  await page.getByText("Settings saved", { exact: true }).waitFor();
   const settings = await page.evaluate('(async () => await (await fetch("/api/settings")).json())()');
   assert.deepEqual(settings.conversationDefaults, {
     pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" },

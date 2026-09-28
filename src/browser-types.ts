@@ -16,6 +16,7 @@ export const browserStartSchema = browserIdentitySchema.extend({
   url: browserWebUrlSchema.optional(),
   profileId: z.string().uuid().optional(),
   profileName: z.string().trim().min(1).max(80).optional(),
+  skipLoginPause: z.boolean().optional(),
 }).refine(value => !(value.profileId && value.profileName), "Choose a profile ID or a new profile name, not both");
 export type BrowserStart = z.infer<typeof browserStartSchema>;
 export interface BrowserSessionRecord extends BrowserStart {

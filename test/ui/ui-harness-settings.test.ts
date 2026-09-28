@@ -74,6 +74,50 @@ test("new conversation controls follow registered harnesses and align toolbar ta
   assert.equal(geometry.taskHeight, geometry.terminalHeight, "Tasks has the same height as adjacent toolbar buttons");
 });
 
+async function markClaudeSignedOut(page: Page) {
+  await page.route("**/api/harnesses", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const claude = body.harnesses.find((harness: { id: string }) => harness.id === "claude");
+    claude.ready = false;
+    claude.unavailableReason = "Claude is not signed in on this node";
+    await route.fulfill({ response, json: body });
+  });
+}
+
+test("new conversation buttons are disabled for a harness that is not signed in", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await markClaudeSignedOut(page);
+  await signIn(page, node.url, environment.username, environment.password);
+  await waitForHarnesses(page);
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+
+  const claude = page.getByTestId("session-create-claude-button");
+  // Buttons stay disabled until the project's execution nodes load; a signed-in harness then enables.
+  await page.locator('[data-testid="session-create-button"]:enabled').waitFor();
+  assert.equal(await claude.isDisabled(), true, "a signed-out harness cannot start a conversation");
+  assert.equal(await claude.getAttribute("title"), "Claude is not signed in on this node");
+
+  await page.locator("#sessionList .session-card").first().click();
+  const option = page.getByTestId("chat-harness-select").locator('option[value="claude"]');
+  assert.equal(await option.evaluate((element: HTMLOptionElement) => element.disabled), true, "the harness switcher cannot pick a signed-out harness");
+});
+
+test("mobile harness dialog disables a harness that is not signed in", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await markClaudeSignedOut(page);
+  await signIn(page, node.url, environment.username, environment.password);
+  await waitForHarnesses(page);
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+
+  await page.getByTestId("new-conversation-mobile-button").click();
+  await page.getByTestId("choice-dialog").waitFor({ state: "visible" });
+  assert.equal(await page.locator('#choiceDialog input[value="claude"]').isDisabled(), true);
+  assert.equal(await page.locator('#choiceDialog input[value="pi"]').isEnabled(), true);
+  assert.equal(await page.getByTestId("choice-option").filter({ hasText: "Claude" }).locator(".choice-option-hint").textContent(), "Claude is not signed in on this node");
+});
+
 test("mobile uses one new conversation button with a dynamic harness dialog", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await page.setViewportSize({ width: 390, height: 844 });

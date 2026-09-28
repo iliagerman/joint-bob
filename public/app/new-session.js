@@ -1,4 +1,4 @@
-import { harnessIdFromPath } from "../harness-metadata.js";
+import { harnessIdFromPath, harnessOption } from "../harness-metadata.js";
 import { api, savePreferencesInBackground } from "./api.js";
 import { classificationPicker } from "./classification.js";
 import { conversationTask, loadHarnesses } from "./chat-controls.js";
@@ -135,7 +135,7 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
   projectPicker.setValue(state.newSessionDraft.projectId || "");
   projectPicker.disabled = Boolean(sourceTaskId);
   document.querySelector("#newSessionHarnessLabel").hidden = !global;
-  harnessSelect.replaceChildren(...state.harnesses.filter(harness => harness.runtimeConfigured).map(harness => new Option(harness.label, harness.id)));
+  harnessSelect.replaceChildren(...state.harnesses.filter(harness => harness.runtimeConfigured).map(harnessOption));
   harnessSelect.value = state.harnesses.find(harness => harness.newSessionPath === sessionPath)?.id || "";
   elements.newSessionNameInput.value = sourceTaskId ? defaultTitle : "";
   newSessionNodes = [];
@@ -173,9 +173,9 @@ async function loadNewSessionNodes() {
 export async function startGlobalConversation() {
   if (!state.projects.length) throw new Error("Create a project first");
   if (!state.harnesses.length) await loadHarnesses();
-  const available = state.harnesses.filter(harness => harness.runtimeConfigured);
+  const available = state.harnesses.filter(harness => harness.ready);
   const harness = available.find(harness => harness.id === state.engine) || available[0];
-  if (!harness) throw new Error("No agent is configured on this node");
+  if (!harness) throw new Error("No agent is installed and signed in on this node");
   await openNewSessionNameDialog(harness.newSessionPath, `New ${harness.label} conversation`, null, true);
 }
 
@@ -196,6 +196,7 @@ export async function startNewHarnessConversation(harnessId) {
   if (!state.harnesses.length) await loadHarnesses();
   const harness = state.harnesses.find((candidate) => candidate.id === harnessId && candidate.runtimeConfigured);
   if (!harness) throw new Error(`Harness ${harnessId} is unavailable`);
+  if (!harness.ready) throw new Error(harness.unavailableReason);
   await openNewSessionNameDialog(harness.newSessionPath, `New ${harness.label} conversation`);
 }
 
@@ -204,13 +205,13 @@ export function renderNewSessionHarnesses() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "primary new-chat-harness-button";
-    button.disabled = !state.activeProjectId || !state.sessionNodes.length;
+    button.disabled = !state.activeProjectId || !state.sessionNodes.length || !harness.ready;
     button.dataset.harnessId = harness.id;
     button.dataset.newSessionHarness = "";
     button.dataset.testid = harness.id === "pi" ? "session-create-button" : harness.id === "claude" ? "session-create-claude-button" : `session-create-${harness.id}-button`;
     if (HARNESS_SHORTCUTS[harness.id]) button.dataset.shortcutHint = HARNESS_SHORTCUTS[harness.id];
     button.setAttribute("aria-label", `New ${harness.label} conversation`);
-    button.title = `New ${harness.label} conversation`;
+    button.title = harness.ready ? `New ${harness.label} conversation` : harness.unavailableReason;
     button.append(brandIcon(harness.id, `new-chat-harness-icon ${harness.id}`));
     button.addEventListener("click", () => startNewHarnessConversation(harness.id).catch((error) => toast(error.message)));
     return button;
@@ -225,7 +226,7 @@ async function chooseNewSessionHarness() {
     eyebrow: "New conversation",
     title: "Choose an agent",
     confirmLabel: "Continue",
-    options: harnesses.map((harness) => ({ value: harness.id, label: harness.label, icon: brandIcon(harness.id, `choice-option-icon ${harness.id}`) })),
+    options: harnesses.map((harness) => ({ value: harness.id, label: harness.label, icon: brandIcon(harness.id, `choice-option-icon ${harness.id}`), disabled: !harness.ready, hint: harness.ready ? "" : harness.unavailableReason })),
   });
   if (harnessId) await startNewHarnessConversation(harnessId);
 }

@@ -207,6 +207,8 @@ export interface ChatMessage {
   toolName?: string;
   /** Present on tool roles that failed, so a reload shows the same failed bubble. */
   isError?: boolean;
+  /** Recorded tool runtime. Absent for legacy transcripts that only stored completion. */
+  durationMs?: number;
   /** ISO time the harness recorded for this message; absent when the transcript line carried none. */
   timestamp?: string;
 }

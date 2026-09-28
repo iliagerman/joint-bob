@@ -126,7 +126,7 @@ export function refreshHarnessPromptQueue(connection: HarnessChatConnection): vo
   const prompts = listQueuedPrompts(queueKey(connection)).filter((prompt) => !prompt.systemEventId && !startingIds.has(prompt.id));
   publish(connection, { type: "queuedPrompts", prompts: prompts.map((prompt) => {
     const images = new Set(prompt.images.map(({ path: imagePath }) => imagePath));
-    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
+    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, timestamp: prompt.createdAt, scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
   }) });
   publish(connection, { type: "queueUpdate", pending: prompts.length });
 }
@@ -181,7 +181,7 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   const displayText = [message.trim(), suffix].filter(Boolean).join("\n\n");
   const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { requestId, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
   markHarnessInput(connection.shared);
-  publish(connection, { type: "userMessage", text: displayText, scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
+  publish(connection, { type: "userMessage", text: displayText, timestamp: queued.createdAt, scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
   refreshHarnessPromptQueue(connection);
   void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
 }
@@ -643,12 +643,12 @@ export async function handleHarnessChatMessage(connection: HarnessChatConnection
 }
 
 export async function attachHarnessChat(options: AttachOptions): Promise<void> {
-  const record = await getConversationRecord(options.project.id, options.engine, options.sessionId);
+  let record = await getConversationRecord(options.project.id, options.engine, options.sessionId);
   const conversationId = record?.conversationId ?? options.sessionId;
   const shared = await openHarnessSession(options.engine, { projectId: options.project.id, cwd: options.cwd, sessionId: options.sessionId, sessionPath: options.sessionPath, conversationId, accountIds: options.accountIds });
   const connection: HarnessChatConnection = { socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId };
   const local = await getClusterNode();
-  if (!record && !options.readOnly) await ensureConversationRecord(options.project.id, options.engine, options.sessionId, local.id, options.taskId ?? undefined, { conversationId, segmentIndex: 0 });
+  if (!record && !options.readOnly) record = await ensureConversationRecord(options.project.id, options.engine, options.sessionId, local.id, options.taskId ?? undefined, { conversationId, segmentIndex: 0 });
   const saved = readQueueSettings(queueKey(connection));
   if (saved && selectedHarness(saved) === options.engine && !harnessSessionBusy(shared)) await shared.session.configure(runtimeSettings(saved));
   attachHarnessClient(shared, options.socket); harnessChatConnections.add(connection);
@@ -661,7 +661,13 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const routing = await routingClientState(connection, local.id);
   const routingMode = routing ? routing.mode : "manual";
   const conversationCommands = getSettings().conversationCommands;
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+  const segmentRecords = await listConversationSegments(options.project.id, conversationId);
+  const listed = options.listedSessions?.find((session) => session.conversationId === conversationId || session.id === conversationId);
+  const startedCandidates = [listed?.createdAt, ...segmentRecords.map((segment) => segment.createdAt), ...browserMessages.map((message) => message.timestamp)]
+    .filter((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)))
+    .sort((left, right) => Date.parse(left) - Date.parse(right));
+  const conversationStartedAt = startedCandidates[0] ?? null;
+  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {

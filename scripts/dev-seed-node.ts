@@ -7,6 +7,7 @@
 //
 // Reads one JSON job on stdin and writes one JSON result on stdout.
 import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import type { ProjectRecord } from "../src/types.js";
 
 interface SeedJob {
@@ -14,7 +15,7 @@ interface SeedJob {
   home: string;
   node: { name: string; url: string };
   admin: { username: string; password: string };
-  paths: { piSessions: string; claudeConfig: string; claudeProjects: string; projectsHome: string };
+  paths: { piSessions: string; claudeConfig: string; claudeProjects: string; standIns: string; projectsHome: string };
   projects: Array<{ name: string; path: string }>;
   /** A twin's projects, recorded here under the same IDs so twin pairing mirrors them. */
   mirrorProjects?: ProjectRecord[];
@@ -39,7 +40,9 @@ const { updateClusterNode } = await import("../src/cluster.js");
 
 updateSettings({
   pi: { executable: "", configPath: job.paths.claudeConfig.replace(/\.claude$/, ".pi"), sessionPath: job.paths.piSessions },
-  claude: { executable: "", configPath: job.paths.claudeConfig, sessionPath: job.paths.claudeProjects },
+  claude: { executable: path.join(job.paths.standIns, "claude"), configPath: job.paths.claudeConfig, sessionPath: job.paths.claudeProjects },
+  // Kiro keeps its default folders; creating ~/.kiro/sessions would start sharing a Kiro transcript folder between twins.
+  runtimes: { kiro: { executable: path.join(job.paths.standIns, "kiro-cli"), configPath: "", sessionPath: "" } },
   syncthing: { endpoint: "" },
   projects: { homePath: job.paths.projectsHome },
 });

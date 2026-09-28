@@ -1,4 +1,4 @@
-import { harnessIdFromPath } from "../harness-metadata.js";
+import { harnessIdFromPath, harnessOption } from "../harness-metadata.js";
 import { api } from "./api.js";
 import { state } from "./state.js";
 import { confirmAction, toast } from "./shell.js";
@@ -36,7 +36,7 @@ export async function openScheduledTasks(projectId, session = null) {
     return option;
   }));
   availableHarnesses = harnessBody.harnesses;
-  field("engine").replaceChildren(...availableHarnesses.map(harness => new Option(harness.label, harness.id)));
+  field("engine").replaceChildren(...availableHarnesses.map(harnessOption));
   availableModels = modelBody.models;
   renderExecutionFields();
   document.querySelector("#cronTimezones").replaceChildren(...["UTC", ...Intl.supportedValuesOf("timeZone")].map(zone => new Option(zone)));
@@ -161,8 +161,8 @@ function editTask(task) {
   editing = task;
   const selectedEngine = task?.engine || context.session?.harnessId || context.session?.engine
     || (context.session ? harnessIdFromPath(state.harnesses, context.session.path) : null)
-    || state.harnesses.find((harness) => harness.runtimeConfigured)?.id;
-  field("engine").replaceChildren(...state.harnesses.filter((harness) => harness.runtimeConfigured).map((harness) => new Option(harness.label, harness.id)));
+    || state.harnesses.find((harness) => harness.ready)?.id;
+  field("engine").replaceChildren(...state.harnesses.filter((harness) => harness.runtimeConfigured).map(harnessOption));
   if (selectedEngine && !state.harnesses.some(({ id }) => id === selectedEngine)) field("engine").add(new Option(selectedEngine, selectedEngine));
   form.reset();
   form.hidden = false;
