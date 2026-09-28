@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.9.1 — 2026-09-28
 
-- Failed quick note runs now open their original conversation when clicked, instead of being retryable as new drafts.
+- Failed quick note runs now stay separate from pending notes and open their original conversation without resuming or resending the prompt.
+- Fixed the missing dropdown arrow and text spacing in mobile settings.
 
 ## 2.9.0 — 2026-09-28
 
