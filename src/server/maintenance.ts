@@ -23,6 +23,7 @@ import { broadcastSessionsChangedToAllProjects, broadcastToProject, scheduleRevi
 import { replicationReceiptSchema } from "./schemas.js";
 import { dropZombieHarnessSessions, harnessSessions, harnessTurnBusy, reapInactiveHarnessSessions } from "./harness-sessions.js";
 import { flags } from "./state.js";
+import { measureOperation } from "./performance-diagnostics.js";
 import { reconcileOutgoingTaskHandoff } from "./task-handoff.js";
 import { harnessTaskRuns } from "./task-runs.js";
 
@@ -61,8 +62,8 @@ export async function initializeStartupReadiness(): Promise<void> {
   flags.startupReadinessInProgress = true;
   try {
     const projects = await listProjects();
-    await reconcileSyncthingProjectFolders(projects);
-    await reconcileManagedAgentResources();
+    await measureOperation("startup.syncthing", () => reconcileSyncthingProjectFolders(projects));
+    await measureOperation("startup.agentResources", () => reconcileManagedAgentResources());
     flags.startupReady = true;
     flags.startupError = undefined;
     console.log("Startup reconciliation completed.");

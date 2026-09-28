@@ -89,7 +89,7 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
         entry.sessions = entry.sessions.then((sessions) => adapter.sessions.refresh(entry.project, sessions, ownedFiles));
         await entry.sessions;
       } catch (error) {
-        this.entries.delete(key);
+        if (this.entries.get(key) === entry) this.entries.delete(key);
         throw error;
       }
     }));
@@ -103,13 +103,19 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
   private async listAdapter(adapter: HarnessAdapter, project: HarnessProject): Promise<SessionSummary[]> {
     const key = projectCacheKey(project, adapter.id);
     const cached = this.entries.get(key);
-    if (cached) return cached.sessions;
-    for (const [cachedKey, entry] of this.entries) {
-      if (entry.project.id === project.id && entry.harnessId === adapter.id) this.entries.delete(cachedKey);
+    if (cached) {
+      this.entries.delete(key);
+      this.entries.set(key, cached);
+      return cached.sessions;
     }
+    // Viewer pins/history and background scans must not evict each other. Keep
+    // a small LRU per project/harness so changing scopes cannot grow it forever.
+    const scoped = [...this.entries].filter(([, entry]) => entry.project.id === project.id && entry.harnessId === adapter.id);
+    if (scoped.length >= 4) this.entries.delete(scoped[0][0]);
     const sessions = adapter.sessions.list(project);
-    this.entries.set(key, { project, harnessId: adapter.id, sessions });
-    sessions.catch(() => this.entries.delete(key));
+    const entry = { project, harnessId: adapter.id, sessions };
+    this.entries.set(key, entry);
+    sessions.catch(() => { if (this.entries.get(key) === entry) this.entries.delete(key); });
     return sessions;
   }
 }

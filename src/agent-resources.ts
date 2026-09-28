@@ -385,6 +385,12 @@ async function reconcileEntry(source: string, destination: string, dataDir: stri
   const actual = await resolveSource(source);
   if (!actual) return;
 
+  // Existing links (including symlinked parent directories) need no content comparison.
+  if (actual === await resolveSource(destination)) {
+    counts.unchanged += 1;
+    return;
+  }
+
   try {
     await lstat(destination);
   } catch (error) {

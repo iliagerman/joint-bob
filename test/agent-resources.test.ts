@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -95,6 +97,45 @@ test("reconciles native agent resources into canonical links without copying sec
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }
+});
+
+test("already linked resources skip content reads through canonical path aliases", async (t) => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "joint-bob-linked-resources-"));
+  const root = path.join(fixture, "resources");
+  const alias = path.join(fixture, "alias");
+  const pi = path.join(fixture, "pi");
+  const claude = path.join(fixture, "claude");
+  const agents = path.join(fixture, "agents");
+  const { reconcileAgentResources } = await import("../src/agent-resources.js");
+  try {
+    await write(root, "shared/skills/example/nested/content.txt", "Skill content\n");
+    await write(root, "pi/prompts/review.md", "Review\n");
+    await symlink(root, alias, "dir");
+    for (const config of [pi, claude, agents]) {
+      await mkdir(path.join(config, "skills"), { recursive: true });
+      await symlink(path.join(alias, "shared/skills/example"), path.join(config, "skills/example"), "dir");
+    }
+    await mkdir(path.join(pi, "prompts"), { recursive: true });
+    await symlink(path.join(alias, "pi/prompts/review.md"), path.join(pi, "prompts/review.md"), "file");
+    const originalReadFile = fs.readFile;
+    const contentReads: string[] = [];
+    const reader = t.mock.method(fs, "readFile", (...args: Parameters<typeof fs.readFile>) => {
+      const file = String(args[0]);
+      if (file.endsWith("content.txt") || file.endsWith("review.md")) contentReads.push(file);
+      return originalReadFile(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      for (const resourceRoot of [root, alias]) {
+        const result = await reconcileAgentResources({ root: resourceRoot, piConfigPath: pi, claudeConfigPath: claude, agentsConfigPath: agents, dataDir: path.join(fixture, "data") });
+        assert.deepEqual(contentReads, [], "Already linked resources must not be read for hashing");
+        assert.deepEqual(result, { root: resourceRoot, imported: 0, linked: 0, unchanged: 4, conflicts: [] });
+      }
+    } finally {
+      reader.mock.restore();
+      syncBuiltinESMExports();
+    }
+  } finally { await rm(fixture, { recursive: true, force: true }); }
 });
 
 test("generates a refreshed Claude plugin from shared skills without changing native copies", async () => {

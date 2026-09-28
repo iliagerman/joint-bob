@@ -45,6 +45,10 @@ export function openSupervisorStore(dataDirectory) {
   const database = new DatabaseSync(file);
   database.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON");
   database.exec("CREATE TABLE IF NOT EXISTS supervisor_tasks(id TEXT PRIMARY KEY,identity TEXT NOT NULL,name TEXT NOT NULL,executable TEXT NOT NULL,args_json TEXT NOT NULL,cwd TEXT NOT NULL,status TEXT NOT NULL,pid INTEGER,started_at TEXT NOT NULL,ended_at TEXT,exit_code INTEGER,signal TEXT,error TEXT); CREATE TABLE IF NOT EXISTS supervisor_completions(task_id TEXT PRIMARY KEY REFERENCES supervisor_tasks(id),created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS supervisor_control(singleton INTEGER PRIMARY KEY CHECK(singleton=1),socket_path TEXT NOT NULL,token_hash TEXT NOT NULL,protocol_version INTEGER NOT NULL,instance_id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS supervisor_credentials(singleton INTEGER PRIMARY KEY CHECK(singleton=1),token TEXT NOT NULL); CREATE TABLE IF NOT EXISTS supervisor_task_tokens(token_hash TEXT PRIMARY KEY,identity TEXT NOT NULL,expires_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS supervisor_installation(singleton INTEGER PRIMARY KEY CHECK(singleton=1),install_root TEXT NOT NULL,active_release TEXT NOT NULL)");
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS supervisor_tasks_active_identity ON supervisor_tasks(identity) WHERE status IN (${ACTIVE});
+    CREATE INDEX IF NOT EXISTS supervisor_tasks_identity_started_id ON supervisor_tasks(identity,started_at DESC,id DESC);
+  `);
   secureDatabaseFiles(file);
   let startupLocked = false;
   const getTask = id => serialize(database.prepare("SELECT * FROM supervisor_tasks WHERE id=?").get(id));

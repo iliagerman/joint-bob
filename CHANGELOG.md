@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.11.2 — 2026-09-28
+
+- Keep viewer and background transcript caches separate without repeatedly rescanning the same conversations.
+- Index active task and conversation task-history lookups instead of scanning completed jobs on each refresh.
+- Skip rehashing already-linked agent resources at startup and log slow startup reconciliation stages.
+
 ## 2.11.1 — 2026-09-28
 
 - The service-worker cache now automatically updates when app files change, preventing stale stylesheets from mismatching with updated pages.

@@ -119,6 +119,12 @@ async function writeSyncedProject(dataDir: string): Promise<void> {
   }));
 }
 
+test("startup stages use static diagnostic labels and remain readiness gates", async () => {
+  const source = await readFile(new URL("../src/server/maintenance.ts", import.meta.url), "utf8");
+  assert.match(source, /import \{ measureOperation \} from "\.\/performance-diagnostics\.js"/);
+  assert.match(source, /await measureOperation\("startup\.syncthing", \(\) => reconcileSyncthingProjectFolders\(projects\)\);\s+await measureOperation\("startup\.agentResources", \(\) => reconcileManagedAgentResources\(\)\);\s+flags\.startupReady = true;/);
+});
+
 test("health stays starting until initial Syncthing ignore reconciliation succeeds", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-startup-ready-"));
   const syncthing = await createSyncthingFixture();
