@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.11.1 — 2026-09-28
 
-- App shell changes now automatically update the service-worker cache without requiring a version bump.
+- The service-worker cache now automatically updates when app files change, preventing stale stylesheets from mismatching with updated pages.
 
 ## 2.11.0 — 2026-09-28
 
