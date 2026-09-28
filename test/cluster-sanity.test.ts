@@ -145,9 +145,9 @@ test("scheduled conversation keeps its active run isolated while edits apply to 
     assert.equal(db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status, "waiting", "editing or pausing must not interrupt the active run");
     publishPiRuntime(runtimeDb, runtime, false);
     const finishDeadline = Date.now() + 30000;
-    while (db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status === "waiting" && Date.now() < finishDeadline) await new Promise(resolve => setTimeout(resolve, 50));
+    while (["waiting", "running"].includes(String(db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status)) && Date.now() < finishDeadline) await new Promise(resolve => setTimeout(resolve, 50));
     const finishedRun = db.prepare("SELECT status, error FROM cron_runs WHERE task_id = ?").get(id) as { status: string; error: string | null };
-    assert.notEqual(finishedRun.status, "waiting", JSON.stringify(finishedRun));
+    assert.ok(["succeeded", "failed"].includes(finishedRun.status), JSON.stringify(finishedRun));
     assert.doesNotMatch(finishedRun.error ?? "", /paused while waiting/, "saved edits must not cancel the already claimed run");
     const saved = await api<{ tasks: Array<{ id: string; name: string; prompt: string; enabled: boolean }> }>(nodeA, sessionA, "GET", `/projects/${project.id}/cron`);
     const savedTask = saved.body.tasks.find(task => task.id === id)!;
@@ -333,6 +333,7 @@ test("background children keep both nodes running after parent completion for ev
   const project = nodeA.projects[0];
   const db = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
   try {
+    db.exec("PRAGMA busy_timeout=5000");
     for (const engine of ["pi", "claude"]) {
       const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
       const parent = listed.body.sessions.find((row) => row.harnessId === engine)!;

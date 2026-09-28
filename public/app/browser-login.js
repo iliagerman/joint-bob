@@ -13,7 +13,9 @@ function identity() {
   if (!state.authenticated || !state.activeProjectId || !state.engine || !conversationId || !appNodeId) return null;
   return { projectId: state.activeProjectId, engine: state.engine, conversationId, appNodeId };
 }
-const identityKey = value => value && JSON.stringify([value.projectId, value.engine, value.conversationId, value.appNodeId]);
+// A conversation can move to another app node while its browser remains on the original
+// machine. The handoff follows the conversation, not its current execution node.
+const identityKey = value => value && JSON.stringify([value.projectId, value.engine, value.conversationId]);
 const requestKey = session => `${session.nodeId}:${session.id}:${session.loginRequest.id}`;
 const sessionIdentity = session => ({ projectId: session.projectId, engine: session.engine, conversationId: session.conversationId, appNodeId: session.appNodeId });
 

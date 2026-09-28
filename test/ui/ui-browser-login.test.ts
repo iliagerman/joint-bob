@@ -148,7 +148,8 @@ test("pending browser login popup preserves ownership through failure, dismissal
     assert.equal(await dialog.count(), 0, "another conversation's sign-in must stay out of the open conversation");
     assert.deepEqual(await page.evaluate(() => import("/app/state.js").then(({ state }) => [state.activeProjectId, state.activeConversationId || state.activeSessionId])), [activeIdentity.projectId, activeIdentity.conversationId], "background discovery must not change the selected conversation");
 
-    Object.assign(session, activeIdentity);
+    // Continuing the conversation on another app node must not strand its browser handoff.
+    Object.assign(session, activeIdentity, { appNodeId: backgroundAppNodeId });
     session.loginRequest = { id: requestId, expectedOrigin: "https://accounts.example.test", readySelector: "[data-authenticated]", loginSelector: "input", label: "Synthetic login", automatic: false };
     session.owner = "agent"; session.canControl = true;
     await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));

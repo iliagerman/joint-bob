@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.11.4 — 2026-09-28
+
+- Browser sign-in handoffs now remain available when their conversation continues from another app node.
+
 ## 2.11.3 — 2026-09-28
 
 - Retain fresh transcript discovery when listing scopes change, avoiding stale metadata exposed by Linux file watchers.

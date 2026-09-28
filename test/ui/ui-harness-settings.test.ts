@@ -187,10 +187,13 @@ test("model picker renders provider presentation metadata", { timeout: 120_000 }
   });
   await page.evaluate(async () => {
     const { state } = await import("/app/state.js");
-    state.engine = "pi";
+    const harness = state.harnesses[0] ?? { id: "fixture-harness", label: "Fixture" };
+    if (!state.harnesses.length) state.harnesses = [harness];
+    const harnessId = harness.id;
+    state.engine = harnessId;
     state.models = [
-      { harnessId: "pi", provider: "openai-codex", id: "gpt", label: "GPT model", providerLabel: "GPT", providerIcon: "openai" },
-      { harnessId: "pi", provider: "fixture-provider", id: "fixture", label: "Fixture model", providerLabel: "Independent", providerIcon: "custom" },
+      { harnessId, provider: "openai-codex", id: "gpt", label: "GPT model", providerLabel: "GPT", providerIcon: "openai" },
+      { harnessId, provider: "fixture-provider", id: "fixture", label: "Fixture model", providerLabel: "Independent", providerIcon: "custom" },
     ];
     const modelButton = document.querySelector("#modelButton")!;
     modelButton.removeAttribute("disabled");
@@ -206,7 +209,7 @@ test("model picker renders provider presentation metadata", { timeout: 120_000 }
 
   await page.evaluate(async () => {
     const { state } = await import("/app/state.js");
-    state.models = [{ harnessId: "pi", provider: "openai-codex", id: "gpt", label: "GPT model", providerLabel: "GPT", providerIcon: "openai" }];
+    state.models = [{ harnessId: state.engine, provider: "openai-codex", id: "gpt", label: "GPT model", providerLabel: "GPT", providerIcon: "openai" }];
     const modelButton = document.querySelector("#modelButton")!;
     modelButton.removeAttribute("disabled");
     modelButton.click();
