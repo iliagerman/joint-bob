@@ -128,6 +128,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         <input class="browser-typing" data-testid="browser-typing" aria-label="Type into the remote page" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
       </div>
       <div class="browser-toolbar" data-part="keyboard">
+        <button class="ghost compact" type="button" data-testid="browser-show-keyboard">Keyboard</button>
         <button class="ghost compact" type="button" data-testid="browser-send-tab">Send Tab</button>
         <button class="ghost compact" type="button" data-testid="browser-send-shift-tab">Send Shift+Tab</button>
         <span class="browser-hint">Tap or click the page to type into it. On a phone the on-screen keyboard opens automatically.</span>
@@ -220,7 +221,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     get("login-done").disabled = !pendingLogin || !running() || !connected || busy || !human() || session.canControl === false || !session.activePageId;
     get("end").disabled = (!running() && !session?.restoreOnRestart) || busy;
     get("reconnect").disabled = busy;
-    typing.disabled = !canType();
+    typing.disabled = get("show-keyboard").disabled = !canType();
     screen.setAttribute("aria-disabled", String(!canType()));
     root.dataset.control = human() ? "human" : "agent";
   }
@@ -716,9 +717,17 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       if (!disposed && session?.id === accountId) { error(failure.message); get("upload-status").textContent = "Selected files discarded."; }
     }).finally(() => { uploading = false; if (!disposed) controls(); });
   });
+  // A phone raises its keyboard only when a field gains focus inside a tap. A field that
+  // kept focus after the keyboard was dismissed gains nothing, so drop focus first.
+  function focusTyping() {
+    if (document.activeElement === typing) typing.blur();
+    typing.focus();
+  }
+  get("show-keyboard").addEventListener("click", focusTyping);
   function click(event, button) {
-    if (!canType() || !frameSize) return;
-    event.preventDefault(); typing.focus();
+    if (!canType()) { if (running() && event.type === "click") error(human() ? "Another viewer controls this browser. Take over control to type." : "Take control to type into the page."); return; }
+    if (!frameSize) return;
+    event.preventDefault(); focusTyping();
     const rect = screen.getBoundingClientRect();
     sendInput({ action: "click", x: Math.max(0, Math.min(frameSize.width, (event.clientX - rect.left) / rect.width * frameSize.width)), y: Math.max(0, Math.min(frameSize.height, (event.clientY - rect.top) / rect.height * frameSize.height)), button, clickCount: Math.min(event.detail || 1, 3) });
   }
@@ -802,10 +811,17 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     sendInput({ action: "key", key: [...(event.ctrlKey ? ["Control"] : []), ...(event.metaKey ? ["Meta"] : []), ...(event.altKey ? ["Alt"] : []), ...(event.shiftKey ? ["Shift"] : []), event.key].join("+") });
   });
   typing.addEventListener("beforeinput", (event) => {
+    // Android keyboards compose words and cannot cancel the edits; each update repeats
+    // the whole word, so the word is sent once when composition ends.
+    if (event.isComposing || event.inputType.endsWith("CompositionText") || event.inputType === "insertFromComposition") return;
     event.preventDefault();
     if (!canType()) return;
     if (event.inputType === "deleteContentBackward") sendInput({ action: "key", key: "Backspace" });
     else if (event.inputType.startsWith("insert") && event.data) sendInput({ action: "text", text: event.data });
+  });
+  typing.addEventListener("compositionend", (event) => {
+    typing.value = "";
+    if (canType() && event.data) sendInput({ action: "text", text: event.data });
   });
   typing.addEventListener("paste", paste);
   // The on-screen keyboard resizes the window; the sign-in size-follow above

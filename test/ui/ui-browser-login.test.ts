@@ -213,8 +213,25 @@ test("pending browser login popup preserves ownership through failure, dismissal
         : new InputEvent("beforeinput", { inputType: detail.inputType, data: detail.data, bubbles: true, cancelable: true })), event);
       assert.deepEqual(await inputReceived, expected);
     }
+    // Android keyboards compose a word and resend it whole on every letter; only the committed word is sent.
+    const textsBefore = inputs.filter(command => command.action === "text").length;
+    inputReceived = new Promise(resolve => { receivedInput = resolve; });
+    await typing.evaluate(element => {
+      for (const data of ["h", "he", "hel"]) element.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertCompositionText", data, isComposing: true, bubbles: true, cancelable: false }));
+      (element as HTMLInputElement).value = "hel";
+      element.dispatchEvent(new CompositionEvent("compositionend", { data: "hel", bubbles: true }));
+    });
+    assert.deepEqual(await inputReceived, { action: "text", text: "hel", expectedPageId: pageId });
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 200)));
+    assert.equal(inputs.filter(command => command.action === "text").length, textsBefore + 1, "a composed word must be sent exactly once");
     assert.equal(await typing.inputValue(), "", "the typing field must never keep what was typed");
     assert.equal(await page.getByTestId("chat-message-input").inputValue(), "", "remote typing must not reach app chat");
+    // A keyboard dismissed while the field kept focus reopens only when focus is gained again.
+    await typing.evaluate(element => { (window as any).__typingFocuses = 0; element.addEventListener("focus", () => (window as any).__typingFocuses++); });
+    await dialog.getByTestId("browser-screen").click();
+    await dialog.getByTestId("browser-show-keyboard").evaluate(element => (element as HTMLButtonElement).click());
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")), "browser-typing", "the Keyboard button must focus the typing field");
+    assert.equal(await page.evaluate(() => (window as any).__typingFocuses), 2, "each tap must refocus the typing field so the phone keyboard reopens");
     await page.setViewportSize({ width: 1440, height: 900 });
 
     await dialog.getByTestId("browser-screen").focus(); await page.keyboard.press("Escape"); await dialog.waitFor({ state: "detached" });

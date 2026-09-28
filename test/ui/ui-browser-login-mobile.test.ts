@@ -159,7 +159,8 @@ test("a phone sign-in has no inline mode and keeps its actions reachable", { tim
   assert.equal(await dialog.getByTestId("browser-login-expand").isVisible(), false, "a phone must not offer the inline halfway state");
 
   // Finishing and dismissing stay on screen, inside the viewport, at all times.
-  for (const testid of ["browser-login-done", "browser-login-dismiss"]) {
+  // The Keyboard button is the reliable way to raise a dismissed phone keyboard.
+  for (const testid of ["browser-login-done", "browser-login-dismiss", "browser-show-keyboard"]) {
     const button = dialog.getByTestId(testid);
     await button.waitFor({ state: "visible" });
     const box = await button.evaluate(element => { const rect = element.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, height: innerHeight }; });
