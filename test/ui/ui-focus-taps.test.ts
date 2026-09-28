@@ -3,7 +3,7 @@ import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 import { api, signIn } from "../dev-nodes.js";
 
-test("focus actions use visible controls instead of multi-tap gestures", { timeout: 180_000 }, async t => {
+test("focus controls support single, double, and triple taps", { timeout: 180_000 }, async t => {
   const fixture = await nativeUiFixture(t);
   const session = await signIn(fixture.environment, fixture.node);
   await api(fixture.node, session, "PUT", "/preferences", { focusUiEnabled: true });
@@ -16,8 +16,8 @@ test("focus actions use visible controls instead of multi-tap gestures", { timeo
   await page.getByTestId("login-password-input").fill(fixture.environment.password);
   await page.getByTestId("login-submit-button").click();
   await page.locator("body.focus-ui .project-card").first().waitFor();
-  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().tap();
-  await page.locator("#sessionList .session-card").first().tap();
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card").first().click();
   await page.waitForFunction(() => !document.querySelector<HTMLTextAreaElement>("#messageInput")!.disabled);
 
   const fab = page.getByTestId("focus-controls-button");
@@ -25,17 +25,30 @@ test("focus actions use visible controls instead of multi-tap gestures", { timeo
   await page.getByTestId("focus-new-note").tap();
   await page.getByTestId("quick-note-dialog").waitFor();
   await page.getByTestId("quick-note-cancel-button").tap();
-
-  await fab.tap();
-  await page.getByTestId("focus-recents").tap();
-  await page.getByTestId("recent-sessions-dialog").waitFor();
-  await page.getByTestId("recent-sessions-close-button").tap();
-  assert.equal(await fab.isVisible(), true, "the controls button never needs a restore gesture");
+  await page.getByTestId("quick-note-dialog").waitFor({ state: "hidden" });
 
   const title = await page.locator("#sessionTitle").boundingBox();
   assert.ok(title);
-  for (let i = 0; i < 4; i++) await page.touchscreen.tap(title.x + 10, title.y + 10);
-  assert.equal(await page.getByTestId("recent-sessions-dialog").isVisible(), false);
-  assert.equal(await page.getByTestId("running-conversations-dialog").isVisible(), false);
-  assert.equal(await fab.isVisible(), true);
+  const tapTitle = async (count: number) => {
+    for (let i = 0; i < count; i++) await page.touchscreen.tap(title.x + title.width / 2, title.y + title.height / 2);
+  };
+  await tapTitle(2);
+  await page.waitForFunction(() => document.querySelector<HTMLElement>("#focusControlsButton")!.hidden);
+  await tapTitle(2);
+  await page.waitForFunction(() => !document.querySelector<HTMLElement>("#focusControlsButton")!.hidden);
+  await tapTitle(3);
+  await page.getByTestId("recent-sessions-dialog").waitFor();
+  assert.equal(await fab.isVisible(), true, "triple tap leaves the controls button visible");
+  await page.getByTestId("recent-sessions-close-button").tap();
+  await page.getByTestId("recent-sessions-dialog").waitFor({ state: "hidden" });
+
+  const start = await fab.boundingBox();
+  assert.ok(start);
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: start.x + start.width / 2, y: start.y + start.height / 2 }] });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 70, y: 160 }] });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  const moved = await fab.boundingBox();
+  assert.ok(moved && moved.x < 100 && moved.y < 180, `touch drag moves controls button: ${JSON.stringify({ start, moved })}`);
+  assert.equal(await page.locator("#focusControls").isVisible(), false, "drag does not open controls");
 });

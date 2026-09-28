@@ -7,6 +7,7 @@ import { state } from "./state.js";
 import { refreshRowMenuAnchor } from "./row-menu.js";
 import { toast } from "./shell.js";
 import { initializeMobileProjectControls, syncMobileProjectControls, mobileFocusViewport } from "./focus-project-controls.js";
+import { installCreationGestures } from "./focus-creation-gestures.js";
 
 const fab = document.querySelector("#focusControlsButton");
 const menu = document.querySelector("#focusControls");
@@ -16,6 +17,7 @@ const context = document.querySelector("#focusContextActions");
 const toolbarHome = document.createComment("Chat toolbar location");
 let enabled = false;
 let preferred = false;
+let position = null;
 
 function currentView() {
   return ["projects", "sessions", "chat", "board", "canvas"].find(view => document.body.classList.contains(`view-${view}`)) || "projects";
@@ -113,10 +115,23 @@ function applyFocusUi() {
   }
 }
 
+function move(x, y) {
+  const height = visualViewport?.height || innerHeight;
+  position = { x: Math.max(12, Math.min(x, innerWidth - fab.offsetWidth - 12)), y: Math.max(12, Math.min(y, height - fab.offsetHeight - 12)) };
+  Object.assign(fab.style, { left: `${position.x}px`, top: `${position.y}px`, right: "auto", bottom: "auto" });
+  placeMenu();
+}
 function resize() {
   if (!enabled) return;
   document.documentElement.style.setProperty("--focus-height", `${visualViewport?.height || innerHeight}px`);
+  if (position && !fab.hidden) move(position.x, position.y);
   placeMenu();
+}
+function toggleFab() {
+  const hide = !fab.hidden;
+  showMenu(false);
+  fab.hidden = hide;
+  if (!hide) resize();
 }
 export function initializeFocusUi({ openSettings, startConversation, createNote, inspectReviews, inspectRunning }) {
   const settings = () => { showMenu(false); openSettings().catch(error => toast(error.message)); };
@@ -146,8 +161,10 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   mobileFocusViewport.addEventListener("change", applyFocusUi);
   window.addEventListener("resize", resize);
   visualViewport?.addEventListener("resize", resize);
-  fab.onclick = () => showMenu();
+  installFabDrag();
   initializeMobileProjectControls();
+  installCreationGestures(start, () => document.querySelector("#focusNewNote").click());
+  installTapGestures();
   installFocusKeys();
 }
 
@@ -169,6 +186,90 @@ function decorateControls() {
     svg.classList.add("focus-action-icon");
     document.getElementById(id).prepend(svg);
   }
+}
+
+function installFabDrag() {
+  let drag = null, dragged = false;
+  fab.addEventListener("pointerdown", event => {
+    if (!event.isPrimary || event.button !== 0) return;
+    const rect = fab.getBoundingClientRect();
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+    dragged = false;
+    fab.setPointerCapture(event.pointerId);
+  });
+  fab.addEventListener("pointermove", event => {
+    if (!drag || drag.id !== event.pointerId) return;
+    const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+    if (Math.hypot(dx, dy) > 7) dragged = true;
+    if (dragged) move(drag.left + dx, drag.top + dy);
+  });
+  fab.addEventListener("pointerup", () => { drag = null; });
+  fab.addEventListener("pointercancel", () => { drag = null; dragged = true; });
+  fab.onclick = () => {
+    if (dragged) { dragged = false; return; }
+    showMenu();
+  };
+  fab.addEventListener("keydown", event => {
+    const delta = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    const rect = fab.getBoundingClientRect();
+    move(rect.left + delta[0], rect.top + delta[1]);
+  });
+}
+
+// Delay gesture controls only; editors need native activation to open mobile keyboards.
+function installTapGestures() {
+  let tap = null, sequence = null, timer = null, lastTouch = -Infinity;
+  const controls = "button,input,textarea,select,a,summary,label,[contenteditable],[role=button]";
+  const nativeControls = "input,textarea,select,label,[contenteditable],#browserPanel,.browser-viewer,.xterm,.canvas-root";
+  const clear = () => { clearTimeout(timer); tap = sequence = null; };
+  const finish = () => {
+    const completed = sequence;
+    clear();
+    if (!enabled || !completed) return;
+    if (completed.count >= 4 && mobileFocusViewport.matches) document.querySelector("#focusRunning").click();
+    else if (completed.count >= 3) { showMenu(false); openRecentSessions(); }
+    else if (completed.count === 2) toggleFab();
+    else activateTap(completed.target, controls);
+  };
+  document.addEventListener("pointerdown", event => {
+    if (!enabled || event.pointerType === "mouse") return;
+    if (!event.isPrimary || event.target.closest(nativeControls)) { clear(); return; }
+    const now = performance.now();
+    if (sequence && (now - sequence.time > 350 || Math.hypot(event.clientX - sequence.x, event.clientY - sequence.y) > 32)) finish();
+    clearTimeout(timer);
+    tap = { id: event.pointerId, x: event.clientX, y: event.clientY, time: now, target: event.target };
+    if (event.target.closest(controls)) event.preventDefault();
+  }, true);
+  document.addEventListener("pointerup", event => {
+    if (!enabled || event.pointerType === "mouse" || !tap || tap.id !== event.pointerId) return;
+    lastTouch = performance.now();
+    if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 12 || lastTouch - tap.time > 350) { clear(); return; }
+    sequence = { count: (sequence?.count || 0) + 1, target: tap.target, x: tap.x, y: tap.y, time: lastTouch };
+    tap = null;
+    timer = setTimeout(finish, 350);
+  }, true);
+  document.addEventListener("pointercancel", clear, true);
+  document.addEventListener("click", event => {
+    if (!enabled || !event.isTrusted || event.detail === 0 || event.target.closest(nativeControls)) return;
+    if (event.pointerType ? event.pointerType === "mouse" : performance.now() - lastTouch > 700) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
+  document.addEventListener("dblclick", event => {
+    if (enabled && !event.target.closest(nativeControls) && performance.now() - lastTouch < 700) event.preventDefault();
+  }, true);
+}
+function activateTap(target, controls) {
+  if (!target.isConnected) return;
+  const control = target.closest(controls);
+  if (!control) { if (!menu.contains(target)) showMenu(false); return; }
+  const input = control instanceof HTMLLabelElement ? control.control : control;
+  if (!input || input.disabled) return;
+  input.focus({ preventScroll: true });
+  if (input instanceof HTMLSelectElement && typeof input.showPicker === "function") input.showPicker();
+  else input.click();
 }
 
 function installFocusKeys() {

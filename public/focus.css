@@ -79,13 +79,14 @@ body.focus-ui #abortButton:disabled { display: none; }
 /* Outline glyphs and transparent targets, with one accent on the floating handle. */
 .focus-action-icon { display: none; }
 body.focus-ui .focus-action-icon { display: block; }
-#focusControlsButton { position: fixed; z-index: 55; right: 20px; bottom: max(24px, env(safe-area-inset-bottom)); display: grid; place-items: center; width: 52px; height: 52px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--panel); color: var(--text); box-shadow: 0 6px 24px rgb(0 0 0 / .22); touch-action: manipulation; user-select: none; cursor: pointer; }
+#focusControlsButton { position: fixed; z-index: 55; right: 20px; bottom: max(24px, env(safe-area-inset-bottom)); display: grid; place-items: center; width: 52px; height: 52px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--panel); color: var(--text); box-shadow: 0 6px 24px rgb(0 0 0 / .22); touch-action: none; user-select: none; cursor: grab; }
 body.view-chat #focusControlsButton { bottom: 160px; }
 #focusControlsButton img { display: block; width: 32px; height: 32px; pointer-events: none; }
 .focus-pending-badge { position: absolute; top: -5px; right: -5px; display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 4px; border: 2px solid var(--panel); border-radius: 999px; background: var(--danger); color: #fff; font: 700 11px/1 var(--sans); pointer-events: none; }
 #focusReviewCount, #focusRunningCount { position: static; flex-shrink: 0; margin-left: auto; border: 0; }
 #focusRunningCount { background: var(--live); }
 #focusControlsButton[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+#focusControlsButton:active { cursor: grabbing; }
 .focus-controls { position: fixed; z-index: 56; width: 336px; max-width: calc(100vw - 24px); max-height: calc(var(--focus-height, 100dvh) - 24px); display: flex; flex-direction: column; overflow: hidden; padding: 8px; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--panel); box-shadow: 0 16px 64px rgb(0 0 0 / .28); }
 .focus-controls > header { flex-shrink: 0; display: flex; align-items: center; min-height: 44px; gap: 4px; padding: 0 4px 4px; border-bottom: 1px solid var(--line); }
 .focus-controls > header strong { flex: 1; padding-left: 8px; font: 600 17px var(--serif); }

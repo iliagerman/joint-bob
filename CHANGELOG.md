@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Restored mobile double-tap, triple-tap, conversation, note, and draggable focus controls.
+
 ## 2.12.1 — 2026-09-28
 
 - Give Settings a larger, screen-sized layout with visible navigation and save controls on small screens.
