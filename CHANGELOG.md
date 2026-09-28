@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.5.2 — 2026-09-28
 
 - Added a Keyboard button to the browser toolbar to help raise the mobile keyboard when it has been dismissed, and improved keyboard input handling for Android devices.
 
