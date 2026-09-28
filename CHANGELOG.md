@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.10.1 — 2026-09-28
 
-- Syncthing folders now sync more reliably by automatically cleaning up stale git metadata and properly handling remote folder deletions.
+- Fixed project folders stuck with sync errors after another machine deleted a folder holding generated files, and the sync check now clears old conflict copies inside `.git`.
 
 ## 2.10.0 — 2026-09-28
 
