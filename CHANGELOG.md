@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.7.1 — 2026-09-28
 
 - Conversation machine pickers now show only machines in the project's cluster, preventing access to machines from other clusters.
 
