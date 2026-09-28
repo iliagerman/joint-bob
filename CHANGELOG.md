@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.7.2 — 2026-09-28
 
-- Project list now displays visual separators between adjacent projects for clearer organization.
+- The project list now shows a divider between projects and between each node's group of projects.
 
 ## 2.7.1 — 2026-09-28
 
