@@ -49,7 +49,7 @@ test("history rendering routes each transcript role to its own bubble", async ()
   // Both transcript entry points use the scroll-preserving renderer, which
   // delegates to the shared transcript renderer once.
   assert.equal(app.match(/rerenderChatTranscript\(payload\.messages,/g)?.length, 2);
-  assert.match(app, /function rerenderChatTranscript\(messages, segments\)[\s\S]*appendTranscript\(messages, segments\)/);
+  assert.match(app, /function rerenderChatTranscript\(messages, segments, conversationStartedAt\)[\s\S]*appendTranscript\(messages, segments, conversationStartedAt\)/);
 });
 
 test("assistant filesystem paths open through the authenticated project file route", async () => {

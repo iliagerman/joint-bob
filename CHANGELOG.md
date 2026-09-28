@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 2.6.0 — 2026-09-28
 
+- Agents with authorized credentials can opt out of automatic ordinary sign-in pauses while MFA, CAPTCHA, and human takeover remain protected.
 - Quick notes can now be shared with other users and cluster nodes from the note's menu.
 - Chat messages now display timestamps in your local timezone.
 - Harness readiness status is now available through the API for monitoring agent availability.
