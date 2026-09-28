@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isInternalSession } from "./internal-sessions.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { parseCompletedJsonl } from "./jsonl.js";
 import { mkdtemp, open, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
@@ -512,7 +513,7 @@ async function summarizePiTranscript(filePath: string, project: SessionProjectPa
     }
     throw error;
   }
-  if (!state || !sessionCwds(project).includes(state.cwd)) return null;
+  if (!state || isInternalSession(state.id, state.firstMessage) || !sessionCwds(project).includes(state.cwd)) return null;
   return {
     id: state.id,
     path: filePath,

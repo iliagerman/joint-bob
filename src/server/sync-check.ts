@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { internalSessionId } from "../internal-sessions.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { getClusterNode } from "../cluster.js";
@@ -147,7 +147,7 @@ async function runAgentResolver(input: SyncResolverInput): Promise<void> {
   const adapter = getHarness(input.settings.harnessId);
   if (!adapter.runtime) throw new Error(`${adapter.label} cannot run the sync check`);
   const runtime = await getHarnessRuntime(input.settings.harnessId);
-  const session = await runtime.open({ projectId: input.projectId, cwd: input.cwd, sessionId: randomUUID() });
+  const session = await runtime.open({ projectId: input.projectId, cwd: input.cwd, sessionId: internalSessionId() });
   try {
     const base = session.settings();
     const settings: HarnessModelSettings = { ...base, provider: input.settings.provider || base.provider, modelId: input.settings.modelId || base.modelId, reasoning: input.settings.thinkingLevel || base.reasoning };
@@ -186,11 +186,13 @@ async function mayResolve(project: ProjectRecord, localNodeId: string): Promise<
   return !lock || lock.nodeId === localNodeId;
 }
 
-async function checkProjectConflicts(project: ProjectRecord, settings: SyncCheckSettings, now: number): Promise<{ resolved: number; unresolved: SyncCheckStatus["unresolved"] }> {
+/** `owner` gates synced files; `.git` leftovers are node-local, so every node clears its own. */
+async function checkProjectConflicts(project: ProjectRecord, settings: SyncCheckSettings, now: number, owner: boolean): Promise<{ resolved: number; unresolved: SyncCheckStatus["unresolved"] }> {
   const unresolved: SyncCheckStatus["unresolved"] = [];
   let resolved = 0;
   const needsAgent: SyncConflict[] = [];
   for (const conflict of await findSyncConflicts(project.id, project.path)) {
+    if (!owner && !conflict.gitMetadata) continue;
     let outcome: SyncConflictOutcome;
     try { outcome = await resolveTrivialConflict(conflict, now); } catch (error) {
       unresolved.push({ projectId: project.id, path: path.relative(project.path, conflict.conflictPath), reason: error instanceof Error ? error.message : "Could not read the conflict copy" });
@@ -267,8 +269,7 @@ export async function runSyncCheck(now = Date.now()): Promise<SyncCheckStatus> {
     const unresolved: SyncCheckStatus["unresolved"] = [];
     let resolved = 0;
     for (const project of projects) {
-      if (!await mayResolve(project, local.id)) continue;
-      const result = await checkProjectConflicts(project, settings, now);
+      const result = await checkProjectConflicts(project, settings, now, await mayResolve(project, local.id));
       resolved += result.resolved;
       unresolved.push(...result.unresolved);
     }

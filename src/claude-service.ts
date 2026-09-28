@@ -1,5 +1,6 @@
 import { failUnobservedConversationWork, recordConversationWork } from "./conversation-work.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { isInternalSession } from "./internal-sessions.js";
 import { randomUUID } from "node:crypto";
 import { parseCompletedJsonl } from "./jsonl.js";
 import type { Stats } from "node:fs";
@@ -245,6 +246,7 @@ interface ClaudeSessionFacts {
   mtimeMs: number;
   size: number;
   startPrompt: string;
+  internal: boolean;
   cwds: Set<string>;
   title: string;
   firstEventAt: string;
@@ -270,7 +272,7 @@ function meaningfulClaudePrompt(record: UnknownRecord, startPrompt: string): str
   // The configured setup command is not the user's description of the work.
   // Keep ignoring it in older transcripts even after automatic startup is disabled.
   if (text === startPrompt || isClaudeLocalCommandMessage(text)) return "";
-  return text.split("\n")[0].slice(0, 80);
+  return text;
 }
 
 // Timestamps can arrive out of order, so the newest one wins rather than the last line, and
@@ -303,8 +305,9 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats, startPrompt
     mtimeMs: fileStat.mtimeMs,
     size: fileStat.size,
     startPrompt,
+    internal: isInternalSession(path.basename(filePath, ".jsonl"), prompt),
     cwds: new Set(records.map((record) => String(record.cwd ?? ""))),
-    title: customTitle || aiTitle || prompt || "Claude conversation",
+    title: customTitle || aiTitle || prompt.split("\n")[0].slice(0, 80) || "Claude conversation",
     firstEventAt: transcriptEventTime(records, "first"),
     lastEventAt: transcriptEventTime(records, "last"),
     contextUsage: claudeContextUsage(records),
@@ -321,6 +324,7 @@ async function summarizeClaudeTranscript(project: SessionProjectPaths, filePath:
     throw error;
   }
   const facts = await claudeSessionFacts(filePath, fileStat, startPrompt);
+  if (facts.internal || isInternalSession(path.basename(path.dirname(path.dirname(filePath))))) return null;
   const projectCwds = new Set(sessionCwds(project));
   if (![...facts.cwds].some((cwd) => projectCwds.has(cwd))) return null;
   const subagentParentId = path.basename(path.dirname(filePath)) === "subagents"

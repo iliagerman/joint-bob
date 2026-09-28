@@ -2,6 +2,7 @@ import { appendFile, lstat, mkdir, readFile, readdir, realpath, stat, writeFile 
 import os from "node:os";
 import path from "node:path";
 import { parseCompletedJsonl } from "../../jsonl.js";
+import { isInternalSession } from "../../internal-sessions.js";
 import { mapWithConcurrency } from "../../concurrency.js";
 import { sessionCwds } from "../shared-paths.js";
 import type { ChatMessage, SessionSummary } from "../../types.js";
@@ -287,7 +288,8 @@ async function readKiroListing(sessionPath: string): Promise<KiroListing> {
   return listing;
 }
 
-function sessionSummary(file: string, value: KiroListing): SessionSummary {
+function sessionSummary(file: string, value: KiroListing): SessionSummary | null {
+  if (isInternalSession(value.id, value.firstMessage)) return null;
   const first = value.firstMessage;
   return {
     id: value.id,
@@ -304,7 +306,8 @@ function sessionSummary(file: string, value: KiroListing): SessionSummary {
 }
 
 export async function listKiroSessions(project: HarnessProject): Promise<SessionSummary[]> {
-  return mapWithConcurrency(await listKiroSessionFiles(project), 8, async (file) => sessionSummary(file, await readKiroListing(file)));
+  const sessions = await mapWithConcurrency(await listKiroSessionFiles(project), 8, async (file) => sessionSummary(file, await readKiroListing(file)));
+  return sessions.filter((session): session is SessionSummary => session !== null);
 }
 
 export async function refreshKiroSessions(

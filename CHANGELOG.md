@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Background sync operations and internal work are now hidden from conversation lists.
+
 ## 2.10.2 — 2026-09-28
 
 - Project conversations now open without waiting for shared quick notes from another machine.
@@ -11,6 +15,9 @@ Every deployment is a version. The newest section must always match the
 
 ## 2.10.1 — 2026-09-28
 
+- Browser sign-in handoffs now follow a conversation when it moves between app nodes.
+- Project conversations open without waiting for shared quick notes, and background status refreshes no longer overlap.
+- Internal sync-repair runs stay out of conversation lists, while new Claude conversations open faster and ignore setup commands when choosing their title.
 - Fixed project folders stuck with sync errors after another machine deleted a folder holding generated files, and the sync check now clears old conflict copies inside `.git`.
 
 ## 2.10.0 — 2026-09-28
@@ -248,6 +255,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 1.92.1 — 2026-09-25
 
+- Claude conversations now default to Opus 5.5.
 - Fixed project search in creation dialogs when starting conversations and quick notes.
 
 ## 1.92.0 — 2026-09-25

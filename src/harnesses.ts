@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { isInternalSession } from "./internal-sessions.js";
 import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverrides, sessionTitleOverrides } from "./names.js";
 import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
@@ -242,7 +243,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
   const historyCutoff = project.historyDays ? Date.now() - project.historyDays * 24 * 60 * 60 * 1000 : 0;
   const eligibleMissingRecords = (current: SessionSummary[]) => {
     const transcriptKeys = new Set(current.map((session) => `${session.harnessId}:${session.id}`));
-    return records.filter((record) => !transcriptKeys.has(`${record.engine}:${record.sessionId}`)
+    return records.filter((record) => !isInternalSession(record.sessionId) && !transcriptKeys.has(`${record.engine}:${record.sessionId}`)
       && (!historyCutoff || Date.parse(record.updatedAt) >= historyCutoff || pinnedIds.has(`${record.engine}:${record.sessionId}`)));
   };
   const initialMissingRecords = eligibleMissingRecords(sessions);
@@ -274,6 +275,14 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
   for (const record of missingRecords) {
     const adapter = adapters.find((candidate) => candidate.id === record.engine);
     if (!adapter) throw new Error(`No harness registered for conversation engine: ${record.engine}`);
+    // Older fixer runs may already have a conversation record. Do not resurrect
+    // a filtered transcript as a draft, even if it was renamed or pinned.
+    const transcript = filesByEngine.get(record.engine)?.get(record.sessionId);
+    if (transcript) {
+      const sessionPath = adapter.paths.ownsSession(transcript) ? transcript : `${adapter.id}:${transcript}`;
+      const messages = await adapter.sessions.loadMessages(project, sessionPath);
+      if (isInternalSession(record.sessionId, messages.find((message) => message.role === "user")?.text)) continue;
+    }
     sessions.push({
       id: record.sessionId,
       path: conversationDraftPath(record.engine, record.sessionId),
@@ -296,7 +305,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     || pinnedIds.has(`${session.segments?.[0]?.engine ?? session.harnessId}:${session.conversationId ?? session.id}`)
     || Boolean(session.segments?.some((segment) => pinnedPaths.has(segment.path) || pinnedIds.has(`${segment.engine}:${segment.sessionId}`)));
   const flat = sessions.filter((session) => {
-    if (!session.path || seen.has(session.path)) return false;
+    if (isInternalSession(session.id, session.firstMessage) || !session.path || seen.has(session.path)) return false;
     seen.add(session.path);
     return true;
   });
