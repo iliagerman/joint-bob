@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Syncthing folders now sync more reliably by automatically cleaning up stale git metadata and properly handling remote folder deletions.
+
 ## 2.10.0 — 2026-09-28
 
 - HTML project files can now be opened directly in the browser with a sandboxed view that runs scripts safely.

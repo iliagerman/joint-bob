@@ -26,14 +26,15 @@ test("conflict copy names map back to their original", () => {
   assert.equal(conflictOriginalPath("/p/CHANGELOG.md"), undefined);
 });
 
-test("conflict scan skips dependency and git folders", async () => {
+test("conflict scan skips dependency folders and marks git leftovers", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "sync-check-scan-"));
   try {
     await writeOld(path.join(root, "docs", `notes.${STAMP}.md`), "a");
     await writeOld(path.join(root, "node_modules", "pkg", `index.${STAMP}.js`), "a");
-    await writeOld(path.join(root, ".git", `HEAD.${STAMP}`), "a");
-    const found = await findSyncConflicts("p", root);
-    assert.deepEqual(found.map((conflict) => conflict.relativePath), [path.join("docs", "notes.md")]);
+    await writeOld(path.join(root, ".git", `index.${STAMP}`), "a");
+    await writeOld(path.join(root, ".git", "objects", "ab", `cd.${STAMP}`), "a");
+    const found = (await findSyncConflicts("p", root)).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+    assert.deepEqual(found.map((conflict) => [conflict.relativePath, Boolean(conflict.gitMetadata)]), [[path.join(".git", "index"), true], [path.join("docs", "notes.md"), false]]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -65,6 +66,13 @@ test("obvious conflicts are fixed without a model and real edits are left for th
     await writeOld(edited.originalPath, "one");
     await writeOld(edited.conflictPath, "two");
     assert.equal(await resolveTrivialConflict(edited), "needs-agent");
+
+    const gitIndex = { ...conflict(`index.${STAMP}`), gitMetadata: true };
+    await writeOld(gitIndex.originalPath, Buffer.from([1, 0, 2]));
+    await writeOld(gitIndex.conflictPath, Buffer.from([1, 0, 3]));
+    assert.equal(await resolveTrivialConflict(gitIndex), "removed-stale-git");
+    assert.equal(await present(gitIndex.conflictPath), false, "git leftovers never reach the agent");
+    assert.deepEqual([...await readFile(gitIndex.originalPath)], [1, 0, 2], "the live git file is kept");
 
     const image = conflict(`logo.${STAMP}.png`);
     await writeOld(image.originalPath, Buffer.from([0x89, 0, 1]));

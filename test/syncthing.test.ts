@@ -10,27 +10,27 @@ const managedIgnorePatterns = [
   ".git/**",
   "**/.git",
   "**/.git/**",
-  "node_modules/",
-  "node_modules/**",
-  "**/node_modules",
-  "**/node_modules/**",
-  ".venv/",
-  "venv/",
-  "dist/",
-  "build/",
-  "coverage/",
-  "test-results/",
-  "**/test-results/",
-  "playwright-report/",
-  "**/playwright-report/",
-  ".pytest_cache/",
-  "**/.pytest_cache/",
-  ".mypy_cache/",
-  "**/.mypy_cache/",
-  ".ruff_cache/",
-  "**/.ruff_cache/",
+  "(?d)node_modules/",
+  "(?d)node_modules/**",
+  "(?d)**/node_modules",
+  "(?d)**/node_modules/**",
+  "(?d).venv/",
+  "(?d)venv/",
+  "(?d)dist/",
+  "(?d)build/",
+  "(?d)coverage/",
+  "(?d)test-results/",
+  "(?d)**/test-results/",
+  "(?d)playwright-report/",
+  "(?d)**/playwright-report/",
+  "(?d).pytest_cache/",
+  "(?d)**/.pytest_cache/",
+  "(?d).mypy_cache/",
+  "(?d)**/.mypy_cache/",
+  "(?d).ruff_cache/",
+  "(?d)**/.ruff_cache/",
   "(?d)__pycache__/",
-  ".DS_Store",
+  "(?d).DS_Store",
   ".env",
   ".env.*",
   "**/.env",
@@ -48,22 +48,22 @@ const managedIgnorePatterns = [
   "**/.pi-mobile-web/",
   "(?d).dev-env/",
   "(?d)**/.dev-env/",
-  "aidlc/.aidlc-*",
-  "**/aidlc/.aidlc-*",
-  "aidlc/spaces/*/intents/.aidlc-*",
-  "**/aidlc/spaces/*/intents/.aidlc-*",
-  "aidlc/spaces/*/intents/*/.aidlc-*",
-  "**/aidlc/spaces/*/intents/*/.aidlc-*",
-  "logs/",
-  "**/logs/",
-  "*.log",
+  "(?d)aidlc/.aidlc-*",
+  "(?d)**/aidlc/.aidlc-*",
+  "(?d)aidlc/spaces/*/intents/.aidlc-*",
+  "(?d)**/aidlc/spaces/*/intents/.aidlc-*",
+  "(?d)aidlc/spaces/*/intents/*/.aidlc-*",
+  "(?d)**/aidlc/spaces/*/intents/*/.aidlc-*",
+  "(?d)logs/",
+  "(?d)**/logs/",
+  "(?d)*.log",
   ".npmrc",
   ".pypirc",
   ".netrc",
   "credentials.json",
   "service-account*.json",
-  "test_database_*.db",
-  "**/test_database_*.db",
+  "(?d)test_database_*.db",
+  "(?d)**/test_database_*.db",
 ];
 
 async function listen(server: ReturnType<typeof createServer>): Promise<number> {
@@ -104,7 +104,7 @@ test("an existing Syncthing folder gains every newly paired node device", async 
         return;
       }
       if (request.method === "GET" && request.url === "/rest/db/ignores?folder=demo") {
-        response.end(JSON.stringify({ ignore: ["secrets/", "*.pem", ".git", "__pycache__/", "secrets/"] }));
+        response.end(JSON.stringify({ ignore: ["secrets/", "*.pem", ".git", "__pycache__/", "playwright-report/", "aidlc/.aidlc-*", "secrets/"] }));
         return;
       }
       response.end("{}");
@@ -201,8 +201,8 @@ test("Syncthing ignores AI-DLC machine-local runtime state", async () => {
   }, async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "demo" }]);
   });
-  assert.ok(postedIgnore?.includes("aidlc/.aidlc-*"));
-  assert.ok(postedIgnore?.includes("**/aidlc/spaces/*/intents/*/.aidlc-*"));
+  assert.ok(postedIgnore?.includes("(?d)aidlc/.aidlc-*"), "AI-DLC state must not block a remote folder deletion");
+  assert.ok(postedIgnore?.includes("(?d)**/aidlc/spaces/*/intents/*/.aidlc-*"));
   assert.ok(!postedIgnore?.some((rule) => rule === ".aidlc-*" || rule === "**/.aidlc-*"));
 });
 
@@ -594,7 +594,8 @@ test("agent resources folder is shared unpaused with resource ignores", async ()
   assert.ok(ignores);
   const ignore = (ignores.body as { ignore: string[] }).ignore;
   assert.ok(ignore.includes(".env"));
-  assert.ok(ignore.includes("node_modules/"));
+  assert.ok(ignore.includes("(?d)node_modules/"));
+  assert.ok(ignore.includes(".env") && !ignore.includes("(?d).env"), "secrets are never deletable");
   assert.ok(ignore.includes("*.sync-conflict-*"));
   assert.ok(!ignore.includes("!.env"));
 });

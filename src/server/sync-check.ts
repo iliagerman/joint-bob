@@ -7,7 +7,7 @@ import type { HarnessModelSettings } from "../harnesses/runtime.js";
 import { getProjectLock } from "../project-locks.js";
 import { getSettings, type SyncCheckSettings } from "../settings.js";
 import { listProjects } from "../store.js";
-import { rescanSyncthingFolder, resetSyncthingConnection, syncthingFolderStatuses } from "../syncthing.js";
+import { reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingFolderErrors, resetSyncthingConnection, syncthingFolderStatuses } from "../syncthing.js";
 import type { ProjectRecord } from "../types.js";
 import { flags } from "./state.js";
 
@@ -18,8 +18,12 @@ import { flags } from "./state.js";
    so two nodes never resolve the same conflict copy. */
 
 const CONFLICT_NAME = /^(.*?)\.sync-conflict-\d{8}-\d{6}-[A-Z0-9]{7}(.*)$/;
-const SKIPPED_DIRECTORIES = new Set([".git", "node_modules", ".venv", "venv", "dist", "build", "coverage", ".joint-bob", ".pi-mobile-web", "__pycache__", ".dev-env", ".stversions", ".stfolder"]);
+const SKIPPED_DIRECTORIES = new Set(["node_modules", ".venv", "venv", "dist", "build", "coverage", ".joint-bob", ".pi-mobile-web", "__pycache__", ".dev-env", ".stversions", ".stfolder"]);
 const MAX_SCANNED_ENTRIES = 50_000;
+/* `.git` is node-local (it is in every project's ignore list), so conflict copies in it
+   are leftovers from before that rule and never sync again. Only its bulky object
+   stores are skipped. */
+const SKIPPED_GIT_DIRECTORIES = new Set(["objects", "lfs", "modules", "worktrees"]);
 /** Syncthing may still be writing a fresh conflict copy; leave it alone until it settles. */
 export const CONFLICT_SETTLE_MS = 2 * 60_000;
 /** An agent that could not resolve a copy is not asked again about it for this long. */
@@ -28,8 +32,8 @@ const AGENT_TIMEOUT_MS = 10 * 60_000;
 const MAX_AGENT_TEXT_BYTES = 512 * 1024;
 const FOLDER_RESCAN_MS = 10 * 60_000;
 
-export interface SyncConflict { projectId: string; root: string; conflictPath: string; originalPath: string; relativePath: string; }
-export type SyncConflictOutcome = "kept-copy" | "removed-duplicate" | "needs-agent" | "manual" | "settling";
+export interface SyncConflict { projectId: string; root: string; conflictPath: string; originalPath: string; relativePath: string; gitMetadata?: boolean; }
+export type SyncConflictOutcome = "kept-copy" | "removed-duplicate" | "removed-stale-git" | "needs-agent" | "manual" | "settling";
 
 export interface SyncResolverInput {
   projectId: string;
@@ -66,22 +70,22 @@ export function conflictOriginalPath(conflictPath: string): string | undefined {
 
 export async function findSyncConflicts(projectId: string, root: string): Promise<SyncConflict[]> {
   const found: SyncConflict[] = [];
-  const pending = [root];
+  const pending: Array<{ directory: string; git: boolean }> = [{ directory: root, git: false }];
   let scanned = 0;
   while (pending.length && scanned < MAX_SCANNED_ENTRIES) {
-    const directory = pending.pop()!;
+    const { directory, git } = pending.pop()!;
     let entries: import("node:fs").Dirent[];
     try { entries = await fs.readdir(directory, { withFileTypes: true }); } catch { continue; }
     for (const entry of entries) {
       scanned += 1;
       const full = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (!SKIPPED_DIRECTORIES.has(entry.name)) pending.push(full);
+        if (git ? !SKIPPED_GIT_DIRECTORIES.has(entry.name) : !SKIPPED_DIRECTORIES.has(entry.name)) pending.push({ directory: full, git: git || entry.name === ".git" });
         continue;
       }
       if (!entry.isFile()) continue;
       const originalPath = conflictOriginalPath(full);
-      if (originalPath) found.push({ projectId, root, conflictPath: full, originalPath, relativePath: path.relative(root, originalPath) });
+      if (originalPath) found.push({ projectId, root, conflictPath: full, originalPath, relativePath: path.relative(root, originalPath), ...(git ? { gitMetadata: true } : {}) });
     }
   }
   return found;
@@ -108,6 +112,11 @@ export async function resolveTrivialConflict(conflict: SyncConflict, now = Date.
   if (copy.equals(original)) {
     await fs.unlink(conflict.conflictPath);
     return "removed-duplicate";
+  }
+  // Git keeps its own history; merging copies of its index or refs would corrupt it.
+  if (conflict.gitMetadata) {
+    await fs.unlink(conflict.conflictPath);
+    return "removed-stale-git";
   }
   if (binary(copy) || binary(original) || copy.length > MAX_AGENT_TEXT_BYTES || original.length > MAX_AGENT_TEXT_BYTES) return "manual";
   return "needs-agent";
@@ -187,7 +196,7 @@ async function checkProjectConflicts(project: ProjectRecord, settings: SyncCheck
       unresolved.push({ projectId: project.id, path: path.relative(project.path, conflict.conflictPath), reason: error instanceof Error ? error.message : "Could not read the conflict copy" });
       continue;
     }
-    if (outcome === "kept-copy" || outcome === "removed-duplicate") resolved += 1;
+    if (outcome === "kept-copy" || outcome === "removed-duplicate" || outcome === "removed-stale-git") resolved += 1;
     else if (outcome === "manual") unresolved.push({ projectId: project.id, path: path.relative(project.path, conflict.conflictPath), reason: "Binary or large file; choose a version by hand" });
     else if (outcome === "needs-agent") needsAgent.push(conflict);
   }
@@ -219,6 +228,11 @@ async function checkProjectConflicts(project: ProjectRecord, settings: SyncCheck
 async function checkFolders(projects: ProjectRecord[], now: number): Promise<SyncCheckStatus["folderIssues"]> {
   const shared = projects.filter((project) => project.syncFolderId);
   if (!shared.length) return [];
+  // Keeps managed ignore rules current without a restart; a stale rule without `(?d)`
+  // makes remote folder deletions fail with "contains ignored files".
+  try { await reconcileSyncthingProjectFolders(shared); } catch (error) {
+    console.warn(`Sync check could not update Syncthing ignore rules: ${error instanceof Error ? error.message : "update failed"}`);
+  }
   let statuses = await syncthingFolderStatuses(shared.map((project) => project.syncFolderId!));
   // A restarted Syncthing can come back on a new port or key; rediscover it once.
   if (Object.values(statuses).some((folder) => folder.state === "unavailable")) {
@@ -230,7 +244,9 @@ async function checkFolders(projects: ProjectRecord[], now: number): Promise<Syn
     const folderId = project.syncFolderId!;
     const folder = statuses[folderId];
     if (!folder || folder.state === "synced" || folder.state === "syncing" || folder.state === "paused") continue;
-    issues.push({ projectId: project.id, folderId, message: folder.message ?? folder.state });
+    const stuck = folder.state === "error" ? await syncthingFolderErrors(folderId).catch(() => []) : [];
+    const detail = stuck.length ? `: ${stuck.slice(0, 3).map((item) => `${item.path} (${item.error.replace(/^syncing: /, "")})`).join("; ")}${stuck.length > 3 ? `; and ${stuck.length - 3} more` : ""}` : "";
+    issues.push({ projectId: project.id, folderId, message: `${project.name}: ${folder.message ?? folder.state}${detail}` });
     if (folder.state !== "error" || now - (folderRescans.get(folderId) ?? 0) < FOLDER_RESCAN_MS) continue;
     folderRescans.set(folderId, now);
     try { await rescanSyncthingFolder(folderId); } catch (error) {

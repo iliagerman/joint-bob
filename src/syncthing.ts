@@ -50,32 +50,35 @@ export interface SyncthingConnection {
   configPath?: string;
 }
 
+/* `(?d)` marks regenerable files Syncthing may delete when another device removes
+   their folder; without it the delete fails with "contains ignored files" and the
+   folder never finishes syncing. Secrets and nested repositories never get it. */
 const projectIgnorePatterns = [
   ".git",
   ".git/**",
   "**/.git",
   "**/.git/**",
-  "node_modules/",
-  "node_modules/**",
-  "**/node_modules",
-  "**/node_modules/**",
-  ".venv/",
-  "venv/",
-  "dist/",
-  "build/",
-  "coverage/",
-  "test-results/",
-  "**/test-results/",
-  "playwright-report/",
-  "**/playwright-report/",
-  ".pytest_cache/",
-  "**/.pytest_cache/",
-  ".mypy_cache/",
-  "**/.mypy_cache/",
-  ".ruff_cache/",
-  "**/.ruff_cache/",
+  "(?d)node_modules/",
+  "(?d)node_modules/**",
+  "(?d)**/node_modules",
+  "(?d)**/node_modules/**",
+  "(?d).venv/",
+  "(?d)venv/",
+  "(?d)dist/",
+  "(?d)build/",
+  "(?d)coverage/",
+  "(?d)test-results/",
+  "(?d)**/test-results/",
+  "(?d)playwright-report/",
+  "(?d)**/playwright-report/",
+  "(?d).pytest_cache/",
+  "(?d)**/.pytest_cache/",
+  "(?d).mypy_cache/",
+  "(?d)**/.mypy_cache/",
+  "(?d).ruff_cache/",
+  "(?d)**/.ruff_cache/",
   "(?d)__pycache__/",
-  ".DS_Store",
+  "(?d).DS_Store",
   ".env",
   ".env.*",
   "**/.env",
@@ -93,22 +96,22 @@ const projectIgnorePatterns = [
   "**/.pi-mobile-web/",
   "(?d).dev-env/",
   "(?d)**/.dev-env/",
-  "aidlc/.aidlc-*",
-  "**/aidlc/.aidlc-*",
-  "aidlc/spaces/*/intents/.aidlc-*",
-  "**/aidlc/spaces/*/intents/.aidlc-*",
-  "aidlc/spaces/*/intents/*/.aidlc-*",
-  "**/aidlc/spaces/*/intents/*/.aidlc-*",
-  "logs/",
-  "**/logs/",
-  "*.log",
+  "(?d)aidlc/.aidlc-*",
+  "(?d)**/aidlc/.aidlc-*",
+  "(?d)aidlc/spaces/*/intents/.aidlc-*",
+  "(?d)**/aidlc/spaces/*/intents/.aidlc-*",
+  "(?d)aidlc/spaces/*/intents/*/.aidlc-*",
+  "(?d)**/aidlc/spaces/*/intents/*/.aidlc-*",
+  "(?d)logs/",
+  "(?d)**/logs/",
+  "(?d)*.log",
   ".npmrc",
   ".pypirc",
   ".netrc",
   "credentials.json",
   "service-account*.json",
-  "test_database_*.db",
-  "**/test_database_*.db",
+  "(?d)test_database_*.db",
+  "(?d)**/test_database_*.db",
 ];
 
 const agentResourceIgnorePatterns = [
@@ -220,11 +223,15 @@ export async function rescanSyncthingFolder(folderId: string): Promise<void> {
   await request<void>(`/rest/db/scan?folder=${encodeURIComponent(folderId)}`, { method: "POST" });
 }
 
+/** Earlier releases wrote some managed rules without `(?d)`; those forms are still ours to replace. */
+function withoutDeletable(rule: string): string { return rule.replace(/^\(\?d\)/, ""); }
+
 async function setIgnores(folderId: string, patterns: readonly string[], preserveUserRules: boolean): Promise<void> {
   const endpoint = `/rest/db/ignores?folder=${encodeURIComponent(folderId)}`;
   const existing = await request<SyncthingIgnores>(endpoint);
   const existingIgnore = existing.ignore ?? [];
-  const userRules = preserveUserRules ? [...new Set(existingIgnore.filter((rule) => !patterns.includes(rule)))] : [];
+  const managed = new Set([...patterns, ...patterns.map(withoutDeletable)]);
+  const userRules = preserveUserRules ? [...new Set(existingIgnore.filter((rule) => !managed.has(rule)))] : [];
   const ignore = [...patterns, ...userRules];
   if (ignore.length === existingIgnore.length && ignore.every((rule, index) => rule === existingIgnore[index])) return;
   await request<void>(endpoint, { method: "POST", body: JSON.stringify({ ignore }) });
@@ -235,7 +242,7 @@ async function setProjectIgnores(folderId: string): Promise<void> {
   const existing = await request<SyncthingIgnores>(endpoint);
   const existingIgnore = existing.ignore ?? [];
   const folderPatterns = projectIgnorePatterns;
-  const managedPatterns = new Set([...projectIgnorePatterns, "__pycache__/"]);
+  const managedPatterns = new Set([...projectIgnorePatterns, ...projectIgnorePatterns.map(withoutDeletable)]);
   const userRules = [...new Set(existingIgnore.filter((rule) => !managedPatterns.has(rule)))];
   const ignore = [...folderPatterns, ...userRules];
   if (ignore.length === existingIgnore.length && ignore.every((rule, index) => rule === existingIgnore[index])) return;
@@ -288,6 +295,12 @@ export async function syncthingFolderStatuses(folderIds: string[]): Promise<Reco
     }
   }));
   return Object.fromEntries(entries);
+}
+
+/** The items Syncthing could not pull for a folder, with its reason for each. */
+export async function syncthingFolderErrors(folderId: string): Promise<Array<{ path: string; error: string }>> {
+  const body = await request<{ errors?: Array<{ path: string; error: string }> | null }>(`/rest/folder/errors?folder=${encodeURIComponent(folderId)}`);
+  return body.errors ?? [];
 }
 
 export async function syncthingPeerCaughtUp(deviceId: string, folderIds: string[]): Promise<boolean> {
