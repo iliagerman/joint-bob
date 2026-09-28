@@ -3,12 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.8.0 — 2026-09-28
 
 - Quick notes can now be searched by title or content to quickly find the ones you need.
-
-## 2.7.3 — 2026-09-28
-
 - Fixed chat bubbles repeating earlier text when followed by tool calls.
 
 ## 2.7.2 — 2026-09-28
