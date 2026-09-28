@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.5.3 — 2026-09-28
+
+- Mark all as read in the reviews inbox clears the list at once, shows a spinner while it finishes in the background, and lets you close the dialog and carry on.
+
 ## 2.5.2 — 2026-09-28
 
 - Added a Keyboard button to the browser toolbar to help raise the mobile keyboard when it has been dismissed, and improved keyboard input handling for Android devices.

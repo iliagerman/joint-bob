@@ -2337,6 +2337,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* The 3px pad is the focus ring's lane: the scroll box would otherwise clip its offset. */
 /* max-content keeps every row at its own height: a capped grid otherwise shrinks its auto rows
    once the list overflows, and rows that opt out of the 56px floor collapse to a clipped sliver. */
+/* Mark-all runs in the background; the spinner shows it is still going after the list clears. */
+#markAllPendingReviewedButton[aria-busy="true"]::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color: var(--accent); border-radius: 50%; vertical-align: -1px; animation: queued-force-spin 0.7s linear infinite; }
+@media (prefers-reduced-motion: reduce) { #markAllPendingReviewedButton[aria-busy="true"]::before { animation-duration: 2.4s; } }
 .pending-reviews-list { display: grid; grid-auto-rows: max-content; gap: 6px; min-width: 0; max-height: 52dvh; overflow-y: auto; padding: 3px; }
 /* The left pad is the shortcut number's lane. */
 .pending-reviews-list .session-card { position: relative; min-height: 0; border: 1px solid var(--line); padding-left: 38px; }

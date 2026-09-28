@@ -65,11 +65,14 @@ async function markAllSessionsReviewed() {
  * rather than the active project's in-memory conversations.
  */
 let pendingReviewsVersion = 0;
+/** True while a mark-all run is in flight, so a second click and stale inbox reads are ignored. */
+let markingAllPending = false;
 
 export async function refreshPendingReviews() {
   const version = ++pendingReviewsVersion;
   const body = await api("/api/reviews/pending");
-  if (version !== pendingReviewsVersion) return;
+  // A read that lands mid mark-all predates it and would bring the cleared rows back.
+  if (version !== pendingReviewsVersion || markingAllPending) return;
   state.pendingReviews = body.projects;
   renderPendingReviewsBadge();
   renderProjects();
@@ -114,7 +117,7 @@ function renderPendingReviewsBadge() {
   document.querySelector("#focusReviews").setAttribute("aria-label", count
     ? `Needs review, ${count} conversation${count === 1 ? "" : "s"}`
     : "Needs review");
-  elements.markAllPendingReviewedButton.disabled = count === 0;
+  elements.markAllPendingReviewedButton.disabled = count === 0 || markingAllPending;
 }
 
 /** Rows 1-10 carry a digit shortcut, the way the recent conversations list does. */
@@ -176,24 +179,35 @@ async function openPendingReview(group, entry) {
   await refreshPendingReviews();
 }
 
+/**
+ * The inbox empties at once and the requests keep going in the background, so the user can
+ * close the dialog and move on. Only the submitted watermarks are marked locally; the refresh
+ * at the end brings back anything newer or anything a failed project did not clear.
+ */
 async function markAllPendingReviewed() {
   const groups = state.pendingReviews;
-  if (!groups.length) return;
-  try {
-    for (const group of groups) {
-      await api(`/api/projects/${encodeURIComponent(group.projectId)}/sessions/reviewed-all`, {
-        method: "PUT",
-        body: JSON.stringify({ sessions: group.sessions.map((entry) => ({ sessionPath: entry.path, updatedAt: entry.updatedAt })) }),
-      });
-    }
-  } finally {
-    // Only the submitted watermarks were reviewed. New activity, other projects,
-    // and partial failures must be reconciled rather than blanket-cleared locally.
-    await refreshSessionsQuietly();
-    await refreshPendingReviews();
-    renderPendingReviewsDialog();
+  if (!groups.length || markingAllPending) return;
+  markingAllPending = true;
+  elements.markAllPendingReviewedButton.setAttribute("aria-busy", "true");
+  const submitted = new Set(groups.flatMap((group) => group.sessions.map((entry) => `${entry.path}\n${entry.updatedAt}`)));
+  for (const session of reviewableSessions()) {
+    if (submitted.has(`${session.path}\n${session.updatedAt}`)) session.reviewState = "reviewed";
   }
-  toast("All conversations marked as read");
+  state.pendingReviews = [];
+  renderReviewCounts();
+  renderPendingReviewsDialog();
+  const results = await Promise.allSettled(groups.map((group) => api(`/api/projects/${encodeURIComponent(group.projectId)}/sessions/reviewed-all`, {
+    method: "PUT",
+    body: JSON.stringify({ sessions: group.sessions.map((entry) => ({ sessionPath: entry.path, updatedAt: entry.updatedAt })) }),
+  })));
+  markingAllPending = false;
+  elements.markAllPendingReviewedButton.removeAttribute("aria-busy");
+  await refreshSessionsQuietly();
+  await refreshPendingReviews();
+  renderReviewCounts();
+  renderPendingReviewsDialog();
+  const failure = results.find((result) => result.status === "rejected");
+  toast(failure ? failure.reason.message : "All conversations marked as read");
 }
 
 export function openPendingReviews() {

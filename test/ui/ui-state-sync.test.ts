@@ -223,7 +223,38 @@ test("mark-all does not mark activity newer than the submitted inbox snapshot re
   } finally { await page.context().close(); }
 });
 
-test("an older pending-review response cannot overwrite a newer inbox", { timeout: 60_000 }, async () => {
+test("mark-all clears the inbox at once and keeps working after the dialog closes", { timeout: 60_000 }, async () => {
+  const page = await openPage();
+  try {
+    const projects = await page.evaluate(async () => {
+      const module = "/app/state.js";
+      const { state } = await import(module);
+      const session = state.sessions[0];
+      session.reviewState = "needs_review";
+      state.pendingReviews = [{ projectId: state.activeProjectId, projectName: "Internal Assistant", sessions: [{ ...session }] }];
+      return state.pendingReviews;
+    });
+    const held = deferred<Route>();
+    let pendingReads = 0;
+    await page.route("**/api/projects/*/sessions/reviewed-all", (route) => held.resolve(route));
+    await page.route("**/api/reviews/pending", (route) => route.fulfill({ json: { projects: ++pendingReads === 1 ? projects : [] } }));
+    await page.evaluate(async () => { const module = "/app/reviews.js"; (await import(module)).openPendingReviews(); });
+    await page.getByTestId("pending-review-option").first().waitFor();
+    const button = page.getByTestId("pending-reviews-mark-all-button");
+    await button.click();
+    const request = await held.promise;
+    assert.equal(await button.getAttribute("aria-busy"), "true", "the button shows the operation is running");
+    assert.equal(await button.isDisabled(), true, "a second click cannot start another run");
+    assert.equal(await page.getByTestId("pending-review-option").count(), 0, "the inbox empties before the server answers");
+    assert.equal(await page.locator("#pendingReviewsBadge").isHidden(), true, "the badge clears before the server answers");
+    await page.locator("#closePendingReviewsButton").click();
+    await request.fulfill({ status: 204 });
+    await page.getByText("All conversations marked as read", { exact: true }).waitFor();
+    assert.equal(await button.getAttribute("aria-busy"), null, "the busy state ends with the run");
+  } finally { await page.context().close(); }
+});
+
+test("an older pending-review response cannot overwrite a newer inbox",{ timeout: 60_000 }, async () => {
   const page = await openPage();
   try {
     const first = deferred<Route>();
