@@ -781,6 +781,10 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   letter-spacing: 0.08em;
 }
 .project-group:first-child > .project-group-summary { margin-top: 0; }
+/* A hairline between projects of the same node, so adjacent rows don't run together. */
+.project-group > .list-row + .list-row { border-top: 1px solid var(--line); }
+/* Each node's group is set off from the one above it. */
+.project-group + .project-group { border-top: 1px solid var(--line-strong); margin-top: 6px; padding-top: 4px; }
 .project-group-summary::-webkit-details-marker { display: none; }
 .project-group-summary::before {
   content: "▸";

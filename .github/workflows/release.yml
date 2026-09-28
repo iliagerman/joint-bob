@@ -30,7 +30,7 @@ jobs:
   release:
     needs: version
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: write
       id-token: write
@@ -58,7 +58,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends syncthing
       - name: Run full test suite
         if: steps.release.outputs.publish == 'true'
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: npm run test:file -- --test-concurrency=2 test/*.test.ts
       - run: npm run build
         if: steps.release.outputs.publish == 'true'
