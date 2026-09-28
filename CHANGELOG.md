@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.10.4 — 2026-09-28
 
-- Fixed sync conflict resolution for nodes that do not own the project to only clear their own git metadata instead of waiting for the owner.
+- Old Syncthing conflict copies inside a project's `.git` folder are now cleared on every machine, not only on the machine that owns the project.
 
 ## 2.10.3 — 2026-09-28
 
