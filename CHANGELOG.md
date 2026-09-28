@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.12.0 — 2026-09-28
 
-- Project rows now display which clusters they are shared through.
+- Project rows now display which clusters they are shared through and the owning node when received from another node.
 
 ## 2.11.4 — 2026-09-28
 
