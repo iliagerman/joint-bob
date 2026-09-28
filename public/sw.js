@@ -3,7 +3,8 @@ const APP_SHELL = ["/", "/index.html", "/styles.css", "/focus.css", "/app/focus-
 
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
+  // "reload" skips the browser's HTTP cache, so a new cache never stores an older file.
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL.map((url) => new Request(url, { cache: "reload" })))));
   self.skipWaiting();
 });
 

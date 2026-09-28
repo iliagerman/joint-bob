@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { dispatchSignedRuntime, twinRuntimeGuard } from "../runtime-peers.js";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
@@ -19,10 +20,21 @@ app.set("trust proxy", 1);
 app.get("/favicon.ico", (_request, response) => {
   response.type("image/png").sendFile(path.join(publicDir, "icon-192.png"));
 });
+/** Hashes the cached app shell, so changed files rename the cache even when the version stays the same. */
+async function appShellDigest(source: string): Promise<string> {
+  const shell: string[] = JSON.parse(source.match(/^const APP_SHELL = (\[.*\]);$/m)?.[1] ?? "[]");
+  const hash = createHash("sha256");
+  for (const url of shell) {
+    const file = url === "/" ? path.join(publicDir, "index.html") : url.startsWith("/vendor/codemirror/") ? path.join(codemirrorDir, url.slice("/vendor/codemirror/".length)) : path.join(publicDir, url);
+    hash.update(url).update(await readFile(file).catch(() => Buffer.alloc(0)));
+  }
+  return hash.digest("hex").slice(0, 12);
+}
+
 app.get("/sw.js", async (_request, response, next) => {
   try {
     const source = await readFile(path.join(publicDir, "sw.js"), "utf8");
-    const worker = source.replace(/^const CACHE_NAME = "[^"]+";/, `const CACHE_NAME = "joint-bob-${appVersion()}";`);
+    const worker = source.replace(/^const CACHE_NAME = "[^"]+";/, `const CACHE_NAME = "joint-bob-${appVersion()}-${await appShellDigest(source)}";`);
     if (worker === source) throw new Error("Service worker cache name is missing");
     response.type("application/javascript").set("Cache-Control", "no-cache").send(worker);
   } catch (error) {

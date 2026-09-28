@@ -3,31 +3,18 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## 2.10.5 — 2026-09-28
+## Unreleased
 
-- Settings now opens immediately with a loading indicator, without waiting for cluster, update, or other optional panels. Saving stays disabled until local settings load safely.
-- Added private, rotating performance logs to diagnose slow requests, conversation loading, CPU saturation, and event-loop stalls without recording credentials or message contents.
+- App shell changes now automatically update the service-worker cache without requiring a version bump.
 
-## 2.10.4 — 2026-09-28
-
-- Old Syncthing conflict copies inside a project's `.git` folder are now cleared on every machine, not only on the machine that owns the project.
-
-## 2.10.3 — 2026-09-28
-
-- Background sync operations and internal work are now hidden from conversation lists.
-
-## 2.10.2 — 2026-09-28
-
-- Project conversations now open without waiting for shared quick notes from another machine.
-- Running and review refreshes now share in-flight requests instead of starting overlapping project scans.
-- New conversations skip unnecessary transcript discovery, and Claude conversation titles ignore the configured setup command.
-
-## 2.10.1 — 2026-09-28
+## 2.11.0 — 2026-09-28
 
 - Browser sign-in handoffs now follow a conversation when it moves between app nodes.
-- Project conversations open without waiting for shared quick notes, and background status refreshes no longer overlap.
-- Internal sync-repair runs stay out of conversation lists, while new Claude conversations open faster and ignore setup commands when choosing their title.
-- Fixed project folders stuck with sync errors after another machine deleted a folder holding generated files, and the sync check now clears old conflict copies inside `.git`.
+- Settings and project conversations open without waiting for slower optional or shared data, while background status refreshes share in-flight scans.
+- Internal sync-repair runs stay out of conversation lists, and new conversations avoid unnecessary transcript discovery and setup-command titles.
+- Fixed Syncthing folder deletions blocked by generated files and stale conflict copies inside node-local `.git` folders.
+- Added private, rotating performance logs for slow requests, session loading, CPU, memory, and event-loop stalls without recording private request or conversation data.
+- Service-worker caches now refresh from current shell files instead of retaining stale assets under an unchanged cache name.
 
 ## 2.10.0 — 2026-09-28
 
