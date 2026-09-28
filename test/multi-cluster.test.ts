@@ -100,6 +100,17 @@ test("a node in two clusters shares each project only with the cluster it was se
     assert.equal((await signedNodeRequest(envB, b, a, "GET", presence(forY.id))).status, 403, "runtime calls into Y's project are refused for X");
     assert.equal((await signedNodeRequest(envC, c, a, "GET", presence(forNobody.id))).status, 403, "runtime calls into an unselected project are refused");
     assert.equal((await signedNodeRequest(envB, b, c, "GET", presence(forY.id))).status, 401, "nodes in different clusters cannot authenticate to each other");
+
+    // A conversation's machine pickers offer only the machines of the project's own cluster.
+    const machineIds = (nodes: Array<{ id: string }>) => nodes.map((node) => node.id).sort();
+    for (const [project, member] of [[forX, b], [forY, c]] as const) {
+      const sessionNodes = await api<{ nodes: Array<{ id: string }> }>(a, sa, "GET", `/projects/${project.id}/session-nodes`);
+      assert.deepEqual(machineIds(sessionNodes.body.nodes), [a.nodeId, member.nodeId].sort(), `${project.name} offers only its cluster's execution machines`);
+      const browserNodes = await api<{ nodes: Array<{ id: string }> }>(a, sa, "GET", `/browser/status?projectId=${project.id}`);
+      assert.deepEqual(machineIds(browserNodes.body.nodes), [a.nodeId, member.nodeId].sort(), `${project.name} offers only its cluster's browser machines`);
+    }
+    const unshared = await api<{ nodes: Array<{ id: string }> }>(a, sa, "GET", `/projects/${forNobody.id}/session-nodes`);
+    assert.deepEqual(machineIds(unshared.body.nodes), [a.nodeId], "an unshared project runs only on its owner");
   } finally {
     await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });

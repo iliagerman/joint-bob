@@ -570,7 +570,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       }
       if (identity?.projectId && identity?.engine && identity?.conversationId) {
         try {
-          const status = await api("/api/browser/status");
+          const status = await api(`/api/browser/status?${new URLSearchParams({ projectId: identity.projectId })}`);
           if (disposed) return;
           configuration = status.config; nodes = status.nodes;
           preference = await api(preferenceUrl());

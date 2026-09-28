@@ -20,11 +20,14 @@ export async function localBrowserStatus() {
   const node = await getClusterNode();
   return { node: { id: node.id, name: node.name }, config: readBrowserConfiguration(), capability: await browserCapability(), runningCount: (await browserRuntime().list()).filter(row => row.state === "running").length };
 }
-export async function browserStatus(nodeId?: string) {
+/** With a project, lists only the machines that project is shared with, so a conversation never offers another cluster's machines. */
+export async function browserStatus(nodeId?: string, projectId?: string) {
   if (nodeId && idSchema.parse(nodeId) !== (await getClusterNode()).id) return (await peerRequest(nodeId, "status", {}, 5000)).json();
+  const project = projectId ? await getProject(projectId) : undefined;
+  if (projectId && !project) throw new BrowserRequestError(404, "Project not found");
   const own = await localBrowserStatus();
   const nodes = [{ ...own.node, ...own.capability, reachable: true, runningCount: own.runningCount }];
-  nodes.push(...await Promise.all((await listRuntimePeers()).map(async peer => {
+  nodes.push(...await Promise.all((await listRuntimePeers(project?.id)).map(async peer => {
     try {
       const status = await (await peerRequest(peer.id, "status", {}, 5000)).json() as Awaited<ReturnType<typeof localBrowserStatus>>;
       applyBrowserConfiguration(browserConfigurationSchema.parse(status.config));
@@ -67,7 +70,10 @@ export async function browserPreferences(input: z.infer<typeof browserIdentitySc
     } catch (error) { console.warn(`Browser preference sync to ${peer.id} failed`, error); }
   }));
   if (update) {
-    if (update.nodeId) await knownNode(update.nodeId);
+    if (update.nodeId) {
+      await knownNode(update.nodeId);
+      if (update.nodeId !== (await getClusterNode()).id && !await clusterPeerMayAccessProject(update.nodeId, identity.projectId)) throw new BrowserRequestError(403, "This project is not shared with that machine");
+    }
     applyBrowserPreference({ ...identity, nodeId: update.nodeId, originNodeId: (await getClusterNode()).id, updatedAt: nextVersion(readBrowserPreference(identity)?.updatedAt) });
     await Promise.all(peers.map(async peer => {
       try { await peerRequest(peer.id, "preferences", { identity, preference: readBrowserPreference(identity) }, 5000); }

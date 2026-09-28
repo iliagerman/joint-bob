@@ -53,7 +53,10 @@ app.get("/api/browser/preferences", route(async (request,response) => {
 app.put("/api/browser/preferences", route(async (request,response) => {
   await human(response); response.json(await browserPreferences(browserIdentitySchema.parse(request.query),z.object({nodeId:id.nullable()}).parse(request.body)));
 }));
-app.get("/api/browser/status", route(async (request,response) => { response.json(await browserStatus(targetNode(request))); }));
+app.get("/api/browser/status", route(async (request,response) => {
+  const {projectId} = z.object({projectId:z.string().min(1).optional()}).parse(request.query);
+  response.json(await browserStatus(targetNode(request), projectId));
+}));
 app.get("/api/browser/sessions", route(async (request,response) => {
   const args = browserIdentitySchema.partial().parse(request.query);
   response.json(await browserOperation({operation:"list",args},await human(response),targetNode(request)));

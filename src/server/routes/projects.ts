@@ -292,9 +292,9 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const local = await getClusterNode();
-    const peerNodes = await Promise.all((await listRuntimePeers()).map(async (peer) => {
+    // Only machines in a cluster this project is shared with may run its conversations.
+    const peerNodes = await Promise.all((await listRuntimePeers(project.id)).map(async (peer) => {
       try {
-        if(!await clusterPeerMayAccessProject(peer.id,project.id))return {id:peer.id,name:peer.name,local:false,online:false,mapped:false,terminal:false};
         const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(3000)});
         if(!reply.ok)throw new Error('Project presence unavailable');
         // A peer that predates the terminal setting does not restrict it.
