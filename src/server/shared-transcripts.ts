@@ -30,8 +30,12 @@ function ensureSchema(db:DatabaseSync):void{
 function within(root:string,file:string):boolean{
  const relative=path.relative(path.resolve(root),path.resolve(file));return relative!==''&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)&&!path.isAbsolute(relative);
 }
-async function fileHash(file:string):Promise<string>{
- const hash=createHash('sha256');for await(const chunk of createReadStream(file))hash.update(chunk);return hash.digest('hex');
+// A twin polls every shared project's inventory, so unchanged transcripts reuse their hash.
+const hashCache=new Map<string,{mtimeMs:number;size:number;hash:string}>();
+async function fileHash(file:string,info:{mtimeMs:number;size:number}):Promise<string>{
+ const cached=hashCache.get(file);if(cached&&cached.mtimeMs===info.mtimeMs&&cached.size===info.size)return cached.hash;
+ const hash=createHash('sha256');for await(const chunk of createReadStream(file))hash.update(chunk);
+ const digest=hash.digest('hex');hashCache.set(file,{mtimeMs:info.mtimeMs,size:info.size,hash:digest});return digest;
 }
 export async function sharedTranscriptProject(peer:string,id:string){
  const db=await clusterV2Database(),local=await getClusterNode();
@@ -58,7 +62,10 @@ async function sourceTranscripts(peer:string,projectId:string){
 export async function sharedTranscriptFile(peer:string,projectId:string,engine:string,sessionId:string):Promise<string>{
  const session=(await sourceTranscripts(peer,projectId)).find(row=>row.engine===engine&&row.id===sessionId);
  if(!session)throw new ClusterV2HttpError(404,"Conversation not found in shared project");
- const adapter=getHarness(engine),file=adapter.paths.transcriptFile?.(session.path);
+ return localTranscriptFile(session);
+}
+async function localTranscriptFile(session:{engine:string;path:string}):Promise<string>{
+ const adapter=getHarness(session.engine),file=adapter.paths.transcriptFile?.(session.path);
  if(!file||!within(adapter.sync.transcriptRoot(),file))throw new ClusterV2HttpError(409,"Conversation transcript is not available");
  if(!(await lstat(file)).isFile()||!within(await realpath(adapter.sync.transcriptRoot()),await realpath(file)))throw new ClusterV2HttpError(409,"Conversation transcript is not a regular local file");
  return file;
@@ -67,8 +74,8 @@ export async function sharedTranscriptInventory(peer:string,projectId:string):Pr
  const entries:Entry[]=[];
  for(const session of await sourceTranscripts(peer,projectId)){
   if(session.path.startsWith('draft:'))continue;
-  const adapter=getHarness(session.engine),file=await sharedTranscriptFile(peer,projectId,session.engine,session.id),info=await stat(file);
-  entries.push(entrySchema.parse({engine:session.engine,sessionId:session.id,relativePath:path.relative(adapter.sync.transcriptRoot(),file),size:info.size,hash:await fileHash(file)}));
+  const adapter=getHarness(session.engine),file=await localTranscriptFile(session),info=await stat(file);
+  entries.push(entrySchema.parse({engine:session.engine,sessionId:session.id,relativePath:path.relative(adapter.sync.transcriptRoot(),file),size:info.size,hash:await fileHash(file,info)}));
  }
  return entries;
 }
@@ -159,7 +166,7 @@ export async function assertSharedTranscriptReady(projectId:string,sessionPath:s
  if(!entry)throw new Error('Conversation transcript is not available on its owner');
  await receiveTranscript(db,peer,projectId,entry);
  const receipt=db.prepare('SELECT path,hash FROM cluster_v2_transcript_receipts WHERE peer_id=? AND project_id=? AND engine=? AND session_id=?').get(peer.nodeId,projectId,entry.engine,entry.sessionId) as {path:string;hash:string}|undefined;
- if(!receipt||receipt.hash!==entry.hash||await fileHash(receipt.path)!==entry.hash)throw new Error('Conversation transcript is not synchronized on this node');
+ if(!receipt||receipt.hash!==entry.hash||await fileHash(receipt.path,await stat(receipt.path))!==entry.hash)throw new Error('Conversation transcript is not synchronized on this node');
 }
 
 let activeFlush:Promise<void>|undefined;

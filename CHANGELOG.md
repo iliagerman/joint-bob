@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Transcript synchronization now reuses file hashes when transcripts are unchanged.
+
 ## 2.6.1 — 2026-09-28
 
 - Improved performance when listing Kiro sessions by reusing transcript data when files haven't changed.
