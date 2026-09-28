@@ -3,6 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.6.0 — 2026-09-28
+
+- Quick notes can now be shared with other users and cluster nodes from the note's menu.
+- Chat messages now display timestamps in your local timezone.
+- Harness readiness status is now available through the API for monitoring agent availability.
+- List filter dropdowns now show their selection with improved styling and keyboard navigation.
+- Creation gestures (drawing C and N in Focus mode) have been removed; use the creation buttons instead.
+- Conversation filters now support selecting multiple statuses and labels simultaneously to show combined results.
+
 ## 2.5.3 — 2026-09-28
 
 - Mark all as read in the reviews inbox clears the list at once, shows a spinner while it finishes in the background, and lets you close the dialog and carry on.
