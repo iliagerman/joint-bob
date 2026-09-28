@@ -96,6 +96,18 @@ test("Claude titles prefer metadata and skip synthetic command prompts", async (
     const synthetic = path.join(projectDir, "synthetic.jsonl");
     const switched = path.join(projectDir, "switched.jsonl");
     const user = (text: string) => ({ type: "user", cwd: projectCwd, message: { role: "user", content: [{ text }] } });
+    const startup = path.join(projectDir, "startup.jsonl");
+    const startPrompt = "Check main before doing any work.\nStop if on another branch.";
+    settings.updateSettings({ ...settings.getSettings(), conversationCommands: { start: { enabled: true, prompt: startPrompt }, end: { enabled: false, prompt: "" } } });
+    await writeFile(startup, `${JSON.stringify(user(startPrompt))}\n`);
+    assert.equal(await claude.claudeSessionTitle(`claude:${startup}`), "Claude conversation", "automatic setup must not name an empty conversation");
+    await writeFile(startup, [user(startPrompt), user("Fix checkout validation")].map(JSON.stringify).join("\n") + "\n");
+    assert.equal(await claude.claudeSessionTitle(`claude:${startup}`), "Fix checkout validation", "first actual request supplies the automatic title");
+    // Changing settings must invalidate parsed facts even when the transcript has not changed.
+    settings.updateSettings({ ...settings.getSettings(), conversationCommands: { start: { enabled: false, prompt: "A different setup command" }, end: { enabled: false, prompt: "" } } });
+    assert.equal(await claude.claudeSessionTitle(`claude:${startup}`), startPrompt.split("\n")[0]);
+    settings.updateSettings({ ...settings.getSettings(), conversationCommands: { start: { enabled: false, prompt: startPrompt }, end: { enabled: false, prompt: "" } } });
+    assert.equal(await claude.claudeSessionTitle(`claude:${startup}`), "Fix checkout validation", "disabling startup does not rename existing conversations after their setup command");
     await writeFile(metadata, [user("User prompt"), { type: "ai-title", aiTitle: "Old AI" }, { type: "ai-title", aiTitle: "New AI" }, { type: "custom-title", customTitle: "Old custom" }, { type: "custom-title", customTitle: "Latest custom" }].map(JSON.stringify).join("\n"));
     await writeFile(synthetic, [user("<command-message>synthetic"), user("<local-command-caveat>synthetic"), user("Real later prompt")].map(JSON.stringify).join("\n"));
     await writeFile(switched, `${JSON.stringify(user("## Available secret accounts\nAccount details\n\nContext handoff: previous transcript\n\nContinue the work seamlessly. The user's next message follows.\n---\nReview my implementation"))}\n`);

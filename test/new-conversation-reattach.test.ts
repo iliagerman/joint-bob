@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import os from "node:os";
@@ -64,12 +65,32 @@ console.log(JSON.stringify({ type: 'result', is_error: false }));
     const { project } = await created.json() as { project: { id: string } };
     await fetch(`${base}/api/settings`, { method: "PUT", headers: credentials.headers, body: JSON.stringify({ pi: { executable: "", configPath: path.join(root, "pi"), sessionPath: path.join(root, "pi", "sessions") }, claude: { executable, configPath: path.join(root, "claude"), sessionPath: path.join(root, "claude", "projects") }, syncthing: { endpoint: "" } }) });
     const ws = (sessionPath: string, id = "") => `ws://127.0.0.1:${address.port}/ws?projectId=${project.id}&sessionPath=${encodeURIComponent(sessionPath)}${id ? `&sessionId=${id}` : ""}`;
-    const opened = await connect(ws("claude:new"), credentials.cookie); first = opened.socket;
-    const id = String(opened.messages.find((message) => message.type === "ready")!.sessionId); first.close(); await new Promise<void>((resolve) => first!.once("close", resolve));
+    const { getHarness } = await import("../src/harnesses.js");
+    const adapter = getHarness("claude");
+    const originalList = adapter.sessions.list;
+    let listings = 0;
+    adapter.sessions.list = async (...args) => { listings++; return originalList(...args); };
+    const requestedId = randomUUID();
+    let opened: Awaited<ReturnType<typeof connect>>;
+    try {
+      opened = await connect(ws("claude:new", requestedId), credentials.cookie);
+      first = opened.socket;
+    } finally {
+      adapter.sessions.list = originalList;
+    }
+    assert.equal(listings, 0, "a fresh client-generated ID must not scan existing transcripts before ready");
+    const id = String(opened.messages.find((message) => message.type === "ready")!.sessionId);
+    assert.equal(id, requestedId);
+    assert.deepEqual(opened.messages.find((message) => message.type === "ready")!.messages, []);
+    first.close(); await new Promise<void>((resolve) => first!.once("close", resolve));
     const sessions = await fetch(`${base}/api/projects/${project.id}/sessions`, { headers: credentials.headers });
     const body = await sessions.json() as { sessions: Array<{ id: string; path: string; draft?: boolean }> };
     assert.ok(body.sessions.some((session) => session.id === id && session.path === `draft:claude:${id}` && session.draft));
-    const resumed = await connect(ws(`draft:claude:${id}`, id), credentials.cookie); second = resumed.socket;
+    const draft = await connect(ws(`draft:claude:${id}`, id), credentials.cookie); second = draft.socket;
+    assert.equal(draft.messages.find((message) => message.type === "ready")!.sessionId, id);
+    second.close(); await new Promise<void>((resolve) => second!.once("close", resolve));
+    const resumed = await connect(ws("claude:new", id), credentials.cookie); second = resumed.socket;
+    assert.equal(resumed.messages.find((message) => message.type === "ready")!.sessionId, id, "reconnecting before a transcript exists must reuse the recorded draft");
     second.send(JSON.stringify({ type: "prompt", message: "hello" })); await waitFor(resumed.messages, () => resumed.messages.some((message) => message.type === "agent_end"));
     const calls = (await readFile(process.env.JOINT_BOB_FAKE_CALLS!, "utf8")).trim().split("\n").map(JSON.parse);
     assert.equal(calls.length, 1); const index = calls[0].indexOf("--session-id"); assert.equal(calls[0][index + 1], id);

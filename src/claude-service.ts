@@ -244,6 +244,7 @@ export function claudeContextUsage(records: UnknownRecord[]): ContextUsage | und
 interface ClaudeSessionFacts {
   mtimeMs: number;
   size: number;
+  startPrompt: string;
   cwds: Set<string>;
   title: string;
   firstEventAt: string;
@@ -262,11 +263,13 @@ function cleanClaudeTitle(value: unknown): string {
   return typeof value === "string" ? value.trim().split("\n")[0].slice(0, 80) : "";
 }
 
-function meaningfulClaudePrompt(record: UnknownRecord): string {
+function meaningfulClaudePrompt(record: UnknownRecord, startPrompt: string): string {
   let text = claudeMessageText(record).trim();
   if (text.startsWith("## Available secret accounts")) text = text.split("\n\n").slice(1).join("\n\n").trim();
   text = stripScheduledPromptMarker(stripHandoffEnvelope(text)).trim();
-  if (isClaudeLocalCommandMessage(text)) return "";
+  // The configured setup command is not the user's description of the work.
+  // Keep ignoring it in older transcripts even after automatic startup is disabled.
+  if (text === startPrompt || isClaudeLocalCommandMessage(text)) return "";
   return text.split("\n")[0].slice(0, 80);
 }
 
@@ -284,9 +287,9 @@ function transcriptEventTime(records: UnknownRecord[], pick: "first" | "last"): 
   return selected;
 }
 
-async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<ClaudeSessionFacts> {
+async function claudeSessionFacts(filePath: string, fileStat: Stats, startPrompt = getSettings().conversationCommands.start.prompt.trim()): Promise<ClaudeSessionFacts> {
   const cached = claudeSessionFactsCache.get(filePath);
-  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) return cached;
+  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size && cached.startPrompt === startPrompt) return cached;
   const records = parseCompletedJsonl(await readFile(filePath, "utf8")) as UnknownRecord[];
   let customTitle = "";
   let aiTitle = "";
@@ -294,11 +297,12 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<Cl
   for (const record of records) {
     if (record.type === "custom-title") customTitle = cleanClaudeTitle(record.customTitle) || customTitle;
     if (record.type === "ai-title") aiTitle = cleanClaudeTitle(record.aiTitle) || aiTitle;
-    if (!prompt && record.type === "user") prompt = meaningfulClaudePrompt(record);
+    if (!prompt && record.type === "user") prompt = meaningfulClaudePrompt(record, startPrompt);
   }
   const facts: ClaudeSessionFacts = {
     mtimeMs: fileStat.mtimeMs,
     size: fileStat.size,
+    startPrompt,
     cwds: new Set(records.map((record) => String(record.cwd ?? ""))),
     title: customTitle || aiTitle || prompt || "Claude conversation",
     firstEventAt: transcriptEventTime(records, "first"),
@@ -309,14 +313,14 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<Cl
   return facts;
 }
 
-async function summarizeClaudeTranscript(project: SessionProjectPaths, filePath: string): Promise<SessionSummary | null> {
+async function summarizeClaudeTranscript(project: SessionProjectPaths, filePath: string, startPrompt: string): Promise<SessionSummary | null> {
   let fileStat: Stats;
   try { fileStat = await stat(filePath); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
-  const facts = await claudeSessionFacts(filePath, fileStat);
+  const facts = await claudeSessionFacts(filePath, fileStat, startPrompt);
   const projectCwds = new Set(sessionCwds(project));
   if (![...facts.cwds].some((cwd) => projectCwds.has(cwd))) return null;
   const subagentParentId = path.basename(path.dirname(filePath)) === "subagents"
@@ -371,7 +375,8 @@ async function claudeFilesInHistory(project: SessionProjectPaths & { historyDays
 
 export async function listClaudeSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }): Promise<SessionSummary[]> {
   const files = await claudeFilesInHistory(project, await claudeSessionFiles(project));
-  const summaries = await mapWithConcurrency(files, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath));
+  const startPrompt = getSettings().conversationCommands.start.prompt.trim();
+  const summaries = await mapWithConcurrency(files, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath, startPrompt));
   // A conversation claimed from another node exists under that node's encoded
   // directory as well as this node's, so the same transcript is read twice.
   // `claudeProjectDirs` lists this node's own project path first, so keeping the
@@ -386,7 +391,8 @@ export async function refreshClaudeSessions(project: SessionProjectPaths & { his
   const changed = new Set(changedFiles.map((filePath) => path.resolve(filePath)));
   const retained = previous.filter((session) => !changed.has(path.resolve(session.path.replace(/^claude:/, ""))));
   const selected = await claudeFilesInHistory(project, [...changed]);
-  const refreshed = await mapWithConcurrency(selected, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath));
+  const startPrompt = getSettings().conversationCommands.start.prompt.trim();
+  const refreshed = await mapWithConcurrency(selected, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath, startPrompt));
   const byId = new Map(retained.map((session) => [session.id, session]));
   for (const session of refreshed) if (session) byId.set(session.id, session);
   return [...byId.values()];

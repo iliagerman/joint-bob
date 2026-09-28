@@ -10,7 +10,8 @@ import { state } from "./state.js";
 let runningProjects = [];
 let refreshInterval;
 let runningRefreshTimer;
-let runningVersion = 0;
+let runningRefreshPromise;
+let runningRefreshPending = false;
 /** Rows 1-10 carry a digit shortcut; the refresh re-render renumbers the list. */
 let runningShortcuts = [];
 
@@ -69,13 +70,21 @@ function renderRunningBadges() {
   }
 }
 
-export async function refreshRunningConversations() {
-  const version = ++runningVersion;
-  const body = await api("/api/running");
-  if (version !== runningVersion) return;
-  runningProjects = body.projects;
-  renderRunningBadges();
-  if (elements.runningConversationsDialog.open) renderRunningConversationsDialog();
+export function refreshRunningConversations() {
+  runningRefreshPending = true;
+  // A scan can take longer than the invalidation interval. Share it and retain
+  // one trailing read instead of starting another scan for every notice.
+  return runningRefreshPromise ??= refreshRunningSnapshots().finally(() => { runningRefreshPromise = null; });
+}
+
+async function refreshRunningSnapshots() {
+  while (runningRefreshPending) {
+    runningRefreshPending = false;
+    const body = await api("/api/running");
+    runningProjects = body.projects;
+    renderRunningBadges();
+    if (elements.runningConversationsDialog.open) renderRunningConversationsDialog();
+  }
 }
 
 /** Coalesce duplicate socket invalidations without delaying visible running feedback. */

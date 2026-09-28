@@ -244,7 +244,10 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   // Chosen in the new-conversation dialog; a conversation has no id yet at this point, so the
   // accounts travel with the connection until the engine reports one (FR9.4).
   const secretAccountIds = socketSecretAccountIdsSchema.parse((url.searchParams.get("secretAccountIds") ?? "").split(",").filter(Boolean));
-  if (requestedSessionId && rawSessionPath && rawSessionPath !== "watch") {
+  // Fresh browser-generated IDs have nothing to recover. Avoid scanning every
+  // harness and its transcript root; a reconnect has a durable record to resolve.
+  if (requestedSessionId && rawSessionPath && rawSessionPath !== "watch"
+    && (!isNewSessionPath(rawSessionPath) || await getConversationRecord(project.id, routingEngine, requestedSessionId))) {
     const direct = await directSessionForOpen(sessionSearchProject, rawSessionPath, requestedSessionId);
     listedSessions = direct ? [direct] : await listHarnessSessions(sessionSearchProject);
     const listedIdentity = listedSessions.some((candidate) => candidate.id === requestedSessionId || candidate.conversationId === requestedSessionId

@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.10.2 — 2026-09-28
+
+- Project conversations now open without waiting for shared quick notes from another machine.
+- Running and review refreshes now share in-flight requests instead of starting overlapping project scans.
+- New conversations skip unnecessary transcript discovery, and Claude conversation titles ignore the configured setup command.
+
 ## 2.10.1 — 2026-09-28
 
 - Fixed project folders stuck with sync errors after another machine deleted a folder holding generated files, and the sync check now clears old conflict copies inside `.git`.

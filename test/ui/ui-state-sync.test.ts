@@ -78,6 +78,55 @@ test("an invalidation during a list fetch gets a trailing authoritative refresh"
   } finally { await page.context().close(); }
 });
 
+test("cross-project refreshes serialize overlapping scans and keep one trailing refresh", { timeout: 60_000 }, async () => {
+  const page = await openPage();
+  try {
+    const results = await page.evaluate(async () => {
+      const runningModule = "/app/running.js", reviewsModule = "/app/reviews.js";
+      const { refreshRunningConversations } = await import(runningModule);
+      const { refreshPendingReviews } = await import(reviewsModule);
+      const results = [];
+      for (const [endpoint, refresh] of [["/api/running", refreshRunningConversations], ["/api/reviews/pending", refreshPendingReviews]] as const) {
+        await refresh();
+        const originalFetch = window.fetch;
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        let requests = 0, active = 0, peak = 0, fail = false;
+        window.fetch = async (input, options) => {
+          if (input !== endpoint) return originalFetch(input, options);
+          const ordinal = ++requests;
+          peak = Math.max(peak, ++active);
+          try {
+            if (ordinal === 1) await gate;
+            return Response.json(fail ? { error: "temporary failure" } : { projects: [] }, { status: fail ? 503 : 200 });
+          } finally { active--; }
+        };
+        try {
+          const first = refresh();
+          const overlapping = Array.from({ length: 5 }, () => refresh());
+          const whileHeld = { requests, peak };
+          release();
+          await Promise.all([first, ...overlapping]);
+          const afterBurst = requests;
+          fail = true;
+          const failureReported = await refresh().then(() => false, () => true);
+          fail = false;
+          await refresh();
+          results.push({ endpoint, whileHeld, afterBurst, peak, failureReported, afterRecovery: requests });
+        } finally { release(); window.fetch = originalFetch; }
+      }
+      return results;
+    });
+    for (const result of results) {
+      assert.equal(result.whileHeld.requests, 1, `${result.endpoint} must not start overlapping full-project scans`);
+      assert.equal(result.afterBurst, 2, `${result.endpoint} keeps exactly one trailing refresh for in-flight invalidations`);
+      assert.equal(result.peak, 1, `${result.endpoint} never has two scans in flight`);
+      assert.equal(result.failureReported, true, `${result.endpoint} reports failed requests`);
+      assert.equal(result.afterRecovery, 4, `${result.endpoint} releases its in-flight guard after failure`);
+    }
+  } finally { await page.context().close(); }
+});
+
 test("a stale pins read cannot erase a pending pin click", { timeout: 60_000 }, async () => {
   const page = await openPage();
   try {
@@ -254,21 +303,25 @@ test("mark-all clears the inbox at once and keeps working after the dialog close
   } finally { await page.context().close(); }
 });
 
-test("an older pending-review response cannot overwrite a newer inbox",{ timeout: 60_000 }, async () => {
+test("an invalidated pending-review response stays hidden until the trailing scan completes", { timeout: 60_000 }, async () => {
   const page = await openPage();
   try {
-    const first = deferred<Route>();
+    await page.evaluate(async () => { const module = "/app/reviews.js"; await (await import(module)).refreshPendingReviews(); });
+    const first = deferred<Route>(), second = deferred<Route>();
     let reads = 0;
     await page.route("**/api/reviews/pending", (route) => {
       if (++reads === 1) first.resolve(route);
+      else if (reads === 2) second.resolve(route);
       else void route.fulfill({ json: { projects: [] } });
     });
     await page.evaluate(async () => { const module = "/app/reviews.js"; void (await import(module)).refreshPendingReviews(); });
     const old = await first.promise;
-    await page.evaluate(async () => { const module = "/app/reviews.js"; await (await import(module)).refreshPendingReviews(); });
+    await page.evaluate(async () => { const module = "/app/reviews.js"; void (await import(module)).refreshPendingReviews(); });
     await old.fulfill({ json: { projects: [{ projectId: "stale-project", projectName: "Old snapshot", sessions: [{ id: "old" }] }] } });
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    assert.equal(await page.evaluate(async () => { const module = "/app/state.js"; return (await import(module)).state.pendingReviews.length; }), 0, "older inbox must not restore already-reviewed entries");
+    const fresh = await second.promise;
+    assert.equal(await page.evaluate(async () => { const module = "/app/state.js"; return (await import(module)).state.pendingReviews.some(group => group.projectId === "stale-project"); }), false, "the invalidated read must not bring back reviewed entries while the trailing scan is pending");
+    await fresh.fulfill({ json: { projects: [] } });
+    await page.waitForFunction(async () => { const module = "/app/state.js"; return (await import(module)).state.pendingReviews.length === 0; });
   } finally { await page.context().close(); }
 });
 

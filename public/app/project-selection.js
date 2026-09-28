@@ -164,13 +164,16 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   renderQuickNotes();
   setMobileView("sessions");
   void loadSessionNodes(projectId).catch((error) => toast(error.message, 8000));
+  // Shared notes can wait on an offline peer. They must not block local conversations.
+  void refreshQuickNotes(projectId).catch((error) => {
+    if (state.activeProjectId === projectId) toast(error.message, 8000);
+  });
   let body;
   try {
     const byTheWayQuery = state.byTheWayToken ? `?byTheWayToken=${encodeURIComponent(state.byTheWayToken)}` : "";
     [body] = await Promise.all([
       api(`/api/projects/${encodeURIComponent(projectId)}/sessions${byTheWayQuery}`),
       state.harnesses.length ? undefined : loadHarnesses(),
-      refreshQuickNotes(projectId),
     ]);
   } finally {
     if (state.activeProjectId === projectId) setListLoading("sessions", false);
