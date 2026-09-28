@@ -32,6 +32,7 @@ import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
 import { broadcastSessionsChangedToAllProjects, broadcastToProject, scheduleReviewNotifications, send } from "../realtime.js";
 import { disposeHarnessSession, findHarnessSession, harnessSessionBusy } from "../harness-sessions.js";
 import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionNtfySchema, sessionRecoverySchema, sessionReviewedSchema, sessionReviewNotificationsSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
+import { stopConversationBackgroundTasks } from "../background-tasks.js";
 import { listProjectSessionsWithReviewState, listReviewScopeSessions, requireLocalConversationOwner } from "../sessions-helpers.js";
 import { app } from "../state.js";
 
@@ -404,7 +405,16 @@ app.post(["/api/cluster/sessions/queue-transfer", "/api/cluster/v2/runtime/sessi
     if (current.status === "transferring" && current.transferToNodeId !== destination) throw new Error("Conversation is transferring to another node");
     const record = await getConversationRecord(project.id, payload.engine, payload.sessionId);
     const key = `${project.id}:${record?.conversationId ?? payload.sessionId}`;
-    if (promptQueueIsDraining(key) || (await listProjectSessionsWithReviewState(project, "", "")).some(session => session.id === payload.sessionId && session.running)) throw new Error("Wait for the current queue dispatch to finish before transferring");
+    const transferSession = async () => (await listProjectSessionsWithReviewState(project, "", "")).find(session => session.id === payload.sessionId);
+    let listedSession = await transferSession();
+    if (promptQueueIsDraining(key) || listedSession?.turnRunning) throw new Error("Wait for the current queue dispatch to finish before transferring");
+    // Background tasks belong to the node that runs them and cannot follow the
+    // conversation, so the owner stops them rather than refusing the transfer.
+    if (listedSession?.running) {
+      await stopConversationBackgroundTasks(record?.conversationId ?? payload.sessionId);
+      listedSession = await transferSession();
+      if (promptQueueIsDraining(key) || listedSession?.running) throw new Error("Background work is still running in this conversation; wait for it to finish before transferring");
+    }
     const fenced = { ...current, status: "transferring" as const, transferToNodeId: destination };
     const result = await compareAndSetConversationOwnership(current, fenced, local.id);
     if (!result.accepted) throw new Error("Conversation owner changed during queue transfer");
@@ -452,9 +462,13 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
   try {
     const response = await runtimeFetch(`${source.url}/api/cluster/sessions/queue-transfer`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, engine, sessionId }), signal: AbortSignal.timeout(3_000),
+      // The owner may stop background tasks first, which can take several seconds.
+      body: JSON.stringify({ projectId, engine, sessionId }), signal: AbortSignal.timeout(20_000),
     });
-    if (!response.ok) throw new TaskWorktreeError("Queue transfer was not acknowledged by its owner; wait for dispatch to finish and retry");
+    if (!response.ok) {
+      const refusal = await response.json().catch(() => ({})) as { error?: string };
+      throw new TaskWorktreeError(`Queue transfer was not acknowledged by its owner${refusal.error ? `: ${refusal.error}` : "; wait for dispatch to finish and retry"}`);
+    }
     snapshot = await response.json() as { events: ReplicationEvent[] };
   } catch (error) {
     if (!peerIsUnreachable(error)) throw error;

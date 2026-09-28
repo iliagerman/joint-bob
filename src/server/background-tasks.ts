@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { readBackgroundTaskIdentity, readBackgroundTasks, readPersistedBackgroundTask, type TaskCursor } from "../background-tasks.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { readActiveConversationTaskIds, readBackgroundTaskIdentity, readBackgroundTasks, readPersistedBackgroundTask, type TaskCursor } from "../background-tasks.js";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
 import { resolveDataDirectory } from "../data-directory.js";
@@ -154,6 +155,22 @@ export async function localBackgroundTaskOperation(commandInput: BackgroundTaskC
     if (error instanceof z.ZodError) throw new TaskRequestError(503, "Background task supervisor is unavailable");
     throw supervisorError(error);
   }
+}
+
+/* Stops every supervised task a conversation left running and waits for the
+   process groups to exit. The supervisor escalates to SIGKILL after 5 s. */
+export async function stopConversationBackgroundTasks(conversationId: string, timeoutMs = 8_000): Promise<boolean> {
+  const data = resolveDataDirectory();
+  const deadline = Date.now() + timeoutMs;
+  for (const id of readActiveConversationTaskIds(data, conversationId)) {
+    try { await supervisorRequest(data, { action: "stop", id }); }
+    catch (error) { console.warn(`Could not stop background task ${id} before transfer`, error); }
+  }
+  while (readActiveConversationTaskIds(data, conversationId).length) {
+    if (Date.now() >= deadline) return false;
+    await delay(250);
+  }
+  return true;
 }
 
 // An older peer still reports a follow-up delivery state; it is dropped, not rejected.

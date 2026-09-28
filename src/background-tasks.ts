@@ -234,3 +234,14 @@ export function readActiveBackgroundTaskIdentities(dataDirectory: string): Set<s
     return new Set(rows.map((row) => row.identity));
   } finally { db.close(); }
 }
+
+/** Supervised tasks still alive for a logical conversation, including tool-call shells. */
+export function readActiveConversationTaskIds(dataDirectory: string, conversationId: string): string[] {
+  const db = open(dataDirectory);
+  if (!db) return [];
+  try {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='supervisor_tasks'").get()) return [];
+    const rows = db.prepare("SELECT id,identity FROM supervisor_tasks WHERE status IN ('starting','running','stopping')").all() as Array<{ id: string; identity: string }>;
+    return rows.filter((row) => backgroundTaskConversationId(row.identity) === conversationId).map((row) => row.id);
+  } finally { db.close(); }
+}

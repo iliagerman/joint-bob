@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Queue transfers now wait for background tasks to stop instead of failing when work is running in the conversation.
+
 ## 2.5.0 — 2026-09-28
 
 - Settings > Cluster now lists your clusters beside the one you open, with each cluster's nodes and what this node shares into it and gets from it.

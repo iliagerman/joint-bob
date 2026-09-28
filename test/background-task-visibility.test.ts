@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { readActiveBackgroundTaskIdentities, readBackgroundTasks, type TaskCursor } from "../src/background-tasks.js";
+import { readActiveBackgroundTaskIdentities, readActiveConversationTaskIds, readBackgroundTasks, type TaskCursor } from "../src/background-tasks.js";
 
 const identity = "visible-session";
 
@@ -127,6 +127,23 @@ test("active background identities are empty without a supervisor database", asy
   const directory = await mkdtemp(path.join(os.tmpdir(), "background-task-none-"));
   try {
     assert.deepEqual([...readActiveBackgroundTaskIdentities(directory)], []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("active conversation tasks match the logical conversation half of the identity", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "background-task-conversation-"));
+  try {
+    const supervisor = createSupervisorDatabase(directory);
+    try {
+      insertLiveTask(supervisor, "running", "running", JSON.stringify(["project", "conversation"]));
+      insertLiveTask(supervisor, "stopping", "stopping", JSON.stringify(["alias", "conversation"]));
+      insertLiveTask(supervisor, "other", "running", JSON.stringify(["project", "other-conversation"]));
+      insertTask(supervisor, "finished", "2026-01-01T00:00:01.000Z", JSON.stringify(["project", "conversation"]));
+    } finally { supervisor.close(); }
+    assert.deepEqual(readActiveConversationTaskIds(directory, "conversation").sort(), ["running", "stopping"]);
+    assert.deepEqual(readActiveConversationTaskIds(directory, "missing"), []);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
