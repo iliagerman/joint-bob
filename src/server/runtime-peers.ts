@@ -61,6 +61,8 @@ async function runtimeAllowed(request:Request,db:DatabaseSync,local:string,peer:
  const body=request.body as {projectId?:unknown;handoffId?:unknown;id?:unknown;input?:{projectId?:unknown};record?:{engine?:unknown;sessionId?:unknown};leases?:Array<{engine:unknown;sessionId:unknown}>}|undefined;
  if(request.path.startsWith('/browser/'))return request.path==='/browser/config'?isTrustedTwin(db,local,peer):true;
  if(request.path==='/background-tasks')return true;
+ // Node-wide inventories carry only skill and MCP names; a project inventory needs that project shared.
+ if(request.path==='/resources/inventory')return body?.projectId===undefined||typeof body.projectId==='string'&&mayShareProject(db,local,peer,body.projectId);
  if(request.path==='/sessions/runtime-snapshot')return Array.isArray(body?.leases)&&body.leases.every((lease:{engine:unknown;sessionId:unknown})=>sessionShared(db,local,peer,lease.engine,lease.sessionId));
  if(request.path==='/sessions/ownership')return sessionShared(db,local,peer,request.query.engine,request.query.sessionId);
  if(request.path==='/sessions/ownership/apply')return sessionShared(db,local,peer,body?.record?.engine,body?.record?.sessionId);
@@ -83,7 +85,7 @@ export function dispatchSignedRuntime(request:Request,response:Response,next:Nex
  const prefix='/api/cluster/v2/runtime/';
  if(!request.path.startsWith(prefix)){next();return;}
  const suffix=request.path.slice(prefix.length),target='/cluster/'+suffix;
- if(!/^(tasks\/|sessions\/|browser\/|git\/|projects\/presence$|project-file|project-files$|cron$|quick-notes\/prepare$|background-tasks$)/.test(suffix)||!machineRoutes.has(`${request.method} ${target}`)){
+ if(!/^(tasks\/|sessions\/|browser\/|git\/|projects\/presence$|project-file|project-files$|cron$|quick-notes\/prepare$|background-tasks$|resources\/inventory$)/.test(suffix)||!machineRoutes.has(`${request.method} ${target}`)){
   response.status(404).json({error:'Unsupported signed runtime route'});return;
  }
  request.url=request.url.replace(prefix,'/api/cluster/');next();

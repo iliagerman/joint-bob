@@ -12,6 +12,8 @@ export interface SkillSummary {
   description: string;
   scope: "user" | "project";
   invocation?: string;
+  /** The skill's folder, as the harness reaches it. */
+  path?: string;
 }
 
 export interface SkillRoots {
@@ -76,7 +78,7 @@ function missingDirectory(error: unknown): boolean {
 async function readSkill(root: string, name: string, harness: HarnessId, scope: SkillSummary["scope"]): Promise<SkillSummary | undefined> {
   try {
     const fields = parseResourceFrontmatter(await readFile(path.join(root, "SKILL.md"), "utf8"));
-    return { harness, name: fields.name || name, description: fields.description || "", scope };
+    return { harness, name: fields.name || name, description: fields.description || "", scope, path: root };
   } catch (error) {
     if (missingDirectory(error)) return undefined;
     throw error;

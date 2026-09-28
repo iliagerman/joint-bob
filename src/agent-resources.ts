@@ -289,6 +289,59 @@ async function samePublished(left: string, right: string): Promise<boolean> {
   return await publishDigest(left) === await publishDigest(right);
 }
 
+async function publishableDigest(source: string): Promise<string> {
+  const files: string[] = [];
+  async function visit(entry: string): Promise<void> {
+    if (excluded(path.relative(source, entry))) return;
+    if ((await lstat(entry)).isDirectory()) { for (const name of await entries(entry)) await visit(path.join(entry, name)); }
+    else files.push(entry);
+  }
+  await visit(source);
+  const hash = createHash("sha256");
+  for (const file of files.sort()) {
+    hash.update(`${path.relative(source, file)}\0${(await lstat(file)).mode & 0o111}\0`);
+    hash.update(await readFile(file));
+  }
+  return hash.digest("hex");
+}
+
+export type SkillImportStatus = "new" | "installed" | "linked" | "changed";
+
+export interface SkillImportCandidate { name: string; description: string; path: string; status: SkillImportStatus; error?: string }
+
+/** Lists the skills under a local folder and how each compares with the shared copy, without changing anything. */
+export async function scanLocalSkills(root: string, options: { root?: string } = {}): Promise<SkillImportCandidate[]> {
+  if (!path.isAbsolute(root)) throw new Error("Skill paths must be absolute");
+  const resolvedRoot = await realpath(root);
+  const shared = agentResourcePaths(options.root).sharedSkills;
+  const directories = existsSync(path.join(resolvedRoot, "SKILL.md")) ? [root] : (await readdir(resolvedRoot, { withFileTypes: true }))
+    .filter((entry) => (entry.isDirectory() || entry.isSymbolicLink()) && !entry.name.startsWith("."))
+    .map((entry) => path.join(root, entry.name));
+  const candidates: SkillImportCandidate[] = [];
+  for (const directory of directories) {
+    let source: string;
+    try { source = await realpath(directory); } catch (error) { if (missing(error)) continue; throw error; }
+    const manifest = path.join(source, "SKILL.md");
+    if (!existsSync(manifest)) continue;
+    let name = path.basename(directory), description = "";
+    try {
+      name = skillName(source, manifest);
+      description = loadSkills({ cwd: source, agentDir: source, skillPaths: [manifest], includeDefaults: false }).skills[0]?.description ?? "";
+      await validateSkillTree(source);
+    } catch (error) {
+      candidates.push({ name, description, path: directory, status: "new", error: (error as Error).message });
+      continue;
+    }
+    const destination = path.join(shared, name);
+    let status: SkillImportStatus = "new";
+    const exists = await destinationExists(destination);
+    if (exists && source === await realpath(destination)) status = "linked";
+    else if (exists) status = await publishableDigest(source) === await publishableDigest(destination) ? "installed" : "changed";
+    candidates.push({ name, description, path: directory, status });
+  }
+  return candidates.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 async function canonicalLink(source: string, destination: string): Promise<boolean> {
   try {
     return path.resolve(await realpath(source)) === path.resolve(destination);

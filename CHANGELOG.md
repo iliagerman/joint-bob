@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Quick notes can now be reordered with up and down arrows to control execution sequence.
+- Added Skills & tools dialog to browse available skills and MCP servers in conversations and projects, and import skills from local folders.
 
 ## 2.6.3 — 2026-09-28
 

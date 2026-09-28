@@ -315,6 +315,7 @@
           <button type="button" data-command="/model" data-testid="chat-model-command-button">/model</button>
           <button type="button" data-command="/tools" data-testid="chat-tools-button">/tools</button>
           <button type="button" data-command="/compact" data-testid="chat-compact-button">/compact</button>
+          <button type="button" id="chatResourcesButton" data-testid="chat-resources-button" title="See this conversation's skills and MCP servers, and add more">Skills &amp; tools</button>
         </div>
         <div class="conversation-lock" id="conversationLock" role="status" data-testid="conversation-lock-notice" hidden>
           <div class="conversation-lock-copy">
@@ -539,6 +540,23 @@
         </div>
 
         <div class="settings-body">
+        <select class="settings-tabs-select" aria-label="Settings sections" data-testid="settings-tab-select">
+          <option value="account">Account</option>
+          <option value="notifications">Notifications</option>
+          <option value="labels">Labels</option>
+          <option value="commands">Commands</option>
+          <option value="secrets">Secrets</option>
+          <option value="cluster">Cluster</option>
+          <option value="workspaces">Workspaces</option>
+          <option value="engines">Harnesses</option>
+          <option value="classifiers">Classifiers</option>
+          <option value="resources">Resources</option>
+          <option value="shortcuts">Shortcuts</option>
+          <option value="updates">Updates</option>
+          <option value="logs">Client logs</option>
+          <option value="changelog">Changelog</option>
+        </select>
+
         <div class="settings-tabs settings-tabs--sidebar" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
           <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
           <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
@@ -859,7 +877,7 @@
             <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourceSkillsPaths" data-testid="settings-resource-skills-paths"></textarea><button class="ghost" type="button" id="settingsResourceSkillsBrowse" data-testid="settings-resource-skills-browse">Browse</button></span>
           </label>
           <p class="settings-hint">Save settings first when changing load paths. Sync local skills publishes entire trusted skill folders (including executable scripts) to the Syncthing-managed shared skills folder. Local sources stay untouched; matching shared skills are backed up and replaced. Removed local skills do not delete shared copies. Sync again after local edits. Scripts are shared with paired nodes.</p>
-          <div class="github-group-actions"><button class="ghost" type="button" id="settingsSyncSkillsButton" data-testid="settings-sync-skills-button">Sync local skills</button><button class="ghost" type="button" id="settingsReloadSkillsButton" data-testid="settings-reload-skills-button">Reload skills</button></div>
+          <div class="github-group-actions"><button class="ghost" type="button" id="settingsResourcesButton" data-testid="settings-resources-button">View &amp; add skills and tools</button><button class="ghost" type="button" id="settingsSyncSkillsButton" data-testid="settings-sync-skills-button">Sync local skills</button><button class="ghost" type="button" id="settingsReloadSkillsButton" data-testid="settings-reload-skills-button">Reload skills</button></div>
           <p class="settings-hint">Reload updates idle Pi sessions on this node. Peers need Reload skills after Syncthing finishes.</p>
           <p id="settingsSkillsStatus" data-testid="settings-skills-status" role="status" aria-live="polite"></p>
           <label>Prompts
@@ -1085,6 +1103,7 @@
         </label>
         <div class="skills-dialog-list" id="skillsDialogList"></div>
         <div class="dialog-actions">
+          <button class="ghost" type="button" id="skillsDialogManageButton" data-testid="skills-dialog-manage-button">Manage skills &amp; tools</button>
           <button class="ghost" type="button" id="closeSkillsDialogButton" data-testid="skills-dialog-close-button">Close</button>
         </div>
       </div>
@@ -1100,6 +1119,55 @@
         <div class="tools-dialog-list" id="toolsDialogList"></div>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="closeToolsDialogButton" data-testid="tools-dialog-close-button">Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="resourcesDialog" data-testid="resources-dialog">
+      <div class="dialog-card resources-card">
+        <div>
+          <span class="eyebrow">Skills &amp; tools</span>
+          <h2 id="resourcesDialogTitle">Skills &amp; tools</h2>
+          <p class="settings-hint" id="resourcesDialogSummary" data-testid="resources-summary"></p>
+        </div>
+        <div class="resources-toolbar">
+          <select id="resourcesScopeSelect" aria-label="Show resources for" data-testid="resources-scope-select">
+            <option value="conversation">This conversation</option>
+            <option value="project">This project, every node</option>
+            <option value="cluster">Every node</option>
+          </select>
+          <select id="resourcesHarnessSelect" aria-label="Agent" data-testid="resources-harness-select"></select>
+          <label class="search-shell" for="resourcesSearchInput">
+            <span class="sr-only">Search skills and tools</span>
+            <input id="resourcesSearchInput" type="search" autocomplete="off" placeholder="Search" data-testid="resources-search-input" />
+          </label>
+        </div>
+        <div class="resources-tabs" role="tablist" aria-label="Resource types">
+          <button type="button" role="tab" data-resources-tab="skills" aria-selected="true" data-testid="resources-tab-skills">Skills <span id="resourcesSkillsCount"></span></button>
+          <button type="button" role="tab" data-resources-tab="mcp" aria-selected="false" data-testid="resources-tab-mcp">MCP servers <span id="resourcesMcpCount"></span></button>
+          <button type="button" role="tab" data-resources-tab="add" aria-selected="false" data-testid="resources-tab-add">+ Add</button>
+        </div>
+        <div class="resources-list" id="resourcesList" role="tabpanel" data-testid="resources-list"></div>
+        <section class="resources-add" id="resourcesAddPanel" role="tabpanel" data-testid="resources-add-panel" hidden>
+          <label>Bring skills from a folder on this node
+            <span class="folder-input-row"><input id="resourcesScanPath" type="text" autocomplete="off" spellcheck="false" value="~/.agents/skills" data-testid="resources-scan-path" /><button class="ghost" type="button" id="resourcesScanButton" data-testid="resources-scan-button">Scan</button></span>
+          </label>
+          <div class="resources-sources" id="resourcesScanSources" data-testid="resources-scan-sources"></div>
+          <div class="resources-list" id="resourcesScanList" data-testid="resources-scan-list"></div>
+          <div class="github-group-actions">
+            <button class="ghost" type="button" id="resourcesSelectNewButton" data-testid="resources-select-new-button">Select new and changed</button>
+            <button class="primary" type="button" id="resourcesImportButton" data-testid="resources-import-button" disabled>Import selected</button>
+          </div>
+          <p class="settings-hint">Import copies whole skill folders, scripts included, into the shared skills folder. Every agent on this node sees them, and Syncthing copies them to paired nodes. Idle Pi sessions reload right away; Claude and Kiro pick them up on their next run.</p>
+          <h3 class="resources-subheading">Share MCP servers</h3>
+          <p class="settings-hint">These servers are configured for only one agent on this node. Sharing a server adds it to the shared MCP config, which Claude and Kiro load on every node. Its command, arguments, headers and environment values are copied as they are.</p>
+          <div class="resources-list" id="resourcesMcpShareList" data-testid="resources-mcp-share-list"></div>
+          <div class="github-group-actions"><button class="ghost" type="button" id="resourcesShareMcpButton" data-testid="resources-share-mcp-button" disabled>Share selected</button></div>
+        </section>
+        <p class="resources-status" id="resourcesStatus" role="status" aria-live="polite" data-testid="resources-status"></p>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="resourcesRefreshButton" data-testid="resources-refresh-button">Refresh</button>
+          <button class="ghost" type="button" id="closeResourcesDialogButton" data-testid="resources-dialog-close-button">Close</button>
         </div>
       </div>
     </dialog>

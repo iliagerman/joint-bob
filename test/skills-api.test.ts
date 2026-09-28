@@ -143,7 +143,7 @@ test("shared skills override unmanaged copies and project skills override shared
     await writeSkill(shared, "review", "---\nname: review\ndescription: Shared\n---\n");
     const sharedSkills = await listSkills(project, { piUser, claudeUser, shared });
     const sharedClaude = sharedSkills.find((skill) => skill.harness === "claude" && skill.name === "review");
-    assert.deepEqual(sharedClaude, { harness: "claude", name: "review", description: "Shared", scope: "user", invocation: "/joint-bob-resources:review " });
+    assert.deepEqual(sharedClaude, { harness: "claude", name: "review", description: "Shared", scope: "user", invocation: "/joint-bob-resources:review ", path: path.join(shared, "review") });
     await writeSkill(path.join(project, ".pi", "skills"), "review", "---\nname: review\ndescription: Pi project\n---\n");
     await writeSkill(path.join(project, ".claude", "skills"), "review", "---\nname: review\ndescription: Claude project\n---\n");
 

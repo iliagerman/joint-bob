@@ -50,6 +50,7 @@ import "./app/shortcut-settings.js";
 import "./app/session-list.js";
 import "./app/chat-transcript.js";
 import "./app/composer-dialogs.js";
+import "./app/resources.js";
 import "./app/chat-controls.js";
 import "./app/project-selection.js";
 import "./app/socket.js";

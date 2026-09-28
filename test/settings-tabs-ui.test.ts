@@ -64,8 +64,10 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   assert.match(styles, /\.settings-body \{[^}]*grid-template-columns:/);
   assert.match(styles, /\.settings-tabs--sidebar \{[^}]*flex-direction: column/);
   assert.match(styles, /\.settings-tabs--sidebar \{[^}]*overflow-y: auto/);
-  // Below the split breakpoint the sidebar folds back into a horizontal strip.
-  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*\.settings-tabs--sidebar \{[^}]*flex-direction: row/);
+  // Below the split breakpoint the sidebar folds into a dropdown of sections.
+  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*\.settings-tabs--sidebar \{[^}]*display: none/);
+  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*\.settings-tabs-select \{[^}]*display: block/);
+  assert.match(html, /class="settings-tabs-select"[^>]*aria-label="Settings sections"/);
 
   // Styling: a scrollable strip on narrow screens, and no animation for reduced-motion users.
   assert.match(styles, /\.settings-tabs\s*\{[^}]*overflow-x:\s*auto/);

@@ -92,6 +92,7 @@ function selectSettingsTab(name) {
     tab.tabIndex = selected ? 0 : -1;
   }
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
+  if (elements.settingsTabsSelect) elements.settingsTabsSelect.value = name;
   if (name === "cluster") void loadBrowserStatus();
   if (name === "notifications") void loadNtfyServicesPanel();
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
@@ -370,6 +371,7 @@ for (const tab of elements.settingsTabs) {
     next.focus();
   });
 }
+elements.settingsTabsSelect.addEventListener("change", () => selectSettingsTab(elements.settingsTabsSelect.value));
 elements.cancelSettingsButton.addEventListener("click", () => elements.settingsDialog.close());
 elements.settingsClientLogsCopyButton.addEventListener("click", async () => {
   try {
