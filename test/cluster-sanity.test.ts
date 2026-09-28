@@ -1196,7 +1196,14 @@ test("cross-node opening replaces stale home paths without the fifty-conversatio
       files.push(file);
       await writeFile(file, JSON.stringify({ type: "session", version: 3, id, cwd: project.path, timestamp: index === 0 ? "2000-01-01T00:00:00.000Z" : new Date().toISOString() }) + "\n");
     }
-    const listed = await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${project.id}/sessions`);
+    let listed = await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${project.id}/sessions`);
+    const catalogDeadline = Date.now() + 10_000;
+    // External file writes reach a warm catalog through the debounced watcher.
+    // Do not rely on another request evicting its cache to make this read cold.
+    while (listed.body.sessions.length !== 50 && Date.now() < catalogDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      listed = await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${project.id}/sessions`);
+    }
     assert.equal(listed.body.sessions.length, 50, "the catalog limit must be reached for this regression");
     assert.equal(listed.body.sessions.some((row) => row.id === sessionId), false, "the selected old conversation is outside the catalog window");
     const url = new URL("/ws", nodeA.url);
