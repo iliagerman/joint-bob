@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.10.3 — 2026-09-28
 
 - Background sync operations and internal work are now hidden from conversation lists.
 
