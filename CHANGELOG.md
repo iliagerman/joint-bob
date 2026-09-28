@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.9.0 — 2026-09-28
 
-- Added automatic background sync checking to quietly resolve Syncthing conflict copies and folder errors.
+- Background sync automatically cleans up Syncthing conflicts and fixes folder errors, running every five minutes by default.
+- Conversations stuck showing running after their agent stopped now clear on their own and move to needs review.
+- Background sync can be customized in Settings to use a different harness or turn off automatic checking.
 
 ## 2.8.1 — 2026-09-28
 
