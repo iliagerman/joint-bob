@@ -81,6 +81,34 @@ test("notes can be reordered and retain order after reload", async () => {
   }
 });
 
+test("notes search matches titles and content like conversation search", async () => {
+  const projectId = node.projects.find(project => project.name === "Internal Assistant")!.id;
+  const ids: string[] = [];
+  try {
+    for (const [title, content] of [["Release checklist", "Confirm the lighthouse report"], ["Database cleanup", "Archive stale rows"]]) {
+      const result = await api<{ note: { id: string } }>(node, authSession, "POST", "/quick-notes", { projectId, title, content, harnessId: "pi" });
+      ids.push(result.body.note.id);
+    }
+    await openNotesTab(projectId);
+    const search = page.getByTestId("quick-notes-search-input");
+
+    await search.fill("lighthouse");
+    assert.deepEqual(await page.getByTestId("quick-note-row").locator("strong").allTextContents(), ["Release checklist"], "content is searchable");
+
+    await search.fill("DATABASE");
+    assert.deepEqual(await page.getByTestId("quick-note-row").locator("strong").allTextContents(), ["Database cleanup"], "title search ignores case");
+
+    await search.fill("nothing matches");
+    assert.equal(await page.getByTestId("quick-note-list").innerText(), "No matching notes.");
+
+    await search.fill("");
+    assert.equal(await page.getByTestId("quick-note-row").filter({ hasText: "Release checklist" }).count(), 1, "clearing search restores notes");
+  } finally {
+    await page.getByTestId("nav-projects-button").click();
+    for (const id of ids) await fetch(`${node.url}/api/quick-notes/${id}`, { method: "DELETE", headers: { Cookie: authSession.cookie, "x-csrf-token": authSession.csrfToken } });
+  }
+});
+
 test("mobile keeps creation actions together and switches conversations and notes with tabs", async () => {
   await page.setViewportSize({ width: 390, height: 844 });
   const projectId = node.projects.find((project) => project.name === "Internal Assistant")!.id;

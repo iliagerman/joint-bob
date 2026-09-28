@@ -168,6 +168,10 @@
             <select class="quick-notes-filter" id="quickNotesProjectFilter" aria-label="Filter notes by project" data-testid="quick-notes-project-filter"></select>
             <button class="ghost quick-note-add" id="quickNoteButton" type="button" disabled aria-label="Add note" title="Add note" data-shortcut-hint="quickNote" data-testid="quick-note-create-button">+</button>
           </div>
+          <label class="search-shell quick-note-search" for="quickNotesSearchInput">
+            <span class="sr-only">Search notes</span>
+            <input id="quickNotesSearchInput" type="search" autocomplete="off" placeholder="Search notes" data-testid="quick-notes-search-input" />
+          </label>
           <div class="quick-note-queue" id="quickNotesQueue" data-testid="quick-notes-queue">
             <label class="quick-note-queue-toggle"><input type="checkbox" id="quickNotesQueueEnabled" data-testid="quick-notes-queue-enabled" /> Start notes automatically</label>
             <label class="quick-note-queue-parallel">Parallel

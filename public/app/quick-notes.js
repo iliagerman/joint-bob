@@ -36,6 +36,7 @@ const conversationsPane = document.querySelector("#conversationListPane");
 const conversationsTab = document.querySelector("#conversationsTab");
 const notesTab = document.querySelector("#notesTab");
 const filterSelect = document.querySelector("#quickNotesProjectFilter");
+const searchInput = document.querySelector("#quickNotesSearchInput");
 const list = document.querySelector("#quickNoteList");
 const queueToggle = document.querySelector("#quickNotesQueueEnabled");
 const queueParallelInput = document.querySelector("#quickNotesQueueParallel");
@@ -198,7 +199,18 @@ export function renderQuickNotes() {
     list.append(empty);
     return;
   }
-  for (const note of state.quickNotes) {
+  const query = searchInput.value.trim().toLowerCase();
+  const notes = query
+    ? state.quickNotes.filter((note) => `${note.title}\n${note.content}`.toLowerCase().includes(query))
+    : state.quickNotes;
+  if (!notes.length) {
+    const empty = document.createElement("p");
+    empty.className = "quick-note-empty";
+    empty.textContent = "No matching notes.";
+    list.append(empty);
+    return;
+  }
+  for (const note of notes) {
     const row = document.createElement("div");
     row.className = "quick-note-row-wrap";
     if (note.status === "failed") row.classList.add("failed");
@@ -564,6 +576,7 @@ filterSelect.addEventListener("change", () => {
   filterProjectId = filterSelect.value;
   void refreshQuickNotes().catch((error) => toast(error.message));
 });
+searchInput.addEventListener("input", renderQuickNotes);
 document.querySelector("#cancelQuickNoteButton").addEventListener("click", () => dialog.close());
 async function removeNote(note) {
   if (!await confirmAction({ title: `Delete "${note.title}"?`, confirmLabel: "Delete note", destructive: true })) return;

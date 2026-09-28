@@ -494,6 +494,7 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .quick-notes-filter { width: min(150px, 45%); min-height: 28px; margin-left: auto; padding: 3px 24px 3px 7px; font-size: 11px; }
 .quick-note-add { display: inline-grid; place-items: center; width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; color: var(--accent); font-size: 18px; }
 .quick-note-add:hover, .quick-note-add:focus-visible { background: var(--surface); color: var(--text); }
+.quick-note-search { margin: 8px 10px 2px; }
 .quick-note-queue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 10px 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .quick-note-queue-toggle { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 12px; font-weight: 550; }
 .quick-note-queue-toggle input { width: 15px; height: 15px; min-width: auto; accent-color: var(--ink); }
