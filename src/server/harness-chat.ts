@@ -35,7 +35,7 @@ import { claimConversationLocally, describeConversationOwner, type ForeignConver
 import { flags } from "./state.js";
 import { measureOperation } from "./performance-diagnostics.js";
 import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
-import { attachHarnessClient, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
+import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 
 export interface HarnessChatConnection {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
@@ -53,22 +53,24 @@ const mutations = new Map<string, Promise<void>>();
 const drains = new Map<string, Promise<void>>();
 const pausedDrains = new Set<string>();
 const startingIds = new Set<string>();
-const autoCompacted = new WeakSet<HarnessSession>();
+// Keyed by conversation, not session object: a reopened session must not retry a
+// compaction that already ran or failed since the last prompt.
+const autoCompacted = new Set<string>();
 
-export function armAutoCompactAfterPrompt(session: HarnessSession): void { autoCompacted.delete(session); }
+export function armAutoCompactAfterPrompt(session: HarnessSession): void { autoCompacted.delete(session.id); }
 
 /** Runs only from the queue's idle gap. Suppression prevents stale usage reported by
  * a just-compacted harness from starting an endless compaction loop. */
 export async function autoCompactBetweenTurns(shared: SharedHarnessSession, threshold: number | null, beforeStart?: () => Promise<void>): Promise<boolean> {
   const usage = shared.session.status().contextUsage;
-  if (threshold === null || !usage || usage.percent < threshold || shared.turnInFlight > 0 || shared.session.isBusy() || autoCompacted.has(shared.session)) return false;
+  if (threshold === null || !usage || usage.percent < threshold || shared.turnInFlight > 0 || shared.session.isBusy() || autoCompacted.has(shared.session.id)) return false;
   shared.turnInFlight += 1;
   markHarnessInput(shared);
   // A failed attempt counts too: wake-ups poll every two seconds, and retrying a
   // failing compaction on each one floods the log and never reaches the prompt.
-  autoCompacted.add(shared.session);
+  autoCompacted.add(shared.session.id);
   try {
-    await shared.session.compact(undefined, beforeStart);
+    await compactHarnessSession(shared, () => shared.session.compact(undefined, beforeStart));
     return true;
   } finally {
     shared.turnInFlight -= 1;
@@ -514,8 +516,9 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
     markHarnessInput(connection.shared);
     try {
       await writable(connection);
-      await connection.shared.session.compact(message.message, () => writable(connection));
-      autoCompacted.add(connection.shared.session);
+      const shared = connection.shared;
+      await compactHarnessSession(shared, () => shared.session.compact(message.message, () => writable(connection)));
+      autoCompacted.add(shared.session.id);
     } finally {
       connection.shared.turnInFlight -= 1;
       sendHarnessStatus(connection.shared);

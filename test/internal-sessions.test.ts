@@ -65,7 +65,8 @@ test("all harness listings hide new, empty and legacy fixer sessions, including 
       if (text) await appendKiroRecord(kiroFile, { type: "message", role: "user", text, timestamp });
       await appendKiroRecord(kiroFile, { type: "title", title: "Renamed", timestamp });
       piFiles.push(piFile); claudeFiles.push(claudeFile); kiroFiles.push(kiroFile);
-      for (const engine of ["pi", "claude", "kiro"]) await ensureConversationRecord(project.id, engine, id, "test-node");
+      // Legacy fixer runs predate internal IDs; their records were deleted once, so only transcripts remain.
+      if (isInternalSession(id) || !isInternalSession(id, text)) for (const engine of ["pi", "claude", "kiro"]) await ensureConversationRecord(project.id, engine, id, "test-node");
     }
     for (const [list, refresh, files] of [
       [listPiSessions, refreshPiSessions, piFiles],

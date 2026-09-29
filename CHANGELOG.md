@@ -3,6 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversation lists now load faster by stopping unnecessary re-reads of unlisted transcripts, and cleaned up leftover sync-repair records from conversation history.
+
+## 2.13.7 — 2026-09-29
+
+- Conversation lists no longer re-read unlisted transcripts on every refresh, which kept the server busy and made `/bob-btw` slow to open.
+- Removed seven leftover sync-repair records so they stay out of conversation history.
+
 ## 2.13.6 — 2026-09-29
 
 - Added a configurable subprocess maximum lifetime for agent processes, shell and background tasks, terminals, and command helpers, defaulting to 360 minutes.

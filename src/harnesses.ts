@@ -278,14 +278,8 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
   for (const record of missingRecords) {
     const adapter = adapters.find((candidate) => candidate.id === record.engine);
     if (!adapter) throw new Error(`No harness registered for conversation engine: ${record.engine}`);
-    // Older fixer runs may already have a conversation record. Do not resurrect
-    // a filtered transcript as a draft, even if it was renamed or pinned.
-    const transcript = filesByEngine.get(record.engine)?.get(record.sessionId);
-    if (transcript) {
-      const sessionPath = adapter.paths.ownsSession(transcript) ? transcript : `${adapter.id}:${transcript}`;
-      const messages = await adapter.sessions.loadMessages(project, sessionPath);
-      if (isInternalSession(record.sessionId, messages.find((message) => message.role === "user")?.text)) continue;
-    }
+    // Fixer runs carry the internal ID prefix, so their records are filtered above without
+    // opening transcripts. Reading them here reparsed every unlisted transcript per listing.
     sessions.push({
       id: record.sessionId,
       path: conversationDraftPath(record.engine, record.sessionId),

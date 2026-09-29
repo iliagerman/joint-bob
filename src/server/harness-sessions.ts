@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { conversationInactive } from "../conversation-watchdog.js";
+import { COMPACTION_INACTIVITY_TIMEOUT_MS, CONVERSATION_INACTIVITY_TIMEOUT_MS, conversationInactive } from "../conversation-watchdog.js";
 import { conversationWorkActive } from "../conversation-work.js";
 import { getHarness, getHarnessRuntime, refreshHarnessSessions } from "../harnesses.js";
 import type { HarnessEvent, HarnessOpenOptions, HarnessSession } from "../harnesses/runtime.js";
@@ -13,6 +13,8 @@ export interface SharedHarnessSession {
   liveEvents: HarnessEvent[]; idleTimer: NodeJS.Timeout | null; unsubscribe: () => void; watchdogStopping?: boolean;
   /** When the inactivity watchdog cancelled this turn; a turn still busy long after is a zombie. */
   watchdogStoppedAt?: number;
+  /** Set while Joint Bob awaits a compaction; `abandon` releases that wait when the watchdog stops it. */
+  compaction?: { abandon: (error: Error) => void };
   /** Original server time survives browser reconnects while this turn is running. */
   turnStartedAt?: string;
   /** True while the running turn came from a scheduled task rather than a person. */
@@ -115,12 +117,25 @@ export function markHarnessInput(shared: SharedHarnessSession, now = Date.now())
   markHarnessActivity(shared, now);
 }
 
+/** A harness that ignores cancellation must not hold the conversation's turn slot forever. */
+export async function compactHarnessSession(shared: SharedHarnessSession, compact: () => Promise<void>): Promise<void> {
+  let abandon!: (error: Error) => void;
+  const abandoned = new Promise<never>((_resolve, reject) => { abandon = reject; });
+  const running = compact();
+  running.catch(() => {});
+  shared.compaction = { abandon };
+  try { await Promise.race([running, abandoned]); }
+  finally { shared.compaction = undefined; }
+}
+
 export async function reapInactiveHarnessSessions(now = Date.now(), liveShellCallers: ReadonlySet<string> = new Set()): Promise<void> {
   await Promise.all([...harnessSessions.values()].map(async (shared) => {
     if (liveShellCallers.has(JSON.stringify([shared.projectId, shared.conversationId]))) return;
-    if (shared.watchdogStopping || !harnessTurnBusy(shared) || !conversationInactive(shared.lastActivityAt, now)) return;
+    const timeout = shared.compaction ? COMPACTION_INACTIVITY_TIMEOUT_MS : CONVERSATION_INACTIVITY_TIMEOUT_MS;
+    if (shared.watchdogStopping || !harnessTurnBusy(shared) || !conversationInactive(shared.lastActivityAt, now, timeout)) return;
     shared.watchdogStopping = true;
     try {
+      shared.compaction?.abandon(new Error(`Compaction stopped after ${Math.round(timeout / 60_000)} minutes without finishing`));
       await shared.session.cancel();
       shared.watchdogStoppedAt = now;
       console.warn(`Stopped inactive ${shared.engine} conversation ${shared.session.id}: no input or output since ${new Date(shared.lastActivityAt).toISOString()}`);
