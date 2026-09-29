@@ -91,6 +91,8 @@ export async function loadProjects() {
     || session.segments?.some((segment) => segment.path === state.activeSessionPath)
     || Boolean(state.activeSessionId && (session.conversationId === state.activeSessionId || session.id === state.activeSessionId || session.segments?.some((segment) => segment.sessionId === state.activeSessionId))));
   if ((state.activeSessionPath || state.activeSessionId) && activeSession) {
+    // The list renders without harness metadata, but opening a conversation resolves its engine.
+    if (!state.harnesses.length) await loadHarnesses().catch(() => undefined);
     openListedSession(activeSession);
     return;
   }

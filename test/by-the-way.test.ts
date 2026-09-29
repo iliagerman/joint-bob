@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { access, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, realpath, rm, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
@@ -52,6 +52,33 @@ test("bob-btw creates an unlisted fork and closing it deletes the temporary tran
   assert.deepEqual(closed, { status: 200, body: { closed: true } });
   await assert.rejects(access(created.body.session.path));
   assert.equal(await readFile(source.path, "utf8"), sourceTranscript, "closing BTW must not change the source transcript");
+});
+
+test("bob-btw forks a pinned conversation older than the history window", async () => {
+  const source = (await sessions()).find((session) => session.harnessId === "pi" && !session.readOnly)!;
+  const projectId = node.projects[0].id;
+  const pin = (pinned: boolean) => api(node, auth, "PUT", "/pins", { kind: "conversation", projectId, engine: source.harnessId, sessionId: source.id, pinned });
+  const aged = new Date(Date.now() - 90 * 86_400_000);
+  await utimes(source.path, aged, aged);
+  try {
+    assert.equal((await pin(true)).status, 200);
+    assert.ok((await sessions()).some((session) => session.id === source.id), "the pin keeps the aged conversation listed");
+    const created = await api<{ session: SessionSummary; token: string }>(node, auth, "POST", `/projects/${projectId}/sessions/by-the-way`, {
+      engine: source.harnessId,
+      sessionId: source.id,
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const closed = await api(node, auth, "POST", `/projects/${projectId}/sessions/by-the-way/close`, {
+      engine: created.body.session.harnessId,
+      sessionId: created.body.session.id,
+      token: created.body.token,
+    });
+    assert.equal(closed.status, 200);
+  } finally {
+    await pin(false);
+    const now = new Date();
+    await utimes(source.path, now, now);
+  }
 });
 
 test("startup removes a temporary fork abandoned by a closed browser", async () => {

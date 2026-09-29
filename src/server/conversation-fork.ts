@@ -4,7 +4,7 @@ import path from "node:path";
 import { getClusterNode } from "../cluster.js";
 import { getConversationOwnership, type ConversationEngine } from "../conversation-ownership.js";
 import { deleteConversationRecord, ensureConversationRecord } from "../conversation-records.js";
-import { getHarness, listHarnessSessions, refreshHarnessSessions } from "../harnesses.js";
+import { getHarness, refreshHarnessSessions } from "../harnesses.js";
 import { HarnessForkError, type HarnessForkFile } from "../harnesses/fork.js";
 import { setSessionClassification, setSessionColor, setSessionTitle } from "../names.js";
 import { readQueueSettings, recordQueueSettings } from "../prompt-queue.js";
@@ -12,7 +12,7 @@ import { conversationScopeId, getScopeSecretAccounts, setScopeSecretAccounts } f
 import type { ProjectRecord, SessionSummary } from "../types.js";
 import { assertProjectEditable } from "./projects.js";
 import { findHarnessSession } from "./harness-sessions.js";
-import { claimConversationLocally, listProjectSessionsWithReviewState, requireLocalConversationOwner } from "./sessions-helpers.js";
+import { claimConversationLocally, listProjectSessionsWithReviewState, listReviewScopeSessions, requireLocalConversationOwner } from "./sessions-helpers.js";
 
 export { HarnessForkError as ConversationForkError } from "../harnesses/fork.js";
 
@@ -23,11 +23,13 @@ function isWithin(filePath: string, root: string): boolean {
 
 /** Snapshot history, not running work. Every segment gets its own identity and file.
  * Ticket/worktree linkage, pending prompts, review state and pins are not inherited.
- * The fork uses the existing project directory, like a new conversation. */
-export async function forkLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix = "[F]"): Promise<SessionSummary> {
+ * The fork uses the existing project directory, like a new conversation.
+ * Listing through the viewer's scope reuses their cached catalog and finds pinned or
+ * recent conversations past the history window; a different scope forces a full rescan. */
+export async function forkLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix = "[F]", viewer = { userId: "", username: "" }): Promise<SessionSummary> {
   await assertProjectEditable(project);
   const local = await getClusterNode();
-  const sessions = await listProjectSessionsWithReviewState(project, "", "").catch((error) => {
+  const sessions = await listProjectSessionsWithReviewState(project, viewer.userId, viewer.username).catch((error) => {
     if (error instanceof SyntaxError) throw new HarnessForkError(409, "Conversation transcript is incomplete or invalid");
     throw error;
   });
@@ -82,7 +84,7 @@ export async function forkLocalConversation(project: ProjectRecord, engine: Conv
     }
     const face = copies.at(-1)!;
     await refreshHarnessSessions(project.id, files.map((file) => file.destination));
-    const listed = (await listHarnessSessions(project)).find((session) => session.id === face.sessionId);
+    const listed = (await listReviewScopeSessions(project, viewer.userId, viewer.username)).find((session) => session.id === face.sessionId);
     if (!listed) throw new HarnessForkError(409, "Fork transcript could not be listed");
     return { ...listed, executionNodeId: local.id };
   } catch (error) {

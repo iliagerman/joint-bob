@@ -131,7 +131,8 @@ app.post("/api/projects/:projectId/sessions/fork", async (request, response, nex
       if (routed.ok) broadcastToProject(project.id, { type: "sessionsChanged" });
       return;
     }
-    const session = await forkLocalConversation(project, payload.engine, payload.sessionId);
+    const authSession = response.locals.authSession as AuthSession;
+    const session = await forkLocalConversation(project, payload.engine, payload.sessionId, "[F]", { userId: authSession.userId, username: authSession.username });
     broadcastToProject(project.id, { type: "sessionsChanged" });
     response.status(201).json({ session });
   } catch (error) {
@@ -157,8 +158,8 @@ app.post(["/api/cluster/sessions/fork", "/api/cluster/v2/runtime/sessions/fork"]
 
 const byTheWayCloseSchema = sessionForkSchema.extend({ token: z.string().uuid(), nodeId: z.string().uuid().optional() });
 
-async function createLocalByTheWay(project: ProjectRecord, engine: ConversationEngine, sessionId: string): Promise<{ session: SessionSummary; token: string }> {
-  const session = await forkLocalConversation(project, engine, sessionId, "[BTW]");
+async function createLocalByTheWay(project: ProjectRecord, engine: ConversationEngine, sessionId: string, viewer?: { userId: string; username: string }): Promise<{ session: SessionSummary; token: string }> {
+  const session = await forkLocalConversation(project, engine, sessionId, "[BTW]", viewer);
   try {
     const lease = await createByTheWayLease(project.id, session.harnessId, session.id);
     return { session, token: lease.token };
@@ -235,7 +236,8 @@ app.post("/api/projects/:projectId/sessions/by-the-way", async (request, respons
       response.status(routed.status).json(body);
       return;
     }
-    response.status(201).json(await createLocalByTheWay(project, payload.engine, payload.sessionId));
+    const authSession = response.locals.authSession as AuthSession;
+    response.status(201).json(await createLocalByTheWay(project, payload.engine, payload.sessionId, { userId: authSession.userId, username: authSession.username }));
   } catch (error) {
     if (error instanceof ConversationForkError || error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
     next(error);

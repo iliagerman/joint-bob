@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- `/bob-btw` and forks now work on pinned conversations older than the history window, and the side conversation no longer fails to load with "Unknown conversation harness".
+
 ## 2.13.9 — 2026-09-29
 
 - Low-confidence routing now falls back to the harness default model instead of keeping an outdated previous selection.
