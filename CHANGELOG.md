@@ -3,10 +3,6 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Added usage dashboard with cost badges, token and model breakdowns, subscription management, and preserved pricing attribution across conversation forks.
-
 ## 2.13.4 — 2026-09-29
 
 - Added an API-equivalent usage dashboard and project and conversation cost badges.
