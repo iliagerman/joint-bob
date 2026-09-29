@@ -7,12 +7,12 @@ import path from "node:path";
 import test from "node:test";
 import WebSocket from "ws";
 
-function waitFor(messages: Array<Record<string, unknown>>, predicate: () => boolean): Promise<void> {
+function waitFor(messages: Array<Record<string, unknown>>, predicate: () => boolean, timeoutMs = 4_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       clearInterval(timer);
       reject(new Error("Timed out waiting for WebSocket message"));
-    }, 4_000);
+    }, timeoutMs);
     const timer = setInterval(() => {
       if (!predicate()) return;
       clearInterval(timer);
@@ -91,7 +91,10 @@ console.log(JSON.stringify({ type: 'result', is_error: false }));
     second.close(); await new Promise<void>((resolve) => second!.once("close", resolve));
     const resumed = await connect(ws("claude:new", id), credentials.cookie); second = resumed.socket;
     assert.equal(resumed.messages.find((message) => message.type === "ready")!.sessionId, id, "reconnecting before a transcript exists must reuse the recorded draft");
-    second.send(JSON.stringify({ type: "prompt", message: "hello" })); await waitFor(resumed.messages, () => resumed.messages.some((message) => message.type === "agent_end"));
+    second.send(JSON.stringify({ type: "prompt", message: "hello" }));
+    // Ready still has its four-second bound. Starting and finishing the synthetic
+    // CLI is separate from reconnecting and needs headroom on a busy test host.
+    await waitFor(resumed.messages, () => resumed.messages.some((message) => message.type === "agent_end"), 15_000);
     const calls = (await readFile(process.env.JOINT_BOB_FAKE_CALLS!, "utf8")).trim().split("\n").map(JSON.parse);
     assert.equal(calls.length, 1); const index = calls[0].indexOf("--session-id"); assert.equal(calls[0][index + 1], id);
   } finally {
