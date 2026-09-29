@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.1 — 2026-09-29
 
 - Double-tapping the send button now sends the message instead of hiding the focus controls.
 
