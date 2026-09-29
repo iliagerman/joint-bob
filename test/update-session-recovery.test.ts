@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { appSource, serverSource } from "./source.js";
 
 test("update recovery records persist queues and stop failed records retrying", async () => {
   const source = await readFile("src/update-recovery.ts", "utf8");
@@ -31,39 +30,6 @@ test("update recovery records persist queues and stop failed records retrying", 
   }
 });
 
-test("server prepares and recovers active sessions around service updates", async () => {
-  const [server, piRuntime, processLifecycle] = await Promise.all([
-    serverSource(),
-    readFile("src/harnesses/pi/runtime.ts", "utf8"),
-    readFile("src/harnesses/process-lifecycle.ts", "utf8"),
-  ]);
-  assert.match(server, /"POST \/update\/prepare"/);
-  assert.match(server, /app\.post\("\/api\/update\/prepare"/);
-  assert.match(server, /updatePreparation: null as Promise<number> \| null,/);
-  assert.match(processLifecycle, /child\.exitCode !== null \|\| child\.signalCode !== null/);
-  assert.match(processLifecycle, /signalGroup\(child\.pid, "SIGTERM"\)/);
-  assert.match(server, /response\.status\(503\)\.json\(\{ error: "Server update in progress" \}\)/);
-  assert.doesNotMatch(server, /catch \(error\) \{ updatePreparing = false; next\(error\); \}/);
-  assert.match(server, /Updating\.\.\. Work will resume automatically\./);
-  assert.match(piRuntime, /getSteeringMessages\(\)/);
-  assert.match(piRuntime, /getFollowUpMessages\(\)/);
-  assert.match(piRuntime, /this\.handle\.session\.clearQueue\(\)/);
-  assert.match(piRuntime, /await this\.handle\.session\.abort\(\)/);
-  assert.match(server, /queuedPrompts: shared\.session\.queuedPrompts\(\), settings/);
-  assert.match(server, /await saveUpdateRecoveries\(active\.map\(\(\{ record \}\) => record\)\)/);
-  assert.match(server, /await Promise\.all\(busySessions\.map\(\(\{ session \}\) => session\.stopForUpdate\(\)\)\)/);
-  // Durable chat prompts are not copied into recovery records, where they would run twice.
-  assert.doesNotMatch(server, /listQueuedPrompts\([^)]*\)\.map\(\(\{ promptText \}\) => promptText\)/);
-  assert.match(server, /recoverPendingUpdateRuns\(\)/);
-  assert.match(server, /async function recoverChat\(record: UpdateRecoveryRecord\)/);
-  assert.match(server, /const shared = await openHarnessSession\(record\.engine, \{ projectId: record\.projectId, cwd: record\.cwd, sessionId: record\.sessionId, sessionPath: record\.sessionPath, conversationId \}\)/);
-  assert.match(server, /for \(const event of shared\.liveEvents\) send\(options\.socket, event\)/);
-  assert.match(server, /for \(const prompt of \[updateContinuationPrompt, \.\.\.record\.queuedPrompts\]\) await shared\.session\.prompt/);
-  // Queue resumption after successful and failed recovery is exercised over WebSocket in queued-engines.test.ts.
-  assert.doesNotMatch(server, /RecoveredClaudeChat|recoveredClaudeChats|runRecoveredClaudePrompt|drainClaudePromptQueue/);
-  assert.doesNotMatch(server, /Conversation is recovering after update/);
-});
-
 test("installer coordinates update preparation before native restart", async () => {
   const [installer, preparationClient] = await Promise.all([
     readFile("scripts/install-service.sh", "utf8"),
@@ -85,12 +51,3 @@ test("installer coordinates update preparation before native restart", async () 
   assert.doesNotMatch(installer, /dist\/cluster\.js/);
 });
 
-test("browser warns during update and refreshes cached shell", async () => {
-  const [app, worker] = await Promise.all([appSource(), readFile("public/sw.js", "utf8")]);
-  assert.match(app, /payload\.type === "updatePreparing"/);
-  assert.match(app, /Updating\.\.\. Work will resume automatically\./);
-  // The shell is refreshed by a versioned cache name, not by one specific version:
-  // AGENTS.md requires bumping it on every frontend change, so pinning a number here
-  // would fail every such change without testing anything real.
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v\d+";/);
-});

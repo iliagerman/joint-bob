@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { waitForDevNode } from "./dev-nodes.js";
+import { serverArgs } from "./server-entry.js";
 import { type ChildProcess, spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
@@ -116,11 +117,8 @@ export async function startServer(): Promise<{ server: Server; baseUrl: string }
 /** A real child process, so killing it is a real crash: no module-level state
  * survives to keep draining the queue the way an in-process close would. */
 export async function spawnNode(root: string, port: number, extraEnv: Record<string, string> = {}): Promise<ChildProcess> {
-  const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
-    cwd: process.cwd(),
-    env: { ...process.env, ...environment(root), PORT: String(port), JOINT_BOB_INSECURE_COOKIE: "1", ...extraEnv },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const env = { ...process.env, ...environment(root), PORT: String(port), JOINT_BOB_INSECURE_COOKIE: "1", ...extraEnv };
+  const child = spawn(process.execPath, serverArgs(env), { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
   return waitForDevNode(child, "queued prompt", `http://127.0.0.1:${port}`);
 }
 

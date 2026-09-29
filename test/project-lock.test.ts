@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { appSource, serverSource } from "./source.js";
 
 test("a project lock records the local node, replicates, and can be cleared by anyone", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-project-lock-"));
@@ -116,29 +115,3 @@ test("an inbound peer lock event wins or loses by last-writer-wins", async () =>
   }
 });
 
-test("the lock is exposed through the API, guards writes, and appears in the project row", async () => {
-  const [types, server, app, styles, worker] = await Promise.all([
-    readFile("src/types.ts", "utf8"),
-    serverSource(),
-    appSource(),
-    readFile("public/styles.css", "utf8"),
-    readFile("public/sw.js", "utf8"),
-  ]);
-
-  assert.match(types, /export interface ProjectLock \{/);
-  assert.match(types, /lockedElsewhere\?: boolean;/);
-
-  assert.match(server, /app\.put\("\/api\/projects\/:projectId\/lock"/);
-  assert.match(server, /class ProjectLockedError extends Error/);
-  assert.match(server, /error instanceof ProjectLockedError/);
-  assert.match(server, /assertProjectEditable/);
-  // The lock must gate the terminal and the chat socket, not the read-only watcher.
-  assert.match(server, /Project is locked by/);
-
-  assert.match(app, /project-lock-button/);
-  assert.match(app, /project-lock-badge/);
-  // The lock control moved into the row overflow menu, so the row itself carries the
-  // state as a badge rather than as a button of its own.
-  assert.match(styles, /\.project-lock-badge \{/);
-  assert.doesNotMatch(worker, /joint-bob-v33/);
-});

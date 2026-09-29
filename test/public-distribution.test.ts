@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { appSource } from "./source.js";
@@ -42,6 +42,8 @@ test("every PWA shell asset exists", async () => {
         : path.join("public", asset.slice(1));
     await access(assetPath);
   }
+  const modules = (await readdir("public/app", { recursive: true })).filter((file) => file.endsWith(".js")).map((file) => `/app/${file.split(path.sep).join("/")}`);
+  assert.deepEqual(modules.filter((module) => !shell.includes(module)), [], "every app module must be in the offline shell");
 });
 
 test("every referenced UI element is bound to the application shell before startup", async () => {

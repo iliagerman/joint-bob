@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import { serverArgs } from "./server-entry.js";
 
 // The auth check writes (it sweeps expired login sessions) on every authenticated
 // request. When another process holds the database write lock, that request must
@@ -20,7 +21,7 @@ test("an authenticated request waits out a database write lock instead of dying"
   try {
     await mkdir(homeDir, { recursive: true });
     let output = "";
-    child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
+    child = spawn(process.execPath, serverArgs(process.env), {
       cwd: path.resolve("."),
       env: { ...process.env, PORT: "0", HOME: homeDir, JOINT_BOB_DATA_DIR: dataDir, MASTER_BOB_ADMIN_USERNAME: "admin", MASTER_BOB_INITIAL_PASSWORD: "initial-password" },
       stdio: ["ignore", "pipe", "pipe"],

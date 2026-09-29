@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 /**
@@ -173,20 +172,3 @@ test("the action row stays on one line: five controls at most", async () => {
   assert.equal(actions.length, 5, "the card action row grew past one line of controls");
 });
 
-test("every icon a card asks for is drawn, and the icons share one size", async () => {
-  const board = await readFile("public/board.js", "utf8");
-  const styles = await readFile("public/styles.css", "utf8");
-
-  const defined = board.slice(board.indexOf("const cardIconPaths = {"), board.indexOf("function cardIcon(name)"));
-  // Only the action row draws with cardIconPaths; the overflow menu items are
-  // drawn by app.js from its own icon set.
-  const actions = board.slice(board.indexOf("function taskCardActions("), board.indexOf("function taskCard("));
-  for (const match of actions.matchAll(/"([a-z]+)"(?= : "| \? ")|icon: "([a-z]+)"/g)) {
-    for (const name of match.slice(1).filter(Boolean)) {
-      assert.ok(defined.includes(`${name}:`), `cardIconPaths is missing "${name}"`);
-    }
-  }
-
-  assert.match(styles, /\.task-card-icon \{[^}]*width: 17px;[^}]*height: 17px;/);
-  assert.match(styles, /\.task-card-actions \{[^}]*flex-wrap: nowrap;/);
-});

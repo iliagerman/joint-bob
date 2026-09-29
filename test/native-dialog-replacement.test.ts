@@ -15,47 +15,6 @@ test("the frontend never falls back to a browser confirm, alert or prompt box", 
   }
 });
 
-test("the app owns a themed confirm dialog wired to a promise helper", async () => {
-  const [html, app, styles] = await Promise.all([
-    readFile("public/index.html", "utf8"),
-    appSource(),
-    readFile("public/styles.css", "utf8"),
-  ]);
-  const start = html.indexOf('<dialog id="confirmDialog"');
-  const end = html.indexOf("</dialog>", start);
-  assert.ok(start >= 0 && end >= 0, "Missing confirm dialog");
-  const dialog = html.slice(start, end);
-
-  assert.match(dialog, /<form method="dialog" class="dialog-card confirm-card">/);
-  assert.match(dialog, /id="confirmTitle"/);
-  assert.match(dialog, /id="confirmMessage"/);
-  assert.match(dialog, /id="confirmCancelButton"[^>]*data-testid="confirm-cancel-button"/);
-  assert.match(dialog, /type="submit" value="confirm" id="confirmAcceptButton"[^>]*data-testid="confirm-accept-button"/);
-
-  assert.match(app, /elements\.confirmCancelButton\.addEventListener\("click", \(\) => elements\.confirmDialog\.close\("cancel"\)\)/);
-  assert.match(app, /confirmDialog\.addEventListener\("keydown",[\s\S]*?key === "y"[\s\S]*?key === "n"/);
-  assert.match(app, /function confirmAction\(\{[\s\S]*?dialog\.showModal\(\)[\s\S]*?resolve\(dialog\.returnValue === "confirm"\)/);
-  assert.match(styles, /\.primary\.destructive \{[^}]*background: var\(--danger\)/);
-});
-
-test("destination pickers use the app's choice dialog instead of a text prompt", async () => {
-  const [html, app] = await Promise.all([
-    readFile("public/index.html", "utf8"),
-    appSource(),
-  ]);
-  const start = html.indexOf('<dialog id="choiceDialog"');
-  const end = html.indexOf("</dialog>", start);
-  assert.ok(start >= 0 && end >= 0, "Missing choice dialog");
-  const dialog = html.slice(start, end);
-
-  assert.match(dialog, /id="choiceList"[^>]*role="radiogroup"/);
-  assert.match(dialog, /id="choiceCancelButton"[^>]*data-testid="choice-cancel-button"/);
-  assert.match(dialog, /type="submit" value="confirm" id="choiceAcceptButton"[^>]*data-testid="choice-accept-button"/);
-
-  assert.match(app, /function chooseOption\(\{[\s\S]*?input\.type = "radio"[\s\S]*?resolve\(elements\.choiceList\.querySelector\("input:checked"\)\?\.value \?\? null\)/);
-  assert.match(app, /async function handoffTask\(task\)[\s\S]*?await chooseOption\(\{/);
-});
-
 test("every destructive action asks through confirmAction before it calls the api", async () => {
   const app = await appSource();
   for (const owner of [

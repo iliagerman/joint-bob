@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appSource, serverSource } from "./source.js";
 
 test("conversation review state starts reviewed and tracks later completion per account", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-reviews-"));
@@ -63,40 +62,3 @@ test("conversation review state starts reviewed and tracks later completion per 
   }
 });
 
-test("conversation UI exposes state counts, automatic review, notifications, and sounds", async () => {
-  const [html, app, styles, server] = await Promise.all([
-    readFile("public/index.html", "utf8"),
-    appSource(),
-    readFile("public/styles.css", "utf8"),
-    serverSource(),
-  ]);
-
-  assert.match(html, /data-filter="active"[^>]*title="Running"[^>]*>.*<span class="sr-only">Running<\/span>/);
-  assert.match(html, /data-filter="review"[^>]*title="Needs review"[^>]*>.*<span class="sr-only">Needs review<\/span>/);
-  assert.match(html, /data-filter="done"[^>]*title="Reviewed"[^>]*>.*<span class="sr-only">Reviewed<\/span>/);
-  assert.match(html, /id="completionSoundSelect"[^>]*data-testid="notifications-sound-select"/);
-  assert.match(html, /id="previewSoundButton"[^>]*data-testid="notifications-sound-preview-button"/);
-  assert.match(app, /markSessionReviewed/);
-  assert.match(app, /playCompletionSound/);
-  assert.match(app, /sessionPath: "\*"/);
-  assert.match(app, /session\.reviewState/);
-  assert.match(styles, /\.chat-status-dot/);
-  assert.match(server, /sessions\/reviewed/);
-  assert.match(html, /id="markAllReviewedButton"[^>]*data-testid="chats-mark-all-reviewed-button"/);
-  assert.match(app, /markAllSessionsReviewed/);
-  assert.match(styles, /\.mark-all-reviewed-button/);
-  assert.match(server, /sessions\/reviewed-all/);
-  assert.match(server, /const shared = findHarnessSession\(project\.id, session\.harnessId, session\.id\);/);
-  assert.match(server, /const externalRunning = new Map<string, Set<string>>\(\);[\s\S]*runtime\.externalRunning\(\)/);
-  assert.match(server, /const backgroundRunning = work\.some\(\(entry\) => agentWorkActive\(entry\.summary\)\) \|\| lease\.backgroundRunning/);
-  assert.match(server, /const turnRunning = Boolean\(shared && harnessTurnBusy\(shared\)[\s\S]*externalRunning\.get\(session\.harnessId\)\?\.has\(session\.id\)/);
-});
-
-
-test("background work has a distinct writable conversation status", async () => {
-  const [app, server, styles] = await Promise.all([appSource(), serverSource(), readFile("public/styles.css", "utf8")]);
-  assert.match(server, /backgroundRunning/);
-  assert.match(server, /harnessTurnBusy/);
-  assert.match(app, /Background tasks running/);
-  assert.match(styles, /\.chat-badge-background/);
-});

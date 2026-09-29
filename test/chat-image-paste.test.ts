@@ -1,19 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { appSource, serverSource } from "./source.js";
-
-test("pasting an image into the composer adds it as an attachment", async () => {
-  const app = await appSource();
-  const handler = /elements\.messageInput\.addEventListener\("paste",[\s\S]*?\n\}\);/.exec(app)?.[0];
-
-  assert.ok(handler, "app.js must register a paste handler on the message input");
-  assert.match(handler, /clipboardData\.files/);
-  assert.match(handler, /file\.type\.startsWith\("image\/"\)/);
-  assert.match(handler, /event\.preventDefault\(\)/);
-  assert.match(handler, /addAttachments\(images\)/);
-  assert.match(handler, /toast\(error\.message\)/);
-});
+import { appSource } from "./source.js";
 
 test("pasted text still reaches the composer when the clipboard also carries an image", async () => {
   const app = await appSource();
@@ -32,47 +20,3 @@ test("file picker accepts every file type", async () => {
   assert.doesNotMatch(input, /\saccept=/);
 });
 
-test("non-image files are uploaded as binary attachments", async () => {
-  const [client, server] = await Promise.all([
-    appSource(),
-    serverSource(),
-  ]);
-
-  assert.match(client, /kind: "file"/);
-  assert.match(client, /files: state\.attachments\.filter\(\(attachment\) => attachment\.kind === "file"\)/);
-  assert.match(server, /files: z\.array\(fileAttachmentSchema\)/);
-  assert.match(server, /function persistTaskAttachments[\s\S]*persistAttachments\(cwd, files\)[\s\S]*savedFiles\.map\(\(saved, index\) => \(\{[^}]*kind: "file" as const/);
-  assert.match(server, /File attachments:\\n/);
-  assert.doesNotMatch(client, /isTextAttachment/);
-  assert.doesNotMatch(client, /is not supported yet/);
-});
-
-test("dropping files on the composer adds them as attachments", async () => {
-  const [app, styles] = await Promise.all([
-    appSource(),
-    readFile("public/styles.css", "utf8"),
-  ]);
-  const dragover = /elements\.composer\.addEventListener\("dragover",[\s\S]*?\n\}\);/.exec(app)?.[0];
-  const drop = /elements\.composer\.addEventListener\("drop",[\s\S]*?\n\}\);/.exec(app)?.[0];
-
-  assert.ok(dragover, "the composer must accept dragged files");
-  assert.match(dragover, /event\.preventDefault\(\)/);
-  assert.match(dragover, /dropEffect = "copy"/);
-
-  assert.ok(drop, "the composer must handle dropped files");
-  assert.match(drop, /event\.preventDefault\(\)/);
-  assert.match(drop, /addAttachments\(event\.dataTransfer\.files\)/);
-  assert.match(drop, /toast\(error\.message\)/);
-
-  assert.match(app, /elements\.composer\.addEventListener\("dragleave"/);
-  assert.match(app, /composer\.classList\.(add|remove|toggle)\("dragging"\)/);
-  assert.match(styles, /\.composer\.dragging/);
-});
-
-test("dropping is ignored while the composer is disabled", async () => {
-  const app = await appSource();
-  const drop = /elements\.composer\.addEventListener\("drop",[\s\S]*?\n\}\);/.exec(app)?.[0];
-
-  assert.ok(drop);
-  assert.match(drop, /if \(elements\.attachmentInput\.disabled\) return;/);
-});

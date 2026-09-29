@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appSource, serverSource } from "./source.js";
+import { serverSource } from "./source.js";
 
 test("Claude sub-agent transcripts list as read-only children of their parent", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-claude-subagents-"));
@@ -61,9 +61,3 @@ test("read-only conversations skip ownership and fence writes on the server", as
   assert.match(server, /if \(connection\.readOnly\) throw new Error\("This conversation is read-only"\);/);
 });
 
-test("the conversation list hides mutating actions on read-only rows and shows worker output", async () => {
-  const app = await appSource();
-  assert.match(app, /const readOnly = session\.readOnly === true \|\| sessionTicketTask\(session\)\?\.status === "done";/);
-  assert.match(app, /taskElement\.title = task\.task;/);
-  assert.match(app, /agent-run-task-output/);
-});

@@ -4,6 +4,7 @@ import { normalizeUsageRecords } from "../src/usage-import.js";
 import { priceUsage } from "../src/usage-pricing.js";
 import { modelCostToPricing } from "../src/pi-service.js";
 import { usageEventSchema, usagePricingSchema } from "../src/usage-types.js";
+import { subscriptionPlanInputSchema } from "../src/subscription-usage.js";
 
 const context = { projectId: "project", conversationId: "conversation", createdAt: "2025-01-01T00:00:00.000Z" };
 const catalog = () => ({ rates: { input: 3, output: 15, cacheRead: .3, cacheWrite5m: 3.75, cacheWrite1h: 6 }, pricing: { source: "runtime-catalog", capturedAt: "2025-01-01T00:00:00.000Z", rates: { input: 3, output: 15, cacheRead: .3, cacheWrite5m: 3.75, cacheWrite1h: 6 } } });
@@ -62,3 +63,21 @@ test("copied origin markers are excluded but ordinary records remain attributabl
   const copied = normalizeUsageRecords("pi", "copy", [{ jointBobUsageOrigin: { sessionId: "old" }, message: { role: "assistant", usage: { input: 1, output: 1 } } }], context);
   assert.equal(copied.length, 0); assert.equal(pi({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }).sessionId, "session");
 });
+test("Claude repeated blocks count once and preserve cache TTLs",()=>{const records=[1,2].map(output=>({type:"assistant",message:{id:"request",role:"assistant",model:"claude-x",usage:{input_tokens:10,output_tokens:output,cache_read_input_tokens:3,cache_creation_input_tokens:6,cache_creation:{ephemeral_5m_input_tokens:2,ephemeral_1h_input_tokens:4}}}}));const events=normalizeUsageRecords("claude","s",records,context);assert.equal(events.length,1);assert.equal(events[0].output,2);assert.equal(events[0].cacheWrite1h,4);});
+
+function records(count: number) {
+  return Array.from({ length: count }, (_, index) => ({ timestamp: 1735689600000 + index,
+    message: { role: "assistant", responseId: `response-${index}`, provider: "synthetic", model: "fixture",
+      usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: .1 } } } }));
+}
+
+test("normalizer handles more than one ingestion page without dropping requests", () => {
+  const first = normalizeUsageRecords("pi", "session", records(63), context);
+  const repeated = normalizeUsageRecords("pi", "session", records(63), context);
+  const appended = normalizeUsageRecords("pi", "session", records(64), context);
+  assert.equal(first.length, 63); assert.equal(new Set(first.map((event) => event.id)).size, 63);
+  assert.deepEqual(repeated.map((event) => event.id), first.map((event) => event.id));
+  assert.equal(appended.length, 64); assert.ok(Math.abs(appended.reduce((sum, event) => sum + (event.apiCostUsd ?? 0), 0) - 6.4) < 1e-12);
+});
+test("subscription price is explicit and unknown cannot become zero",()=>{assert.throws(()=>subscriptionPlanInputSchema.parse({provider:"anthropic",accountLabel:"a",planName:"Pro",renewalAt:null,quotaWindows:[],status:"available",source:"manual"}));const plan=subscriptionPlanInputSchema.parse({provider:"anthropic",accountLabel:"a",planName:"Pro",price:{amount:20,currency:"usd",billingPeriod:"month"},renewalAt:null,quotaWindows:[],status:"available",source:"manual"});assert.equal(plan.price.amount,20);assert.equal(plan.price.currency,"USD");});
+test("quota remaining must be derived",()=>assert.throws(()=>subscriptionPlanInputSchema.parse({provider:"x",accountLabel:"a",planName:"p",price:{amount:0,currency:"USD",billingPeriod:"month"},renewalAt:null,status:"available",source:"manual",quotaWindows:[{id:"w",label:"window",used:2,limit:10,remaining:9,unit:"requests",resetsAt:null,capturedAt:"2025-01-01T00:00:00.000Z",source:"manual"}]})));

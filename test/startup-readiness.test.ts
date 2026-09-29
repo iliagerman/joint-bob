@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { appVersion } from "../src/changelog.js";
+import { serverArgs } from "./server-entry.js";
 
 interface SyncthingFixture {
   port: number;
@@ -68,7 +69,7 @@ async function unusedPort(): Promise<number> {
 
 function startServer(dataDir: string, port: number, syncthingPort: number): { child: ChildProcess; output: () => string } {
   let output = "";
-  const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
+  const child = spawn(process.execPath, serverArgs(process.env), {
     env: {
       ...process.env,
       HOME: path.join(dataDir, "home"),

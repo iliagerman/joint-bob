@@ -10,6 +10,7 @@ import WebSocket from "ws";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { sessionSafeguardsEnabled, sessionToolSelection } from "../src/pi-service.js";
 import { openPiRuntimeDatabase, publishPiRuntime } from "../src/pi-runtime.js";
+import { queuedSettingsSchema } from "../src/prompt-queue.js";
 import type { SessionSummary } from "../src/types.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 
@@ -377,4 +378,9 @@ test("malformed transcripts fail without publishing a partial fork", async () =>
     const result = await fork(source);
     assert.equal(result.status, 409);
   } finally { await writeFile(source.path, before); }
+});
+
+test("saved conversation settings retain Claude tool restrictions for a fork", () => {
+  const settings = { provider: "claude", modelId: "sonnet", reasoning: "high", claudeTools: { available: ["Read", "Bash"], enabled: ["Read"] } };
+  assert.deepEqual(queuedSettingsSchema.parse(settings), settings);
 });

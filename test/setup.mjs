@@ -1,6 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { enableCompileCache } from "node:module";
 import os from "node:os";
 import path from "node:path";
+
+// V8 bytecode cache shared by every test process and the nodes they spawn; it only skips recompiling unchanged modules.
+process.env.NODE_COMPILE_CACHE ??= path.join(os.tmpdir(), "joint-bob-test-compile-cache");
+enableCompileCache(process.env.NODE_COMPILE_CACHE);
 
 const testHome = mkdtempSync(path.join(os.tmpdir(), "joint-bob-test-runner-"));
 // Pin Playwright's browser cache to the real home before HOME is redirected: browser detection

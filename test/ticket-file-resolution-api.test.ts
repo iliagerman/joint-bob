@@ -5,6 +5,7 @@ import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { serverArgs } from "./server-entry.js";
 
 interface StartedNode { baseUrl: string; child: ChildProcess; homeDir: string; output: () => string; }
 
@@ -42,7 +43,7 @@ async function startNode(root: string, syncthingUrl: string): Promise<StartedNod
   const homeDir = path.join(root, "home");
   await mkdir(homeDir, { recursive: true });
   let output = "";
-  const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
+  const child = spawn(process.execPath, serverArgs(process.env), {
     cwd: path.resolve("."),
     env: { ...process.env, PORT: "0", HOME: homeDir, PI_WEB_DATA_DIR: path.join(root, "data"), MASTER_BOB_ADMIN_USERNAME: "admin", MASTER_BOB_INITIAL_PASSWORD: "initial-password", PI_MOBILE_WEB_SYNCTHING_URL: syncthingUrl, PI_MOBILE_WEB_SYNCTHING_API_KEY: "test-key" },
     stdio: ["ignore", "pipe", "pipe"],

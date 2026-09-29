@@ -51,7 +51,7 @@ homeserver.
 Run a single file while iterating:
 
 ```bash
-npm run test:file test/canvas-ui.test.ts
+npm run test:file test/canvas-layout.test.ts
 ```
 
 Focused harness boundary checks:

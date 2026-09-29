@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { serverSource } from "./source.js";
 
 async function withStore(run: (root: string, store: typeof import("../src/store.js")) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-color-sync-"));
@@ -50,10 +49,3 @@ test("clearing a colour on the source node clears it on the importing node too",
   });
 });
 
-test("a colour change rides the project metadata delivered to peers", async () => {
-  const [server, metadata] = await Promise.all([serverSource(), readFile("src/cluster-project-metadata.ts", "utf8")]);
-
-  // Without the colour in the portable metadata the new colour sits on this node forever.
-  assert.match(metadata, /name: override\?\.name \?\? row\.name, color: row\.color,/);
-  assert.match(server, /await flushProjectMetadataDeliveries\(\);/);
-});

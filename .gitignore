@@ -113,3 +113,4 @@ aidlc/diagnostics/
 # aidlc/spaces/*/intents/*/<phase>/<stage>/*.md (artifacts + diary).
 .claude/settings.local.json
 # END AWS AI-DLC v2
+/.test-build-*/

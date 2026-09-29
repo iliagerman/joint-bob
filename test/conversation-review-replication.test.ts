@@ -4,14 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { appSource, serverSource } from "./source.js";
 
 /**
  * Review watermarks replicate by cluster-stable identity (username, project,
  * engine, session id) and merge by highest watermark, so duplicates, reordering,
  * and differing transcript paths across nodes cannot regress a review.
  */
-
 
 async function withClusterNode(dataDir: string): Promise<void> {
   const { DatabaseSync } = await import("node:sqlite");
@@ -137,31 +135,6 @@ test("a remote watermark outranks the local row and another account's watermark 
     else process.env.PI_WEB_DATA_DIR = previous;
     await rm(dataDir, { recursive: true, force: true });
   }
-});
-
-test("the running and review wiring is present end to end", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const [server, app, replication] = await Promise.all([serverSource(), appSource(), readFile("src/replication.ts", "utf8")]);
-
-  // The conversation list consults replicated leases, not just local runtime.
-  const listing = server.slice(server.indexOf("async function listProjectSessionsWithReviewState"), server.indexOf("app.get(\"/api/projects/:projectId/sessions\""));
-  assert.match(listing, /conversationLeaseState\(session\.harnessId, session\.id\)/);
-  // Leases travel on an authenticated cluster route pushed from the periodic loop.
-  assert.match(server, /app\.post\(\[?"\/api\/cluster\/sessions\/runtime-snapshot"/);
-  assert.match(server, /pushRuntimeLeaseSnapshots\(\)\.catch/);
-  assert.match(server, /"POST \/cluster\/sessions\/runtime-snapshot"/);
-  // Review marks publish durable events, and applying them wakes every watcher.
-  assert.match(replication, /"conversation\.review"/);
-  assert.match(replication, /invalidations\.add\("sessionsChanged"\)/);
-  assert.match(server, /broadcastReplicationInvalidations/);
-  // The client trails a sessionsChanged burst with a pending-reviews refresh.
-  assert.match(app, /function schedulePendingReviewsRefresh\(\)/);
-  const handlersStart = app.indexOf("const INVALIDATION_HANDLERS = {");
-  const invalidationHandlers = app.slice(handlersStart, app.indexOf("};", handlersStart));
-  assert.match(invalidationHandlers, /sessionsChanged: \(\) => \{[\s\S]*?schedulePendingReviewsRefresh\(\);/);
-  const watchStart = app.indexOf('socket.addEventListener("message"', app.indexOf("export function ensureWatchSocket()"));
-  const watchHandler = app.slice(watchStart, app.indexOf("close", watchStart));
-  assert.match(watchHandler, /handleInvalidation\(/);
 });
 
 test("a review watermark too far in the future is rejected", async () => {

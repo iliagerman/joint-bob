@@ -3,6 +3,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import path from "node:path";
+import { serverArgs } from "./server-entry.js";
 
 export interface SeededNode {
   key: string;
@@ -59,24 +60,21 @@ export async function seedDevEnvironment(root: string, nodeCount: 1 | 2): Promis
 export function startDevNode(environment: DevEnvironment, node: SeededNode, extraEnv: Record<string, string> = {}): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const installStub = Boolean(extraEnv.JOINT_BOB_TEST_ENGINE_LOG || process.env.JOINT_BOB_TEST_ENGINE_LOG);
-    const child = spawn(process.execPath, ["--import", "tsx", ...(installStub ? ["--import", "./test/stub-harness-bootstrap.ts"] : []), "src/server.ts"], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        PORT: String(node.port),
-        NODE_ENV: "test",
-        HOME: environment.home,
-        JOINT_BOB_DATA_DIR: node.dataDir,
-        // What `scripts/dev-local.sh` sets, so the tests exercise the same
-        // configuration a developer's browser talks to.
-        JOINT_BOB_SESSION_COOKIE: node.cookieName,
-        JOINT_BOB_INSECURE_COOKIE: "1",
-        // A developer shell may export a real release commit; tests always run as a checkout unless they say otherwise.
-        JOINT_BOB_RELEASE: "development",
-        ...extraEnv,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const env = {
+      ...process.env,
+      PORT: String(node.port),
+      NODE_ENV: "test",
+      HOME: environment.home,
+      JOINT_BOB_DATA_DIR: node.dataDir,
+      // What `scripts/dev-local.sh` sets, so the tests exercise the same
+      // configuration a developer's browser talks to.
+      JOINT_BOB_SESSION_COOKIE: node.cookieName,
+      JOINT_BOB_INSECURE_COOKIE: "1",
+      // A developer shell may export a real release commit; tests always run as a checkout unless they say otherwise.
+      JOINT_BOB_RELEASE: "development",
+      ...extraEnv,
+    };
+    const child = spawn(process.execPath, serverArgs(env, installStub ? ["./test/stub-harness-bootstrap.ts"] : []), { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
     waitForDevNode(child, node.key, node.url).then(resolve, reject);
   });
 }

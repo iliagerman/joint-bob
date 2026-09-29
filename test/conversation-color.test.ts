@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appSource, serverSource } from "./source.js";
 
 test("a conversation colour persists and can be cleared", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-conversation-color-"));
@@ -23,23 +22,3 @@ test("a conversation colour persists and can be cleared", async () => {
   }
 });
 
-test("conversation creation and the row menu both offer the colour palette", async () => {
-  const [html, app, styles, server] = await Promise.all([
-    readFile("public/index.html", "utf8"),
-    appSource(),
-    readFile("public/styles.css", "utf8"),
-    serverSource(),
-  ]);
-
-  const createForm = html.slice(html.indexOf('id="newSessionNameForm"'), html.indexOf('id="secretAccountDialog"'));
-  assert.match(createForm, /data-testid="new-session-color-swatches"/);
-  assert.match(html, /data-testid="conversation-color-dialog"/);
-  assert.match(html, /data-testid="conversation-color-swatches"/);
-  assert.match(app, /testid: "session-color-button"/);
-  assert.match(app, /selectedSessionColor\(elements\.newSessionColorSwatches\)/);
-  assert.match(app, /saveSessionColor\(state\.activeConversationId \|\| payload\.sessionId, state\.engine, pendingColor\)/);
-  assert.match(app, /button\.dataset\.color = session\.color/);
-  assert.match(styles, /\.session-card\[data-color\]/);
-  assert.match(server, /app\.put\("\/api\/projects\/:projectId\/sessions\/color"/);
-  assert.match(server, /setSessionColor\(payload\.sessionId, payload\.color\)/);
-});

@@ -57,6 +57,10 @@ test("project file references resolve only within their project", async () => {
     const codeInBrowser = await fetch(`${baseUrl}/api/projects/${project.id}/file?path=src/config.ts&browser=1`, { headers });
     assert.match(codeInBrowser.headers.get("content-security-policy") ?? "", /script-src 'self'/);
     assert.match(await codeInBrowser.text(), /file-view\.js/);
+    // Only a canvas pane may be framed, and only by the app itself.
+    assert.equal((await fetch(`${baseUrl}/?canvasPane=1`, { headers })).headers.get("x-frame-options"), "SAMEORIGIN");
+    assert.equal((await fetch(`${baseUrl}/`, { headers })).headers.get("x-frame-options"), "DENY");
+    assert.equal((await fetch(`${baseUrl}/api/projects`, { headers })).headers.get("x-frame-options"), "DENY");
 
     await mkdir(path.join(projectPath, "a"), { recursive: true });
     await mkdir(path.join(projectPath, "b"), { recursive: true });

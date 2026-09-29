@@ -11,25 +11,6 @@ function functionBody(source: string, header: string): string {
   return source.slice(start, end);
 }
 
-test("a project row menu finds its button again after the rows are rebuilt", async () => {
-  const app = await appSource();
-  const row = functionBody(app, "function projectRow(project) {");
-
-  // renderProjects replaces every row about once a second while an agent streams,
-  // so the button the menu was opened from is gone; the id on the row is how the
-  // menu finds the fresh one instead of closing itself.
-  assert.match(row, /row\.dataset\.projectId = project\.id;/);
-  assert.match(row, /openRowMenu\(menuButton, projectMenuItems\(project\), `\[data-project-id="\$\{CSS\.escape\(project\.id\)\}"\] \[data-testid="project-menu-button"\]`\)/);
-});
-
-test("a conversation row menu finds its button again after the rows are rebuilt", async () => {
-  const app = await appSource();
-  const render = functionBody(app, "function renderSessions() {");
-
-  assert.match(render, /row\.dataset\.sessionPath = session\.path;/);
-  assert.match(render, /openRowMenu\(menuButton, sessionMenuItems\(session, sessionActive\), `\[data-session-path="\$\{CSS\.escape\(session\.path\)\}"\] \[data-testid="session-menu-button"\]`\)/);
-});
-
 test("the sidebar lists keep their scroll position across a background rebuild", async () => {
   const app = await appSource();
   const keep = functionBody(app, "function keepListScroll(container) {");

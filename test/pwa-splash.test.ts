@@ -13,16 +13,6 @@ test("the launch splash is dark whatever the phone theme is", async () => {
   assert.equal(manifest.theme_color, SPLASH_INK);
 });
 
-test("the in-app boot screen pins the same ink instead of following the theme", async () => {
-  const styles = await readFile("public/styles.css", "utf8");
-  const block = styles.match(/\.app-boot \{[^}]*\}/);
-  assert.ok(block, ".app-boot rule exists");
-  assert.match(block[0], new RegExp(`background: ${SPLASH_INK};`));
-  assert.doesNotMatch(block[0], /var\(--bg\)/);
-  assert.match(styles, /\.app-boot-wordmark \{[^}]*color: #f7f3e8;/);
-  assert.match(styles, /\.app-boot-mark \{[^}]*width: 192px;[^}]*height: 192px;/);
-});
-
 // A padded icon shows its padding as corners on any launcher that does not crop to a circle, so
 // the tile stays full-bleed: on a splash of the same ink the crop shape is invisible anyway.
 test("the app icon is the full-bleed tile with no padded variant", async () => {

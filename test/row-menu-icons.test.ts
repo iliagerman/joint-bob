@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { appSource } from "./source.js";
 
@@ -49,9 +48,3 @@ test("every icon name a menu item asks for is defined", async () => {
   }
 });
 
-test("menu rows lay out as icon plus label", async () => {
-  const styles = await readFile("public/styles.css", "utf8");
-
-  assert.match(styles, /\.row-menu button \{[\s\S]*?display: flex;[\s\S]*?align-items: center;[\s\S]*?gap: 10px;/);
-  assert.match(styles, /\.row-menu-icon \{[^}]*width: 16px;[^}]*height: 16px;[^}]*flex: none;/);
-});

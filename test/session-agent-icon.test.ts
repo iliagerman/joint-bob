@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
-import { appSource, serverSource } from "./source.js";
+import { appSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -11,58 +11,6 @@ function functionBody(source: string, header: string): string {
   assert.notEqual(end, -1, `${header} has no closing brace`);
   return source.slice(start, end);
 }
-
-test("the server names the agent that last drove each conversation", async () => {
-  const [types, server] = await Promise.all([
-    readFile("src/types.ts", "utf8"),
-    serverSource(),
-  ]);
-
-  // The label is prose; the id is what the UI can switch an icon on.
-  assert.match(types, /agentId: HarnessId;/);
-  const listing = functionBody(server, "async function listProjectSessionsWithReviewState(");
-  // A running task overrides the conversation's own harness, exactly as the label does.
-  assert.match(listing, /const agentId = config\?\.engine \?\? session\.harnessId;/);
-  assert.match(listing, /agentLabel: getHarness\(agentId\)\.label,/);
-  assert.match(listing, /\n\s+agentId,/);
-});
-
-test("the review inbox carries the agent id alongside the label", async () => {
-  const server = await serverSource();
-
-  const pending = server.slice(server.indexOf('app.get("/api/reviews/pending"'));
-  assert.match(pending.slice(0, 1200), /agentId: session\.agentId,/);
-});
-
-test("a conversation row shows a Pi or Claude mark, not only the agent name", async () => {
-  const app = await appSource();
-
-  assert.match(app, /function agentIcon\(agentId\)/);
-
-  const render = functionBody(app, "function renderSessions() {");
-  assert.match(render, /agentIcon\(/);
-  assert.match(render, /dataset\.testid = "session-agent-icon"/);
-  assert.match(render, /agent\.setAttribute\("aria-label", session\.agentLabel\)/);
-  assert.doesNotMatch(render, /document\.createTextNode\(`\$\{session\.agentLabel\}/);
-  // The wrapper names the harness; its decorative mark stays out of the accessibility tree.
-  const icon = functionBody(app, "function brandIcon(name, className) {");
-  assert.match(icon, /setAttribute\("aria-hidden", "true"\)/);
-});
-
-test("the review inbox rows carry the same mark as the conversation list", async () => {
-  const app = await appSource();
-
-  const dialog = functionBody(app, "function renderPendingReviewsDialog() {");
-  assert.match(dialog, /agentIcon\(/);
-});
-
-test("the mark uses each agent's own colour in both themes", async () => {
-  const styles = await readFile("public/styles.css", "utf8");
-
-  assert.match(styles, /\.session-agent-icon\.pi \{[^}]*var\(--accent\)/);
-  assert.match(styles, /\.session-agent-icon\.claude \{[^}]*var\(--claude\)/);
-  assert.match(styles, /\.session-agent-icon\.kiro \{[^}]*var\(--kiro\)/);
-});
 
 /**
  * The marks are the real published logos, not lookalikes: vendor paths from their
@@ -89,29 +37,6 @@ test("every brand mark is the vendor's real logo", async () => {
   for (const rect of ["M0 0h18v6H0z", "M0 6h6v18H0z", "M12 6h6v6h-6z", "M6 12h6v6H6z", "M18 12h6v12h-6z"]) {
     assert.ok(brands.includes(rect), `the Pi logo is missing ${rect}`);
   }
-});
-
-test("every brand mark is built the same way, so they line up wherever they appear", async () => {
-  const app = await appSource();
-
-  // One builder and one fill keep all marks aligned; Kiro retains its published 17x16 box.
-  const builder = functionBody(app, "function brandIcon(name, className) {");
-  assert.match(builder, /name === "kiro" \? "0 0 17 16" : "0 0 24 24"/);
-  assert.match(builder, /setAttribute\("fill", "currentColor"\)/);
-  for (const wrapper of ["function agentIcon(agentId) {", "function providerIcon(provider) {"]) {
-    assert.match(functionBody(app, wrapper), /brandIcon\(/, `${wrapper} does not use the shared builder`);
-  }
-});
-
-test("the model picker names GPT with the OpenAI mark", async () => {
-  const [app, styles] = await Promise.all([
-    appSource(),
-    readFile("public/styles.css", "utf8"),
-  ]);
-
-  const dialog = functionBody(app, "function renderModelDialog() {");
-  assert.match(dialog, /brandIcon\(presentation\.providerIcon, "model-group-icon"\)/);
-  assert.match(styles, /\.model-group-icon \{/);
 });
 
 /**

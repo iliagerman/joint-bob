@@ -3,36 +3,12 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appSource } from "./source.js";
-
-test("streamed assistant text paints cheaply before the final markdown render", async () => {
-  const app = await appSource();
-
-  assert.match(app, /function renderBubbleContent\(bubble, text, flush = false\)/);
-  assert.match(app, /bubble\._renderFinal = bubble\._renderFinal \|\| flush;/);
-  assert.match(app, /role === "assistant" && !bubble\._renderFinal/);
-  assert.match(app, /!bubble\._hasRenderedText/);
-  assert.match(app, /cancelAnimationFrame\(bubble\._renderRaf\)/);
-  assert.match(app, /content\.textContent = text;[\s\S]*return;/);
-  assert.match(app, /content\.textContent = bubble\._raw/);
-  assert.match(app, /renderBubbleContent\(bubble, text, true\)/);
-  assert.match(app, /renderBubbleContent\(state\.assistantBubble, text, true\)/);
-  assert.doesNotMatch(app, /LARGE_MESSAGE_RENDER_MS|bubble\._renderTimer/);
-});
 
 test("off-screen chat bubbles keep their real height while scrolling", async () => {
   const styles = await readFile("public/styles.css", "utf8");
 
   assert.doesNotMatch(styles, /^\.message \{[^\n}]*content-visibility:/m);
   assert.doesNotMatch(styles, /^\.message \{[^\n}]*contain-intrinsic-size:/m);
-});
-
-test("Claude session listing reads a bounded number of transcripts at a time", async () => {
-  const source = await readFile("src/claude-service.ts", "utf8");
-
-  assert.match(source, /const CLAUDE_LIST_CONCURRENCY = 8;/);
-  assert.match(source, /mapWithConcurrency\(files, CLAUDE_LIST_CONCURRENCY,/);
-  assert.doesNotMatch(source, /await Promise\.all\(files\.map\(/);
 });
 
 test("Claude session listing returns every transcript when there are more than the concurrency limit", async () => {

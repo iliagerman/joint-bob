@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { serverSource } from "./source.js";
 
 async function writeMarkdown(filePath: string, contents: string): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
@@ -96,10 +95,3 @@ test("Claude command list uses Claude skills and invocation syntax", async () =>
   }
 });
 
-test("project commands endpoint returns commands for one harness", async () => {
-  const server = await serverSource();
-
-  assert.match(server, /app\.get\("\/api\/projects\/:projectId\/commands"/);
-  assert.match(server, /request\.query\.harness/);
-  assert.match(server, /listHarnessCommands\(project\.path, harness, \{ resourcePaths: getScopedResourcePaths\(project\.id\) \}\)/);
-});

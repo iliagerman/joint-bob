@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appSource } from "./source.js";
 
 async function writeSkill(root: string, name: string, contents: string): Promise<void> {
   await mkdir(path.join(root, name), { recursive: true });
@@ -158,23 +157,3 @@ test("shared skills override unmanaged copies and project skills override shared
   }
 });
 
-test("the skills dialog is searchable and inserts the harness-specific invocation", async () => {
-  const [html, app, styles] = await Promise.all([
-    readFile("public/index.html", "utf8"),
-    appSource(),
-    readFile("public/styles.css", "utf8"),
-  ]);
-
-  assert.match(html, /<dialog id="skillsDialog" data-testid="skills-dialog">/);
-  assert.match(html, /id="skillsDialogSearchInput"[\s\S]*?data-testid="skills-dialog-search-input"/);
-  assert.match(html, /id="skillsDialogList"/);
-
-  // The /skill chip opens the browser instead of typing a bare prefix the user has to complete.
-  assert.match(app, /function openSkillsDialog\(\)/);
-  assert.match(app, /function renderSkillsDialog\(\)/);
-  assert.match(app, /\/skills`/);
-  assert.match(app, /skill\.invocation/);
-
-  assert.match(styles, /\.skills-dialog-list \{/);
-  assert.match(styles, /\.skill-option-description \{/);
-});

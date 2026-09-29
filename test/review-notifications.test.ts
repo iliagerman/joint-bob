@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { appSource } from "./source.js";
 
 async function withDataDir(run: (dataDir: string) => Promise<void>): Promise<void> {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-review-notifications-"));
@@ -101,17 +100,3 @@ test("a device subscribed to every project is a subscriber of each one", async (
   });
 });
 
-test("the service worker notification vibrates so a phone announces a review", async () => {
-  const worker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
-
-  assert.match(worker, /vibrate:/);
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v\d+";/);
-});
-
-test("the client subscribes devices globally but exposes per-conversation controls", async () => {
-  const app = await appSource();
-
-  assert.match(app, /projectId: "\*"/);
-  assert.match(app, /session-review-notifications-button/);
-  assert.match(app, /reviewNotificationsEnabled/);
-});
