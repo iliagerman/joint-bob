@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Agent commands no longer show Node.js SQLite experimental warnings in their output.
+
 ## 2.13.15 — 2026-09-29
 
 - Lists no longer pause on every refresh for a machine that is stuck but still sending requests, and a machine that comes back shows live data again within a minute.

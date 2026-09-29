@@ -102,7 +102,7 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
     try {
       await request({
         action: "start", id, name: "Shell command", executable: process.execPath,
-        args: [fileURLToPath(new URL("./supervised-shell-worker.mjs", import.meta.url)), ...args], cwd: realCwd,
+        args: ["--disable-warning=ExperimentalWarning", fileURLToPath(new URL("./supervised-shell-worker.mjs", import.meta.url)), ...args], cwd: realCwd,
         env: { ...Object.fromEntries(Object.entries(env).filter(([, value]) => typeof value === "string")), JOINT_BOB_SUPERVISED_SHELL_ID: id },
       });
       accepted = true;

@@ -60,6 +60,17 @@ test("actual shell wrapper returns short failures and keeps them out of Tasks", 
   } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
 });
 
+test("the shell wrapper's own SQLite warning never precedes command output", async () => {
+  const f = await fixture();
+  try {
+    const warnings = { NODE_NO_WARNINGS: "" };
+    const own = await wrapper(f, "printf useful", warnings);
+    assert.equal(own.stdout, "useful"); assert.equal(own.stderr, "");
+    const command = await wrapper(f, `"${process.execPath}" -e 'require("node:sqlite")'`, warnings);
+    assert.match(command.stdout + command.stderr, /SQLite is an experimental feature/, "a command's own warnings still reach the agent");
+  } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
+});
+
 test("short shell waits for slow process-group inspection without claiming a background child", { timeout: 30_000 }, async () => {
   const f = await fixture();
   try {

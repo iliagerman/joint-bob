@@ -4,6 +4,13 @@ if (process.argv.length === 3 && process.argv[2] === "--version") {
   process.stdout.write("GNU bash (Joint Bob supervised shell)\n");
   process.exitCode = 0;
 } else {
+  // Node's SQLite warning would otherwise precede every agent command's output.
+  const emitWarning = process.emitWarning;
+  process.emitWarning = (warning, ...rest) => {
+    const type = typeof rest[0] === "string" ? rest[0] : rest[0]?.type;
+    if (type === "ExperimentalWarning" && String(warning?.message ?? warning).startsWith("SQLite")) return;
+    emitWarning.call(process, warning, ...rest);
+  };
   const { runSupervisedShell } = await import("../scripts/supervised-shell.mjs");
   const controller = new AbortController();
   const abort = () => controller.abort();
