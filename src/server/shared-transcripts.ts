@@ -18,7 +18,7 @@ import { getConversationOwnership } from "../conversation-ownership.js";
 import { deletedConversationKeys, ensureConversationRecord } from "../conversation-records.js";
 import { replicationPeers } from "./replication-v2.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
-import { fetchPeer } from "./peer-availability.js";
+import { fetchPeer, whilePeerOptional } from "./peer-availability.js";
 
 export const transcriptQuery=z.object({projectId:z.string().min(1).max(300),engine:z.string().min(1).max(80).optional(),sessionId:z.string().min(1).max(300).optional()}).strict();
 const entrySchema=z.object({engine:z.string().min(1).max(80),sessionId:z.string().min(1).max(300),relativePath:z.string().min(1).max(4096),size:z.number().int().min(0).max(1024*1024*1024),hash:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
@@ -26,17 +26,24 @@ type Entry=z.infer<typeof entrySchema>;
 function ensureSchema(db:DatabaseSync):void{
  db.exec(`CREATE TABLE IF NOT EXISTS cluster_v2_transcript_receipts(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,engine TEXT NOT NULL,session_id TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(peer_id,project_id,engine,session_id));
  CREATE TABLE IF NOT EXISTS cluster_v2_transcript_progress(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,PRIMARY KEY(peer_id,project_id));
- CREATE TABLE IF NOT EXISTS cluster_v2_transcript_errors(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,error TEXT NOT NULL,PRIMARY KEY(peer_id,project_id));`);
+ CREATE TABLE IF NOT EXISTS cluster_v2_transcript_errors(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,error TEXT NOT NULL,PRIMARY KEY(peer_id,project_id));
+ CREATE TABLE IF NOT EXISTS transcript_hashes(file TEXT PRIMARY KEY,mtime_ms REAL NOT NULL,size INTEGER NOT NULL,hash TEXT NOT NULL);`);
 }
 function within(root:string,file:string):boolean{
  const relative=path.relative(path.resolve(root),path.resolve(file));return relative!==''&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)&&!path.isAbsolute(relative);
 }
 // A twin polls every shared project's inventory, so unchanged transcripts reuse their hash.
 const hashCache=new Map<string,{mtimeMs:number;size:number;hash:string}>();
+// The hashes are also kept in node.db (local-only), so a restart does not re-read every
+// transcript on disk to answer the first inventory.
 async function fileHash(file:string,info:{mtimeMs:number;size:number}):Promise<string>{
- const cached=hashCache.get(file);if(cached&&cached.mtimeMs===info.mtimeMs&&cached.size===info.size)return cached.hash;
+ const db=await clusterV2Database();ensureSchema(db);
+ const row=hashCache.get(file)??(db.prepare('SELECT mtime_ms mtimeMs,size,hash FROM transcript_hashes WHERE file=?').get(file) as {mtimeMs:number;size:number;hash:string}|undefined);
+ if(row&&row.mtimeMs===info.mtimeMs&&row.size===info.size){hashCache.set(file,row);return row.hash;}
  const hash=createHash('sha256');for await(const chunk of createReadStream(file))hash.update(chunk);
- const digest=hash.digest('hex');hashCache.set(file,{mtimeMs:info.mtimeMs,size:info.size,hash:digest});return digest;
+ const digest=hash.digest('hex');hashCache.set(file,{mtimeMs:info.mtimeMs,size:info.size,hash:digest});
+ db.prepare('INSERT INTO transcript_hashes VALUES(?,?,?,?) ON CONFLICT(file) DO UPDATE SET mtime_ms=excluded.mtime_ms,size=excluded.size,hash=excluded.hash').run(file,info.mtimeMs,info.size,digest);
+ return digest;
 }
 export async function sharedTranscriptProject(peer:string,id:string){
  const db=await clusterV2Database(),local=await getClusterNode();
@@ -178,12 +185,22 @@ export function sharedTranscriptStatus(db:DatabaseSync,local:string,peer:string)
  const pending=projects.filter(id=>!db.prepare('SELECT 1 FROM cluster_v2_transcript_progress WHERE peer_id=? AND project_id=?').get(peer,id)).length;
  return {pending,...(failure?{error:failure.error}:{})};
 }
+/** Each inventory makes the peer build that project's full conversation catalog, and the
+    administration flush runs every 2 s: pulling on every flush kept a large project's
+    catalog rebuilding nonstop on the peer, starving everything else it served. */
+const PULL_INTERVAL_MS=30_000;
+const pulledAt=new Map<string,number>();
+export function resetSharedTranscriptPulls():void{pulledAt.clear();}
 async function runSharedTranscripts():Promise<void>{
  const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);
  for(const peer of replicationPeers(db,local.id))for(const projectId of sharedProjectIds(db,local.id,peer.nodeId))try{
   if(!await getProject(projectId))continue;
+  const key=`${peer.nodeId}\n${projectId}`;
+  if(Date.now()-(pulledAt.get(key)??0)<PULL_INTERVAL_MS)continue;
+  pulledAt.set(key,Date.now());
   const target='/api/cluster/v2/transcripts?'+new URLSearchParams({projectId});
-  const payload=z.object({entries:z.array(entrySchema).max(10000)}).strict().parse(await(await peerGet(peer,target)).json());
+  // A peer known to be down is skipped until its next probe instead of waited on.
+  const payload=z.object({entries:z.array(entrySchema).max(10000)}).strict().parse(await(await whilePeerOptional(()=>peerGet(peer,target))).json());
   for(const entry of payload.entries)await receiveTranscript(db,peer,projectId,entry);
   db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=?').run(peer.nodeId,projectId);
   db.prepare('INSERT OR IGNORE INTO cluster_v2_transcript_progress VALUES(?,?)').run(peer.nodeId,projectId);
