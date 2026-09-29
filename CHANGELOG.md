@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.13.8 — 2026-09-29
+
+- Fixed the running badge persisting indefinitely when auto-compaction stalls, and prevented reopened sessions from retrying the same compaction in a loop.
+- Conversation lists now load faster by stopping unnecessary re-reads of unlisted transcripts for internal sessions.
+
 ## Unreleased
 
-- Conversation lists now load faster by stopping unnecessary re-reads of unlisted transcripts, and cleaned up leftover sync-repair records from conversation history.
 - Low-confidence routing now falls back to the harness default model instead of keeping an outdated previous selection.
 
 ## 2.13.7 — 2026-09-29
