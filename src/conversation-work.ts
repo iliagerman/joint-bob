@@ -11,12 +11,16 @@ export interface ConversationWork {
   observedAt?: string;
 }
 
+/** Listings read work once per conversation, so the schema is ensured once per connection. */
+const ensured = new WeakSet<ReturnType<typeof conversationRuntimeDatabase>>();
 function database(): ReturnType<typeof conversationRuntimeDatabase> {
   const db = conversationRuntimeDatabase();
+  if (ensured.has(db)) return db;
   db.exec(`CREATE TABLE IF NOT EXISTS conversation_work (
     engine TEXT NOT NULL, session_id TEXT NOT NULL, run_id TEXT NOT NULL,
     payload TEXT NOT NULL, PRIMARY KEY (engine, session_id, run_id)
   )`);
+  ensured.add(db);
   return db;
 }
 
@@ -116,7 +120,10 @@ export function refreshConversationWork(): Promise<boolean> {
 /** Persist descriptors independently of socket/session handles, including across node restarts. */
 async function refreshObservedWork(): Promise<boolean> {
   let changed = false;
-  await Promise.all(listConversationWork().filter((work) => work.descriptor && agentWorkActive(work.summary)).map(async (work) => {
+  // Every listing refreshes; only runs with a dashboard can be refreshed, so parse just those.
+  const described = database().prepare("SELECT payload FROM conversation_work WHERE json_extract(payload, '$.descriptor') IS NOT NULL").all()
+    .map((row) => JSON.parse(String(row.payload)) as ConversationWork);
+  await Promise.all(described.filter((work) => work.descriptor && agentWorkActive(work.summary)).map(async (work) => {
     try {
       const summary = await refreshAgentRun({ ...work.descriptor!, summary: work.summary });
       if (JSON.stringify(summary) === JSON.stringify(work.summary)) return;

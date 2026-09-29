@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Fixed cluster hub event delivery blocking the event loop when processing large replication backlogs.
 - Usage dashboard and listing queries now load faster by using indexed project lookups.
 - Conversation listings now cache usage totals and skip re-reading transcripts being actively written until they stop changing.
+- Cached harness executable detection and database schema setup to speed up conversation operations.
 
 ## 2.13.12 — 2026-09-29
 

@@ -29,15 +29,25 @@ export function configuredRuntime(id: string, defaults: RuntimeSettings): Runtim
   };
 }
 
+/** Harness defaults resolve their executable whenever a transcript root is read, once per
+    listed file, and each lookup is a syscall per PATH directory. */
+const DETECT_TTL_MS = 30_000;
+const detected = new Map<string, { executable: string; at: number }>();
+
 export function detectExecutable(command: string): string {
+  const key = `${command}\n${process.env.PATH ?? ""}`;
+  const cached = detected.get(key);
+  if (cached && Date.now() - cached.at < DETECT_TTL_MS) return cached.executable;
+  let executable = command;
   for (const directory of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
     const candidate = path.join(directory, command);
-    try { accessSync(candidate, fsConstants.X_OK); return candidate; }
+    try { accessSync(candidate, fsConstants.X_OK); executable = candidate; break; }
     catch (error) {
       if (!["EACCES", "ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
     }
   }
-  return command;
+  detected.set(key, { executable, at: Date.now() });
+  return executable;
 }
 
 export function localizeTranscript(sessionPath: string, homePath: string, root: string, prefix: string, label: string): string {
