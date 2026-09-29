@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Cluster operations now continue with cached peer data when a node is slow or offline, preventing timeouts during node unavailability.
+- Fixed cluster relay event processing blocking the event loop during large backlogs by checking and applying events in bounded pages.
 
 ## 2.13.13 — 2026-09-29
 

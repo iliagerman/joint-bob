@@ -228,6 +228,9 @@ export function acceptEnvelopes(db: DatabaseSync, local: string, clusterId: stri
   const now = new Date().toISOString();
   return envelopes.filter((envelope) => {
     if (inScope(db, local, sender, envelope.event)) return true;
+    // A twin's own events reach this node directly over the twin link. A relayed copy that
+    // does not fit here never will, and rechecking it forever pinned the event loop.
+    if (isTrustedTwin(db, local, envelope.event.originNodeId)) return false;
     db.prepare("INSERT OR IGNORE INTO cluster_v2_relay_deferred VALUES(?,?,?,?,?,?)")
       .run(clusterId, envelope.event.id, JSON.stringify(envelope.event), envelope.signature, sender, now);
     return false;
@@ -243,24 +246,52 @@ async function applyBatch(db: DatabaseSync, clusterId: string, from: string, env
   return received;
 }
 
-/** Applies set-aside events that this node can place now, until none are left that it can. */
-async function applyDeferred(db: DatabaseSync, local: string, clusterId: string): Promise<void> {
+/** Set-aside events are rechecked in pages, yielding between them: thousands of them
+    checked in one synchronous pass blocked the event loop. */
+const DEFERRED_PAGE = 200;
+/** With no new data arriving, rechecking every flush only repeats the same answer. */
+const DEFERRED_IDLE_MS = 30_000;
+const deferredChecks = new Map<string, { running: Promise<void>; checkedAt: number }>();
+
+/** Applies set-aside events that this node can place now, until none are left that it can.
+    New data may make them placeable, so `arrived` rechecks at once; otherwise at most every
+    DEFERRED_IDLE_MS. Passes for one cluster never overlap. */
+async function applyDeferred(db: DatabaseSync, local: string, clusterId: string, arrived = false): Promise<void> {
+  const previous = deferredChecks.get(clusterId);
+  if (!arrived && previous && Date.now() - previous.checkedAt < DEFERRED_IDLE_MS) return previous.running;
+  const running = (previous?.running ?? Promise.resolve()).then(() => applyDeferredPasses(db, local, clusterId));
+  deferredChecks.set(clusterId, { running: running.catch(() => undefined), checkedAt: Date.now() });
+  return running;
+}
+
+async function applyDeferredPasses(db: DatabaseSync, local: string, clusterId: string): Promise<void> {
   db.prepare("DELETE FROM cluster_v2_relay_deferred WHERE received_at<?").run(new Date(Date.now() - DEFERRED_MS).toISOString());
+  const remove = db.prepare("DELETE FROM cluster_v2_relay_deferred WHERE cluster_id=? AND event_id=?");
   for (;;) {
-    const rows = db.prepare("SELECT event,signature,from_node_id FROM cluster_v2_relay_deferred WHERE cluster_id=? ORDER BY rowid").all(clusterId) as unknown as Array<{ event: string; signature: string; from_node_id: string }>;
-    const ready = rows.map((row) => ({ from: row.from_node_id, envelope: { event: JSON.parse(row.event) as ReplicationEvent, signature: row.signature } }))
-      .filter(({ from, envelope }) => isMember(db, clusterId, from) && inScope(db, local, from, envelope.event));
-    if (!ready.length) return;
-    for (const { from, envelope } of ready) {
-      await applyBatch(db, clusterId, from, [envelope]);
-      db.prepare("DELETE FROM cluster_v2_relay_deferred WHERE cluster_id=? AND event_id=?").run(clusterId, envelope.event.id);
+    let applied = 0, after = 0;
+    for (;;) {
+      const rows = db.prepare("SELECT rowid,event,signature,from_node_id FROM cluster_v2_relay_deferred WHERE cluster_id=? AND rowid>? ORDER BY rowid LIMIT ?").all(clusterId, after, DEFERRED_PAGE) as unknown as Array<{ rowid: number; event: string; signature: string; from_node_id: string }>;
+      if (!rows.length) break;
+      after = rows[rows.length - 1].rowid;
+      for (const row of rows) {
+        const envelope = { event: JSON.parse(row.event) as ReplicationEvent, signature: row.signature };
+        const ready = isMember(db, clusterId, row.from_node_id) && inScope(db, local, row.from_node_id, envelope.event);
+        // Set aside before twins' events were dropped on arrival; the twin link delivers them.
+        if (!ready && isTrustedTwin(db, local, envelope.event.originNodeId)) { remove.run(clusterId, envelope.event.id); continue; }
+        if (!ready) continue;
+        await applyBatch(db, clusterId, row.from_node_id, [envelope]);
+        remove.run(clusterId, envelope.event.id);
+        applied += 1;
+      }
+      await new Promise((resolve) => setImmediate(resolve));
     }
+    if (!applied) return;
   }
 }
 
 async function applyEnvelopes(db: DatabaseSync, local: string, clusterId: string, from: string, envelopes: RelayEnvelope[]): Promise<string[]> {
   const received = envelopes.length ? await applyBatch(db, clusterId, from, envelopes) : [];
-  await applyDeferred(db, local, clusterId);
+  await applyDeferred(db, local, clusterId, envelopes.length > 0);
   return received;
 }
 
