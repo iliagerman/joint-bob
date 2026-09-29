@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Agent commands no longer show Node.js SQLite experimental warnings in their output.
+- Upgraded to OpenAI Codex GPT-6 models, retiring GPT-5.6 versions from automatic routing.
 
 ## 2.13.15 — 2026-09-29
 

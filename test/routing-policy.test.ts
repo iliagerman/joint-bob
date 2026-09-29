@@ -148,7 +148,7 @@ test("defaultRoutingPolicy maps task categories for Pi and Claude", () => {
   const pi = generated.harnesses.pi.levels;
   assert.deepEqual(Object.entries(pi).map(([level, mapping]) => [level, mapping!.provider, mapping!.modelId, mapping!.thinkingLevel]), [
     ["1", "zai", "glm-5.3-flash", "low"],
-    ["3", "openai-codex", "gpt-5.6-terra", "medium"],
+    ["3", "openai-codex", "gpt-6-luna", "medium"],
     ["5", "openai-codex", "gpt-6-sol", "medium"],
     ["7", "openai-codex", "gpt-6-sol", "high"],
     ["10", "openai-codex", "gpt-6-astra", "xhigh"],
@@ -167,8 +167,12 @@ test("defaultRoutingPolicy maps task categories for Pi and Claude", () => {
   assert.doesNotThrow(() => validateRoutingPolicy(generated), "generated defaults must satisfy the policy schema");
 });
 
-test("routing policy rejects retired GPT-4 and unapproved Codex models", () => {
-  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "1": { provider: "openai-codex", modelId: "gpt-4.1", thinkingLevel: "low", description: "Small obvious request" } } } } })), /not allowed for automatic routing/);
+test("routing policy rejects retired and unapproved Codex models", () => {
+  assert.doesNotThrow(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "3": { provider: "openai-codex", modelId: "gpt-6-luna", thinkingLevel: "medium", description: "Git operations" } } } } })), "GPT-6 Luna is available for automatic routing");
+  for (const modelId of ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-4.1"]) {
+    assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "3": { provider: "openai-codex", modelId, thinkingLevel: "medium", description: "Git operations" } } } } })), /not allowed for automatic routing/);
+  }
+  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "3": { provider: "openai", modelId: "gpt-5.6-sol", thinkingLevel: "medium", description: "Git operations" } } } } })), /not allowed for automatic routing/);
   assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "1": { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "low", description: "Small obvious request" } } } } })), /not allowed for automatic routing/);
 });
 

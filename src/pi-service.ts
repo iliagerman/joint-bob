@@ -273,8 +273,7 @@ function preferredModel(available: readonly AvailableModel[]): AvailableModel | 
   return (
     configuredPreferredModel() ??
     available.find((model) => model.provider === "openai-codex" && model.id === "gpt-6-sol") ??
-    available.find((model) => model.provider === "openai-codex" && model.id === "gpt-5.6-sol") ??
-    available.find((model) => model.provider === "openai-codex" && model.id === "gpt-5.6-luna") ??
+    available.find((model) => model.provider === "openai-codex" && model.id === "gpt-6-luna") ??
     available.find((model) => model.provider === "google" && model.id === "gemini-3.1-pro-preview") ??
     available.find((model) => model.provider === "google" && model.id === "gemini-2.5-pro") ??
     available.find((model) => !isDeprecatedDefault(model)) ??
@@ -286,7 +285,7 @@ export async function listAvailableModels(): Promise<ModelSummary[]> {
   const available = await modelRuntime.getAvailable();
   const preferred = preferredModel(available);
   return available
-    .filter((model) => !isDeprecatedDefault(model) && !isSupersededGlm(model))
+    .filter((model) => !isDeprecatedDefault(model) && !isSupersededGlm(model) && !model.id.startsWith("gpt-5.6-"))
     .sort((left, right) => {
       if (preferred && left.provider === preferred.provider && left.id === preferred.id) return -1;
       if (preferred && right.provider === preferred.provider && right.id === preferred.id) return 1;

@@ -11,7 +11,7 @@ require_tool syncthing
 pi_version="$(pi --version)"
 claude_version="$(claude --version)"
 syncthing_version="$(syncthing --version)"
-model="${PI_PREREQUISITE_MODEL:-${JOINT_BOB_MODEL:-${PI_MOBILE_WEB_MODEL:-openai-codex/gpt-5.6-sol}}}"
+model="${PI_PREREQUISITE_MODEL:-${JOINT_BOB_MODEL:-${PI_MOBILE_WEB_MODEL:-openai-codex/gpt-6-sol}}}"
 
 if pi_auth="$(pi auth check --model "${model}" --json --no-refresh 2>/dev/null)" && [[ "${pi_auth}" =~ \"status\"[[:space:]]*:[[:space:]]*\"ready\" ]]; then
   echo "Pi authentication ready for ${model}."

@@ -11,11 +11,11 @@ import { type ReplicationEvent } from "./replication.js";
 /** The routing policy of the implicit legacy cluster, where every peer sees every project. */
 export const LEGACY_CLUSTER_ID = "";
 export const ROUTING_LEVELS = 10;
-export const CODEX_ROUTING_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-sol", "gpt-6-astra"] as const;
+export const CODEX_ROUTING_MODELS = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"] as const;
 const codexRoutingModels = new Set<string>(CODEX_ROUTING_MODELS);
 
 export function automaticRoutingModelAllowed(provider: string | undefined, modelId: string): boolean {
-  if (/^gpt-4(?:[.-]|$)/i.test(modelId)) return false;
+  if (/^gpt-(?:4|5\.6)(?:[.-]|$)/i.test(modelId)) return false;
   return provider !== "openai-codex" || codexRoutingModels.has(modelId);
 }
 
@@ -227,7 +227,7 @@ export function defaultRoutingPolicy(): RoutingPolicy {
     const tiers = adapter.id === "pi"
       ? [
         { level: "1", provider: "zai", modelId: "glm-5.3-flash", thinkingLevel: "low", description: "Direct CLI commands, shell inspection, lookups, and other short mechanical terminal work that does not change git history." },
-        { level: "3", provider: "openai-codex", modelId: "gpt-5.6-terra", thinkingLevel: "medium", description: "Git operations such as reviewing diffs, preparing commits, resolving straightforward conflicts, and managing an existing branch." },
+        { level: "3", provider: "openai-codex", modelId: "gpt-6-luna", thinkingLevel: "medium", description: "Git operations such as reviewing diffs, preparing commits, resolving straightforward conflicts, and managing an existing branch." },
         { level: "5", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium", description: "Debugging a reported error, reproducing a failure, tracing its cause, and making a focused fix." },
         { level: "7", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "high", description: "Software development that implements or refactors a feature across the codebase and verifies the result." },
         { level: "10", provider: "openai-codex", modelId: "gpt-6-astra", thinkingLevel: "xhigh", description: "Complex planning, architecture, ambiguous multi-system design, or high-risk work that needs deep analysis before implementation." },
