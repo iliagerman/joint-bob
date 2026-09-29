@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.5 — 2026-09-29
 
-- Managed skills are now local-only; use Resources → Skills to share them selectively with clusters.
+- Managed skills can now be shared with selected clusters instead of every paired node.
+- Received skills cannot be reshared, and removing one preserves local edits and supports explicit reimport.
+- Legacy blanket resource synchronization is paused before selective skill sharing starts.
 
 ## 2.13.4 — 2026-09-29
 
