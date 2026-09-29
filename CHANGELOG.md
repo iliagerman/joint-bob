@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Peer polls no longer block when a request is already in-flight, returning cached data instantly instead.
+
 ## 2.13.16 — 2026-09-29
 
 - Agent commands no longer show Node.js SQLite experimental warnings in their output.

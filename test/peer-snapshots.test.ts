@@ -62,3 +62,14 @@ test("an alive peer that answers slowly is not reported offline", async () => {
   assert.equal(late.fresh, true, "its answer from moments ago still counts");
   assert.deepEqual(late.value, { n: 1 });
 });
+
+test("a poll that finds a request to the peer already open does not wait on it again", async () => {
+  const key = scope();
+  await peerSnapshot(key, peer, async () => ({ n: 1 }));
+  const open = peerSnapshot(key, peer, () => new Promise<{ n: number }>(() => {}), { waitMs: 200 });
+  const started = performance.now();
+  const joined = await peerSnapshot(key, peer, async () => ({ n: 3 }), { waitMs: 200 });
+  assert.ok(performance.now() - started < 100, "the second poll answered at once");
+  assert.deepEqual(joined.value, { n: 1 });
+  await open;
+});

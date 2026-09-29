@@ -67,6 +67,9 @@ export async function peerSnapshot<T>(scope: string, peerId: string, load: () =>
   const key = `${scope}\n${peerId}`;
   const previous = await stored(scope, peerId);
   let request = inFlight.get(key) as Promise<PeerSnapshot<T>> | undefined;
+  // Only the caller that asks waits. A poll that finds the question already open (a probe
+  // of a stuck peer stays open until its timeout) answers from the stored reply at once.
+  if (request && previous) return { value: previous.value as T, fetchedAt: previous.fetchedAt, fresh: Date.now() - Date.parse(previous.fetchedAt) < RECENT_MS };
   if (!request) {
     request = whilePeerOptional(load).then(
       async (value) => ({ value, fetchedAt: await store(scope, peerId, value), fresh: true }),
