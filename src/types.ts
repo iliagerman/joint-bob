@@ -51,6 +51,7 @@ export interface ProjectRecord {
 
 export interface ProjectView extends ProjectRecord {
   syncStatus: ProjectSyncStatus;
+  usage?: import("./usage-types.js").UsageTotals;
   lock?: ProjectLock;
   /** True when another node holds the lock, so this node must not edit the project. */
   lockedElsewhere?: boolean;
@@ -86,6 +87,7 @@ export interface AgentRunSummary {
 
 export interface SessionSummary {
   cronTaskId?: string;
+  usage?: import("./usage-types.js").UsageTotals;
   id: string;
   path: string;
   color?: ProjectColor;
@@ -219,6 +221,7 @@ export interface ModelSummary {
   label: string;
   providerLabel?: string;
   providerIcon?: string;
+  pricing?: import("./usage-types.js").UsagePricing;
 }
 
 /** How much of the model's context window the conversation currently occupies. */

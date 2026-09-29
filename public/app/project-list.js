@@ -16,6 +16,7 @@ import { closeWatchSocket } from "./socket.js";
 import { shared, state } from "./state.js";
 import { renderBoardView } from "./tasks.js";
 import { openProjectPathMapping } from "./workspaces.js";
+import { usageBadge } from "./usage-format.js";
 
 /**
  * Emptying a scroll box resets it to the top, and a running agent rebuilds these
@@ -146,7 +147,7 @@ function projectRow(project) {
     syncStatus.dataset.testid = "project-sync-status";
     syncStatus.textContent = status.state === "error" && status.message ? `Error: ${status.message}` : syncLabels[status.state] || syncLabels.unavailable;
     syncStatus.title = status.message || "";
-    button.append(name, projectPath, syncStatus);
+    button.append(name, projectPath, syncStatus, usageBadge(project.usage, "project-usage-cost"));
     const clusterBadge = projectClusterBadge(project);
     if (clusterBadge) button.append(clusterBadge);
     const reviewCount = pendingReviewCountForProject(project.id);

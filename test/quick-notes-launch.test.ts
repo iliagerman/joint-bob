@@ -86,6 +86,7 @@ test("manual launch runs the saved note over the real /ws wire", { timeout: 90_0
     assert.equal(launch.body.nodeId, node.nodeId);
     assert.equal(launch.body.sessionPath, `draft:pi:${launch.body.sessionId}`);
     assert.equal(launch.body.note.status, "started");
+    await until("manual engine turn started", async () => (await engineLogLines(log)).length > 0);
     assert.deepEqual((await engineLogLines(log)).length, 1, "the stubbed engine ran exactly one turn");
 
     await writeFile(path.join(root, "pi.release"), "");

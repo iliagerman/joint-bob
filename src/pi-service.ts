@@ -118,12 +118,46 @@ function modelLabel(model: AvailableModel): string {
   return displayName || name || id;
 }
 
+export function modelCostToPricing(provider: string, raw: Record<string, unknown>): import("./usage-types.js").UsagePricing {
+  const tiers = Array.isArray(raw.tiers) ? raw.tiers : [];
+  const anthropic = provider === "anthropic";
+  const rates = {
+    input: Number(raw.input),
+    output: Number(raw.output),
+    cacheRead: raw.cacheRead === undefined ? undefined : Number(raw.cacheRead),
+    cacheWrite: raw.cacheWrite === undefined ? undefined : Number(raw.cacheWrite),
+    cacheWrite5m: anthropic && raw.cacheWrite !== undefined ? Number(raw.cacheWrite) : undefined,
+    cacheWrite1h: anthropic ? Number(raw.input) * 2 : undefined,
+    inputTiers: tiers.map((value) => {
+      const tier = value as Record<string, unknown>;
+      return {
+        threshold: Number(tier.inputTokensAbove), input: Number(tier.input),
+        output: tier.output === undefined ? undefined : Number(tier.output),
+        cacheRead: tier.cacheRead === undefined ? undefined : Number(tier.cacheRead),
+        cacheWrite5m: tier.cacheWrite === undefined ? undefined : Number(tier.cacheWrite),
+        cacheWrite1h: anthropic ? Number(tier.input) * 2 : undefined,
+      };
+    }),
+  };
+  return { source: "runtime-catalog", capturedAt: new Date().toISOString(), rates, provenance: "runtime model registry estimate" };
+}
+
+export function usageModelPricing(provider: string, modelId: string): import("./usage-types.js").UsagePricing | null {
+  const model = modelRuntime.getModel(provider, modelId);
+  if (!model) return null;
+  const cost = asRecord(model).cost;
+  if (!cost || typeof cost !== "object" || Array.isArray(cost)) return null;
+  return modelCostToPricing(provider, JSON.parse(JSON.stringify(cost)) as Record<string, unknown>);
+}
+
 export function summarizeModel(model: AvailableModel | undefined): ModelSummary | undefined {
   if (!model) return undefined;
+  const pricing = usageModelPricing(String(model.provider), String(model.id));
   return {
     provider: String(model.provider),
     id: String(model.id),
     label: modelLabel(model),
+    ...(pricing ? { pricing } : {}),
   };
 }
 

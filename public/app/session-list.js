@@ -19,6 +19,7 @@ import { confirmAction, enableNotifications, formatDate, toast } from "./shell.j
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
 import { activeChatSession } from "./terminal.js";
+import { usageBadge } from "./usage-format.js";
 
 const classificationFilter = createMultiSelect({ id: "conversationClassificationFilter", testid: "conversation-classification-filter", label: "Labels", prompt: "All labels", placeholder: "Search labels" });
 document.querySelector("#conversationFilterRow").prepend(classificationFilter.root);
@@ -125,7 +126,7 @@ export function renderSessions() {
       classification.textContent = session.classification;
       sessionName.append(classification);
     }
-    button.append(sessionName, meta);
+    button.append(sessionName, meta, usageBadge(session.usage, "session-usage-cost"));
     const displayState = sessionDisplayState(session);
     const badge = document.createElement("em");
     badge.className = `chat-badge chat-badge-${displayState}`;

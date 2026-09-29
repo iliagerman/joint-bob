@@ -23,7 +23,10 @@ function piBranch(entries: ForkEntry[]): ForkEntry[] {
 
 export function snapshotPiFork(options: HarnessForkOptions): HarnessForkSnapshot {
   if (options.draft && !options.live) return { sessionPath: conversationDraftPath("pi", options.newSessionId), files: [] };
-  const entries = resumableHistory(options.live ? piForkEntries(options.live) as ForkEntry[] : piBranch(transcript(options.sessionPath)));
+  const entries = resumableHistory(options.live ? piForkEntries(options.live) as ForkEntry[] : piBranch(transcript(options.sessionPath))).map((entry) => {
+    const message = entry.message as Record<string, unknown> | undefined;
+    return message?.role === "assistant" ? { ...entry, jointBobUsageOrigin: entry.jointBobUsageOrigin ?? options.sessionId } : entry;
+  });
   if (entries[0]?.type !== "session") throw new HarnessForkError(409, "Pi transcript has no session header");
   entries[0] = { ...entries[0], id: options.newSessionId, cwd: options.project.path, timestamp: options.timestamp };
   delete entries[0].parentSession;

@@ -60,6 +60,7 @@ import "./app/ownership.js";
 import "./app/composer.js";
 import "./app/secrets.js";
 import "./app/browser-login.js";
+import "./app/usage-dashboard.js";
 
 initializeFocusUi({
   openSettings, startConversation: startGlobalConversation,

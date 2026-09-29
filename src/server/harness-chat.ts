@@ -6,6 +6,8 @@ import WebSocket from "ws";
 import { getClusterNode } from "../cluster.js";
 import { getConversationRecord, ensureConversationRecord, listConversationSegments } from "../conversation-records.js";
 import type { DifficultyClassification } from "../classifiers/contract.js";
+import type { UsageDifficulty } from "../usage-types.js";
+import { inheritedDifficulty, latestDifficultyForConversation, saveDifficulty } from "../usage-ledger.js";
 import { getDifficultyClassifier } from "../classifiers/registry.js";
 import { automaticRoutingModelAllowed, routingEvalDue } from "../routing-policy.js";
 import { activeRoutingConfig, routingConfigDatabase, routingConfigWarning, type StoredRoutingConfig } from "../routing-configs.js";
@@ -211,12 +213,14 @@ function routingClassifierInput(connection: HarnessChatConnection, queued: Queue
     configuration is this node's own choice; manual picks always win; any failure keeps
     the conversation's current settings and never blocks the prompt. In manual mode
     nothing routes: the hand-picked model stands until Bob auto is selected. */
-async function routePromptByDifficulty(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
-  if (queued.systemEventId) return;
+async function routePromptByDifficulty(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<UsageDifficulty> {
+  const base: UsageDifficulty = { turnId: queued.id, projectId: connection.project.id, conversationId: connection.conversationId, sessionId: connection.shared.session.id, engine: connection.engine, occurredAt: new Date().toISOString(), status: "not-classified", level: null, confidence: null, startedAt: null, endedAt: null };
+  const result = (status: string, extra: Partial<UsageDifficulty> = {}): UsageDifficulty => ({ ...base, status, ...extra });
+  if (queued.systemEventId) return result("internal");
   let policy: StoredRoutingConfig | null = null;
   try { policy = activeRoutingConfig(routingConfigDatabase()); }
   catch (error) { console.warn("Routing configuration resolution failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error"); }
-  if (!policy) return;
+  if (!policy) return result("disabled");
   const key = queueKey(connection);
   const ordinal = bumpRoutingPromptCount(key);
   const state = readRoutingState(key);
@@ -224,16 +228,18 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   // when the previous configuration had already consumed its evaluation point.
   const staleConfig = state.lastEvalOrdinal !== null && (state.configId !== policy.id || state.configRevision !== policy.revision);
   const due = staleConfig || routingEvalDue(policy.policy, ordinal, state.lastEvalOrdinal);
-  if (state.mode === "manual") return;
+  const configured = { configId: policy.id, configRevision: policy.revision, classifierId: policy.policy.classifierId };
+  if (state.mode === "manual") return result("manual", configured);
   if (queued.settings) {
     // A manual per-prompt model pick wins and consumes this evaluation point.
     if (due) recordRoutingEval(key, ordinal, policy);
-    return;
+    return result("manual", configured);
   }
-  if (!due) return;
+  if (!due) return inheritedDifficulty(result("not-classified", configured), latestDifficultyForConversation(connection.project.id, connection.conversationId, policy.id, policy.revision));
   recordRoutingEval(key, ordinal, policy);
-  const skip = (reason: string, level?: number, confidence?: number): void => {
+  const skip = (reason: string, status: string, level?: number, confidence?: number): UsageDifficulty => {
     publish(connection, { type: "promptRouted", queueId: queued.id, skipped: reason, ...(level !== undefined ? { level } : {}), ...(confidence !== undefined ? { confidence } : {}) });
+    return result(status, { ...configured, level: status === "classified" ? level ?? null : null, confidence: confidence ?? null });
   };
   const harnessPolicy = policy.policy.harnesses[connection.engine];
   const configuredOptions = Object.entries(harnessPolicy?.levels ?? {})
@@ -242,41 +248,41 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
     .sort((left, right) => left.level - right.level);
   if (!configuredOptions.length) {
     publish(connection, { type: "promptRouted", queueId: queued.id, skipped: "no configured mapping", mapped: false });
-    return;
+    return result("unavailable", configured);
   }
   const classifier = getDifficultyClassifier(policy.policy.classifierId);
-  if (!classifier) { skip("unknown classifier"); return; }
+  if (!classifier) return skip("unknown classifier", "unavailable");
   const apiKey = genericSecretEnvironment(connection.project.id)[classifier.variableName];
-  if (!apiKey) { skip("classifier key missing"); return; }
+  if (!apiKey) return skip("classifier key missing", "unavailable");
   let classification: DifficultyClassification | null = null;
   try {
     const input = routingClassifierInput(connection, queued, policy.policy.contextMessages ?? 10);
     classification = await classifier.classify(input, apiKey, { options: configuredOptions });
   } catch { classification = null; }
-  if (!classification) { skip("classifier failed"); return; }
-  if (classification.confidence < policy.policy.confidenceThreshold) { skip("low confidence", classification.level, classification.confidence); return; }
-  if (classification.abstained) { skip("no suitable mapping", undefined, classification.confidence); return; }
+  if (!classification) return skip("classifier failed", "unavailable");
+  if (classification.confidence < policy.policy.confidenceThreshold) return skip("low confidence", "low-confidence", classification.level, classification.confidence);
+  if (classification.abstained) return skip("no suitable mapping", "abstained", undefined, classification.confidence);
   const mapping = harnessPolicy?.levels[String(classification.level)] ?? null;
   if (!mapping) {
     publish(connection, { type: "promptRouted", queueId: queued.id, level: classification.level, confidence: classification.confidence, mapped: false });
-    return;
+    return result("classified", { ...configured, level: classification.level, confidence: classification.confidence, mapped: false });
   }
   const settings = {
     provider: mapping.provider ?? getHarness(connection.engine).configuration?.fixedProvider ?? connection.shared.session.settings().provider,
     modelId: mapping.modelId,
     reasoning: mapping.thinkingLevel,
   };
-  if (!automaticRoutingModelAllowed(settings.provider, settings.modelId)) { skip("model not allowed", classification.level, classification.confidence); return; }
+  if (!automaticRoutingModelAllowed(settings.provider, settings.modelId)) return skip("model not allowed", "classified", classification.level, classification.confidence);
   try {
     await (await getHarnessRuntime(connection.engine)).validateSettings(settings);
     await connection.shared.session.configure(settings);
     recordQueueSettings(key, currentSettings(connection));
   } catch (error) {
     console.warn("Routed model unavailable", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
-    skip("model unavailable", classification.level, classification.confidence);
-    return;
+    return skip("model unavailable", "classified", classification.level, classification.confidence);
   }
   publish(connection, { type: "promptRouted", queueId: queued.id, level: classification.level, confidence: classification.confidence, mapped: true, provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.reasoning, classifierId: classifier.id });
+  return result("classified", { ...configured, classifierId: classifier.id, level: classification.level, confidence: classification.confidence, mapped: true });
 }
 
 async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
@@ -289,7 +295,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
   markHarnessInput(shared);
   try {
     if (queued.settings) await applyQueuedSettings(connection, queued.settings);
-    await routePromptByDifficulty(connection, queued);
+    const difficulty = await routePromptByDifficulty(connection, queued);
     await writable(connection);
     await connection.shared.session.preflight();
     const attachments = await queuedAttachments(connection.cwd, queued, getSettings().digestAttachments ? describeImage : undefined);
@@ -297,8 +303,14 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
     const latest = listQueuedPrompts(queueKey(connection)).find(({ id }) => id === queued.id);
     if (!latest || latest.revision !== queued.revision || !beginQueuedPrompt(queued.id, queued.revision)) return;
     startingIds.add(queued.id);
+    let origin: string | undefined;
+    let activeDifficulty: UsageDifficulty | undefined;
     let claimed = false;
     try {
+      origin = (await getClusterNode()).id;
+      const startedAt = new Date().toISOString();
+      activeDifficulty = { ...difficulty, occurredAt: startedAt, startedAt };
+      saveDifficulty(activeDifficulty, origin);
       const text = `${connection.handoffContext ?? ""}${attachments.text}`;
       await connection.shared.session.prompt({ text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
         armAutoCompactAfterPrompt(connection.shared.session);
@@ -326,7 +338,9 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
         throw error;
       }
     } finally {
-      startingIds.delete(queued.id);
+      try {
+        if (activeDifficulty && origin) saveDifficulty({ ...activeDifficulty, endedAt: new Date().toISOString() }, origin);
+      } finally { startingIds.delete(queued.id); }
     }
   } finally {
     // switchHarness transfers the busy counter to the destination shared session.

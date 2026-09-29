@@ -8,6 +8,8 @@ import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harness
 import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
 import type { HarnessRuntime } from "./harnesses/runtime.js";
 import type { HarnessId, SessionSummary } from "./types.js";
+import { conversationUsage, usageTotals } from "./usage-ledger.js";
+import { ingestUsageSessions } from "./usage-ingest.js";
 
 export { defineHarness } from "./harnesses/contract.js";
 export type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
@@ -309,7 +311,12 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     if (isInternalSession(session.id, session.firstMessage) || !session.path || seen.has(session.path)) return false;
     seen.add(session.path);
     return true;
+  }).map((session) => {
+    const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
+    const logicalId = record?.conversationId ?? session.id;
+    return classifications[logicalId] ? { ...session, classification: classifications[logicalId] } : session;
   });
+  await ingestUsageSessions(project, flat, records);
   // A harness switch continues one logical conversation: group its segments and
   // let the newest segment face the list. Single sessions group as themselves.
   const byConversation = new Map<string, Array<{ session: SessionSummary; segmentIndex: number }>>();
@@ -329,6 +336,9 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     return {
       ...face,
       conversationId,
+      usage: face.readOnly
+        ? usageTotals({ projectIds: [project.id], projectId: project.id, sessionId: face.id })
+        : conversationUsage(project.id, conversationId),
       ...(segments.some(({ session }) => session.cronTaskId) ? { cronTaskId: segments.find(({ session }) => session.cronTaskId)!.session.cronTaskId } : {}),
       ...(segmentViews ? { segments: segmentViews } : {}),
       // A switched conversation keeps the title of its first real segment; a fresh

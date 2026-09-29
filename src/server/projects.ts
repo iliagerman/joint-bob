@@ -13,6 +13,7 @@ import type { ProjectRecord, ProjectSyncStatus, ProjectView } from "../types.js"
 import { sessionWatcher } from "./chat.js";
 import { harnessSessionBusy, harnessSessions } from "./harness-sessions.js";
 import { harnessTaskRuns, projectHasMergeReservation } from "./task-runs.js";
+import { projectUsage } from "../usage-ledger.js";
 
 function unavailableProjectStatus(message = "No Syncthing folder is configured"): ProjectSyncStatus {
   return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
@@ -31,6 +32,7 @@ export async function projectsWithSharedNames(includeSyncStatus = true): Promise
       syncStatus: project.syncFolderId
         ? statuses[project.syncFolderId] ?? unavailableProjectStatus("Loading sync status")
         : unavailableProjectStatus(),
+      usage: projectUsage(project.id),
       ...(lock ? { lock, lockedElsewhere: lock.nodeId !== local.id } : {}),
     };
   });
