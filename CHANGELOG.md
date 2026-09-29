@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversation catalogs now load faster on startup by resuming from saved summaries instead of re-reading every transcript.
+
 ## 2.13.19 — 2026-09-30
 
 - Usage imports no longer block listing requests; imports now run in the background to keep the interface responsive.

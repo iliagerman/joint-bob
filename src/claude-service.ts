@@ -19,6 +19,7 @@ import { getConversationRecord } from "./conversation-records.js";
 import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
 import { stripScheduledPromptMarker } from "./scheduled-prompt.js";
 import { stripHandoffEnvelope } from "./handoff-context.js";
+import { storeTranscriptSummary, storedTranscriptSummary } from "./transcript-summary-store.js";
 export { buildHandoffContext, stripHandoffEnvelope } from "./handoff-context.js";
 
 // Runs one Claude Code turn in print mode and maps its stream-json output to
@@ -297,9 +298,17 @@ function transcriptEventTime(records: UnknownRecord[], pick: "first" | "last"): 
   return selected;
 }
 
+/** Bump when the facts or how they are derived change, so old stored ones are ignored. */
+const CLAUDE_FACTS_KIND = "claude-facts-v1";
+/** The stored facts for a file this process has not read yet, so a restart resumes from them. */
+function storedClaudeFacts(filePath: string): ClaudeSessionFacts | undefined {
+  const stored = storedTranscriptSummary<Omit<ClaudeSessionFacts, "cwds"> & { cwds: string[] }>(CLAUDE_FACTS_KIND, filePath);
+  return stored ? { ...stored, cwds: new Set(stored.cwds) } : undefined;
+}
+
 async function claudeSessionFacts(filePath: string, fileStat: Stats, startPrompt = getSettings().conversationCommands.start.prompt.trim()): Promise<ClaudeSessionFacts> {
-  const cached = claudeSessionFactsCache.get(filePath);
-  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size && cached.startPrompt === startPrompt) return cached;
+  const cached = claudeSessionFactsCache.get(filePath) ?? storedClaudeFacts(filePath);
+  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size && cached.startPrompt === startPrompt) { claudeSessionFactsCache.set(filePath, cached); return cached; }
   const pending = claudeSessionFactsInFlight.get(filePath);
   if (pending && pending.mtimeMs === fileStat.mtimeMs && pending.size === fileStat.size && pending.startPrompt === startPrompt) return pending.promise;
   const promise = readClaudeSessionFacts(filePath, fileStat, startPrompt);
@@ -308,7 +317,10 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats, startPrompt
   try {
     const facts = await promise;
     // A changed stamp or prompt may have started another read while this waited.
-    if (claudeSessionFactsInFlight.get(filePath) === entry) claudeSessionFactsCache.set(filePath, facts);
+    if (claudeSessionFactsInFlight.get(filePath) === entry) {
+      claudeSessionFactsCache.set(filePath, facts);
+      storeTranscriptSummary(CLAUDE_FACTS_KIND, filePath, { ...facts, cwds: [...facts.cwds] });
+    }
     return facts;
   } finally {
     if (claudeSessionFactsInFlight.get(filePath) === entry) claudeSessionFactsInFlight.delete(filePath);

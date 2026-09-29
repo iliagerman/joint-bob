@@ -25,6 +25,7 @@ import { stripHandoffEnvelope } from "./claude-service.js";
 import { stripScheduledPromptMarker } from "./scheduled-prompt.js";
 import { sessionCwds, type SessionProjectPaths } from "./harnesses/shared-paths.js";
 import { canonicalPiTranscriptName, piSessionIdFromFileName } from "./harnesses/pi/paths.js";
+import { forgetTranscriptSummary, storeTranscriptSummary, storedTranscriptSummary } from "./transcript-summary-store.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { agentResourcePaths, commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
@@ -463,6 +464,14 @@ interface PiTranscriptSummaryState {
 const PI_SUMMARY_TAIL_BYTES = 512;
 const piTranscriptSummaryCache = new Map<string, PiTranscriptSummaryState>();
 
+/** Bump when the summary fields or how they are derived change, so old stored ones are ignored. */
+const PI_SUMMARY_KIND = "pi-summary-v1";
+/** The stored summary for a file this process has not read yet, so a restart resumes from it. */
+function storedPiSummary(file: string): PiTranscriptSummaryState | undefined {
+  const stored = storedTranscriptSummary<Omit<PiTranscriptSummaryState, "tail"> & { tail: string }>(PI_SUMMARY_KIND, file);
+  return stored ? { ...stored, tail: Buffer.from(stored.tail, "base64") } : undefined;
+}
+
 function isPiSetupPrompt(text: string): boolean {
   const startPrompt = getSettings().conversationCommands.start.prompt.trim();
   return Boolean(startPrompt) && text === startPrompt;
@@ -516,7 +525,7 @@ async function readPiSummaryState(filePath: string): Promise<PiTranscriptSummary
   try {
     const info = await file.stat();
     const identity = `${info.dev}:${info.ino}:${info.birthtimeMs}`;
-    const cached = piTranscriptSummaryCache.get(resolved);
+    const cached = piTranscriptSummaryCache.get(resolved) ?? storedPiSummary(resolved);
     const appendCandidate = cached?.identity === identity && info.size >= cached.size;
     const verificationStart = appendCandidate ? cached.offset - cached.tail.length : 0;
     let buffer = await readPiBytes(file, verificationStart, info.size);
@@ -537,6 +546,9 @@ async function readPiSummaryState(filePath: string): Promise<PiTranscriptSummary
     if (completeBytes) state.tail = Buffer.from(buffer.subarray(Math.max(0, completedEnd - PI_SUMMARY_TAIL_BYTES), completedEnd));
     applyPiSummaryRecords(state, records);
     piTranscriptSummaryCache.set(resolved, state);
+    if (!cached || cached.identity !== state.identity || cached.size !== state.size || cached.modifiedAt !== state.modifiedAt) {
+      storeTranscriptSummary(PI_SUMMARY_KIND, resolved, { ...state, tail: state.tail.toString("base64") });
+    }
     return state;
   } finally {
     await file.close();
@@ -550,6 +562,7 @@ async function summarizePiTranscript(filePath: string, project: SessionProjectPa
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       piTranscriptSummaryCache.delete(path.resolve(filePath));
+      forgetTranscriptSummary(PI_SUMMARY_KIND, path.resolve(filePath));
       return null;
     }
     throw error;

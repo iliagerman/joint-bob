@@ -103,3 +103,47 @@ test("Pi session summaries are cached and old transcripts load only on demand", 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a restart resumes Pi summaries from node.db instead of re-reading every transcript", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-pi-summary-store-"));
+  const previousDataDir = process.env.PI_WEB_DATA_DIR;
+  process.env.PI_WEB_DATA_DIR = path.join(root, "data");
+  try {
+    const sessionRoot = path.join(root, "sessions");
+    const projectCwd = path.join(root, "project");
+    await mkdir(projectCwd, { recursive: true });
+    const sessionDir = path.join(sessionRoot, `--${path.resolve(projectCwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
+    await mkdir(sessionDir, { recursive: true });
+    const sessionFile = path.join(sessionDir, "session-0.jsonl");
+    await writeFile(sessionFile, `${[
+      { type: "session", version: 3, id: "session-0", timestamp: "2026-01-01T00:00:00.000Z", cwd: projectCwd },
+      { type: "message", id: "user-0", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "Original request" }], timestamp: Date.parse("2026-01-01T00:00:01.000Z") } },
+    ].map((record) => JSON.stringify(record)).join("\n")}\n`);
+    const settings = await import(`../src/settings.js?cache=${Date.now()}-${Math.random()}`);
+    settings.updateSettings({
+      pi: { executable: "", configPath: path.join(root, "pi"), sessionPath: sessionRoot },
+      claude: { executable: "", configPath: path.join(root, "claude"), sessionPath: path.join(root, "claude", "projects") },
+      syncthing: { endpoint: "" },
+      projects: { homePath: path.join(root, "JointBob") },
+    });
+    const first = await import(`../src/pi-service.js?cache=${Date.now()}-${Math.random()}`);
+    assert.equal((await first.listPiSessions({ path: projectCwd }))[0]?.firstMessage, "Original request");
+
+    // Mark the stored summary: a process that re-parsed the unchanged transcript would never see it.
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(path.join(root, "data", "node.db"));
+    const row = db.prepare("SELECT payload FROM transcript_summaries WHERE kind='pi-summary-v1' AND file=?").get(path.resolve(sessionFile)) as { payload: string } | undefined;
+    assert.ok(row, "listing stores the summary");
+    db.prepare("UPDATE transcript_summaries SET payload=? WHERE kind='pi-summary-v1' AND file=?").run(JSON.stringify({ ...JSON.parse(row.payload), firstMessage: "From the stored summary" }), path.resolve(sessionFile));
+    db.close();
+
+    const restarted = await import(`../src/pi-service.js?cache=${Date.now()}-${Math.random()}`);
+    assert.equal((await restarted.listPiSessions({ path: projectCwd }))[0]?.firstMessage, "From the stored summary", "a fresh process resumes from the stored summary");
+    await writeFile(sessionFile, (await import("node:fs")).readFileSync(sessionFile, "utf8").replace("Original request", "Rewritten request"));
+    const rewritten = await import(`../src/pi-service.js?cache=${Date.now()}-${Math.random()}`);
+    assert.equal((await rewritten.listPiSessions({ path: projectCwd }))[0]?.firstMessage, "Rewritten request", "a rewritten transcript is read again");
+  } finally {
+    if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previousDataDir;
+    await rm(root, { recursive: true, force: true });
+  }
+});

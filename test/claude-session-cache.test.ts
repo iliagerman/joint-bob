@@ -253,3 +253,41 @@ test("Claude older rejection cannot remove a newer pending read", async (t) => {
   assert.equal(await newer, "Newer");
   assert.equal((await joined)?.usedTokens, 42);
 });
+
+test("a restart resumes Claude session facts from node.db instead of re-reading every transcript", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-claude-facts-store-"));
+  const previousDataDir = process.env.PI_WEB_DATA_DIR;
+  process.env.PI_WEB_DATA_DIR = root;
+  try {
+    const sessionRoot = path.join(root, "claude-sessions");
+    const projectCwd = path.join(root, "project");
+    await mkdir(projectCwd, { recursive: true });
+    const settings = await import(`../src/settings.js?cache=${Date.now()}-${Math.random()}`);
+    settings.updateSettings({
+      pi: { executable: "pi", configPath: path.join(root, "pi-config"), sessionPath: path.join(root, "pi-sessions") },
+      claude: { executable: "claude", configPath: path.join(root, "claude-config"), sessionPath: sessionRoot },
+      syncthing: { endpoint: "" },
+    });
+    const sessionPaths = await import(`../src/session-paths.js?cache=${Date.now()}-${Math.random()}`);
+    const projectDir = sessionPaths.claudeProjectDir(projectCwd, sessionRoot);
+    await mkdir(projectDir, { recursive: true });
+    const transcriptPath = path.join(projectDir, "session-one.jsonl");
+    await writeFile(transcriptPath, `${JSON.stringify({ type: "user", cwd: projectCwd, message: { role: "user", content: [{ text: "First" }] } })}\n`);
+    const first = await import(`../src/claude-service.js?cache=${Date.now()}-${Math.random()}`);
+    assert.equal((await first.listClaudeSessions({ path: projectCwd }))[0]?.title, "[Claude] First");
+
+    // Mark the stored facts: a process that re-parsed the unchanged transcript would never see it.
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(path.join(root, "node.db"));
+    const row = db.prepare("SELECT payload FROM transcript_summaries WHERE kind='claude-facts-v1' AND file=?").get(transcriptPath) as { payload: string } | undefined;
+    assert.ok(row, "listing stores the facts");
+    db.prepare("UPDATE transcript_summaries SET payload=? WHERE kind='claude-facts-v1' AND file=?").run(JSON.stringify({ ...JSON.parse(row.payload), title: "Stored" }), transcriptPath);
+    db.close();
+
+    const restarted = await import(`../src/claude-service.js?cache=${Date.now()}-${Math.random()}`);
+    assert.equal((await restarted.listClaudeSessions({ path: projectCwd }))[0]?.title, "[Claude] Stored", "a fresh process resumes from the stored facts");
+  } finally {
+    if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previousDataDir;
+    await rm(root, { recursive: true, force: true });
+  }
+});
