@@ -42,6 +42,13 @@ test("focus controls support single, double, and triple taps", { timeout: 180_00
   await page.getByTestId("recent-sessions-close-button").tap();
   await page.getByTestId("recent-sessions-dialog").waitFor({ state: "hidden" });
 
+  await page.locator("#messageInput").fill("double-tap send");
+  const send = await page.getByTestId("chat-send-button").boundingBox();
+  assert.ok(send);
+  for (let i = 0; i < 2; i++) await page.touchscreen.tap(send.x + send.width / 2, send.y + send.height / 2);
+  await page.waitForFunction(() => !document.querySelector<HTMLTextAreaElement>("#messageInput")!.value);
+  assert.equal(await fab.isVisible(), true, "double-tapping send must not hide the controls button");
+
   const start = await fab.boundingBox();
   assert.ok(start);
   const cdp = await context.newCDPSession(page);

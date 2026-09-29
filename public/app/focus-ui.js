@@ -230,7 +230,7 @@ function installTapGestures() {
     if (!enabled || !completed) return;
     if (completed.count >= 4 && mobileFocusViewport.matches) document.querySelector("#focusRunning").click();
     else if (completed.count >= 3) { showMenu(false); openRecentSessions(); }
-    else if (completed.count === 2) toggleFab();
+    else if (completed.count === 2 && !completed.target.closest(controls)) toggleFab();
     else activateTap(completed.target, controls);
   };
   document.addEventListener("pointerdown", event => {
