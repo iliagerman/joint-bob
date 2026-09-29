@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.20 — 2026-09-30
 
 - Restarting nodes no longer fail health checks when peer requests arrive during startup.
 - Conversation catalogs now load faster on startup by resuming from saved summaries instead of re-reading every transcript.
