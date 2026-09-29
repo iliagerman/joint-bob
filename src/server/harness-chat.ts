@@ -262,7 +262,23 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
     classification = await classifier.classify(input, apiKey, { options: configuredOptions });
   } catch { classification = null; }
   if (!classification) return skip("classifier failed", "unavailable");
-  if (classification.confidence < policy.policy.confidenceThreshold) return skip("low confidence", "low-confidence", classification.level, classification.confidence);
+  if (classification.confidence < policy.policy.confidenceThreshold) {
+    // An unsure classifier must not leave a previously routed tier (often a cheap one) in place.
+    const fallback = getSettings().conversationDefaults[connection.engine];
+    const settings = fallback ? { provider: fallback.provider, modelId: fallback.modelId, reasoning: fallback.thinkingLevel } : null;
+    if (settings) {
+      try {
+        await (await getHarnessRuntime(connection.engine)).validateSettings(settings);
+        await connection.shared.session.configure(settings);
+        recordQueueSettings(key, currentSettings(connection));
+        publish(connection, { type: "promptRouted", queueId: queued.id, skipped: "low confidence", fallback: "harness default", level: classification.level, confidence: classification.confidence, provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.reasoning });
+        return result("low-confidence", { ...configured, confidence: classification.confidence });
+      } catch (error) {
+        console.warn("Harness default model unavailable", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
+      }
+    }
+    return skip("low confidence", "low-confidence", classification.level, classification.confidence);
+  }
   if (classification.abstained) return skip("no suitable mapping", "abstained", undefined, classification.confidence);
   const mapping = harnessPolicy?.levels[String(classification.level)] ?? null;
   if (!mapping) {

@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Conversation lists now load faster by stopping unnecessary re-reads of unlisted transcripts, and cleaned up leftover sync-repair records from conversation history.
+- Low-confidence routing now falls back to the harness default model instead of keeping an outdated previous selection.
 
 ## 2.13.7 — 2026-09-29
 

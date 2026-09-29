@@ -186,6 +186,9 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   events = routingEvents(chat.messages);
   assert.equal(events.length, 3, "ordinal 7 is due again");
   assert.equal(events[2].skipped, "low confidence", `expected a low-confidence skip, got ${JSON.stringify(events[2])}`);
+  assert.equal(events[2].fallback, "harness default", "low confidence falls back to the harness default, not the previous pick");
+  assert.equal(events[2].modelId, "default");
+  assert.equal(events[2].thinkingLevel, "medium", "the previous per-prompt pick used low; the Kiro default is medium");
 
   answer = { none: true, confidence: 0.9 };
   chat.socket.send(JSON.stringify({ type: "prompt", message: "not due before escape", requestId: randomUUID() }));

@@ -892,7 +892,8 @@ export function markPromptRouted(routing) {
   const note = bubble.querySelector(".routed-note") || document.createElement("div");
   note.className = "routed-note";
   note.dataset.testid = "routed-note";
-  if (routing.skipped) note.textContent = `Routing skipped: ${routing.skipped}`;
+  if (routing.skipped && routing.fallback) note.textContent = `Routing skipped: ${routing.skipped}, using ${routing.fallback} ${routing.provider}/${routing.modelId} (${routing.thinkingLevel})`;
+  else if (routing.skipped) note.textContent = `Routing skipped: ${routing.skipped}`;
   else if (routing.mapped) note.textContent = `Routed: difficulty ${routing.level} → ${routing.provider}/${routing.modelId} (${routing.thinkingLevel})`;
   else note.textContent = `Difficulty ${routing.level}: no mapping, conversation model kept`;
   if (!note.isConnected) bubble.append(note);
