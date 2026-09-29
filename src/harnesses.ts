@@ -274,7 +274,9 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     if (record?.taskId && !session.taskId) session.taskId = record.taskId;
     if (record?.cronTaskId) session.cronTaskId = record.cronTaskId;
   }
-  const missingRecords = eligibleMissingRecords(sessions);
+  // A harness can intentionally omit an unstarted transcript. Its record must
+  // not turn that existing transcript back into a visible draft.
+  const missingRecords = eligibleMissingRecords(sessions).filter((record) => !filesByEngine.get(record.engine)?.has(record.sessionId));
   for (const record of missingRecords) {
     const adapter = adapters.find((candidate) => candidate.id === record.engine);
     if (!adapter) throw new Error(`No harness registered for conversation engine: ${record.engine}`);

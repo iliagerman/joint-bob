@@ -249,6 +249,7 @@ interface ClaudeSessionFacts {
   startPrompt: string;
   internal: boolean;
   cwds: Set<string>;
+  prompt: string;
   title: string;
   firstEventAt: string;
   lastEventAt: string;
@@ -330,6 +331,7 @@ async function readClaudeSessionFacts(filePath: string, fileStat: Stats, startPr
     startPrompt,
     internal: isInternalSession(path.basename(filePath, ".jsonl"), prompt),
     cwds: new Set(records.map((record) => String(record.cwd ?? ""))),
+    prompt,
     title: customTitle || aiTitle || prompt.split("\n")[0].slice(0, 80) || "Claude conversation",
     firstEventAt: transcriptEventTime(records, "first"),
     lastEventAt: transcriptEventTime(records, "last"),
@@ -346,7 +348,9 @@ async function summarizeClaudeTranscript(project: SessionProjectPaths, filePath:
     throw error;
   }
   const facts = await claudeSessionFacts(filePath, fileStat, startPrompt);
-  if (facts.internal || isInternalSession(path.basename(path.dirname(path.dirname(filePath))))) return null;
+  // Opening a new chat writes only the automatic setup command. It is not a
+  // conversation until the user has supplied a real prompt.
+  if (!facts.prompt || facts.internal || isInternalSession(path.basename(path.dirname(path.dirname(filePath))))) return null;
   const projectCwds = new Set(sessionCwds(project));
   if (![...facts.cwds].some((cwd) => projectCwds.has(cwd))) return null;
   const subagentParentId = path.basename(path.dirname(filePath)) === "subagents"

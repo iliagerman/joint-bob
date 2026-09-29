@@ -104,8 +104,10 @@ test("Claude titles prefer metadata and skip synthetic command prompts", async (
     settings.updateSettings({ ...settings.getSettings(), conversationCommands: { start: { enabled: true, prompt: startPrompt }, end: { enabled: false, prompt: "" } } });
     await writeFile(startup, `${JSON.stringify(user(startPrompt))}\n`);
     assert.equal(await claude.claudeSessionTitle(`claude:${startup}`), "Claude conversation", "automatic setup must not name an empty conversation");
+    assert.equal((await claude.listClaudeSessions({ path: projectCwd })).some((session) => session.path === `claude:${startup}`), false, "startup-only conversations stay out of the catalog");
     await writeFile(startup, [user(startPrompt), user("Fix checkout validation")].map(JSON.stringify).join("\n") + "\n");
     assert.equal(await claude.claudeSessionTitle(`claude:${startup}`), "Fix checkout validation", "first actual request supplies the automatic title");
+    assert.equal((await claude.listClaudeSessions({ path: projectCwd })).some((session) => session.path === `claude:${startup}`), true, "a real prompt makes the conversation visible");
     // Changing settings must invalidate parsed facts even when the transcript has not changed.
     settings.updateSettings({ ...settings.getSettings(), conversationCommands: { start: { enabled: false, prompt: "A different setup command" }, end: { enabled: false, prompt: "" } } });
     assert.equal(await claude.claudeSessionTitle(`claude:${startup}`), startPrompt.split("\n")[0]);

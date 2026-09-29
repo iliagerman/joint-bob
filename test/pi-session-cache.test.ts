@@ -35,6 +35,14 @@ test("Pi session summaries are cached and old transcripts load only on demand", 
     });
 
     const pi = await import(`../src/pi-service.js?cache=${Date.now()}-${Math.random()}`);
+    const startPrompt = "Check main before doing any work.";
+    settings.updateSettings({ ...settings.getSettings(), conversationCommands: { start: { enabled: true, prompt: startPrompt }, end: { enabled: false, prompt: "" } } });
+    const startupFile = path.join(sessionDir, "startup.jsonl");
+    await writeFile(startupFile, [
+      { type: "session", version: 3, id: "startup", timestamp: "2026-01-01T00:00:00.000Z", cwd: projectCwd },
+      { type: "message", id: "startup-message", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: startPrompt }], timestamp: Date.parse("2026-01-01T00:00:01.000Z") } },
+    ].map(JSON.stringify).join("\n") + "\n");
+    assert.equal((await pi.listPiSessions({ path: projectCwd })).some((session) => session.id === "startup"), false, "startup-only conversations stay out of the catalog");
 
     const stamp = new Date(1700000000000);
     await writeFile(sessionFile, transcript("First"));

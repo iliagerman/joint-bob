@@ -463,10 +463,18 @@ interface PiTranscriptSummaryState {
 const PI_SUMMARY_TAIL_BYTES = 512;
 const piTranscriptSummaryCache = new Map<string, PiTranscriptSummaryState>();
 
+function isPiSetupPrompt(text: string): boolean {
+  const startPrompt = getSettings().conversationCommands.start.prompt.trim();
+  return Boolean(startPrompt) && text === startPrompt;
+}
+
 function applyPiSummaryRecords(state: PiTranscriptSummaryState, records: UnknownRecord[]): void {
   for (const record of records) {
     if (record.type === "session_info") state.name = typeof record.name === "string" ? record.name.trim() : "";
-    if (!state.firstMessage && record.type === "message" && asRecord(record.message).role === "user") state.firstMessage = stripScheduledPromptMarker(textFromMessage(record.message)).trim();
+    if (!state.firstMessage && record.type === "message" && asRecord(record.message).role === "user") {
+      const prompt = stripScheduledPromptMarker(textFromMessage(record.message)).trim();
+      if (!isPiSetupPrompt(prompt)) state.firstMessage = prompt;
+    }
     const activity = piMessageActivity(record);
     if (activity && activity > state.updatedAt) state.updatedAt = activity;
   }
@@ -546,7 +554,9 @@ async function summarizePiTranscript(filePath: string, project: SessionProjectPa
     }
     throw error;
   }
-  if (!state || isInternalSession(state.id, state.firstMessage) || !sessionCwds(project).includes(state.cwd)) return null;
+  // Opening a new chat writes only the automatic setup command. It is not a
+  // conversation until the user has supplied a real prompt.
+  if (!state || !state.firstMessage || isInternalSession(state.id, state.firstMessage) || !sessionCwds(project).includes(state.cwd)) return null;
   return {
     id: state.id,
     path: filePath,

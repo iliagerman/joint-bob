@@ -1195,7 +1195,7 @@ test("cross-node opening replaces stale home paths without the fifty-conversatio
       const id = index === 0 ? sessionId : randomUUID();
       const file = path.join(directory, `${id}.jsonl`);
       files.push(file);
-      await writeFile(file, JSON.stringify({ type: "session", version: 3, id, cwd: project.path, timestamp: index === 0 ? "2000-01-01T00:00:00.000Z" : new Date().toISOString() }) + "\n");
+      await writeFile(file, `${JSON.stringify({ type: "session", version: 3, id, cwd: project.path, timestamp: index === 0 ? "2000-01-01T00:00:00.000Z" : new Date().toISOString() })}\n${JSON.stringify({ type: "message", id: `message-${id}`, parentId: null, timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "text", text: "Fixture conversation" }] } })}\n`);
     }
     let listed = await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${project.id}/sessions`);
     const catalogDeadline = Date.now() + 10_000;
