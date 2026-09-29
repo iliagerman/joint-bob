@@ -14,8 +14,34 @@ CREATE TABLE IF NOT EXISTS usage_difficulty(turn_id TEXT PRIMARY KEY,project_id 
 CREATE INDEX IF NOT EXISTS usage_difficulty_scope ON usage_difficulty(project_id,conversation_id,session_id,engine,occurred_at);
 CREATE INDEX IF NOT EXISTS usage_difficulty_interval ON usage_difficulty(project_id,conversation_id,occurred_at DESC);
 CREATE TABLE IF NOT EXISTS usage_inventory(project_id TEXT NOT NULL,conversation_id TEXT NOT NULL,session_id TEXT NOT NULL,engine TEXT NOT NULL,title TEXT NOT NULL,classification TEXT,usage_status TEXT NOT NULL,PRIMARY KEY(project_id,engine,session_id));
-CREATE TABLE IF NOT EXISTS subscription_plans(id TEXT PRIMARY KEY,owner TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS subscription_owner ON subscription_plans(owner);`);
+CREATE TABLE IF NOT EXISTS subscription_plans(id TEXT PRIMARY KEY,owner TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS subscription_owner ON subscription_plans(owner);
+CREATE TABLE IF NOT EXISTS usage_ingest_files(file_key TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,status TEXT NOT NULL);`);
 }
+/** Local-only: fingerprints name this machine's files, so they never replicate. */
+export function usageIngestFingerprint(key: string): { fingerprint: string; status: string } | undefined {
+  return usageDatabase().prepare("SELECT fingerprint,status FROM usage_ingest_files WHERE file_key=?").get(key) as { fingerprint: string; status: string } | undefined;
+}
+export function saveUsageIngestFingerprint(key: string, fingerprint: string, status: string): void {
+  usageDatabase().prepare("INSERT INTO usage_ingest_files(file_key,fingerprint,status) VALUES(?,?,?) ON CONFLICT(file_key) DO UPDATE SET fingerprint=excluded.fingerprint,status=excluded.status").run(key, fingerprint, status);
+}
+
+/**
+ * Every listing poll reads each conversation's totals, and computing one aggregates all of its
+ * event payloads. Totals stay cached until a write touches their scope.
+ */
+type UsageScope = { projectId: string; conversationId?: string; sessionId?: string; engine?: string };
+const totalsCache = new Map<string, { projectIds: string[]; filters: UsageFilters; totals: UsageTotals }>();
+function invalidateTotals(scopes: UsageScope[]): void {
+  if (!scopes.length) return;
+  for (const [key, { projectIds, filters }] of totalsCache) {
+    if (scopes.some((scope) => projectIds.includes(scope.projectId)
+      && (!scope.conversationId || !filters.conversationId || scope.conversationId === filters.conversationId)
+      && (!scope.sessionId || !filters.sessionId || scope.sessionId === filters.sessionId)
+      && (!scope.engine || !filters.engine || scope.engine === filters.engine))) totalsCache.delete(key);
+  }
+}
+/** For writers outside this module, such as tests that edit the tables directly. */
+export function clearUsageTotalsCache(): void { totalsCache.clear(); }
 export function usageDatabase(): DatabaseSync {
   if (database) return database;
   const directory = resolveDataDirectory(); mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -63,14 +89,16 @@ function putEvent(db: DatabaseSync, raw: UsageEvent, origin: string): UsageEvent
 
 export function saveUsageEvents(raw: UsageEvent[], originNodeId: string): void {
   const db = usageDatabase();
+  const changed: UsageEvent[] = [];
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const value of raw) {
       const event = putEvent(db, usageEventSchema.parse(value), originNodeId);
-      if (event) enqueueReplicationEvent(db, { originNodeId, entityType: "model.usage", entityKey: event.id, operation: "upsert", payload: { projectId: event.projectId, event, originNodeId } });
+      if (event) { changed.push(event); enqueueReplicationEvent(db, { originNodeId, entityType: "model.usage", entityKey: event.id, operation: "upsert", payload: { projectId: event.projectId, event, originNodeId } }); }
     }
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
+  invalidateTotals(changed);
 }
 export function saveUsageEvent(raw: UsageEvent, originNodeId: string): void { saveUsageEvents([raw], originNodeId); }
 
@@ -178,10 +206,22 @@ function unavailableInventory(db: DatabaseSync, filters: UsageFilters): number {
 }
 export function usageTotals(filters: UsageFilters): UsageTotals {
   const db = usageDatabase();
+  // Classification and difficulty labels change outside the usage writers, so those stay live.
+  // The resolved project ids are part of the key, so an alias change is a new entry.
+  const cacheable = !filters.classification && !filters.difficulty;
+  const projectIds = rawProjectIds(db, filters);
+  const key = JSON.stringify([projectIds, filters]);
+  const cached = cacheable ? totalsCache.get(key) : undefined;
+  if (cached) return cached.totals;
   const condition = where(db, filters);
   const row = db.prepare(`SELECT ${aggregate} FROM ${source(db, filters)} WHERE 1=1${condition.sql}`).get(...condition.args) as Record<string, number | null>;
   row.unavailableSessions = unavailableInventory(db, filters);
-  return totalsRow(row);
+  const totals = totalsRow(row);
+  if (cacheable) {
+    if (totalsCache.size >= 20_000) totalsCache.clear();
+    totalsCache.set(key, { projectIds, filters, totals });
+  }
+  return totals;
 }
 export function usageBreakdown(filters: UsageFilters, dimension: UsageDimension): Array<{ key: string; totals: UsageTotals }> {
   const db = usageDatabase();
@@ -214,8 +254,12 @@ export function usageInventoryCoverage(projectIds?: string[]): { projects: numbe
   return { projects: Number(row.projects), sessions: Number(row.sessions), missing: Number(row.missing ?? 0) };
 }
 export function upsertUsageInventory(value: { projectId: string; conversationId: string; sessionId: string; engine: string; title: string; classification: string | null; usageStatus: string }): void {
-  usageDatabase().prepare(`INSERT INTO usage_inventory(project_id,conversation_id,session_id,engine,title,classification,usage_status) VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,engine,session_id) DO UPDATE SET conversation_id=excluded.conversation_id,title=excluded.title,classification=excluded.classification,usage_status=excluded.usage_status`)
+  // Every listing re-reports every session; an unchanged row must not rewrite the database.
+  const { changes } = usageDatabase().prepare(`INSERT INTO usage_inventory(project_id,conversation_id,session_id,engine,title,classification,usage_status) VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,engine,session_id) DO UPDATE SET conversation_id=excluded.conversation_id,title=excluded.title,classification=excluded.classification,usage_status=excluded.usage_status
+    WHERE conversation_id IS NOT excluded.conversation_id OR title IS NOT excluded.title OR classification IS NOT excluded.classification OR usage_status IS NOT excluded.usage_status`)
     .run(value.projectId, value.conversationId, value.sessionId, value.engine, value.title, value.classification, value.usageStatus);
+  // The row may have moved between conversations, so drop the whole project's session totals.
+  if (Number(changes)) invalidateTotals([{ projectId: value.projectId, sessionId: value.sessionId, engine: value.engine }]);
 }
 export function usageConversations(projectIds: string[]): unknown[] {
   if (!projectIds.length) return [];
@@ -237,7 +281,8 @@ export function applyUsageEvent(db: DatabaseSync, event: ReplicationEvent): void
   const payload = event.payload as { projectId: string; event: UsageEvent; originNodeId: string };
   if (!payload || payload.projectId !== payload.event?.projectId || payload.originNodeId !== event.originNodeId || event.entityKey !== payload.event?.id) throw new Error("Malformed usage replication event");
   const parsed = usageEventSchema.parse(payload.event);
-  putEvent(db, { ...parsed, projectId: resolveProjectAlias(db,parsed.projectId) }, event.originNodeId);
+  const stored = putEvent(db, { ...parsed, projectId: resolveProjectAlias(db,parsed.projectId) }, event.originNodeId);
+  if (stored) invalidateTotals([stored]);
 }
 export function applyUsageDifficultyEvent(db: DatabaseSync, event: ReplicationEvent): void {
   if (event.entityType !== "usage.difficulty" || event.operation !== "upsert") throw new Error("Unsupported usage difficulty event");

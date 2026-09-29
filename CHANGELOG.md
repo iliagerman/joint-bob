@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Usage dashboard and listing queries now load faster by using indexed project lookups.
+- Conversation listings now cache usage totals and skip re-reading transcripts being actively written until they stop changing.
 
 ## 2.13.12 — 2026-09-29
 

@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test, { beforeEach } from "node:test";
 import { priceUsage } from "../src/usage-pricing.js";
 import { DatabaseSync } from "node:sqlite";
-import { applyUsageEvent, ensureUsageSchema, saveUsageEvent, usageDatabase, usageTotals } from "../src/usage-ledger.js";
+import { applyUsageEvent, clearUsageTotalsCache, ensureUsageSchema, saveUsageEvent, usageDatabase, usageTotals } from "../src/usage-ledger.js";
 import type { UsageEvent } from "../src/usage-types.js";
 
 const db = usageDatabase();
-beforeEach(() => db.exec("DELETE FROM model_usage_events; DELETE FROM usage_inventory; DELETE FROM replication_outbox;"));
+beforeEach(() => { db.exec("DELETE FROM model_usage_events; DELETE FROM usage_inventory; DELETE FROM replication_outbox;"); clearUsageTotalsCache(); });
 function event(overrides: Partial<UsageEvent> = {}): UsageEvent {
   return { id: "request", projectId: "project", conversationId: "conversation", sessionId: "session", engine: "pi", provider: "provider", modelId: "model",
     occurredAt: "2025-01-01T00:00:00.000Z", requestId: null, input: 10, output: 5, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0,

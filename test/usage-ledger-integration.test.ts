@@ -5,8 +5,8 @@ import path from "node:path";
 import test, { beforeEach } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationRecord } from "../src/conversation-records.js";
-import { applyUsageEvent, ensureUsageSchema, latestDifficultyForConversation, saveDifficulty, saveUsageEvent, saveUsageEvents, usageBreakdown, usageConversations, usageDatabase, usageInventoryCoverage, usageTotals, upsertUsageInventory } from "../src/usage-ledger.js";
-import { ingestUsageSessions } from "../src/usage-ingest.js";
+import { applyUsageEvent, clearUsageTotalsCache, ensureUsageSchema, latestDifficultyForConversation, saveDifficulty, saveUsageEvent, saveUsageEvents, usageBreakdown, usageConversations, usageDatabase, usageInventoryCoverage, usageTotals, upsertUsageInventory } from "../src/usage-ledger.js";
+import { ingestUsageSessions, USAGE_REIMPORT_INTERVAL_MS } from "../src/usage-ingest.js";
 import { ensureReplicationSchema } from "../src/replication.js";
 import type { ProjectRecord, SessionSummary } from "../src/types.js";
 import type { UsageEvent } from "../src/usage-types.js";
@@ -20,6 +20,7 @@ function stored(id = "pi:event"): UsageEvent { return JSON.parse((db.prepare("SE
 beforeEach(() => {
   for (const table of ["model_usage_events", "usage_difficulty", "usage_inventory", "replication_outbox"]) db.exec(`DELETE FROM ${table}`);
   db.exec("DROP TABLE IF EXISTS name_overrides; DROP TABLE IF EXISTS project_aliases");
+  clearUsageTotalsCache();
 });
 
 test("registry pricing snapshot is frozen, replicated exactly, and duplicates are idempotent", () => {
@@ -73,6 +74,7 @@ test("replicated event-only conversations are visible once, titled safely, class
 });
 
 test("file ingestion imports many sessions, switched segments, subagents, and appended requests idempotently", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const home = await mkdtemp(path.join(os.tmpdir(), "joint-bob-usage-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const root = path.join(home, "project");
@@ -108,5 +110,9 @@ test("file ingestion imports many sessions, switched segments, subagents, and ap
   assert.equal((db.prepare("SELECT count(*) n FROM replication_outbox").get() as { n: number }).n, outboxCount);
   await appendFile(sessions[0].path, `${JSON.stringify(piRecord("appended-response", "2025-01-01T00:00:02.000Z"))}\n`);
   await ingestUsageSessions(project, sessions, records);
+  assert.equal(usageTotals({ projectIds: [project.id] }).requests, 67, "a transcript still being written is not re-read on every listing");
+  t.mock.timers.tick(USAGE_REIMPORT_INTERVAL_MS);
+  await ingestUsageSessions(project, sessions, records);
   assert.equal(usageTotals({ projectIds: [project.id] }).requests, 68);
+  assert.ok((db.prepare("SELECT count(*) n FROM usage_ingest_files").get() as { n: number }).n >= 67, "fingerprints survive a restart");
 });

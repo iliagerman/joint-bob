@@ -6,9 +6,14 @@ import type { ConversationRecord } from "./conversation-records.js";
 import { parseCompletedJsonl } from "./jsonl.js";
 import type { ProjectRecord, SessionSummary } from "./types.js";
 import { normalizeUsageRecords } from "./usage-import.js";
-import { saveUsageEvents, upsertUsageInventory } from "./usage-ledger.js";
+import { saveUsageEvents, saveUsageIngestFingerprint, upsertUsageInventory, usageIngestFingerprint } from "./usage-ledger.js";
 
-const fingerprints = new Map<string, { fingerprint: string; status: string }>();
+/**
+ * A transcript being written changes on every turn, and importing it re-reads the whole file,
+ * so a changed file is re-imported at most once per interval.
+ */
+export const USAGE_REIMPORT_INTERVAL_MS = 60_000;
+const fingerprints = new Map<string, { fingerprint: string; status: string; importedAt?: number }>();
 const inFlight = new Map<string, Promise<string>>();
 
 function nativePath(session: SessionSummary): string | null {
@@ -36,8 +41,11 @@ async function importSession(project: ProjectRecord, session: SessionSummary, co
       throw error;
     }
     const fingerprint = `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${project.id}:${conversationId}`;
-    const cached = fingerprints.get(key);
+    // The persisted fingerprint keeps a restart from re-reading every transcript on disk.
+    const cached: { fingerprint: string; status: string; importedAt?: number } | undefined = fingerprints.get(key) ?? usageIngestFingerprint(key);
+    if (cached) fingerprints.set(key, cached);
     if (cached?.fingerprint === fingerprint) return cached.status;
+    if (cached?.importedAt && Date.now() - cached.importedAt < USAGE_REIMPORT_INTERVAL_MS) return cached.status;
     let contents: string;
     try { contents = await readFile(file, "utf8"); }
     catch (error) {
@@ -54,7 +62,8 @@ async function importSession(project: ProjectRecord, session: SessionSummary, co
     });
     saveUsageEvents(events, origin);
     const status = events.some((event) => event.usageStatus === "missing") ? "missing" : "reported";
-    fingerprints.set(key, { fingerprint, status });
+    fingerprints.set(key, { fingerprint, status, importedAt: Date.now() });
+    saveUsageIngestFingerprint(key, fingerprint, status);
     return status;
   })();
   inFlight.set(key, pending);
