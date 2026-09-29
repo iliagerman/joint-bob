@@ -84,9 +84,15 @@ function eventFromRow(row: OutboxRow): ReplicationEvent {
   return { id: row.event_id, originNodeId: row.origin_node_id, entityType: row.entity_type, entityKey: row.entity_key, operation: row.operation, payload: JSON.parse(row.payload), createdAt: row.created_at };
 }
 
+/** Outbox rows examined per transaction. A backlog of many thousand events in one transaction
+    blocks the event loop for minutes, and its stale snapshot then fails the cursor write, so
+    the same backlog was rescanned forever. */
+const ENQUEUE_BATCH = 500;
+
 /** Queues this node's own events for the hubs of every cluster that may receive them. A
-    project that becomes shared with a cluster later gets its earlier events queued once. */
-function enqueueOwnEvents(db: DatabaseSync, local: string): void {
+    project that becomes shared with a cluster later gets its earlier events queued once.
+    Returns whether more of the outbox remains past the cursor. */
+function enqueueOwnEvents(db: DatabaseSync, local: string): boolean {
   ensureHubSchema(db);
   const now = new Date().toISOString();
   const shared = new Set<string>();
@@ -117,15 +123,19 @@ function enqueueOwnEvents(db: DatabaseSync, local: string): void {
       }
     }
     const cursor = (db.prepare("SELECT outbox_rowid FROM cluster_v2_hub_cursor WHERE singleton=1").get() as { outbox_rowid: number } | undefined)?.outbox_rowid ?? 0;
-    let last = cursor;
-    for (const row of db.prepare("SELECT rowid,* FROM replication_outbox WHERE rowid>? AND origin_node_id=? ORDER BY rowid").iterate(cursor, local) as unknown as Iterable<OutboxRow>) {
+    let last = cursor, examined = 0;
+    for (const row of db.prepare("SELECT rowid,* FROM replication_outbox WHERE rowid>? AND origin_node_id=? ORDER BY rowid LIMIT ?").iterate(cursor, local, ENQUEUE_BATCH) as unknown as Iterable<OutboxRow>) {
       last = row.rowid;
+      examined += 1;
       const event = eventFromRow(row);
       for (const clusterId of hubClusters(db, local, event)) queueForCluster(db, local, clusterId, event, now);
     }
-    const newest = (db.prepare("SELECT max(rowid) id FROM replication_outbox").get() as { id: number | null }).id ?? 0;
+    const more = examined === ENQUEUE_BATCH;
+    // Only a drained outbox may skip ahead past other nodes' rows.
+    const newest = more ? last : (db.prepare("SELECT max(rowid) id FROM replication_outbox").get() as { id: number | null }).id ?? 0;
     db.prepare("INSERT INTO cluster_v2_hub_cursor VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET outbox_rowid=excluded.outbox_rowid").run(Math.max(last, newest));
     db.exec("RELEASE hub_enqueue");
+    return more;
   } catch (error) { db.exec("ROLLBACK TO hub_enqueue; RELEASE hub_enqueue"); throw error; }
 }
 
@@ -189,7 +199,7 @@ export async function flushHubDeliveries(): Promise<void> {
   flushing = true;
   try {
     const db = await clusterV2Database(), local = (await getClusterNode()).id;
-    enqueueOwnEvents(db, local);
+    while (enqueueOwnEvents(db, local)) await new Promise((resolve) => setImmediate(resolve));
     await deliverToHubs(db, local);
     // Events set aside may fit now that other data arrived, by any path.
     for (const { clusterId } of listSharingMemberships(db, local)) await applyDeferred(db, local, clusterId);
