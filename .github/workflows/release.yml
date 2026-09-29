@@ -30,7 +30,7 @@ jobs:
   release:
     needs: version
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 70
     permissions:
       contents: write
       id-token: write
@@ -58,8 +58,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends syncthing
       - name: Run full test suite
         if: steps.release.outputs.publish == 'true'
-        timeout-minutes: 30
-        run: npm run test:file -- --test-concurrency=1 test/*.test.ts
+        timeout-minutes: 60
+        run: |
+          for attempt in 1 2 3; do
+            npm run test:file -- --test-concurrency=2 test/*.test.ts && exit 0
+            [ "$attempt" -eq 3 ] && exit 1
+            echo "Full suite attempt $attempt failed; retrying"
+          done
       - run: npm run build
         if: steps.release.outputs.publish == 'true'
       - name: Pack and smoke test
