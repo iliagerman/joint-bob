@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Usage dashboard and listing queries now load faster by using indexed project lookups.
+
 ## 2.13.12 — 2026-09-29
 
 - Fixed clipped Costs dashboard on desktop and mobile with clearer Overview and Harness subscriptions views.

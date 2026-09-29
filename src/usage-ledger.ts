@@ -99,13 +99,24 @@ function hasAliases(db: DatabaseSync): boolean {
 function canonicalProject(db: DatabaseSync, alias: string): string {
   return hasAliases(db) ? `COALESCE((SELECT project_id FROM project_aliases WHERE alias_id=${alias}.project_id),${alias}.project_id)` : `${alias}.project_id`;
 }
+/**
+ * The stored project ids whose canonical project is one of `projectIds`. Filtering on these
+ * raw ids keeps the project indexes usable; wrapping the column in the alias lookup forces a
+ * full scan per query, which stalls every conversation listing.
+ */
+function rawProjectIds(db: DatabaseSync, filters: UsageFilters): string[] {
+  const projectIds = filters.projectId ? filters.projectIds.filter((id) => id === filters.projectId) : filters.projectIds;
+  if (!projectIds.length || !hasAliases(db)) return projectIds;
+  const aliases = db.prepare("SELECT alias_id,project_id FROM project_aliases").all() as Array<{ alias_id: string; project_id: string }>;
+  const aliased = new Set(aliases.map((row) => row.alias_id));
+  return [...new Set([...projectIds.filter((id) => !aliased.has(id)), ...aliases.filter((row) => projectIds.includes(row.project_id)).map((row) => row.alias_id)])];
+}
 function where(db: DatabaseSync, filters: UsageFilters, alias = "e"): { sql: string; args: string[] } {
-  if (!filters.projectIds.length) return { sql: " AND 0", args: [] };
-  const project = canonicalProject(db, alias);
-  const args = [...filters.projectIds];
-  const clauses = [`${project} IN (${filters.projectIds.map(() => "?").join(",")})`];
+  const projectIds = rawProjectIds(db, filters);
+  if (!projectIds.length) return { sql: " AND 0", args: [] };
+  const args = [...projectIds];
+  const clauses = [`${alias}.project_id IN (${projectIds.map(() => "?").join(",")})`];
   for (const [key, column] of [["conversationId", "conversation_id"], ["sessionId", "session_id"], ["engine", "engine"]] as const) if (filters[key]) { clauses.push(`${alias}.${column}=?`); args.push(filters[key]!); }
-  if (filters.projectId) { clauses.push(`${project}=?`); args.push(filters.projectId); }
   for (const [key, json] of [["provider", "provider"], ["modelId", "modelId"]] as const) if (filters[key]) { clauses.push(`json_extract(${alias}.payload,'$.${json}')=?`); args.push(filters[key]!); }
   if (filters.difficulty) { clauses.push(`${difficultyExpression()}=?`); args.push(filters.difficulty); }
   if (filters.from) { clauses.push(`${alias}.occurred_at>=?`); args.push(filters.from); }
@@ -145,18 +156,22 @@ function classification(db: DatabaseSync, alias = "e", inventoryAlias = "i"): st
     : `COALESCE(${inventoryAlias}.classification,'Unclassified')`;
 }
 function difficultyExpression(): string { return "COALESCE(CAST(json_extract(d.payload,'$.level') AS TEXT),'not-classified')"; }
-function source(db: DatabaseSync): string {
+/** Joins only what the filter or grouping reads: each join is evaluated per event row. */
+function source(db: DatabaseSync, filters: UsageFilters, dimension?: UsageDimension): string {
   const eventProject = canonicalProject(db, "e");
   const difficultyProject = canonicalProject(db, "x");
-  return `model_usage_events e LEFT JOIN usage_inventory i ON ${canonicalProject(db, "i")}=${eventProject} AND i.engine=e.engine AND i.session_id=e.session_id
-    LEFT JOIN usage_difficulty d ON d.turn_id=(SELECT x.turn_id FROM usage_difficulty x WHERE ${difficultyProject}=${eventProject} AND x.conversation_id=e.conversation_id AND x.session_id=e.session_id AND x.engine=e.engine AND json_extract(x.payload,'$.endedAt') IS NOT NULL AND json_extract(x.payload,'$.status') IN ('classified','inherited') AND e.occurred_at>=json_extract(x.payload,'$.startedAt') AND e.occurred_at<=json_extract(x.payload,'$.endedAt') ORDER BY json_extract(x.payload,'$.startedAt') DESC LIMIT 1)`;
+  const inventory = !hasNames(db) && (Boolean(filters.classification) || dimension === "classification");
+  const difficulty = Boolean(filters.difficulty) || dimension === "difficulty";
+  return `model_usage_events e${inventory ? ` LEFT JOIN usage_inventory i ON ${canonicalProject(db, "i")}=${eventProject} AND i.engine=e.engine AND i.session_id=e.session_id` : ""}${difficulty ? `
+    LEFT JOIN usage_difficulty d ON d.turn_id=(SELECT x.turn_id FROM usage_difficulty x WHERE ${difficultyProject}=${eventProject} AND x.conversation_id=e.conversation_id AND x.session_id=e.session_id AND x.engine=e.engine AND json_extract(x.payload,'$.endedAt') IS NOT NULL AND json_extract(x.payload,'$.status') IN ('classified','inherited') AND e.occurred_at>=json_extract(x.payload,'$.startedAt') AND e.occurred_at<=json_extract(x.payload,'$.endedAt') ORDER BY json_extract(x.payload,'$.startedAt') DESC LIMIT 1)` : ""}`;
 }
 function unavailableInventory(db: DatabaseSync, filters: UsageFilters): number {
   if (!filters.projectIds.length || filters.provider || filters.modelId || filters.from || filters.to || filters.difficulty) return 0;
-  const project = canonicalProject(db, "i");
-  const clauses = [`${project} IN (${filters.projectIds.map(() => "?").join(",")})`, "i.usage_status IN ('missing','unavailable')"];
-  const args = [...filters.projectIds];
-  for (const [key, column] of [["projectId", "project_id"], ["conversationId", "conversation_id"], ["sessionId", "session_id"], ["engine", "engine"]] as const) if (filters[key]) { clauses.push(`${key === "projectId" ? project : `i.${column}`}=?`); args.push(filters[key]!); }
+  const projectIds = rawProjectIds(db, filters);
+  if (!projectIds.length) return 0;
+  const clauses = [`i.project_id IN (${projectIds.map(() => "?").join(",")})`, "i.usage_status IN ('missing','unavailable')"];
+  const args = [...projectIds];
+  for (const [key, column] of [["conversationId", "conversation_id"], ["sessionId", "session_id"], ["engine", "engine"]] as const) if (filters[key]) { clauses.push(`i.${column}=?`); args.push(filters[key]!); }
   if (filters.classification) { clauses.push(`${classification(db, "i", "i")}=?`); args.push(filters.classification); }
   const row = db.prepare(`SELECT COUNT(*) count FROM usage_inventory i WHERE ${clauses.join(" AND ")}`).get(...args) as { count: number };
   return Number(row.count);
@@ -164,7 +179,7 @@ function unavailableInventory(db: DatabaseSync, filters: UsageFilters): number {
 export function usageTotals(filters: UsageFilters): UsageTotals {
   const db = usageDatabase();
   const condition = where(db, filters);
-  const row = db.prepare(`SELECT ${aggregate} FROM ${source(db)} WHERE 1=1${condition.sql}`).get(...condition.args) as Record<string, number | null>;
+  const row = db.prepare(`SELECT ${aggregate} FROM ${source(db, filters)} WHERE 1=1${condition.sql}`).get(...condition.args) as Record<string, number | null>;
   row.unavailableSessions = unavailableInventory(db, filters);
   return totalsRow(row);
 }
@@ -176,7 +191,7 @@ export function usageBreakdown(filters: UsageFilters, dimension: UsageDimension)
     difficulty: difficultyExpression(),
     model: "json_extract(e.payload,'$.modelId')", day: "substr(e.occurred_at,1,10)", engine: "e.engine",
   };
-  const rows = db.prepare(`SELECT ${expressions[dimension]} key,${aggregate} FROM ${source(db)} WHERE 1=1${condition.sql} GROUP BY key ORDER BY key`)
+  const rows = db.prepare(`SELECT ${expressions[dimension]} key,${aggregate} FROM ${source(db, filters, dimension)} WHERE 1=1${condition.sql} GROUP BY key ORDER BY key`)
     .all(...condition.args) as unknown as Array<Record<string, number | null> & { key: string }>;
   return rows.map((row) => ({ key: row.key, totals: totalsRow(row) }));
 }
