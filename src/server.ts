@@ -18,7 +18,7 @@ import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { activateManagedHarnesses, startHarnessUpdateScheduler } from "./harness-updater.js";
-import { flags, port, server } from "./server/state.js";
+import { clusterWorkAllowed, flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
 import { startBrowserMonitors, stopBrowserMonitors } from "./server/browser-monitors.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
@@ -118,34 +118,41 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
     void startQuickNoteScheduler().catch(error => console.error("Quick note recovery failed; scheduler not started", error));
     void startBrowserMonitors().catch(error => console.error("Browser monitor startup failed", error));
+    // Cluster work waits for startup reconciliation: run alongside it, it kept a restarting
+    // node too busy to become ready within its release health check.
+    const flushClusterWork = (): void => {
+      flushV2ClusterAdministration().catch((error) => console.warn("V2 cluster administration flush failed", error));
+      flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
+      flushHubDeliveries().catch((error) => console.warn("Hub delivery failed", error));
+      flushSuccessionNotices().catch((error) => console.warn("Succession notice delivery failed", error));
+      pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
+      flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
+      flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
+      reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
+    };
+    let clusterStarted = false;
+    const runClusterWork = (): void => {
+      if (!clusterWorkAllowed()) return;
+      if (!clusterStarted) {
+        clusterStarted = true;
+        pullFromHubs().catch((error) => console.warn("Hub pull failed", error));
+        removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
+      }
+      flushClusterWork();
+    };
     initializeStartupReadiness()
+      .then(runClusterWork)
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTaskConversationRecords(); })
       .catch((error) => console.warn("Startup recovery failed", error));
-    flushV2ClusterAdministration().catch((error) => console.warn("V2 cluster administration flush failed", error));
-    flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
-    flushHubDeliveries().catch((error) => console.warn("Hub delivery failed", error));
-    pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
-    flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
-    flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
-    reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
-    pullFromHubs().catch((error) => console.warn("Hub pull failed", error));
-    removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
-    setInterval(() => pullFromHubs().catch((error) => console.warn("Hub pull failed", error)), 60_000).unref();
+    setInterval(() => { if (clusterWorkAllowed()) pullFromHubs().catch((error) => console.warn("Hub pull failed", error)); }, 60_000).unref();
     setInterval(() => reapInactiveConversations().catch((error) => console.warn("Inactive conversation reap failed", error)), 60_000).unref();
     setInterval(() => sweepStaleConversations().catch((error) => console.warn("Stale conversation sweep failed", error)), 60_000).unref();
     setInterval(() => void runSyncCheck(), 5 * 60_000).unref();
     setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
     setInterval(() => {
       void initializeStartupReadiness();
-      flushV2ClusterAdministration().catch((error) => console.warn("V2 cluster administration flush failed", error));
-      flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
-      flushHubDeliveries().catch((error) => console.warn("Hub delivery failed", error));
-      flushSuccessionNotices().catch((error) => console.warn("Succession notice delivery failed", error));
-      pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
       sweepRuntimeLeases();
-      flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
-      flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
-      reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
+      runClusterWork();
     }, 2_000).unref();
   });
   })

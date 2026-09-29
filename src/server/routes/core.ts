@@ -8,7 +8,7 @@ import { authenticate, authenticationStatus, AuthError, type AuthSession, type M
 import { appVersion } from "../../changelog.js";
 import { captureClusterRawBody, clusterBodyParserError, rejectEncodedClusterBody, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
 import { loginSchema, passwordChangeSchema } from "../schemas.js";
-import { app, codemirrorDir, flags, publicDir } from "../state.js";
+import { app, clusterWorkAllowed, codemirrorDir, flags, publicDir } from "../state.js";
 import { redeemV2Membership } from "../cluster-v2.js";
 import { receiveManagerCertificate } from "../cluster-manager.js";
 import { confirmTwinHttp } from "../twins.js";
@@ -43,6 +43,13 @@ app.get("/sw.js", async (_request, response, next) => {
 });
 app.use("/vendor/codemirror", express.static(codemirrorDir, { index: false }));
 app.use(express.static(publicDir));
+// Until startup reconciliation completes, peers are asked to retry. Their requests (a whole
+// project's catalog, relayed backlogs) kept a restarting node too busy to ever become ready,
+// so a new release failed its health check and was rolled back. Peers retry on their own.
+app.use("/api/cluster", (_request, response, next) => {
+  if (clusterWorkAllowed()) { next(); return; }
+  response.set("Retry-After", "5").status(503).json({ error: "This node is starting" });
+});
 app.use("/api/cluster/v2", rejectEncodedClusterBody);
 app.use(express.json({ limit: "56mb", verify: captureClusterRawBody }));
 app.use(clusterBodyParserError);

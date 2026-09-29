@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Restarting nodes no longer fail health checks when peer requests arrive during startup.
 - Conversation catalogs now load faster on startup by resuming from saved summaries instead of re-reading every transcript.
 
 ## 2.13.19 — 2026-09-30

@@ -97,3 +97,9 @@ export const idleSessionTimeoutMs = 30 * 60 * 1000;
 export const localWriteGraceMs = 15_000;
 export const watchClients = new Map<string, Set<WebSocket>>();
 export const updateContinuationPrompt = "A service update interrupted this turn. Inspect the transcript and working tree, continue unfinished work, and do not repeat completed side effects.";
+
+/** Cluster traffic and work wait for startup reconciliation so a restarting node can become
+    ready, but never longer than this: a node whose reconciliation keeps failing must not cut
+    itself off from its peers. */
+const CLUSTER_STARTUP_GRACE_S = 300;
+export function clusterWorkAllowed(): boolean { return flags.startupReady || process.uptime() > CLUSTER_STARTUP_GRACE_S; }

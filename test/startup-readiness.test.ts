@@ -144,10 +144,14 @@ test("health stays starting until initial Syncthing ignore reconciliation succee
 
     const starting = await waitForHealth(port, 503);
     assert.deepEqual(await starting.json(), { status: "starting", version: appVersion(), release: "development" });
+    const peerWhileStarting = await fetch(`http://127.0.0.1:${port}/api/cluster/v2/transcripts?projectId=project-1`);
+    assert.equal(peerWhileStarting.status, 503, "peers are asked to retry while the node starts");
+    assert.equal(peerWhileStarting.headers.get("retry-after"), "5");
 
     syncthing.release();
     const ready = await waitForHealth(port, 200);
     assert.deepEqual(await ready.json(), { status: "ok", version: appVersion(), release: "development" });
+    assert.notEqual((await fetch(`http://127.0.0.1:${port}/api/cluster/v2/transcripts?projectId=project-1`)).status, 503, "a ready node serves peers again");
   } finally {
     if (child) await stopServer(child);
     await syncthing.close();
