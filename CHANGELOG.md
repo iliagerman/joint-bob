@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.12.3 — 2026-09-29
+
+- Stopped simultaneous requests from repeatedly parsing the same unchanged Claude transcript.
+- Project conversations now appear without waiting for model and harness discovery.
+- Added private timing logs that separate project request delays, conversation metadata work, and browser rendering.
+
 ## 2.12.2 — 2026-09-28
 
 - Restored mobile double-tap, triple-tap, conversation, note, and draggable focus controls.
