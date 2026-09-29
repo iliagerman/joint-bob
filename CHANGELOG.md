@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.13.3 — 2026-09-29
+
+- Opening a conversation checks only its execution node, without waiting for unrelated offline peers.
+- Recorded single-segment conversations open their own transcript directly instead of scanning the entire project catalog.
+- Added private WebSocket attachment timings and reports of loading stages still waiting after ten seconds.
+
 ## 2.13.2 — 2026-09-29
 
 - Claude conversation forks now correctly preserve the assistant's usage attribution.

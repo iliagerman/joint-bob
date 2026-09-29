@@ -69,6 +69,37 @@ test("runtime diagnostics include event-loop, CPU and memory and stop cleanly", 
   assert.equal(await readFile(filename, "utf8"), before);
 });
 
+test("WebSocket stages share a private trace ID and report a pending operation before it completes", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-socket-"));
+  const diagnostics = createPerformanceDiagnostics(root, { slowMs: 0, waitingMs: 5 });
+  let release!: (value: number) => void;
+  const gate = new Promise<number>(resolve => { release = resolve; });
+  const work = diagnostics.trace("chat.connect", () => diagnostics.measure("chat.open.runtime", () => gate));
+  t.after(async () => { release(42); await work; await diagnostics.stop(); await rm(root, { recursive: true, force: true }); });
+  await pause(20);
+  await diagnostics.flush();
+  const filename = path.join(root, "performance.jsonl");
+  const pending = (await readFile(filename, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  assert.deepEqual(pending.map(event => event.operation).sort(), ["chat.connect", "chat.open.runtime"]);
+  assert.ok(pending.every(event => event.event === "operation_waiting"));
+  assert.notEqual(pending[0].requestId, "background");
+  assert.equal(pending[0].requestId, pending[1].requestId);
+  release(42);
+  assert.equal(await work, 42);
+  const failure = new Error("private-socket-failure");
+  await assert.rejects(diagnostics.trace("chat.failure", () => { throw failure; }), error => error === failure);
+  await pause(20);
+  await diagnostics.flush();
+  const text = await readFile(filename, "utf8");
+  assert.doesNotMatch(text, /private-socket-failure/);
+  const events = text.trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(events.filter(event => event.event === "operation_waiting").length, 2, "completion and rejection clear waiting timers");
+  const completed = events.filter(event => event.event === "slow_operation" && event.operation !== "chat.failure");
+  assert.equal(completed.length, 2);
+  assert.ok(completed.every(event => event.requestId === pending[0].requestId));
+  assert.notEqual(events.find(event => event.operation === "chat.failure").requestId, pending[0].requestId);
+});
+
 test("fast operations do not generate noisy logs", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-fast-"));
   const diagnostics = createPerformanceDiagnostics(root, { slowMs: 10_000 });

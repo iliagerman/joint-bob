@@ -251,7 +251,7 @@ export async function openListedSession(session) {
   state.activeTaskId = session.taskId || null;
   const listedOwner = state.sessionNodes.find((node) => node.id === session.executionNodeId);
   if (session.executionNodeId && !listedOwner?.local) {
-    try { await loadSessionNodes(projectId); }
+    try { await loadSessionNodes(projectId, session.executionNodeId); }
     catch (error) { toast(error.message, 8000); }
     if (state.activeProjectId !== projectId || state.activeSessionId !== session.id) return;
   }

@@ -9,8 +9,9 @@ type Fields = Record<string, string | number | boolean>;
 const requestContext = new AsyncLocalStorage<string>();
 
 /** Bounded, private diagnostics. Never accepts request bodies, queries, headers or error messages. */
-export function createPerformanceDiagnostics(directory: string, options: { slowMs?: number; intervalMs?: number; maxBytes?: number } = {}) {
+export function createPerformanceDiagnostics(directory: string, options: { slowMs?: number; intervalMs?: number; maxBytes?: number; waitingMs?: number } = {}) {
   const slowMs = options.slowMs ?? 500;
+  const waitingMs = options.waitingMs ?? 10_000;
   const maxBytes = options.maxBytes ?? 5 * 1024 * 1024;
   const filename = path.join(directory, "performance.jsonl");
   let writes = Promise.resolve();
@@ -48,7 +49,7 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
     activeRequests++;
     let completed = false;
     const fields = (): Fields => ({ requestId, method: request.method, route: typeof request.route?.path === "string" ? request.route.path : "unmatched", status: response.statusCode, durationMs: Math.round(performance.now() - started), activeRequests });
-    const waiting = setTimeout(() => log("request_waiting", fields()), 10_000);
+    const waiting = setTimeout(() => log("request_waiting", fields()), waitingMs);
     waiting.unref();
     const finish = (): void => {
       if (completed) return;
@@ -65,11 +66,20 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
   /** Labels are code-owned stage names, never data from a user or peer. */
   async function measure<T>(operation: string, run: () => Promise<T> | T): Promise<T> {
     const started = performance.now();
+    const requestId = requestContext.getStore() ?? "background";
+    const waiting = setTimeout(() => log("operation_waiting", { operation, requestId, durationMs: Math.round(performance.now() - started) }), waitingMs);
+    waiting.unref();
     try { return await run(); }
     finally {
+      clearTimeout(waiting);
       const durationMs = Math.round(performance.now() - started);
-      if (durationMs >= slowMs) log("slow_operation", { operation, durationMs, requestId: requestContext.getStore() ?? "background" });
+      if (durationMs >= slowMs) log("slow_operation", { operation, durationMs, requestId });
     }
+  }
+
+  /** Correlate non-HTTP work, including WebSocket attachment, without logging its URL. */
+  function trace<T>(operation: string, run: () => Promise<T> | T): Promise<T> {
+    return requestContext.run(`${process.pid}-operation-${++sequence}`, () => measure(operation, run));
   }
 
   function start(): void {
@@ -100,8 +110,9 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
     clearInterval(timer); timer = undefined; delay.disable();
     await writes;
   }
-  return { middleware, measure, start, stop, flush: () => writes };
+  return { middleware, measure, trace, start, stop, flush: () => writes };
 }
 
 export const performanceDiagnostics = createPerformanceDiagnostics(path.join(resolveDataDirectory(), "logs"));
 export const measureOperation = performanceDiagnostics.measure;
+export const traceOperation = performanceDiagnostics.trace;

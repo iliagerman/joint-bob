@@ -6,7 +6,7 @@ import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSocket } from "./runtime-peers.js";
 import { clusterPeerMayAccessProject, peerMayOpenTerminal } from "./cluster-helpers.js";
 import { type ConversationEngine, getConversationOwnership } from "../conversation-ownership.js";
-import { ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "../conversation-records.js";
+import { ensureConversationRecord, getConversationRecord, listConversationSegments, parseConversationDraftPath } from "../conversation-records.js";
 import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import { getProjectLock } from "../project-locks.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
@@ -25,6 +25,7 @@ import { socketSecretAccountIdsSchema, socketTaskIdSchema } from "./schemas.js";
 import { type ForeignConversationOwner, openConversationOwnership } from "./sessions-helpers.js";
 import { watchClients, webSocketServer } from "./state.js";
 import { ownerPeer } from "./task-handoff.js";
+import { measureOperation, traceOperation } from "./performance-diagnostics.js";
 import { mergeReservations, taskCwd, taskHandoffContext, taskTerminalCounts } from "./task-runs.js";
 
 function describeSessionRequest(rawSessionPath: string | null) {
@@ -43,7 +44,9 @@ async function directSessionForOpen(project: ProjectRecord, sessionPath: string,
   const request = describeSessionRequest(sessionPath);
   if (!request.sessionPath || request.draft) return undefined;
   const record = await getConversationRecord(project.id, request.engine, sessionId);
-  if (record?.conversationId) return undefined;
+  // A single recorded segment is still a direct open. Only switched conversations
+  // need the full catalog to resolve the latest segment and its earlier history.
+  if (record && (await listConversationSegments(project.id, record.conversationId ?? sessionId)).length > 1) return undefined;
   return findHarnessSession(project, request.engine, sessionPath, sessionId);
 }
 
@@ -58,7 +61,7 @@ authSessionEvents.on("revoked", (sessionIds: string[]) => {
 // A connection must never take the node down: a peer can hand this node malformed task
 // or session data, so any unexpected failure closes that socket and is logged.
 webSocketServer.on("connection", (socket, request) => {
-  handleConnection(socket, request).catch((error) => {
+  traceOperation("chat.connect", () => handleConnection(socket, request)).catch((error) => {
     console.error("WebSocket connection failed", error);
     socket.close(1011, "Connection failed");
   });
@@ -248,12 +251,12 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   // harness and its transcript root; a reconnect has a durable record to resolve.
   if (requestedSessionId && rawSessionPath && rawSessionPath !== "watch"
     && (!isNewSessionPath(rawSessionPath) || await getConversationRecord(project.id, routingEngine, requestedSessionId))) {
-    const direct = await directSessionForOpen(sessionSearchProject, rawSessionPath, requestedSessionId);
-    listedSessions = direct ? [direct] : await listHarnessSessions(sessionSearchProject);
+    const direct = await measureOperation("chat.open.direct_lookup", () => directSessionForOpen(sessionSearchProject, rawSessionPath!, requestedSessionId));
+    listedSessions = direct ? [direct] : await measureOperation("chat.open.catalog", () => listHarnessSessions(sessionSearchProject));
     const listedIdentity = listedSessions.some((candidate) => candidate.id === requestedSessionId || candidate.conversationId === requestedSessionId
       || candidate.segments?.some((segment) => segment.sessionId === requestedSessionId));
     if (!listedIdentity) {
-      const recovered = await findHarnessSession(sessionSearchProject, routingEngine, rawSessionPath, requestedSessionId);
+      const recovered = await measureOperation("chat.open.recover", () => findHarnessSession(sessionSearchProject, routingEngine, rawSessionPath!, requestedSessionId));
       if (recovered) listedSessions = [recovered];
     }
     if (task?.sessionPath && taskIdentity?.sessionId === requestedSessionId) rawSessionPath = resolveLocalSessionPath(task.sessionPath).path;
@@ -289,7 +292,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   let cwd = requestedTask ? taskCwd(project, requestedTask) : project.path;
   // Ticket conversations live in the ticket workspace, not the project directory,
   // so this must search the same paths the conversation list searches.
-  if ((sessionRequest.sessionPath || sessionRequest.draft) && !listedSessions) listedSessions = await listHarnessSessions(sessionSearchProject);
+  if ((sessionRequest.sessionPath || sessionRequest.draft) && !listedSessions) listedSessions = await measureOperation("chat.open.catalog", () => listHarnessSessions(sessionSearchProject));
   let listedSession = listedSessions?.find((candidate) => candidate.path === (sessionRequest.draft ? rawSessionPath : sessionRequest.sessionPath)
     || Boolean(!sessionRequest.draft && taskIdentity && requestedSessionId === taskIdentity.sessionId && candidate.harnessId === taskIdentity.engine && candidate.id === taskIdentity.sessionId)
     || Boolean(sessionRequest.sessionPath && candidate.segments?.some((segment) => segment.path === sessionRequest.sessionPath)));
@@ -334,7 +337,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   let foreignOwner: ForeignConversationOwner | null = null;
   if (!sessionReadOnly) {
     try {
-      foreignOwner = await openConversationOwnership(sessionRequest.engine, ownershipSessionId, local.id);
+      foreignOwner = await measureOperation("chat.open.ownership", () => openConversationOwnership(sessionRequest.engine, ownershipSessionId, local.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Conversation ownership claim failed";
       // A new conversation with no owner is unusable, but an existing one still

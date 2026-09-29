@@ -292,8 +292,12 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const local = await getClusterNode();
+    // Opening one conversation needs only its owner. Unrelated offline peers
+    // must not delay the local node or a reachable selected owner.
+    const targetNodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : undefined;
     // Only machines in a cluster this project is shared with may run its conversations.
-    const peerNodes = await Promise.all((await listRuntimePeers(project.id)).map(async (peer) => {
+    const peers = targetNodeId === local.id ? [] : (await listRuntimePeers(project.id)).filter(peer => !targetNodeId || peer.id === targetNodeId);
+    const peerNodes = await Promise.all(peers.map(async (peer) => {
       try {
         const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(3000)});
         if(!reply.ok)throw new Error('Project presence unavailable');

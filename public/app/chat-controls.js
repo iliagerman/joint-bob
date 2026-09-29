@@ -210,10 +210,15 @@ export function loadHarnesses() {
   return harnessesRequest;
 }
 
-export async function loadSessionNodes(projectId) {
-  const body = await api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes`);
+export async function loadSessionNodes(projectId, targetNodeId) {
+  const query = targetNodeId ? `?nodeId=${encodeURIComponent(targetNodeId)}` : "";
+  const body = await api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes${query}`);
   if (state.activeProjectId !== projectId) return;
-  state.sessionNodes = body.nodes;
+  // A targeted refresh must not remove the other choices from the node picker.
+  const refreshed = new Set([targetNodeId, ...body.nodes.map(node => node.id)]);
+  state.sessionNodes = targetNodeId
+    ? [...state.sessionNodes.filter(node => !refreshed.has(node.id)), ...body.nodes]
+    : body.nodes;
   const previousNodeId = state.activeNodeId;
   const selected = state.sessionNodes.find((node) => node.id === state.activeNodeId && node.online && node.mapped)
     || state.sessionNodes.find((node) => node.local);
