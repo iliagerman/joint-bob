@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.16 — 2026-09-29
 
 - Agent commands no longer show Node.js SQLite experimental warnings in their output.
-- Upgraded to OpenAI Codex GPT-6 models, retiring GPT-5.6 versions from automatic routing.
+- The built-in classifier now uses GPT-6 Luna for git tasks, and GPT-5.6 models no longer appear as new Pi choices or automatic routing options.
 
 ## 2.13.15 — 2026-09-29
 
