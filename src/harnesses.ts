@@ -9,7 +9,7 @@ import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
 import type { HarnessRuntime } from "./harnesses/runtime.js";
 import type { HarnessId, SessionSummary } from "./types.js";
 import { conversationUsage, usageTotals } from "./usage-ledger.js";
-import { ingestUsageSessions } from "./usage-ingest.js";
+import { scheduleUsageIngest } from "./usage-ingest.js";
 
 export { defineHarness } from "./harnesses/contract.js";
 export type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
@@ -312,7 +312,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     const logicalId = record?.conversationId ?? session.id;
     return classifications[logicalId] ? { ...session, classification: classifications[logicalId] } : session;
   });
-  await ingestUsageSessions(project, flat, records);
+  scheduleUsageIngest(project, flat, records);
   // A harness switch continues one logical conversation: group its segments and
   // let the newest segment face the list. Single sessions group as themselves.
   const byConversation = new Map<string, Array<{ session: SessionSummary; segmentIndex: number }>>();

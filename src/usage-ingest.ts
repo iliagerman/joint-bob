@@ -71,11 +71,11 @@ async function importSession(project: ProjectRecord, session: SessionSummary, co
   finally { if (inFlight.get(key) === pending) inFlight.delete(key); }
 }
 
-export async function ingestUsageSessions(project: ProjectRecord, sessions: SessionSummary[], records: ConversationRecord[]): Promise<void> {
+export async function ingestUsageSessions(project: ProjectRecord, sessions: SessionSummary[], records: ConversationRecord[], concurrency = 4): Promise<void> {
   const lineage = new Map(records.map((record) => [`${record.engine}:${record.sessionId}`, record.conversationId ?? record.sessionId]));
   const origin = (await getClusterNode()).id;
   const ordered = [...sessions].sort((a, b) => (a.createdAt ?? project.createdAt).localeCompare(b.createdAt ?? project.createdAt));
-  await mapWithConcurrency(ordered, 4, async (session) => {
+  await mapWithConcurrency(ordered, concurrency, async (session) => {
     const parent = parentFor(session, sessions);
     const conversationId = parent
       ? lineage.get(`${parent.harnessId}:${parent.id}`) ?? parent.conversationId ?? parent.id
@@ -85,5 +85,35 @@ export async function ingestUsageSessions(project: ProjectRecord, sessions: Sess
       projectId: project.id, conversationId, sessionId: session.id, engine: session.harnessId,
       title: parent?.title ?? session.title, classification: parent?.classification ?? session.classification ?? null, usageStatus: status,
     });
+    await new Promise((resolve) => setImmediate(resolve));
   });
+}
+
+/**
+ * Listings schedule imports instead of awaiting them. Importing a whole history inside the
+ * listing request held that request, and a node's startup, for minutes: a peer's inventory
+ * request is a listing too. One import runs at a time, a file at a time, with the latest
+ * listing of each project.
+ */
+const scheduled = new Map<string, { project: ProjectRecord; sessions: SessionSummary[]; records: ConversationRecord[] }>();
+let draining: Promise<void> | undefined;
+
+export function scheduleUsageIngest(project: ProjectRecord, sessions: SessionSummary[], records: ConversationRecord[]): void {
+  scheduled.set(project.id, { project, sessions, records });
+  if (!draining) startDrain();
+}
+
+function startDrain(): void {
+  draining = (async () => {
+    for (const [id, job] of scheduled) {
+      scheduled.delete(id);
+      try { await ingestUsageSessions(job.project, job.sessions, job.records, 1); }
+      catch (error) { console.warn(`Usage import for project ${id} failed`, error); }
+    }
+  })().finally(() => { draining = undefined; if (scheduled.size) startDrain(); });
+}
+
+/** Resolves once every scheduled import has finished, for callers that report totals. */
+export async function usageIngestIdle(): Promise<void> {
+  while (draining) await draining;
 }

@@ -1,5 +1,6 @@
 import { listHarnessSessions } from "../harnesses.js";
 import { listProjects } from "../store.js";
+import { usageIngestIdle } from "../usage-ingest.js";
 import { usageInventoryCoverage } from "../usage-ledger.js";
 
 export interface UsageCoverage { projects: number; sessions: number; missing: number; refreshedAt: string }
@@ -10,6 +11,7 @@ let last = 0;
 async function run(): Promise<UsageCoverage> {
   const projects = await listProjects();
   for (const project of projects) await listHarnessSessions({ ...project, historyDays: 0 });
+  await usageIngestIdle();
   return { ...usageInventoryCoverage(projects.map((project) => project.id)), refreshedAt: new Date().toISOString() };
 }
 

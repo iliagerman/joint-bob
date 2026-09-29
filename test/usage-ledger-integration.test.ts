@@ -6,7 +6,7 @@ import test, { beforeEach } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationRecord } from "../src/conversation-records.js";
 import { applyUsageEvent, clearUsageTotalsCache, ensureUsageSchema, latestDifficultyForConversation, saveDifficulty, saveUsageEvent, saveUsageEvents, usageBreakdown, usageConversations, usageDatabase, usageInventoryCoverage, usageTotals, upsertUsageInventory } from "../src/usage-ledger.js";
-import { ingestUsageSessions, USAGE_REIMPORT_INTERVAL_MS } from "../src/usage-ingest.js";
+import { ingestUsageSessions, scheduleUsageIngest, USAGE_REIMPORT_INTERVAL_MS, usageIngestIdle } from "../src/usage-ingest.js";
 import { ensureReplicationSchema } from "../src/replication.js";
 import type { ProjectRecord, SessionSummary } from "../src/types.js";
 import type { UsageEvent } from "../src/usage-types.js";
@@ -115,4 +115,18 @@ test("file ingestion imports many sessions, switched segments, subagents, and ap
   await ingestUsageSessions(project, sessions, records);
   assert.equal(usageTotals({ projectIds: [project.id] }).requests, 68);
   assert.ok((db.prepare("SELECT count(*) n FROM usage_ingest_files").get() as { n: number }).n >= 67, "fingerprints survive a restart");
+});
+
+test("a listing schedules usage import instead of waiting for it", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "joint-bob-usage-scheduled-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const project: ProjectRecord = { id: "scheduled-project", name: "Scheduled", path: home, createdAt: now, updatedAt: now };
+  const file = path.join(home, "scheduled.jsonl");
+  const assistant = { timestamp: 1735689600000, message: { role: "assistant", responseId: "scheduled-response", provider: "openai-codex", model: "fixture", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: .01 } } } };
+  await writeFile(file, `${JSON.stringify({ type: "session", id: "scheduled", timestamp: now })}\n${JSON.stringify(assistant)}\n`);
+  const sessions: SessionSummary[] = [{ id: "scheduled", path: file, harnessId: "pi", agentId: "pi", agentLabel: "Pi", title: "scheduled", createdAt: now }];
+  scheduleUsageIngest(project, sessions, []);
+  assert.equal(usageTotals({ projectIds: [project.id] }).requests, 0, "the caller returns before the import runs");
+  await usageIngestIdle();
+  assert.equal(usageTotals({ projectIds: [project.id] }).requests, 1, "the import completes in the background");
 });

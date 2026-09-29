@@ -45,4 +45,18 @@ if (process.env.JOINT_BOB_TEST_STATIC_TRANSPORT === "1") {
   await import("./static-browser-transport.mjs").then((module) => module.installStaticBrowserTransport());
 }
 
+// Tests open live nodes' databases directly while those nodes write in the background (the
+// usage import runs behind listings), so a test connection waits for the write lock the way
+// the app's own connections do. A test that sets its own busy_timeout still wins.
+const { DatabaseSync } = await import("node:sqlite");
+const waiting = new WeakSet();
+const exec = DatabaseSync.prototype.exec;
+for (const method of ["exec", "prepare"]) {
+  const original = DatabaseSync.prototype[method];
+  DatabaseSync.prototype[method] = function (...args) {
+    if (!waiting.has(this)) { waiting.add(this); exec.call(this, "PRAGMA busy_timeout = 5000"); }
+    return original.apply(this, args);
+  };
+}
+
 process.on("exit", () => rmSync(testHome, { recursive: true, force: true }));

@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Usage imports no longer block listing requests; imports now run in the background to keep the interface responsive.
 - Transcript inventory syncing no longer floods the cluster with repeated peer requests; pulling is now rate-limited and peers known to be down are skipped until the next availability check.
 
 ## 2.13.18 — 2026-09-29
