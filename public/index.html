@@ -92,7 +92,7 @@
           <button class="ghost icon-button" id="projectNotesButton" type="button" data-notes-open aria-label="Project notes" title="Project notes" data-shortcut-hint="toggleNotes" data-testid="projects-open-notes-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h9l3 3V20.5H6z"/><path d="M15 3.5v3h3M9 11h6M9 15h6"/></svg></button>
           <button class="ghost icon-button" id="projectBoardButton" type="button" aria-label="Project board" title="Project board" data-testid="projects-open-board-button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></button>
           <button class="ghost icon-button" id="openCanvasButton" type="button" aria-label="Open the canvas" title="Canvas" data-shortcut-hint="toggleView" data-testid="projects-open-canvas-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg></button>
-          <button class="ghost icon-button" type="button" data-usage-open data-testid="usage-open" aria-label="Usage and costs" title="Usage and costs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg><kbd class="shortcut-hint" aria-hidden="true"></kbd></button>
+          <button class="ghost usage-open" type="button" data-usage-open data-testid="usage-open" aria-label="Costs" title="Costs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg><span>Costs</span><kbd class="shortcut-hint" aria-hidden="true"></kbd></button>
           <button class="ghost icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-shortcut-hint="settings" data-testid="settings-open-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
@@ -539,45 +539,25 @@
 
     <dialog id="usageDialog" data-testid="usage-dialog" aria-labelledby="usageTitle">
       <div class="dialog-card usage-card">
-        <header class="usage-heading">
-          <div><span class="eyebrow">API-equivalent estimates</span><h2 id="usageTitle">Usage &amp; costs</h2></div>
-          <button type="button" class="ghost" data-testid="usage-close" aria-label="Close usage dashboard">Close</button>
-        </header>
-        <p class="usage-source">Pi reported estimates / runtime catalog estimates; not invoices. Tool service fees not included. Historical rates may differ.</p>
-        <div id="usageStatus" role="status" aria-live="polite"></div>
-        <form id="usageFilters" class="usage-filters">
-          <label>Project<select name="projectId" data-testid="usage-project-filter"><option value="">All projects</option></select></label>
-          <label>Conversation<select name="conversationId" data-testid="usage-conversation-filter"><option value="">All conversations</option></select></label>
-          <label>Existing label<select name="classification" data-testid="usage-classification-filter"><option value="">All labels</option></select></label>
-          <label>Difficulty<select name="difficulty" data-testid="usage-difficulty-filter"><option value="">All difficulties</option><option value="not-classified">Not classified</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
-          <label>Model<input name="modelId" data-testid="usage-model-filter" /></label>
-          <label>Engine<input name="engine" data-testid="usage-engine-filter" /></label>
-          <label>Provider<input name="provider" data-testid="usage-provider-filter" /></label>
-          <label>From<input name="from" type="date" data-testid="usage-from-filter" /></label>
-          <label>To<input name="to" type="date" data-testid="usage-to-filter" /></label>
-          <button type="button" class="ghost" id="usageRefresh" data-testid="usage-refresh">Refresh usage</button>
-        </form>
-        <div id="usageNotice"></div>
-        <section><h3>Totals</h3><div id="usageSummary" class="usage-summary" data-testid="usage-summary"></div></section>
-        <section><h3>Cost breakdowns</h3><div id="usageBreakdowns" data-testid="usage-breakdowns"></div></section>
-        <section class="usage-subscriptions"><div class="usage-section-heading"><div><h3>Account subscriptions</h3><p>Plan fees are account-level and unaffected by usage filters.</p></div><button type="button" id="subscriptionAdd" data-testid="subscription-add">Add subscription price</button></div>
-          <p>Automatic quota reporting unavailable; add manual snapshot or check provider usage page.</p>
-          <div id="subscriptionList"></div>
-          <details id="subscriptionEditor" data-testid="subscription-editor"><summary>Subscription editor</summary>
-            <form id="subscriptionForm" class="subscription-form">
-              <input type="hidden" name="id" />
-              <label>Provider<input name="provider" required data-testid="subscription-provider" /></label>
-              <label>Account label<input name="accountLabel" required data-testid="subscription-account-label" /></label>
-              <label>Plan name<input name="planName" required data-testid="subscription-plan-name" /></label>
-              <label>Price<input name="amount" type="number" required min="0" step="0.01" data-testid="subscription-price" /></label>
-              <label>Currency<input name="currency" required pattern="[A-Za-z]{3}" maxlength="3" value="USD" data-testid="subscription-currency" /></label>
-              <label>Billing period<select name="billingPeriod" data-testid="subscription-period"><option value="month">Month</option><option value="year">Year</option></select></label>
-              <label>Renewal date<input name="renewalAt" type="datetime-local" data-testid="subscription-renewal" /></label>
-              <fieldset><legend>Manual quota snapshots</legend><div id="quotaRows"></div><button type="button" id="quotaAdd" data-testid="quota-add">Add quota window</button></fieldset>
-              <p id="subscriptionError" role="alert" hidden></p>
-              <div class="dialog-actions"><button type="button" class="ghost" id="subscriptionCancel">Cancel</button><button type="submit" class="primary" data-testid="subscription-save">Save subscription</button></div>
-            </form>
-          </details>
+        <header class="usage-heading"><div><span class="eyebrow">Costs</span><h2 id="usageTitle">Costs &amp; subscriptions</h2><p>See estimated API usage or set what you pay for each harness.</p></div><button type="button" class="ghost" data-testid="usage-close">Close</button></header>
+        <nav class="usage-tabs" aria-label="Costs views"><button type="button" aria-pressed="true" data-testid="usage-tab-overview">Overview</button><button type="button" aria-pressed="false" data-testid="usage-tab-subscriptions">Harness subscriptions</button></nav>
+        <section id="usageOverviewPanel" data-usage-panel="overview">
+          <p class="usage-source">API-equivalent estimates are not paid subscription fees or invoices. Tool service fees are not included.</p>
+          <div id="usageStatus" role="status" aria-live="polite">Loading usage…</div><div id="usageNotice"></div>
+          <section><h3>Totals</h3><div id="usageSummary" class="usage-summary" data-testid="usage-summary"><p>Loading totals…</p></div></section>
+          <details class="usage-filter-details"><summary>Filter usage</summary><form id="usageFilters" class="usage-filters">
+            <label>Project<select name="projectId" data-testid="usage-project-filter"><option value="">All projects</option></select></label><label>Conversation<select name="conversationId" data-testid="usage-conversation-filter"><option value="">All conversations</option></select></label><label>Existing label<select name="classification" data-testid="usage-classification-filter"><option value="">All labels</option></select></label><label>Difficulty<select name="difficulty" data-testid="usage-difficulty-filter"><option value="">All difficulties</option><option value="not-classified">Not classified</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label><label>Model<input name="modelId" data-testid="usage-model-filter" /></label><label>Engine<input name="engine" data-testid="usage-engine-filter" /></label><label>Provider<input name="provider" data-testid="usage-provider-filter" /></label><label>From<input name="from" type="date" data-testid="usage-from-filter" /></label><label>To<input name="to" type="date" data-testid="usage-to-filter" /></label><button type="button" class="ghost" id="usageRefresh" data-testid="usage-refresh">Refresh usage</button>
+          </form></details>
+          <section><h3>Cost breakdowns</h3><div id="usageBreakdowns" data-testid="usage-breakdowns"><p>Loading breakdowns…</p></div></section>
+        </section>
+        <section class="usage-subscriptions" id="usageSubscriptionsPanel" data-usage-panel="subscriptions" hidden>
+          <div class="usage-section-heading"><div><h3>Subscription prices by harness</h3><p>Choose a harness and enter the price you actually pay. Fees are not calculated from token usage.</p></div><button type="button" id="subscriptionAdd" data-testid="subscription-add">Add price</button></div>
+          <div id="subscriptionPlanStatus" role="status"></div><div id="subscriptionList"></div>
+          <details id="subscriptionEditor" data-testid="subscription-editor"><summary>Edit subscription price</summary><form id="subscriptionForm" class="subscription-form">
+            <input type="hidden" name="id" /><label>Harness<select name="harnessId" required data-testid="subscription-harness"></select></label><label>Account label<input name="accountLabel" required value="Personal" placeholder="Personal" data-testid="subscription-account-label" /></label><label>Plan name<input name="planName" required placeholder="Pro" data-testid="subscription-plan-name" /></label><label>Price actually paid<input name="amount" type="number" required min="0" step="0.01" data-testid="subscription-price" /></label><label>Currency<input name="currency" required pattern="[A-Za-z]{3}" maxlength="3" value="USD" data-testid="subscription-currency" /></label><label>Billing period<select name="billingPeriod" data-testid="subscription-period"><option value="month">Month</option><option value="year">Year</option></select></label>
+            <details class="subscription-more" data-testid="subscription-more"><summary>Optional details</summary><label>Provider attribution (legacy/optional)<input name="provider" data-testid="subscription-provider" /></label><label>Renewal date<input name="renewalAt" type="datetime-local" data-testid="subscription-renewal" /></label><fieldset><legend>Manual quota snapshots (never reported automatically)</legend><div id="quotaRows"></div><button type="button" id="quotaAdd" data-testid="quota-add">Add quota window</button></fieldset></details>
+            <p id="subscriptionError" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="ghost" id="subscriptionCancel" data-testid="subscription-cancel">Cancel</button><button type="submit" class="primary" data-testid="subscription-save">Save subscription</button></div>
+          </form></details>
         </section>
       </div>
     </dialog>

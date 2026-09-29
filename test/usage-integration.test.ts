@@ -18,9 +18,15 @@ test("usage API rejects malformed and reversed dates", async () => {
 test("usage API rejects an unknown project", async () => assert.equal((await api(node, session, "GET", "/usage?projectId=unknown")).status, 404));
 test("usage refresh requires CSRF", async () => assert.equal((await fetch(`${node.url}/api/usage/refresh`, { method: "POST", headers: { Cookie: session.cookie } })).status, 403));
 test("manual subscription persists, validates price, and deletes", async () => {
-  const payload = { provider: "anthropic", accountLabel: "work", planName: "Max", price: { amount: 200, currency: "USD", billingPeriod: "month" }, renewalAt: null, quotaWindows: [], status: "available", source: "manual" };
+  const payload = { harnessId: "claude", provider: "anthropic", accountLabel: "work", planName: "Max", price: { amount: 200, currency: "USD", billingPeriod: "month" }, renewalAt: null, quotaWindows: [], status: "available", source: "manual" };
   const saved = await api<{ id: string }>(node, session, "PUT", "/subscription-usage", payload); assert.equal(saved.status, 200);
-  const listed = await api<{ plans: Array<{ id: string; price: { amount: number } }> }>(node, session, "GET", "/subscription-usage"); assert.equal(listed.body.plans[0].price.amount, 200);
+  const pi = await api<{ id: string }>(node, session, "PUT", "/subscription-usage", { ...payload, harnessId: "pi", provider: "", accountLabel: "personal", price: { ...payload.price, amount: 20 } }); assert.equal(pi.status, 200);
+  const legacy = await api<{ id: string }>(node, session, "PUT", "/subscription-usage", { ...payload, harnessId: undefined, provider: "legacy-provider", accountLabel: "legacy" }); assert.equal(legacy.status, 200);
+  const listed = await api<{ plans: Array<{ id: string; harnessId: string|null; provider: string; price: { amount: number } }> }>(node, session, "GET", "/subscription-usage");
+  assert.equal(listed.body.plans.find(plan => plan.id === saved.body.id)?.harnessId, "claude");
+  assert.equal(listed.body.plans.find(plan => plan.id === pi.body.id)?.harnessId, "pi");
+  assert.equal(listed.body.plans.find(plan => plan.id === legacy.body.id)?.harnessId, null);
+  assert.equal(listed.body.plans.find(plan => plan.id === legacy.body.id)?.provider, "legacy-provider");
   assert.equal((await api(node, session, "PUT", "/subscription-usage", { ...payload, price: { ...payload.price, amount: -1 } })).status, 400);
   const response = await fetch(`${node.url}/api/subscription-usage/${saved.body.id}`, { method: "DELETE", headers: { Cookie: session.cookie, "x-csrf-token": session.csrfToken } }); assert.equal(response.status, 204);
 });

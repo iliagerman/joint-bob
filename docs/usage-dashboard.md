@@ -6,4 +6,6 @@ Existing conversation labels and recorded difficulty classifications can filter 
 
 Coverage includes imported native transcripts and replicated ledger events. Historical backfill may be partial, copied fork records are excluded, and Kiro sessions whose token details are unavailable remain explicitly unknown rather than being estimated. Draft sessions are not treated as missing usage.
 
-Subscription prices and quota windows are manual records only. Joint Bob does not claim to query, refresh, or automate provider quotas. The timestamp shown for a quota is when that manual snapshot was changed; editing only a plan price does not refresh it.
+Subscription prices are grouped by the actual harness you select, not inferred from provider identity. Multiple account plans can belong to one harness. Older provider-only records remain under **Unassigned — choose a harness** until you edit them; they are never assigned automatically.
+
+Subscription prices and quota windows are manual records only. Joint Bob does not claim to query, refresh, or automate provider quotas. The timestamp shown for a quota is when that manual snapshot was changed; editing only a plan price does not refresh it. Subscription setup loads and saves independently of usage estimates, so it remains available if usage refresh is slow or unavailable.

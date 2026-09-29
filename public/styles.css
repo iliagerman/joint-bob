@@ -1,14 +1,18 @@
 /* Usage dashboard */
-#usageDialog { width: 100%; max-width: none; max-height: none; padding: 12px; overflow: hidden; background: transparent; border: 0; }
+#usageDialog { width: 100%; max-width: none; max-height: none; padding: 12px; overflow: visible; background: transparent; border: 0; }
 #usageDialog::backdrop { background: rgba(10, 12, 14, .55); }
-.usage-card { width: min(1120px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); margin: auto; overflow: auto; background: var(--panel); }
-.usage-heading, .usage-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+#usageDialog .usage-card { width: min(1120px, calc(100vw - 24px)); min-width: 0; max-width: none; max-height: calc(100dvh - 24px); margin: auto; overflow-y: auto; overflow-x: visible; background: var(--panel); }
+.usage-heading, .usage-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
 .usage-heading { position: sticky; top: -1px; z-index: 2; padding-bottom: 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .usage-source { max-width: none !important; }
-.usage-filters { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 10px; }
-.usage-filters label, .subscription-form label { display: grid; gap: 4px; }
-.usage-filters :is(input, select), .subscription-form :is(input, select) { min-width: 0; width: 100%; }
-.usage-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.usage-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.usage-tabs button[aria-pressed="true"] { background: var(--text); color: var(--panel); }
+#usageDialog [data-usage-panel][hidden] { display: none !important; }
+#usageDialog [data-usage-panel] { min-width: 0; }
+.usage-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 10px; }
+.usage-filters label, .subscription-form label { display: grid; min-width: 0; gap: 4px; }
+.usage-filters :is(input, select, button), .subscription-form :is(input, select, button, fieldset) { min-width: 0; max-width: 100%; width: 100%; }
+.usage-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 10px; }
 .usage-metric, .subscription-card, .usage-breakdown { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
 .usage-metric { display: grid; gap: 5px; }
 .usage-metric span { color: var(--muted); font-size: 12px; }
@@ -21,16 +25,20 @@
 .usage-breakdown :is(th, td):first-child { text-align: left; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .usage-warning, .usage-error { padding: 10px; border-left: 3px solid var(--amber); background: var(--field); }
 .usage-error { border-color: var(--danger); }
-.usage-subscriptions, #subscriptionList { display: grid; gap: 12px; }
+.usage-subscriptions, #subscriptionList, .subscription-harness-group { display: grid; min-width: 0; gap: 12px; }
 .subscription-card .subscription-price { display: block; font-size: 18px; }
-.subscription-form { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding-top: 12px; }
-.subscription-form fieldset, .subscription-form .dialog-actions, .subscription-form > p { grid-column: 1 / -1; }
-.quota-row { display: grid; grid-template-columns: 2fr repeat(4, 1fr) auto; gap: 8px; align-items: end; margin-top: 8px; }
+.subscription-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; padding-top: 12px; }
+.subscription-form fieldset, .subscription-form .dialog-actions, .subscription-form > p, .subscription-form > details { grid-column: 1 / -1; min-width: 0; }
+.subscription-more[open] { display: grid; gap: 10px; }
+.quota-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr)); gap: 8px; align-items: end; margin-top: 8px; min-width: 0; }
+#usageDialog .dialog-actions { flex-wrap: wrap; }
+.project-actions .usage-open { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 31px; padding: 0 8px; font-size: 11px; }
+.project-actions .usage-open svg { width: 16px; height: 16px; }
 @media (max-width: 700px) {
-  .usage-card { width: calc(100vw - 24px); }
-  .usage-filters, .usage-summary, #usageBreakdowns, .subscription-form { grid-template-columns: 1fr; }
-  .quota-row { grid-template-columns: 1fr 1fr; }
-  .quota-row label:first-child { grid-column: 1 / -1; }
+  #usageDialog { padding: 6px; }
+  #usageDialog .usage-card { width: calc(100vw - 12px); max-height: calc(100dvh - 12px); padding: 14px; }
+  .usage-filters, .usage-summary, #usageBreakdowns, .subscription-form { grid-template-columns: minmax(0, 1fr); }
+  .quota-row { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Joint Bob interface.
