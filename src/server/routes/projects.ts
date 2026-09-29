@@ -19,6 +19,7 @@ import { assertProjectEditable, projectsWithSharedNames, projectView, relocatePr
 import { broadcastToAllClients, broadcastToProject } from "../realtime.js";
 import { projectListQuerySchema, projectLockSchema, projectPathMappingSchema, projectSchema, projectUpdateSchema, registeredHarnessIdSchema, sessionClassificationSchema, sessionColorSchema, sessionDoneSchema, sessionTitleSchema } from "../schemas.js";
 import { app } from "../state.js";
+import { peerSnapshot } from "../peer-snapshots.js";
 import { projectHasMergeReservation } from "../task-runs.js";
 
 app.get("/api/projects", async (request, response, next) => {
@@ -299,11 +300,14 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
     const peers = targetNodeId === local.id ? [] : (await listRuntimePeers(project.id)).filter(peer => !targetNodeId || peer.id === targetNodeId);
     const peerNodes = await Promise.all(peers.map(async (peer) => {
       try {
-        const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(3000)});
-        if(!reply.ok)throw new Error('Project presence unavailable');
+        // A peer that is slow or offline answers from what it last reported, marked offline.
+        const presence=await peerSnapshot(`presence:${project.id}`,peer.id,async()=>{
+          const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(3000)});
+          if(!reply.ok)throw new Error('Project presence unavailable');
+          return await reply.json() as {mapped:boolean;terminal?:boolean};
+        });
         // A peer that predates the terminal setting does not restrict it.
-        const presence=await reply.json() as {mapped:boolean;terminal?:boolean};
-        return {id:peer.id,name:peer.name,local:false,online:true,mapped:presence.mapped,terminal:presence.terminal!==false};
+        return {id:peer.id,name:peer.name,local:false,online:presence.fresh,mapped:presence.value.mapped,terminal:presence.value.terminal!==false};
       } catch {
         return { id: peer.id, name: peer.name, local: false, online: false, mapped: false, terminal: false };
       }

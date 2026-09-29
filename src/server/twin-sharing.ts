@@ -14,6 +14,7 @@ import { pendingEventsForPeer } from "../replication.js";
 import { listProjectMetadataDeliveries } from "../cluster-project-metadata.js";
 import { resumeSharedProjectFolder } from "../syncthing.js";
 import { ensureTwinHttpSchema, pendingTwinDeliveries, bootstrapOwnedTwinPolicies } from "./twins.js";
+import { peerSnapshot, staleSnapshotReason } from "./peer-snapshots.js";
 
 export const adoptionInventorySchema = z.array(z.object({id:z.string().min(1).max(300),ownerNodeId:z.string().uuid().nullable()}).strict()).max(10000);
 export type AdoptionInventory = z.infer<typeof adoptionInventorySchema>;
@@ -70,7 +71,9 @@ export async function localTwinSharingStatus(db: DatabaseSync, local: string, re
   const peer=sharingTwin(db,local,relationshipId);
   const row=db.prepare("SELECT owner_node_id,error FROM cluster_v2_twin_sharing WHERE relationship_id=?").get(relationshipId) as {owner_node_id:string;error:string|null}|undefined;
   const projectCount=sharedProjectIds(db,local,peer).length;
-  if(row)await flushSharedTranscripts();
+  // The panel polls this. Delivery keeps running after the short wait and the counts below
+  // come from its stored progress, so an offline twin does not hold the status open.
+  if(row){let timer:NodeJS.Timeout|undefined;await Promise.race([flushSharedTranscripts().catch(()=>undefined),new Promise(resolve=>{timer=setTimeout(resolve,1_000);})]);clearTimeout(timer);}
   const files=await sharingFilesStatus(db,local,peer),transcripts=sharedTranscriptStatus(db,local,peer);
   const events=await pendingEventsForPeer(peer,event=>mayReplicateEvent(db,local,peer,event));
   const controls=db.prepare('SELECT count(*) count FROM cluster_v2_resource_deliveries WHERE peer_id=?').get(peer) as {count:number};
@@ -96,8 +99,11 @@ export async function twinSharingStatus(db:DatabaseSync,local:string,relationshi
   if(status.state!=='ready')return status;
   const peer=sharingTwin(db,local,relationshipId),endpoint=peerEndpoint(db,'twin',relationshipId,peer);
   try{
-    const remote=z.object({state:z.enum(['pending','ready','error']),pendingDeliveries:z.number().int().nonnegative(),error:z.string().optional()}).passthrough()
-      .parse(await signedPeerPost(endpoint,'/api/cluster/v2/twins/sharing-status',{relationshipId}));
+    const snapshot=await peerSnapshot(`twin-sharing:${relationshipId}`,peer,async()=>z.object({state:z.enum(['pending','ready','error']),pendingDeliveries:z.number().int().nonnegative(),error:z.string().optional()}).passthrough()
+      .parse(await signedPeerPost(endpoint,'/api/cluster/v2/twins/sharing-status',{relationshipId})));
+    // A twin that is not answering is never shown as ready from an old report.
+    if(!snapshot.fresh)return {...status,state:'error',error:staleSnapshotReason(snapshot.fetchedAt)};
+    const remote=snapshot.value;
     return {...status,state:remote.state,pendingDeliveries:status.pendingDeliveries+remote.pendingDeliveries,...(remote.error?{error:remote.error}:{})};
   }catch(error){return {...status,state:'error',error:error instanceof Error?error.message:'Twin peer status unavailable'};}
 }

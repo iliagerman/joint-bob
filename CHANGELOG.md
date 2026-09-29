@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Cluster operations now continue with cached peer data when a node is slow or offline, preventing timeouts during node unavailability.
+
 ## 2.13.13 — 2026-09-29
 
 - Fixed cluster hub event delivery blocking the event loop when processing large replication backlogs.

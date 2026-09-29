@@ -14,6 +14,7 @@ import { clusterPeerMayAccessProject } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { app } from "../state.js";
+import { peerSnapshot, staleSnapshotReason } from "../peer-snapshots.js";
 import { registerSkillSharingRoutes } from "../skill-sharing.js";
 
 registerSkillSharingRoutes();
@@ -50,9 +51,12 @@ app.get("/api/resources/inventory", async (request, response, next) => {
       nodes.push(...await Promise.all(peers.map(async (peer): Promise<NodeInventory> => {
         const node = { id: peer.id, name: peer.name, local: false, online: false };
         try {
-          const remote = await runtimeFetch(`${peer.url}/api/cluster/resources/inventory`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(query.projectId ? { projectId: query.projectId } : {}), signal: AbortSignal.timeout(4_000) });
-          if (!remote.ok) throw new Error(`Peer returned ${remote.status}`);
-          return { node: { ...node, online: true }, inventory: await remote.json() as ResourceInventory };
+          const remote = await peerSnapshot(`resources:${query.projectId ?? ""}`, peer.id, async () => {
+            const reply = await runtimeFetch(`${peer.url}/api/cluster/resources/inventory`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(query.projectId ? { projectId: query.projectId } : {}), signal: AbortSignal.timeout(4_000) });
+            if (!reply.ok) throw new Error(`Peer returned ${reply.status}`);
+            return await reply.json() as ResourceInventory;
+          });
+          return remote.fresh ? { node: { ...node, online: true }, inventory: remote.value } : { node, inventory: remote.value, error: staleSnapshotReason(remote.fetchedAt) };
         } catch (error) {
           return { node, error: error instanceof Error ? error.message : "Peer unreachable" };
         }

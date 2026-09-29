@@ -9,6 +9,7 @@ import { cronConversationReady } from "../cron.js";
 import { sendError } from "../http-auth.js";
 import { registeredHarnessIdSchema } from "../schemas.js";
 import { app } from "../state.js";
+import { peerSnapshot, staleSnapshotReason } from "../peer-snapshots.js";
 
 const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("list"), projectId: z.string().min(1) }).strict(),
@@ -93,10 +94,16 @@ app.get("/api/projects/:projectId/cron", async (request, response, next) => {
   try {
     // Only nodes that may hold this project's tasks, and a short wait: opening a project
     // must not stall on one slow or unreachable member.
-    const nodes = [await getClusterNode(), ...await listRuntimePeers(request.params.projectId)];
+    const local = await getClusterNode();
+    const nodes = [local, ...await listRuntimePeers(request.params.projectId)];
+    const command = { action: "list", projectId: request.params.projectId } as const;
     const results = await Promise.all(nodes.map(async node => {
-      try { return { nodeId: node.id, ...await routeCommand(node.id, { action: "list", projectId: request.params.projectId }, 3000) as { tasks: unknown[] } }; }
-      catch (error) { return { nodeId: node.id, tasks: [], error: error instanceof Error ? error.message : String(error) }; }
+      try {
+        if (node.id === local.id) return { nodeId: node.id, ...await routeCommand(node.id, command, 3000) as { tasks: unknown[] } };
+        // A slow or offline member answers from its last list, flagged so it is not edited.
+        const remote = await peerSnapshot(`cron:${request.params.projectId}`, node.id, async () => await routeCommand(node.id, command, 3000) as { tasks: unknown[] });
+        return { nodeId: node.id, ...remote.value, ...(remote.fresh ? {} : { error: staleSnapshotReason(remote.fetchedAt) }) };
+      } catch (error) { return { nodeId: node.id, tasks: [], error: error instanceof Error ? error.message : String(error) }; }
     }));
     response.json({ tasks: results.flatMap(result => result.tasks), errors: results.filter(result => "error" in result) });
   } catch (error) { next(error); }

@@ -11,6 +11,8 @@ import { enqueueSystemPrompt } from "../prompt-queue.js";
 import { getProject } from "../store.js";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
 import { broadcastToProject, wakeQueuedConversations } from "./realtime.js";
+import { isPeerUnreachable } from "./peer-availability.js";
+import { peerSnapshot, staleSnapshotReason } from "./peer-snapshots.js";
 
 export class BrowserRequestError extends Error { constructor(public status: number, message: string) { super(message); } }
 let runtime: BrowserRuntime | undefined;
@@ -87,6 +89,11 @@ async function sharedBrowserPeers(projectId?: string) {
   const peers = await listRuntimePeers();
   if (!projectId) return peers;
   return (await Promise.all(peers.map(async peer => await clusterPeerMayAccessProject(peer.id, projectId) ? peer : null))).filter(peer => peer !== null);
+}
+
+/** peerRequest reports any failure to reach the peer as 503. */
+function browserPeerUnreachable(error: unknown): boolean {
+  return error instanceof BrowserRequestError ? error.status === 503 : isPeerUnreachable(error);
 }
 
 // Relay browser control only. Website network traffic remains executor-local.
@@ -302,8 +309,11 @@ async function discoverBrowsers(operation: Extract<BrowserOperation, { operation
   const result: BrowserDiscovery = { sessions: local.sessions, unavailableNodes: [] };
   await Promise.all((await sharedBrowserPeers(operation.args.projectId)).map(async peer => {
     try {
-      const remote = await (await peerRequest(peer.id, "operation", { ...operation, actor, identity }, 5000)).json() as { sessions: BrowserSessionView[] };
-      result.sessions.push(...remote.sessions.map(session => ({ ...session, nodeId: peer.id })));
+      const remote = await peerSnapshot(`browser:${JSON.stringify([operation, actor, identity ?? null])}`, peer.id,
+        async () => await (await peerRequest(peer.id, "operation", { ...operation, actor, identity }, 5000)).json() as { sessions: BrowserSessionView[] },
+        { unreachable: browserPeerUnreachable });
+      result.sessions.push(...remote.value.sessions.map(session => ({ ...session, nodeId: peer.id })));
+      if (!remote.fresh) result.unavailableNodes.push({ nodeId: peer.id, reason: staleSnapshotReason(remote.fetchedAt) });
     } catch (error) {
       if (error instanceof BrowserRequestError && ((error.status === 403 && /Project is not shared/.test(error.message)) || (error.status === 404 && /Project not found/.test(error.message)))) return;
       result.unavailableNodes.push({ nodeId: peer.id, reason: error instanceof Error ? error.message : "Browser node unavailable" });
@@ -320,8 +330,13 @@ export async function discoverBrowserProfiles(identity: z.infer<typeof browserId
   const result: BrowserDiscovery & { profiles: Array<BrowserProfile & { nodeId: string }> } = { sessions: [], unavailableNodes: [], profiles: local.profiles.map(profile => ({ ...profile, nodeId: localNode.id })) };
   await Promise.all((await sharedBrowserPeers(identity.projectId)).map(async peer => {
     try {
-      const remote = await (await peerRequest(peer.id, "operation", { operation: "profiles", args, actor, identity }, 5000)).json() as { profiles: BrowserProfile[] };
-      result.profiles.push(...remote.profiles.map(profile => ({ ...profile, nodeId: peer.id })));
+      const remote = await peerSnapshot(`browser-profiles:${JSON.stringify([args, actor, identity])}`, peer.id,
+        async () => await (await peerRequest(peer.id, "operation", { operation: "profiles", args, actor, identity }, 5000)).json() as { profiles: BrowserProfile[] },
+        // Attaching refuses to pick an account while any node is unaccounted for, so a slow
+        // peer keeps its full answer time here; a peer known to be down still fails at once.
+        { unreachable: browserPeerUnreachable, waitMs: 5_000 });
+      result.profiles.push(...remote.value.profiles.map(profile => ({ ...profile, nodeId: peer.id })));
+      if (!remote.fresh) result.unavailableNodes.push({ nodeId: peer.id, reason: staleSnapshotReason(remote.fetchedAt) });
     } catch (error) {
       if (error instanceof BrowserRequestError && ((error.status === 403 && /Project is not shared/.test(error.message)) || (error.status === 404 && /Project not found/.test(error.message)))) return;
       result.unavailableNodes.push({ nodeId: peer.id, reason: error instanceof Error ? error.message : "Browser node unavailable" });

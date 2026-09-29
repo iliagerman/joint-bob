@@ -79,8 +79,14 @@ export async function syncSharedQuickNotes(projectId?: string): Promise<void> {
     })));
 }
 
+/** Listing waits this long for fresh copies. A slow or offline owner keeps its cached drafts
+    on screen, and the refresh still lands in the cache for the next poll. */
+const LIST_WAIT_MS = 1_000;
+
 export async function listSharedQuickNotes(projectId?: string): Promise<QuickNote[]> {
-  await syncSharedQuickNotes(projectId);
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([syncSharedQuickNotes(projectId).catch(() => undefined), new Promise((resolve) => { timer = setTimeout(resolve, LIST_WAIT_MS); })]);
+  clearTimeout(timer);
   const { db } = await context();
   const rows = projectId
     ? db.prepare("SELECT owner_node_id, note FROM shared_quick_notes WHERE project_id=?").all(projectId)

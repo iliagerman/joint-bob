@@ -12,6 +12,8 @@ import { browserRuntime, BrowserRequestError } from "./browser.js";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
 import { broadcastToProject } from "./realtime.js";
 import { flags } from "./state.js";
+import { isPeerUnreachable } from "./peer-availability.js";
+import { peerSnapshot, staleSnapshotReason } from "./peer-snapshots.js";
 
 const id = z.string().uuid();
 const generation = z.number().int().positive().safe();
@@ -223,16 +225,25 @@ export async function listBrowserMonitors(value: string): Promise<unknown> {
   const local = await getClusterNode();
   const own = await manageBrowserMonitor({ action: "list", projectId: project.id }, `${local.id}:system`) as { monitors: MonitorRecord[]; runtime: ReturnType<typeof browserMonitorRuntimeStatus> };
   const monitors = [...own.monitors], nodes = [{ nodeId: local.id, runtime: own.runtime }], unavailableNodes: Array<{ nodeId: string; reason: string }> = [];
-  const peers = await listRuntimePeers();
-  for (const peer of peers) {
-    if (!(await clusterPeerMayAccessProject(peer.id, project.id))) continue;
+  const allPeers = await listRuntimePeers();
+  const peers: typeof allPeers = [];
+  for (const peer of allPeers) if (await clusterPeerMayAccessProject(peer.id, project.id)) peers.push(peer);
+  // Peers answer in parallel; a slow or offline one shows its last list and is flagged.
+  const results = await Promise.all(peers.map(async (peer) => {
     try {
-      const result = await routeBrowserMonitor(peer.id, { action: "list", projectId: project.id }, `${local.id}:system`) as typeof own;
-      monitors.push(...result.monitors); nodes.push({ nodeId: peer.id, runtime: result.runtime });
-    } catch (error) {
-      if (error instanceof BrowserRequestError && error.status === 403) throw error;
-      unavailableNodes.push({ nodeId: peer.id, reason: error instanceof Error ? error.message.slice(0, 2000) : "Browser monitor node is unavailable" });
+      return { peer, remote: await peerSnapshot(`browser-monitors:${project.id}`, peer.id,
+        async () => await routeBrowserMonitor(peer.id, { action: "list", projectId: project.id }, `${local.id}:system`) as typeof own,
+        { unreachable: (error) => error instanceof BrowserRequestError ? error.status === 503 : isPeerUnreachable(error) }) };
+    } catch (error) { return { peer, error }; }
+  }));
+  for (const { peer, remote, error } of results) {
+    if (remote) {
+      monitors.push(...remote.value.monitors); nodes.push({ nodeId: peer.id, runtime: remote.value.runtime });
+      if (!remote.fresh) unavailableNodes.push({ nodeId: peer.id, reason: staleSnapshotReason(remote.fetchedAt) });
+      continue;
     }
+    if (error instanceof BrowserRequestError && error.status === 403) throw error;
+    unavailableNodes.push({ nodeId: peer.id, reason: error instanceof Error ? error.message.slice(0, 2000) : "Browser monitor node is unavailable" });
   }
   return { monitors, nodes, unavailableNodes };
 }

@@ -7,6 +7,8 @@ import { resolveDataDirectory } from "../data-directory.js";
 import { getProject, projectAliasIds } from "../store.js";
 import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
+import { isPeerUnreachable } from "./peer-availability.js";
+import { peerSnapshot, staleSnapshotReason } from "./peer-snapshots.js";
 
 const scope = z.object({
   projectId: z.string().min(1).max(200),
@@ -240,7 +242,11 @@ export async function discoverBackgroundTasks(projectId: string, conversationId:
   const results = await Promise.all(
     [{ id: local.id, name: local.name }, ...allowed.map((peer) => ({ id: peer.id, name: peer.name }))].map(async (node) => {
       try {
-        return await routeBackgroundTaskOperation(node.id, command) as ListResult;
+        if (node.id === local.id) return await routeBackgroundTaskOperation(node.id, command) as ListResult;
+        const remote = await peerSnapshot(`background-tasks:${JSON.stringify(command)}`, node.id,
+          async () => await routeBackgroundTaskOperation(node.id, command) as ListResult,
+          { unreachable: (error) => error instanceof TaskRequestError && error.status === 503 || isPeerUnreachable(error) });
+        return remote.fresh ? remote.value : { ...remote.value, node: { ...remote.value.node, available: false, reason: staleSnapshotReason(remote.fetchedAt) } };
       } catch (error) {
         if (error instanceof TaskRequestError && error.status === 403) throw error;
         // Older peers do not expose this API during a rolling upgrade.

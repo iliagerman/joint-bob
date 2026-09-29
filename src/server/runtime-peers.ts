@@ -12,6 +12,7 @@ import { cronStore } from "../cron.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { replicationPeers } from "./replication-v2.js";
+import { fetchPeer } from "./peer-availability.js";
 
 const runtimeSockets=new Map<WebSocket,{peer:string;projectId:string}>();
 export function trackRuntimeSocket(socket:WebSocket,peer:string,projectId:string):void{
@@ -46,7 +47,7 @@ export async function runtimeFetch(input:string|URL,init:RequestInit={}):Promise
  }
  const body=Buffer.from(serialized),headers=new Headers(init.headers);
  headers.set("Authorization",signClusterRequest(db,local.id,peer.id,method,url.pathname+url.search,body));
- return globalThis.fetch(url,{...init,headers,redirect:"error"});
+ return fetchPeer(db,peer.id,url,{...init,headers,redirect:"error"});
 }
 
 function sessionShared(db:DatabaseSync,local:string,peer:string,engine:unknown,sessionId:unknown):boolean{

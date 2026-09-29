@@ -18,6 +18,7 @@ import { getConversationOwnership } from "../conversation-ownership.js";
 import { deletedConversationKeys, ensureConversationRecord } from "../conversation-records.js";
 import { replicationPeers } from "./replication-v2.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
+import { fetchPeer } from "./peer-availability.js";
 
 export const transcriptQuery=z.object({projectId:z.string().min(1).max(300),engine:z.string().min(1).max(80).optional(),sessionId:z.string().min(1).max(300).optional()}).strict();
 const entrySchema=z.object({engine:z.string().min(1).max(80),sessionId:z.string().min(1).max(300),relativePath:z.string().min(1).max(4096),size:z.number().int().min(0).max(1024*1024*1024),hash:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
@@ -82,7 +83,7 @@ export async function sharedTranscriptInventory(peer:string,projectId:string):Pr
 }
 async function peerGet(peer:PeerEndpoint,target:string):Promise<Response>{
  const db=await clusterV2Database(),local=await getClusterNode();
- const response=await fetch(new URL(target,peer.url),{redirect:'error',signal:AbortSignal.timeout(30000),headers:{Authorization:signClusterRequest(db,local.id,peer.nodeId,'GET',target,Buffer.alloc(0))}});
+ const response=await fetchPeer(db,peer.nodeId,new URL(target,peer.url),{redirect:'error',signal:AbortSignal.timeout(30000),headers:{Authorization:signClusterRequest(db,local.id,peer.nodeId,'GET',target,Buffer.alloc(0))}});
  if(!response.ok)throw new Error(`Transcript request rejected (${response.status})`);return response;
 }
 async function safeParent(root:string,destination:string):Promise<void>{

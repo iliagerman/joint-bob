@@ -8,6 +8,7 @@ import { isTrustedTwin, mayReceiveResource } from "../cluster-sharing-policy.js"
 import { ClusterV2HttpError } from '../cluster-v2-errors.js';
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { replicationEventProjectId, type ReplicationEvent } from "../replication.js";
+import { fetchPeer } from "./peer-availability.js";
 
 export function replicationPeers(db: DatabaseSync, local: string): PeerEndpoint[] {
   ensureResourceSharingSchema(db);
@@ -54,7 +55,7 @@ export async function sendReplicationV2(peer: PeerEndpoint, events: ReplicationE
 export async function signedPeerPost(peer: PeerEndpoint, target: string, payload: unknown): Promise<unknown> {
   const db = await clusterV2Database(), local = await getClusterNode();
   const body = Buffer.from(JSON.stringify(payload));
-  const response = await fetch(new URL(target, peer.url), { method: "POST", redirect: "error",
+  const response = await fetchPeer(db, peer.nodeId, new URL(target, peer.url), { method: "POST", redirect: "error",
     signal: AbortSignal.timeout(10_000), body,
     headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, local.id, peer.nodeId, "POST", target, body) } });
   if (!response.ok) throw new ClusterV2HttpError(response.status,`Peer returned ${response.status}`);
