@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.18 — 2026-09-29
 
 - Empty conversations created when opening a new chat are now hidden from your conversation list until you type your first message.
 
