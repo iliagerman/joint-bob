@@ -3,10 +3,6 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Subscription prices now group by harness with independent loading from usage refreshes.
-
 ## 2.13.12 — 2026-09-29
 
 - Fixed clipped Costs dashboard on desktop and mobile with clearer Overview and Harness subscriptions views.
