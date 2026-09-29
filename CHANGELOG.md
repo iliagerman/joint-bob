@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Cluster operations now detect when offline machines come back online within 60 seconds instead of waiting up to five minutes, and probe throttling prevents excessive checks when stuck nodes keep attempting to contact the cluster.
+
 ## 2.13.14 — 2026-09-29
 
 - Cluster listings no longer stall waiting for unavailable nodes—cached data displays while checks continue in the background.

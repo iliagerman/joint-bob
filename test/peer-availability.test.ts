@@ -8,7 +8,7 @@ import { fetchPeer, isPeerUnreachable, markPeerUnreachable, peerReachable, PeerU
 const peer = "11111111-1111-4111-8111-111111111111";
 beforeEach(() => resetPeerAvailability());
 
-test("a failed peer is skipped, probed once per window, and cleared when it contacts us", () => {
+test("a failed peer is skipped and probed once per window, retried at least every minute", () => {
   const now = 1_000_000;
   markPeerUnreachable(peer, now);
   assert.equal(peerReachable(peer, null, now + 1), false);
@@ -16,7 +16,18 @@ test("a failed peer is skipped, probed once per window, and cleared when it cont
   assert.equal(peerReachable(peer, null, now + 15_001), false, "other callers do not wait on the probe");
   markPeerUnreachable(peer, now + 20_000);
   assert.equal(peerReachable(peer, null, now + 49_000), false, "a failed probe doubles the backoff");
-  assert.equal(peerReachable(peer, new Date(now + 21_000).toISOString(), now + 22_000), true, "a signed request from the peer proves it is back");
+  for (let failure = 0; failure < 10; failure += 1) markPeerUnreachable(peer, now + 100_000);
+  assert.equal(peerReachable(peer, null, now + 160_000), true, "the backoff never exceeds a minute");
+});
+
+test("a peer that contacts us after failing is probed early, but a stuck one at most every 10 s", () => {
+  const now = 1_000_000;
+  markPeerUnreachable(peer, now);
+  const contact = (at: number) => new Date(at).toISOString();
+  assert.equal(peerReachable(peer, contact(now + 2_000), now + 3_000), true, "a restarted peer is looked at on the next read");
+  markPeerUnreachable(peer, now + 8_000);
+  assert.equal(peerReachable(peer, contact(now + 9_000), now + 9_500), false, "a peer that keeps calling but cannot answer is not probed back to back");
+  assert.equal(peerReachable(peer, contact(now + 9_000), now + 13_000), true);
 });
 
 test("only failures to reach the peer count against it", () => {
