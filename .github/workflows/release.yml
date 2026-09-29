@@ -59,7 +59,7 @@ jobs:
       - name: Run full test suite
         if: steps.release.outputs.publish == 'true'
         timeout-minutes: 30
-        run: npm run test:file -- --test-concurrency=2 test/*.test.ts
+        run: npm run test:file -- --test-concurrency=1 test/*.test.ts
       - run: npm run build
         if: steps.release.outputs.publish == 'true'
       - name: Pack and smoke test
