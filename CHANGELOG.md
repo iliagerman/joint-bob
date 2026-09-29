@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.17 — 2026-09-29
 
 - Peer polls no longer block when a request is already in-flight, returning cached data instantly instead.
 
