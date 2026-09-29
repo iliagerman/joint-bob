@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.14 — 2026-09-29
 
-- Cluster operations now continue with cached peer data when a node is slow or offline, preventing timeouts during node unavailability.
-- Fixed cluster relay event processing blocking the event loop during large backlogs by checking and applying events in bounded pages.
+- Cluster listings no longer stall waiting for unavailable nodes—cached data displays while checks continue in the background.
+- Fixed the server stalling when processing large backlogs of relayed twin events.
 
 ## 2.13.13 — 2026-09-29
 
