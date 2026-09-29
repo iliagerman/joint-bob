@@ -102,7 +102,7 @@ test("switching projects discards in-flight responses from the previous project"
   // selectProject clears the old list up front and abandons a late response.
   assert.match(app, /state\.sessionNodes = \[\];\s*state\.sessions = \[\];/);
   assert.match(app, /if \(state\.activeProjectId === projectId\) setListLoading\("sessions", false\);/);
-  assert.match(app, /if \(state\.activeProjectId !== projectId\) return;\s*state\.sessions = body\.sessions;/);
+  assert.match(app, /if \(state\.activeProjectId !== projectId\) return;\s*(?:const renderStarted = performance\.now\(\);\s*)?state\.sessions = body\.sessions;/);
 
   // refreshSessionsQuietly and loadTasks capture the project id instead of
   // re-reading it after the await.

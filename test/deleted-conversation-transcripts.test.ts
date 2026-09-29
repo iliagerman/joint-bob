@@ -27,6 +27,18 @@ function piTranscript(sessionId: string, cwd: string): string {
   ].map((record) => JSON.stringify(record)).join("\n") + "\n";
 }
 
+function conversationEvent(dataDir: string, sessionId: string, operation: "upsert" | "delete") {
+  const database = new DatabaseSync(path.join(dataDir, "node.db"));
+  try {
+    const row = database.prepare(`SELECT event_id, origin_node_id, entity_type, entity_key, operation, payload, created_at
+      FROM replication_outbox WHERE entity_type = 'conversation.record' AND operation = ? AND entity_key LIKE ? ORDER BY rowid DESC LIMIT 1`)
+      .get(operation, `%:${sessionId}`) as { event_id: string; origin_node_id: string; entity_type: string; entity_key: string; operation: string; payload: string; created_at: string } | undefined;
+    assert.ok(row, `${operation} event exists`);
+    return { id: row.event_id, originNodeId: row.origin_node_id, entityType: row.entity_type, entityKey: row.entity_key,
+      operation: row.operation, payload: JSON.parse(row.payload), createdAt: row.created_at };
+  } finally { database.close(); }
+}
+
 // A deleted conversation stays deleted on both twins. Before this, the twin that received
 // the deletion kept its transcript file, the file travelled back, and every transcript
 // inventory of that project failed with "Conversation record was deleted".
@@ -62,16 +74,28 @@ test("a conversation deleted on one twin loses its transcript on both and never 
       await mkdir(piRoot(environment), { recursive: true });
       for (const id of [deleted, kept]) await writeFile(path.join(piRoot(environment), `${id}.jsonl`), piTranscript(id, directory));
     }
+    // The source watcher may have opened before its transcript root existed. Wait for
+    // its periodic rescan before reproducing the inventory exchange that creates the
+    // records. The twin's managed path differs from the owner's cwd, so its replicated
+    // record is how it knows these copied transcripts.
     await eventually(async () => {
-      const sessions = await api<{ sessions: Array<{ id: string }> }>(right, sb, "GET", `/projects/${projectId}/sessions`);
-      assert.ok(sessions.body.sessions.some((session) => session.id === deleted), "the twin knows the conversation before the deletion");
+      const sessions = await api<{ sessions: Array<{ id: string }> }>(left, sa, "GET", `/projects/${projectId}/sessions`);
+      assert.ok(sessions.body.sessions.some((session) => session.id === deleted), "the owner discovers the conversation before offering it");
     });
+    const offered = await signedNodeRequest(b, right, left, "GET", `/api/cluster/v2/transcripts?${new URLSearchParams({ projectId })}`);
+    assert.equal(offered.status, 200, await offered.text());
+    const recordDelivery = await signedNodeRequest(a, left, right, "POST", "/api/cluster/v2/events", { events: [conversationEvent(left.dataDir, deleted, "upsert")] });
+    assert.equal(recordDelivery.status, 200, await recordDelivery.text());
+    const beforeDeletion = await api<{ sessions: Array<{ id: string }> }>(right, sb, "GET", `/projects/${projectId}/sessions`);
+    assert.ok(beforeDeletion.body.sessions.some((session) => session.id === deleted), "the twin knows the conversation before the deletion");
 
     const removal = await fetch(`${left.url}/api/projects/${projectId}/sessions?${new URLSearchParams({ engine: "pi", sessionId: deleted })}`, {
       method: "DELETE", headers: { Cookie: sa.cookie, "x-csrf-token": sa.csrfToken },
     });
     assert.equal(removal.status, 204, await removal.text());
     assert.equal(await exists(path.join(piRoot(a), `${deleted}.jsonl`)), false, "the deleting node removes its transcript");
+    const deletionDelivery = await signedNodeRequest(a, left, right, "POST", "/api/cluster/v2/events", { events: [conversationEvent(left.dataDir, deleted, "delete")] });
+    assert.equal(deletionDelivery.status, 200, await deletionDelivery.text());
     await eventually(async () => {
       assert.equal(await exists(path.join(piRoot(b), `${deleted}.jsonl`)), false, "the twin removes its copy when the deletion arrives");
       const sessions = await api<{ sessions: Array<{ id: string }> }>(right, sb, "GET", `/projects/${projectId}/sessions`);
