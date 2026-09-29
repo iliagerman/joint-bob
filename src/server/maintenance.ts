@@ -17,6 +17,7 @@ import { mayReplicateEvent, replicationPeers, sendReplicationV2, signedPeerPost 
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
 import { listProjects } from "../store.js";
 import { reconcileSyncthingProjectFolders } from "../syncthing.js";
+import { ensureLegacySkillSyncPaused, refreshSharedSkills } from "./skill-sharing.js";
 import { listTasks, listUnfinishedOutgoingTaskHandoffs, releaseStaleTaskLease } from "../tasks.js";
 import type { HarnessId } from "../types.js";
 import { broadcastSessionsChangedToAllProjects, broadcastToProject, scheduleReviewNotifications, wakeQueuedConversations } from "./realtime.js";
@@ -53,8 +54,13 @@ export async function reconcileTaskConversationRecords(): Promise<void> {
 }
 
 export async function reconcileManagedAgentResources(): Promise<void> {
+  // The former folder included skills, prompts, plugins and MCP configuration. It
+  // must stay paused: selective skill grants are the only publishing path now.
+  await ensureLegacySkillSyncPaused();
   const resources = await reconcileAgentResources();
   if (resources.conflicts.length) console.warn(`Agent resource reconciliation found ${resources.conflicts.length} conflict(s)`);
+  try { await refreshSharedSkills(); }
+  catch (error) { console.warn("Selective skill refresh failed", error); }
 }
 
 export async function initializeStartupReadiness(): Promise<void> {

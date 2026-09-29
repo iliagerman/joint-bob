@@ -34,8 +34,7 @@ test("the cluster inventory asks each paired node over the signed runtime route"
     assert.ok(peer?.inventory, `peer answered: ${peer?.error}`);
     assert.equal(peer.node.online, true);
     const skill = peer.inventory.skills.find((item) => item.name === "cluster-skill");
-    assert.ok(skill);
-    assert.equal(skill.path, "", "peers keep local paths to themselves");
+    assert.equal(skill, undefined, "ungranted managed skill names are not disclosed to peers");
     assert.equal(peer.inventory.mcpServers.find((server) => server.name === "tracker")?.file, "");
     assert.doesNotMatch(JSON.stringify(cluster.body), /never-leaves/);
     assert.ok(cluster.body.nodes.find((entry) => entry.node.local)?.inventory?.skills.find((item) => item.name === "cluster-skill")?.path);

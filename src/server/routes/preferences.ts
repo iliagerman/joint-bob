@@ -255,9 +255,10 @@ app.post("/api/settings/skills/sync", async (request, response, next) => {
   try {
     const { paths } = skillSyncSchema.parse(request.body);
     syncingSkills = true;
+    await (await import("../skill-sharing.js")).ensureLegacySkillSyncPaused();
     response.json(await syncLocalSkills(paths));
   } catch (error) {
-    const validation = error instanceof Error && /^(Skill paths|Skill file|Invalid skill|No valid SKILL|Conflicting skill|Nested symbolic link|Unsupported file type|Skill source and destination overlap|Skill destination is a symbolic link)/.test(error.message);
+    const validation = error instanceof Error && /^(Skill paths|Skill file|Invalid skill|No valid SKILL|Conflicting skill|Nested symbolic link|Unsupported file type|Skill source and destination overlap|Skill destination is a symbolic link|Received skills cannot)/.test(error.message);
     if (error instanceof z.ZodError || validation || (error as NodeJS.ErrnoException).code === "ENOENT") {
       sendError(response, 400, error instanceof Error ? error.message : "Invalid skill paths"); return;
     }

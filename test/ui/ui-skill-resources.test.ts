@@ -20,10 +20,17 @@ test("resource settings explicitly publish and reload skills", { timeout: 120_00
     page.on("console", (message) => { if (message.type() === "error" && !message.text().includes("400 (Bad Request)")) errors.push(message.text()); });
     await page.goto(node.url); await page.getByTestId("login-username-input").fill(environment.username); await page.getByTestId("login-password-input").fill(environment.password); await page.getByTestId("login-submit-button").click();
     await page.getByText("Internal Assistant", { exact: true }).waitFor(); await page.getByTestId("settings-open-button").click(); await page.getByTestId("settings-tab-resources").click();
+    await page.waitForFunction(() => document.querySelector("#settingsForm")?.getAttribute("aria-busy") !== "true");
     await page.getByTestId("settings-resource-skills-paths").fill(source);
     await page.getByTestId("settings-sync-skills-button").click(); await page.getByTestId("confirm-cancel-button").click();
     await assert.rejects(readFile(path.join(environment.home, "JointBob/.agent-resources/shared/skills/visible/SKILL.md")));
-    await page.getByTestId("settings-sync-skills-button").click(); await page.getByTestId("confirm-accept-button").click(); await page.getByTestId("settings-skills-status").getByText(/Published for Syncthing/).waitFor();
+    await page.getByTestId("settings-sync-skills-button").click();
+    const [imported] = await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith("/api/settings/skills/sync")),
+      page.getByTestId("confirm-accept-button").click(),
+    ]);
+    assert.equal(imported.status(), 200, await imported.text());
+    await page.getByTestId("settings-skills-status").getByText(/Manage cluster sharing in the Skills tab/).waitFor();
     const sharedManifest = path.join(environment.home, "JointBob/.agent-resources/shared/skills/visible/SKILL.md");
     assert.match(await readFile(sharedManifest, "utf8"), /first/);
     await writeFile(path.join(source, "SKILL.md"), "---\nname: visible\ndescription: second\n---\n");
@@ -33,7 +40,7 @@ test("resource settings explicitly publish and reload skills", { timeout: 120_00
       page.getByTestId("confirm-accept-button").click(),
     ]);
     assert.equal(updated.status(), 200);
-    await page.getByTestId("settings-skills-status").getByText(/Published 1/).waitFor();
+    await page.getByTestId("settings-skills-status").getByText(/Imported 1/).waitFor();
     assert.match(await readFile(sharedManifest, "utf8"), /second/);
     await page.getByTestId("settings-resource-skills-paths").fill(path.join(root, "missing"));
     await page.getByTestId("settings-sync-skills-button").click();

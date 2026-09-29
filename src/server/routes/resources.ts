@@ -4,6 +4,8 @@ import path from "node:path";
 import { z } from "zod";
 import { agentResourcePaths, scanLocalSkills } from "../../agent-resources.js";
 import { getClusterNode } from "../../cluster.js";
+import { clusterV2Database } from "../../cluster-v2-store.js";
+import { authorizedSkillClusters, listReceivedSkills } from "../../skill-sharing.js";
 import { listDiscoveredHarnesses } from "../../harnesses/registry.js";
 import { configuredRuntime } from "../../harnesses/runtime-configuration.js";
 import { resourceInventory, shareMcpServers, type ResourceInventory } from "../../resource-inventory.js";
@@ -12,6 +14,9 @@ import { clusterPeerMayAccessProject } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { app } from "../state.js";
+import { registerSkillSharingRoutes } from "../skill-sharing.js";
+
+registerSkillSharingRoutes();
 
 interface NodeInventory {
   node: { id: string; name: string; local: boolean; online: boolean };
@@ -66,8 +71,16 @@ app.post(["/api/cluster/resources/inventory", "/api/cluster/v2/runtime/resources
     const { projectId } = peerInventorySchema.parse(request.body ?? {});
     if (projectId && !await clusterPeerMayAccessProject(response.locals.machineNodeId as string, projectId)) { sendError(response, 403, "Project is not shared with this node"); return; }
     const inventory = await localInventory(projectId);
-    // Local file locations stay on this node; peers only need names and where each comes from.
-    response.json({ ...inventory, skills: inventory.skills.map((skill) => ({ ...skill, path: "" })), mcpServers: inventory.mcpServers.map((server) => ({ ...server, file: "" })), sharedSkillsPath: "", mcpConfigPath: "" });
+    const db = await clusterV2Database();
+    const local = await getClusterNode();
+    const sender = response.locals.machineNodeId as string;
+    const received = new Set(listReceivedSkills(db).map((skill) => skill.name));
+    // A node-wide inventory must not disclose user/native names. Managed received
+    // skills are not relayable, and owner skills appear only under an explicit grant.
+    const skills = inventory.skills.filter((skill) => skill.origin === "project"
+      ? Boolean(projectId)
+      : skill.origin === "shared" && !received.has(skill.name) && authorizedSkillClusters(db, local.id, sender, skill.name).length > 0);
+    response.json({ ...inventory, skills: skills.map((skill) => ({ ...skill, path: "" })), mcpServers: inventory.mcpServers.map((server) => ({ ...server, file: "" })), sharedSkillsPath: "", mcpConfigPath: "" });
   } catch (error) { next(error); }
 });
 

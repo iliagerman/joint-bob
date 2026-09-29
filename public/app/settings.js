@@ -414,13 +414,13 @@ async function syncLocalSkills() {
   const paths = resourceFieldsValue(globalResourceFields).skills;
   if (!await confirmAction({
     title: "Sync local skills?",
-    message: "Publish these trusted skill directories, including scripts, to paired nodes? Matching shared skills are replaced with backups.",
+    message: "Import these trusted skill directories, including scripts, as local managed skills? Matching local managed copies are replaced with backups. Choose clusters separately in Skills.",
     confirmLabel: "Sync skills",
     destructive: true,
   })) return;
   const result = await api("/api/settings/skills/sync", { method: "POST", body: JSON.stringify({ paths }) });
   const backup = result.backupPath ? ` Backups: ${result.backupPath}.` : "";
-  elements.settingsSkillsStatus.textContent = `Published ${result.published.length}; unchanged ${result.unchanged.length}.${backup} Published for Syncthing; peer transfer may still be pending.`;
+  elements.settingsSkillsStatus.textContent = `Imported ${result.published.length}; unchanged ${result.unchanged.length}.${backup} Manage cluster sharing in the Skills tab.`;
 }
 
 async function reloadSkills() {

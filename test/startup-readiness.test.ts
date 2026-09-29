@@ -24,6 +24,11 @@ async function createSyncthingFixture(fail = false): Promise<SyncthingFixture> {
   let requested = () => {};
   const requestReceived = new Promise<void>((resolve) => { requested = resolve; });
   const fake = createServer(async (request, response) => {
+    if (request.url === "/rest/config/folders" && request.method === "GET") {
+      response.setHeader("Content-Type", "application/json");
+      response.end("[]");
+      return;
+    }
     if (request.url?.startsWith("/rest/db/ignores?folder=folder-1") && request.method === "GET") {
       requested();
       if (failing) { response.statusCode = 500; response.end("failed"); return; }

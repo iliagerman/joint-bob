@@ -9,7 +9,7 @@ const ORIGIN_LABELS = { shared: "shared", user: "agent", project: "project" };
 const MCP_SOURCE_LABELS = { shared: "shared", user: "agent", local: "project-local", project: "project", plugin: "plugin" };
 const SCAN_STATUS_LABELS = { new: "New", changed: "Changed", installed: "Installed", linked: "Linked" };
 
-const view = { scope: "conversation", projectId: null, engine: null, tab: "skills", nodes: [], loading: false, candidates: [], scanRoot: "", request: 0 };
+const view = { scope: "conversation", projectId: null, engine: null, tab: "skills", nodes: [], sharing: null, loading: false, candidates: [], scanRoot: "", request: 0 };
 
 function harnessLabel(id) {
   for (const entry of view.nodes) {
@@ -60,7 +60,7 @@ function filteredServers(inventory) {
   return inventory.mcpServers.filter((server) => (!harness || server.harnesses.includes(harness)) && matches(query, server.name, server.target));
 }
 
-function skillRow(skill) {
+function skillRow(skill, local = false) {
   const row = document.createElement("div");
   row.className = "resources-row";
   row.dataset.testid = "resources-skill-row";
@@ -76,7 +76,56 @@ function skillRow(skill) {
   description.className = "skill-option-description";
   description.textContent = skill.description;
   row.append(name, harnesses, description);
-  return row;
+  if (!local) return row;
+  const policy = view.sharing?.skills?.find((item) => item.name === skill.name && item.path === skill.path);
+  if (skill.origin !== "shared" || !policy) {
+    const hint = document.createElement("small"); hint.textContent = "Import this native/project skill first to manage or share it."; row.append(hint); return row;
+  }
+  if (policy.kind === "received") {
+    const status = document.createElement("small");
+    status.textContent = `Received from ${policy.receivedFrom}. Cannot be reshared.${policy.lastSync ? ` Last sync ${new Date(policy.lastSync).toLocaleString()}.` : ""}`;
+    row.append(status, skillRemoveButton(skill, true));
+    return row;
+  }
+  const details = document.createElement("details"); details.dataset.testid = "skill-sharing-controls";
+  const summary = document.createElement("summary"); summary.textContent = policy.clusterIds.length ? `Shared with ${policy.clusterIds.map((id) => view.sharing.clusters.find((c) => c.id === id)?.name || id).join(", ")}` : "Local only · Share";
+  const fieldset = document.createElement("fieldset"); const legend = document.createElement("legend"); legend.textContent = "Member machines receive this skill for all of their agents"; fieldset.append(legend);
+  for (const cluster of view.sharing.clusters) { const label=document.createElement("label"); label.className="checkbox-row"; const input=document.createElement("input"); input.type="checkbox"; input.value=cluster.id; input.checked=policy.clusterIds.includes(cluster.id); input.dataset.testid="skill-sharing-cluster-checkbox"; label.append(input,cluster.name); fieldset.append(label); }
+  const save = document.createElement("button");
+  save.type = "button"; save.className = "ghost compact"; save.dataset.testid = "skill-sharing-save"; save.textContent = "Save sharing";
+  save.addEventListener("click", async () => {
+    const clusterIds = [...fieldset.querySelectorAll("input:checked")].map((input) => input.value);
+    if (clusterIds.some((id) => !policy.clusterIds.includes(id)) && !await confirmAction({ title: `Share ${skill.name}?`, message: "Copy this skill, including executable scripts, to member machines of the selected clusters? Other clusters will not receive it through Joint Bob.", confirmLabel: "Share" })) return;
+    save.disabled = true;
+    try {
+      await api(`/api/resources/skills/${encodeURIComponent(skill.name)}/sharing`, { method: "PUT", body: JSON.stringify({ clusterIds }) });
+      await loadInventory();
+      setStatus("Selection saved. Receivers update on Refresh or within 30 seconds while online. Offline copies remain until they reconnect.");
+    } catch (error) { setStatus(error.message); }
+    finally { save.disabled = false; }
+  });
+  if (!view.sharing.clusters.length) fieldset.append(emptyRow("No clusters joined. Skill stays local."));
+  fieldset.append(save); details.append(summary, fieldset); row.append(details, skillRemoveButton(skill, false)); return row;
+}
+
+function skillRemoveButton(skill, received) {
+  const button = document.createElement("button");
+  button.type = "button"; button.className = "ghost compact danger"; button.dataset.testid = "skill-remove";
+  button.textContent = received ? "Remove local copy" : "Remove";
+  button.addEventListener("click", async () => {
+    if (!await confirmAction({ title: `Remove ${skill.name}?`, message: received
+      ? "Remove and suppress this received copy on this machine. The owner's skill is unchanged."
+      : "Revoke grants and back up this managed folder. Offline copies remain until receivers reconnect. Independent native copies stay untouched.", confirmLabel: "Remove", destructive: true })) return;
+    button.disabled = true;
+    try {
+      const result = await api(`/api/resources/skills/${encodeURIComponent(skill.name)}`, { method: "DELETE" });
+      await api("/api/settings/skills/reload", { method: "POST", body: JSON.stringify({}) });
+      await Promise.all([loadInventory(), loadSkills(true)]);
+      setStatus(`Removed. Backup: ${result.backup}. Start a new conversation to forget previously read instructions.`);
+    } catch (error) { setStatus(error.message); }
+    finally { button.disabled = false; }
+  });
+  return button;
 }
 
 function serverRow(server) {
@@ -119,13 +168,23 @@ function renderList() {
   const harness = harnessFilter();
   const multiple = view.nodes.length > 1;
   let total = 0;
+  if (skills && view.sharing) {
+    const notice = emptyRow("Managed skills are local-only until you select clusters. Legacy blanket resource sync is paused; prompts, plugins and MCP no longer transfer automatically. Previously copied unmanaged skills cannot be erased remotely.");
+    notice.dataset.testid = "skill-sharing-notice";
+    list.append(notice);
+    if (!view.sharing.legacy.verified) list.append(emptyRow(view.sharing.legacy.error || "Legacy sync status not yet verified. Publishing verifies it before proceeding."));
+    for (const peer of view.sharing.peerStatus) {
+      const status = emptyRow(`${peer.ownerNodeId}: ${peer.error || `Last synced ${peer.lastSuccess}`}`);
+      status.dataset.testid = "skill-peer-status"; list.append(status);
+    }
+  }
   for (const entry of view.nodes) {
     const rows = entry.inventory ? (skills ? filteredSkills(entry.inventory) : filteredServers(entry.inventory)) : [];
     total += rows.length;
     if (multiple) list.append(nodeHeading(entry, rows.length, skills ? "skills" : "MCP servers"));
     if (!entry.inventory) continue;
     if (!skills && harness && !entry.inventory.harnesses.find((item) => item.id === harness)?.mcp) { list.append(emptyRow(`${harnessLabel(harness)} does not load MCP servers.${view.scope === "conversation" ? " Show this project to see the servers other agents load." : ""}`)); continue; }
-    list.append(...rows.map(skills ? skillRow : serverRow));
+    list.append(...rows.map((item) => skills ? skillRow(item, entry.node.local) : serverRow(item)));
   }
   if (!total && !list.childElementCount) list.append(emptyRow(skills ? "No skills match." : "No MCP servers match."));
 }
@@ -163,9 +222,10 @@ async function loadInventory() {
   if (view.scope !== "cluster" && view.projectId) params.set("projectId", view.projectId);
   if (view.scope !== "conversation") params.set("cluster", "1");
   try {
-    const body = await api(`/api/resources/inventory?${params}`);
+    const [body, sharing] = await Promise.all([api(`/api/resources/inventory?${params}`), api("/api/resources/skills/sharing")]);
     if (request !== view.request) return;
     view.nodes = body.nodes;
+    view.sharing = sharing;
     renderHarnessOptions();
   } catch (error) {
     if (request === view.request) setStatus(error.message);
@@ -305,7 +365,7 @@ async function importSelected() {
   const changed = chosen.filter((candidate) => candidate.status === "changed").length;
   if (!await confirmAction({
     title: `Import ${chosen.length} skill${chosen.length === 1 ? "" : "s"}?`,
-    message: `Their folders, scripts included, are copied to the shared skills folder and to paired nodes.${changed ? ` ${changed} shared cop${changed === 1 ? "y is" : "ies are"} replaced; backups are kept.` : ""}`,
+    message: `Their folders, scripts included, are copied into local managed skills. They remain local-only until shared from the Skills tab.${changed ? ` ${changed} managed cop${changed === 1 ? "y is" : "ies are"} replaced; backups are kept.` : ""}`,
     confirmLabel: "Import",
     destructive: changed > 0,
   })) return;
@@ -328,7 +388,7 @@ async function shareSelectedServers() {
   if (!checked.length) return;
   if (!await confirmAction({
     title: `Share ${checked.length} MCP server${checked.length === 1 ? "" : "s"}?`,
-    message: "Claude and Kiro on every paired node will load them. Environment values and headers, including any tokens, are copied to those nodes.",
+    message: "Claude and Kiro on this machine will load this managed MCP configuration. Environment values and headers are copied locally. Cluster distribution of MCP configuration is not supported by selective skill sharing.",
     confirmLabel: "Share",
     destructive: true,
   })) return;
@@ -354,6 +414,7 @@ export function openResources({ scope = "conversation", projectId = state.active
   view.scope = !view.projectId ? "cluster" : scope === "conversation" && !engine ? "project" : scope;
   view.tab = tab;
   view.nodes = [];
+  view.sharing = null;
   view.candidates = [];
   view.scanRoot = "";
   setStatus("");
@@ -394,7 +455,7 @@ elements.resourcesSelectNewButton.addEventListener("click", () => {
 });
 elements.resourcesImportButton.addEventListener("click", () => importSelected());
 elements.resourcesShareMcpButton.addEventListener("click", () => shareSelectedServers());
-elements.resourcesRefreshButton.addEventListener("click", () => { loadInventory(); if (view.tab === "add") scan(); });
+elements.resourcesRefreshButton.addEventListener("click", async () => { try { if (view.tab === "skills") await api("/api/resources/skills/refresh", { method: "POST", body: JSON.stringify({}) }); await loadInventory(); if (view.tab === "add") await scan(); } catch (error) { setStatus(error.message); } });
 elements.closeResourcesDialogButton.addEventListener("click", () => elements.resourcesDialog.close());
 elements.chatResourcesButton.addEventListener("click", () => openResources());
 elements.skillsDialogManageButton.addEventListener("click", () => { elements.skillsDialog.close(); openResources(); });

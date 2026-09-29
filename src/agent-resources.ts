@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadSkills, SettingsManager, type PackageSource } from "@earendil-works/pi-coding-agent";
 import { resolveDataDirectory } from "./data-directory.js";
+import { allowSkillImport, receivedOwner, skillSuppressed, withSkillMutation } from "./skill-sharing-files.js";
 import { getSettings, type ScopedResourcePaths } from "./settings.js";
 
 export const AGENT_RESOURCES_FOLDER_ID = "joint-bob-agent-resources";
@@ -168,7 +169,11 @@ async function replacePublishedSkill(staged: string, destination: string, backup
   }
 }
 
-export async function syncLocalSkills(roots: string[], options: { root?: string; dataDir?: string } = {}): Promise<{ published: string[]; unchanged: string[]; backupPath: string | null }> {
+export function syncLocalSkills(roots: string[], options: { root?: string; dataDir?: string } = {}): Promise<{ published: string[]; unchanged: string[]; backupPath: string | null }> {
+  return withSkillMutation(() => publishLocalSkills(roots, options));
+}
+
+async function publishLocalSkills(roots: string[], options: { root?: string; dataDir?: string }): Promise<{ published: string[]; unchanged: string[]; backupPath: string | null }> {
   if (!roots.length || roots.length > 20) throw new Error("Skill paths must contain between 1 and 20 entries");
   if (roots.some((root) => !path.isAbsolute(root))) throw new Error("Skill paths must be absolute");
   const skills = await discoverLocalSkills(roots);
@@ -180,6 +185,7 @@ export async function syncLocalSkills(roots: string[], options: { root?: string;
   const stagedSkills: LocalSkill[] = [];
   try {
     for (const skill of skills) {
+      if (await receivedOwner(paths.sharedSkills, skill.name, options.dataDir)) throw new Error("Received skills cannot be overwritten by import");
       const destination = path.join(paths.sharedSkills, skill.name);
       if (overlaps(skill.source, destination) || overlaps(destination, skill.source)) {
         if (path.resolve(skill.source) === path.resolve(destination)) { unchanged.push(skill.name); continue; }
@@ -199,6 +205,7 @@ export async function syncLocalSkills(roots: string[], options: { root?: string;
       await replacePublishedSkill(staged.source, destination, backup);
       published.push(staged.name);
     }
+    for (const name of [...published, ...unchanged]) await allowSkillImport(paths.sharedSkills, name, options.dataDir);
     return { published, unchanged, backupPath: published.some((name) => existsSync(path.join(backupRoot, name))) ? backupRoot : null };
   } finally { await rm(stagingRoot, { recursive: true, force: true }); }
 }
@@ -410,7 +417,7 @@ async function reconcileEntry(source: string, destination: string, dataDir: stri
   if (link) await linkImportedEntry(source, destination, dataDir, counts);
 }
 
-async function materialize(mapping: Mapping, counts: Counts): Promise<void> {
+async function materialize(mapping: Mapping, counts: Counts, dataDir: string): Promise<void> {
   if (!mapping.directory) {
     try {
       await lstat(mapping.destination);
@@ -434,6 +441,7 @@ async function materialize(mapping: Mapping, counts: Counts): Promise<void> {
   if (!names.length) return;
   await mkdir(mapping.source, { recursive: true });
   for (const name of names) {
+    if (path.basename(mapping.source) === "skills" && await skillSuppressed(mapping.destination, name, dataDir)) continue;
     const source = path.join(mapping.source, name);
     const destination = path.join(mapping.destination, name);
     try {
@@ -468,13 +476,15 @@ async function reconcileMappings(list: Mapping[], dataDir: string, counts: Count
   for (const mapping of list) {
     if (mapping.directory) {
       for (const name of await entries(mapping.source)) {
+        if (path.basename(mapping.source) === "skills" && (await skillSuppressed(mapping.destination, name, dataDir)
+          || await receivedOwner(mapping.destination, name, dataDir))) continue;
         await reconcileEntry(path.join(mapping.source, name), path.join(mapping.destination, name), dataDir, counts, mapping.link);
       }
     } else {
       await reconcileEntry(mapping.source, mapping.destination, dataDir, counts, mapping.link);
     }
   }
-  for (const mapping of list) await materialize(mapping, counts);
+  for (const mapping of list) await materialize(mapping, counts, dataDir);
 }
 
 function portablePackage(value: PackageSource): boolean {
@@ -757,9 +767,9 @@ async function reconcile(options: AgentResourceReconcileOptions): Promise<AgentR
 }
 
 export async function reconcileAgentResources(options?: AgentResourceReconcileOptions): Promise<AgentResourceReconcileResult> {
-  if (options) return reconcile(options);
+  if (options) return withSkillMutation(() => reconcile(options));
   if (!defaultReconciliation) {
-    defaultReconciliation = reconcile({}).finally(() => {
+    defaultReconciliation = withSkillMutation(() => reconcile({})).finally(() => {
       defaultReconciliation = undefined;
     });
   }

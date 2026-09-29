@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Managed skills are now local-only; use Resources → Skills to share them selectively with clusters.
+
 ## 2.13.4 — 2026-09-29
 
 - Added an API-equivalent usage dashboard and project and conversation cost badges.
