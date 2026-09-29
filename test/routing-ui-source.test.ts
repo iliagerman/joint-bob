@@ -30,6 +30,8 @@ test("routing configuration UI wiring stays connected and lives only under Class
   assert.match(configs, /routing-description/, "each configured option carries a classifier description");
   assert.match(configs, /saved, unavailable here/, "a saved mapping whose model is missing keeps its option instead of silently clearing");
   assert.match(configs, /notDetected/, "a harness present only in the saved policy keeps its grid");
+  assert.match(configs, /cloneConfig/, "the built-in configuration can be cloned");
+  assert.match(configs, /config\.builtIn/, "the built-in configuration stays read-only in the editor");
   assert.match(configs, /Save and share/, "sharing an edited configuration saves it first");
   assert.match(dialogs, /\/api\/routing-configs/, "the model dialog reads classifiers from the configuration API");
   assert.match(dialogs, /saveRoutingClassifier/, "changing the classifier saves the active configuration");
@@ -44,7 +46,7 @@ test("routing configuration UI wiring stays connected and lives only under Class
   const classifierPanel = index.slice(index.indexOf('id="settingsPanel-classifiers"'), index.indexOf('id="settingsPanel-resources"'));
   const clusterPanelHtml = index.slice(index.indexOf('id="settingsPanel-cluster"'), index.indexOf('id="settingsPanel-workspaces"'));
   const enginesPanel = index.slice(index.indexOf('id="settingsPanel-engines"'), index.indexOf('id="settingsPanel-classifiers"'));
-  for (const testid of ["routing-active-config-select", "routing-config-list", "routing-config-create-button", "routing-config-editor", "routing-config-save-button", "routing-config-share-button", "routing-config-delete-button", "routing-enabled", "routing-cadence", "routing-cadence-n", "routing-context-messages", "routing-confidence", "routing-classifier"]) {
+  for (const testid of ["routing-active-config-select", "routing-config-list", "routing-config-create-button", "routing-config-editor", "routing-config-save-button", "routing-config-clone-button", "routing-config-share-button", "routing-config-delete-button", "routing-enabled", "routing-cadence", "routing-cadence-n", "routing-context-messages", "routing-confidence", "routing-classifier"]) {
     assert.ok(classifierPanel.includes(`data-testid="${testid}"`), `the Classifiers panel must carry ${testid}`);
   }
   assert.ok(index.includes('data-testid="model-auto-label"'), "the chat toolbar still marks Bob auto");

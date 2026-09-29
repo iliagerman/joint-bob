@@ -40,6 +40,13 @@ test("routing configurations live under Classifiers, save mappings, and keep una
 
   // Everything is configured in the Classifiers tab: create, edit, save, activate.
   await openSettingsTab(page, "classifiers");
+  const builtInRow = page.getByTestId("routing-config-row").filter({ hasText: "Joint Bob default" });
+  await builtInRow.getByTestId("routing-config-edit-button").click();
+  await page.getByTestId("routing-config-editor").waitFor();
+  assert.equal(await page.getByTestId("routing-config-editor-name").isDisabled(), true, "the built-in configuration is read-only");
+  assert.equal(await page.getByTestId("routing-config-clone-button").isVisible(), true, "the built-in configuration offers an editable clone");
+  assert.equal(await page.getByTestId("routing-context-messages").inputValue(), "1");
+  assert.equal(await page.getByTestId("routing-cadence-n").inputValue(), "1");
   await page.getByTestId("routing-config-name-input").fill("Field routing");
   const created = page.waitForResponse(response => response.url().endsWith("/api/routing-configs") && response.request().method() === "POST");
   await page.getByTestId("routing-config-create-button").click();
@@ -105,7 +112,7 @@ test("routing configurations live under Classifiers, save mappings, and keep una
     await page.waitForTimeout(250);
   }
   assert.equal(selection?.config_id, configId, "the active select stores this node's own selection");
-  await page.locator('[data-testid="routing-config-edit-button"]').first().click();
+  await page.getByTestId("routing-config-row").filter({ hasText: "Field routing" }).getByTestId("routing-config-edit-button").click();
   await page.getByTestId("routing-config-editor").waitFor();
   await page.getByTestId("routing-model-kiro-1").waitFor();
   assert.equal(await page.getByTestId("routing-description-kiro-1").inputValue(), "Small, localized requests with clear requirements", "the description survives save and reload");
@@ -119,7 +126,7 @@ test("routing configurations live under Classifiers, save mappings, and keep una
   ghost.harnesses.claude = { levels: { "9": { modelId: "claude-opus-5", thinkingLevel: "high", description: "An undetected harness's mapping" } } };
   db.prepare("UPDATE routing_configs SET policy = ? WHERE id = ?").run(JSON.stringify(ghost), configId);
   await openSettingsTab(page, "classifiers");
-  await page.locator('[data-testid="routing-config-edit-button"]').first().click();
+  await page.getByTestId("routing-config-row").filter({ hasText: "Field routing" }).getByTestId("routing-config-edit-button").click();
   await page.getByTestId("routing-config-editor").waitFor();
   const ghostSelect = page.getByTestId("routing-model-kiro-2");
   await ghostSelect.waitFor();
@@ -151,12 +158,27 @@ test("routing configurations live under Classifiers, save mappings, and keep una
 
   // Deleting the active configuration ends the selection.
   await openSettingsTab(page, "classifiers");
-  await page.locator('[data-testid="routing-config-edit-button"]').first().click();
+  await page.getByTestId("routing-config-row").filter({ hasText: "Field routing" }).getByTestId("routing-config-edit-button").click();
   await page.getByTestId("routing-config-editor").waitFor();
   await page.getByTestId("routing-config-delete-button").click();
   await page.locator("#confirmDialog[open]").waitFor();
   await page.getByTestId("confirm-accept-button").click();
-  await page.getByTestId("routing-config-list").getByText("No routing configurations yet").waitFor();
+  await page.getByTestId("routing-config-row").filter({ hasText: "Field routing" }).waitFor({ state: "hidden" });
+  await page.getByTestId("routing-config-list").getByText("Joint Bob default").waitFor();
+  assert.equal(await page.getByTestId("routing-config-row").count(), 1, "deleting the user copy leaves only the built-in configuration");
   assert.equal((db.prepare("SELECT count(*) AS count FROM routing_configs").get() as { count: number }).count, 0);
   assert.equal((db.prepare("SELECT config_id FROM routing_config_selection WHERE singleton = 1").get() as { config_id: string } | undefined)?.config_id ?? "", "", "deleting the selected configuration clears the selection");
+
+  // Cloning creates a normal local copy without changing the built-in preset.
+  await page.getByTestId("routing-config-row").filter({ hasText: "Joint Bob default" }).getByTestId("routing-config-edit-button").click();
+  await page.getByTestId("routing-config-clone-button").click();
+  const cloneRow = page.getByTestId("routing-config-row").filter({ hasText: "Joint Bob default copy" });
+  await cloneRow.waitFor();
+  const clonePolicy = JSON.parse((db.prepare("SELECT policy FROM routing_configs WHERE name = 'Joint Bob default copy'").get() as { policy: string }).policy);
+  assert.equal(clonePolicy.contextMessages, 1);
+  assert.deepEqual(clonePolicy.evalCadence, { mode: "every-n", n: 1 });
+  await page.getByTestId("routing-config-delete-button").click();
+  await page.getByTestId("confirm-accept-button").click();
+  await cloneRow.waitFor({ state: "hidden" });
+  assert.equal((db.prepare("SELECT count(*) AS count FROM routing_configs").get() as { count: number }).count, 0);
 });

@@ -143,30 +143,26 @@ test("routingEvalDue follows the configured cadence", () => {
 });
 
 
-test("defaultRoutingPolicy keeps editable model tiers inside their harness", () => {
-  const generated = defaultRoutingPolicy({
-    pi: [
-      { provider: "openai-codex", id: "gpt-4.1", label: "GPT 4.1" },
-      { provider: "zai", id: "glm-5.3-flash", label: "GLM 5.3 Flash" },
-      { provider: "zai", id: "glm-5.3", label: "GLM 5.3" },
-      { provider: "anthropic", id: "claude-opus-5-5", label: "Claude Opus 5.5" },
-      { provider: "openai-codex", id: "gpt-5.6-sol", label: "GPT 5.6 Sol" },
-      { provider: "openai-codex", id: "gpt-6-astra", label: "GPT 6 Astra" },
-    ],
-    claude: [{ provider: "claude", id: "claude-opus-5-5", label: "Claude Opus 5.5" }],
-    kiro: [{ provider: "kiro", id: "default", label: "Kiro default" }],
-  });
+test("defaultRoutingPolicy maps task categories for Pi and Claude", () => {
+  const generated = defaultRoutingPolicy();
   const pi = generated.harnesses.pi.levels;
-  assert.deepEqual(Object.entries(pi).filter(([, mapping]) => mapping).map(([level, mapping]) => [level, mapping!.provider, mapping!.modelId, mapping!.thinkingLevel]), [
+  assert.deepEqual(Object.entries(pi).map(([level, mapping]) => [level, mapping!.provider, mapping!.modelId, mapping!.thinkingLevel]), [
     ["1", "zai", "glm-5.3-flash", "low"],
-    ["4", "zai", "glm-5.3", "high"],
-    ["7", "openai-codex", "gpt-5.6-sol", "high"],
-    ["10", "openai-codex", "gpt-6-astra", "max"],
+    ["3", "openai-codex", "gpt-5.6-terra", "medium"],
+    ["5", "openai-codex", "gpt-6-sol", "medium"],
+    ["7", "openai-codex", "gpt-6-sol", "high"],
+    ["10", "openai-codex", "gpt-6-astra", "xhigh"],
   ]);
-  assert.equal(Object.values(pi).some((mapping) => mapping?.modelId === "claude-opus-5-5"), false, "Pi defaults do not borrow Claude models");
-  assert.deepEqual(generated.harnesses.claude.levels["10"], { modelId: "claude-opus-5-5", thinkingLevel: "max", description: "The hardest Claude work requiring Opus 5.5's sustained architectural reasoning and judgment." });
+  const claude = generated.harnesses.claude.levels;
+  assert.deepEqual(Object.entries(claude).map(([level, mapping]) => [level, mapping!.modelId, mapping!.thinkingLevel]), [
+    ["1", "haiku", "low"],
+    ["3", "haiku", "low"],
+    ["5", "claude-opus-5-5", "medium"],
+    ["7", "claude-opus-5-5", "high"],
+    ["10", "claude-opus-5-5", "xhigh"],
+  ]);
   assert.ok(Object.values(generated.harnesses.kiro.levels).every((mapping) => !mapping), "Kiro has no guessed defaults");
-  assert.equal(generated.contextMessages, 10);
+  assert.equal(generated.contextMessages, 1);
   assert.deepEqual(generated.evalCadence, { mode: "every-n", n: 1 });
   assert.doesNotThrow(() => validateRoutingPolicy(generated), "generated defaults must satisfy the policy schema");
 });

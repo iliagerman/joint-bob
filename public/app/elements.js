@@ -224,6 +224,7 @@ export const elements = {
   routingHarnessSelect: document.querySelector("#routingHarnessSelect"),
   routingConfigHarnessGrids: document.querySelector("#routingConfigHarnessGrids"),
   routingConfigSaveButton: document.querySelector("#routingConfigSaveButton"),
+  routingConfigCloneButton: document.querySelector("#routingConfigCloneButton"),
   routingConfigShareButton: document.querySelector("#routingConfigShareButton"),
   routingConfigDeleteButton: document.querySelector("#routingConfigDeleteButton"),
   routingEnabled: document.querySelector("#routingEnabled"),

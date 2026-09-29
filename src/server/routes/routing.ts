@@ -3,7 +3,7 @@ import { listDifficultyClassifiers } from "../../classifiers/registry.js";
 import { getClusterNode } from "../../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { getHarnessRuntime, listHarnesses } from "../../harnesses.js";
-import { applyRoutingConfigEvents, createRoutingConfig, deleteRoutingConfig, enqueueRoutingConfigDeliveries, getRoutingConfig, listRoutingConfigs, pendingRoutingConfigDeliveryCount, routingConfigDatabase, routingConfigEventFor, routingConfigEventSchema, routingConfigShareTargets, routingConfigWarning, RoutingConfigError, setRoutingConfigSelection, updateRoutingConfig, type RoutingConfigEvent, type StoredRoutingConfig } from "../../routing-configs.js";
+import { applyRoutingConfigEvents, createRoutingConfig, DEFAULT_ROUTING_CONFIG_ID, defaultRoutingConfig, deleteRoutingConfig, enqueueRoutingConfigDeliveries, getRoutingConfig, listRoutingConfigs, pendingRoutingConfigDeliveryCount, routingConfigDatabase, routingConfigEventFor, routingConfigEventSchema, routingConfigShareTargets, routingConfigWarning, RoutingConfigError, setRoutingConfigSelection, updateRoutingConfig, type RoutingConfigEvent, type StoredRoutingConfig } from "../../routing-configs.js";
 import { automaticRoutingModelAllowed, defaultRoutingPolicy, listRoutingPolicies, RoutingPolicyError, routingPolicyDatabase, validateRoutingPolicy } from "../../routing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { sendError } from "../http-auth.js";
@@ -33,13 +33,13 @@ async function routingModels(): Promise<Array<{ id: string; label: string; think
   return groups;
 }
 
-type ConfigView = StoredRoutingConfig & { mine: boolean; ownerLabel?: string; warning: string | null };
+type ConfigView = StoredRoutingConfig & { mine: boolean; builtIn?: boolean; ownerLabel?: string; warning: string | null };
 
-function configView(localNodeId: string, config: StoredRoutingConfig, ownerNames: Map<string, string>): ConfigView {
+function configView(localNodeId: string, config: StoredRoutingConfig, ownerNames: Map<string, string>, builtIn = false): ConfigView {
   return {
     ...config,
     mine: config.ownerNodeId === localNodeId,
-    ...(ownerNames.has(config.ownerNodeId) ? { ownerLabel: ownerNames.get(config.ownerNodeId) } : {}),
+    ...(builtIn ? { builtIn: true, ownerLabel: "Joint Bob" } : ownerNames.has(config.ownerNodeId) ? { ownerLabel: ownerNames.get(config.ownerNodeId) } : {}),
     warning: routingConfigWarning(config),
   };
 }
@@ -78,11 +78,11 @@ app.get("/api/routing-configs", async (_request, response, next) => {
     const names = await ownerNames(local);
     response.json({
       routingLevels: 10,
-      configs: listRoutingConfigs(db).map((config) => configView(local.id, config, names)),
+      configs: [configView(local.id, defaultRoutingConfig(), names, true), ...listRoutingConfigs(db).map((config) => configView(local.id, config, names))],
       selectedId: (db.prepare("SELECT config_id FROM routing_config_selection WHERE singleton = 1").get() as { config_id: string } | undefined)?.config_id ?? "",
       classifiers: listDifficultyClassifiers().map(({ id, label, variableName }) => ({ id, label, variableName })),
       harnesses,
-      defaultPolicy: defaultRoutingPolicy(Object.fromEntries(harnesses.map((harness) => [harness.id, harness.models.map(({ provider, id, label }) => ({ provider, id, label }))]))),
+      defaultPolicy: defaultRoutingPolicy(),
       shareTargets: routingConfigShareTargets(policies, local.id).map(({ nodeId, name, kind, clusterName }) => ({ nodeId, name, kind, ...(clusterName ? { clusterName } : {}) })),
       // Kept for older callers: the retired per-cluster policies are listed read-only until the migration empties them.
       policies: listRoutingPolicies(policies).map((stored) => ({ ...stored, editable: false, localLeader: false, leaderName: stored.leaderNodeId, warning: null })),
@@ -112,7 +112,7 @@ app.put("/api/routing-configs/selection", async (request, response, next) => {
   try {
     localAuth(response);
     const input = selectionSchema.parse(request.body);
-    if (input.configId !== "" && !getRoutingConfig(routingConfigDatabase(), input.configId)) throw new RoutingConfigError(404, "Routing configuration not found");
+    if (input.configId !== "" && input.configId !== DEFAULT_ROUTING_CONFIG_ID && !getRoutingConfig(routingConfigDatabase(), input.configId)) throw new RoutingConfigError(404, "Routing configuration not found");
     setRoutingConfigSelection(routingConfigDatabase(), input.configId);
     broadcastRoutingMode();
     response.json({ selectedId: input.configId });
@@ -127,6 +127,7 @@ app.put("/api/routing-configs/:id", async (request, response, next) => {
   try {
     localAuth(response);
     const id = uuid.parse(request.params.id);
+    if (id === DEFAULT_ROUTING_CONFIG_ID) throw new RoutingConfigError(403, "The Joint Bob default configuration is read-only; clone it to make changes");
     const input = configUpdateSchema.parse(request.body);
     const local = await getClusterNode();
     const db = routingConfigDatabase();
@@ -151,6 +152,7 @@ app.delete("/api/routing-configs/:id", async (request, response, next) => {
   try {
     localAuth(response);
     const id = uuid.parse(request.params.id);
+    if (id === DEFAULT_ROUTING_CONFIG_ID) throw new RoutingConfigError(403, "The Joint Bob default configuration cannot be deleted");
     const local = await getClusterNode();
     const db = routingConfigDatabase();
     const config = getRoutingConfig(db, id);
@@ -171,6 +173,7 @@ app.post("/api/routing-configs/:id/share", async (request, response, next) => {
   try {
     localAuth(response);
     const id = uuid.parse(request.params.id);
+    if (id === DEFAULT_ROUTING_CONFIG_ID) throw new RoutingConfigError(403, "The Joint Bob default configuration cannot be shared");
     const local = await getClusterNode();
     const db = routingConfigDatabase();
     const config = getRoutingConfig(db, id);

@@ -73,10 +73,10 @@ test("v2 HTTP membership preserves independent clusters and routes authority thr
     assert.deepEqual(retry.body.snapshot, joined.body.snapshot);
 
     // Joining carries no routing configuration: the new member starts unselected.
-    const beforeShare = await call<{ configs: unknown[]; selectedId: string }>(nodeB, sessionB, "GET", "/routing-configs");
+    const beforeShare = await call<{ configs: Array<{ name: string; builtIn?: boolean }>; selectedId: string }>(nodeB, sessionB, "GET", "/routing-configs");
     assert.equal(beforeShare.status, 200);
-    assert.deepEqual(beforeShare.body.configs, [], "a joiner receives no routing configuration with its membership");
-    assert.equal(beforeShare.body.selectedId, "");
+    assert.deepEqual(beforeShare.body.configs.map((config) => ({ name: config.name, builtIn: config.builtIn })), [{ name: "Joint Bob default", builtIn: true }], "a joiner has only the local built-in preset before sharing");
+    assert.equal(beforeShare.body.selectedId, "", "joining does not activate any routing configuration");
 
     // Sharing distributes over the signed cluster protocol to every eligible member.
     const shared = await call<{ results: Array<{ nodeId: string; delivered: boolean }> }>(nodeA, sessionA, "POST", `/routing-configs/${configId}/share`, {});

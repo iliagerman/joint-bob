@@ -6,7 +6,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
 import {
-  activeRoutingConfig, applyRoutingConfigEvents, createRoutingConfig, currentRoutingConfigTarget, deleteRoutingConfig, dueRoutingConfigDeliveries, dropRoutingConfigDelivery,
+  activeRoutingConfig, applyRoutingConfigEvents, createRoutingConfig, currentRoutingConfigTarget, DEFAULT_ROUTING_CONFIG_ID, deleteRoutingConfig, dueRoutingConfigDeliveries, dropRoutingConfigDelivery,
   enqueueRoutingConfigDeliveries, ensureRoutingConfigSchema, listRoutingConfigs, migrateRoutingConfigs, pendingRoutingConfigDeliveryCount, routingConfigDatabase, routingConfigEventFor,
   routingConfigShareTargets, routingConfigWarning, RoutingConfigError, selectedRoutingConfigId, setRoutingConfigSelection, updateRoutingConfig,
 } from "../src/routing-configs.js";
@@ -66,6 +66,18 @@ test("a node keeps multiple named configurations, local by default, and selects 
   assert.equal(activeRoutingConfig(db), null, "an empty selection turns routing off");
   deleteRoutingConfig(db, nodeB, first.id);
   deleteRoutingConfig(db, nodeB, second.id);
+});
+
+test("the built-in default is selectable without becoming a stored editable configuration", () => {
+  const db = routingConfigDatabase();
+  const storedCount = listRoutingConfigs(db).length;
+  setRoutingConfigSelection(db, DEFAULT_ROUTING_CONFIG_ID);
+  const active = activeRoutingConfig(db);
+  assert.equal(active?.id, DEFAULT_ROUTING_CONFIG_ID);
+  assert.equal(active?.policy.contextMessages, 1);
+  assert.deepEqual(active?.policy.evalCadence, { mode: "every-n", n: 1 });
+  assert.equal(listRoutingConfigs(db).length, storedCount, "the built-in preset is not written into the editable configuration table");
+  setRoutingConfigSelection(db, "");
 });
 
 test("a disabled selected configuration does not route", () => {

@@ -217,37 +217,34 @@ export function routingEvalDue(policy: RoutingPolicy, promptOrdinal: number, las
   return promptOrdinal - lastEvalOrdinal >= (policy.evalCadence.n ?? Number.POSITIVE_INFINITY);
 }
 
-export interface DefaultPolicyModel { provider: string; id: string; label: string }
-
-/** Builds approved tiers per harness. Kiro and unknown harnesses stay blank, so
-    defaults never guess how a native model catalogue ranks its models. */
-export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPolicyModel[]>): RoutingPolicy {
+/** Builds the immutable Joint Bob preset. Kiro and unknown harnesses stay blank;
+    only Pi and Claude have an intentional task-to-model mapping. */
+export function defaultRoutingPolicy(): RoutingPolicy {
   const harnesses: RoutingPolicy["harnesses"] = {};
   for (const adapter of listDiscoveredHarnesses()) {
     if (!adapter.configuration) continue;
     const levelsMap: RoutingPolicy["harnesses"][string]["levels"] = {};
-    const models = modelsByHarness[adapter.id] ?? [];
     const tiers = adapter.id === "pi"
       ? [
-        { level: "1", provider: "zai", modelId: "glm-5.3-flash", thinking: "low", description: "Fast, low-cost work such as summaries, lookups, small edits, and requests with an obvious answer." },
-        { level: "4", provider: "zai", modelId: "glm-5.3", thinking: "high", description: "Substantial implementation, analysis, or debugging that benefits from strong reasoning at lower cost." },
-        { level: "7", provider: "openai-codex", modelId: "gpt-5.6-sol", thinking: "high", description: "Complex development work across several files where implementation quality matters more than broad architecture." },
-        { level: "10", provider: "openai-codex", modelId: "gpt-6-astra", thinking: "max", description: "The hardest ambiguous, high-risk, or cross-system architecture requiring sustained reasoning and verification." },
+        { level: "1", provider: "zai", modelId: "glm-5.3-flash", thinkingLevel: "low", description: "Direct CLI commands, shell inspection, lookups, and other short mechanical terminal work that does not change git history." },
+        { level: "3", provider: "openai-codex", modelId: "gpt-5.6-terra", thinkingLevel: "medium", description: "Git operations such as reviewing diffs, preparing commits, resolving straightforward conflicts, and managing an existing branch." },
+        { level: "5", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium", description: "Debugging a reported error, reproducing a failure, tracing its cause, and making a focused fix." },
+        { level: "7", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "high", description: "Software development that implements or refactors a feature across the codebase and verifies the result." },
+        { level: "10", provider: "openai-codex", modelId: "gpt-6-astra", thinkingLevel: "xhigh", description: "Complex planning, architecture, ambiguous multi-system design, or high-risk work that needs deep analysis before implementation." },
       ]
       : adapter.id === "claude"
-        ? [{ level: "10", provider: "claude", modelId: "claude-opus-5-5", thinking: "max", description: "The hardest Claude work requiring Opus 5.5's sustained architectural reasoning and judgment." }]
+        ? [
+          { level: "1", provider: "claude", modelId: "haiku", thinkingLevel: "low", description: "Direct CLI commands, shell inspection, lookups, and other short mechanical terminal work that does not change git history." },
+          { level: "3", provider: "claude", modelId: "haiku", thinkingLevel: "low", description: "Git operations such as reviewing diffs, preparing commits, resolving straightforward conflicts, and managing an existing branch." },
+          { level: "5", provider: "claude", modelId: "claude-opus-5-5", thinkingLevel: "medium", description: "Debugging a reported error, reproducing a failure, tracing its cause, and making a focused fix." },
+          { level: "7", provider: "claude", modelId: "claude-opus-5-5", thinkingLevel: "high", description: "Software development that implements or refactors a feature across the codebase and verifies the result." },
+          { level: "10", provider: "claude", modelId: "claude-opus-5-5", thinkingLevel: "xhigh", description: "Complex planning, architecture, ambiguous multi-system design, or high-risk work that needs deep analysis before implementation." },
+        ]
         : [];
     for (const tier of tiers) {
-      const model = models.find((candidate) => candidate.provider === tier.provider && candidate.id === tier.modelId);
-      if (!model) continue;
-      const thinkingLevel = adapter.configuration.thinkingLevels.includes(tier.thinking as never)
-        ? tier.thinking
-        : adapter.configuration.thinkingLevels.at(-1)!;
-      levelsMap[tier.level] = { ...(adapter.configuration.fixedProvider ? {} : { provider: model.provider }), modelId: model.id, thinkingLevel, description: tier.description };
+      levelsMap[tier.level] = { ...(adapter.configuration.fixedProvider ? {} : { provider: tier.provider }), modelId: tier.modelId, thinkingLevel: tier.thinkingLevel, description: tier.description };
     }
     harnesses[adapter.id] = { levels: levelsMap };
   }
-  // Evaluate every user turn by default. The classifier is deliberately best-effort, so
-  // a failed or low-confidence evaluation leaves the current model in place.
-  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "every-n", n: 1 }, contextMessages: 10, confidenceThreshold: 0.3, harnesses };
+  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "every-n", n: 1 }, contextMessages: 1, confidenceThreshold: 0.3, harnesses };
 }

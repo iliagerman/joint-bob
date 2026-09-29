@@ -15,6 +15,7 @@ function routingModelValue(provider, modelId) { return `${provider}\u0000${model
 function configById(id) { return routingState?.configs.find((config) => config.id === id) ?? null; }
 
 function ownerLabel(config) {
+  if (config.builtIn) return "Joint Bob";
   if (config.mine) return "local";
   return config.ownerLabel || `node ${String(config.ownerNodeId).slice(0, 8)}`;
 }
@@ -133,19 +134,23 @@ function fillEditor(config) {
   }
   elements.routingClassifier.value = policy?.classifierId || routingState.classifiers[0]?.id || "";
   elements.routingCadence.value = policy?.evalCadence?.mode || "first-message";
-  elements.routingCadenceN.value = policy?.evalCadence?.n || 5;
-  elements.routingContextMessages.value = policy?.contextMessages || 10;
+  elements.routingCadenceN.value = policy?.evalCadence?.n || 1;
+  elements.routingContextMessages.value = policy?.contextMessages || 1;
   elements.routingConfidence.value = policy?.confidenceThreshold ?? 0.3;
   renderHarnessTables(routingState.routingLevels, policy);
-  const editable = config.mine;
+  const editable = config.mine && !config.builtIn;
   for (const control of editorControls()) control.disabled = !editable;
+  elements.routingConfigCloneButton.hidden = !config.builtIn;
+  elements.routingConfigCloneButton.disabled = false;
   elements.routingConfigDeleteButton.disabled = !editable;
   elements.routingConfigShareButton.disabled = !editable;
   elements.routingConfigStatus.textContent = config.warning
     ? config.warning
-    : editable
-      ? config.shared ? "Shared with this node's clusters. Owned here; edits redistribute to eligible nodes." : "Local to this node. Share it to distribute it to the eligible nodes of your clusters."
-      : `Shared by ${ownerLabel(config)}. Only the originating node can change or delete it.`;
+    : config.builtIn
+      ? "Built in and read-only. Clone it to create an editable copy."
+      : editable
+        ? config.shared ? "Shared with this node's clusters. Owned here; edits redistribute to eligible nodes." : "Local to this node. Share it to distribute it to the eligible nodes of your clusters."
+        : `Shared by ${ownerLabel(config)}. Only the originating node can change or delete it.`;
 }
 
 function renderConfigList() {
@@ -168,14 +173,14 @@ function renderConfigList() {
     name.textContent = config.name;
     const detail = document.createElement("span");
     detail.className = "cluster-node-url";
-    detail.textContent = config.shared ? `shared by ${ownerLabel(config)}` : "local";
+    detail.textContent = config.builtIn ? "built in · read-only" : config.shared ? `shared by ${ownerLabel(config)}` : "local";
     if (config.id === routingState.selectedId) detail.textContent += " · active";
     identity.append(name, detail);
     const edit = document.createElement("button");
     edit.className = "ghost compact";
     edit.type = "button";
     edit.dataset.testid = "routing-config-edit-button";
-    edit.textContent = editingId === config.id ? "Editing" : "Edit";
+    edit.textContent = editingId === config.id ? "Viewing" : config.builtIn ? "View" : "Edit";
     edit.addEventListener("click", () => fillEditor(config));
     row.append(identity, edit);
     elements.routingConfigList.append(row);
@@ -186,7 +191,7 @@ function renderActiveSelect() {
   elements.routingActiveConfigSelect.replaceChildren();
   elements.routingActiveConfigSelect.add(new Option("None — keep each conversation's model", ""));
   for (const config of routingState.configs) {
-    elements.routingActiveConfigSelect.add(new Option(`${config.name}${config.mine ? "" : ` (shared by ${ownerLabel(config)})`}`, config.id));
+    elements.routingActiveConfigSelect.add(new Option(`${config.name}${config.builtIn ? " (built in)" : config.mine ? "" : ` (shared by ${ownerLabel(config)})`}`, config.id));
   }
   elements.routingActiveConfigSelect.value = routingState.selectedId;
 }
@@ -240,6 +245,14 @@ async function createConfig() {
   toast("Routing configuration created");
 }
 
+async function cloneConfig() {
+  const config = configById(editingId);
+  if (!config?.builtIn) throw new Error("Select the built-in configuration first");
+  const result = await api("/api/routing-configs", { method: "POST", body: JSON.stringify({ name: `${config.name} copy`, policy: config.policy }) });
+  await loadRoutingConfigs(result.config.id);
+  toast("Editable routing configuration created");
+}
+
 async function saveConfig(notify = true) {
   if (!editingId) throw new Error("Select a configuration first");
   const body = { name: elements.routingConfigEditorNameInput.value.trim(), policy: editorFormValue() };
@@ -287,6 +300,7 @@ async function selectActiveConfig() {
 function mutation(button, action) { button.addEventListener("click", () => action().catch(async (error) => { toast(error.message); try { await loadRoutingConfigs(); } catch { /* the panel refreshes on the next open */ } })); }
 mutation(elements.routingConfigCreateButton, createConfig);
 mutation(elements.routingConfigSaveButton, saveConfig);
+mutation(elements.routingConfigCloneButton, cloneConfig);
 mutation(elements.routingConfigShareButton, shareConfig);
 mutation(elements.routingConfigDeleteButton, deleteConfig);
 elements.routingActiveConfigSelect.addEventListener("change", () => { selectActiveConfig().catch((error) => toast(error.message)); });

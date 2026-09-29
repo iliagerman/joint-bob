@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a built-in, read-only model selector that routes planning, development, debugging, Git, and CLI work to task-specific Pi and Claude models and can be cloned for customization.
+
 ## 2.12.3 — 2026-09-29
 
 - Stopped simultaneous requests from repeatedly parsing the same unchanged Claude transcript.

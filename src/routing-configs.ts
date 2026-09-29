@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDifficultyClassifier } from "./classifiers/registry.js";
 import { listTwinUpdateTargets } from "./twin-updates.js";
 import { listSharingClusterMembers, listSharingMemberships } from "./cluster-sharing-policy.js";
-import { routingPolicySchema, readRoutingPolicy, routingPolicyDatabase, type RoutingPolicy } from "./routing-policy.js";
+import { defaultRoutingPolicy, routingPolicySchema, readRoutingPolicy, routingPolicyDatabase, type RoutingPolicy } from "./routing-policy.js";
 
 /** Named classifier/routing configurations, modelled on secret accounts: each node
     keeps any number of named configurations, defaults to local-only storage, and
@@ -19,6 +19,20 @@ export interface StoredRoutingConfig {
   shared: boolean;
   revision: number;
   updatedAt: string;
+}
+
+export const DEFAULT_ROUTING_CONFIG_ID = "00000000-0000-4000-8000-000000000001";
+
+export function defaultRoutingConfig(): StoredRoutingConfig {
+  return {
+    id: DEFAULT_ROUTING_CONFIG_ID,
+    name: "Joint Bob default",
+    policy: defaultRoutingPolicy(),
+    ownerNodeId: "joint-bob",
+    shared: false,
+    revision: 1,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
 }
 
 export interface RoutingConfigShareTarget {
@@ -160,7 +174,7 @@ export function selectedRoutingConfigId(db: DatabaseSync): string {
 /** Sets this node's active configuration. An empty id turns automatic routing off. */
 export function setRoutingConfigSelection(db: DatabaseSync, configId: string): void {
   ensureRoutingConfigSchema(db);
-  if (configId !== "" && !getRoutingConfig(db, configId)) throw new RoutingConfigError(404, "Routing configuration not found");
+  if (configId !== "" && configId !== DEFAULT_ROUTING_CONFIG_ID && !getRoutingConfig(db, configId)) throw new RoutingConfigError(404, "Routing configuration not found");
   db.prepare("INSERT INTO routing_config_selection(singleton, config_id) VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET config_id = excluded.config_id").run(configId);
 }
 
@@ -170,6 +184,7 @@ export function activeRoutingConfig(db: DatabaseSync): StoredRoutingConfig | nul
   ensureRoutingConfigSchema(db);
   const selected = selectedRoutingConfigId(db);
   if (!selected) return null;
+  if (selected === DEFAULT_ROUTING_CONFIG_ID) return defaultRoutingConfig();
   const config = getRoutingConfig(db, selected);
   if (!config) {
     setRoutingConfigSelection(db, "");
