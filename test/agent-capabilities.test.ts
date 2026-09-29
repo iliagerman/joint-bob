@@ -160,7 +160,7 @@ test("task capability reports unavailable without creating supervisor state", as
     const instructions = agentCapabilityInstructionFiles().map((file) => file.content).join("\n");
     assert.doesNotMatch(instructions, /Completions enqueue an automatic follow-up/);
     assert.doesNotMatch(instructions, /within five seconds/);
-    assert.match(instructions, /runs? to completion/);
+    assert.match(instructions, /subject to this node's subprocess maximum lifetime/);
     assert.match(instructions, /never wakes|does not wake/);
     assert.match(instructions, /Supported extensions and external job producers must launch their process through this CLI/);
     assert.match(instructions, /Never use it for ordinary shell commands/);

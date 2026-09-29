@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.13.6 — 2026-09-29
+
+- Added a configurable subprocess maximum lifetime for agent processes, shell and background tasks, terminals, and command helpers, defaulting to 360 minutes.
+
 ## 2.13.5 — 2026-09-29
 
 - Managed skills can now be shared with selected clusters instead of every paired node.

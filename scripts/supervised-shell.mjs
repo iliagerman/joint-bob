@@ -9,7 +9,7 @@ import { requestSupervisor } from "./supervisor-client.mjs";
 // list it, stream its output, and stop it. The shell itself always waits for the
 // command to finish: there is no automatic hand-off to the background and no
 // follow-up prompt. A node may cap the run time through JOINT_BOB_SHELL_TIMEOUT_MS;
-// with no cap a command runs as long as it needs to.
+// the supervisor's separate subprocess maximum lifetime still applies.
 const TABLE = `CREATE TABLE IF NOT EXISTS supervised_shell_calls(task_id TEXT PRIMARY KEY,state TEXT NOT NULL,foreground_until INTEGER NOT NULL)`;
 const terminal = new Set(["completed", "failed", "stopped", "unknown"]);
 // Commands shorter than this stay out of the Tasks view; longer ones appear while

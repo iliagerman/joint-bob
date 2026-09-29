@@ -10,7 +10,7 @@ import { readSupervisorControl, supervisorRequest } from "../scripts/supervisor-
 import { assertSupervisorCompatible, readInstallation, releaseAppSpec, supervisorComponentsMatch } from "../scripts/supervisor-release.mjs";
 
 const repo = path.resolve(import.meta.dirname, "..");
-const components = ["joint-bob-supervisor.mjs", "supervisor-worker.mjs", "supervisor-store.mjs", "supervisor-client.mjs", "supervisor-service.mjs", "supervisor-release.mjs", "supervisor-install.mjs"];
+const components = ["joint-bob-supervisor.mjs", "supervisor-worker.mjs", "supervisor-store.mjs", "supervisor-client.mjs", "supervisor-service.mjs", "supervisor-release.mjs", "supervisor-install.mjs", "subprocess-lifetime.mjs"];
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function waitFor<T>(operation: () => Promise<T>, description: string, timeout = 6000): Promise<T> {

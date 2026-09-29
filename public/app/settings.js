@@ -337,6 +337,7 @@ async function loadSettings() {
   elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked;
   elements.settingsShellTimeoutEnabled.checked = settings.shellCommandTimeoutSeconds !== null;
   elements.settingsShellTimeoutSeconds.value = settings.shellCommandTimeoutSeconds ?? 600;
+  elements.settingsSubprocessMaxLifetimeMinutes.value = settings.subprocessMaxLifetimeMinutes ?? 360;
   elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
   elements.settingsDigestAttachments.checked = settings.digestAttachments;
   renderSyncCheckSettings(settings);
@@ -381,6 +382,7 @@ async function saveSettings(event) {
       conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
       autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
       shellCommandTimeoutSeconds: elements.settingsShellTimeoutEnabled.checked ? Number(elements.settingsShellTimeoutSeconds.value) : null,
+      subprocessMaxLifetimeMinutes: Number(elements.settingsSubprocessMaxLifetimeMinutes.value),
       digestAttachments: elements.settingsDigestAttachments.checked,
       ...(syncCheck ? { syncCheck } : {}),
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },

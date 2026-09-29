@@ -5,6 +5,7 @@ import path from "node:path";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { openSupervisorStore } from "./supervisor-store.mjs";
+import { watchSubprocess } from "./subprocess-lifetime.mjs";
 import { assertSupervisorCompatible, releaseAppSpec, waitForAppHealth } from "./supervisor-release.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -289,7 +290,18 @@ class Runtime {
       fd = openSync(logPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       if (!fstatSync(fd).isFile()) throw new Error("Task log is not a regular file");
       const launched = await launchWorker({ ...task, env }, [fd, fd], true);
+      // Only task workers, never the supervisor's app worker or the server.
       const owned = { child: launched.child, stopRequested: false };
+      watchSubprocess(launched.child, {
+        dataDirectory: path.dirname(this.socketPath),
+        ...this.taskLifetimeOptions,
+        onExpire: () => {
+          if (this.owned.get(task.id) !== owned) return;
+          owned.stopRequested = true;
+          this.store.markStopping(task.id);
+          console.error(`Task ${task.id} reached the subprocess maximum lifetime`);
+        },
+      });
       this.owned.set(task.id, owned);
       launched.child.on("message", message => {
         if (message.type === "exited") this.finishTask(task.id, launched.child, { code: message.code, signal: message.signal });
@@ -430,7 +442,7 @@ class Runtime {
   }
 }
 
-export async function startSupervisor({ dataDirectory, app, installation }) {
+export async function startSupervisor({ dataDirectory, app, installation, taskLifetimeOptions }) {
   if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Supervisor supports only Linux and macOS");
   if (!path.isAbsolute(dataDirectory)) throw new Error("dataDirectory must be absolute");
   const store = openSupervisorStore(dataDirectory);
@@ -440,6 +452,7 @@ export async function startSupervisor({ dataDirectory, app, installation }) {
   const existingInstallation = store.getInstallation();
   if (installation && existingInstallation && existingInstallation.installRoot !== installation.installRoot) { store.close(); throw new Error("Supervisor installation root does not match existing record"); }
   const runtime = new Runtime(store, socketPath, token, tokenHash, randomUUID(), installation ?? existingInstallation);
+  runtime.taskLifetimeOptions = taskLifetimeOptions;
   let listening = false;
   try {
     store.beginStartup();

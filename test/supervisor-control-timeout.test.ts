@@ -9,7 +9,7 @@ import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
 import { readSupervisorControl, requestSupervisor } from "../scripts/supervisor-client.mjs";
 
 // Byte-identical copies of these files make a candidate release supervisor-compatible.
-const COMPONENTS = ["joint-bob-supervisor.mjs", "supervisor-worker.mjs", "supervisor-store.mjs", "supervisor-client.mjs", "supervisor-service.mjs", "supervisor-release.mjs"];
+const COMPONENTS = ["joint-bob-supervisor.mjs", "supervisor-worker.mjs", "supervisor-store.mjs", "supervisor-client.mjs", "supervisor-service.mjs", "supervisor-release.mjs", "subprocess-lifetime.mjs"];
 
 // The stub release app: a minimal /api/health responder that satisfies waitForAppHealth.
 const STUB_SERVER = `

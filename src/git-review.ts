@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile } from "./subprocess.js";
 import path from "node:path";
 import { promisify } from "node:util";
 

@@ -12,6 +12,7 @@ import { configuredRuntime, detectExecutable, runtimeOverrides } from "./harness
 import type { HarnessAdapter } from "./harnesses/contract.js";
 import { decrypt, save, setting, settingsDatabase, value } from "./settings-store.js";
 import { defaultManagedHome } from "./managed-home.js";
+import { DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES, validSubprocessLifetime } from "../scripts/subprocess-lifetime.mjs";
 
 export interface RuntimeSettings {
   executable: string;
@@ -102,6 +103,8 @@ export interface SettingsInput {
   autoCompactThreshold?: number | null;
   /** Seconds a harness shell command may run before this node stops it; null means no limit. */
   shellCommandTimeoutSeconds?: number | null;
+  /** Wall-clock maximum for owned subprocesses, in minutes. */
+  subprocessMaxLifetimeMinutes?: number;
   /** Describe images and inline text files for the agent instead of sending raw bytes. */
   digestAttachments?: boolean;
   syncCheck?: SyncCheckSettings;
@@ -123,6 +126,7 @@ export interface SettingsResponse {
   conversationHistoryDays: number;
   autoCompactThreshold: number | null;
   shellCommandTimeoutSeconds: number | null;
+  subprocessMaxLifetimeMinutes: number;
   digestAttachments: boolean;
   syncCheck: SyncCheckSettings;
   remoteTerminal: RemoteTerminalSettings;
@@ -248,6 +252,7 @@ export function getSettings(): SettingsResponse {
     conversationHistoryDays: Number(value("conversationHistoryDays", "30")),
     autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
     shellCommandTimeoutSeconds: value("shellCommandTimeoutSeconds", "unlimited") === "unlimited" ? null : Number(value("shellCommandTimeoutSeconds", "unlimited")),
+    subprocessMaxLifetimeMinutes: Number(value("subprocessMaxLifetimeMinutes", String(DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES))),
     digestAttachments: value("digestAttachments", "false") === "true",
     syncCheck: syncCheck(conversationDefaults),
     remoteTerminal: remoteTerminalSettings(),
@@ -345,6 +350,8 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const conversationHistoryDays = input.conversationHistoryDays ?? previous.conversationHistoryDays;
   const autoCompactThreshold = input.autoCompactThreshold === undefined ? previous.autoCompactThreshold : input.autoCompactThreshold;
   const shellCommandTimeoutSeconds = input.shellCommandTimeoutSeconds === undefined ? previous.shellCommandTimeoutSeconds : input.shellCommandTimeoutSeconds;
+  const subprocessMaxLifetimeMinutes = input.subprocessMaxLifetimeMinutes === undefined ? previous.subprocessMaxLifetimeMinutes : input.subprocessMaxLifetimeMinutes;
+  if (!validSubprocessLifetime(subprocessMaxLifetimeMinutes)) throw new Error("Subprocess maximum lifetime must be an integer from 1 to 10080 minutes");
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
   const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
@@ -364,6 +371,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "conversationHistoryDays", String(conversationHistoryDays));
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));
     save(db, "shellCommandTimeoutSeconds", shellCommandTimeoutSeconds === null ? "unlimited" : String(shellCommandTimeoutSeconds));
+    save(db, "subprocessMaxLifetimeMinutes", String(subprocessMaxLifetimeMinutes));
     save(db, "digestAttachments", String(digestAttachments));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
@@ -391,6 +399,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         conversationHistoryDaysChanged: previous.conversationHistoryDays !== settings.conversationHistoryDays,
         autoCompactThresholdChanged: previous.autoCompactThreshold !== settings.autoCompactThreshold,
         shellCommandTimeoutChanged: previous.shellCommandTimeoutSeconds !== settings.shellCommandTimeoutSeconds,
+        subprocessMaxLifetimeChanged: previous.subprocessMaxLifetimeMinutes !== settings.subprocessMaxLifetimeMinutes,
         digestAttachmentsChanged: previous.digestAttachments !== settings.digestAttachments,
         syncCheckChanged: JSON.stringify(previous.syncCheck) !== JSON.stringify(settings.syncCheck),
         remoteTerminalChanged: JSON.stringify(previous.remoteTerminal) !== JSON.stringify(settings.remoteTerminal),

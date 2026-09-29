@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile } from "./subprocess.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { promisify } from "node:util";
 import os from "node:os";

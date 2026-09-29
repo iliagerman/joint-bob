@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile } from "./subprocess.js";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";

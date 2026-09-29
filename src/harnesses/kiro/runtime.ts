@@ -1,4 +1,5 @@
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn } from "../../subprocess.js";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";

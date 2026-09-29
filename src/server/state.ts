@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile } from "../subprocess.js";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

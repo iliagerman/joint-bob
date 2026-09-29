@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile } from "../../subprocess.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFile, access } from "node:fs/promises";
 import { promisify } from "node:util";

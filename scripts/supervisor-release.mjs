@@ -2,7 +2,7 @@ import { cpSync, existsSync, lstatSync, readFileSync, realpathSync, renameSync, 
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const COMPONENTS = ["joint-bob-supervisor.mjs", "supervisor-worker.mjs", "supervisor-store.mjs", "supervisor-client.mjs", "supervisor-service.mjs", "supervisor-release.mjs"];
+const COMPONENTS = ["joint-bob-supervisor.mjs", "supervisor-worker.mjs", "supervisor-store.mjs", "supervisor-client.mjs", "supervisor-service.mjs", "supervisor-release.mjs", "subprocess-lifetime.mjs"];
 const MESSAGE = "Supervisor components changed; this release needs a maintenance activation";
 
 export function readInstallation(dataDirectory) {

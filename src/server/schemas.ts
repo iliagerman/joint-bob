@@ -376,6 +376,7 @@ export const settingsSchema = z.object({
   conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
   autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
   shellCommandTimeoutSeconds: z.number().int().min(1).max(86_400).nullable().optional(),
+  subprocessMaxLifetimeMinutes: z.number().int().min(1).max(10_080).optional(),
   digestAttachments: z.boolean().optional(),
   syncCheck: syncCheckSchema.optional(),
   remoteTerminal: z.object({ twins: z.boolean(), otherNodes: z.boolean() }).strict().optional(),

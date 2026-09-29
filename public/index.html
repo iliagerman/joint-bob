@@ -695,7 +695,11 @@
               <input id="settingsShellTimeoutSeconds" type="number" min="1" max="86400" step="1" required data-testid="settings-shell-timeout-seconds" />
               seconds
             </label>
-            <p class="settings-hint">Commands run to completion by default, however long they take. A limit applies to every agent on this node; a stopped command returns exit code 124.</p>
+            <p class="settings-hint">Optional shorter limit for agent shell commands. A command stopped by this limit returns exit code 124. The subprocess maximum below still applies.</p>
+            <label>Subprocess maximum lifetime, minutes
+              <input id="settingsSubprocessMaxLifetimeMinutes" type="number" min="1" max="10080" step="1" required data-testid="settings-subprocess-max-lifetime-minutes" />
+            </label>
+            <p class="settings-hint">Default 360 minutes, measured from launch, not last activity. Applies to owned agent processes, shell/background tasks, terminal shells and command helpers on this node. Changes also affect running work. Sends TERM, then KILL after 5 seconds. Excludes the server, supervisor, update installer and persistent browser service. Descendants that detach before observation cannot be guaranteed.</p>
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Account</legend>

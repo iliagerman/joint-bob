@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile } from "./subprocess.js";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { getSettings } from "./settings.js";

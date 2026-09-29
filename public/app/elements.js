@@ -165,6 +165,7 @@ export const elements = {
   settingsAutoCompactThreshold: document.querySelector("#settingsAutoCompactThreshold"),
   settingsShellTimeoutEnabled: document.querySelector("#settingsShellTimeoutEnabled"),
   settingsShellTimeoutSeconds: document.querySelector("#settingsShellTimeoutSeconds"),
+  settingsSubprocessMaxLifetimeMinutes: document.querySelector("#settingsSubprocessMaxLifetimeMinutes"),
   settingsDigestAttachments: document.querySelector("#settingsDigestAttachments"),
   settingsSyncCheckEnabled: document.querySelector("#settingsSyncCheckEnabled"),
   settingsSyncCheckHarness: document.querySelector("#settingsSyncCheckHarness"),
