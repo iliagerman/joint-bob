@@ -6,7 +6,7 @@
   "packages": {
     "": {
       "name": "joint-bob",
-      "version": "2.13.12",
+      "version": "2.13.23",
       "license": "MIT",
       "dependencies": {
         "@anthropic-ai/claude-code": "2.1.239",

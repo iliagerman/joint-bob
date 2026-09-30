@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.23 — 2026-09-30
 
-- Costs dashboard now displays charts for project and model usage, pages conversations 20 at a time, detects your subscription plan from Claude, and refreshes in the background while the dashboard stays open.
+- Added an icon-only Costs entry and configurable Ctrl+Alt+Shift+C shortcut.
+- Saved totals remain visible while transcripts refresh in the background.
+- Conversation cost tables display 20 rows per page.
+- Added visual charts for costs by project, model, and day.
+- Claude subscription types are detected automatically, with billed prices explicitly unavailable and manual overrides for unsupported harnesses.
 
 ## 2.13.22 — 2026-09-30
 
