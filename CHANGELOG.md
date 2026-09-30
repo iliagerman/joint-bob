@@ -6,13 +6,15 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Skills can now be shared with individual nodes or whole clusters, selected in bulk, and long lists are paginated.
-
-## 2.14.0 — 2026-09-30
-
 - Conversations idle past 40 days are now automatically deleted to free up storage.
 - Empty drafts are automatically cleaned up after 1 hour if owned or 7 days if not yet owned.
 - Pinned, ticket, and scheduled conversations are always preserved from automatic deletion.
 - Added conversationRetentionDays setting to configure the retention period.
+- Recent conversations now refresh pinned transcripts from each harness correctly, keeping shared sessions and review status available across nodes.
+
+## 2.13.24 — 2026-09-30
+
+- Recent conversations now refresh pinned transcripts from each harness correctly, keeping shared sessions and review status available across nodes.
 
 ## 2.13.23 — 2026-09-30
 

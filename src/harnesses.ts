@@ -243,9 +243,13 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
   let sessions = initialSessions;
   const pinnedFilesByAdapter = new Map<HarnessAdapter, string[]>();
   for (const sessionPath of pinnedSessionPaths) {
-    const adapter = adapters.find((candidate) => candidate.paths.ownsSession(sessionPath));
+    const adapter = adapters.find((candidate) => candidate.paths.ownsTranscript(sessionPath))
+      ?? adapters.find((candidate) => candidate.paths.ownsSession(sessionPath));
     if (!adapter || !adapter.paths.sessionId(sessionPath)) continue;
-    const filePath = adapter.paths.localize?.(sessionPath, os.homedir()) ?? sessionPath;
+    const sessionFile = sessionPath.startsWith(`${adapter.id}:`) ? sessionPath.slice(adapter.id.length + 1) : sessionPath;
+    const filePath = adapter.paths.ownsTranscript(sessionFile)
+      ? sessionFile
+      : adapter.paths.localize?.(sessionPath, os.homedir()) ?? sessionFile;
     if (!adapter.paths.ownsTranscript(filePath)) continue;
     pinnedFilesByAdapter.set(adapter, [...(pinnedFilesByAdapter.get(adapter) ?? []), filePath]);
   }
