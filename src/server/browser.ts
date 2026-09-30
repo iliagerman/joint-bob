@@ -352,7 +352,10 @@ async function startBrowser(operation: Extract<BrowserOperation, { operation: "s
     const owners = new Set(attached.map(session => session.nodeId));
     if (owners.size > 1) throw new BrowserRequestError(409, "Browser profile has multiple physical owners");
     const owner = attached[0]?.nodeId;
-    if (owner && nodeId && owner !== nodeId) throw new BrowserRequestError(409, `Browser profile belongs to machine ${owner}, not ${nodeId}`);
+    if (owner && nodeId && owner !== nodeId) {
+      if (listed.unavailableNodes.some((node) => node.nodeId === owner)) throw new BrowserRequestError(503, `Browser machine ${owner} is unavailable; no fallback was attempted`);
+      throw new BrowserRequestError(409, `Browser profile belongs to machine ${owner}, not ${nodeId}`);
+    }
     if (owner) nodeId = owner;
     else {
       // Cold start: no session pins the profile yet. An explicit machine is trusted

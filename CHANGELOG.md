@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Git reviews now display priority badges and sort reviewed files by importance.
 - Sessions can now be recorded as permanent conversations that persist across restarts.
+- Browser requests now report unavailability status when the owning machine is down, instead of generic conflict errors.
 
 ## 2.13.22 — 2026-09-30
 
