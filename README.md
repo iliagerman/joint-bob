@@ -160,6 +160,15 @@ PORT='<joint-bob-port>' HTTPS_PORT='<443|8443|10000>' ~/.local/share/joint-bob/a
 
 Open the HTTPS URL shown by `tailscale serve status`. The default HTTPS port is `8443`. Tailscale Serve keeps Joint Bob inside your tailnet. The script does not enable Tailscale Funnel.
 
+Before using this URL for a cluster, verify both sides of the proxy on this node:
+
+```bash
+tailscale serve status
+curl -fsS http://127.0.0.1:8787/api/health
+```
+
+Serve status must show HTTPS `:8443` forwarding to this node's local Joint Bob port (normally `8787`). Then, from another node on the same tailnet, run `curl -fsS https://<node>.<tailnet>.ts.net:8443/api/health`. A Tailscale machine showing as online does not mean Joint Bob is reachable; the peer check must return health JSON before you pair nodes. Use the actual URL and port shown by Serve status.
+
 Useful commands:
 
 ```bash
@@ -184,7 +193,7 @@ Cluster URLs must be HTTPS origins with no path, query, username, or password. L
 
 ## Clusters, sharing, and twins
 
-Install Joint Bob and configure private HTTPS on every machine first. Tailscale Serve is the easiest option, but any mutually reachable trusted HTTPS origin works. On every node, set its name and private HTTPS origin in **Settings > Cluster**, and select a **Joint Bob home folder** in **Settings > Projects**.
+Install Joint Bob and configure private HTTPS on every machine first. Tailscale Serve is the easiest option, but any mutually reachable trusted HTTPS origin works. On every node, set its name and private HTTPS origin in **Settings > Cluster**, and select a **Joint Bob home folder** in **Settings > Projects**. Before generating or using an invitation, verify each node's `/api/health` URL from every other node; a URL can be syntactically valid and still refuse connections if Joint Bob or its HTTPS proxy is not running.
 
 A node can belong to any number of clusters, and a cluster has no member limit.
 

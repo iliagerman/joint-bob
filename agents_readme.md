@@ -214,19 +214,26 @@ Example with explicit ports:
 PORT='<node-port>' HTTPS_PORT='<tailscale-port>' ~/.local/share/joint-bob/app/scripts/serve-https.sh
 ```
 
-Read the private origin from `tailscale serve status` and confirm its health endpoint responds over HTTPS.
+Read the exact private origin and forwarding target from `tailscale serve status`. Confirm local Joint Bob responds, then verify the HTTPS endpoint from another tailnet node before pairing:
+
+```bash
+curl -fsS http://127.0.0.1:<node-port>/api/health
+curl -fsS https://<node>.<tailnet>.ts.net:<tailscale-port>/api/health
+```
+
+The first check runs on this node; the second must run on a different cluster node. Expect health JSON from both. A Tailscale status of `active` only proves tailnet connectivity, not that Serve forwards to Joint Bob. If local health fails, inspect/start the Joint Bob service. If local health works but peer HTTPS fails, inspect `tailscale serve status` and rerun the installed `scripts/serve-https.sh` with the correct `PORT` and `HTTPS_PORT`. Never pair a node until peer health checks pass.
 
 ## Complete option 4: multiple nodes with Tailscale
 
 For every node:
 
-1. Finish installation and local verification.
+1. Finish installation and verify local Joint Bob service health at `http://127.0.0.1:<node-port>/api/health`.
 2. Confirm Tailscale is signed in to a tailnet shared by all cluster nodes.
-3. Configure Tailscale Serve.
-4. Record the stable HTTPS origin without a path or query.
-5. Verify every node can reach every other node's `/api/health` endpoint.
+3. Configure Tailscale Serve and verify its mapping with `tailscale serve status`.
+4. Record the exact stable HTTPS origin and port shown there, without a path or query.
+5. From every other node, run `curl -fsS <peer-origin>/api/health`; require health JSON from every peer.
 
-Do not start pairing until all nodes pass these checks.
+A node listed as online in Tailscale can still refuse Joint Bob connections when Serve is missing or its local service is stopped. Diagnose local-service failure separately from Serve/peer-connectivity failure. Do not start pairing until all checks pass.
 
 ## Complete option 5: multiple nodes without Tailscale
 
