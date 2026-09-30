@@ -26,6 +26,26 @@
 .usage-breakdown :is(th, td):first-child { text-align: left; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .usage-warning, .usage-error { padding: 10px; border-left: 3px solid var(--amber); background: var(--field); }
 .usage-error { border-color: var(--danger); }
+#usageCharts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; min-width: 0; }
+#usageCharts > .usage-chart-note { grid-column: 1 / -1; }
+#usageDialog .usage-chart { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); overflow: hidden; }
+#usageDialog .usage-chart h4 { margin: 0 0 10px; }
+#usageDialog .usage-chart :is(ul, ol) { margin: 0; padding: 0; list-style: none; }
+#usageDialog .usage-chart-bars { display: grid; gap: 8px; }
+#usageDialog .usage-chart-bars li { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(80px, 2fr) auto; align-items: center; gap: 8px; min-width: 0; }
+#usageDialog .usage-chart-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#usageDialog .usage-chart-track { height: 10px; overflow: hidden; border-radius: 999px; background: var(--field); }
+#usageDialog .usage-chart-fill { display: block; height: 100%; min-width: 2px; border-radius: inherit; background: var(--accent); }
+#usageDialog .usage-donut { width: min(180px, 65vw); aspect-ratio: 1; margin: 8px auto 14px; border-radius: 50%; }
+#usageDialog .usage-chart-legend { display: grid; gap: 6px; }
+#usageDialog .usage-chart-legend li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 7px; }
+#usageDialog .usage-chart-legend i { width: 10px; height: 10px; border-radius: 2px; }
+#usageDialog .usage-day-chart { grid-column: 1 / -1; overflow-x: auto; overscroll-behavior-x: contain; }
+#usageDialog .usage-chart-columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(58px, 1fr); align-items: end; width: max-content; min-width: 100%; height: 180px; overflow: visible; }
+#usageDialog .usage-chart-columns li { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; align-items: end; justify-items: center; gap: 3px; height: 180px; padding: 0 4px; font-size: 10px; white-space: nowrap; }
+#usageDialog .usage-chart-column { display: block; align-self: end; width: min(32px, 70%); min-height: 2px; background: var(--accent); border-radius: 4px 4px 0 0; }
+#usageDialog .usage-chart-columns span { color: var(--muted); font-family: var(--mono); }
+#usageDialog .usage-chart-columns strong { font-size: 9px; }
 .usage-subscriptions, #subscriptionList, .subscription-harness-group { display: grid; min-width: 0; gap: 12px; }
 .subscription-card .subscription-price { display: block; font-size: 18px; }
 .subscription-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; padding-top: 12px; }
@@ -33,8 +53,6 @@
 .subscription-more[open] { display: grid; gap: 10px; }
 .quota-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr)); gap: 8px; align-items: end; margin-top: 8px; min-width: 0; }
 #usageDialog .dialog-actions { flex-wrap: wrap; }
-.project-actions .usage-open { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 31px; padding: 0 8px; font-size: 11px; }
-.project-actions .usage-open svg { width: 16px; height: 16px; }
 @media (max-width: 700px) {
   #usageDialog { padding: 6px; }
   #usageDialog .usage-card { width: calc(100vw - 12px); max-height: calc(100dvh - 12px); padding: 14px; }

@@ -151,9 +151,29 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
   });
 
   const opener = page.getByTestId("usage-open");
-  assert.ok(await opener.getAttribute("aria-label"), "icon opener has an accessible name");
-  assert.equal((await opener.textContent())?.includes("Costs"), false, "icon opener has no visible Costs text");
-  assert.equal(await opener.locator("svg").count(), 1);
+  const focusOpener = page.getByTestId("focus-usage-open");
+  for (const costsOpener of [opener, focusOpener]) {
+    assert.equal(await costsOpener.getAttribute("data-shortcut-hint"), "costs");
+    assert.equal((await costsOpener.textContent())?.includes("Costs"), false, "icon opener has no visible Costs text");
+    assert.equal(await costsOpener.locator("svg").count(), 1);
+  }
+  assert.equal(await opener.getAttribute("aria-label"), "Costs", "icon opener has an accessible name");
+  const iconBox = await opener.locator("svg").boundingBox();
+  assert.ok(iconBox && iconBox.width > 0 && iconBox.height > 0, "costs icon has visible geometry");
+  const openerBox = await opener.boundingBox();
+  const settingsBox = await page.getByTestId("settings-open-button").boundingBox();
+  assert.ok(openerBox && settingsBox && openerBox.width === settingsBox.width, "costs opener matches neighboring icon width");
+
+  await page.keyboard.down("Control");
+  await page.keyboard.down("Alt");
+  const costsBadge = opener.locator(".shortcut-hint");
+  await costsBadge.waitFor({ state: "visible" });
+  assert.equal(await costsBadge.textContent(), "C");
+  assert.ok((await costsBadge.getAttribute("title"))?.includes("C"), "costs badge title includes its key");
+  await page.keyboard.up("Alt");
+  await page.keyboard.up("Control");
+  await costsBadge.waitFor({ state: "hidden" });
+
   await page.keyboard.press("Control+Alt+Shift+C");
   const dialog = page.getByTestId("usage-dialog");
   await dialog.waitFor({ state: "visible" });
@@ -164,8 +184,9 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
   const heights = await dialog.locator(".usage-chart-column").evaluateAll((bars: HTMLElement[]) => bars.map((bar) => bar.getBoundingClientRect().height));
   assert.ok(heights.every((height) => height > 0));
   assert.notEqual(heights[0], heights[1], "different day costs produce different bar heights");
-  await dialog.getByText("Readable Project", { exact: true }).first().waitFor();
-  assert.equal(await dialog.getByText("project-internal-id", { exact: true }).count(), 0);
+  const usageCharts = dialog.locator("#usageCharts");
+  await usageCharts.getByText("Readable Project", { exact: true }).first().waitFor();
+  assert.equal(await usageCharts.getByText("project-internal-id", { exact: true }).count(), 0);
 
   const conversationSection = page.getByTestId("usage-conversations-table");
   const rows = () => conversationSection.locator("tbody tr");
@@ -195,6 +216,7 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
   }
 
   await page.setViewportSize({ width: 1200, height: 800 });
+  await dialog.locator(".usage-filter-details > summary").click();
   gateRefresh = true;
   await page.locator("#usageRefresh").click();
   await page.getByText("Updating usage…", { exact: true }).waitFor();
