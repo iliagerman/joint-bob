@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.24 — 2026-09-30
 
-- Pinned session transcripts are now located reliably across different session path formats.
+- Recent conversations now refresh pinned transcripts from each harness correctly, keeping shared sessions and review status available across nodes.
 
 ## 2.13.23 — 2026-09-30
 
