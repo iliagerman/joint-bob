@@ -113,6 +113,8 @@ Validate a custom port as a decimal integer from `1` through `65535` before usin
 
 Run the command on each target as its service user. Never use `sudo` for the installer. Do not bypass checksum verification, replace the release URL, edit files under the installed app, or delete `~/.joint-bob` to recover from an error.
 
+For a one-command onboarding that also configures Tailscale Serve and verifies health, use `scripts/bootstrap.sh` the same way. It calls the normal installer, so the same rules apply. Set `JOINT_BOB_SKIP_SERVE=1` to install only.
+
 The installer may report pending Pi or Claude authentication. That does not mean installation failed.
 
 ## Verify every node

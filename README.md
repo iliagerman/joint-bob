@@ -40,6 +40,12 @@ Run this as the user who will run Joint Bob. Do not use `sudo`:
 curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash
 ```
 
+One command can install and, when Tailscale is already signed in, configure Serve and verify health:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/bootstrap.sh | bash
+```
+
 The installer downloads the latest GitHub release, verifies its SHA-256 checksum, installs dependencies, starts Syncthing, and creates a native user service.
 
 It also registers a node-local Pi extension to report terminal activity to the app. After upgrading, run `/reload` in existing Pi terminals or restart them to load it. Active turns, including long-running tools and automatic retries, stay out of pending reviews until Pi settles. If a terminal crashes, its running heartbeat expires after 30 seconds. Terminals started with extensions disabled cannot report their activity.
