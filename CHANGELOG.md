@@ -5,7 +5,14 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
-- Conversations now automatically clean up old idle conversations and empty drafts after a configurable retention period to free up storage.
+- Skills can now be shared with individual nodes or whole clusters, selected in bulk, and long lists are paginated.
+
+## 2.14.0 — 2026-09-30
+
+- Conversations idle past 40 days are now automatically deleted to free up storage.
+- Empty drafts are automatically cleaned up after 1 hour if owned or 7 days if not yet owned.
+- Pinned, ticket, and scheduled conversations are always preserved from automatic deletion.
+- Added conversationRetentionDays setting to configure the retention period.
 
 ## 2.13.23 — 2026-09-30
 

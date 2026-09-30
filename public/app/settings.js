@@ -332,6 +332,7 @@ async function loadSettings() {
   elements.settingsProjectHome.value = settings.projects.homePath;
   document.querySelector("#settingsConversationLabels").value = settings.conversationLabels.join("\n");
   document.querySelector("#settingsConversationHistoryDays").value = settings.conversationHistoryDays;
+  document.querySelector("#settingsConversationRetentionDays").value = settings.conversationRetentionDays;
   elements.settingsAutoCompactEnabled.checked = settings.autoCompactThreshold !== null;
   elements.settingsAutoCompactThreshold.value = settings.autoCompactThreshold ?? 70;
   elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked;
@@ -380,6 +381,7 @@ async function saveSettings(event) {
       resources: resourceFieldsValue(globalResourceFields),
       conversationLabels: document.querySelector("#settingsConversationLabels").value.split("\n").map((label) => label.trim()).filter(Boolean),
       conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
+      conversationRetentionDays: Number(document.querySelector("#settingsConversationRetentionDays").value),
       autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
       shellCommandTimeoutSeconds: elements.settingsShellTimeoutEnabled.checked ? Number(elements.settingsShellTimeoutSeconds.value) : null,
       subprocessMaxLifetimeMinutes: Number(elements.settingsSubprocessMaxLifetimeMinutes.value),

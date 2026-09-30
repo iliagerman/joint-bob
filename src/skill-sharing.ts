@@ -25,30 +25,62 @@ function validateUuid(value: string): void {
 export function ensureSkillSharingSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS skill_shares(name TEXT NOT NULL,cluster_id TEXT NOT NULL,owner_join_sequence INTEGER NOT NULL,PRIMARY KEY(name,cluster_id));
 CREATE TABLE IF NOT EXISTS received_skills(owner_node_id TEXT NOT NULL,name TEXT NOT NULL,digest TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(owner_node_id,name),UNIQUE(name));
-CREATE TABLE IF NOT EXISTS skill_peer_status(owner_node_id TEXT PRIMARY KEY,last_success TEXT,last_error TEXT);`);
+CREATE TABLE IF NOT EXISTS skill_peer_status(owner_node_id TEXT PRIMARY KEY,last_success TEXT,last_error TEXT);
+CREATE TABLE IF NOT EXISTS skill_node_shares(name TEXT NOT NULL,node_id TEXT NOT NULL,cluster_id TEXT NOT NULL,owner_join_sequence INTEGER NOT NULL,receiver_join_sequence INTEGER NOT NULL,PRIMARY KEY(name,node_id));`);
 }
 
-export function setSkillShares(db: DatabaseSync, ownerNodeId: string, name: string, clusterIds: string[]): void {
+export function setSkillShares(db: DatabaseSync, ownerNodeId: string, name: string, clusterIds: string[], nodeIds: string[] = []): void {
   ensureSkillSharingSchema(db);
   validateSkillName(name);
   if (new Set(clusterIds).size !== clusterIds.length) throw new Error("Duplicate cluster selection");
+  if (new Set(nodeIds).size !== nodeIds.length) throw new Error("Duplicate node selection");
+  const owned = listSharingMemberships(db, ownerNodeId);
   const rows = clusterIds.map((clusterId) => {
     validateUuid(clusterId);
     if (getSharingCluster(db, clusterId).closed) throw new Error("Cluster is closed");
-    const membership = listSharingMemberships(db, ownerNodeId).find((item) => item.clusterId === clusterId);
+    const membership = owned.find((item) => item.clusterId === clusterId);
     if (!membership) throw new Error("Owner is not a cluster member");
     return { clusterId, sequence: membership.joinSequence };
+  });
+  const nodeRows = nodeIds.map((nodeId) => {
+    validateUuid(nodeId);
+    if (nodeId === ownerNodeId) throw new Error("A node cannot share a skill with itself");
+    // A node grant rides one shared cluster, so leaving it revokes the grant.
+    for (const membership of owned) {
+      if (getSharingCluster(db, membership.clusterId).closed) continue;
+      const receiver = listSharingClusterMembers(db, membership.clusterId).find((member) => member.nodeId === nodeId);
+      if (receiver) return { nodeId, clusterId: membership.clusterId, ownerSequence: membership.joinSequence, receiverSequence: receiver.joinSequence };
+    }
+    throw new Error("Node shares no open cluster with this node");
   });
   db.exec("SAVEPOINT skill_share_write");
   try {
     db.prepare("DELETE FROM skill_shares WHERE name=?").run(name);
+    db.prepare("DELETE FROM skill_node_shares WHERE name=?").run(name);
     const insert = db.prepare("INSERT INTO skill_shares VALUES(?,?,?)");
     for (const row of rows) insert.run(name, row.clusterId, row.sequence);
+    const insertNode = db.prepare("INSERT INTO skill_node_shares VALUES(?,?,?,?,?)");
+    for (const row of nodeRows) insertNode.run(name, row.nodeId, row.clusterId, row.ownerSequence, row.receiverSequence);
     db.exec("RELEASE skill_share_write");
   } catch (error) {
     db.exec("ROLLBACK TO skill_share_write; RELEASE skill_share_write");
     throw error;
   }
+}
+
+function validNodeGrants(db: DatabaseSync, ownerNodeId: string, name: string): Array<{ nodeId: string; clusterId: string }> {
+  const rows = db.prepare("SELECT node_id,cluster_id,owner_join_sequence,receiver_join_sequence FROM skill_node_shares WHERE name=? ORDER BY node_id").all(name) as unknown as Array<{node_id:string;cluster_id:string;owner_join_sequence:number;receiver_join_sequence:number}>;
+  const owned = listSharingMemberships(db, ownerNodeId);
+  return rows.filter((row) => owned.some((item) => item.clusterId === row.cluster_id && item.joinSequence === row.owner_join_sequence)
+    && !getSharingCluster(db, row.cluster_id).closed
+    && listSharingClusterMembers(db, row.cluster_id).some((member) => member.nodeId === row.node_id && member.joinSequence === row.receiver_join_sequence))
+    .map((row) => ({ nodeId: row.node_id, clusterId: row.cluster_id }));
+}
+
+export function skillNodeIds(db: DatabaseSync, ownerNodeId: string, name: string): string[] {
+  ensureSkillSharingSchema(db);
+  validateSkillName(name);
+  return validNodeGrants(db, ownerNodeId, name).map((grant) => grant.nodeId);
 }
 
 export function skillClusterIds(db: DatabaseSync, ownerNodeId: string, name: string): string[] {
@@ -61,7 +93,9 @@ export function skillClusterIds(db: DatabaseSync, ownerNodeId: string, name: str
 }
 
 export function authorizedSkillClusters(db: DatabaseSync, owner: string, receiver: string, name: string): string[] {
-  return skillClusterIds(db, owner, name).filter((id) => listSharingClusterMembers(db, id).some((member) => member.nodeId === receiver));
+  const clusters = skillClusterIds(db, owner, name).filter((id) => listSharingClusterMembers(db, id).some((member) => member.nodeId === receiver));
+  for (const grant of validNodeGrants(db, owner, name)) if (grant.nodeId === receiver && !clusters.includes(grant.clusterId)) clusters.push(grant.clusterId);
+  return clusters;
 }
 
 export function listReceivedSkills(db: DatabaseSync): ReceivedSkill[] {

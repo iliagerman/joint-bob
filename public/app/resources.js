@@ -9,7 +9,11 @@ const ORIGIN_LABELS = { shared: "shared", user: "agent", project: "project" };
 const MCP_SOURCE_LABELS = { shared: "shared", user: "agent", local: "project-local", project: "project", plugin: "plugin" };
 const SCAN_STATUS_LABELS = { new: "New", changed: "Changed", installed: "Installed", linked: "Linked" };
 
-const view = { scope: "conversation", projectId: null, engine: null, tab: "skills", nodes: [], sharing: null, loading: false, candidates: [], scanRoot: "", request: 0 };
+const PAGE_SIZE = 20;
+
+const view = { scope: "conversation", projectId: null, engine: null, tab: "skills", nodes: [], sharing: null, loading: false, candidates: [], scanRoot: "", request: 0,
+  page: 0, scanPage: 0, selected: new Set(), scanSelected: new Set(), shareOpen: false };
+let pickerIds = 0;
 
 function harnessLabel(id) {
   for (const entry of view.nodes) {
@@ -60,52 +64,271 @@ function filteredServers(inventory) {
   return inventory.mcpServers.filter((server) => (!harness || server.harnesses.includes(harness)) && matches(query, server.name, server.target));
 }
 
+function skillKey(skill) { return `${skill.name}\n${skill.path}`; }
+
+function policyFor(skill) { return view.sharing?.skills?.find((item) => item.name === skill.name && item.path === skill.path); }
+
+/** Owned managed skills share directly; native and project skills are imported first. */
+function shareable(skill) {
+  const policy = policyFor(skill);
+  return policy ? policy.kind === "local" : skill.origin !== "shared";
+}
+
+function clusterName(id) { return view.sharing?.clusters.find((cluster) => cluster.id === id)?.name || id; }
+
+function nodeName(id) { return view.sharing?.nodes?.find((node) => node.nodeId === id)?.name || id; }
+
+function targetNames({ clusterIds = [], nodeIds = [] }) {
+  return [...clusterIds.map((id) => `${clusterName(id)} (cluster)`), ...nodeIds.map(nodeName)];
+}
+
+function pickerGroup(title) {
+  const group = document.createElement("div");
+  group.className = "resources-target-group";
+  const heading = document.createElement("small");
+  heading.className = "resources-target-heading";
+  heading.textContent = title;
+  group.append(heading);
+  return group;
+}
+
+function targetCheckbox(kind, value, text, checked) {
+  const label = document.createElement("label");
+  label.className = "checkbox-row";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.value = value;
+  input.checked = checked;
+  input.dataset.kind = kind;
+  input.dataset.testid = kind === "cluster" ? "skill-sharing-cluster-checkbox" : "skill-sharing-node-checkbox";
+  label.append(input, text);
+  return { label, input };
+}
+
+function targetPicker(clusterIds = [], nodeIds = []) {
+  const fieldset = document.createElement("fieldset");
+  fieldset.className = "resources-targets";
+  fieldset.dataset.testid = "skill-sharing-targets";
+  const legend = document.createElement("legend");
+  legend.textContent = "Receivers get the skill, scripts included, for all of their agents";
+  fieldset.append(legend);
+  const clusters = view.sharing?.clusters ?? [];
+  if (!clusters.length) { fieldset.append(emptyRow("No clusters joined, so the skill stays on this node. Create or join a cluster to share.")); return fieldset; }
+  const whole = pickerGroup("Whole clusters: every member node, including nodes that join later");
+  for (const cluster of clusters) {
+    const { label, input } = targetCheckbox("cluster", cluster.id, cluster.name, clusterIds.includes(cluster.id));
+    const members = document.createElement("small");
+    members.className = "resources-target-members";
+    members.id = `resources-target-${++pickerIds}`;
+    members.textContent = cluster.members?.length ? cluster.members.map((member) => member.name).join(", ") : "No other nodes yet";
+    input.setAttribute("aria-describedby", members.id);
+    whole.append(label, members);
+  }
+  const single = pickerGroup("Individual nodes");
+  const nodes = view.sharing?.nodes ?? [];
+  if (!nodes.length) single.append(emptyRow("No other nodes in your clusters yet."));
+  for (const node of nodes) {
+    const { label } = targetCheckbox("node", node.nodeId, node.name, nodeIds.includes(node.nodeId));
+    if (node.twin) label.append(" ", badge("twin", "harness"));
+    single.append(label);
+  }
+  fieldset.append(whole, single);
+  return fieldset;
+}
+
+function pickedTargets(fieldset) {
+  const values = (kind) => [...fieldset.querySelectorAll(`input[data-kind="${kind}"]:checked`)].map((input) => input.value);
+  return { clusterIds: values("cluster"), nodeIds: values("node") };
+}
+
+function sharingSummary(policy) {
+  const names = targetNames(policy);
+  return names.length ? `Shared with ${names.join(", ")}` : "Local only · Share";
+}
+
+function sharingControls(skill, policy) {
+  const details = document.createElement("details"); details.dataset.testid = "skill-sharing-controls";
+  const summary = document.createElement("summary"); summary.textContent = sharingSummary(policy);
+  const picker = targetPicker(policy.clusterIds, policy.nodeIds ?? []);
+  details.append(summary, picker);
+  if (!view.sharing.clusters.length) return details;
+  const save = document.createElement("button");
+  save.type = "button"; save.className = "ghost compact"; save.dataset.testid = "skill-sharing-save"; save.textContent = "Save sharing";
+  save.addEventListener("click", async () => {
+    const targets = pickedTargets(picker);
+    const added = targets.clusterIds.some((id) => !policy.clusterIds.includes(id)) || targets.nodeIds.some((id) => !(policy.nodeIds ?? []).includes(id));
+    if (added && !await confirmAction({ title: `Share ${skill.name}?`, message: `Copy this skill, including executable scripts, to ${targetNames(targets).join(", ")}? Nodes you did not select will not receive it through Joint Bob.`, confirmLabel: "Share" })) return;
+    save.disabled = true;
+    try {
+      await api(`/api/resources/skills/${encodeURIComponent(skill.name)}/sharing`, { method: "PUT", body: JSON.stringify(targets) });
+      await loadInventory();
+      setStatus("Selection saved. Receivers update on Refresh or within 30 seconds while online. Offline copies remain until they reconnect.");
+    } catch (error) { setStatus(error.message); }
+    finally { save.disabled = false; }
+  });
+  picker.append(save);
+  return details;
+}
+
+function rowActions(...children) {
+  const actions = document.createElement("div");
+  actions.className = "resources-row-actions";
+  actions.append(...children);
+  return actions;
+}
+
 function skillRow(skill, local = false) {
   const row = document.createElement("div");
   row.className = "resources-row";
   row.dataset.testid = "resources-skill-row";
   row.title = skill.path || "";
+  const head = document.createElement("div");
+  head.className = "resources-row-head";
+  if (local && view.sharing && shareable(skill)) {
+    const pick = document.createElement("input");
+    pick.type = "checkbox";
+    pick.dataset.testid = "resources-skill-select";
+    pick.setAttribute("aria-label", `Select ${skill.name}`);
+    pick.checked = view.selected.has(skillKey(skill));
+    pick.addEventListener("change", () => {
+      if (pick.checked) view.selected.add(skillKey(skill)); else view.selected.delete(skillKey(skill));
+      renderShareBar();
+    });
+    head.append(pick);
+  }
   const name = document.createElement("strong");
   name.textContent = skill.name;
   name.append(" ", badge(ORIGIN_LABELS[skill.origin] ?? skill.origin, `origin-${skill.origin}`));
   if (view.scope === "conversation" && view.engine && skill.harnesses.includes(view.engine)) name.append(" ", badge("active", "active"));
+  head.append(name);
   const harnesses = document.createElement("span");
   harnesses.className = "resources-harnesses";
   harnesses.append(...skill.harnesses.map((id) => badge(harnessLabel(id), "harness")));
   const description = document.createElement("span");
   description.className = "skill-option-description";
   description.textContent = skill.description;
-  row.append(name, harnesses, description);
-  if (!local) return row;
-  const policy = view.sharing?.skills?.find((item) => item.name === skill.name && item.path === skill.path);
-  if (skill.origin !== "shared" || !policy) {
-    const hint = document.createElement("small"); hint.textContent = "Import this native/project skill first to manage or share it."; row.append(hint); return row;
+  row.append(head, harnesses, description);
+  if (!local || !view.sharing) return row;
+  const policy = policyFor(skill);
+  if (!policy) {
+    if (skill.origin !== "shared") { const hint = document.createElement("small"); hint.textContent = "Not managed yet. Select it and choose Share to import and share it in one step."; row.append(hint); }
+    return row;
   }
   if (policy.kind === "received") {
     const status = document.createElement("small");
-    status.textContent = `Received from ${policy.receivedFrom}. Cannot be reshared.${policy.lastSync ? ` Last sync ${new Date(policy.lastSync).toLocaleString()}.` : ""}`;
-    row.append(status, skillRemoveButton(skill, true));
+    status.textContent = `Received from ${policy.receivedFromName || policy.receivedFrom}. Cannot be reshared.${policy.lastSync ? ` Last sync ${new Date(policy.lastSync).toLocaleString()}.` : ""}`;
+    row.append(rowActions(status, skillRemoveButton(skill, true)));
     return row;
   }
-  const details = document.createElement("details"); details.dataset.testid = "skill-sharing-controls";
-  const summary = document.createElement("summary"); summary.textContent = policy.clusterIds.length ? `Shared with ${policy.clusterIds.map((id) => view.sharing.clusters.find((c) => c.id === id)?.name || id).join(", ")}` : "Local only · Share";
-  const fieldset = document.createElement("fieldset"); const legend = document.createElement("legend"); legend.textContent = "Member machines receive this skill for all of their agents"; fieldset.append(legend);
-  for (const cluster of view.sharing.clusters) { const label=document.createElement("label"); label.className="checkbox-row"; const input=document.createElement("input"); input.type="checkbox"; input.value=cluster.id; input.checked=policy.clusterIds.includes(cluster.id); input.dataset.testid="skill-sharing-cluster-checkbox"; label.append(input,cluster.name); fieldset.append(label); }
-  const save = document.createElement("button");
-  save.type = "button"; save.className = "ghost compact"; save.dataset.testid = "skill-sharing-save"; save.textContent = "Save sharing";
-  save.addEventListener("click", async () => {
-    const clusterIds = [...fieldset.querySelectorAll("input:checked")].map((input) => input.value);
-    if (clusterIds.some((id) => !policy.clusterIds.includes(id)) && !await confirmAction({ title: `Share ${skill.name}?`, message: "Copy this skill, including executable scripts, to member machines of the selected clusters? Other clusters will not receive it through Joint Bob.", confirmLabel: "Share" })) return;
-    save.disabled = true;
-    try {
-      await api(`/api/resources/skills/${encodeURIComponent(skill.name)}/sharing`, { method: "PUT", body: JSON.stringify({ clusterIds }) });
-      await loadInventory();
-      setStatus("Selection saved. Receivers update on Refresh or within 30 seconds while online. Offline copies remain until they reconnect.");
-    } catch (error) { setStatus(error.message); }
-    finally { save.disabled = false; }
-  });
-  if (!view.sharing.clusters.length) fieldset.append(emptyRow("No clusters joined. Skill stays local."));
-  fieldset.append(save); details.append(summary, fieldset); row.append(details, skillRemoveButton(skill, false)); return row;
+  row.append(rowActions(sharingControls(skill, policy), skillRemoveButton(skill, false)));
+  return row;
+}
+
+function localInventory() { return view.nodes.find((entry) => entry.node.local)?.inventory; }
+
+function selectedSkills() {
+  return (localInventory()?.skills ?? []).filter((skill) => view.selected.has(skillKey(skill)) && shareable(skill));
+}
+
+function barButton(text, testid, onClick, primary = false) {
+  const button = document.createElement("button");
+  button.type = "button"; button.className = primary ? "primary compact" : "ghost compact"; button.dataset.testid = testid; button.textContent = text;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function renderShareBar() {
+  const bar = elements.resourcesShareBar;
+  bar.replaceChildren();
+  bar.hidden = view.tab !== "skills" || !view.sharing || !localInventory();
+  if (bar.hidden) return;
+  const chosen = selectedSkills();
+  const line = document.createElement("div");
+  line.className = "resources-share-line";
+  const count = document.createElement("span");
+  count.dataset.testid = "resources-selected-count";
+  count.textContent = chosen.length ? `${chosen.length} skill${chosen.length === 1 ? "" : "s"} selected` : "Select skills to share them with clusters or nodes.";
+  const shown = localInventory() ? filteredSkills(localInventory()).filter(shareable) : [];
+  const all = barButton(`Select all ${shown.length} shown`, "resources-select-all", () => { for (const skill of shown) view.selected.add(skillKey(skill)); renderList(); });
+  all.disabled = !shown.length;
+  const clear = barButton("Clear", "resources-select-clear", () => { view.selected.clear(); view.shareOpen = false; renderList(); });
+  clear.disabled = !chosen.length;
+  const open = barButton(view.shareOpen ? "Cancel" : "Share…", "resources-share-open", () => { view.shareOpen = !view.shareOpen; renderShareBar(); }, !view.shareOpen);
+  open.disabled = !chosen.length;
+  line.append(count, all, clear, open);
+  bar.append(line);
+  if (!view.shareOpen || !chosen.length) return;
+  const picker = targetPicker();
+  bar.append(picker);
+  if (!view.sharing.clusters.length) return;
+  const actions = document.createElement("div");
+  actions.className = "github-group-actions";
+  actions.append(
+    barButton("Share", "resources-share-apply", () => bulkShare(picker, "add"), true),
+    barButton("Make local only", "resources-share-unshare", () => bulkShare(picker, "clear")),
+  );
+  bar.append(actions);
+}
+
+async function bulkShare(picker, mode) {
+  const chosen = selectedSkills();
+  const targets = mode === "add" ? pickedTargets(picker) : { clusterIds: [], nodeIds: [] };
+  if (mode === "add" && !targets.clusterIds.length && !targets.nodeIds.length) { setStatus("Choose at least one cluster or node."); return; }
+  const imports = mode === "add" ? chosen.filter((skill) => !policyFor(skill)) : [];
+  const plural = chosen.length === 1 ? "" : "s";
+  const confirmed = mode === "add"
+    ? await confirmAction({ title: `Share ${chosen.length} skill${plural}?`, message: `Copy ${chosen.length === 1 ? "this skill" : "these skills"}, including executable scripts, to ${targetNames(targets).join(", ")}?${imports.length ? ` ${imports.length} unmanaged skill${imports.length === 1 ? " is" : "s are"} imported into managed skills first.` : ""} Existing receivers are kept.`, confirmLabel: "Share" })
+    : await confirmAction({ title: `Stop sharing ${chosen.length} skill${plural}?`, message: "Every receiver removes its copy on its next sync. Offline copies remain until those nodes reconnect.", confirmLabel: "Stop sharing", destructive: true });
+  if (!confirmed) return;
+  for (const button of elements.resourcesShareBar.querySelectorAll("button")) button.disabled = true;
+  try {
+    const names = new Set(chosen.filter((skill) => policyFor(skill)?.kind === "local").map((skill) => skill.name));
+    if (imports.length) {
+      const result = await api("/api/settings/skills/sync", { method: "POST", body: JSON.stringify({ paths: imports.map((skill) => skill.path) }) });
+      for (const name of [...result.published, ...result.unchanged]) names.add(name);
+      await api("/api/settings/skills/reload", { method: "POST", body: JSON.stringify({}) }).catch(() => {});
+    }
+    const sharing = await api("/api/resources/skills/sharing");
+    const failed = [];
+    let updated = 0;
+    for (const name of names) {
+      const policy = sharing.skills.find((item) => item.name === name && item.kind === "local");
+      if (!policy) { failed.push(`${name}: not an owned managed skill`); continue; }
+      const union = (current, extra) => [...new Set([...current, ...extra])];
+      const body = mode === "add" ? { clusterIds: union(policy.clusterIds, targets.clusterIds), nodeIds: union(policy.nodeIds ?? [], targets.nodeIds) } : targets;
+      try {
+        await api(`/api/resources/skills/${encodeURIComponent(name)}/sharing`, { method: "PUT", body: JSON.stringify(body) });
+        updated += 1;
+      } catch (error) { failed.push(`${name}: ${error.message}`); }
+    }
+    view.selected.clear();
+    view.shareOpen = false;
+    await Promise.all([loadInventory(), imports.length ? loadSkills(true) : null]);
+    const done = mode === "add" ? `Shared ${updated} skill${updated === 1 ? "" : "s"} with ${targetNames(targets).join(", ")}. Receivers update on Refresh or within 30 seconds while online.` : `${updated} skill${updated === 1 ? " is" : "s are"} local only now.`;
+    setStatus(`${done}${failed.length ? ` Failed: ${failed.join("; ")}.` : ""}`);
+  } catch (error) { setStatus(error.message); toast(error.message); }
+  finally { renderShareBar(); }
+}
+
+function renderPager(container, total, page, onPage) {
+  container.replaceChildren();
+  container.hidden = total <= PAGE_SIZE;
+  if (container.hidden) return;
+  const pages = Math.ceil(total / PAGE_SIZE);
+  const previous = barButton("Previous", "resources-page-previous", () => onPage(page - 1));
+  previous.disabled = page === 0;
+  const label = document.createElement("span");
+  label.dataset.testid = "resources-page-label";
+  label.textContent = `${page * PAGE_SIZE + 1}–${Math.min(total, (page + 1) * PAGE_SIZE)} of ${total}`;
+  const next = barButton("Next", "resources-page-next", () => onPage(page + 1));
+  next.disabled = page >= pages - 1;
+  container.append(previous, label, next);
+}
+
+function paged(items, page) {
+  const last = Math.max(0, Math.ceil(items.length / PAGE_SIZE) - 1);
+  const current = Math.min(page, last);
+  return { current, shown: items.slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE) };
 }
 
 function skillRemoveButton(skill, received) {
@@ -160,33 +383,57 @@ function nodeHeading(entry, count, noun) {
   return heading;
 }
 
+function sharingNotices(list) {
+  const notice = emptyRow("Managed skills stay on this node until you share them. Tick skills, then choose Share… to send them to whole clusters or to single nodes.");
+  notice.dataset.testid = "skill-sharing-notice";
+  list.append(notice);
+  if (!view.sharing.legacy.verified) list.append(emptyRow(view.sharing.legacy.error || "Legacy sync status not yet verified. Publishing verifies it before proceeding."));
+  if (!view.sharing.peerStatus.length) return;
+  const details = document.createElement("details");
+  details.className = "resources-peer-status";
+  const failing = view.sharing.peerStatus.filter((peer) => peer.error).length;
+  const summary = document.createElement("summary");
+  summary.textContent = `Receiving from ${view.sharing.peerStatus.length} node${view.sharing.peerStatus.length === 1 ? "" : "s"}${failing ? ` · ${failing} failing` : ""}`;
+  details.append(summary);
+  details.open = failing > 0;
+  for (const peer of view.sharing.peerStatus) {
+    const status = emptyRow(`${peer.ownerName || peer.ownerNodeId}: ${peer.error || `Last synced ${new Date(peer.lastSuccess).toLocaleString()}`}`);
+    status.dataset.testid = "skill-peer-status"; details.append(status);
+  }
+  list.append(details);
+}
+
 function renderList() {
   const list = elements.resourcesList;
   list.replaceChildren();
-  if (view.loading && !view.nodes.length) { list.append(emptyRow("Loading…")); return; }
+  renderShareBar();
+  if (view.loading && !view.nodes.length) { list.append(emptyRow("Loading…")); renderPager(elements.resourcesListPager, 0, 0, () => {}); return; }
   const skills = view.tab === "skills";
+  const noun = skills ? "skills" : "MCP servers";
   const harness = harnessFilter();
   const multiple = view.nodes.length > 1;
-  let total = 0;
-  if (skills && view.sharing) {
-    const notice = emptyRow("Managed skills are local-only until you select clusters. Legacy blanket resource sync is paused; prompts, plugins and MCP no longer transfer automatically. Previously copied unmanaged skills cannot be erased remotely.");
-    notice.dataset.testid = "skill-sharing-notice";
-    list.append(notice);
-    if (!view.sharing.legacy.verified) list.append(emptyRow(view.sharing.legacy.error || "Legacy sync status not yet verified. Publishing verifies it before proceeding."));
-    for (const peer of view.sharing.peerStatus) {
-      const status = emptyRow(`${peer.ownerNodeId}: ${peer.error || `Last synced ${peer.lastSuccess}`}`);
-      status.dataset.testid = "skill-peer-status"; list.append(status);
-    }
-  }
+  if (skills && view.sharing) sharingNotices(list);
+  const items = [], counts = new Map();
   for (const entry of view.nodes) {
-    const rows = entry.inventory ? (skills ? filteredSkills(entry.inventory) : filteredServers(entry.inventory)) : [];
-    total += rows.length;
-    if (multiple) list.append(nodeHeading(entry, rows.length, skills ? "skills" : "MCP servers"));
-    if (!entry.inventory) continue;
-    if (!skills && harness && !entry.inventory.harnesses.find((item) => item.id === harness)?.mcp) { list.append(emptyRow(`${harnessLabel(harness)} does not load MCP servers.${view.scope === "conversation" ? " Show this project to see the servers other agents load." : ""}`)); continue; }
-    list.append(...rows.map((item) => skills ? skillRow(item, entry.node.local) : serverRow(item)));
+    if (!entry.inventory) { if (multiple) list.append(nodeHeading(entry, 0, noun)); continue; }
+    if (!skills && harness && !entry.inventory.harnesses.find((item) => item.id === harness)?.mcp) {
+      if (multiple) list.append(nodeHeading(entry, 0, noun));
+      list.append(emptyRow(`${harnessLabel(harness)} does not load MCP servers.${view.scope === "conversation" ? " Show this project to see the servers other agents load." : ""}`));
+      continue;
+    }
+    const rows = skills ? filteredSkills(entry.inventory) : filteredServers(entry.inventory);
+    counts.set(entry, rows.length);
+    for (const item of rows) items.push({ entry, item });
   }
-  if (!total && !list.childElementCount) list.append(emptyRow(skills ? "No skills match." : "No MCP servers match."));
+  const { current, shown } = paged(items, view.page);
+  view.page = current;
+  let heading = null;
+  for (const { entry, item } of shown) {
+    if (multiple && entry !== heading) { list.append(nodeHeading(entry, counts.get(entry), noun)); heading = entry; }
+    list.append(skills ? skillRow(item, entry.node.local) : serverRow(item));
+  }
+  if (!items.length && !list.querySelector(".resources-row, .resources-node")) list.append(emptyRow(skills ? "No skills match." : "No MCP servers match."));
+  renderPager(elements.resourcesListPager, items.length, view.page, (page) => { view.page = page; renderList(); list.scrollIntoView({ block: "nearest" }); });
 }
 
 function countFor(entry, key) { return entry?.inventory ? (key === "skills" ? filteredSkills(entry.inventory) : filteredServers(entry.inventory)).length : 0; }
@@ -208,6 +455,7 @@ function render() {
   elements.resourcesHarnessSelect.disabled = view.scope === "conversation" && Boolean(view.engine);
   const adding = view.tab === "add";
   elements.resourcesList.hidden = adding;
+  if (adding) { elements.resourcesListPager.hidden = true; elements.resourcesShareBar.hidden = true; }
   elements.resourcesScopeSelect.parentElement.hidden = adding;
   elements.resourcesAddPanel.hidden = !adding;
   if (adding) renderAdd(); else renderList();
@@ -237,11 +485,15 @@ async function loadInventory() {
 /* ---- Adding skills and MCP servers ---- */
 
 function selectedCandidates() {
-  return [...elements.resourcesScanList.querySelectorAll("input[type=checkbox]:checked")].map((input) => view.candidates[Number(input.value)]).filter(Boolean);
+  return [...view.scanSelected].map((index) => view.candidates[index]).filter(Boolean);
 }
 
+function importable(candidate) { return !candidate.error && candidate.status !== "installed" && candidate.status !== "linked"; }
+
 function syncAddButtons() {
-  elements.resourcesImportButton.disabled = !selectedCandidates().length;
+  const chosen = selectedCandidates().length;
+  elements.resourcesImportButton.disabled = !chosen;
+  elements.resourcesImportButton.textContent = chosen ? `Import selected (${chosen})` : "Import selected";
   elements.resourcesShareMcpButton.disabled = !elements.resourcesMcpShareList.querySelector("input[type=checkbox]:checked");
 }
 
@@ -253,8 +505,12 @@ function candidateRow(candidate, index) {
   const input = document.createElement("input");
   input.type = "checkbox";
   input.value = String(index);
-  input.disabled = Boolean(candidate.error) || candidate.status === "installed" || candidate.status === "linked";
-  input.addEventListener("change", syncAddButtons);
+  input.disabled = !importable(candidate);
+  input.checked = view.scanSelected.has(index);
+  input.addEventListener("change", () => {
+    if (input.checked) view.scanSelected.add(index); else view.scanSelected.delete(index);
+    syncAddButtons();
+  });
   const body = document.createElement("span");
   const name = document.createElement("strong");
   name.textContent = candidate.name;
@@ -279,10 +535,12 @@ function renderAdd() {
   elements.resourcesScanList.replaceChildren();
   if (view.scanRoot && !view.candidates.length) elements.resourcesScanList.append(emptyRow("No skills found in that folder."));
   const counts = { new: 0, changed: 0, installed: 0, linked: 0 };
-  view.candidates.forEach((candidate, index) => {
-    if (!candidate.error) counts[candidate.status] += 1;
-    elements.resourcesScanList.append(candidateRow(candidate, index));
-  });
+  for (const candidate of view.candidates) if (!candidate.error) counts[candidate.status] += 1;
+  const indexed = view.candidates.map((candidate, index) => ({ candidate, index }));
+  const { current, shown } = paged(indexed, view.scanPage);
+  view.scanPage = current;
+  for (const { candidate, index } of shown) elements.resourcesScanList.append(candidateRow(candidate, index));
+  renderPager(elements.resourcesScanPager, indexed.length, view.scanPage, (page) => { view.scanPage = page; renderAdd(); });
   if (view.scanRoot) setStatus(`${view.scanRoot}: ${counts.new} new, ${counts.changed} changed, ${counts.installed + counts.linked} already available.`);
   elements.resourcesMcpShareList.replaceChildren();
   const servers = shareableServers();
@@ -348,11 +606,14 @@ async function scan() {
   setStatus("Scanning…");
   try {
     const body = await api(`/api/resources/skills/scan?path=${encodeURIComponent(folder)}`);
+    view.scanSelected.clear();
+    view.scanPage = 0;
     view.candidates = body.candidates;
     view.scanRoot = body.root;
     renderAdd();
   } catch (error) {
     view.candidates = [];
+    view.scanSelected.clear();
     view.scanRoot = "";
     renderAdd();
     setStatus(error.message);
@@ -365,7 +626,7 @@ async function importSelected() {
   const changed = chosen.filter((candidate) => candidate.status === "changed").length;
   if (!await confirmAction({
     title: `Import ${chosen.length} skill${chosen.length === 1 ? "" : "s"}?`,
-    message: `Their folders, scripts included, are copied into local managed skills. They remain local-only until shared from the Skills tab.${changed ? ` ${changed} managed cop${changed === 1 ? "y is" : "ies are"} replaced; backups are kept.` : ""}`,
+    message: `Their folders, scripts included, are copied into local managed skills. They stay on this node until you share them from the Skills tab.${changed ? ` ${changed} managed cop${changed === 1 ? "y is" : "ies are"} replaced; backups are kept.` : ""}`,
     confirmLabel: "Import",
     destructive: changed > 0,
   })) return;
@@ -417,6 +678,11 @@ export function openResources({ scope = "conversation", projectId = state.active
   view.sharing = null;
   view.candidates = [];
   view.scanRoot = "";
+  view.page = 0;
+  view.scanPage = 0;
+  view.selected.clear();
+  view.scanSelected.clear();
+  view.shareOpen = false;
   setStatus("");
   elements.resourcesSearchInput.value = "";
   elements.resourcesHarnessSelect.value = view.engine ?? "";
@@ -435,13 +701,16 @@ elements.resourcesScopeSelect.addEventListener("change", () => {
   // Leaving a conversation drops its agent filter; the wider views start with every agent.
   elements.resourcesHarnessSelect.value = view.engine ?? "";
   view.nodes = [];
+  view.page = 0;
   loadInventory();
 });
-elements.resourcesHarnessSelect.addEventListener("change", render);
-elements.resourcesSearchInput.addEventListener("input", render);
+elements.resourcesHarnessSelect.addEventListener("change", () => { view.page = 0; render(); });
+elements.resourcesSearchInput.addEventListener("input", () => { view.page = 0; render(); });
 for (const button of elements.resourcesDialog.querySelectorAll("[data-resources-tab]")) {
   button.addEventListener("click", () => {
     view.tab = button.dataset.resourcesTab;
+    view.page = 0;
+    view.shareOpen = false;
     setStatus("");
     render();
     if (view.tab === "add" && !view.scanRoot) autoScan();
@@ -450,8 +719,8 @@ for (const button of elements.resourcesDialog.querySelectorAll("[data-resources-
 elements.resourcesScanButton.addEventListener("click", scan);
 elements.resourcesScanPath.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); scan(); } });
 elements.resourcesSelectNewButton.addEventListener("click", () => {
-  for (const input of elements.resourcesScanList.querySelectorAll("input[type=checkbox]")) if (!input.disabled) input.checked = true;
-  syncAddButtons();
+  view.candidates.forEach((candidate, index) => { if (importable(candidate)) view.scanSelected.add(index); });
+  renderAdd();
 });
 elements.resourcesImportButton.addEventListener("click", () => importSelected());
 elements.resourcesShareMcpButton.addEventListener("click", () => shareSelectedServers());
@@ -459,4 +728,4 @@ elements.resourcesRefreshButton.addEventListener("click", async () => { try { if
 elements.closeResourcesDialogButton.addEventListener("click", () => elements.resourcesDialog.close());
 elements.chatResourcesButton.addEventListener("click", () => openResources());
 elements.skillsDialogManageButton.addEventListener("click", () => { elements.skillsDialog.close(); openResources(); });
-elements.settingsResourcesButton.addEventListener("click", () => openResources({ scope: "cluster", projectId: null, tab: "add" }));
+elements.settingsResourcesButton.addEventListener("click", () => openResources({ scope: "cluster", projectId: null, tab: "skills" }));

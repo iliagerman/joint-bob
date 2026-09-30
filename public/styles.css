@@ -25,26 +25,6 @@
 .usage-breakdown :is(th, td):first-child { text-align: left; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .usage-warning, .usage-error { padding: 10px; border-left: 3px solid var(--amber); background: var(--field); }
 .usage-error { border-color: var(--danger); }
-#usageCharts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; min-width: 0; }
-#usageCharts > .usage-chart-note { grid-column: 1 / -1; }
-#usageDialog .usage-chart { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); overflow: hidden; }
-#usageDialog .usage-chart h4 { margin: 0 0 10px; }
-#usageDialog .usage-chart :is(ul, ol) { margin: 0; padding: 0; list-style: none; }
-#usageDialog .usage-chart-bars { display: grid; gap: 8px; }
-#usageDialog .usage-chart-bars li { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(80px, 2fr) auto; align-items: center; gap: 8px; min-width: 0; }
-#usageDialog .usage-chart-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#usageDialog .usage-chart-track { height: 10px; overflow: hidden; border-radius: 999px; background: var(--field); }
-#usageDialog .usage-chart-fill { display: block; height: 100%; min-width: 2px; border-radius: inherit; background: var(--accent); }
-#usageDialog .usage-donut { width: min(180px, 65vw); aspect-ratio: 1; margin: 8px auto 14px; border-radius: 50%; }
-#usageDialog .usage-chart-legend { display: grid; gap: 6px; }
-#usageDialog .usage-chart-legend li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 7px; }
-#usageDialog .usage-chart-legend i { width: 10px; height: 10px; border-radius: 2px; }
-#usageDialog .usage-day-chart { grid-column: 1 / -1; overflow-x: auto; overscroll-behavior-x: contain; }
-#usageDialog .usage-chart-columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(58px, 1fr); align-items: end; width: max-content; min-width: 100%; height: 180px; overflow: visible; }
-#usageDialog .usage-chart-columns li { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; align-items: end; justify-items: center; gap: 3px; height: 180px; padding: 0 4px; font-size: 10px; white-space: nowrap; }
-#usageDialog .usage-chart-column { display: block; align-self: end; width: min(32px, 70%); min-height: 2px; background: var(--accent); border-radius: 4px 4px 0 0; }
-#usageDialog .usage-chart-columns span { color: var(--muted); font-family: var(--mono); }
-#usageDialog .usage-chart-columns strong { font-size: 9px; }
 .usage-subscriptions, #subscriptionList, .subscription-harness-group { display: grid; min-width: 0; gap: 12px; }
 .subscription-card .subscription-price { display: block; font-size: 18px; }
 .subscription-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; padding-top: 12px; }
@@ -3254,28 +3234,6 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
   .background-tasks-footer > span { display: none; }
 }
 
-/* Costs dashboard charts and progress */
-.usage-open svg { width: 18px; height: 18px; }
-.usage-status-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.usage-charts { --usage-chart-0: var(--accent); --usage-chart-1: var(--claude); --usage-chart-2: var(--live); --usage-chart-3: var(--amber); --usage-chart-4: #8b6fcb; --usage-chart-5: #4c9da8; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
-.usage-chart { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); overflow: hidden; }
-.usage-chart h4 { margin: 0 0 10px; }
-.usage-chart-note { grid-column: 1/-1; margin: 0; color: var(--muted); font-size: 12px; }
-.usage-chart-empty { color: var(--muted); font-size: 12px; }
-.usage-chart-bars,.usage-chart-legend { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.usage-chart-bars li { display: grid; grid-template-columns: minmax(60px,.8fr) minmax(50px,1fr) auto; align-items: center; gap: 6px; font-size: 11px; }
-.usage-chart-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-chart-track { height: 8px; border-radius: 5px; background: var(--field); overflow: hidden; }
-.usage-chart-fill { display: block; height: 100%; background: var(--accent); }
-.usage-donut { width: min(130px,60%); aspect-ratio: 1; margin: 0 auto 10px; border-radius: 50%; mask: radial-gradient(circle,#0000 0 42%,#000 43%); }
-.usage-chart-legend li { display: grid; grid-template-columns: 10px minmax(0,1fr) auto; gap: 6px; align-items: center; font-size: 11px; }
-.usage-chart-legend i { width: 9px; height: 9px; border-radius: 2px; }
-.usage-chart-legend span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 10px; }
-.subscription-detected { margin: 6px 0; padding: 9px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
-.subscription-detected p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
-@media (max-width: 700px) { .usage-charts { grid-template-columns: minmax(0,1fr); } .usage-status-row { align-items: flex-start; } }
-
 /* Project file explorer */
 .file-explorer-card { width: min(760px, calc(100vw - 24px)); height: min(680px, calc(100dvh - 24px)); max-height: calc(100dvh - 24px); grid-template-rows: auto auto auto minmax(0, 1fr) auto; gap: 0; padding: 0; overflow: hidden; }
 .file-explorer-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px 15px; border-bottom: 1px solid var(--line); }
@@ -3343,10 +3301,6 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-review-kind.is-deleted { background: color-mix(in srgb, #f85149 22%, transparent); color: color-mix(in srgb, #f85149 90%, var(--text)); }
 .git-review-kind.is-modified, .git-review-kind.is-type_changed { background: color-mix(in srgb, #d29922 24%, transparent); color: color-mix(in srgb, #d29922 92%, var(--text)); }
 .git-review-kind.is-unmerged { background: color-mix(in srgb, #f85149 30%, transparent); color: #fff; }
-.git-review-priority { flex: none; min-width: 54px; padding: 2px 6px; border-radius: var(--radius-ctl); font: 600 10px/1.4 var(--mono); text-align: center; background: var(--field); color: var(--muted); }
-.git-review-priority.is-high { background: color-mix(in srgb, #f85149 22%, transparent); color: color-mix(in srgb, #f85149 90%, var(--text)); }
-.git-review-priority.is-medium { background: color-mix(in srgb, #d29922 24%, transparent); color: color-mix(in srgb, #d29922 92%, var(--text)); }
-.git-review-priority.is-low { background: color-mix(in srgb, #3fb950 18%, transparent); color: color-mix(in srgb, #3fb950 90%, var(--text)); }
 .git-review-file-name { overflow: hidden; font: 500 12px/1.3 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .git-review-commit-subject, .git-review-thread-question { font-size: 13px; font-weight: 600; }
 .git-review-commit-meta, .git-review-thread-meta { color: var(--muted); font: 500 11px/1.3 var(--mono); }
@@ -3394,9 +3348,9 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .resources-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
 .resources-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); padding: 6px 10px; }
 .resources-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
-.resources-list { display: grid; gap: 4px; min-width: 0; max-height: 46dvh; overflow-y: auto; }
+.resources-list { display: grid; gap: 4px; min-width: 0; }
 .resources-add { display: grid; gap: 10px; }
-.resources-add .resources-list { max-height: 30dvh; }
+#resourcesMcpShareList { max-height: 30dvh; overflow-y: auto; }
 .resources-subheading { margin: 6px 0 0; font-size: 13px; }
 .resources-row { display: grid; gap: 3px; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 8px 12px; }
 .resources-row strong { font-size: 12.5px; font-family: var(--mono); overflow-wrap: anywhere; }
@@ -3412,5 +3366,22 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .resources-sources { display: flex; flex-wrap: wrap; gap: 6px; }
 .resources-sources:empty { display: none; }
 .resources-status:empty { display: none; }
+.resources-list > * { min-width: 0; }
+.resources-list .model-shortcuts-empty { white-space: normal; overflow-wrap: anywhere; }
+.resources-row-actions { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 4px 12px; min-width: 0; }
+.resources-row-actions > details, .resources-row-actions > small { flex: 1 1 240px; min-width: 0; }
+.resources-row-actions > button { flex: none; }
+.resources-row-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.resources-row-head input { width: 16px; height: 16px; min-width: auto; margin: 0; flex: none; accent-color: var(--ink); }
+.resources-share-bar { display: grid; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 8px 12px; background: var(--surface); }
+.resources-share-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.resources-share-line > span { flex: 1 1 180px; font-size: 12px; color: var(--muted); }
+.resources-targets { display: grid; gap: 10px; min-width: 0; margin: 6px 0 0; padding: 0; border: 0; }
+.resources-targets legend { margin-bottom: 4px; padding: 0; font-size: 12px; color: var(--muted); }
+.resources-target-group { display: grid; gap: 4px; min-width: 0; }
+.resources-target-heading { font-size: 11px; color: var(--muted); }
+.resources-target-members { margin: -2px 0 2px 26px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.resources-pager { display: flex; justify-content: center; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.resources-peer-status summary { cursor: pointer; font-size: 12px; color: var(--muted); }
 .resources-status { margin: 0; font-size: 12px; color: var(--muted); }
 @media (max-width: 640px) { .resources-toolbar { grid-template-columns: 1fr 1fr; } .resources-toolbar .search-shell { grid-column: 1 / -1; } }

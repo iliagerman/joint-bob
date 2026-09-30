@@ -6,7 +6,7 @@ import test, { after } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { createSharingCluster, addSharingMember, removeSharingMember, ensureClusterSharingPolicySchema } from "../src/cluster-sharing-policy.js";
-import { authorizedSkillClusters, setSkillShares } from "../src/skill-sharing.js";
+import { authorizedSkillClusters, setSkillShares, skillNodeIds } from "../src/skill-sharing.js";
 
 const temporaryRoots: string[] = [];
 async function temporary(prefix: string): Promise<string> {
@@ -96,6 +96,33 @@ test("overlapping grants survive one unshare and owner readmission never revives
     removeSharingMember(db, y, manager, owner);
     addSharingMember(db, y, manager, owner, 1);
     assert.deepEqual(authorizedSkillClusters(db, owner, peer, "portable"), []);
+  } finally { db.close(); }
+});
+
+test("node grants reach only the chosen node and never survive either side leaving", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    ensureClusterSharingPolicySchema(db);
+    const manager = randomUUID(), owner = randomUUID(), chosen = randomUUID(), other = randomUUID(), stranger = randomUUID(), x = randomUUID();
+    createSharingCluster(db, { id: x, name: "x" }, manager);
+    for (const node of [owner, chosen, other]) addSharingMember(db, x, manager, node, 1);
+    setSkillShares(db, owner, "portable", [], [chosen]);
+    assert.deepEqual(skillNodeIds(db, owner, "portable"), [chosen]);
+    assert.deepEqual(authorizedSkillClusters(db, owner, chosen, "portable"), [x]);
+    assert.deepEqual(authorizedSkillClusters(db, owner, other, "portable"), []);
+    assert.throws(() => setSkillShares(db, owner, "portable", [], [stranger]), /no open cluster/);
+    assert.throws(() => setSkillShares(db, owner, "portable", [], [owner]), /itself/);
+    assert.deepEqual(skillNodeIds(db, owner, "portable"), [chosen], "a rejected update keeps prior grants");
+    removeSharingMember(db, x, manager, chosen);
+    addSharingMember(db, x, manager, chosen, 1);
+    assert.deepEqual(authorizedSkillClusters(db, owner, chosen, "portable"), [], "receiver readmission never revives a grant");
+    setSkillShares(db, owner, "portable", [], [chosen]);
+    removeSharingMember(db, x, manager, owner);
+    addSharingMember(db, x, manager, owner, 1);
+    assert.deepEqual(skillNodeIds(db, owner, "portable"), [], "owner readmission never revives a grant");
+    setSkillShares(db, owner, "portable", [x], [chosen]);
+    setSkillShares(db, owner, "portable", [], []);
+    assert.deepEqual(authorizedSkillClusters(db, owner, chosen, "portable"), []);
   } finally { db.close(); }
 });
 

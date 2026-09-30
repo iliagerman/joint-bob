@@ -62,7 +62,7 @@
       <div class="focus-navigation">
         <button type="button" id="focusProjects" data-testid="focus-projects">All projects</button>
         <button type="button" id="focusConversations" data-testid="focus-conversations">Conversations</button>
-        <button type="button" data-usage-open data-testid="focus-usage-open" aria-label="Costs" title="Costs" data-shortcut-hint="costs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg></button>
+        <button type="button" data-usage-open data-testid="focus-usage-open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg>Usage</button>
         <button type="button" id="focusSettings" data-testid="focus-settings">Settings</button>
       </div>
 
@@ -92,7 +92,7 @@
           <button class="ghost icon-button" id="projectNotesButton" type="button" data-notes-open aria-label="Project notes" title="Project notes" data-shortcut-hint="toggleNotes" data-testid="projects-open-notes-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h9l3 3V20.5H6z"/><path d="M15 3.5v3h3M9 11h6M9 15h6"/></svg></button>
           <button class="ghost icon-button" id="projectBoardButton" type="button" aria-label="Project board" title="Project board" data-testid="projects-open-board-button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></button>
           <button class="ghost icon-button" id="openCanvasButton" type="button" aria-label="Open the canvas" title="Canvas" data-shortcut-hint="toggleView" data-testid="projects-open-canvas-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg></button>
-          <button class="ghost icon-button usage-open" type="button" data-usage-open data-shortcut-hint="costs" data-testid="usage-open" aria-label="Costs" title="Costs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg></button>
+          <button class="ghost usage-open" type="button" data-usage-open data-testid="usage-open" aria-label="Costs" title="Costs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg><span>Costs</span><kbd class="shortcut-hint" aria-hidden="true"></kbd></button>
           <button class="ghost icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-shortcut-hint="settings" data-testid="settings-open-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
@@ -543,13 +543,12 @@
         <nav class="usage-tabs" aria-label="Costs views"><button type="button" aria-pressed="true" data-testid="usage-tab-overview">Overview</button><button type="button" aria-pressed="false" data-testid="usage-tab-subscriptions">Harness subscriptions</button></nav>
         <section id="usageOverviewPanel" data-usage-panel="overview">
           <p class="usage-source">API-equivalent estimates are not paid subscription fees or invoices. Tool service fees are not included.</p>
-          <div class="usage-status-row"><div id="usageStatus" role="status" aria-live="polite">Loading usage…</div><button type="button" class="ghost" id="usageRefresh" data-testid="usage-refresh">Refresh usage</button></div><div id="usageNotice"></div>
+          <div id="usageStatus" role="status" aria-live="polite">Loading usage…</div><div id="usageNotice"></div>
           <section><h3>Totals</h3><div id="usageSummary" class="usage-summary" data-testid="usage-summary"><p>Loading totals…</p></div></section>
-          <section><h3>Known cost overview</h3><div id="usageCharts" class="usage-charts" data-testid="usage-charts"></div></section>
           <details class="usage-filter-details"><summary>Filter usage</summary><form id="usageFilters" class="usage-filters">
-            <label>Project<select name="projectId" data-testid="usage-project-filter"><option value="">All projects</option></select></label><label>Conversation (shown page)<select name="conversationId" data-testid="usage-conversation-filter"><option value="">All conversations</option></select></label><label>Existing label<select name="classification" data-testid="usage-classification-filter"><option value="">All labels</option></select></label><label>Difficulty<select name="difficulty" data-testid="usage-difficulty-filter"><option value="">All difficulties</option><option value="not-classified">Not classified</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label><label>Model<input name="modelId" data-testid="usage-model-filter" /></label><label>Engine<input name="engine" data-testid="usage-engine-filter" /></label><label>Provider<input name="provider" data-testid="usage-provider-filter" /></label><label>From<input name="from" type="date" data-testid="usage-from-filter" /></label><label>To<input name="to" type="date" data-testid="usage-to-filter" /></label>
+            <label>Project<select name="projectId" data-testid="usage-project-filter"><option value="">All projects</option></select></label><label>Conversation<select name="conversationId" data-testid="usage-conversation-filter"><option value="">All conversations</option></select></label><label>Existing label<select name="classification" data-testid="usage-classification-filter"><option value="">All labels</option></select></label><label>Difficulty<select name="difficulty" data-testid="usage-difficulty-filter"><option value="">All difficulties</option><option value="not-classified">Not classified</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label><label>Model<input name="modelId" data-testid="usage-model-filter" /></label><label>Engine<input name="engine" data-testid="usage-engine-filter" /></label><label>Provider<input name="provider" data-testid="usage-provider-filter" /></label><label>From<input name="from" type="date" data-testid="usage-from-filter" /></label><label>To<input name="to" type="date" data-testid="usage-to-filter" /></label><button type="button" class="ghost" id="usageRefresh" data-testid="usage-refresh">Refresh usage</button>
           </form></details>
-          <section><h3>Cost breakdowns</h3><div id="usageBreakdowns" data-testid="usage-breakdowns"><p>Loading breakdowns…</p></div><nav id="usageConversationPagination" class="usage-pagination" aria-label="Conversation cost pages"><button type="button" class="ghost" data-page="previous" data-testid="usage-conversations-previous">Previous</button><span data-testid="usage-conversations-page">Page 1</span><button type="button" class="ghost" data-page="next" data-testid="usage-conversations-next">Next</button></nav></section>
+          <section><h3>Cost breakdowns</h3><div id="usageBreakdowns" data-testid="usage-breakdowns"><p>Loading breakdowns…</p></div></section>
         </section>
         <section class="usage-subscriptions" id="usageSubscriptionsPanel" data-usage-panel="subscriptions" hidden>
           <div class="usage-section-heading"><div><h3>Subscription prices by harness</h3><p>Choose a harness and enter the price you actually pay. Fees are not calculated from token usage.</p></div><button type="button" id="subscriptionAdd" data-testid="subscription-add">Add price</button></div>
@@ -620,6 +619,11 @@
               days
             </label>
             <p class="settings-hint">Older transcripts stay on disk and load only when opened from a pin, recent item, canvas pane, or direct link.</p>
+            <label>Delete conversations with no activity for
+              <input id="settingsConversationRetentionDays" type="number" min="1" max="3650" step="1" required data-testid="settings-conversation-retention-days" />
+              days
+            </label>
+            <p class="settings-hint">Deletion removes the transcript on every node. Pinned, ticket, and scheduled conversations are kept. Conversations that never got a message are deleted after an hour.</p>
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Context compaction</legend>
@@ -1203,18 +1207,21 @@
           <button type="button" role="tab" data-resources-tab="mcp" aria-selected="false" data-testid="resources-tab-mcp">MCP servers <span id="resourcesMcpCount"></span></button>
           <button type="button" role="tab" data-resources-tab="add" aria-selected="false" data-testid="resources-tab-add">+ Add</button>
         </div>
+        <div class="resources-share-bar" id="resourcesShareBar" data-testid="resources-share-bar" hidden></div>
         <div class="resources-list" id="resourcesList" role="tabpanel" data-testid="resources-list"></div>
+        <div class="resources-pager" id="resourcesListPager" data-testid="resources-list-pager" hidden></div>
         <section class="resources-add" id="resourcesAddPanel" role="tabpanel" data-testid="resources-add-panel" hidden>
           <label>Bring skills from a folder on this node
             <span class="folder-input-row"><input id="resourcesScanPath" type="text" autocomplete="off" spellcheck="false" value="~/.agents/skills" data-testid="resources-scan-path" /><button class="ghost" type="button" id="resourcesScanButton" data-testid="resources-scan-button">Scan</button></span>
           </label>
           <div class="resources-sources" id="resourcesScanSources" data-testid="resources-scan-sources"></div>
           <div class="resources-list" id="resourcesScanList" data-testid="resources-scan-list"></div>
+          <div class="resources-pager" id="resourcesScanPager" data-testid="resources-scan-pager" hidden></div>
           <div class="github-group-actions">
             <button class="ghost" type="button" id="resourcesSelectNewButton" data-testid="resources-select-new-button">Select new and changed</button>
             <button class="primary" type="button" id="resourcesImportButton" data-testid="resources-import-button" disabled>Import selected</button>
           </div>
-          <p class="settings-hint">Import copies whole skill folders, scripts included, into the shared skills folder. Every agent on this node sees them, and Syncthing copies them to paired nodes. Idle Pi sessions reload right away; Claude and Kiro pick them up on their next run.</p>
+          <p class="settings-hint">Import copies whole skill folders, scripts included, into the managed skills folder. Every agent on this node sees them; they stay on this node until you share them from the Skills tab. Idle Pi sessions reload right away; Claude and Kiro pick them up on their next run.</p>
           <h3 class="resources-subheading">Share MCP servers</h3>
           <p class="settings-hint">These servers are configured for only one agent on this node. Sharing a server adds it to the shared MCP config, which Claude and Kiro load on every node. Its command, arguments, headers and environment values are copied as they are.</p>
           <div class="resources-list" id="resourcesMcpShareList" data-testid="resources-mcp-share-list"></div>

@@ -6,19 +6,19 @@ import type { Request, Response as HttpResponse, NextFunction } from "express";
 import { z } from "zod";
 import { AGENT_RESOURCES_FOLDER_ID, agentResourcePaths } from "../agent-resources.js";
 import { getClusterNode } from "../cluster.js";
-import { listSharingClusterMembers, listSharingMemberships, getSharingCluster } from "../cluster-sharing-policy.js";
+import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships, getSharingCluster } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { getSettings } from "../settings.js";
 import { pauseSyncthingFolders } from "../syncthing.js";
-import { authorizedSkillClusters, buildSkillBundle, ensureSkillSharingSchema, installSkillBundle, listReceivedSkills, setSkillShares, skillBundleDigest, skillClusterIds, validateSkillName, type ReceivedSkill } from "../skill-sharing.js";
+import { authorizedSkillClusters, buildSkillBundle, ensureSkillSharingSchema, installSkillBundle, listReceivedSkills, setSkillShares, skillBundleDigest, skillClusterIds, skillNodeIds, validateSkillName, type ReceivedSkill } from "../skill-sharing.js";
 import { backupRemovedSkill, markReceived, receivedOwner, skillSuppressed, suppressSkill, unlinkSkillAliases, unmarkReceived, withSkillMutation } from "../skill-sharing-files.js";
 import { sendError } from "./http-auth.js";
 import { app } from "./state.js";
 
 const nameSchema = z.string().min(1).max(200).refine((value) => { try { validateSkillName(value); return true; } catch { return false; } });
-const selectionSchema = z.object({ clusterIds: z.array(z.string().uuid()).max(100) }).strict();
+const selectionSchema = z.object({ clusterIds: z.array(z.string().uuid()).max(100), nodeIds: z.array(z.string().uuid()).max(100).default([]) }).strict();
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const manifestSchema = z.object({ ownerNodeId: z.string().uuid(), skills: z.array(z.object({ name: nameSchema, digest: digestSchema }).strict()).max(512) }).strict()
   .refine((value) => new Set(value.skills.map((skill) => skill.name.toLowerCase())).size === value.skills.length, "Duplicate skill names");
@@ -85,16 +85,29 @@ async function localView() {
   const db = await clusterV2Database(), node = await getClusterNode();
   ensureSkillSharingSchema(db);
   const received = listReceivedSkills(db);
-  const clusters = listSharingMemberships(db, node.id).map((membership) => getSharingCluster(db, membership.clusterId)).filter((cluster) => !cluster.closed);
+  const nodeName = db.prepare("SELECT name FROM cluster_v2_membership_nodes WHERE cluster_id=? AND node_id=?");
+  const nodes = new Map<string, { nodeId: string; name: string; twin: boolean; clusterIds: string[] }>();
+  const clusters = listSharingMemberships(db, node.id).map((membership) => getSharingCluster(db, membership.clusterId)).filter((cluster) => !cluster.closed).map((cluster) => {
+    const members = listSharingClusterMembers(db, cluster.id).filter((member) => member.nodeId !== node.id).map((member) => {
+      const name = (nodeName.get(cluster.id, member.nodeId) as { name: string | null } | undefined)?.name || member.nodeId;
+      const known = nodes.get(member.nodeId) ?? { nodeId: member.nodeId, name, twin: isTrustedTwin(db, node.id, member.nodeId), clusterIds: [] };
+      known.clusterIds.push(cluster.id);
+      nodes.set(member.nodeId, known);
+      return { nodeId: member.nodeId, name };
+    });
+    return { ...cluster, members };
+  });
   const skills = [];
   for (const name of await managedNames()) {
     const source = received.find((item) => item.name === name);
     const owner = source?.ownerNodeId ?? await receivedOwner(agentResourcePaths().sharedSkills, name);
     skills.push({ name, path: await realpath(path.join(agentResourcePaths().sharedSkills, name)), kind: owner ? "received" : "local",
-      clusterIds: owner ? [] : skillClusterIds(db, node.id, name), receivedFrom: owner, lastSync: source?.updatedAt });
+      clusterIds: owner ? [] : skillClusterIds(db, node.id, name), nodeIds: owner ? [] : skillNodeIds(db, node.id, name),
+      receivedFrom: owner, receivedFromName: owner ? nodes.get(owner)?.name ?? owner : null, lastSync: source?.updatedAt });
   }
-  return { clusters, legacy: legacyStatus, skills,
-    peerStatus: db.prepare("SELECT owner_node_id AS ownerNodeId,last_success AS lastSuccess,last_error AS error FROM skill_peer_status").all() };
+  const peerStatus = (db.prepare("SELECT owner_node_id AS ownerNodeId,last_success AS lastSuccess,last_error AS error FROM skill_peer_status").all() as Array<{ ownerNodeId: string; lastSuccess: string | null; error: string | null }>)
+    .map((status) => ({ ...status, ownerName: nodes.get(status.ownerNodeId)?.name ?? status.ownerNodeId }));
+  return { clusters, nodes: [...nodes.values()].sort((left, right) => left.name.localeCompare(right.name)), legacy: legacyStatus, skills, peerStatus };
 }
 
 async function manifestFor(receiver: string) {
@@ -243,17 +256,17 @@ export async function refreshSharedSkills(): Promise<void> {
   return refresh;
 }
 
-async function shareSkill(name: string, ids: string[]) {
+async function shareSkill(name: string, ids: string[], nodeIds: string[]) {
   await ensureLegacySkillSyncPaused();
   return withSkillMutation(async () => {
     const db = await clusterV2Database(), local = (await getClusterNode()).id;
     const root = agentResourcePaths().sharedSkills;
     if (await receivedOwner(root, name)) throw failure("Received skills cannot be reshared", 403);
     if (!(await managedNames()).includes(name)) throw failure("Managed skill not found", 404);
-    if (ids.length) await buildSkillBundle(path.join(root, name), name);
-    try { setSkillShares(db, local, name, ids); }
+    if (ids.length || nodeIds.length) await buildSkillBundle(path.join(root, name), name);
+    try { setSkillShares(db, local, name, ids, nodeIds); }
     catch (error) { throw failure((error as Error).message, 400); }
-    return { name, clusterIds: skillClusterIds(db, local, name) };
+    return { name, clusterIds: skillClusterIds(db, local, name), nodeIds: skillNodeIds(db, local, name) };
   });
 }
 async function removeSkill(name: string) {
@@ -286,7 +299,7 @@ function route(action: (request: Request, response: HttpResponse) => Promise<unk
 }
 export function registerSkillSharingRoutes(): void {
 app.get("/api/resources/skills/sharing", route(async () => localView()));
-app.put("/api/resources/skills/:name/sharing", route(async (request) => shareSkill(nameSchema.parse(request.params.name), selectionSchema.parse(request.body).clusterIds)));
+app.put("/api/resources/skills/:name/sharing", route(async (request) => { const selection = selectionSchema.parse(request.body); return shareSkill(nameSchema.parse(request.params.name), selection.clusterIds, selection.nodeIds); }));
 app.delete("/api/resources/skills/:name", route(async (request) => removeSkill(nameSchema.parse(request.params.name))));
 app.post("/api/resources/skills/refresh", route(async (request) => { z.object({}).strict().parse(request.body); await refreshSharedSkills(); return localView(); }));
 app.post("/api/cluster/v2/skills/manifest", route(async (request, response) => { z.object({}).strict().parse(request.body); return manifestFor(response.locals.machineNodeId); }, true));
