@@ -3,6 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Git reviews now display priority badges and sort reviewed files by importance.
+
+## 2.13.22 — 2026-09-30
+
+- Git Review sorts changed files by review priority and displays their importance.
+- Shared conversations remain visible across nodes, and pinned transcripts refresh before review state is calculated.
+- Browser requests for profiles on unavailable machines fail clearly without falling back to another machine.
+
 ## 2.13.21 — 2026-09-30
 
 - Git reviews can focus on agent-reported conversation files and generate ranked, guided comments, with reviewer model and effort selectable.

@@ -143,8 +143,15 @@ function changeGroup(title, changes, staged) {
     const name = document.createElement("span");
     name.className = "git-review-file-name";
     name.textContent = change.oldPath ? `${change.oldPath} → ${change.path}` : change.path;
-    row.append(kind, name);
-    row.addEventListener("click", () => selectWorktreeFile(change, staged));
+    const item = git.guide?.guide.items.find((reviewItem) => reviewItem.path === change.path);
+    if (git.guide) {
+      const priority = document.createElement("span");
+      priority.className = `git-review-priority${item ? ` is-${item.priority}` : " is-unrated"}`;
+      priority.textContent = item?.priority.toUpperCase() ?? "UNRATED";
+      priority.title = item ? `Importance: ${item.priority}` : "Not included in the saved review";
+      row.append(kind, priority, name);
+    } else row.append(kind, name);
+    row.addEventListener("click", () => selectWorktreeFile(change, staged ?? change.staged));
     group.append(row);
   }
   return group;
@@ -158,7 +165,14 @@ function scopedChanges(changes) {
 
 function renderChangeList(status) {
   elements.gitReviewList.textContent = "";
-  const groups = [
+  const reviewOrder = new Map(git.guide?.guide.items.map((item, index) => [item.path, index]) ?? []);
+  const groups = git.guide ? [
+    changeGroup("Review order", [
+      ...scopedChanges(status.staged),
+      ...scopedChanges(status.unstaged),
+      ...scopedChanges(status.untracked),
+    ].sort((left, right) => (reviewOrder.get(left.path) ?? Number.MAX_SAFE_INTEGER) - (reviewOrder.get(right.path) ?? Number.MAX_SAFE_INTEGER))),
+  ].filter(Boolean) : [
     changeGroup("Staged", scopedChanges(status.staged), true),
     changeGroup("Unstaged", scopedChanges(status.unstaged), false),
     changeGroup("Untracked", scopedChanges(status.untracked), false),
@@ -462,6 +476,7 @@ async function generateGuide() {
     git.focusIndex = 0;
     elements.gitReviewFocus.checked = true;
     renderGuide();
+    if (git.status) renderChangeList(git.status);
     setStatus("Review saved for 7 days. File scope is agent-claimed, not proven ownership.");
   } catch (error) { setStatus(error.message); toast(error.message, 10000); }
   finally { elements.gitReviewGenerate.disabled = false; }
