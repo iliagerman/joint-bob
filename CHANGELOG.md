@@ -3,14 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.15.0 — 2026-09-30
 
 - Skills can now be shared with individual nodes or whole clusters, selected in bulk, and long lists are paginated.
 - Conversations idle past 40 days are now automatically deleted to free up storage.
 - Empty drafts are automatically cleaned up after 1 hour if owned or 7 days if not yet owned.
 - Pinned, ticket, and scheduled conversations are always preserved from automatic deletion.
 - Added conversationRetentionDays setting to configure the retention period.
-- Pinned transcripts now load correctly from each harness node, keeping shared sessions and review status available across the cluster.
 
 ## 2.13.24 — 2026-09-30
 
