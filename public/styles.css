@@ -1567,6 +1567,13 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .cron-form-heading { display: grid; gap: 3px; padding-bottom: 2px; }
 .cron-form-heading h3 { margin: 0; color: var(--text); font-size: 15px; }
 .cron-schedule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.cron-days { min-width: 0; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
+.cron-days legend { padding: 0 5px; }
+.cron-days small { color: var(--muted); font-weight: normal; }
+.cron-day-options { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.cron-day-options label { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; cursor: pointer; }
+.cron-day-options input { width: 16px; height: 16px; min-width: 16px; padding: 0; accent-color: var(--ink); }
+#cronDays[hidden], #cronQuietTimes[hidden] { display: none; }
 .cron-help { margin: 0 !important; padding: 10px 12px; border-radius: 8px; background: var(--field); }
 #cronNew { justify-self: start; }
 

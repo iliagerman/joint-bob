@@ -1916,11 +1916,27 @@
           <label>Prompt<textarea name="prompt" required maxlength="100000" rows="4" data-testid="cron-prompt"></textarea></label>
           <div class="cron-schedule-grid">
             <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
-            <label id="cronTimeLabel">Time<input name="time" type="time" value="09:00" required data-testid="cron-time"></label>
+            <label id="cronTimeLabel">Start time<input name="time" type="time" value="08:00" required data-testid="cron-time"></label>
             <label id="cronIntervalLabel">Repeat every (hours)<input name="intervalHours" type="number" inputmode="numeric" min="1" max="168" value="1" required data-testid="cron-interval-hours"></label>
-            <label id="cronMinuteLabel">At minute<input name="minute" type="number" inputmode="numeric" min="0" max="59" value="0" required data-testid="cron-minute"></label>
             <label id="cronWeekdayLabel">Day<select name="weekday" data-testid="cron-weekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
           </div>
+          <fieldset id="cronDays" class="cron-days"><legend>Run on days <small>(unchecked days stay quiet)</small></legend>
+            <div class="cron-day-options">
+              <label><input type="checkbox" name="days" value="1" checked data-testid="cron-day-1">Mon</label>
+              <label><input type="checkbox" name="days" value="2" checked data-testid="cron-day-2">Tue</label>
+              <label><input type="checkbox" name="days" value="3" checked data-testid="cron-day-3">Wed</label>
+              <label><input type="checkbox" name="days" value="4" checked data-testid="cron-day-4">Thu</label>
+              <label><input type="checkbox" name="days" value="5" checked data-testid="cron-day-5">Fri</label>
+              <label><input type="checkbox" name="days" value="6" checked data-testid="cron-day-6">Sat</label>
+              <label><input type="checkbox" name="days" value="0" checked data-testid="cron-day-0">Sun</label>
+            </div>
+          </fieldset>
+          <label class="checkbox-row"><input name="quietEnabled" type="checkbox" data-testid="cron-quiet-enabled">Quiet hours (no runs)</label>
+          <div id="cronQuietTimes" class="cron-schedule-grid" hidden>
+            <label>From<input name="quietStart" type="time" value="22:00" data-testid="cron-quiet-start"></label>
+            <label>Until<input name="quietEnd" type="time" value="08:00" data-testid="cron-quiet-end"></label>
+          </div>
+          <p class="cron-help">Times and days use this timezone. Quiet hours can cross midnight; end time is when runs resume. Skipped runs are not made up.</p>
           <label>Timezone<input name="timezone" list="cronTimezones" required autocomplete="off" data-testid="cron-timezone"></label>
           <datalist id="cronTimezones"></datalist>
           <label>Execution node<select name="ownerNodeId" required data-testid="cron-owner"></select></label>

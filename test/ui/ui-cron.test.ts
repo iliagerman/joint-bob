@@ -32,7 +32,7 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     f.reasoning.value = "high"; f.timezone.value = "UTC"; f.enabled.checked = false;
     if (f.pauseOnFailure.checked) throw Error("Pause on failure must default off");
     f.pauseOnFailure.checked = true;
-    if (document.querySelector("#cronWeekdayLabel").hidden || document.querySelector("#cronTimeLabel").hidden || !document.querySelector("#cronMinuteLabel").hidden) throw Error("Weekly controls incorrect");
+    if (document.querySelector("#cronWeekdayLabel").hidden || document.querySelector("#cronTimeLabel").hidden || !document.querySelector("#cronIntervalLabel").hidden) throw Error("Weekly controls incorrect");
     if (f.engine.disabled || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Project execution settings unavailable");
     form.requestSubmit(); return true;
   })()`), true);
@@ -68,12 +68,23 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     const form = document.querySelector("#cronForm"), f = form.elements;
     if (!f.engine.disabled || f.engine.value !== "pi") throw Error("Conversation harness should be visible and fixed");
     if (!f.model.options.length || f.reasoning.options.length < 2 || f.reasoning.disabled) throw Error("Conversation execution settings unavailable");
-    f.reasoning.value = "high"; f.intervalHours.value = "3";
+    f.reasoning.value = "high"; f.intervalHours.value = "2"; f.time.value = "08:00";
+    for (const day of form.querySelectorAll('[name="days"]')) day.checked = [1, 2, 3, 4, 5].includes(Number(day.value));
+    f.quietEnabled.checked = true; f.quietEnabled.dispatchEvent(new Event("change", { bubbles: true }));
+    f.quietStart.value = "18:00"; f.quietEnd.value = "08:00";
+    if (document.querySelector("#cronQuietTimes").hidden || document.querySelector("#cronTimeLabel").hidden) throw Error("Hourly start and quiet hours must be visible");
     f.name.value = "Conversation browser cron"; f.prompt.value = "Scheduled append";
     f.timezone.value = "UTC"; f.enabled.checked = false;
     form.requestSubmit(); return true;
   })()`), true);
-  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Conversation browser cron") && document.querySelector("#cronList").textContent.includes("Existing conversation") && document.querySelector("#cronList").textContent.includes("Every 3 hours") && document.querySelector("#cronList").textContent.includes("high") && document.querySelector("#cronList").textContent.includes("Paused"));
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Conversation browser cron") && document.querySelector("#cronList").textContent.includes("Existing conversation") && document.querySelector("#cronList").textContent.includes("Every 2 hours") && document.querySelector("#cronList").textContent.includes("Mon, Tue, Wed, Thu, Fri") && document.querySelector("#cronList").textContent.includes("18:00–08:00") && document.querySelector("#cronList").textContent.includes("08:00") && document.querySelector("#cronList").textContent.includes("high") && document.querySelector("#cronList").textContent.includes("Paused"));
+  await page.getByTestId("cron-edit").click();
+  assert.equal(await page.evaluate(`(() => {
+    const f = document.querySelector("#cronForm").elements;
+    return f.time.value === "08:00" && f.intervalHours.value === "2" && f.quietEnabled.checked && f.quietStart.value === "18:00" && f.quietEnd.value === "08:00" &&
+      [...document.querySelectorAll('#cronForm [name="days"]')].filter(day => day.checked).map(day => Number(day.value)).join(",") === "1,2,3,4,5";
+  })()`), true, "Edited task must retain run days, start time and quiet hours");
+  await page.getByTestId("cron-cancel").click();
   await page.locator("#cronClose").click();
   await page.locator('[data-testid="chats-filter-cron-button"]').click();
   await page.waitForFunction(() => document.querySelectorAll("#sessionList .list-row").length === 1 && document.querySelector("#sessionList .list-row").textContent.includes("Short one"));

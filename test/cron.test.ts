@@ -16,6 +16,31 @@ test("easy schedules use timezone, skip DST gaps and do not repeat a daily fall-
   assert.equal(nextCronRun({ ...schedule, frequency: "hourly", intervalHours: 3, minute: 15, timezone: "UTC" }, Date.parse("2026-03-03T10:20:00Z")), Date.parse("2026-03-03T12:15:00Z"));
 });
 
+test("working days, quiet hours and local hourly start filter scheduled runs", async () => {
+  const { nextCronRun, cronInputSchema, CronStore } = await import("../src/cron.js");
+  const schedule = { ...input().schedule, frequency: "hourly" as const, intervalHours: 2, hour: 8, startHour: 8, minute: 0,
+    days: [1, 2, 3, 4, 5], quietStart: "18:00", quietEnd: "08:00", timezone: "America/New_York" };
+  assert.equal(nextCronRun(schedule, Date.parse("2026-03-06T22:00:00Z")), Date.parse("2026-03-09T12:00:00Z"), "skip quiet Friday evening and weekend");
+  assert.equal(nextCronRun(schedule, Date.parse("2026-03-09T12:00:00Z")), Date.parse("2026-03-09T14:00:00Z"), "8am anchor means 10am next");
+  assert.equal(nextCronRun({ ...schedule, quietStart: "12:30", quietEnd: "13:30", hour: 9, startHour: 9, minute: 0, intervalHours: 3 }, Date.parse("2026-03-09T12:00:00Z")), Date.parse("2026-03-09T13:00:00Z"));
+  assert.equal(nextCronRun({ ...schedule, quietStart: "08:00", quietEnd: "18:00" }, Date.parse("2026-03-09T12:00:00Z")), Date.parse("2026-03-09T22:00:00Z"));
+  assert.equal(nextCronRun({ ...schedule, frequency: "daily", hour: 9, minute: 0 }, Date.parse("2026-03-06T15:00:00Z")), Date.parse("2026-03-09T13:00:00Z"));
+  assert.equal(nextCronRun({ ...schedule, frequency: "hourly", days: [0], quietStart: undefined, quietEnd: undefined, timezone: "Europe/Berlin", startHour: 2, intervalHours: 24, minute: 30 }, Date.parse("2026-10-25T00:30:00Z")), Date.parse("2026-11-01T01:30:00Z"), "fall-back hour must not run twice");
+  const db = new DatabaseSync(":memory:");
+  try {
+    const store = new CronStore(db);
+    const task = store.create({ ...input(), schedule }, Date.parse("2026-03-06T22:00:00Z"));
+    assert.equal(task.nextRun, Date.parse("2026-03-09T12:00:00Z"));
+    assert.equal(store.claim(task.id, task.ownerNodeId, task.nextRun)?.dueAt, task.nextRun);
+    assert.equal(store.get(task.id)?.nextRun, Date.parse("2026-03-09T14:00:00Z"));
+  } finally { db.close(); }
+  for (const invalid of [
+    { ...schedule, days: [] }, { ...schedule, days: [7] }, { ...schedule, days: [1, 1] },
+    { ...schedule, quietEnd: undefined }, { ...schedule, quietStart: "08:00", quietEnd: "08:00" },
+    { ...schedule, quietStart: "24:00" }, { ...schedule, frequency: "weekly", weekday: 0 },
+  ]) assert.equal(cronInputSchema.safeParse({ ...input(), schedule: invalid }).success, false);
+});
+
 test("weekly schedules skip a DST gap even when the next valid week is more than nine days away", async () => {
   const { nextCronRun } = await import("../src/cron.js");
   const schedule = { ...input().schedule, frequency: "weekly" as const, weekday: 0, hour: 2, minute: 30 };

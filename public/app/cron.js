@@ -71,7 +71,10 @@ async function refreshTasks() {
     const harness = availableHarnesses.find(candidate => candidate.id === task.engine);
     const reasoning = task.reasoning ?? task.model?.reasoning;
     const repeat = task.schedule.frequency === "hourly" && (task.schedule.intervalHours ?? 1) > 1 ? `Every ${task.schedule.intervalHours} hours` : task.schedule.frequency;
-    const execution = [["Repeat", repeat], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"]];
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const execution = [["Repeat", repeat], ["Start time", task.schedule.frequency === "hourly" && task.schedule.startHour === undefined ? `At minute ${task.schedule.minute} (legacy UTC interval)` : `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`],
+      ["Run on days", task.schedule.days ? task.schedule.days.map(day => days[day]).join(", ") : "Every eligible day"],
+      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"]];
     const entries = task.enabled
       ? [["Next run", new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone })], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
       : [["Status", "Paused"], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]];
@@ -180,18 +183,21 @@ function editTask(task) {
     field("frequency").value = task.schedule.frequency;
     field("weekday").value = task.schedule.weekday;
     field("intervalHours").value = task.schedule.intervalHours ?? 1;
-    field("minute").value = task.schedule.minute;
-    field("time").value = `${String(task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`;
+    field("time").value = `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`;
+    field("quietEnabled").checked = Boolean(task.schedule.quietStart);
+    if (task.schedule.quietStart) field("quietStart").value = task.schedule.quietStart;
+    if (task.schedule.quietEnd) field("quietEnd").value = task.schedule.quietEnd;
+    for (const checkbox of form.querySelectorAll('[name="days"]')) checkbox.checked = !task.schedule.days || task.schedule.days.includes(Number(checkbox.value));
   }
   field("engine").disabled = Boolean(context.session || task?.sessionId);
   showScheduleFields(); field("name").focus();
 }
 function showScheduleFields() {
   const hourly = field("frequency").value === "hourly";
-  document.querySelector("#cronTimeLabel").hidden = hourly;
   document.querySelector("#cronIntervalLabel").hidden = !hourly;
-  document.querySelector("#cronMinuteLabel").hidden = !hourly;
   document.querySelector("#cronWeekdayLabel").hidden = field("frequency").value !== "weekly";
+  document.querySelector("#cronDays").hidden = field("frequency").value === "weekly";
+  document.querySelector("#cronQuietTimes").hidden = !field("quietEnabled").checked;
 }
 form.addEventListener("submit", async event => {
   event.preventDefault();
@@ -200,6 +206,9 @@ form.addEventListener("submit", async event => {
   submit.disabled = true; errorText.textContent = "";
   try {
     const [hour, minute] = field("time").value.split(":").map(Number);
+    const days = [...form.querySelectorAll('[name="days"]:checked')].map(checkbox => Number(checkbox.value));
+    if (field("frequency").value !== "weekly" && !days.length) throw new Error("Select at least one run day");
+    if (field("quietEnabled").checked && field("quietStart").value === field("quietEnd").value) throw new Error("Quiet hours need different start and end times");
     const [provider, modelId] = field("model").value.split("|");
     const input = {
       projectId: context.projectId, name: field("name").value, prompt: field("prompt").value,
@@ -207,7 +216,12 @@ form.addEventListener("submit", async event => {
       model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,
       sessionId: editing ? editing.sessionId : context.session ? context.session.id : null, enabled: field("enabled").checked,
       pauseOnFailure: field("pauseOnFailure").checked,
-      schedule: { frequency: field("frequency").value, intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined, hour, minute: field("frequency").value === "hourly" ? Number(field("minute").value) : minute, weekday: Number(field("weekday").value), timezone: field("timezone").value },
+      schedule: { frequency: field("frequency").value, intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined,
+        hour, minute, startHour: field("frequency").value === "hourly" ? hour : undefined,
+        weekday: Number(field("weekday").value), timezone: field("timezone").value,
+        days: field("frequency").value === "weekly" ? undefined : days,
+        quietStart: field("quietEnabled").checked ? field("quietStart").value : undefined,
+        quietEnd: field("quietEnabled").checked ? field("quietEnd").value : undefined },
     };
     await command(editing ? editing.ownerNodeId : input.ownerNodeId, editing ? { action: "update", id: editing.id, input } : { action: "create", input });
     showList(); await refreshTasks();
@@ -215,6 +229,7 @@ form.addEventListener("submit", async event => {
   finally { submit.disabled = false; }
 });
 field("frequency").addEventListener("change", showScheduleFields);
+field("quietEnabled").addEventListener("change", showScheduleFields);
 field("engine").addEventListener("change", () => renderExecutionFields());
 field("model").addEventListener("change", () => renderExecutionFields(field("model").value));
 document.querySelector("#cronNew").addEventListener("click", () => editTask(null));

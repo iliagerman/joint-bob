@@ -11,6 +11,14 @@ const timezoneSchema = z.string().min(1).max(100).refine(value => {
   try { new Intl.DateTimeFormat("en", { timeZone: value }); return true; } catch { return false; }
 }, "Unknown timezone");
 const reasoningSchema = z.enum(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const clockSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM");
+const scheduleSchema = z.object({ frequency: z.enum(["hourly", "daily", "weekly"]), intervalHours: z.number().int().min(1).max(168).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), weekday: z.number().int().min(0).max(6), timezone: timezoneSchema, startHour: z.number().int().min(0).max(23).optional(),
+  days: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(), quietStart: clockSchema.optional(), quietEnd: clockSchema.optional(),
+}).strict().superRefine((schedule, context) => {
+  if (schedule.days && new Set(schedule.days).size !== schedule.days.length) context.addIssue({ code: "custom", path: ["days"], message: "Days must be unique" });
+  if (schedule.frequency === "weekly" && schedule.days && !schedule.days.includes(schedule.weekday)) context.addIssue({ code: "custom", path: ["days"], message: "Include the weekly run day" });
+  if (Boolean(schedule.quietStart) !== Boolean(schedule.quietEnd) || schedule.quietStart && schedule.quietStart === schedule.quietEnd) context.addIssue({ code: "custom", path: ["quietEnd"], message: "Quiet hours need two different times" });
+});
 const cronModelSchema = z.object({
   provider: z.string().trim().min(1).max(80),
   modelId: z.string().trim().min(1).max(200),
@@ -23,7 +31,7 @@ export const cronInputSchema = z.object({
     .refine(id => listDiscoveredHarnesses().some(adapter => adapter.id === id && adapter.runtime), "Harness is not registered on this node"),
   model: cronModelSchema.nullable().optional(), reasoning: reasoningSchema.optional(),
   sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(), pauseOnFailure: z.boolean().default(false),
-  schedule: z.object({ frequency: z.enum(["hourly", "daily", "weekly"]), intervalHours: z.number().int().min(1).max(168).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), weekday: z.number().int().min(0).max(6), timezone: timezoneSchema }).strict(),
+  schedule: scheduleSchema,
 }).strict().superRefine((input, context) => {
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === input.engine);
   if (!adapter?.configuration) return;
@@ -51,11 +59,31 @@ export function nextCronRun(schedule: CronInput["schedule"], after: number): num
   const todayPassed = Number(start.hour) * 60 + Number(start.minute) >= schedule.hour * 60 + schedule.minute;
   for (let time = Math.floor(after / 60000) * 60000 + 60000; time <= after + 16 * 86400000; time += 60000) {
     const p = parts(time);
+    const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday);
+    if (schedule.days && !schedule.days.includes(weekday)) continue;
+    const wallMinute = Number(p.hour) * 60 + Number(p.minute);
+    if (schedule.quietStart && schedule.quietEnd) {
+      const startMinute = Number(schedule.quietStart.slice(0, 2)) * 60 + Number(schedule.quietStart.slice(3));
+      const endMinute = Number(schedule.quietEnd.slice(0, 2)) * 60 + Number(schedule.quietEnd.slice(3));
+      if (startMinute < endMinute ? wallMinute >= startMinute && wallMinute < endMinute : wallMinute >= startMinute || wallMinute < endMinute) continue;
+    }
     if (Number(p.minute) !== schedule.minute) continue;
-    if (schedule.frequency === "hourly" && Math.floor(time / 3600000) % (schedule.intervalHours ?? 1) === 0) return time;
+    if (schedule.frequency === "hourly") {
+      if (schedule.startHour === undefined) {
+        if (Math.floor(time / 3600000) % (schedule.intervalHours ?? 1) === 0) return time;
+      } else {
+        // Local calendar hours anchor the interval; 08:00 + two hours stays at 08:00 after DST.
+        const day = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day)) / 86400000;
+        if ((day * 24 + Number(p.hour) - schedule.startHour) % (schedule.intervalHours ?? 1) === 0) {
+          const previousHour = parts(time - 3600000);
+          if (!(date(previousHour) === date(p) && previousHour.hour === p.hour)) return time;
+        }
+      }
+      continue;
+    }
     // A daily/weekly wall-clock occurrence runs once, even when DST repeats it.
     if (Number(p.hour) !== schedule.hour || todayPassed && date(p) === date(start)) continue;
-    if (schedule.frequency === "daily" || ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday) === schedule.weekday) return time;
+    if (schedule.frequency === "daily" || weekday === schedule.weekday) return time;
   }
   throw new Error("No schedule occurrence within sixteen days");
 }
