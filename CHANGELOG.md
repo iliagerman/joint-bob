@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Notification services can now be shared with selected clusters.
+
 ## 2.16.0 — 2026-09-30
 
 - Secret accounts can be shared with selected clusters or nodes; recipients get read-only copies that track owner updates.

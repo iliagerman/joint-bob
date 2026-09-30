@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,29 @@ import test from "node:test";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, pairTwinNodes } from "./dev-nodes.js";
 
 interface ServiceView { id: string; name: string; url: string; hasToken: boolean; isDefault: boolean }
+
+test("an ntfy service can be shared to a selected cluster", { timeout: 120_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-ntfy-cluster-target-"));
+  const environment = await seedDevEnvironment(root, 2);
+  const [nodeA, nodeB] = environment.nodes;
+  const servers = await Promise.all(environment.nodes.map((node) => startDevNode(environment, node)));
+  try {
+    const [sessionA, sessionB] = await Promise.all([signIn(environment, nodeA), signIn(environment, nodeB)]);
+    const created = await api<{ snapshot: { body: { clusterId: string } } }>(nodeA, sessionA, "POST", "/clusters", { name: "Selected" });
+    const clusterId = created.body.snapshot.body.clusterId;
+    const invitation = await api<{ link: string }>(nodeA, sessionA, "POST", `/clusters/${clusterId}/invitations`, { expectedEpoch: 1 });
+    assert.equal((await api(nodeB, sessionB, "POST", "/clusters/join", { link: invitation.body.link, requestId: randomUUID() })).status, 201);
+    const service = await api<{ service: ServiceView }>(nodeA, sessionA, "POST", "/ntfy/services", { name: "Selected", url: "https://ntfy.example", token: "selected-secret" });
+    const shared = await api<{ results: Array<{ peerId: string; ok: boolean }> }>(nodeA, sessionA, "POST", `/ntfy/services/${service.body.service.id}/share`, { includeTwins: false, clusterIds: [clusterId] });
+    assert.equal(shared.status, 200, JSON.stringify(shared.body));
+    assert.deepEqual(shared.body.results, [{ peerId: nodeB.nodeId, ok: true }]);
+    const remote = await api<{ services: ServiceView[] }>(nodeB, sessionB, "GET", "/ntfy/services");
+    assert.deepEqual(remote.body.services, [{ ...service.body.service, isDefault: true }]);
+  } finally {
+    await Promise.all(servers.map((server) => stopDevNode(server)));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("an ntfy service can be shared to paired nodes and a default can be selected", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jb-ntfy-cluster-"));
@@ -25,7 +49,7 @@ test("an ntfy service can be shared to paired nodes and a default can be selecte
     const local = await api<{ services: ServiceView[] }>(nodeA, sessionA, "GET", "/ntfy/services");
     assert.equal(local.body.services.find((service) => service.id === second.body.service.id)?.isDefault, true);
 
-    const shared = await api<{ results: Array<{ peerId: string; ok: boolean }> }>(nodeA, sessionA, "POST", `/ntfy/services/${second.body.service.id}/share`);
+    const shared = await api<{ results: Array<{ peerId: string; ok: boolean }> }>(nodeA, sessionA, "POST", `/ntfy/services/${second.body.service.id}/share`, {});
     assert.equal(shared.status, 200, JSON.stringify(shared.body));
     assert.deepEqual(shared.body.results, [{ peerId: nodeB.nodeId, ok: true }]);
     const remote = await api<{ services: ServiceView[] }>(nodeB, sessionB, "GET", "/ntfy/services");

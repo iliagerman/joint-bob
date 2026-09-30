@@ -17,6 +17,56 @@ function serviceButton(text, testid, className, action) {
   return button;
 }
 
+async function shareNtfyService(service) {
+  const { clusters } = await api("/api/clusters");
+  const dialog = document.createElement("dialog");
+  dialog.className = "ntfy-share-dialog";
+  dialog.setAttribute("aria-labelledby", "ntfyShareHeading");
+  const card = document.createElement("form");
+  card.className = "dialog-card";
+  card.method = "dialog";
+  const heading = document.createElement("h2"); heading.id = "ntfyShareHeading"; heading.textContent = `Share ${service.name}`;
+  const note = document.createElement("p"); note.textContent = "The server token grants publishing access. Choose exactly who receives it.";
+  const twinsLabel = document.createElement("label");
+  const twins = document.createElement("input"); twins.type = "checkbox"; twins.name = "twins"; twins.checked = true; twins.dataset.testid = "ntfy-share-twins";
+  twinsLabel.append(twins, document.createTextNode(" Active trusted twins"));
+  const clusterTitle = document.createElement("h3"); clusterTitle.textContent = "Clusters";
+  const clusterInputs = [];
+  const clusterList = document.createElement("div"); clusterList.className = "ntfy-share-clusters";
+  for (const cluster of clusters) {
+    const label = document.createElement("label");
+    const input = document.createElement("input"); input.type = "checkbox"; input.value = cluster.id; input.name = "cluster"; input.dataset.testid = `ntfy-share-cluster-${cluster.id}`;
+    clusterInputs.push(input);
+    const members = cluster.members.map((member) => member.name).join(", ");
+    label.append(input, document.createTextNode(` ${cluster.name}${members ? ` · ${members}` : ""}`));
+    clusterList.append(label);
+  }
+  if (!clusters.length) { const empty = document.createElement("p"); empty.textContent = "No clusters configured."; clusterList.append(empty); }
+  const actions = document.createElement("div"); actions.className = "dialog-actions";
+  const cancel = serviceButton("Cancel", "ntfy-share-cancel", "ghost", () => dialog.close());
+  const submit = serviceButton("Share", "ntfy-share-confirm", "primary", () => {}); submit.type = "submit";
+  actions.append(cancel, submit);
+  card.append(heading, note, twinsLabel, clusterTitle, clusterList, actions);
+  card.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const clusterIds = clusterInputs.filter((input) => input.checked).map((input) => input.value);
+    if (!twins.checked && !clusterIds.length) { toast("Choose twins or at least one cluster"); return; }
+    submit.disabled = true;
+    try {
+      const { results } = await api(`/api/ntfy/services/${encodeURIComponent(service.id)}/share`, {
+        method: "POST", body: JSON.stringify({ includeTwins: twins.checked, clusterIds }),
+      });
+      dialog.close();
+      const failures = results.filter((result) => !result.ok);
+      toast(failures.length ? `Shared with ${results.length - failures.length} nodes; ${failures.length} failed` : `Shared with ${results.length} node${results.length === 1 ? "" : "s"}`, failures.length ? 8000 : 3000);
+    } catch (error) { toast(error.message, 8000); }
+    finally { submit.disabled = false; }
+  });
+  dialog.append(card); document.body.append(dialog);
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  dialog.showModal();
+}
+
 function renderNtfyService(service) {
   const item = document.createElement("li");
   const label = document.createElement("span");
@@ -31,11 +81,7 @@ function renderNtfyService(service) {
     } catch (error) { toast(error.message, 8000); }
   }));
   actions.append(serviceButton("Share", "ntfy-service-share-button", "ghost compact", async () => {
-    try {
-      const { results } = await api(`/api/ntfy/services/${encodeURIComponent(service.id)}/share`, { method: "POST" });
-      const failures = results.filter((result) => !result.ok);
-      toast(failures.length ? `Shared with ${results.length - failures.length} nodes; ${failures.length} failed` : `Shared with ${results.length} node${results.length === 1 ? "" : "s"}`, failures.length ? 8000 : 3000);
-    } catch (error) { toast(error.message, 8000); }
+    try { await shareNtfyService(service); } catch (error) { toast(error.message, 8000); }
   }));
   const remove = serviceButton("Remove", "ntfy-service-remove-button", "ghost compact danger", async () => {
     try {

@@ -11,6 +11,8 @@ test("ntfy settings share services and choose a default", { timeout: 90_000 }, a
     window.fetch = (url, options = {}) => {
       const path = String(url);
       window.ntfyRequests.push({path, method:options.method || "GET"});
+      if (path.endsWith("/share")) window.ntfyShareBody = JSON.parse(options.body);
+      if (path === "/api/clusters") return Promise.resolve(Response.json({clusters:[{id:"cluster-id",name:"Team",members:[{name:"node A"},{name:"node B"}]}]}));
       if (path === "/api/ntfy/services") return Promise.resolve(Response.json({services:[
         {id:"00000000-0000-4000-8000-000000000001",name:"Home",url:"https://ntfy.home",hasToken:true,isDefault:true},
         {id:"00000000-0000-4000-8000-000000000002",name:"Backup",url:"https://ntfy.backup",hasToken:false,isDefault:false}
@@ -28,10 +30,15 @@ test("ntfy settings share services and choose a default", { timeout: 90_000 }, a
   await rows.nth(1).getByTestId("ntfy-service-default-button").evaluate((button: HTMLButtonElement) => button.click());
   await page.waitForFunction(`window.ntfyRequests.some((request) => request.path.endsWith("/default"))`);
   await rows.nth(1).getByTestId("ntfy-service-share-button").evaluate((button: HTMLButtonElement) => button.click());
+  await page.getByText("Team · node A, node B").waitFor();
+  await page.locator('.ntfy-share-dialog input[name="twins"]').uncheck();
+  await page.locator('.ntfy-share-dialog input[name="cluster"]').check();
+  await page.getByTestId("ntfy-share-confirm").evaluate((button: HTMLButtonElement) => button.click());
   await page.waitForFunction(`window.ntfyRequests.some((request) => request.path.endsWith("/share"))`);
   const requests = await page.evaluate("window.ntfyRequests");
   assert.deepEqual(requests.filter((request: { method: string }) => request.method !== "GET"), [
     { path: "/api/ntfy/services/00000000-0000-4000-8000-000000000002/default", method: "PUT" },
     { path: "/api/ntfy/services/00000000-0000-4000-8000-000000000002/share", method: "POST" },
   ]);
+  assert.deepEqual(await page.evaluate("window.ntfyShareBody"), { includeTwins: false, clusterIds: ["cluster-id"] });
 });

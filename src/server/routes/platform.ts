@@ -8,10 +8,11 @@ import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ntfyServiceSchema, pushSubscribeSchema, pushUnsubscribeSchema, sharedNtfyServiceSchema } from "../schemas.js";
 import { app } from "../state.js";
 import { getClusterNode } from "../../cluster.js";
-import { isTrustedTwin } from "../../cluster-sharing-policy.js";
+import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { replicationPeers, signedPeerPost } from "../replication-v2.js";
 import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
+import { z } from "zod";
 import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema } from "../../ntfy-publish.js";
 
 app.get("/api/push/vapid-public-key", async (_request, response, next) => {
@@ -74,20 +75,27 @@ app.put("/api/ntfy/services/:id/default", (request, response) => {
   response.json({ ok: true });
 });
 
-/** Copies one ntfy server, token included, to every active twin. Never to other cluster
-    members: the token publishes to this user's topics. */
+/** Shares ntfy credentials only to explicitly selected twins or cluster members. */
 app.post("/api/ntfy/services/:id/share", async (request, response, next) => {
   try {
     const service = getNtfyService(request.params.id);
     if (!service) { sendError(response, 404, "ntfy service not found"); return; }
+    const payload = z.object({ includeTwins: z.boolean().default(true), clusterIds: z.array(z.string().uuid()).max(50).default([]) }).strict().parse(request.body ?? {});
     const db = await clusterV2Database(), local = await getClusterNode();
-    const twins = replicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId));
-    const results = await Promise.all(twins.map(async (peer) => {
+    const peers = replicationPeers(db, local.id);
+    const targets = new Set(peers.filter((peer) => payload.includeTwins && isTrustedTwin(db, local.id, peer.nodeId)).map((peer) => peer.nodeId));
+    for (const clusterId of payload.clusterIds) {
+      const members = listSharingClusterMembers(db, clusterId);
+      if (!members.some((member) => member.nodeId === local.id)) { sendError(response, 403, "You are not a member of a selected cluster"); return; }
+      for (const member of members) if (member.nodeId !== local.id && peers.some((peer) => peer.nodeId === member.nodeId)) targets.add(member.nodeId);
+    }
+    const results = await Promise.all([...targets].map(async (peerId) => {
+      const peer = peers.find(({ nodeId }) => nodeId === peerId)!;
       try {
         await signedPeerPost(peer, "/api/cluster/v2/ntfy/services", service);
-        return { peerId: peer.nodeId, ok: true };
+        return { peerId, ok: true };
       } catch (error) {
-        return { peerId: peer.nodeId, ok: false, error: error instanceof Error ? error.message : "Share failed" };
+        return { peerId, ok: false, error: error instanceof Error ? error.message : "Share failed" };
       }
     }));
     response.json({ results });
@@ -98,7 +106,10 @@ app.post("/api/cluster/v2/ntfy/services", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const db = await clusterV2Database(), local = await getClusterNode();
-    if (!isTrustedTwin(db, local.id, response.locals.machineNodeId as string)) { sendError(response, 403, "ntfy servers are shared only between twins"); return; }
+    const sender = response.locals.machineNodeId as string;
+    const sharesCluster = listSharingMemberships(db, local.id).some(({ clusterId }) =>
+      listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === sender));
+    if (!isTrustedTwin(db, local.id, sender) && !sharesCluster) { sendError(response, 403, "ntfy servers can only be shared between twins or cluster members"); return; }
     response.status(201).json({ service: importNtfyService(sharedNtfyServiceSchema.parse(request.body)) });
   } catch (error) { next(error); }
 });
