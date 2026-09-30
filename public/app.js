@@ -22,6 +22,7 @@ import { initializeFocusUi } from "./app/focus-ui.js";
 import { openQuickNote, toggleQuickNotes } from "./app/quick-notes.js";
 import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
 import { state } from "./app/state.js";
+import { openUsageDashboard } from "./app/usage-dashboard.js";
 import "./app/state.js";
 import "./app/elements.js";
 import "./app/project-files.js";
@@ -176,6 +177,10 @@ if (!state.canvasPaneMode) {
       newKiroChat: () => { void startNewHarnessConversation("kiro").catch((error) => toast(error.message)); },
       quickNote: () => { void openQuickNote().catch((error) => toast(error.message)); },
       toggleNotes: toggleQuickNotes,
+      costs: () => {
+        const blocking = [...document.querySelectorAll("dialog[open]")].some((item) => item.id !== "usageDialog");
+        if (!blocking) openUsageDashboard();
+      },
     },
     openShortcutSettings: () => { void openSettings("shortcuts"); },
     openSpotlight,

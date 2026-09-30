@@ -107,8 +107,9 @@ test("every command has a default chord, and the defaults never collide", () => 
     assert.notEqual(normalizeChord(defaults[command]), null, `${command}'s default is a valid chord`);
     // One modifier pair everywhere is what lets a button badge name the key alone.
     assert.deepEqual(defaults[command].slice(0, 2), ["ctrl", "alt"], `${command} rides Control+Option`);
-    assert.equal(defaults[command].length, 3, `${command} is one chord, not a sequence`);
+    assert.equal(defaults[command].length, command === "costs" ? 4 : 3, `${command} is one chord, not a sequence`);
   }
+  assert.deepEqual(defaults.costs, ["ctrl", "alt", "shift", "C"]);
   const ids = Object.values(defaults).map(chordId);
   assert.equal(new Set(ids).size, ids.length, "no two defaults share one chord");
   assert.deepEqual(defaults.browser, ["ctrl", "alt", "B"]);
@@ -119,6 +120,12 @@ test("every command has a default chord, and the defaults never collide", () => 
   // The conversation keys ride their own modifiers, or Control+Option+3 would mean
   // both "page 3" and "the conversation holding 3".
   assert.notDeepEqual(DEFAULT_CANVAS_KEYMAP.base, ["ctrl", "alt"]);
+});
+
+test("a custom chord collision keeps the earlier command and unbinds costs", () => {
+  const keymap = normalizeCanvasKeymap({ version: 4, base: ["meta", "shift"], commands: { browser: ["ctrl", "alt", "shift", "C"], costs: ["ctrl", "alt", "shift", "C"] } });
+  assert.deepEqual(keymap.commands.browser, ["ctrl", "alt", "shift", "C"]);
+  assert.equal(keymap.commands.costs, null);
 });
 
 test("new command defaults never steal an existing custom binding", () => {

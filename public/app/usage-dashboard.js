@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { state } from "./state.js";
 import { confirmAction, toast } from "./shell.js";
 import { formatPlanPrice, formatUsageCost } from "./usage-format.js";
+import { renderUsageCharts } from "./usage-charts.js";
 
 const dialog = document.querySelector("#usageDialog");
 const filters = document.querySelector("#usageFilters");
@@ -15,8 +16,16 @@ const editor = document.querySelector("#subscriptionEditor");
 const planForm = document.querySelector("#subscriptionForm");
 const quotaRows = document.querySelector("#quotaRows");
 const refreshButton = document.querySelector("#usageRefresh");
+const charts = document.querySelector("#usageCharts");
+const pagination = document.querySelector("#usageConversationPagination");
 
 let requestGeneration = 0;
+let page = 1;
+let pollTimer = null;
+let hasSnapshot = false;
+let snapshotScope = "";
+let detections = [];
+let detectionError = "";
 let inventory = { projects: [], conversations: [], classifications: [] };
 let plans = [];
 let harnesses = [];
@@ -78,7 +87,7 @@ function updateInventory(data) {
     ...new Map([...current, ...incoming].map((item) => [item[key], item])).values(),
   ];
   inventory.projects = merge(inventory.projects, data.projects, "id");
-  inventory.conversations = merge(inventory.conversations, data.conversations, "conversationId");
+  inventory.conversations = data.conversations;
   inventory.classifications = [...new Set([
     ...inventory.classifications,
     ...data.breakdowns.classifications.map((item) => item.key).filter(Boolean),
@@ -112,8 +121,51 @@ function renderSummary(totals) {
     metric("Reasoning tokens", totals.reasoning.toLocaleString()),
   );
 }
-function renderTable(title,rows,names=new Map()){const s=element("section",undefined,"usage-breakdown");s.append(element("h4",title));const table=element("table"),head=element("tr");for(const label of [title.slice(0,-1),"Cost","Tokens","Requests","Tools"])head.append(element("th",label));table.append(element("thead"));table.tHead.append(head);const body=element("tbody");if(!rows.length){const c=element("td","No usage in this scope.");c.colSpan=5;const r=element("tr");r.append(c);body.append(r);}for(const item of rows){const r=element("tr"),name=names.get(item.key)||item.key||"Not classified";for(const v of [name,formatUsageCost(item.totals),item.totals.totalTokens.toLocaleString(),String(item.totals.requests),String(item.totals.toolCalls)])r.append(element("td",v));body.append(r);}table.append(body);s.append(table);return s;}
-function renderUsage(data){updateInventory(data);renderSummary(data.summary);const pn=new Map(data.projects.map(p=>[p.id,p.name])),cn=new Map(data.conversations.map(c=>[c.conversationId,c.title||c.conversationId]));const labels={projects:"Projects",conversations:"Conversations",classifications:"Existing labels",difficulties:"Classifier difficulties",models:"Models",days:"Days"};breakdowns.replaceChildren(...Object.entries(labels).map(([k,l])=>renderTable(l,data.breakdowns[k],k==="projects"?pn:k==="conversations"?cn:new Map())));notice.removeAttribute("role");const missing=data.summary.unavailableSessions||0,unpriced=Math.max(0,data.summary.requests-data.summary.pricedRequests);notice.className=missing||unpriced||data.summary.partial?"usage-warning":"";notice.textContent=missing||unpriced||data.summary.partial?`Partial coverage: ${missing} sessions unavailable; ${unpriced} requests unpriced.`:"";}
+function renderTable(title, rows, names = new Map()) {
+  const section = element("section", undefined, "usage-breakdown");
+  section.append(element("h4", title));
+  const table = element("table");
+  const head = element("tr");
+  for (const label of [title.slice(0, -1), "Cost", "Tokens", "Requests", "Tools"]) head.append(element("th", label));
+  const thead = element("thead");
+  thead.append(head);
+  table.append(thead);
+  const body = element("tbody");
+  for (const item of rows.slice(0, 20)) {
+    const row = element("tr");
+    const name = names.get(item.key) || item.key || "Not classified";
+    for (const value of [name, formatUsageCost(item.totals), item.totals.totalTokens.toLocaleString(), String(item.totals.requests), String(item.totals.toolCalls)]) row.append(element("td", value));
+    body.append(row);
+  }
+  if (!rows.length) {
+    const cell = element("td", "No usage in this scope."); cell.colSpan = 5;
+    const row = element("tr"); row.append(cell); body.append(row);
+  }
+  table.append(body); section.append(table); return section;
+}
+function renderUsage(data) {
+  hasSnapshot = true;
+  updateInventory(data); renderSummary(data.summary); renderUsageCharts(charts, data);
+  const projectNames = new Map(data.projects.map((item) => [item.id, item.name]));
+  const conversationNames = new Map(data.conversations.map((item) => [item.conversationId, item.title || item.conversationId]));
+  const labels = { projects: "Projects", conversations: "Conversations", classifications: "Existing labels", difficulties: "Classifier difficulties", models: "Models", days: "Days" };
+  const sections = Object.entries(labels).map(([key, label]) => {
+    const section = renderTable(label, data.breakdowns[key], key === "projects" ? projectNames : key === "conversations" ? conversationNames : new Map());
+    if (key === "conversations") { section.dataset.testid = "usage-conversations-table"; section.querySelector("h4").after(pagination); }
+    return section;
+  });
+  breakdowns.replaceChildren(...sections);
+  const paging = data.conversationPagination;
+  pagination.querySelector("span").textContent = paging.totalPages ? `Page ${paging.page} of ${paging.totalPages}` : "Page 0 of 0";
+  pagination.querySelector('[data-page="previous"]').disabled = paging.page <= 1;
+  pagination.querySelector('[data-page="next"]').disabled = !paging.totalPages || paging.page >= paging.totalPages;
+  page = paging.page;
+  notice.removeAttribute("role");
+  const missing = data.summary.unavailableSessions || 0;
+  const unpriced = Math.max(0, data.summary.requests - data.summary.pricedRequests);
+  notice.className = missing || unpriced || data.summary.partial ? "usage-warning" : "";
+  notice.textContent = data.coverage.error || (missing || unpriced || data.summary.partial ? `Partial coverage: ${missing} sessions unavailable; ${unpriced} requests unpriced.` : "");
+}
 function queryString() {
   const parameters = new URLSearchParams();
   for (const [key, value] of new FormData(filters)) {
@@ -121,22 +173,31 @@ function queryString() {
   }
   return parameters.toString();
 }
-async function loadUsage() {
+function stopPolling(){if(pollTimer)clearTimeout(pollTimer);pollTimer=null;}
+async function loadUsage({ polling = false } = {}) {
+  stopPolling();
+  const scope = queryString();
+  if (scope !== snapshotScope) { hasSnapshot = false; snapshotScope = scope; }
   const generation = ++requestGeneration;
-  status.textContent = "Loading usage…";
-  notice.className = "";
-  notice.removeAttribute("role");
-  notice.textContent = "";
-  summary.replaceChildren(element("p", "Loading totals…"));
-  breakdowns.replaceChildren(element("p", "Loading breakdowns…"));
+  status.textContent = hasSnapshot ? "Updating usage…" : "Loading usage…";
+  if (!hasSnapshot) {
+    notice.className = "";
+    notice.removeAttribute("role");
+    notice.textContent = "";
+    summary.replaceChildren(element("p", "Loading totals…"));
+    breakdowns.replaceChildren(element("p", "Loading breakdowns…"));
+  }
   refreshButton.disabled = true;
   try {
-    const data = await api(`/api/usage?${queryString()}`, {
+    const parameters = new URLSearchParams(queryString()); parameters.set("page", String(page)); parameters.set("pageSize", "20"); if(polling)parameters.set("refresh","false");
+    const data = await api(`/api/usage?${parameters}`, {
       signal: AbortSignal.timeout(20000),
     });
     if (generation !== requestGeneration) return;
     renderUsage(data);
-    status.textContent = `Usage refreshed ${new Date(data.coverage.refreshedAt).toLocaleString()}`;
+    status.textContent = data.coverage.refreshing ? "Refreshing transcripts in background…" : data.coverage.refreshedAt ? `Usage refreshed ${new Date(data.coverage.refreshedAt).toLocaleString()}` : "Showing saved usage; first transcript refresh pending";
+    stopPolling();
+    if (dialog.open && !document.hidden && data.coverage.refreshing) pollTimer=setTimeout(()=>void loadUsage({polling:true}),2000);
   } catch (error) {
     if (generation !== requestGeneration) return;
     const guidance = error.name === "TimeoutError"
@@ -145,13 +206,16 @@ async function loadUsage() {
     notice.className = "usage-error";
     notice.setAttribute("role", "alert");
     notice.textContent = guidance;
-    summary.replaceChildren(element("p", "Usage totals unavailable. Select Refresh usage to try again."));
-    breakdowns.replaceChildren(element("p", "Usage breakdowns unavailable. Select Refresh usage to try again."));
+    if (!hasSnapshot) {
+      summary.replaceChildren(element("p", "Usage totals unavailable. Select Refresh usage to try again."));
+      breakdowns.replaceChildren(element("p", "Usage breakdowns unavailable. Select Refresh usage to try again."));
+    }
     status.textContent = "Usage unavailable";
   } finally {
     if (generation === requestGeneration) refreshButton.disabled = false;
   }
 }
+async function loadDetections(){try{detections=(await api("/api/subscription-usage/detected")).detections||[];detectionError="";renderPlans();}catch(error){detections=[];detectionError=`Detection unavailable: ${error.message}`;renderPlans();}}
 async function loadPlans() {
   planStatus.textContent = "Loading subscription prices…";
   try {
@@ -198,7 +262,7 @@ function openEditor(plan, harness) {
   }
   planForm.elements.harnessId.focus();
 }
-function planCard(plan,label){const card=element("article",undefined,"subscription-card");card.dataset.testid="subscription-card";card.append(element("h4",`${plan.planName} · ${plan.accountLabel}`),element("strong",formatPlanPrice(plan.price),"subscription-price"),element("p",`${label}${plan.provider?` · ${plan.provider}`:""} · Manual price`));if(!plan.quotaWindows.length)card.append(element("p","No manual quota snapshot. Automatic quota reporting unavailable."));for(const q of plan.quotaWindows){const stale=Date.now()-new Date(q.capturedAt).getTime()>3600000||(q.resetsAt&&new Date(q.resetsAt)<new Date());card.append(element("p",`${q.label}: ${q.used??"unknown"} of ${q.limit??"unknown"} ${q.unit}; ${q.remaining??"unknown"} remaining · Manual snapshot ${new Date(q.capturedAt).toLocaleString()}${q.resetsAt?` · resets ${new Date(q.resetsAt).toLocaleString()}`:""}${stale?" · stale":""}`));}const edit=element("button","Edit","ghost");edit.type="button";edit.dataset.testid="subscription-edit";edit.addEventListener("click",()=>openEditor(plan));const remove=element("button","Delete","ghost danger");remove.type="button";remove.dataset.testid="subscription-delete";remove.addEventListener("click",()=>void deletePlan(plan).catch(e=>toast(e.message)));card.append(edit,remove);return card;}
+function planCard(plan,label){const card=element("article",undefined,"subscription-card");card.dataset.testid="subscription-card";card.append(element("h4",`${plan.planName} · ${plan.accountLabel}`),element("strong",formatPlanPrice(plan.price),"subscription-price"),element("p",`${label}${plan.provider?` · ${plan.provider}`:""} · Price override`));if(!plan.quotaWindows.length)card.append(element("p","No manual quota snapshot. Automatic quota reporting unavailable."));for(const q of plan.quotaWindows){const stale=Date.now()-new Date(q.capturedAt).getTime()>3600000||(q.resetsAt&&new Date(q.resetsAt)<new Date());card.append(element("p",`${q.label}: ${q.used??"unknown"} of ${q.limit??"unknown"} ${q.unit}; ${q.remaining??"unknown"} remaining · Manual snapshot ${new Date(q.capturedAt).toLocaleString()}${q.resetsAt?` · resets ${new Date(q.resetsAt).toLocaleString()}`:""}${stale?" · stale":""}`));}const edit=element("button","Edit","ghost");edit.type="button";edit.dataset.testid="subscription-edit";edit.addEventListener("click",()=>openEditor(plan));const remove=element("button","Delete","ghost danger");remove.type="button";remove.dataset.testid="subscription-delete";remove.addEventListener("click",()=>void deletePlan(plan).catch(e=>toast(e.message)));card.append(edit,remove);return card;}
 function renderPlans() {
   subscriptionList.replaceChildren();
   const groups = harnesses.map((harness) => ({ id: harnessId(harness), label: harnessLabel(harness) }));
@@ -211,15 +275,25 @@ function renderPlans() {
   for (const group of groups) {
     const section = element("section", undefined, "subscription-harness-group");
     section.append(element("h4", group.label));
+    const detected=detections.find(item=>item.harnessId===group.id);
+    if (detected || detectionError) {
+      const report = element("article", undefined, "subscription-detected");
+      const available = detected?.status === "detected";
+      report.append(
+        element("strong", available ? "Detected from harness" : "Detection unavailable"),
+        element("p", available ? `${detected.planName}${detected.authMethod ? ` · ${detected.authMethod}` : ""}. Billed price unavailable.` : detected?.message || detectionError),
+      );
+      section.append(report);
+    }
     const matching = plans.filter((plan) => (plan.harnessId ?? null) === group.id);
     if (matching.length) {
       section.append(...matching.map((plan) => planCard(plan, group.label)));
     } else {
-      section.append(element("p", "Not configured"));
-      const setPrice = element("button", "Set price", "ghost");
+      if (!detected || detected.status === "detected") section.append(element("p", "Not configured"));
+      const setPrice = element("button", detected?.status==="detected" ? "Add price override" : "Set price", "ghost");
       setPrice.type = "button";
       setPrice.dataset.testid = "subscription-set-price";
-      setPrice.addEventListener("click", () => openEditor(null, group.id));
+      setPrice.addEventListener("click", () => { openEditor(null, group.id); if(detected?.planName)planForm.elements.planName.value=detected.planName; });
       section.append(setPrice);
     }
     subscriptionList.append(section);
@@ -244,21 +318,28 @@ document.querySelectorAll("[data-usage-open]").forEach((button) => {
   button.addEventListener("click", () => openUsageDashboard());
 });
 document.querySelector("[data-testid='usage-close']").addEventListener("click", () => dialog.close());
+dialog.addEventListener("close",()=>{stopPolling();requestGeneration++;});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { stopPolling(); requestGeneration++; }
+  else if (dialog.open && hasSnapshot) void loadUsage({ polling: true });
+});
+pagination.addEventListener("click",event=>{const direction=event.target.closest("button")?.dataset.page;if(!direction)return;page=Math.max(1,page+(direction==="next"?1:-1));void loadUsage();});
 document.querySelector("#subscriptionAdd").addEventListener("click", () => openEditor(null));
 document.querySelector("#subscriptionCancel").addEventListener("click", () => {
   editor.open = false;
 });
 document.querySelector("#quotaAdd").addEventListener("click", () => quotaRows.append(quotaRow()));
-filters.addEventListener("change", loadUsage);
+filters.addEventListener("change", () => { page=1; void loadUsage(); });
 filters.addEventListener("submit", (event) => {
   event.preventDefault();
+  page = 1;
   void loadUsage();
 });
 refreshButton.addEventListener("click", async () => {
   refreshButton.disabled = true;
   try {
     await api("/api/usage/refresh", { method: "POST" });
-    await loadUsage();
+    await loadUsage({polling:true});
   } catch (error) {
     toast(error.message);
   } finally {
@@ -277,5 +358,7 @@ export function openUsageDashboard(initialFilters = {}) {
     planStatus.textContent = `Harnesses unavailable: ${error.message}`;
   });
   void loadPlans();
+  void loadDetections();
+  page=1;
   void loadUsage();
 }

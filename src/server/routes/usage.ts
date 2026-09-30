@@ -2,12 +2,13 @@ import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { getProject } from "../../store.js";
 import { deleteSubscriptionPlan, listSubscriptionPlans, saveSubscriptionPlan, subscriptionPlanInputSchema } from "../../subscription-usage.js";
-import { usageBreakdown, usageConversations, usageTotals } from "../../usage-ledger.js";
+import { usageBreakdown, usageConversationPage, usageConversations, usageInventoryCoverage, usageTotals } from "../../usage-ledger.js";
+import { collectSubscriptionDetections } from "../../subscription-detection.js";
 import type { UsageFilters } from "../../usage-types.js";
 import { sendError } from "../http-auth.js";
 import { projectsWithSharedNames } from "../projects.js";
 import { app } from "../state.js";
-import { refreshAllUsage } from "../usage.js";
+import { requestUsageRefresh, usageRefreshStatus } from "../usage.js";
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const parsed = Date.parse(`${value}T00:00:00.000Z`);
@@ -19,6 +20,9 @@ const querySchema = z.object({
   modelId: z.string().min(1).max(300).optional(), provider: z.string().min(1).max(200).optional(),
   classification: z.string().min(1).max(80).optional(),
   difficulty: z.string().regex(/^(?:[1-9]|10|not-classified)$/).optional(),
+  page: z.coerce.number().int().positive().max(1_000_000).default(1),
+  pageSize: z.coerce.number().int().positive().max(50).default(20),
+  refresh: z.enum(["true", "false"]).default("true"),
 }).strict().refine((value) => !value.from || !value.to || value.from <= value.to, { message: "from must not be after to" });
 type UsageQuery = z.infer<typeof querySchema>;
 
@@ -30,25 +34,32 @@ async function validatedQuery(raw: unknown): Promise<UsageQuery> {
   return { ...query, projectId: project.id };
 }
 
-async function dashboard(query: UsageQuery) {
-  const projects = await projectsWithSharedNames(false);
+async function dashboard(query: UsageQuery, suppliedProjects?: Awaited<ReturnType<typeof projectsWithSharedNames>>) {
+  const projects = suppliedProjects ?? await projectsWithSharedNames(false);
   const ids = projects.map((project) => project.id);
   if (query.projectId && !ids.includes(query.projectId)) throw Object.assign(new Error("Project not found"), { statusCode: 404 });
   const end = query.to ? new Date(`${query.to}T00:00:00.000Z`) : undefined;
   if (end) end.setUTCDate(end.getUTCDate() + 1);
+  const { page: _page, pageSize: _pageSize, refresh: _refresh, ...filterQuery } = query;
   const filters: UsageFilters = {
-    projectIds: ids, ...query,
+    projectIds: ids, ...filterQuery,
     from: query.from ? `${query.from}T00:00:00.000Z` : undefined,
     to: end?.toISOString(),
   };
+  let conversationPage = usageConversationPage(filters, query.page, query.pageSize);
+  const totalPages = Math.max(1, Math.ceil(conversationPage.total / query.pageSize));
+  const page = Math.min(query.page, totalPages);
+  if (page !== query.page) conversationPage = usageConversationPage(filters, page, query.pageSize);
+  const visibleConversationIds = [...new Set([...conversationPage.rows.map((row) => row.key), ...(query.conversationId ? [query.conversationId] : [])])];
   return {
     summary: usageTotals(filters),
     breakdowns: {
-      projects: usageBreakdown(filters, "project"), conversations: usageBreakdown(filters, "conversation"),
+      projects: usageBreakdown(filters, "project"), conversations: conversationPage.rows,
       classifications: usageBreakdown(filters, "classification"), difficulties: usageBreakdown(filters, "difficulty"),
       models: usageBreakdown(filters, "model"), days: usageBreakdown(filters, "day"),
     },
-    conversations: usageConversations(filters.projectId ? [filters.projectId] : ids),
+    conversations: usageConversations(filters.projectId ? [filters.projectId] : ids, visibleConversationIds),
+    conversationPagination: { page, pageSize: query.pageSize, total: conversationPage.total, totalPages: conversationPage.total ? totalPages : 0 },
     projects: projects.map(({ id, name }) => ({ id, name })),
   };
 }
@@ -56,15 +67,21 @@ async function dashboard(query: UsageQuery) {
 app.get(["/api/usage", "/api/usage/summary"], async (request, response, next) => {
   try {
     const query = await validatedQuery(request.query);
-    const coverage = await refreshAllUsage();
-    response.json({ ...await dashboard(query), coverage: { scope: "observed transcripts and replicated usage", ...coverage }, subscriptions: listSubscriptionPlans((response.locals.authSession as AuthSession).username) });
+    const projects = await projectsWithSharedNames(false);
+    const result = await dashboard(query, projects);
+    const savedCoverage = usageInventoryCoverage(result.projects.map((project) => project.id));
+    // Queue only after every saved-data read. request() marks pending synchronously,
+    // while its setImmediate guarantees discovery cannot race this snapshot.
+    if (query.refresh === "true") requestUsageRefresh();
+    response.json({ ...result, coverage: { scope: "observed transcripts and replicated usage", ...savedCoverage, ...usageRefreshStatus() }, subscriptions: listSubscriptionPlans((response.locals.authSession as AuthSession).username) });
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
     if ((error as { statusCode?: number }).statusCode === 404) { sendError(response, 404, "Project not found"); return; }
     next(error);
   }
 });
-app.post("/api/usage/refresh", async (_request, response, next) => { try { response.json(await refreshAllUsage(true)); } catch (error) { next(error); } });
+app.post("/api/usage/refresh", (_request, response) => { requestUsageRefresh(true); response.status(202).json({ ...usageRefreshStatus(), accepted: true }); });
+app.get("/api/subscription-usage/detected", async (_request, response, next) => { try { response.json({ detections: await collectSubscriptionDetections() }); } catch (error) { next(error); } });
 app.get("/api/subscription-usage", (_request, response) => response.json({ plans: listSubscriptionPlans((response.locals.authSession as AuthSession).username), automaticQuotaReporting: "unavailable" }));
 app.put("/api/subscription-usage", (request, response, next) => {
   try { response.json(saveSubscriptionPlan((response.locals.authSession as AuthSession).username, subscriptionPlanInputSchema.parse(request.body))); }

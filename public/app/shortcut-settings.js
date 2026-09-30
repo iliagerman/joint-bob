@@ -63,6 +63,7 @@ const COMMAND_ROWS = [
   { command: "focusUp", label: "Canvas: go to the conversation above" },
   { command: "focusDown", label: "Canvas: go to the conversation below" },
   ...[..."123456789"].map((digit, index) => ({ command: `page${index + 1}`, label: `Canvas: jump to page ${digit}` })),
+  { command: "costs", label: "Open costs and subscriptions" },
 ];
 const rowTestid = (command) => `canvas-keymap-${command.replace(/[A-Z0-9]/g, (character) => `-${character.toLowerCase()}`)}-input`;
 

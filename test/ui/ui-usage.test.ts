@@ -98,6 +98,123 @@ test("usage dashboard edits subscription price and manual quota on desktop and m
   assert.deepEqual(errors, []);
 });
 
+test("usage dashboard renders charts, paginates, remains responsive, and preserves snapshots", { timeout: 240_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await login(page, environment, node.url);
+
+  const conversations = Array.from({ length: 45 }, (_, index) => ({
+    conversationId: `conversation-${index + 1}`,
+    title: `Conversation ${index + 1}`,
+  }));
+  const totals = (cost: number, requests = 2) => ({
+    apiCostUsd: cost, partial: true, input: 100, output: 50, cacheRead: 10,
+    cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteUnknown: 0, totalTokens: 160,
+    pricedRequests: requests, requests, toolCalls: 1, toolErrors: 0, reasoning: 5,
+    unavailableSessions: 0,
+  });
+  let updated = false;
+  let gateRefresh = false;
+  let releaseRefresh: (() => void) | undefined;
+  let usageGets = 0;
+  const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+
+  await page.route("**/api/usage**", async (route: any) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/usage/refresh") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      return;
+    }
+    if (request.method() !== "GET" || url.pathname !== "/api/usage") return route.continue();
+    usageGets += 1;
+    if (gateRefresh) { await refreshGate; gateRefresh = false; updated = true; }
+    const requestedPage = Number(url.searchParams.get("page") || 1);
+    const start = (requestedPage - 1) * 20;
+    const visible = conversations.slice(start, start + 20);
+    const cost = updated ? 30 : 12;
+    const body = {
+      projects: [{ id: "project-internal-id", name: "Readable Project" }],
+      conversations: visible,
+      summary: totals(cost),
+      breakdowns: {
+        projects: [{ key: "project-internal-id", totals: totals(cost) }],
+        conversations: visible.map((item, index) => ({ key: item.conversationId, totals: totals(index + 1, 1) })),
+        classifications: [{ key: "feature", totals: totals(3) }],
+        difficulties: [{ key: "medium", totals: totals(3) }],
+        models: [{ key: "model-a", totals: totals(10) }, { key: "model-b", totals: totals(2) }],
+        days: [{ key: "2023-01-02", totals: totals(2) }, { key: "2025-06-15", totals: totals(8) }],
+      },
+      conversationPagination: { page: requestedPage, pageSize: 20, total: 45, totalPages: 3 },
+      coverage: { error: "", refreshing: updated, refreshedAt: "2025-06-16T12:00:00.000Z" },
+    };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+
+  const opener = page.getByTestId("usage-open");
+  assert.ok(await opener.getAttribute("aria-label"), "icon opener has an accessible name");
+  assert.equal((await opener.textContent())?.includes("Costs"), false, "icon opener has no visible Costs text");
+  assert.equal(await opener.locator("svg").count(), 1);
+  await page.keyboard.press("Control+Alt+Shift+C");
+  const dialog = page.getByTestId("usage-dialog");
+  await dialog.waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.querySelectorAll(".usage-chart-column").length === 2);
+
+  const donutBox = await dialog.locator(".usage-donut").boundingBox();
+  assert.ok(donutBox && donutBox.width > 0 && donutBox.height > 0);
+  const heights = await dialog.locator(".usage-chart-column").evaluateAll((bars: HTMLElement[]) => bars.map((bar) => bar.getBoundingClientRect().height));
+  assert.ok(heights.every((height) => height > 0));
+  assert.notEqual(heights[0], heights[1], "different day costs produce different bar heights");
+  await dialog.getByText("Readable Project", { exact: true }).first().waitFor();
+  assert.equal(await dialog.getByText("project-internal-id", { exact: true }).count(), 0);
+
+  const conversationSection = page.getByTestId("usage-conversations-table");
+  const rows = () => conversationSection.locator("tbody tr");
+  assert.equal(await rows().count(), 20);
+  const pagination = page.locator("#usageConversationPagination");
+  assert.equal(await conversationSection.locator("#usageConversationPagination").count(), 1, "pagination is inside conversations");
+  await pagination.locator('[data-page="next"]').click();
+  await pagination.getByText("Page 2 of 3").waitFor();
+  assert.equal(await rows().count(), 20);
+  await pagination.locator('[data-page="next"]').click();
+  await pagination.getByText("Page 3 of 3").waitFor();
+  assert.equal(await rows().count(), 5);
+  await pagination.locator('[data-page="previous"]').click();
+  await pagination.getByText("Page 2 of 3").waitFor();
+  assert.equal(await rows().count(), 20);
+
+  for (const viewport of [{ width: 390, height: 520 }, { width: 520, height: 700 }]) {
+    await page.setViewportSize(viewport);
+    const card = dialog.locator(".usage-card");
+    const cardBox = await card.boundingBox();
+    assert.ok(cardBox && cardBox.x >= 0 && cardBox.x + cardBox.width <= viewport.width);
+    for (const chart of await dialog.locator(".usage-chart").all()) {
+      const box = await chart.boundingBox();
+      assert.ok(box && cardBox && box.x >= cardBox.x && box.x + box.width <= cardBox.x + cardBox.width);
+    }
+    assert.equal(await card.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth), true);
+  }
+
+  await page.setViewportSize({ width: 1200, height: 800 });
+  gateRefresh = true;
+  await page.locator("#usageRefresh").click();
+  await page.getByText("Updating usage…", { exact: true }).waitFor();
+  await dialog.getByText("$12 · partial", { exact: true }).first().waitFor();
+  if (page.clock?.install) await page.clock.install();
+  releaseRefresh?.();
+  await dialog.getByText("$30 · partial", { exact: true }).first().waitFor();
+  await dialog.evaluate((element: HTMLDialogElement) => {
+    (window as any).__usageCloseObserved = false;
+    element.addEventListener("close", () => { (window as any).__usageCloseObserved = true; }, { once: true });
+  });
+  await page.getByTestId("usage-close").click();
+  await page.waitForFunction(() => (window as any).__usageCloseObserved === true);
+  if (page.clock?.fastForward) await page.clock.fastForward(0);
+  const requestsAtClose = usageGets;
+  if (page.clock?.fastForward) await page.clock.fastForward(10_000);
+  await page.waitForFunction(() => true);
+  assert.equal(usageGets, requestsAtClose, "closing the dashboard stops polling");
+});
+
 test("subscription prices save while a real usage read is blocked", { timeout: 240_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await login(page, environment, node.url);

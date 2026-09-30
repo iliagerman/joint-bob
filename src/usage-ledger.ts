@@ -223,6 +223,16 @@ export function usageTotals(filters: UsageFilters): UsageTotals {
   }
   return totals;
 }
+export interface UsageConversationPage { rows: Array<{ key: string; totals: UsageTotals }>; total: number }
+export function usageConversationPage(filters: UsageFilters, page: number, pageSize: number): UsageConversationPage {
+  const db = usageDatabase();
+  const condition = where(db, filters);
+  const from = `${source(db, filters, "conversation")} WHERE 1=1${condition.sql}`;
+  const count = db.prepare(`SELECT COUNT(*) total FROM (SELECT e.conversation_id FROM ${from} GROUP BY e.conversation_id)`).get(...condition.args) as { total: number };
+  const rows = db.prepare(`SELECT e.conversation_id key,${aggregate} FROM ${from} GROUP BY key ORDER BY cost DESC,key ASC LIMIT ? OFFSET ?`)
+    .all(...condition.args, pageSize, (page - 1) * pageSize) as unknown as Array<Record<string, number | null> & { key: string }>;
+  return { rows: rows.map((row) => ({ key: row.key, totals: totalsRow(row) })), total: Number(count.total) };
+}
 export function usageBreakdown(filters: UsageFilters, dimension: UsageDimension): Array<{ key: string; totals: UsageTotals }> {
   const db = usageDatabase();
   const condition = where(db, filters);
@@ -261,20 +271,22 @@ export function upsertUsageInventory(value: { projectId: string; conversationId:
   // The row may have moved between conversations, so drop the whole project's session totals.
   if (Number(changes)) invalidateTotals([{ projectId: value.projectId, sessionId: value.sessionId, engine: value.engine }]);
 }
-export function usageConversations(projectIds: string[]): unknown[] {
-  if (!projectIds.length) return [];
+export function usageConversations(projectIds: string[], conversationIds?: string[]): unknown[] {
+  if (!projectIds.length || conversationIds && !conversationIds.length) return [];
   const db = usageDatabase();
   const inventoryProject = canonicalProject(db, "i");
   const eventProject = canonicalProject(db, "e");
   const placeholders = projectIds.map(() => "?").join(",");
+  const conversationClause = conversationIds ? ` AND i.conversation_id IN (${conversationIds.map(() => "?").join(",")})` : "";
+  const eventConversationClause = conversationIds ? ` AND e.conversation_id IN (${conversationIds.map(() => "?").join(",")})` : "";
   const names = hasNames(db)
     ? "COALESCE((SELECT name FROM name_overrides WHERE scope='session_classifications' AND key=u.conversationId),'Unclassified')"
     : "COALESCE(max(u.classification),'Unclassified')";
   return db.prepare(`WITH u AS (
-    SELECT ${inventoryProject} projectId,i.conversation_id conversationId,i.title,i.classification,i.usage_status usageStatus FROM usage_inventory i WHERE ${inventoryProject} IN (${placeholders})
+    SELECT ${inventoryProject} projectId,i.conversation_id conversationId,i.title,i.classification,i.usage_status usageStatus FROM usage_inventory i WHERE ${inventoryProject} IN (${placeholders})${conversationClause}
     UNION ALL
-    SELECT ${eventProject},e.conversation_id,e.conversation_id,NULL,json_extract(e.payload,'$.usageStatus') FROM model_usage_events e WHERE ${eventProject} IN (${placeholders})
-  ) SELECT u.projectId,u.conversationId,COALESCE(max(CASE WHEN u.title!=u.conversationId THEN u.title END),u.conversationId) title,${names} classification,min(u.usageStatus) usageStatus FROM u GROUP BY u.projectId,u.conversationId ORDER BY title`).all(...projectIds, ...projectIds);
+    SELECT ${eventProject},e.conversation_id,e.conversation_id,NULL,json_extract(e.payload,'$.usageStatus') FROM model_usage_events e WHERE ${eventProject} IN (${placeholders})${eventConversationClause}
+  ) SELECT u.projectId,u.conversationId,COALESCE(max(CASE WHEN u.title!=u.conversationId THEN u.title END),u.conversationId) title,${names} classification,min(u.usageStatus) usageStatus FROM u GROUP BY u.projectId,u.conversationId ORDER BY title`).all(...projectIds, ...(conversationIds ?? []), ...projectIds, ...(conversationIds ?? []));
 }
 export function applyUsageEvent(db: DatabaseSync, event: ReplicationEvent): void {
   if (event.entityType !== "model.usage" || event.operation !== "upsert") throw new Error("Unsupported usage replication event");

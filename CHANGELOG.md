@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Costs dashboard now displays charts for project and model usage, pages conversations 20 at a time, detects your subscription plan from Claude, and refreshes in the background while the dashboard stays open.
+
 ## 2.13.22 — 2026-09-30
 
 - Git Review now orders changed files by importance and marks their priority in the list.
