@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Git review can now browse GitHub pull requests and CI pipeline runs directly with comments, approvals, and job logs.
+
 ## 2.18.0 — 2026-09-30
 
 - Scheduled tasks can now run on selected days of the week and skip during configured quiet hours.

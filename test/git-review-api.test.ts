@@ -135,6 +135,15 @@ test("git review endpoints report status, diff, history, and commit for a projec
     });
     assert.equal(outOfScope.status, 409, "conversation review rejects paths outside a fresh agent-declared list");
 
+    const invalidGithub = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/github?op=run&id=oops`, { headers });
+    assert.equal(invalidGithub.status, 400);
+    const noGithubRemote = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/github?op=pulls`, { headers });
+    assert.equal(noGithubRemote.status, 400);
+    const invalidAction = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/github`, { method: "POST", headers, body: JSON.stringify({ action: "close", number: 0 }) });
+    assert.equal(invalidAction.status, 400);
+    const unsignedGithub = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/github?op=pulls`);
+    assert.equal(unsignedGithub.status, 401);
+
     const untrackedResponse = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/diff?path=${encodeURIComponent("fresh.ts")}&untracked=1`, { headers });
     assert.equal(untrackedResponse.status, 200);
     assert.match((await jsonBody(untrackedResponse) as { patch: string }).patch, /\+export const fresh = true;/);

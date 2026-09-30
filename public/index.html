@@ -1298,9 +1298,11 @@
           <button class="git-review-tab is-active" id="gitReviewTabChanges" type="button" role="tab" aria-selected="true" data-git-tab="changes" data-testid="git-review-tab-changes">Changes</button>
           <button class="git-review-tab" id="gitReviewTabHistory" type="button" role="tab" aria-selected="false" data-git-tab="history" data-testid="git-review-tab-history">History</button>
           <button class="git-review-tab" id="gitReviewTabReviews" type="button" role="tab" aria-selected="false" data-git-tab="reviews" data-testid="git-review-tab-reviews">Reviews</button>
+          <button class="git-review-tab" id="gitReviewTabPulls" type="button" role="tab" aria-selected="false" data-git-tab="pulls" data-testid="git-review-tab-pulls">Pull requests</button>
+          <button class="git-review-tab" id="gitReviewTabPipelines" type="button" role="tab" aria-selected="false" data-git-tab="pipelines" data-testid="git-review-tab-pipelines">Pipelines</button>
         </div>
         <p class="git-review-ambiguity" id="gitReviewAmbiguity" hidden data-testid="git-review-ambiguity"></p>
-        <div class="git-review-toolbar">
+        <div class="git-review-toolbar" id="gitReviewToolbar">
           <label><input id="gitReviewAllChanges" type="checkbox" data-testid="git-review-all-changes"> Include other pending changes</label>
           <label><input id="gitReviewFocus" type="checkbox" data-testid="git-review-focus"> Focus mode</label>
           <button class="ghost compact" id="gitReviewRefreshScope" type="button" data-testid="git-review-refresh-scope">Refresh conversation files</button>
@@ -1311,7 +1313,7 @@
           </div>
           <button class="primary compact" id="gitReviewGenerate" type="button" data-testid="git-review-generate">Generate review comments</button>
         </div>
-        <div class="git-review-body">
+        <div class="git-review-body" id="gitReviewBody">
           <aside class="git-review-list" id="gitReviewList" data-testid="git-review-list" aria-label="Changed files and commits"></aside>
           <section class="git-review-detail">
             <div class="git-review-diff-head">
@@ -1324,6 +1326,7 @@
             </div>
           </section>
         </div>
+        <section class="git-hosting" id="gitReviewHosting" aria-label="GitHub pull requests and pipelines" hidden></section>
         <p class="git-review-status" id="gitReviewStatus" role="status" aria-live="polite"></p>
         <form class="git-review-ask" id="gitReviewAskForm" hidden data-testid="git-review-ask-form">
           <div class="git-review-ask-head">

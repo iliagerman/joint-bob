@@ -1,4 +1,5 @@
 import { harnessOption } from "../harness-metadata.js";
+import { loadGitHosting, resetGitHosting } from "./git-hosting.js";
 import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
@@ -55,6 +56,7 @@ export async function openGitReview(conversationId = null) {
   git.reviewerTouched = false;
   git.guide = null;
   git.scopeRequest += 1;
+  resetGitHosting();
   elements.gitReviewAllChanges.checked = !conversationId;
   elements.gitReviewAllChanges.disabled = !conversationId;
   elements.gitReviewRefreshScope.hidden = !conversationId;
@@ -76,11 +78,17 @@ export async function openGitReview(conversationId = null) {
 
 function applyTab(tab) {
   git.tab = tab;
-  for (const [name, button] of [["changes", elements.gitReviewTabChanges], ["history", elements.gitReviewTabHistory], ["reviews", elements.gitReviewTabReviews]]) {
+  for (const [name, button] of [["changes", elements.gitReviewTabChanges], ["history", elements.gitReviewTabHistory], ["reviews", elements.gitReviewTabReviews], ["pulls", elements.gitReviewTabPulls], ["pipelines", elements.gitReviewTabPipelines]]) {
     const active = name === tab;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-selected", String(active));
   }
+  const hosting = tab === "pulls" || tab === "pipelines";
+  if (!hosting) resetGitHosting();
+  elements.gitReviewToolbar.hidden = hosting;
+  elements.gitReviewBody.hidden = hosting;
+  elements.gitReviewHosting.hidden = !hosting;
+  elements.gitReviewDialog.querySelector(".git-review-card").classList.toggle("is-hosting", hosting);
   // Agent-declared file lists are useful scope, not proof of file ownership.
   const showAmbiguity = Boolean(git.conversationId) && tab === "changes";
   elements.gitReviewAmbiguity.hidden = !showAmbiguity;
@@ -90,6 +98,7 @@ function applyTab(tab) {
 async function loadCurrentTab() {
   if (git.tab === "changes") return loadChanges();
   if (git.tab === "history") return loadHistory();
+  if (git.tab === "pulls" || git.tab === "pipelines") return loadGitHosting(git.tab, gitApiUrl);
   return loadReviews();
 }
 
@@ -548,7 +557,7 @@ elements.chatGitButton.addEventListener("click", () => {
 });
 elements.gitReviewCloseButton.addEventListener("click", () => elements.gitReviewDialog.close());
 elements.gitReviewDialog.addEventListener("close", () => { git.scopeRequest += 1; git.selection = null; git.thread = null; });
-for (const button of [elements.gitReviewTabChanges, elements.gitReviewTabHistory, elements.gitReviewTabReviews]) {
+for (const button of [elements.gitReviewTabChanges, elements.gitReviewTabHistory, elements.gitReviewTabReviews, elements.gitReviewTabPulls, elements.gitReviewTabPipelines]) {
   button.addEventListener("click", () => { applyTab(button.dataset.gitTab); elements.gitReviewAskForm.hidden = true; void loadCurrentTab(); });
 }
 elements.gitReviewAskButton.addEventListener("click", () => { void openAsk(); });

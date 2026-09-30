@@ -20,6 +20,8 @@ import {
   type GitReviewSelection,
 } from "../../git-review-threads.js";
 import { getProject } from "../../store.js";
+import { genericSecretEnvironment } from "../../secrets.js";
+import { createGitHubReview } from "../github-review.js";
 import { listTasks } from "../../tasks.js";
 import { sendError } from "../http-auth.js";
 import { GitReviewRunError, runGitReview } from "../git-review-run.js";
@@ -107,6 +109,78 @@ function handleGitError(response: Response, error: unknown, next: (error?: unkno
   if (error instanceof GitReviewError || error instanceof GitReviewRunError) { sendError(response, error.status, error.message); return; }
   next(error);
 }
+
+// ---- GitHub pull requests and Actions ----
+
+const githubQuery = z.object({
+  op: z.enum(["pulls", "pull", "runs", "run", "log"]),
+  state: z.enum(["open", "closed"]).optional(),
+  page: z.coerce.number().int().min(1).max(1000).optional(),
+  id: z.coerce.number().int().positive().optional(),
+});
+const githubAction = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("comment"), number: z.number().int().positive(), body: z.string().trim().min(1).max(65536) }).strict(),
+  z.object({ action: z.literal("review"), number: z.number().int().positive(), event: z.enum(["APPROVE", "REQUEST_CHANGES"]), body: z.string().max(65536) }).strict(),
+  z.object({ action: z.literal("close"), number: z.number().int().positive() }).strict(),
+]);
+
+async function githubClient(projectId: string, taskId?: string) {
+  const cwd = await reviewCwd(projectId, taskId);
+  const secrets = genericSecretEnvironment(projectId);
+  return createGitHubReview(cwd, secrets.GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN);
+}
+
+async function githubRead(projectId: string, taskId: string | undefined, query: Record<string, unknown>) {
+  const parsed = githubQuery.safeParse(query);
+  if (!parsed.success) throw new GitReviewError(400, "Invalid GitHub request");
+  const { op, id, page = 1, state = "open" } = parsed.data;
+  const github = await githubClient(projectId, taskId);
+  if (op === "pulls") return { repository: github.repository, pulls: await github.pulls(state, page) };
+  if (op === "runs") return { repository: github.repository, runs: await github.runs(page) };
+  if (!id) throw new GitReviewError(400, "GitHub item ID required");
+  if (op === "pull") return github.pull(id);
+  if (op === "run") return github.run(id);
+  return github.log(id);
+}
+
+async function githubWrite(projectId: string, taskId: string | undefined, body: unknown) {
+  const parsed = githubAction.safeParse(body);
+  if (!parsed.success) throw new GitReviewError(400, "Invalid GitHub action");
+  const github = await githubClient(projectId, taskId);
+  const action = parsed.data;
+  if (action.action === "comment") return github.comment(action.number, action.body);
+  if (action.action === "close") return github.close(action.number);
+  return github.review(action.number, action.event, action.body);
+}
+
+app.get("/api/cluster/git/github", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    response.json(await githubRead(queryString(request, "projectId"), queryOptional(request, "taskId"), request.query));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.get("/api/projects/:projectId/git/github", async (request, response, next) => {
+  try {
+    const query = { op: queryOptional(request, "op"), id: queryOptional(request, "id"), state: queryOptional(request, "state"), page: queryOptional(request, "page") };
+    await withOwningNode(request, response, "/api/cluster/git/github", query, async () =>
+      githubRead(request.params.projectId, queryOptional(request, "taskId"), query));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.post("/api/cluster/git/github", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    response.json(await githubWrite(queryString(request, "projectId"), queryOptional(request, "taskId"), request.body));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.post("/api/projects/:projectId/git/github", async (request, response, next) => {
+  try {
+    await withOwningNode(request, response, "/api/cluster/git/github", {}, async () =>
+      githubWrite(request.params.projectId, queryOptional(request, "taskId"), request.body), request);
+  } catch (error) { handleGitError(response, error, next); }
+});
 
 // ---- Status ----
 
