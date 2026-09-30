@@ -10,6 +10,7 @@ node_modules
 *.tsbuildinfo
 
 # Runtime state and local data
+/.pi/multi-agent-worktrees/
 .pi-mobile-web/
 .joint-bob/
 /.dev-env/
