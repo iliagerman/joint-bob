@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversation listings now load faster by avoiding redundant rescans of recorded transcripts and caching settings lookups.
+
 ## 2.19.2 — 2026-09-30
 
 - Costs icon-only restored with C modifier-held shortcut hint and Ctrl+Alt+Shift+C shortcut; missing chart styles restored.

@@ -284,7 +284,15 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       includedSessionIds: [...new Set([...(project.includedSessionIds ?? []), ...discoveredRecords.map((record) => `${record.engine}:${record.sessionId}`)])],
       recordSessionIds: [...new Set([...(project.recordSessionIds ?? []), ...discoveredRecords.map((record) => `${record.engine}:${record.sessionId}`)])],
     };
-    sessions = await sessionCatalog.list(transcriptProject);
+    // Summarize only the recorded transcripts into this listing. Listing the widened
+    // scope through the catalog replaced this scope's cached scan, so every listing
+    // rescanned every transcript twice.
+    const discoveredFilesByAdapter = new Map<HarnessAdapter, string[]>();
+    for (const record of discoveredRecords) {
+      const adapter = adapters.find((candidate) => candidate.id === record.engine)!;
+      discoveredFilesByAdapter.set(adapter, [...(discoveredFilesByAdapter.get(adapter) ?? []), filesByEngine.get(record.engine)!.get(record.sessionId)!]);
+    }
+    for (const [adapter, files] of discoveredFilesByAdapter) sessions = await adapter.sessions.refresh(transcriptProject, sessions, files);
   }
   for (const session of sessions) {
     const record = recordsBySession.get(`${session.harnessId}:${session.id}`);

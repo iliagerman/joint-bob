@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { ensureAuditSchema } from "./audit.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { defaultManagedHome } from "./managed-home.js";
@@ -11,6 +11,8 @@ const databasePath = path.join(dataDir, "node.db");
 const keyPath = path.join(dataDir, "secret.key");
 let database: DatabaseSync | undefined;
 let encryptionKey: Buffer | undefined;
+// Settings are read on hot paths, once per listed transcript; compiling the query each time dominated them.
+let settingQuery: StatementSync | undefined;
 
 export function settingsDatabase(): DatabaseSync {
   if (database) return database;
@@ -67,7 +69,8 @@ export function decrypt(value: string): string {
 }
 
 export function setting(keyName: string): { value: string; isSecret: boolean } | undefined {
-  const row = settingsDatabase().prepare("SELECT value, is_secret FROM node_settings WHERE key = ?").get(keyName) as { value: string; is_secret: number } | undefined;
+  settingQuery ??= settingsDatabase().prepare("SELECT value, is_secret FROM node_settings WHERE key = ?");
+  const row = settingQuery.get(keyName) as { value: string; is_secret: number } | undefined;
   if (!row) return undefined;
   return { value: row.value, isSecret: row.is_secret === 1 };
 }

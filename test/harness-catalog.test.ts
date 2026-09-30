@@ -39,6 +39,25 @@ test("partial watcher refresh does not cache an atomic fork as a draft", async (
   assert.notEqual(cached.draft, true);
 });
 
+test("recorded shared transcripts join the listing without replacing its cached scan", async (t) => {
+  const project = { id: randomUUID(), name: "Recorded share", path: path.join(os.homedir(), randomUUID()) };
+  const sessionId = randomUUID();
+  // A twin's transcript keeps the cwd it was written under; only the project's record binds it here.
+  const piPath = path.join(os.homedir(), ".pi/agent/sessions", `${sessionId}.jsonl`);
+  const timestamp = new Date().toISOString();
+  await mkdir(path.dirname(piPath), { recursive: true });
+  await writeFile(piPath, `${JSON.stringify({ type: "session", version: 3, id: sessionId, cwd: "/Users/twin/project", timestamp })}\n${JSON.stringify({ type: "message", id: `${sessionId}-message`, parentId: null, timestamp, message: { role: "user", content: [{ type: "text", text: "Shared session" }] } })}\n`);
+  await ensureConversationRecord(project.id, "pi", sessionId, "fixture-node");
+  t.after(async () => { clearHarnessSessionCache(project.id); await rm(piPath); });
+  const pi = listHarnesses().find((adapter) => adapter.id === "pi")!;
+  const scans = t.mock.method(pi.sessions, "list");
+  for (let listing = 0; listing < 3; listing++) {
+    const listed = (await listHarnessSessions(project)).find((session) => session.id === sessionId);
+    assert.equal(listed?.path, piPath, "the recorded transcript is listed, not shown as a draft");
+  }
+  assert.equal(scans.mock.callCount(), 1, "record discovery must not evict the scope it was discovered from");
+});
+
 test("direct lookup reads only the selected transcript", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-direct-session-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
