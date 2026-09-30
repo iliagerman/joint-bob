@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.17.0 — 2026-09-30
 
-- Notification services can now be shared with selected clusters.
+- Notification services can now be shared with selected clusters or trusted twins.
+- Usage charts now remain available in the app's offline cache.
 
 ## 2.16.0 — 2026-09-30
 
