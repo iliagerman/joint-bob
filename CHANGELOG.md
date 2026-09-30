@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Git reviews now display priority badges and sort reviewed files by importance.
+- Sessions can now be recorded as permanent conversations that persist across restarts.
 
 ## 2.13.22 — 2026-09-30
 

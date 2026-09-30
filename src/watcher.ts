@@ -118,7 +118,8 @@ export class SessionWatcher {
       const canonicalFile = adapter.paths.canonicalTranscript?.(file) ?? file;
       project.pendingFiles.set(canonicalFile, adapter);
     }
-    if (this.projects.get(projectId) !== project || project.debounceTimer) return;
+    if (this.projects.get(projectId) !== project) return;
+    if (project.debounceTimer) clearTimeout(project.debounceTimer);
     project.debounceTimer = setTimeout(() => {
       project.debounceTimer = null;
       void this.flush(projectId, project).catch(error => console.error(`Session watcher refresh failed for ${projectId}:`, error));

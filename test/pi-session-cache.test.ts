@@ -78,6 +78,15 @@ test("Pi session summaries are cached and old transcripts load only on demand", 
     assert.equal((await pi.listPiSessions({ path: projectCwd, historyDays: 1, includedSessionIds: ["pi:session-0"] })).length, 1, "a pinned old transcript remains discoverable");
     assert.equal((await pi.loadPiMessages(sessionFile))[0].text, "Secnd", "an old transcript still loads directly");
 
+    const foreignCwd = path.join(root, "other-project");
+    const foreignFile = path.join(sessionRoot, "foreign-session.jsonl");
+    await mkdir(foreignCwd, { recursive: true });
+    await writeFile(foreignFile, transcript("Other project").replaceAll(projectCwd, foreignCwd).replaceAll("session-0", "foreign-session"));
+    const untrustedInclude = await pi.listPiSessions({ path: projectCwd, includedSessionIds: ["pi:foreign-session"] });
+    assert.equal(untrustedInclude.some((session) => session.id === "foreign-session"), false, "a user pin cannot expose a transcript from another project");
+    const recordedConversation = await pi.listPiSessions({ path: projectCwd, recordSessionIds: ["pi:foreign-session"] });
+    assert.equal(recordedConversation.some((session) => session.id === "foreign-session"), true, "a project-bound conversation record can restore a shared transcript");
+
     await writeFile(sessionFile, transcript("Large", "x".repeat(32 * 1024 * 1024)));
     const large = await pi.refreshPiSessions({ path: projectCwd }, [], [sessionFile]);
     await appendFile(sessionFile, JSON.stringify({ type: "session_info", name: "Appended title" }));

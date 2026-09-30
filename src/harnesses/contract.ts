@@ -11,6 +11,7 @@ export interface HarnessProject extends ProjectRecord {
   historyDays?: number;
   includedSessionPaths?: string[];
   includedSessionIds?: string[];
+  recordSessionIds?: string[];
 }
 
 export interface HarnessAdapter<TId extends HarnessId = HarnessId> {

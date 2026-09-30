@@ -73,7 +73,8 @@ test("direct lookup resolves stale foreign paths without scanning either harness
   const claudePath = claudeSessionFilePath(project.path, sessionId);
   await mkdir(path.dirname(piPath), { recursive: true });
   await mkdir(path.dirname(claudePath), { recursive: true });
-  await writeFile(piPath, JSON.stringify({ type: "session", version: 3, id: sessionId, cwd: project.path, timestamp: new Date().toISOString() }) + "\n");
+  const piTimestamp = new Date().toISOString();
+  await writeFile(piPath, `${JSON.stringify({ type: "session", version: 3, id: sessionId, cwd: project.path, timestamp: piTimestamp })}\n${JSON.stringify({ type: "message", id: `${sessionId}-message`, parentId: null, timestamp: piTimestamp, message: { role: "user", content: [{ type: "text", text: "Selected session" }] } })}\n`);
   await writeFile(claudePath, JSON.stringify({ type: "user", sessionId, cwd: project.path, timestamp: new Date().toISOString(), message: { role: "user", content: "selected" } }) + "\n");
   t.after(async () => { await rm(piPath); await rm(path.dirname(claudePath), { recursive: true, force: true }); });
   const adapters = listHarnesses();

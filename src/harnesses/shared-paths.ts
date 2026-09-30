@@ -4,6 +4,8 @@ import type { ProjectRecord } from "../types.js";
 
 export interface SessionProjectPaths extends Pick<ProjectRecord, "path" | "macPath" | "locations"> {
   additionalPaths?: string[];
+  includedSessionIds?: string[];
+  recordSessionIds?: string[];
 }
 
 export function sessionCwds(project: SessionProjectPaths): string[] {

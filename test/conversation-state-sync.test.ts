@@ -50,8 +50,9 @@ interface ListedSession {
 
 async function listSessions(mesh: Mesh, node: SeededNode, auth: SignedIn): Promise<ListedSession[]> {
   const response = await fetch(`${node.url}/api/projects/${mesh.projectId}/sessions`, { headers: headers(auth) });
-  assert.equal(response.status, 200, node.url);
-  return (await response.json() as { sessions: ListedSession[] }).sessions;
+  const body = await response.text();
+  assert.equal(response.status, 200, `${node.url}: ${body}`);
+  return (JSON.parse(body) as { sessions: ListedSession[] }).sessions;
 }
 
 async function waitForSession(mesh: Mesh, node: SeededNode, auth: SignedIn, sessionId: string, predicate: (session: ListedSession) => boolean, deadlineMs = 20_000): Promise<ListedSession> {
@@ -128,7 +129,7 @@ async function waitForInvocation(invocationLog: string, expected: string): Promi
 }
 
 function piTranscript(sessionId: string, cwd: string): string {
-  return `${JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: "2026-01-01T00:00:00.000Z", cwd })}\n`;
+  return `${JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: "2026-01-01T00:00:00.000Z", cwd })}\n${JSON.stringify({ type: "message", id: `${sessionId}-message`, parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "Resume this conversation" }] } })}\n`;
 }
 
 function claudeProjectDirName(cwd: string): string {
@@ -155,6 +156,13 @@ test("running leases and review watermarks travel between two real nodes", { tim
     assert.deepEqual(claimed.body.pendingPeerIds, []);
     const serverSocket = await openConversation(mesh, server, transcriptPath);
     sockets.push(serverSocket);
+    const recentResponse = await fetch(`${server.url}/api/recents`, {
+      method: "PUT", headers: headers(serverAuth),
+      body: JSON.stringify({ projectId: mesh.projectId, engine: "pi", sessionId, sessionPath: transcriptPath, title: "Resume this conversation", openedAt: new Date().toISOString(), updatedAt: null }),
+    });
+    assert.equal(recentResponse.status, 200, await recentResponse.text());
+    const recentList = await fetch(`${server.url}/api/recents`, { headers: headers(serverAuth) });
+    assert.ok((await recentList.json() as { recentSessions: Array<{ sessionId: string }> }).recentSessions.some((recent) => recent.sessionId === sessionId));
     sendPrompt(serverSocket, "run on the homeserver");
     await waitForInvocation(invocationLog, `pi:${server.nodeId}`);
     await waitForSession(mesh, mac, macAuth, sessionId, (session) => session.running && session.reviewState === "running");
@@ -165,6 +173,7 @@ test("running leases and review watermarks travel between two real nodes", { tim
     const finished = await waitForSession(mesh, mac, macAuth, sessionId, (session) => !session.running && session.reviewState === "needs_review");
     await markReviewed(mesh, mac, macAuth, finished);
     await waitForSession(mesh, server, serverAuth, sessionId, (session) => session.reviewState === "reviewed");
+    await new Promise((resolve) => setTimeout(resolve, 350)); // Outside the 250 ms remote-watermark skew window.
 
     // Phase 2: the Mac executes, the homeserver reviews.
     await rm(path.join(holdDir, "pi.release"));
@@ -177,6 +186,9 @@ test("running leases and review watermarks travel between two real nodes", { tim
     await waitForSession(mesh, server, serverAuth, sessionId, (session) => session.running && session.reviewState === "running");
     await writeFile(path.join(holdDir, "pi.release"), "release");
     assert.equal(await waitForTextDelta(macSocket), "textDelta");
+    const latestRecord = JSON.parse((await readFile(transcriptPath, "utf8")).trim().split("\n").at(-1)!) as { message?: { role?: string; timestamp?: number } };
+    assert.equal(latestRecord.message?.role, "assistant", "the stub appends the completed turn to the shared transcript");
+    assert.ok(latestRecord.message.timestamp! > Date.parse(finished.updatedAt!) + 250, "new activity clears the remote-watermark skew window");
     const finishedAgain = await waitForSession(mesh, server, serverAuth, sessionId, (session) => !session.running && session.reviewState === "needs_review");
     await markReviewed(mesh, server, serverAuth, finishedAgain);
     await waitForSession(mesh, mac, macAuth, sessionId, (session) => session.reviewState === "reviewed");

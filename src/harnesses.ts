@@ -26,7 +26,8 @@ function projectCacheKey(project: HarnessProject, harnessId: HarnessId): string 
     .map((value) => path.resolve(value));
   const includedPaths = [...new Set(project.includedSessionPaths ?? [])].sort();
   const includedIds = [...new Set(project.includedSessionIds ?? [])].sort();
-  return `${project.id}:${harnessId}:${project.historyDays ?? 0}:${JSON.stringify([...new Set(paths)].sort())}:${JSON.stringify(includedPaths)}:${JSON.stringify(includedIds)}`;
+  const recordIds = [...new Set(project.recordSessionIds ?? [])].sort();
+  return `${project.id}:${harnessId}:${project.historyDays ?? 0}:${JSON.stringify([...new Set(paths)].sort())}:${JSON.stringify(includedPaths)}:${JSON.stringify(includedIds)}:${JSON.stringify(recordIds)}`;
 }
 
 export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> {
@@ -240,6 +241,15 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     listConversationRecords(project.id),
   ]);
   let sessions = initialSessions;
+  const pinnedFilesByAdapter = new Map<HarnessAdapter, string[]>();
+  for (const sessionPath of pinnedSessionPaths) {
+    const adapter = adapters.find((candidate) => candidate.paths.ownsSession(sessionPath));
+    if (!adapter || !adapter.paths.sessionId(sessionPath)) continue;
+    const filePath = adapter.paths.localize?.(sessionPath, os.homedir()) ?? sessionPath;
+    if (!adapter.paths.ownsTranscript(filePath)) continue;
+    pinnedFilesByAdapter.set(adapter, [...(pinnedFilesByAdapter.get(adapter) ?? []), filePath]);
+  }
+  for (const [adapter, paths] of pinnedFilesByAdapter) sessions = await adapter.sessions.refresh(project, sessions, paths);
   const pinnedPaths = new Set(pinnedSessionPaths);
   const pinnedIds = new Set(pinnedSessionIds);
   const recordsBySession = new Map(records.map((record) => [`${record.engine}:${record.sessionId}`, record]));
@@ -261,13 +271,16 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     }
     return [engine, filesBySessionId] as const;
   })));
-  const discovered = initialMissingRecords.flatMap((record) => {
-    const transcript = filesByEngine.get(record.engine)!.get(record.sessionId);
-    return transcript ? [transcript] : [];
-  });
+  const discoveredRecords = initialMissingRecords.filter((record) => filesByEngine.get(record.engine)!.has(record.sessionId));
+  const discovered = discoveredRecords.map((record) => filesByEngine.get(record.engine)!.get(record.sessionId)!);
   if (discovered.length) {
     await sessionCatalog.refresh(project.id, discovered);
-    sessions = await sessionCatalog.list(project);
+    const transcriptProject = {
+      ...project,
+      includedSessionIds: [...new Set([...(project.includedSessionIds ?? []), ...discoveredRecords.map((record) => `${record.engine}:${record.sessionId}`)])],
+      recordSessionIds: [...new Set([...(project.recordSessionIds ?? []), ...discoveredRecords.map((record) => `${record.engine}:${record.sessionId}`)])],
+    };
+    sessions = await sessionCatalog.list(transcriptProject);
   }
   for (const session of sessions) {
     const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
