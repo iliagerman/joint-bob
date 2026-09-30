@@ -3,17 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Git reviews now display priority badges and sort reviewed files by importance.
-- Sessions can now be recorded as permanent conversations that persist across restarts.
-- Browser requests now report unavailability status when the owning machine is down, instead of generic conflict errors.
-
 ## 2.13.22 — 2026-09-30
 
-- Git Review sorts changed files by review priority and displays their importance.
-- Shared conversations remain visible across nodes, and pinned transcripts refresh before review state is calculated.
-- Browser requests for profiles on unavailable machines fail clearly without falling back to another machine.
+- Git Review now orders changed files by importance and marks their priority in the list.
+- Conversations shared across nodes stay visible, and pinned transcripts refresh before review state is calculated.
+- Requests for browser profiles on offline machines report the outage without falling back to another machine.
 
 ## 2.13.21 — 2026-09-30
 
