@@ -144,6 +144,18 @@ function showLoading() {
 function modelsForHarness(engine) {
   return availableModels.filter((model) => model.harnessId === engine);
 }
+function boundSession() {
+  if (editing?.sessionId) return { id: editing.sessionId, engine: editing.engine };
+  const session = context.session;
+  return session ? { id: session.id, engine: session.harnessId || session.engine || harnessIdFromPath(state.harnesses, session.path) } : null;
+}
+function updateCronContext() {
+  const bound = boundSession();
+  const appends = bound?.engine === field("engine").value;
+  document.querySelector("#cronContext").textContent = appends
+    ? "Appends to this conversation. Ownership transfers automatically to the selected node after the active run finishes."
+    : "Each run starts a new conversation using the selected agent's project settings and inherited credentials.";
+}
 function renderExecutionFields(modelKey = "", reasoning = field("reasoning").value) {
   const engine = field("engine").value;
   const models = modelsForHarness(engine);
@@ -189,7 +201,8 @@ function editTask(task) {
     if (task.schedule.quietEnd) field("quietEnd").value = task.schedule.quietEnd;
     for (const checkbox of form.querySelectorAll('[name="days"]')) checkbox.checked = !task.schedule.days || task.schedule.days.includes(Number(checkbox.value));
   }
-  field("engine").disabled = Boolean(context.session || task?.sessionId);
+  field("engine").disabled = false;
+  updateCronContext();
   showScheduleFields(); field("name").focus();
 }
 function showScheduleFields() {
@@ -210,11 +223,12 @@ form.addEventListener("submit", async event => {
     if (field("frequency").value !== "weekly" && !days.length) throw new Error("Select at least one run day");
     if (field("quietEnabled").checked && field("quietStart").value === field("quietEnd").value) throw new Error("Quiet hours need different start and end times");
     const [provider, modelId] = field("model").value.split("|");
+    const session = boundSession();
     const input = {
       projectId: context.projectId, name: field("name").value, prompt: field("prompt").value,
       ownerNodeId: field("ownerNodeId").value, engine: field("engine").value,
       model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,
-      sessionId: editing ? editing.sessionId : context.session ? context.session.id : null, enabled: field("enabled").checked,
+      sessionId: session?.engine === field("engine").value ? session.id : null, enabled: field("enabled").checked,
       pauseOnFailure: field("pauseOnFailure").checked,
       schedule: { frequency: field("frequency").value, intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined,
         hour, minute, startHour: field("frequency").value === "hourly" ? hour : undefined,
@@ -224,13 +238,14 @@ form.addEventListener("submit", async event => {
         quietEnd: field("quietEnabled").checked ? field("quietEnd").value : undefined },
     };
     await command(editing ? editing.ownerNodeId : input.ownerNodeId, editing ? { action: "update", id: editing.id, input } : { action: "create", input });
+    if (!input.sessionId && context.session) context.session = null;
     showList(); await refreshTasks();
   } catch (error) { errorText.textContent = error.message; }
   finally { submit.disabled = false; }
 });
 field("frequency").addEventListener("change", showScheduleFields);
 field("quietEnabled").addEventListener("change", showScheduleFields);
-field("engine").addEventListener("change", () => renderExecutionFields());
+field("engine").addEventListener("change", () => { renderExecutionFields(); updateCronContext(); });
 field("model").addEventListener("change", () => renderExecutionFields(field("model").value));
 document.querySelector("#cronNew").addEventListener("click", () => editTask(null));
 document.querySelector("#cronCancel").addEventListener("click", showList);

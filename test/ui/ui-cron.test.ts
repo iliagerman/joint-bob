@@ -66,7 +66,11 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   await page.locator("#cronNew").click();
   assert.equal(await page.evaluate(`(() => {
     const form = document.querySelector("#cronForm"), f = form.elements;
-    if (!f.engine.disabled || f.engine.value !== "pi") throw Error("Conversation harness should be visible and fixed");
+    if (f.engine.disabled || f.engine.value !== "pi") throw Error("Conversation harness should be selectable");
+    f.engine.value = "claude"; f.engine.dispatchEvent(new Event("change", { bubbles: true }));
+    if (!document.querySelector("#cronContext").textContent.includes("Each run starts a new conversation")) throw Error("Changing harness should start a new conversation");
+    f.engine.value = "pi"; f.engine.dispatchEvent(new Event("change", { bubbles: true }));
+    if (!document.querySelector("#cronContext").textContent.includes("Appends to this conversation")) throw Error("Returning to the conversation harness should restore append mode");
     if (!f.model.options.length || f.reasoning.options.length < 2 || f.reasoning.disabled) throw Error("Conversation execution settings unavailable");
     f.reasoning.value = "high"; f.intervalHours.value = "2"; f.time.value = "08:00";
     for (const day of form.querySelectorAll('[name="days"]')) day.checked = [1, 2, 3, 4, 5].includes(Number(day.value));
@@ -162,4 +166,33 @@ test("scheduled tasks dialog shows a loading spinner until tasks arrive", { time
   release();
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("No scheduled tasks"));
   assert.equal(await page.getByTestId("cron-loading").count(), 0, "Spinner must clear once tasks resolve");
+});
+
+test("changing a conversation schedule harness detaches it into a new conversation", { timeout: 180_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.locator('#loginDialog[open]').waitFor();
+  await page.locator("#loginUsernameInput").fill(environment.username);
+  await page.locator("#loginPasswordInput").fill(environment.password);
+  await page.locator("#loginSubmitButton").click();
+  await page.waitForFunction(() => document.querySelectorAll("#projectList .list-row").length === 3);
+  await page.locator("#projectList .list-row", { hasText: "Internal Assistant" }).locator("button").first().click();
+  await page.locator('[data-filter="all"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll("#sessionList .list-row")].some(row => row.textContent.includes("Makor deployment information")));
+  await page.locator("#sessionList .list-row", { hasText: "Makor deployment information" }).locator(".row-menu-button").click();
+  await page.locator('[data-testid="session-cron-button"]').click();
+  await page.waitForFunction(() => document.querySelector("#cronDialog").open && document.querySelector("#cronList").textContent.includes("No scheduled tasks"));
+  await page.locator("#cronNew").click();
+  await page.evaluate(() => {
+    const form = document.querySelector("#cronForm") as HTMLFormElement;
+    const fields = form.elements as typeof form.elements & { engine: HTMLSelectElement; name: HTMLInputElement; prompt: HTMLTextAreaElement };
+    if (fields.engine.disabled || fields.engine.value !== "claude") throw Error("Conversation harness selector should be enabled");
+    fields.engine.value = "pi";
+    fields.engine.dispatchEvent(new Event("change", { bubbles: true }));
+    if (!document.querySelector("#cronContext")?.textContent?.includes("Each run starts a new conversation")) throw Error("Alternate harness should start a new conversation");
+    fields.name.value = "Pi scheduled conversation";
+    fields.prompt.value = "Run on Pi";
+    form.requestSubmit();
+  });
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Pi scheduled conversation") && document.querySelector("#cronList").textContent.includes("New conversation") && document.querySelector("#cronList").textContent.includes("Pi"));
 });

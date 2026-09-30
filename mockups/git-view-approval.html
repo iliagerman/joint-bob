@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Git view · layout approval</title>
+<style>
+  :root { color-scheme: dark; --bg:#101315; --panel:#1b2023; --raised:#242b2e; --line:#343d41; --text:#ecf0ed; --muted:#9ba8a7; --mint:#a3dfbd; --amber:#f3bd72; --red:#ed948d; font-family: "Avenir Next", "Segoe UI", sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--text); background: radial-gradient(circle at 10% 0%, #23372f 0, transparent 35%), var(--bg); }
+  button, textarea { font:inherit; }
+  button { cursor:pointer; }
+  button:focus-visible, textarea:focus-visible { outline:2px solid var(--mint); outline-offset:2px; }
+  .page { max-width:1480px; margin:auto; padding:32px clamp(16px,4vw,64px) 60px; }
+  .topline { display:flex; gap:22px; align-items:end; justify-content:space-between; flex-wrap:wrap; margin-bottom:24px; }
+  .eyebrow { margin:0 0 9px; color:var(--mint); font:700 11px/1.2 ui-monospace, monospace; letter-spacing:.16em; text-transform:uppercase; }
+  h1 { font-size:clamp(30px,4vw,48px); line-height:1.05; letter-spacing:-.05em; margin:0 0 8px; font-weight:650; }
+  .sub { color:var(--muted); margin:0; font-size:14px; line-height:1.5; }
+  .choices { display:flex; gap:8px; flex-wrap:wrap; }
+  .choice { border:1px solid var(--line); color:var(--text); background:var(--panel); padding:10px 15px; border-radius:8px; font-size:13px; }
+  .choice[aria-pressed="true"] { border-color:var(--mint); background:#2c4437; color:#ddf8e5; }
+  .choice small { display:block; color:var(--muted); font-size:11px; margin-top:2px; text-align:left; }
+  .frame { background:var(--panel); border:1px solid #45504e; box-shadow:0 30px 90px #0008; border-radius:14px; overflow:hidden; min-height:635px; }
+  .app-head { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:17px 23px; border-bottom:1px solid var(--line); }
+  .app-head h2 { margin:0; font-size:20px; letter-spacing:-.025em; }
+  .repo { display:block; color:var(--muted); font:12px ui-monospace, monospace; margin-top:3px; }
+  .demo { border:1px solid #6d6149; color:var(--amber); padding:6px 10px; border-radius:5px; font:11px ui-monospace, monospace; white-space:nowrap; }
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); padding:0 16px; overflow-x:auto; }
+  .tab { color:var(--muted); border:0; border-bottom:2px solid transparent; background:transparent; padding:12px 15px; white-space:nowrap; font-size:13px; }
+  .tab.active { color:var(--text); border-color:var(--mint); }
+  .tab .mobile-label { display:none; }
+  .back-button { display:inline-block; background:none; border:0; padding:0; margin-bottom:14px; color:var(--mint); font-size:13px; }
+  .row-title { display:block; font-size:13px; font-weight:650; line-height:1.45; }
+  .row-meta { display:block; margin-top:7px; color:var(--muted); font:11px ui-monospace,monospace; }
+  .detail { min-width:0; padding:26px clamp(18px,3vw,40px); }
+  .detail-head { display:flex; justify-content:space-between; gap:20px; align-items:start; }
+  .detail h3 { font-size:24px; line-height:1.2; margin:5px 0 8px; letter-spacing:-.03em; }
+  .detail h4 { margin:23px 0 11px; font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+  .meta { font:12px/1.6 ui-monospace,monospace; color:var(--muted); }
+  .pill { display:inline-block; padding:4px 8px; border-radius:20px; background:#284b37; color:var(--mint); font:11px ui-monospace,monospace; white-space:nowrap; }
+  .pill.running { background:#514027; color:var(--amber); }
+  .pill.failed { background:#4c302d; color:var(--red); }
+  .copy { color:#c3ceca; font-size:13px; line-height:1.6; max-width:650px; }
+  .quote { border-left:2px solid #647e6e; padding:9px 14px; margin:13px 0; background:#242d2a; font-size:13px; line-height:1.5; }
+  .quote strong { font-size:11px; color:var(--mint); }
+  .check { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); font-size:13px; }
+  .check button { border:0; background:none; color:var(--mint); text-decoration:underline; text-underline-offset:3px; padding:3px; font-size:12px; }
+  .check .status { color:var(--muted); font:11px ui-monospace,monospace; }
+  .check .status.good { color:var(--mint); } .check .status.bad { color:var(--red); } .check .status.wait { color:var(--amber); }
+  .composer { margin-top:21px; }
+  textarea { width:100%; min-height:70px; resize:vertical; background:#141a1b; color:var(--text); border:1px solid #45504e; border-radius:7px; padding:12px; font-size:13px; }
+  .actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .btn { background:#293137; border:1px solid #515d5f; border-radius:6px; color:var(--text); padding:9px 12px; font-size:12px; }
+  .btn.primary { color:#102018; background:var(--mint); border-color:var(--mint); font-weight:700; }
+  .btn.danger { color:var(--red); border-color:#76504c; }
+  .btn:hover { filter:brightness(1.15); }
+  .fine { color:var(--muted); font:11px/1.5 ui-monospace,monospace; }
+  .logs { background:#101618; border:1px solid #43504f; border-radius:7px; padding:15px; margin:15px 0; color:#d3ded7; font:12px/1.8 ui-monospace,monospace; overflow:auto; white-space:pre-wrap; }
+  .pipeline { padding:18px clamp(15px,3vw,36px) 30px; }
+  .index { padding:22px clamp(15px,3vw,36px) 32px; }
+  .index-title { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .index-title h3 { margin:0 0 14px; font-size:22px; }
+  .index-title .fine { margin:0; }
+  .index-search { width:100%; padding:11px 13px; margin:0 0 12px; color:var(--text); border:1px solid var(--line); border-radius:7px; background:#141a1b; font-size:13px; font-family:inherit; }
+  .index-controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; border:1px solid var(--line); background:#202729; border-radius:7px 7px 0 0; padding:9px 11px; }
+  .index-filter { background:transparent; border:1px solid transparent; border-radius:5px; color:var(--muted); padding:7px 11px; font-size:12px; }
+  .index-filter.active { color:var(--text); background:#35413d; border-color:#5d7770; }
+  .index-filter:hover { color:var(--text); }
+  .index-count { color:var(--muted); font:11px ui-monospace,monospace; margin-left:auto; }
+  .index-row { display:flex; align-items:start; gap:11px; width:100%; min-height:78px; padding:16px; text-align:left; background:#181e20; color:var(--text); border:0; border-bottom:1px solid var(--line); }
+  .index-row:last-child { border-radius:0 0 7px 7px; }
+  .index-row:hover { background:#283431; }
+  .index-row[hidden] { display:none; }
+  .index-row .row-title { font-size:14px; }
+  .index-row .row-meta { font:11px/1.55 ui-monospace,monospace; }
+  .row-state { flex:none; color:var(--mint); font-size:16px; line-height:1.2; }
+  .row-state.failed { color:var(--red); } .row-state.closed { color:var(--muted); }
+  .row-copy { flex:1; min-width:0; }
+  .row-side { color:var(--muted); font:11px/1.5 ui-monospace,monospace; white-space:nowrap; }
+  .run-index { display:grid; grid-template-columns:185px minmax(0,1fr); gap:17px; }
+  .run-categories { border-right:1px solid var(--line); padding-right:12px; }
+  .run-categories h4 { color:var(--muted); font:700 10px ui-monospace,monospace; text-transform:uppercase; letter-spacing:.12em; }
+  .run-categories .index-filter { display:block; width:100%; text-align:left; }
+  .run-select { display:none; background:#141a1b; color:var(--text); border:1px solid var(--line); padding:7px; border-radius:5px; font-size:12px; }
+  .run-title { display:flex; align-items:start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:18px; }
+  .run-title h3 { font-size:20px; margin:0 0 4px; }
+  .source { color:var(--mint); font:11px/1.5 ui-monospace,monospace; text-decoration:underline; text-underline-offset:3px; }
+  .pipeline-workspace { display:grid; grid-template-columns:190px minmax(0,1fr); gap:18px; margin-top:16px; }
+  .job-nav { align-self:start; border:1px solid var(--line); border-radius:8px; background:#171d1f; padding:12px 6px; }
+  .job-nav h4 { color:var(--muted); font:700 10px ui-monospace,monospace; letter-spacing:.1em; text-transform:uppercase; padding:0 9px; }
+  .nav-job { width:100%; background:transparent; border:0; border-radius:5px; color:var(--text); padding:8px 9px; text-align:left; font-size:11px; line-height:1.35; }
+  .nav-job.active { background:#2a3e34; } .nav-job:hover { background:#2b3435; }
+  .graph { min-width:0; border:1px solid var(--line); border-radius:8px; background:#111719; padding:17px; }
+  .graph-heading { font-size:13px; font-weight:700; margin:0 0 8px; }
+  .graph-heading small { display:block; color:var(--muted); font:11px/1.5 ui-monospace,monospace; font-weight:400; margin-top:3px; }
+  .flow { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr); gap:28px; margin-top:16px; }
+  .flow.is-linear { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .flow-stage { position:relative; display:flex; flex-direction:column; justify-content:center; min-width:0; min-height:304px; border:1px solid #42504a; border-radius:7px; padding:42px 10px 12px; background:#1b2324; }
+  .flow-stage:not(:last-child)::after { content:""; position:absolute; left:100%; width:28px; top:50%; border-top:2px solid #689f82; }
+  .flow-stage:not(:last-child)::before { content:""; position:absolute; left:calc(100% + 20px); top:calc(50% - 4px); border:5px solid transparent; border-left-color:#689f82; }
+  .stage-head { position:absolute; top:12px; left:10px; right:10px; font-size:12px; font-weight:700; }
+  .stage-head small { display:block; color:var(--muted); font:10px/1.4 ui-monospace,monospace; margin-top:3px; }
+  .job-grid { display:grid; grid-template-columns:1fr; gap:7px; }
+  .flow-matrix .job-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .free-lane { display:flex; align-items:center; gap:10px; flex-wrap:wrap; border:1px dashed #4b5b5a; border-radius:7px; margin-top:12px; padding:9px 12px; }
+  .free-lane .job { flex:1; max-width:260px; min-height:50px; }
+  .free-lane > span { color:var(--muted); font:11px/1.45 ui-monospace,monospace; }
+  .graph-key { margin:12px 0 0; color:var(--muted); font:11px/1.5 ui-monospace,monospace; }
+  .job { min-width:0; min-height:74px; padding:10px 12px; border:1px solid #46524d; border-radius:7px; background:#20292a; color:var(--text); text-align:left; }
+  .job.active { border-color:var(--mint); background:#293a32; }
+  .job .job-label { display:block; font-size:12px; font-weight:650; line-height:1.4; }
+  .job .job-meta { display:block; color:var(--muted); font:10px/1.5 ui-monospace,monospace; margin-top:5px; }
+  .job .job-meta.failed { color:var(--red); }
+  .job .job-meta.skipped { color:var(--muted); }
+  .inspection { margin-top:22px; padding:17px; border:1px solid var(--line); border-radius:8px; background:#161d1f; }
+  .inspection h4 { margin:0 0 4px; font-size:15px; }
+  .inspection .check button { min-height:32px; }
+  .inspection .check.active { background:#2b3c33; padding-left:8px; }
+  .inspection .logs { margin-bottom:8px; }
+  .stage-note { margin:0 0 10px; color:var(--muted); font:11px/1.5 ui-monospace,monospace; }
+  .bad-text { color:var(--red); } .good-text { color:var(--mint); } .wait-text { color:var(--amber); }
+  /* Option B: a full-page operational dashboard rather than a dialog-sized split view. */
+  .dashboard { padding:22px; display:grid; gap:15px; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .stat { border:1px solid var(--line); border-radius:8px; background:#20282a; padding:17px; }
+  .stat b { display:block; font-size:25px; margin:8px 0 0; } .stat span { color:var(--muted); font:11px ui-monospace,monospace; }
+  .bottom { margin-top:22px; display:flex; justify-content:space-between; gap:15px; align-items:center; flex-wrap:wrap; }
+  .approval { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .approval-output { font:12px ui-monospace,monospace; color:var(--mint); }
+  .note { max-width:600px; color:var(--muted); font-size:12px; line-height:1.5; margin:0; }
+  @media (max-width:760px) {
+    .page { padding-top:20px; } .frame { min-height:0; }
+    .app-head { padding:14px 17px; } .demo { font-size:10px; } .demo .desktop-label { display:none; }
+    .tabs { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:0; padding:0 8px; overflow:visible; }
+    .tab { grid-column:span 2; padding:12px 2px; font-size:12px; }
+    .tab:nth-child(n+4) { grid-column:span 3; }
+    .tab .desktop-label { display:none; } .tab .mobile-label { display:inline; }
+    .run-index { display:block; } .run-categories { display:none; }
+    .run-select { display:inline-block; }
+    .index { padding:15px 12px 25px; }
+    .index-title h3 { font-size:19px; }
+    .index-row { display:grid; grid-template-columns:20px minmax(0,1fr); padding:14px 11px; }
+    .index-row .row-title { font-size:13px; }
+    .row-side { grid-column:2; font-size:10px; white-space:normal; }
+    .index-controls { gap:2px; padding:6px; }
+    .index-filter { padding:7px 8px; }
+    .dashboard { padding:12px; } .dashboard .stats { display:none; }
+    .dashboard > .pipeline { padding:4px 0 10px; }
+    .pipeline-workspace { display:block; margin-top:12px; }
+    .job-nav { display:none; }
+    .graph { padding:12px; }
+    .flow, .flow.is-linear { grid-template-columns:1fr; gap:26px; }
+    .flow-stage { min-height:0; padding:50px 10px 12px; }
+    .flow-stage:not(:last-child)::after { width:0; height:26px; left:50%; top:100%; border-top:0; border-left:2px solid #689f82; }
+    .flow-stage:not(:last-child)::before { left:calc(50% - 4px); top:calc(100% + 16px); border-left-color:transparent; border-top-color:#689f82; }
+    .flow-matrix .job-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .pipeline .job { min-height:58px; padding:9px; }
+    .pipeline .job .job-label { font-size:11px; }
+    .pipeline .inspection { padding:12px; }
+    .pipeline .inspection .check { display:flex; }
+    .pipeline .inspection .check button { margin-left:auto; }
+    .stats { grid-template-columns:repeat(3,1fr); gap:6px; } .stat { padding:10px; } .stat b { font-size:19px; } .stat span { font-size:9px; }
+    .detail { padding:20px; } .detail-head { flex-wrap:wrap; } .detail h3 { font-size:21px; }
+    .check { align-items:flex-start; flex-wrap:wrap; }
+  }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="topline">
+    <div><p class="eyebrow">Joint Bob / design preview</p><h1>One Git view. Two directions.</h1><p class="sub">PRs are sample data. Pipelines use recorded GitHub Actions runs from Vite and Joint Bob, including a six-job parallel matrix.</p></div>
+    <nav class="choices" aria-label="Choose layout"><button class="choice" data-layout="a" aria-pressed="true">A · Focused workspace<small>Fits the current Git dialog</small></button><button class="choice" data-layout="b" aria-pressed="false">B · Operations desk<small>PRs and CI at a glance</small></button></nav>
+  </header>
+  <div class="frame" id="preview"></div>
+  <footer class="bottom"><p class="note">CI uses fixed September 30 snapshots from two repos to show parallel jobs. The product would list only the selected repo. PRs are fictional; no action sends requests.</p><div class="approval"><button class="btn primary" id="approve">Choose this layout</button><output class="approval-output" id="selection" aria-live="polite"></output></div></footer>
+</main>
+<script>
+  const prs = [
+    { number:184, title:'Fix retry handling after timeout', author:'maya', branch:'fix/retry-timeouts', status:'Open', checks:'2 passed · 1 running', summary:'Stop retrying a send after the server has already accepted it. The timeout path now checks the response before scheduling another attempt.', comment:'Could this distinguish cancellation from a timeout? The current branch looks like it retries both.' },
+    { number:182, title:'Update conversation settings UI', author:'leo', branch:'settings/cleanup', status:'Open', checks:'3 passed', summary:'Moves project defaults next to conversation overrides, with a clearer save state.', comment:'The override label could use an example for first-time users.' },
+    { number:179, title:'Retire the legacy session picker', author:'nina', branch:'remove/old-picker', status:'Closed', checks:'1 failed · 2 passed', summary:'Removes the unused legacy picker after migrating the remaining routes.', comment:'The browser journey still expects the old selector. Please update it before reopening.' }
+  ];
+  // Snapshots from GitHub Actions on 2026-09-30. PRs above remain fictional.
+  const matrixSteps = [
+    ['Set up job','Passed'],['Checkout','Passed'],['Install pnpm and node 24','Passed'],
+    ['Install pnpm and node 24 for builds','Skipped'],['(non-windows) Set Playwright path and Get playwright version','Passed'],
+    ['(windows) Set Playwright path and Get playwright version','Skipped'],["Cache Playwright's binary",'Passed'],
+    ['Install Playwright','Passed'],['Build','Passed'],['Set node version to 24','Skipped'],['Test unit','Passed'],
+    ['Test serve','Passed'],['Test serve (bundled dev)','Passed'],['Test build','Passed'],
+    ["Post Cache Playwright's binary",'Passed'],['Post Install pnpm and node 24','Passed'],['Post Checkout','Passed'],['Complete job','Passed']
+  ];
+  function matrixJobSteps(node, os) {
+    return matrixSteps.map(([original, outcome]) => {
+      let name=original;
+      if(name==='Install pnpm and node 24' || name==='Post Install pnpm and node 24') name=name.replace('24',node);
+      if(name==='Set node version to 24') name=`Set node version to ${node}`;
+      if(node===20 && (name==='Install pnpm and node 20' || name==='Install pnpm and node 24 for builds')) outcome=outcome==='Passed'?'Skipped':'Passed';
+      if(node===20 && name==='Set node version to 20') outcome='Passed';
+      if(node===20 && name==='Post Install pnpm and node 20') name='Post Install pnpm and node 24 for builds';
+      if(os==='Windows' && name.startsWith('(non-windows)')) outcome='Skipped';
+      if(os==='Windows' && name.startsWith('(windows)')) outcome='Passed';
+      return [name,outcome];
+    });
+  }
+  const releaseSteps = [
+    ['Set up job','Passed'],['Run actions/checkout@v4','Passed'],['Run actions/setup-node@v4','Passed'],
+    ['Validate release version','Passed'],['Run npm ci','Passed'],['Run npm run typecheck','Failed'],
+    ['Install native synchronization test dependency','Skipped'],['Run full test suite','Skipped'],
+    ['Run npm run build','Skipped'],['Pack and smoke test','Skipped'],
+    ['Run softprops/action-gh-release@v2','Skipped'],['Publish to npm when configured','Skipped'],
+    ['Post Run actions/setup-node@v4','Skipped'],['Post Run actions/checkout@v4','Passed'],['Complete job','Passed']
+  ];
+  const successfulReleaseSteps = releaseSteps.map(([name,outcome]) => [name,name==='Publish to npm when configured'?'Skipped':'Passed']);
+  const runs = [
+    { id:36688048421, number:31958, repo:'vitejs/vite', name:'CI', branch:'fix/source-url-percent-roundtrip', status:'Passed', date:'Sep 30, 2026 · 08:10 UTC', url:'https://github.com/vitejs/vite/actions/runs/36688048421', jobs:[
+      {id:109798374576,label:'Get changed files',phase:'Gate',status:'Passed',time:'08:10:20–08:10:31',steps:[['Set up job','Passed'],['Checkout','Passed'],['Get changed files','Passed'],['Post Checkout','Passed'],['Complete job','Passed']]},
+      {id:109798374183,label:'Lint · Node 24 / Ubuntu',phase:'Independent',status:'Passed',time:'08:10:19–08:12:04',steps:[['Set up job','Passed'],['Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1','Passed'],['Install pnpm and node 24','Passed'],['Build','Passed'],['Lint','Passed'],['Check formatting','Passed'],['Typecheck','Passed'],['Test docs','Passed'],['Post Install pnpm and node 24','Passed'],['Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1','Passed'],['Complete job','Passed']]},
+      {id:109798462813,label:'Node 20 · Ubuntu',phase:'Parallel matrix',status:'Passed',time:'08:10:34–08:14:38',steps:matrixJobSteps(20,'Ubuntu')},
+      {id:109798462707,label:'Node 22 · Ubuntu',phase:'Parallel matrix',status:'Passed',time:'08:10:35–08:15:22',steps:matrixJobSteps(22,'Ubuntu')},
+      {id:109798462654,label:'Node 24 · Ubuntu',phase:'Parallel matrix',status:'Passed',time:'08:10:34–08:14:40',steps:matrixJobSteps(24,'Ubuntu')},
+      {id:109798462558,label:'Node 26 · Ubuntu',phase:'Parallel matrix',status:'Passed',time:'08:10:35–08:14:04',steps:matrixJobSteps(26,'Ubuntu')},
+      {id:109798462769,label:'Node 24 · macOS',phase:'Parallel matrix',status:'Passed',time:'08:10:40–08:16:35',steps:matrixJobSteps(24,'macOS')},
+      {id:109798462858,label:'Node 24 · Windows',phase:'Parallel matrix',status:'Passed',time:'08:10:34–08:16:54',steps:matrixJobSteps(24,'Windows')},
+      {id:109800616225,label:'Build & Test Passed or Skipped',phase:'Result',status:'Passed',time:'08:17:06–08:17:13',steps:[['Set up job','Passed'],['Run echo "Build & Test Passed or Skipped"','Passed'],['Complete job','Passed']]},
+      {id:109800618274,label:'Build & Test Failed',phase:'Result',status:'Skipped',time:'not run',steps:[]}
+    ]},
+    { id:36709322118, number:305, repo:'iliagerman/joint-bob', name:'Release', branch:'main', status:'Failed', date:'Sep 30, 2026 · 11:34 UTC', url:'https://github.com/iliagerman/joint-bob/actions/runs/36709322118', jobs:[
+      {id:109867050067,label:'version',phase:'Gate',status:'Passed',time:'11:34:02–11:34:09',steps:[['Set up job','Passed'],['Run actions/checkout@v4','Passed'],['Run actions/setup-node@v4','Passed'],['Read release version','Passed'],['Post Run actions/setup-node@v4','Passed'],['Post Run actions/checkout@v4','Passed'],['Complete job','Passed']]},
+      {id:109867107377,label:'release',phase:'Result',status:'Failed',time:'11:34:13–11:34:40',steps:releaseSteps}
+    ]},
+    { id:36698121548, number:301, repo:'iliagerman/joint-bob', name:'Release', branch:'main', status:'Passed', date:'Sep 30, 2026 · 09:45 UTC', url:'https://github.com/iliagerman/joint-bob/actions/runs/36698121548', jobs:[
+      {id:109830882843,label:'version',phase:'Gate',status:'Passed',time:'09:45:24–09:45:33',steps:[['Set up job','Passed'],['Run actions/checkout@v4','Passed'],['Run actions/setup-node@v4','Passed'],['Read release version','Passed'],['Post Run actions/setup-node@v4','Passed'],['Post Run actions/checkout@v4','Passed'],['Complete job','Passed']]},
+      {id:109830947751,label:'release',phase:'Result',status:'Passed',time:'09:45:36–09:58:17',steps:successfulReleaseSteps}
+    ]}
+  ];
+  let layout='a', tab='pipelines', selectedPr=0, selectedRun=0, selectedJob=4, selectedStep=10, prDetailOpen=false, runDetailOpen=false, prFilter='open', runFilter='all', workflowFilter='all', searchQuery='';
+  const preview=document.querySelector('#preview');
+  const escapeHtml=(text)=>String(text).replace(/[&<>"']/g, char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const badge=(status)=>`<span class="pill ${status==='Failed'?'failed':status==='Running'?'running':''}">${escapeHtml(status)}</span>`;
+  const tabs=()=>`<nav class="tabs" aria-label="Git views">${[['changes','Changes','Changes'],['history','History','History'],['reviews','Reviews','Reviews'],['pulls','Pull requests','Pull requests'],['pipelines','Pipelines','Pipelines']].map(([id,label,mobile])=>`<button class="tab ${tab===id?'active':''}" data-tab="${id}" aria-current="${tab===id?'page':'false'}"><span class="desktop-label">${label}</span><span class="mobile-label">${mobile}</span></button>`).join('')}</nav>`;
+  const back=(kind)=>`<button class="back-button" data-back="${kind}">← All ${kind==='pulls'?'pull requests':'pipeline runs'}</button>`;
+  function prRows() { return prs.map((pr,index)=>pr.status.toLowerCase()!==prFilter?'':`<button class="index-row" data-search-row data-pr="${index}"><span class="row-state ${pr.status==='Closed'?'closed':''}">${pr.status==='Closed'?'●':'↗'}</span><span class="row-copy"><span class="row-title">${escapeHtml(pr.title)}</span><span class="row-meta">#${pr.number} · ${escapeHtml(pr.author)} · ${escapeHtml(pr.checks)}</span></span></button>`).join(''); }
+  function runRows() { return runs.map((run,index)=>({run,index})).sort((a,b)=>b.run.id-a.run.id).map(({run,index})=>runFilter!=='all' && run.status.toLowerCase()!==runFilter || workflowFilter!=='all' && run.name!==workflowFilter?'':`<button class="index-row" data-search-row data-run="${index}"><span class="row-state ${run.status==='Failed'?'failed':''}">${run.status==='Failed'?'✕':'✓'}</span><span class="row-copy"><span class="row-title">${escapeHtml(run.repo)} · ${escapeHtml(run.name)} #${run.number}</span><span class="row-meta">${escapeHtml(run.branch)} · ${run.jobs.length} jobs · ${escapeHtml(run.status)}</span></span><span class="row-side">${escapeHtml(run.date)}</span></button>`).join(''); }
+  function prDetail() {
+    const pr=prs[selectedPr];
+    return `<div class="detail">${back('pulls')}<div class="detail-head"><div><span class="eyebrow">Pull request #${pr.number}</span><h3>${escapeHtml(pr.title)}</h3><div class="meta">${escapeHtml(pr.author)} wants to merge ${escapeHtml(pr.branch)} into main</div></div>${badge(pr.status)}</div><p class="copy">${escapeHtml(pr.summary)}</p><h4>Checks · sample</h4><div class="check"><span>${escapeHtml(pr.checks)}</span><button data-tab="pipelines">Explore pipeline example →</button></div><h4>Review conversation</h4><div class="quote"><strong>REVIEW COMMENT · src/retry.ts:42</strong><br>${escapeHtml(pr.comment)}</div><div class="composer"><label class="fine" for="reply">Add a PR comment or review note</label><textarea id="reply" placeholder="Write a comment…"></textarea><div class="actions"><button class="btn" data-demo="Comment">Comment</button><button class="btn primary" data-demo="Approve">Approve</button><button class="btn" data-demo="Request changes">Request changes</button><button class="btn danger" data-demo="Close PR">Close PR</button></div></div></div>`;
+  }
+  function logExcerpt(run,job,step) {
+    if(run.repo==='vitejs/vite' && job.id===109798462654 && step[0]==='Test unit') return '$ pnpm run test-unit\nTest Files  71 passed (71)\nTests       1017 passed | 3 skipped (1020)\nDuration    7.70s';
+    if(run.repo==='iliagerman/joint-bob' && job.label==='release' && step[0]==='Run npm run typecheck') return '$ npm run typecheck\nsrc/server/conversation-retention.ts(7,10): error TS2305: Module \'"../preferences.js"\' has no exported member \'allPinnedSessionPaths\'.\nsrc/server/conversation-retention.ts(12,10): error TS2305: Module \'"../user-pins.js"\' has no exported member \'pinnedConversationKeys\'.\nProcess completed with exit code 2.';
+    return step[1]==='Skipped' ? 'This step was skipped. No log.' : 'Log excerpt not included in this snapshot. Open the job on GitHub for complete output.';
+  }
+  function jobTiles(run,phase) {
+    return run.jobs.map((job,index)=>job.phase===phase?`<button class="job ${selectedJob===index?'active':''}" data-job="${index}" aria-pressed="${selectedJob===index}"><span class="job-label">${job.status==='Failed'?'✕':job.status==='Skipped'?'–':'✓'} ${escapeHtml(job.label)}</span><span class="job-meta ${job.status.toLowerCase()}">${escapeHtml(job.status)} · ${escapeHtml(job.time)}</span></button>`:'').join('');
+  }
+  function runDetail() {
+    const run=runs[selectedRun], job=run.jobs[selectedJob], step=job.steps[selectedStep];
+    const phases=run.repo==='vitejs/vite'?['Gate','Parallel matrix','Result']:['Gate','Result'];
+    const labels={'Gate':run.repo==='vitejs/vite'?'01 · Get changed files':'01 · Version','Parallel matrix':'02 · Parallel build & test','Result':run.repo==='vitejs/vite'?'03 · Outcome':'02 · Release'};
+    const notes={'Gate':'Starts first','Parallel matrix':'Six jobs run together after the gate','Result':run.repo==='vitejs/vite'?'Needs all six matrix jobs':'Needs version'};
+    const stages=phases.map(phase=>`<section class="flow-stage flow-${phase==='Parallel matrix'?'matrix':phase.toLowerCase()}"><div class="stage-head">${labels[phase]}<small>${notes[phase]}</small></div><div class="job-grid">${jobTiles(run,phase)}</div></section>`).join('');
+    const independent=run.repo==='vitejs/vite'?`<div class="free-lane"><span>Independent lane · runs alongside the gate and matrix, no dependency</span>${jobTiles(run,'Independent')}</div>`:'';
+    const navigation=run.jobs.map((item,index)=>`<button class="nav-job ${selectedJob===index?'active':''}" data-job="${index}">${item.status==='Failed'?'✕':item.status==='Skipped'?'–':'✓'} ${escapeHtml(item.label)}</button>`).join('');
+    const steps=job.steps.length?job.steps.map(([name,status],index)=>`<div class="check ${selectedStep===index?'active':''}"><span class="${status==='Failed'?'bad-text':status==='Passed'?'good-text':''}">${status==='Failed'?'✕':status==='Skipped'?'–':'✓'}</span><span>${escapeHtml(name)}</span><button data-step="${index}">${selectedStep===index?'Selected':'Logs'}</button></div>`).join(''):'<p class="fine">Skipped job. No steps ran.</p>';
+    const logs=step?`<h4>${escapeHtml(step[0])} · log excerpt</h4><pre class="logs">${escapeHtml(logExcerpt(run,job,step))}</pre>`:'';
+    return `<div class="run-title"><div><span class="eyebrow">${escapeHtml(run.repo)} / GitHub Actions</span><h3>${escapeHtml(run.name)} #${run.number} ${badge(run.status)}</h3><span class="meta">${escapeHtml(run.branch)} · ${escapeHtml(run.date)} · ${run.jobs.length} jobs</span></div><a class="source" href="${run.url}" target="_blank" rel="noopener noreferrer">Open real run on GitHub ↗</a></div><div class="pipeline-workspace"><aside class="job-nav" aria-label="Jobs in this run"><h4>All jobs</h4>${navigation}</aside><div><section class="graph" aria-label="Workflow dependencies"><p class="graph-heading">Workflow graph<small>Arrows show job dependencies. Tap a job to inspect its steps.</small></p>${independent}<div class="flow ${run.repo==='vitejs/vite'?'':'is-linear'}">${stages}</div><p class="graph-key">${run.repo==='vitejs/vite'?'Get changed files → six concurrent builds → outcome. Lint runs independently.':'Version → release. Typecheck failed in the release job.'}</p></section><section class="inspection" id="job-inspector"><h4>${escapeHtml(job.label)} · ${job.steps.length} steps</h4><p class="stage-note">${escapeHtml(job.status)} · ${escapeHtml(job.time)} · <a class="source" href="${run.url}/job/${job.id}" target="_blank" rel="noopener noreferrer">Full job log ↗</a></p>${steps}${logs}</section></div></div>`;
+  }
+  function runList() {
+    const category=(value,label)=>`<button class="index-filter ${workflowFilter===value?'active':''}" data-workflow="${value}">${label}</button>`;
+    const status=(value,label)=>`<button class="index-filter ${runFilter===value?'active':''}" data-run-filter="${value}">${label}</button>`;
+    const picker=`<select class="run-select" aria-label="Workflow" data-workflow-select><option value="all" ${workflowFilter==='all'?'selected':''}>All workflows</option><option value="CI" ${workflowFilter==='CI'?'selected':''}>CI</option><option value="Release" ${workflowFilter==='Release'?'selected':''}>Release</option></select>`;
+    return `<section class="index"><div class="index-title"><h3>All pipeline runs</h3><p class="fine">Demo snapshots from Vite and Joint Bob · newest first</p></div><div class="run-index"><aside class="run-categories"><h4>Workflows</h4>${category('all','All workflows')}${category('CI','CI')}${category('Release','Release')}</aside><div><input class="index-search" type="search" data-filter placeholder="Search runs or branches" aria-label="Search pipeline runs" value="${escapeHtml(searchQuery)}"><div class="index-controls">${picker}${status('all','All')}${status('passed','Passed')}${status('failed','Failed')}<span class="index-count">Runs · Sep 30 snapshot</span></div><div class="index-rows">${runRows()}</div><p class="empty" hidden>No matching runs</p></div></div></section>`;
+  }
+  function prList() {
+    const filter=(value,label)=>`<button class="index-filter ${prFilter===value?'active':''}" data-pr-filter="${value}">${label}</button>`;
+    return `<section class="index"><div class="index-title"><h3>All pull requests</h3><p class="fine">Sample data · choose a PR to review</p></div><input class="index-search" type="search" data-filter placeholder="Search titles or authors" aria-label="Search pull requests" value="${escapeHtml(searchQuery)}"><div class="index-controls">${filter('open','Open · 2')}${filter('closed','Closed · 1')}<span class="index-count">Newest first</span></div><div class="index-rows">${prRows()}</div><p class="empty" hidden>No matching pull requests</p></section>`;
+  }
+  function filterSearch() {
+    let shown=0;
+    for(const row of preview.querySelectorAll('[data-search-row]')) { row.hidden=!row.textContent.toLowerCase().includes(searchQuery.toLowerCase()); if(!row.hidden) shown++; }
+    preview.querySelector('.empty').hidden=shown!==0;
+  }
+  function render() {
+    const isPr=tab==='pulls', isRun=tab==='pipelines';
+    const head=`<header class="app-head"><div><h2>Git</h2><span class="repo">joint-bob / main</span></div><span class="demo"><span class="desktop-label">INTERACTIVE MOCKUP · </span>${isRun?'REAL CI SNAPSHOT':'SAMPLE PRS'}</span></header>${tabs()}`;
+    if (!isPr && !isRun) { preview.innerHTML=head+`<div class="detail"><span class="eyebrow">Existing view</span><h3>${tab[0].toUpperCase()+tab.slice(1)}</h3><p class="copy">This tab remains as it is today. Choose Pull requests or Pipelines to inspect the proposed screens.</p></div>`; return; }
+    const content=isRun?runDetailOpen?`<section class="pipeline">${back('runs')}${runDetail()}</section>`:runList():prDetailOpen?prDetail():prList();
+    preview.innerHTML=head+(layout==='b'&&!runDetailOpen&&!prDetailOpen?`<div class="dashboard"><div class="stats"><div class="stat"><span>OPEN PRS · SAMPLE</span><b>2</b></div><div class="stat"><span>CI MATRIX JOBS · REAL</span><b class="good-text">6</b></div><div class="stat"><span>FAILED RUNS · REAL</span><b class="bad-text">1</b></div></div>${content}</div>`:content);
+    if(isRun?!runDetailOpen:!prDetailOpen) filterSearch();
+  }
+  document.querySelectorAll('[data-layout]').forEach(button=>button.addEventListener('click',()=>{layout=button.dataset.layout;document.querySelectorAll('[data-layout]').forEach(item=>item.setAttribute('aria-pressed',item===button?'true':'false'));document.querySelector('#selection').textContent='';render();}));
+  function showScreen() { render(); if(window.matchMedia('(max-width:760px)').matches) preview.scrollIntoView({block:'start'}); }
+  preview.addEventListener('click',event=>{
+    const button=event.target.closest('button'); if(!button)return;
+    if(button.dataset.tab){tab=button.dataset.tab;searchQuery='';showScreen();}
+    else if(button.dataset.back){if(button.dataset.back==='runs')runDetailOpen=false;else prDetailOpen=false;showScreen();}
+    else if(button.hasAttribute('data-pr')){selectedPr=Number(button.dataset.pr);prDetailOpen=true;showScreen();}
+    else if(button.hasAttribute('data-run')){selectedRun=Number(button.dataset.run);selectedJob=selectedRun===0?4:1;selectedStep=selectedRun===0?10:5;runDetailOpen=true;showScreen();}
+    else if(button.dataset.prFilter){prFilter=button.dataset.prFilter;showScreen();}
+    else if(button.dataset.runFilter){runFilter=button.dataset.runFilter;showScreen();}
+    else if(button.dataset.workflow){workflowFilter=button.dataset.workflow;showScreen();}
+    else if(button.hasAttribute('data-job')){selectedJob=Number(button.dataset.job);selectedStep=0;render();}
+    else if(button.hasAttribute('data-step')){selectedStep=Number(button.dataset.step);render();}
+    else if(button.dataset.demo){window.alert(`${button.dataset.demo} is preview-only. No GitHub action was sent.`);}
+  });
+  preview.addEventListener('change',event=>{if(event.target.matches('[data-workflow-select]')){workflowFilter=event.target.value;render();}});
+  preview.addEventListener('input',event=>{if(event.target.matches('[data-filter]')){searchQuery=event.target.value;filterSearch();}});
+  document.querySelector('#approve').addEventListener('click',()=>{document.querySelector('#selection').textContent=`Selected: ${layout==='a'?'A · Focused workspace':'B · Operations desk'}. Tell me this choice in chat to approve implementation.`;});
+  render();
+</script>
+</body>
+</html>
