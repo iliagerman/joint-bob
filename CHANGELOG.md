@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.19.2 — 2026-09-30
 
-- Costs button now displays as an icon-only button, matching the style of other toolbar controls.
+- Costs icon-only restored with C modifier-held shortcut hint and Ctrl+Alt+Shift+C shortcut; missing chart styles restored.
 
 ## 2.19.1 — 2026-09-30
 
