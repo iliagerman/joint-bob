@@ -17,11 +17,6 @@ const REVIEW_ANSWER_LIMIT = 40_000;
 // The diff handed to the model is bounded so a huge change cannot blow the context.
 const REVIEW_DIFF_LIMIT = 120_000;
 
-// Tool names, across harnesses, that only read state. The review agent is restricted
-// to these so an explanation cannot silently mutate the working tree. Enforcement is
-// best-effort per harness: a harness that advertises no matching tool runs with tools
-// disabled entirely, and the prompt reinforces the read-only contract regardless.
-const READ_ONLY_TOOL_PATTERN = /^(fs_read|read|read_file|grep|search|search_files|list|list_directory|glob|find|codebase|get_document_symbols|lookup_symbols|search_symbols)$/i;
 
 export interface RunGitReviewInput {
   projectId: string;
@@ -35,6 +30,8 @@ export interface RunGitReviewInput {
   question: string;
   /** Prior exchanges in this thread, oldest first, replayed as context. */
   history?: Array<{ role: "user" | "assistant"; text: string }>;
+  /** Structured review/discovery instructions; still runs in the same read-only session. */
+  instructions?: string;
 }
 
 export interface RunGitReviewResult {
@@ -50,6 +47,7 @@ function boundedDiff(diff: string): string {
 }
 
 function reviewPrompt(input: RunGitReviewInput): string {
+  if (input.instructions) return `${input.instructions}\n\n${boundedDiff(input.diff)}`;
   const target = input.selection.scope === "commit"
     ? `commit ${input.selection.revision}`
     : input.selection.filePath
@@ -60,7 +58,7 @@ function reviewPrompt(input: RunGitReviewInput): string {
     : "";
   return [
     "You are a read-only code reviewer. Explain code changes; never modify files, run mutating commands, stage, commit, or push.",
-    "You may read and search the project to understand context, then answer in prose. Cite file paths and line references where useful.",
+    "Use only the provided diff and conversation context. Cite file paths and line references where useful.",
     `The user is asking about ${target}.`,
     "",
     "```diff",
@@ -72,15 +70,9 @@ function reviewPrompt(input: RunGitReviewInput): string {
   ].join("\n");
 }
 
-/** Restricts the session to read-only tools when the harness advertises any; otherwise disables all. */
+/** Do not run a reviewer when the harness cannot disable its tools. */
 async function restrictToReadOnly(session: HarnessSession): Promise<void> {
-  try {
-    const readOnly = session.tools().filter((tool) => READ_ONLY_TOOL_PATTERN.test(tool.name)).map((tool) => tool.name);
-    await session.setTools(readOnly);
-  } catch {
-    // A harness that cannot restrict tools still runs; the prompt states the read-only
-    // contract, and this is explanation-only work with a short, cancelled-on-timeout turn.
-  }
+  await session.setTools([]);
 }
 
 function collectAnswer(events: HarnessEvent[]): string {

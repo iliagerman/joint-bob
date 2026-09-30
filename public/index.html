@@ -1286,6 +1286,17 @@
           <button class="git-review-tab" id="gitReviewTabReviews" type="button" role="tab" aria-selected="false" data-git-tab="reviews" data-testid="git-review-tab-reviews">Reviews</button>
         </div>
         <p class="git-review-ambiguity" id="gitReviewAmbiguity" hidden data-testid="git-review-ambiguity"></p>
+        <div class="git-review-toolbar">
+          <label><input id="gitReviewAllChanges" type="checkbox" data-testid="git-review-all-changes"> Include other pending changes</label>
+          <label><input id="gitReviewFocus" type="checkbox" data-testid="git-review-focus"> Focus mode</label>
+          <button class="ghost compact" id="gitReviewRefreshScope" type="button" data-testid="git-review-refresh-scope">Refresh conversation files</button>
+          <div class="git-review-ask-controls">
+            <label>Reviewer<select id="gitReviewHarness" data-testid="git-review-harness"></select></label>
+            <label>Model<select id="gitReviewModel" data-testid="git-review-model"></select></label>
+            <label>Effort<select id="gitReviewThinking" data-testid="git-review-thinking"></select></label>
+          </div>
+          <button class="primary compact" id="gitReviewGenerate" type="button" data-testid="git-review-generate">Generate review comments</button>
+        </div>
         <div class="git-review-body">
           <aside class="git-review-list" id="gitReviewList" data-testid="git-review-list" aria-label="Changed files and commits"></aside>
           <section class="git-review-detail">
@@ -1293,7 +1304,10 @@
               <p class="git-review-diff-path" id="gitReviewDiffPath" data-testid="git-review-diff-path"></p>
               <button class="ghost compact" id="gitReviewAskButton" type="button" hidden data-testid="git-review-ask-button">Ask AI</button>
             </div>
-            <pre class="git-review-diff" id="gitReviewDiff" data-testid="git-review-diff" tabindex="0"></pre>
+            <div class="git-review-detail-content">
+              <section id="gitReviewGuide" class="git-review-guide" hidden data-testid="git-review-guide"></section>
+              <pre class="git-review-diff" id="gitReviewDiff" data-testid="git-review-diff" tabindex="0"></pre>
+            </div>
           </section>
         </div>
         <p class="git-review-status" id="gitReviewStatus" role="status" aria-live="polite"></p>
@@ -1301,11 +1315,6 @@
           <div class="git-review-ask-head">
             <span class="eyebrow" id="gitReviewAskTarget">Ask about this change</span>
             <button class="ghost icon-button" id="gitReviewAskCloseButton" type="button" aria-label="Close Ask AI" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-          </div>
-          <div class="git-review-ask-controls">
-            <label>Harness<select id="gitReviewHarness" data-testid="git-review-harness"></select></label>
-            <label>Model<select id="gitReviewModel" data-testid="git-review-model"></select></label>
-            <label>Thinking<select id="gitReviewThinking" data-testid="git-review-thinking"></select></label>
           </div>
           <div class="git-review-thread" id="gitReviewThread" data-testid="git-review-thread"></div>
           <label class="sr-only" for="gitReviewQuestion">Question</label>

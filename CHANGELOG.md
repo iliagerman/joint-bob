@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Git review now generates ranked review comments in conversation scope, shows which reviewer changed files last, and focuses on specific files with step-by-step guidance.
+
 ## 2.13.20 — 2026-09-30
 
 - Restarting nodes no longer fail health checks when peer requests arrive during startup.

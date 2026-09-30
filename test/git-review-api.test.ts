@@ -129,6 +129,12 @@ test("git review endpoints report status, diff, history, and commit for a projec
     assert.match(diff.patch, /-export const value = 1;/);
     assert.match(diff.patch, /\+export const value = 2;/);
 
+    const outOfScope = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/guide`, {
+      method: "POST", headers,
+      body: JSON.stringify({ conversationId: "unverified-conversation", scope: "conversation", paths: ["app.ts"], harnessId: "pi", modelId: "gpt-6-sol", thinkingLevel: "xhigh" }),
+    });
+    assert.equal(outOfScope.status, 409, "conversation review rejects paths outside a fresh agent-declared list");
+
     const untrackedResponse = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/diff?path=${encodeURIComponent("fresh.ts")}&untracked=1`, { headers });
     assert.equal(untrackedResponse.status, 200);
     assert.match((await jsonBody(untrackedResponse) as { patch: string }).patch, /\+export const fresh = true;/);
