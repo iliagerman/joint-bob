@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- File action buttons now display SVG icons and are reorganized for better mobile and desktop usability.
+
 ## 2.15.0 — 2026-09-30
 
 - Skills can now be shared with individual nodes or whole clusters, selected in bulk, and long lists are paginated.

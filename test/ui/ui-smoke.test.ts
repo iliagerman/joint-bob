@@ -812,6 +812,50 @@ test("canvas pages hold independent layouts and keep their frames", async () => 
     "the surviving pane keeps its exact geometry");
 });
 
+test("file action buttons stay aligned with and without a browser link", async () => {
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await page.getByTestId("chat-file-link").first().click();
+  await page.getByTestId("file-action-view-button").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("file-action-browser-link").isVisible(), false, "markdown has no browser action");
+
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const browserLink of [false, true]) {
+      // The file is markdown. Show the optional HTML-only action to exercise both layouts.
+      await page.getByTestId("file-action-browser-link").evaluate((link, visible) => { link.hidden = !visible; }, browserLink);
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      const layout = await page.locator("#fileActionView").evaluate((actions) => {
+        const open = [];
+        const footer = [];
+        for (const item of actions.querySelectorAll<HTMLElement>(".file-editor-open-actions > :not([hidden])")) {
+          const box = item.getBoundingClientRect();
+          open.push({ x: box.x, y: box.y, width: box.width, height: box.height, icon: !!item.querySelector("svg") });
+        }
+        for (const item of actions.querySelectorAll<HTMLElement>(".file-editor-footer > *")) {
+          const box = item.getBoundingClientRect();
+          footer.push({ x: box.x, y: box.y, width: box.width, height: box.height });
+        }
+        return { open, footer, cardRight: actions.closest<HTMLElement>(".file-editor-card")!.getBoundingClientRect().right };
+      });
+      assert.equal(layout.open.length, browserLink ? 3 : 2);
+      assert.ok(layout.open.every((button) => button.icon), "file actions have icons");
+      assert.ok(layout.open.every((button) => button.height >= 44 && button.x + button.width <= layout.cardRight), "file actions fit dialog");
+      assert.ok(layout.open.every((button) => Math.abs(button.width - layout.open[0].width) < 1), "file actions have equal widths");
+      assert.ok(layout.open.every((button) => Math.abs(button.height - layout.open[0].height) < 1), "file actions have equal heights");
+      if (width > 430) assert.ok(layout.open.every((button) => Math.abs(button.y - layout.open[0].y) < 1), "desktop actions share a row");
+      assert.ok(Math.abs(layout.footer[0].width - layout.footer[1].width) < 1, "Cancel and Edit have equal widths");
+      assert.ok(Math.abs(layout.footer[0].y - layout.footer[1].y) < 1, "Cancel and Edit share a row");
+      assert.ok(layout.footer[0].y >= layout.open.at(-1)!.y + layout.open.at(-1)!.height, "footer sits below file actions");
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByTestId("file-action-browser-link").evaluate((link) => { link.hidden = true; });
+  await page.getByTestId("file-action-cancel-button").click();
+});
+
 test("a markdown file opens as raw source and previews beside it", async () => {
   // A fresh load, because the previous test left the canvas picker open. The dialog is
   // then reached the way a person reaches it: a file mentioned in a conversation.

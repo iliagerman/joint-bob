@@ -548,7 +548,9 @@
           <details class="usage-filter-details"><summary>Filter usage</summary><form id="usageFilters" class="usage-filters">
             <label>Project<select name="projectId" data-testid="usage-project-filter"><option value="">All projects</option></select></label><label>Conversation<select name="conversationId" data-testid="usage-conversation-filter"><option value="">All conversations</option></select></label><label>Existing label<select name="classification" data-testid="usage-classification-filter"><option value="">All labels</option></select></label><label>Difficulty<select name="difficulty" data-testid="usage-difficulty-filter"><option value="">All difficulties</option><option value="not-classified">Not classified</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label><label>Model<input name="modelId" data-testid="usage-model-filter" /></label><label>Engine<input name="engine" data-testid="usage-engine-filter" /></label><label>Provider<input name="provider" data-testid="usage-provider-filter" /></label><label>From<input name="from" type="date" data-testid="usage-from-filter" /></label><label>To<input name="to" type="date" data-testid="usage-to-filter" /></label><button type="button" class="ghost" id="usageRefresh" data-testid="usage-refresh">Refresh usage</button>
           </form></details>
+          <div id="usageCharts"></div>
           <section><h3>Cost breakdowns</h3><div id="usageBreakdowns" data-testid="usage-breakdowns"><p>Loading breakdowns…</p></div></section>
+          <div id="usageConversationPagination" class="usage-pagination"><button type="button" data-page="previous" data-testid="usage-page-previous">Previous</button><span>Page 0 of 0</span><button type="button" data-page="next" data-testid="usage-page-next">Next</button></div>
         </section>
         <section class="usage-subscriptions" id="usageSubscriptionsPanel" data-usage-panel="subscriptions" hidden>
           <div class="usage-section-heading"><div><h3>Subscription prices by harness</h3><p>Choose a harness and enter the price you actually pay. Fees are not calculated from token usage.</p></div><button type="button" id="subscriptionAdd" data-testid="subscription-add">Add price</button></div>
@@ -1257,11 +1259,15 @@
         </div>
         <p id="fileActionStatus" role="status" aria-live="polite"></p>
         <div id="fileActionView" class="file-editor-actions">
-          <button class="ghost" id="fileActionCancelButton" type="button" data-testid="file-action-cancel-button">Cancel</button>
-          <button class="ghost" id="fileActionViewButton" type="button" data-testid="file-action-view-button">View</button>
-          <a class="ghost" id="fileActionBrowserLink" data-testid="file-action-browser-link" target="_blank" rel="noopener noreferrer" hidden>Open in browser</a>
-          <a class="ghost" id="fileActionDownloadLink" data-testid="file-action-download-link" download>Download</a>
-          <button class="primary" id="fileActionEditButton" type="button" data-testid="file-action-edit-button" autofocus>Edit</button>
+          <div class="file-editor-open-actions">
+            <button class="ghost" id="fileActionViewButton" type="button" data-testid="file-action-view-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/></svg>View</button>
+            <a class="ghost" id="fileActionBrowserLink" data-testid="file-action-browser-link" target="_blank" rel="noopener noreferrer" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 5h6v6M19 5l-9 9"/><path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg>Open in browser</a>
+            <a class="ghost" id="fileActionDownloadLink" data-testid="file-action-download-link" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>Download</a>
+          </div>
+          <div class="file-editor-footer">
+            <button class="ghost" id="fileActionCancelButton" type="button" data-testid="file-action-cancel-button">Cancel</button>
+            <button class="primary" id="fileActionEditButton" type="button" data-testid="file-action-edit-button" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 20 4.5-1 11-11a2 2 0 0 0-3-3l-11 11L4 20zM14.5 7.5l3 3"/></svg>Edit</button>
+          </div>
         </div>
         <div id="fileEditorView" hidden>
           <div class="file-editor-label"><label for="fileEditorTextarea">File contents</label><span class="file-editor-label-tools"><button class="ghost" id="fileEditorPreviewButton" type="button" hidden aria-pressed="false" data-testid="file-editor-preview-button">Preview</button><span id="fileEditorMode" data-testid="file-editor-mode">Normal</span></span></div>
