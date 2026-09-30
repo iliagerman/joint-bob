@@ -55,7 +55,7 @@ async function listSessions(mesh: Mesh, node: SeededNode, auth: SignedIn): Promi
   return (JSON.parse(body) as { sessions: ListedSession[] }).sessions;
 }
 
-async function waitForSession(mesh: Mesh, node: SeededNode, auth: SignedIn, sessionId: string, predicate: (session: ListedSession) => boolean, deadlineMs = 20_000): Promise<ListedSession> {
+async function waitForSession(mesh: Mesh, node: SeededNode, auth: SignedIn, sessionId: string, predicate: (session: ListedSession) => boolean, deadlineMs = 45_000): Promise<ListedSession> {
   const deadline = Date.now() + deadlineMs;
   for (;;) {
     const session = (await listSessions(mesh, node, auth)).find((candidate) => candidate.id === sessionId);

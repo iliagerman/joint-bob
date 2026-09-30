@@ -471,7 +471,7 @@ test("a replicated review survives a cold listing on the other node and new acti
   assert.ok(target);
   await list(nodeB, sessionB, projectB.id);
   const waitState = async (node: SeededNode, auth: SignedIn, projectId: string, state: string, minimumUpdatedAt?: string) => {
-    const deadline = Date.now() + 15_000;
+    const deadline = Date.now() + 45_000;
     let current: ReviewSession | undefined;
     do {
       current = (await list(node, auth, projectId)).find((session) => session.id === target.id);

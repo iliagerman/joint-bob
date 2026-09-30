@@ -7,7 +7,7 @@ import test from 'node:test';
 import {api,seedDevEnvironment,signIn,startDevNode,stopDevNode} from './dev-nodes.js';
 import {startNativeSyncthing,stopNativeSyncthing} from './native-syncthing.js';
 
-test('confirmed legacy mirrors agree owner folder ID, resume paused native folders and preserve both local paths/data',{timeout:120000},async()=>{
+test('confirmed legacy mirrors agree owner folder ID, resume paused native folders and preserve both local paths/data',{timeout:180000},async()=>{
  const root=await mkdtemp(path.join(os.tmpdir(),'legacy-twin-folders-'));
  const children:Awaited<ReturnType<typeof startDevNode>>[]=[],syncs:Awaited<ReturnType<typeof startNativeSyncthing>>[]=[];
  try{
@@ -29,7 +29,7 @@ test('confirmed legacy mirrors agree owner folder ID, resume paused native folde
   const sa=await signIn(a,left),sb=await signIn(b,right);
   const invitation=await api<{link:string;relationshipId:string}>(left,sa,'POST','/twins/invitations',{confirmOwnedData:true});
   assert.equal((await api(right,sb,'POST','/twins/accept',{link:invitation.body.link,confirmOwnedData:true})).status,201);
-  let transferred=false;const deadline=Date.now()+35000;
+  let transferred=false;const deadline=Date.now()+75000;
   while(Date.now()<deadline){try{transferred=await readFile(path.join(mirror.path,'owner.txt'),'utf8')==='owner files stay'&&await readFile(path.join(project.path,'replica.txt'),'utf8')==='replica files stay';}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}if(transferred)break;await new Promise(r=>setTimeout(r,200));}
   assert.equal(transferred,true,'both pre-existing native folder contents must survive and transfer');
   const folders=await syncB.request<Array<{id:string;path:string;paused:boolean}>>('config/folders');

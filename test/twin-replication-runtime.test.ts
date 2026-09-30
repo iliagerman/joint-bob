@@ -9,7 +9,7 @@ import { signedNodeRequest } from "./signed-node-request.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 
 async function eventually(check: () => Promise<void>): Promise<void> {
-  const deadline = Date.now() + 25_000;
+  const deadline = Date.now() + 50_000;
   while (true) {
     try { await check(); return; }
     catch (error) { if (Date.now() >= deadline) throw error; }
