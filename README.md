@@ -144,11 +144,15 @@ sudo loginctl enable-linger "$USER"
 
 Choose one access method:
 
-- With Tailscale, install Tailscale on the remote host and use Tailscale Serve.
+- With Tailscale, install Tailscale on the remote host (see **Install Tailscale** below) and use Tailscale Serve.
 - Without Tailscale, use an SSH tunnel for a single node.
 - For a cluster without Tailscale, put every node behind a trusted HTTPS reverse proxy on a private network.
 
 Do not expose Joint Bob's plain HTTP port `8787` to the internet. The repository's `deploy/aws-ec2-test` Terraform is an ephemeral smoke-test environment, not a persistent EC2 deployment. See **EC2 smoke test** below.
+
+## Install Tailscale
+
+Joint Bob does not install Tailscale. Install and sign in to it yourself on every node that will use tailnet HTTPS.macOS: install the Tailscale app from https://tailscale.com/download (or `brew install --cask tailscale`) and sign in from the menu-bar app. Linux: `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up` and complete the printed sign-in URL. Verify with `tailscale status` — it must list this machine before `serve-https.sh` or `bootstrap.sh` can configure Serve. Tailscale has its own account; sign-in is a human step.
 
 ## Private access with Tailscale
 

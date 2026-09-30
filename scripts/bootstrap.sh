@@ -29,7 +29,8 @@ elif command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; t
   echo "==> Configuring Tailscale Serve on :${HTTPS_PORT}"
   PORT="${PORT}" HTTPS_PORT="${HTTPS_PORT}" "${APP_DIR}/scripts/serve-https.sh"
 else
-  echo "==> Tailscale not found or signed out; skipping Serve. Install and sign in to Tailscale, then run:" >&2
+  echo "==> Tailscale not found or signed out; skipping Serve. Joint Bob works locally without it." >&2
+  echo "    For cluster/remote access, install and sign in to Tailscale (see README: Install Tailscale), then run:" >&2
   echo "    PORT=${PORT} HTTPS_PORT=${HTTPS_PORT} ${APP_DIR}/scripts/serve-https.sh" >&2
 fi
 
