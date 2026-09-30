@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.13.21 — 2026-09-30
 
-- Git review now generates ranked review comments in conversation scope, shows which reviewer changed files last, and focuses on specific files with step-by-step guidance.
+- Git reviews can focus on agent-reported conversation files and generate ranked, guided comments, with reviewer model and effort selectable.
 
 ## 2.13.20 — 2026-09-30
 
