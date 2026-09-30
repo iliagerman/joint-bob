@@ -1547,13 +1547,13 @@
       <form method="dialog" class="dialog-card" id="secretAccountForm">
         <div class="secret-dialog-heading">
           <span class="secret-dialog-icon" id="secretAccountProviderIcon" data-testid="secret-account-provider-icon"></span>
-          <div><span class="eyebrow">Node-local credentials</span><h2 id="secretAccountTitle">Secret account</h2><p>File entries store their content privately; the environment receives the private file path.</p></div>
+          <div><span class="eyebrow">Secret credentials</span><h2 id="secretAccountTitle">Secret account</h2><p>File entries store their content privately; the environment receives the private file path.</p></div>
         </div>
         <label>Label<input id="secretAccountLabelInput" required autocomplete="off" placeholder="Work AWS" data-testid="secret-account-label-input" /></label>
         <label>Provider<select id="secretAccountProviderInput" data-testid="secret-account-provider-input"><option value="aws">AWS</option><option value="google">Google</option><option value="github">GitHub</option><option value="website">Website</option><option value="custom">Custom</option></select></label>
         <p class="secret-provider-hint" id="secretAccountProviderHint" data-testid="secret-account-provider-hint"></p>
         <label>Website origin <span class="muted">(optional)</span><input id="secretAccountOriginInput" data-testid="secret-account-origin-input" type="url" placeholder="https://mobile.com" autocomplete="off" spellcheck="false" aria-describedby="secretAccountOriginHint" /></label>
-        <p class="secret-provider-hint" id="secretAccountOriginHint">Use the exact HTTPS scheme, host, and port; subdomains are separate. Assigned scopes authorize ordinary automatic sign-in; MFA and CAPTCHA remain human-only. Bound values are not exported and stay on this credential node, though they can fill an authorized paired browser. Clear the origin to use ordinary environment secrets.</p>
+        <p class="secret-provider-hint" id="secretAccountOriginHint">Use the exact HTTPS scheme, host, and port; subdomains are separate. Assigned scopes authorize ordinary automatic sign-in; MFA and CAPTCHA remain human-only. Bound values are not exported to the shell. Sharing sends an encrypted-at-rest copy to selected nodes; authorized browser sign-in can also use them. Clear the origin to use ordinary environment secrets.</p>
         <div id="secretVariableRows" data-testid="secret-variable-rows"></div>
         <button type="button" class="ghost" id="secretVariableAddButton" data-testid="secret-variable-add-button">Add environment variable</button>
         <label class="checkbox-row"><input id="secretAccountReplicateInput" type="checkbox" data-testid="secret-account-replicate-toggle" /> Replicate this account to paired nodes</label>
@@ -1562,7 +1562,7 @@
     </dialog>
     <dialog id="secretScopeDialog" data-testid="secret-scope-dialog">
       <form method="dialog" class="dialog-card" id="secretScopeForm">
-        <div><span class="eyebrow">Node-local credentials</span><h2 id="secretScopeTitle">Secret accounts</h2><p>Select accounts available to new agent sessions in this scope.</p></div>
+        <div><span class="eyebrow">Secret credentials</span><h2 id="secretScopeTitle">Secret accounts</h2><p>Select accounts available to new agent sessions in this scope.</p></div>
         <div id="secretScopeList" class="secret-scope-list" data-testid="secret-scope-list"></div>
         <button type="button" class="ghost" id="secretScopeAddButton" data-testid="secret-scope-add-button" hidden>New project secret</button>
         <div class="dialog-actions"><button type="button" class="ghost" id="secretScopeCancelButton" data-testid="secret-scope-cancel-button">Cancel</button><button type="submit" class="primary" data-testid="secret-scope-save-button">Save accounts</button></div>

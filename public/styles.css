@@ -1827,6 +1827,9 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .changelog-entry ul:empty { display: none; }
 
 .secret-account-list, .secret-scope-list { display: grid; gap: 8px; }
+.secret-sharing-card { width: min(480px, calc(100vw - 24px)); max-height: min(75vh, 680px); overflow-y: auto; }
+.secret-sharing-card fieldset { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 10px 12px; }
+.secret-sharing-card legend { padding-inline: 4px; font-weight: 600; }
 .secret-account-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .secret-account-meta { display: grid; gap: 2px; flex: 1; min-width: 0; }
 .secret-account-meta strong { color: var(--text); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }

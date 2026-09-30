@@ -5,7 +5,12 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Secret accounts can be shared with selected clusters or nodes; recipients get read-only copies that track owner updates.
+
+## 2.15.1 — 2026-09-30
+
 - File action buttons now display SVG icons and are reorganized for better mobile and desktop usability.
+- Secret accounts can be shared with selected clusters or nodes; recipients get read-only copies that track owner updates.
 
 ## 2.15.0 — 2026-09-30
 

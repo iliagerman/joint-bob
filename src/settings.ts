@@ -100,6 +100,7 @@ export interface SettingsInput {
   resources?: ResourcePaths;
   conversationLabels?: string[];
   conversationHistoryDays?: number;
+  conversationRetentionDays?: number;
   autoCompactThreshold?: number | null;
   /** Seconds a harness shell command may run before this node stops it; null means no limit. */
   shellCommandTimeoutSeconds?: number | null;
@@ -124,6 +125,7 @@ export interface SettingsResponse {
   resources: ResourcePaths;
   conversationLabels: string[];
   conversationHistoryDays: number;
+  conversationRetentionDays: number;
   autoCompactThreshold: number | null;
   shellCommandTimeoutSeconds: number | null;
   subprocessMaxLifetimeMinutes: number;
@@ -250,6 +252,7 @@ export function getSettings(): SettingsResponse {
     resources: readResourcePaths("resources."),
     conversationLabels: conversationLabelsSchema.parse(JSON.parse(value("conversationLabels", JSON.stringify(DEFAULT_CONVERSATION_LABELS)))),
     conversationHistoryDays: Number(value("conversationHistoryDays", "30")),
+    conversationRetentionDays: Number(value("conversationRetentionDays", "40")),
     autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
     shellCommandTimeoutSeconds: value("shellCommandTimeoutSeconds", "unlimited") === "unlimited" ? null : Number(value("shellCommandTimeoutSeconds", "unlimited")),
     subprocessMaxLifetimeMinutes: Number(value("subprocessMaxLifetimeMinutes", String(DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES))),
@@ -348,6 +351,8 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const resources = input.resources ? normalizeResourcePaths(input.resources) : previous.resources;
   const conversationLabels = conversationLabelsSchema.parse(input.conversationLabels ?? previous.conversationLabels);
   const conversationHistoryDays = input.conversationHistoryDays ?? previous.conversationHistoryDays;
+  const conversationRetentionDays = input.conversationRetentionDays ?? previous.conversationRetentionDays;
+  if (!Number.isInteger(conversationRetentionDays) || conversationRetentionDays < 1 || conversationRetentionDays > 3650) throw new Error("Conversation retention must be between 1 and 3650 days");
   const autoCompactThreshold = input.autoCompactThreshold === undefined ? previous.autoCompactThreshold : input.autoCompactThreshold;
   const shellCommandTimeoutSeconds = input.shellCommandTimeoutSeconds === undefined ? previous.shellCommandTimeoutSeconds : input.shellCommandTimeoutSeconds;
   const subprocessMaxLifetimeMinutes = input.subprocessMaxLifetimeMinutes === undefined ? previous.subprocessMaxLifetimeMinutes : input.subprocessMaxLifetimeMinutes;
@@ -369,6 +374,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "projects.homePath", path.resolve(homePath));
     save(db, "conversationLabels", JSON.stringify(conversationLabels));
     save(db, "conversationHistoryDays", String(conversationHistoryDays));
+    save(db, "conversationRetentionDays", String(conversationRetentionDays));
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));
     save(db, "shellCommandTimeoutSeconds", shellCommandTimeoutSeconds === null ? "unlimited" : String(shellCommandTimeoutSeconds));
     save(db, "subprocessMaxLifetimeMinutes", String(subprocessMaxLifetimeMinutes));
@@ -397,6 +403,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         conversationDefaultsChanged: JSON.stringify(previous.conversationDefaults) !== JSON.stringify(settings.conversationDefaults),
         conversationLabelsChanged: JSON.stringify(previous.conversationLabels) !== JSON.stringify(settings.conversationLabels),
         conversationHistoryDaysChanged: previous.conversationHistoryDays !== settings.conversationHistoryDays,
+        conversationRetentionDaysChanged: previous.conversationRetentionDays !== settings.conversationRetentionDays,
         autoCompactThresholdChanged: previous.autoCompactThreshold !== settings.autoCompactThreshold,
         shellCommandTimeoutChanged: previous.shellCommandTimeoutSeconds !== settings.shellCommandTimeoutSeconds,
         subprocessMaxLifetimeChanged: previous.subprocessMaxLifetimeMinutes !== settings.subprocessMaxLifetimeMinutes,

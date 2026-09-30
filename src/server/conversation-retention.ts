@@ -13,7 +13,7 @@ import { pinnedConversationKeys } from "../user-pins.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
 import { findHarnessSession } from "./harness-sessions.js";
 import { assertProjectEditable } from "./projects.js";
-import { removeLocalConversation } from "./routes/sessions.js";
+import { deleteLocalConversation } from "./routes/sessions.js";
 
 let activeSweep: Promise<number> | undefined;
 
@@ -33,7 +33,7 @@ async function runSweep(now: number): Promise<number> {
     const tasks = await listTasks(project.id);
     const records = new Map((await listConversationRecords(project.id)).map((record) => [`${record.engine}:${record.sessionId}`, record]));
     const temporary = await listByTheWaySessionIds(project.id);
-    const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) }, [], [], Infinity);
+    const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
     const ownership = new Map(await Promise.all(sessions.map(async (session) => [session, await getConversationOwnership(session.harnessId, session.id)] as const)));
     for (const session of sessions) {
       if (temporary.has(session.id)) continue;
@@ -54,7 +54,7 @@ async function runSweep(now: number): Promise<number> {
       if (open && open.clients.size) continue;
       try {
         if (await conversationBelongsToDoneTask(project.id, session.harnessId, session.id)) continue;
-        await removeLocalConversation(project, session);
+        await deleteLocalConversation(project, session.harnessId, session.id, session.taskId);
         deleted += 1;
         console.log(`Deleted ${reason} conversation ${session.harnessId}:${session.id} in ${project.name}`);
       } catch (error) {

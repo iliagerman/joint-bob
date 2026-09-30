@@ -116,6 +116,11 @@ export function setUserPin(username: string, target: UserPinTarget, pinned: bool
   return listUserPins(username);
 }
 
+export function pinnedConversationKeys(): string[] {
+  const rows = pinDatabase().prepare("SELECT engine, session_id FROM user_pins WHERE kind = 'conversation' AND pinned = 1").all() as Array<{ engine: string; session_id: string }>;
+  return [...new Set(rows.map((row) => `${row.engine}:${row.session_id}`))];
+}
+
 export function listUserPins(username: string): UserPins {
   const rows = pinDatabase().prepare("SELECT kind, project_id, engine, session_id FROM user_pins WHERE username = ? AND pinned = 1 ORDER BY kind, project_id, engine, session_id")
     .all(username) as unknown as Array<{ kind: UserPinTarget["kind"]; project_id: string; engine: ConversationEngine | ""; session_id: string }>;

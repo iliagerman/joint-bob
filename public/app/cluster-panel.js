@@ -102,7 +102,8 @@ function renderReceived(cluster) {
   heading.dataset.testid = "cluster-received-summary";
   received.replaceChildren(heading);
   if (!got.length) {
-    received.append(text("p", `Nothing yet. The other nodes have not shared projects with ${cluster.name}.`, "cluster-muted"));
+    received.append(text("p", `No projects shared with you in ${cluster.name}.`, "cluster-muted"));
+    void renderReceivedSecrets(cluster.id);
     return;
   }
   const byOwner = new Map();
@@ -122,6 +123,18 @@ function renderReceived(cluster) {
     list.append(group);
   }
   received.append(list);
+  void renderReceivedSecrets(cluster.id);
+}
+async function renderReceivedSecrets(clusterId) {
+  try {
+    const { received: secrets } = await api(`/api/clusters/${clusterId}/secrets`);
+    if (selectedClusterId !== clusterId || !secrets.length) return;
+    const section = document.createElement("div"); section.className = "cluster-owner-group";
+    section.append(text("p", `Secrets shared with me · ${secrets.length}`));
+    const chips = document.createElement("ul"); chips.className = "cluster-chips";
+    for (const secret of secrets) chips.append(text("li", `${secret.label} · from ${nodeName(secret.ownerNodeId)} · read-only`, "cluster-chip"));
+    section.append(chips); received.append(section);
+  } catch { /* Secret inventory can be unavailable while the cluster reconnects. */ }
 }
 
 function headerActions(cluster) {

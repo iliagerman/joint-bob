@@ -232,7 +232,7 @@ Joint Bob and Syncthing have separate jobs:
 - Syncthing transfers each shared project's files and its ticket workspaces.
 - Each node keeps its own `~/.joint-bob/node.db`. Joint Bob never synchronizes the SQLite database as a file.
 - Pi, Claude, and Kiro configuration, authentication files, OAuth state, MCP authentication, and daemon control keys remain node-local. Joint Bob pauses legacy `dot-pi`, `dot-claude`, whole-transcript, and global ticket folders if they exist.
-- A secret account marked to replicate reaches twins, and reaches cluster members only for the shared projects it is attached to. That encrypted replication uses the Joint Bob cluster API, not Syncthing.
+- A secret account marked to replicate reaches twins, and reaches cluster members only for shared projects it is attached to. In Settings > Secrets, each owned account can also be shared with selected clusters or individual nodes in them, without enabling twin replication. Sharing a workspace sends its assigned accounts to members along with the workspace's projects. Recipients see read-only copies; edits on the owner update them, and removing the last grant removes the copy when the recipient reconnects. Values already copied cannot be recalled. Credential transfer uses the signed Joint Bob cluster API, not Syncthing.
 
 Users still install Joint Bob on every node, create a local Joint Bob administrator on every node, configure mutually reachable private HTTPS origins, choose a Joint Bob home folder, and join clusters or pair twins with a one-time link. Pi, Claude, and Kiro authentication is separate and must be completed on every node that will run that engine. Tailscale authentication is required only when Tailscale provides the private network.
 

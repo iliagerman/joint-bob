@@ -374,6 +374,7 @@ export const settingsSchema = z.object({
   resources: resourcePathsSchema.optional(),
   conversationLabels: conversationLabelsSchema.optional(),
   conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
+  conversationRetentionDays: z.number().int().min(1).max(3650).optional(),
   autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
   shellCommandTimeoutSeconds: z.number().int().min(1).max(86_400).nullable().optional(),
   subprocessMaxLifetimeMinutes: z.number().int().min(1).max(10_080).optional(),

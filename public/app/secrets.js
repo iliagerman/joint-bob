@@ -4,7 +4,7 @@ import { brandIcon, brandIconPaths } from "./icons.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 
-// Generic secret accounts are deliberately node-local; only metadata is ever rendered.
+// Render account metadata only; secret values never leave the form.
 export const secretAccounts = [];
 let editingSecretAccountId = null;
 // Set while the account form was opened from a project's picker: the new account belongs to that project.
@@ -23,7 +23,7 @@ const providerHints = {
   google: "Paste the Google service account JSON. It is stored privately and GOOGLE_APPLICATION_CREDENTIALS points gcloud and the Google SDKs at it.",
   github: "A personal access token. The gh CLI and the GitHub API read it, and GITHUB_TOKEN is filled in from GH_TOKEN. Git pushes keep using the GitHub group set under Projects.",
   custom: "Any environment variables you need. Every agent session in the scopes you assign this account to receives them.",
-  website: "Structured website sign-in. Set the exact website origin, then LOGIN_USERNAME and LOGIN_PASSWORD (add more fields the form needs). The agent fills them at that origin with login-fill; values stay on this node and never enter the shell.",
+  website: "Structured website sign-in. Set the exact website origin, then LOGIN_USERNAME and LOGIN_PASSWORD (add more fields the form needs). The agent fills them at that origin with login-fill; values never enter the shell. Sharing sends encrypted-at-rest copies to selected nodes.",
 };
 
 function providerIcon(provider) {
@@ -110,7 +110,7 @@ function renderSecretAccounts() {
   elements.secretAccountList.replaceChildren();
   const visible = secretAccounts.filter((account) => secretTypeFilter === "all" || account.provider === secretTypeFilter);
   if (!visible.length) {
-    elements.secretAccountList.textContent = secretTypeFilter === "all" ? "No node-local secret accounts." : `No ${providerLabels[secretTypeFilter] ?? secretTypeFilter} accounts.`;
+    elements.secretAccountList.textContent = secretTypeFilter === "all" ? "No secret accounts." : `No ${providerLabels[secretTypeFilter] ?? secretTypeFilter} accounts.`;
     return;
   }
   for (const account of visible) {
@@ -125,12 +125,61 @@ function renderSecretAccounts() {
       const origin = document.createElement("span"); origin.className = "secret-account-vars"; origin.textContent = account.websiteOrigin; meta.append(origin);
     }
     meta.append(variables);
+    if (account.shared) {
+      const status = document.createElement("span"); status.className = "secret-account-vars";
+      status.textContent = account.readOnly ? "Shared with me · read-only" : "Shared with other nodes";
+      meta.append(status);
+    }
     const edit = document.createElement("button"); edit.type = "button"; edit.className = "ghost compact"; edit.textContent = "Edit"; edit.dataset.testid = "secret-account-edit-button";
     edit.addEventListener("click", () => openSecretAccount(account));
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "ghost compact danger"; remove.textContent = "Delete"; remove.dataset.testid = "secret-account-delete-button";
     remove.addEventListener("click", () => deleteSecretAccount(account));
-    row.append(providerBadge(account.provider, "secret-account-provider-badge"), meta, edit, remove); elements.secretAccountList.append(row);
+    row.append(providerBadge(account.provider, "secret-account-provider-badge"), meta);
+    if (!account.readOnly) {
+      const share = document.createElement("button"); share.type = "button"; share.className = "ghost compact"; share.textContent = "Share"; share.dataset.testid = "secret-account-share-button";
+      share.addEventListener("click", () => void openSecretSharing(account).catch((error) => toast(error.message)));
+      row.append(share, edit, remove);
+    }
+    elements.secretAccountList.append(row);
   }
+}
+
+async function openSecretSharing(account) {
+  const [{ clusters }, { grants }] = await Promise.all([
+    api("/api/secrets/destinations"), api(`/api/secrets/accounts/${encodeURIComponent(account.id)}/sharing`),
+  ]);
+  const dialog = document.createElement("dialog"); dialog.className = "secret-sharing-dialog";
+  const form = document.createElement("form"); form.method = "dialog"; form.className = "dialog-card secret-sharing-card";
+  const title = document.createElement("h3"); title.textContent = `Share ${account.label}`;
+  const hint = document.createElement("p"); hint.textContent = `An entire cluster includes future members. Recipients can use this account but cannot change its values. Removing a destination deletes its copy unless another share still grants access.${account.projectId ? " This project's sharing must be enabled in the same cluster first." : ""}`; hint.id = "secret-sharing-hint"; dialog.setAttribute("aria-describedby", hint.id);
+  form.append(title, hint);
+  for (const cluster of clusters) {
+    const group = document.createElement("fieldset");
+    const legend = document.createElement("legend"); legend.textContent = cluster.name; group.append(legend);
+    for (const target of [{ id: null, name: "Entire cluster" }, ...cluster.nodes]) {
+      const label = document.createElement("label"); label.className = "checkbox-row";
+      const input = document.createElement("input"); input.type = "checkbox";
+      input.dataset.clusterId = cluster.id; input.dataset.nodeId = target.id ?? "";
+      input.checked = grants.some((grant) => grant.clusterId === cluster.id && grant.nodeId === target.id);
+      label.append(input, document.createTextNode(target.name)); group.append(label);
+    }
+    form.append(group);
+  }
+  if (!clusters.length) { const empty = document.createElement("p"); empty.textContent = "Join a cluster to share this account."; form.append(empty); }
+  const actions = document.createElement("div"); actions.className = "dialog-actions";
+  const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel"; cancel.addEventListener("click", () => dialog.close());
+  const save = document.createElement("button"); save.type = "submit"; save.className = "primary"; save.textContent = "Save sharing";
+  actions.append(cancel, save); form.append(actions); dialog.append(form); document.body.append(dialog);
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  form.addEventListener("submit", (event) => { event.preventDefault(); void (async () => {
+    const selected = [...form.querySelectorAll("input:checked")].map((input) => ({ clusterId: input.dataset.clusterId, nodeId: input.dataset.nodeId || null }));
+    const confirmed = await confirmAction({ eyebrow: "Share secret", title: `Share ${account.label}?`, message: "Selected nodes receive the secret values. Removing access stops future use, but cannot erase values someone already copied.", confirmLabel: "Save sharing" });
+    if (!confirmed) return;
+    save.disabled = true;
+    try { await api(`/api/secrets/accounts/${encodeURIComponent(account.id)}/sharing`, { method: "PUT", body: JSON.stringify({ grants: selected }) }); dialog.close(); await loadSecretAccounts(); toast("Secret sharing saved"); }
+    catch (error) { toast(error.message); } finally { save.disabled = false; }
+  })(); });
+  dialog.showModal(); cancel.focus();
 }
 
 export async function loadSecretAccounts() {
@@ -210,12 +259,12 @@ function renderSecretScopeList(accountIds) {
   const { scopeType, scopeId } = secretScopeTarget;
   const visible = secretAccounts.filter((account) => scopeType === "workspace" ? !account.projectId : !account.projectId || account.projectId === scopeId);
   elements.secretScopeList.replaceChildren();
-  if (!visible.length) elements.secretScopeList.textContent = scopeType === "project" ? "No secret accounts yet. Create one below or in Settings." : "No node-local secret accounts. Add one in Settings.";
+  if (!visible.length) elements.secretScopeList.textContent = scopeType === "project" ? "No secret accounts yet. Create one below or in Settings." : "No secret accounts. Add one in Settings.";
   for (const account of visible) {
     const item = document.createElement("label"); item.className = "checkbox-row secret-scope-row";
     const input = document.createElement("input"); input.type = "checkbox"; input.value = account.id; input.checked = accountIds.includes(account.id); input.dataset.testid = "secret-scope-account-checkbox";
     const detail = account.websiteOrigin ? ` — ${account.websiteOrigin}` : "";
-    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}${detail}`)); elements.secretScopeList.append(item);
+    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}${detail}${account.readOnly ? " · Shared, read-only" : account.shared ? " · Shared" : ""}`)); elements.secretScopeList.append(item);
   }
 }
 

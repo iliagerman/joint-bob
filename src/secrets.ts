@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isHarnessId, type HarnessId } from "./types.js";
 import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
+import { ClusterV2HttpError } from "./cluster-v2-errors.js";
 
 export type SecretProvider = "aws" | "google" | "github" | "custom" | "website";
 export type SecretKind = "value" | "file";
@@ -18,11 +19,11 @@ export interface SecretConversation { engine: ConversationEngineId; sessionId?: 
 export interface SecretVariable { name: string; kind: SecretKind; configured: true }
 /** `projectId` marks an account owned by one project: it is attached to that project on creation, never
     replicates, and is offered only in that project's pickers. Absent means global to this node. */
-export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; websiteOrigin?: string; projectId?: string }
+export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; websiteOrigin?: string; projectId?: string; shared?: boolean; readOnly?: boolean; ownerNodeId?: string }
 export interface SecretAccountInput { id?: string; label: string; provider: SecretProvider; replicate?: boolean; variables: Array<{ name: string; kind: SecretKind; value?: string }>; websiteOrigin?: string | null; projectId?: string }
 export interface WebsiteCredentialAccount { id: string; origin: string; variables: Array<{ name: string; kind: SecretKind; value: string }> }
 type StoredVariable = { name: string; kind: SecretKind; value: string };
-type AccountRow = { id: string; label: string; provider: SecretProvider; replicate: number; variables_encrypted: string; website_origin: string | null; project_id: string | null };
+type AccountRow = { id: string; label: string; provider: SecretProvider; replicate: number; variables_encrypted: string; website_origin: string | null; project_id: string | null; origin_node_id: string };
 
 /** A `github` account's variable set is fixed: the user never types the name. */
 export const GITHUB_TOKEN_VARIABLE = "GH_TOKEN";
@@ -145,16 +146,22 @@ function storedVariables(row: AccountRow): StoredVariable[] {
 
 function accountRow(id: string): AccountRow {
   assertAccountId(id);
-  const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
+  const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
   if (!row) throw new Error("Secret account not found");
   return row;
 }
 
 function publicAccount(row: AccountRow): SecretAccount {
-  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })), ...(row.website_origin ? { websiteOrigin: row.website_origin } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) };
+  const local = hasTable('cluster_node') ? db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined : undefined;
+  const readOnly = Boolean(row.origin_node_id && row.origin_node_id !== local?.id);
+  const shared = readOnly
+    || hasTable('cluster_v2_secret_grants') && Boolean(db().prepare('SELECT 1 FROM cluster_v2_secret_grants WHERE account_id=? LIMIT 1').get(row.id))
+    || hasTable('cluster_v2_share_selections') && Boolean(db().prepare("SELECT 1 FROM secret_assignments a JOIN cluster_v2_share_selections s ON s.kind='workspace' AND s.resource_id=a.scope_id WHERE a.account_id=? AND a.scope_type='workspace' LIMIT 1").get(row.id))
+    || Boolean(row.replicate && hasTable('sharing_resource_shares') && db().prepare("SELECT 1 FROM secret_assignments a JOIN sharing_resource_shares s ON s.kind='project' AND s.resource_id=a.scope_id WHERE a.account_id=? AND a.scope_type='project' LIMIT 1").get(row.id));
+  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })), ...(row.website_origin ? { websiteOrigin: row.website_origin } : {}), ...(row.project_id ? { projectId: row.project_id } : {}), ...(shared ? {shared:true} : {}), ...(readOnly ? {readOnly:true,ownerNodeId:row.origin_node_id} : {}) };
 }
 
-function clearFiles(id: string): void {
+export function clearSecretAccountFiles(id: string): void {
   rmSync(path.join(dataDir, "secret-files", id), { recursive: true, force: true });
 }
 
@@ -220,15 +227,19 @@ function conversationRows(conversation: SecretConversation): AccountRow[] {
 
 function accountAllowedForProject(accountId: string, projectId: string): boolean {
   const handle = db();
-  const { origin_node_id: origin } = handle.prepare("SELECT origin_node_id FROM secret_accounts WHERE id=?").get(accountId) as { origin_node_id: string };
+  const { origin_node_id: origin, project_id: ownerProject } = handle.prepare("SELECT origin_node_id,project_id FROM secret_accounts WHERE id=?").get(accountId) as { origin_node_id: string; project_id: string|null };
+  if (ownerProject && ownerProject !== projectId) return false;
   // An account created here has no origin until it first replicates.
   if (!origin) return true;
   const { id: local } = handle.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string };
   if (origin === local) return true;
   if (isTrustedTwin(handle, local, origin)) return true;
   const policy = handle.prepare("SELECT deleted FROM cluster_v2_resource_policy WHERE kind='project' AND resource_id=?").get(projectId) as { deleted: number } | undefined;
+  if (!hasTable('cluster_v2_scoped_secret_copies')) return Boolean(policy && !policy.deleted && mayReceiveResource(handle, local, 'project', projectId) && mayReceiveResource(handle, origin, 'project', projectId));
+  const grants = handle.prepare('SELECT grants FROM cluster_v2_scoped_secret_copies WHERE peer_id=? AND account_id=?').get(origin, accountId) as {grants:string}|undefined;
+  if (ownerProject && (!policy || policy.deleted || !mayReceiveResource(handle, local, 'project', projectId) || !mayReceiveResource(handle, origin, 'project', projectId))) return false;
+  if (grants && (JSON.parse(grants.grants) as Array<{clusterId:string}>).some(grant => handle.prepare('SELECT 1 FROM sharing_memberships a JOIN sharing_memberships b ON a.cluster_id=b.cluster_id WHERE a.cluster_id=? AND a.node_id=? AND b.node_id=?').get(grant.clusterId,local,origin) && (!ownerProject || handle.prepare("SELECT 1 FROM sharing_resource_shares WHERE kind='project' AND resource_id=? AND cluster_id=?").get(ownerProject,grant.clusterId)))) return true;
   if (!policy || policy.deleted || !mayReceiveResource(handle, local, 'project', projectId) || !mayReceiveResource(handle, origin, 'project', projectId)) return false;
-  if (!hasTable('cluster_v2_scoped_secret_copies')) return true;
   const copy = handle.prepare('SELECT scopes FROM cluster_v2_scoped_secret_copies WHERE peer_id=? AND account_id=?').get(origin, accountId) as { scopes: string } | undefined;
   return !copy || (JSON.parse(copy.scopes) as Array<{ projectIds: string[] }>).some(scope => scope.projectIds.includes(projectId));
 }
@@ -251,7 +262,7 @@ function resolved(project: string, conversation?: SecretConversation): ResolvedA
 }
 
 export async function listSecretAccounts(): Promise<SecretAccount[]> {
-  return (db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id FROM secret_accounts ORDER BY label, id").all() as unknown as AccountRow[]).map(publicAccount);
+  return (db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts ORDER BY label, id").all() as unknown as AccountRow[]).map(publicAccount);
 }
 
 export async function saveSecretAccount(input: SecretAccountInput): Promise<SecretAccount> {
@@ -259,6 +270,7 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
   const id = input.id ?? randomUUID();
   if (input.id) assertAccountId(id);
   const old = input.id ? accountRow(id) : undefined;
+  if (old && (old.origin_node_id && hasTable('cluster_node') && old.origin_node_id !== (db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined)?.id || hasTable('cluster_v2_scoped_secret_copies') && db().prepare('SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=?').get(id))) throw new ClusterV2HttpError(403, 'Shared secret accounts are read-only on this node');
   const websiteOrigin = input.websiteOrigin === undefined ? old?.website_origin ?? null : input.websiteOrigin === null ? null : normalizeWebsiteOrigin(input.websiteOrigin);
   if (input.provider === "website" && !websiteOrigin) throw new Error("Website secret accounts require a website origin");
   if (websiteOrigin && input.variables.some((variable) => variable.kind === "file")) throw new Error("Website credential accounts cannot contain file variables");
@@ -287,22 +299,24 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
     db().exec("ROLLBACK");
     throw error;
   }
-  clearFiles(id);
+  clearSecretAccountFiles(id);
   return { id, label: input.label.trim(), provider: input.provider, replicate: Boolean(replicate), variables: variables.map(({ name, kind }) => ({ name, kind, configured: true })), ...(websiteOrigin ? { websiteOrigin } : {}), ...(projectId ? { projectId } : {}) };
 }
 
 export async function deleteSecretAccount(accountId: string): Promise<void> {
   const row = accountRow(accountId);
+  if (row.origin_node_id && hasTable('cluster_node') && row.origin_node_id !== (db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined)?.id || hasTable('cluster_v2_scoped_secret_copies') && db().prepare('SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=?').get(accountId)) throw new ClusterV2HttpError(403, 'Shared secret accounts are read-only on this node');
   db().exec("BEGIN IMMEDIATE");
   try {
     db().prepare("DELETE FROM secret_assignments WHERE account_id = ?").run(row.id);
+    if (hasTable('cluster_v2_secret_grants')) db().prepare('DELETE FROM cluster_v2_secret_grants WHERE account_id=?').run(row.id);
     db().prepare("DELETE FROM secret_accounts WHERE id = ?").run(row.id);
     db().exec("COMMIT");
   } catch (error) {
     db().exec("ROLLBACK");
     throw error;
   }
-  clearFiles(row.id);
+  clearSecretAccountFiles(row.id);
 }
 
 export async function getScopeSecretAccounts(scopeType: SecretScopeType, scopeId: string): Promise<{ accountIds: string[] }> {
@@ -323,11 +337,15 @@ export async function setScopeSecretAccounts(scopeType: SecretScopeType, scopeId
     db().prepare("DELETE FROM secret_assignments WHERE scope_type = ? AND scope_id = ?").run(scopeType, canonical);
     const insert = db().prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
     for (const id of accountIds) insert.run(scopeType, canonical, id);
+    if (hasTable('cluster_v2_local_secret_assignments')) {
+      db().prepare('DELETE FROM cluster_v2_local_secret_assignments WHERE scope_type=? AND scope_id=?').run(scopeType,canonical);
+      for (const id of accountIds) if (db().prepare("SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=? AND grants<>'[]'").get(id)) db().prepare('INSERT INTO cluster_v2_local_secret_assignments VALUES(?,?,?)').run(scopeType,canonical,id);
+    }
     const selectUpdatedAt = db().prepare("SELECT updated_at FROM secret_accounts WHERE id = ?");
     const touch = db().prepare("UPDATE secret_accounts SET updated_at = ? WHERE id = ?");
     for (const id of changed) {
       const row = selectUpdatedAt.get(id) as { updated_at: string };
-      touch.run(new Date(Math.max(Date.now(), Date.parse(row.updated_at) + 1)).toISOString(), id);
+      if (!hasTable('cluster_v2_scoped_secret_copies') || !db().prepare('SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=?').get(id)) touch.run(new Date(Math.max(Date.now(), Date.parse(row.updated_at) + 1)).toISOString(), id);
     }
     db().exec("COMMIT");
   } catch (error) {

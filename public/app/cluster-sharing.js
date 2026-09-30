@@ -104,4 +104,13 @@ export async function renderClusterSharing(cluster, { localNodeId, onSaved }) {
   });
   status.textContent = data.pendingDeliveries ? `${data.pendingDeliveries} ${data.pendingDeliveries === 1 ? "delivery" : "deliveries"} still on their way` : "";
   container.append(note, projects, workspaces, autoShare, save);
+  try {
+    const { shared } = await api(`/api/clusters/${cluster.id}/secrets`);
+    if (current !== revision || !shared.length) return;
+    const section = text("div", "", "cluster-scope");
+    section.append(text("p", `Secrets I share · ${shared.length}`, "cluster-scope-title"));
+    const list = document.createElement("ul"); list.className = "cluster-chips";
+    for (const account of shared) list.append(text("li", account.label, "cluster-chip"));
+    section.append(list); container.append(section);
+  } catch { /* Projects remain editable if credential inventory is temporarily unavailable. */ }
 }

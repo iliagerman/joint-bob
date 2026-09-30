@@ -674,6 +674,11 @@ export function readLegacyRecentSessions(userId: string): RecentSession[] {
   return parseRecentSessions(row.recent_sessions);
 }
 
+export function allPinnedSessionPaths(): string[] {
+  const rows = preferencesDatabase().prepare("SELECT pinned_session_paths FROM user_preferences").all() as Array<{ pinned_session_paths: string }>;
+  return [...new Set(rows.flatMap((row) => parseStringList(row.pinned_session_paths)))];
+}
+
 export function updateUserPreferences(userId: string, partial: Partial<UserPreferences>): UserPreferences {
   const columns: string[] = [];
   const values: Array<string | number | null> = [];
