@@ -41,7 +41,8 @@ test("project text file content is versioned and conflict-safe", async () => {
     const created = await fetch(`${baseUrl}/api/projects`, { method: "POST", headers, body: JSON.stringify({ name: "Files", path: projectPath }) });
     const project = (await created.json() as { project: { id: string } }).project;
     await mkdir(projectPath, { recursive: true });
-    await writeFile(path.join(sessionRoot, `${sessionId}.jsonl`), `${JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: new Date().toISOString(), cwd: projectPath })}\n`);
+    const startedAt = new Date().toISOString();
+    await writeFile(path.join(sessionRoot, `${sessionId}.jsonl`), `${JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: startedAt, cwd: projectPath })}\n${JSON.stringify({ type: "message", id: `${sessionId}-message`, parentId: null, timestamp: startedAt, message: { role: "user", content: [{ type: "text", text: "Edit project files" }] } })}\n`);
     await writeFile(path.join(projectPath, "notes.txt"), "before\n");
     const contentUrl = `${baseUrl}/api/projects/${project.id}/file-content?path=notes.txt`;
     const opened = await fetch(contentUrl, { headers });

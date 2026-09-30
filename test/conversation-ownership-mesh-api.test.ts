@@ -112,7 +112,7 @@ function prompt(socket: WebSocket, message: string): Promise<Record<string, unkn
 }
 
 function piTranscript(sessionId: string, cwd: string): string {
-  return `${JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: "2026-01-01T00:00:00.000Z", cwd })}\n`;
+  return `${JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: "2026-01-01T00:00:00.000Z", cwd })}\n${JSON.stringify({ type: "message", id: `${sessionId}-message`, parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "Continue this conversation" }] } })}\n`;
 }
 
 async function assertSpoofRejected(mesh: Mesh, source: SeededNode, destination: SeededNode, engine: "pi" | "claude", sessionId: string): Promise<void> {

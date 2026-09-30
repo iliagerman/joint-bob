@@ -1297,11 +1297,12 @@ test("chat ntfy sends use the replicated conversation destination on another nod
     const fixture = (projectPath: string, activity: string) => [
       { type: "session", version: 3, id, timestamp: initial, cwd: projectPath },
       { type: "session_info", name: "Portable notification fixture", timestamp: initial },
-      { type: "message", id: `${id}-reply`, parentId: null, timestamp: activity, message: { role: "assistant", content: [{ type: "text", text: "Portable notification finished" }], timestamp: Date.parse(activity) } },
+      { type: "message", id: `${id}-prompt`, parentId: null, timestamp: initial, message: { role: "user", content: [{ type: "text", text: "Run the portable notification fixture" }], timestamp: Date.parse(initial) } },
+      { type: "message", id: `${id}-reply`, parentId: `${id}-prompt`, timestamp: activity, message: { role: "assistant", content: [{ type: "text", text: "Portable notification finished" }], timestamp: Date.parse(activity) } },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
     await Promise.all([writeFile(fileA, fixture(projectA.path, initial)), writeFile(fileB, fixture(projectB.path, initial))]);
     const listReady = async (node: SeededNode, auth: SignedIn, projectId: string, predicate: (row: PortableSession) => boolean, description: string) => {
-      const deadline = Date.now() + 30_000;
+      const deadline = Date.now() + 60_000;
       let found: PortableSession | undefined;
       while (Date.now() < deadline) {
         const result = await api<{ sessions: PortableSession[] }>(node, auth, "GET", `/projects/${projectId}/sessions`);

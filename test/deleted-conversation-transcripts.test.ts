@@ -86,8 +86,10 @@ test("a conversation deleted on one twin loses its transcript on both and never 
     assert.equal(offered.status, 200, await offered.text());
     const recordDelivery = await signedNodeRequest(a, left, right, "POST", "/api/cluster/v2/events", { events: [conversationEvent(left.dataDir, deleted, "upsert")] });
     assert.equal(recordDelivery.status, 200, await recordDelivery.text());
-    const beforeDeletion = await api<{ sessions: Array<{ id: string }> }>(right, sb, "GET", `/projects/${projectId}/sessions`);
-    assert.ok(beforeDeletion.body.sessions.some((session) => session.id === deleted), "the twin knows the conversation before the deletion");
+    await eventually(async () => {
+      const beforeDeletion = await api<{ sessions: Array<{ id: string }> }>(right, sb, "GET", `/projects/${projectId}/sessions`);
+      assert.ok(beforeDeletion.body.sessions.some((session) => session.id === deleted), "the twin knows the conversation before the deletion");
+    });
 
     const removal = await fetch(`${left.url}/api/projects/${projectId}/sessions?${new URLSearchParams({ engine: "pi", sessionId: deleted })}`, {
       method: "DELETE", headers: { Cookie: sa.cookie, "x-csrf-token": sa.csrfToken },

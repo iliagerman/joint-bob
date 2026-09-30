@@ -42,7 +42,8 @@ test("project files can be listed, deleted, and copied between folders", async (
     const created = await fetch(`${baseUrl}/api/projects`, { method: "POST", headers, body: JSON.stringify({ name: "Files", path: projectPath }) });
     const project = (await created.json() as { project: { id: string } }).project;
     await mkdir(path.join(projectPath, "docs"), { recursive: true });
-    await writeFile(path.join(sessionRoot, `${sessionId}.jsonl`), `${JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: new Date().toISOString(), cwd: projectPath })}\n`);
+    const startedAt = new Date().toISOString();
+    await writeFile(path.join(sessionRoot, `${sessionId}.jsonl`), `${JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: startedAt, cwd: projectPath })}\n${JSON.stringify({ type: "message", id: `${sessionId}-message`, parentId: null, timestamp: startedAt, message: { role: "user", content: [{ type: "text", text: "Explore project files" }] } })}\n`);
     await writeFile(path.join(projectPath, "readme.md"), "# hello\n");
     await writeFile(path.join(projectPath, "notes.txt"), "keep\n");
     await writeFile(path.join(projectPath, "docs", "guide.md"), "guide\n");

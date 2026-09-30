@@ -54,7 +54,7 @@ async function waitForOwnershipOn(environment: DevEnvironment, asker: SeededNode
   throw new Error(`Timed out waiting for ${node.url} to see the owner ${ownerNodeId}`);
 }
 
-test("opening a never-prompted conversation claims it, and the second node is told who owns it", { timeout: 180_000 }, async () => {
+test("opening a transcript conversation claims it, and the second node is told who owns it", { timeout: 180_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-lock-mesh-"));
   const children: ChildProcess[] = [];
   const sockets: WebSocket[] = [];
@@ -63,11 +63,11 @@ test("opening a never-prompted conversation claims it, and the second node is to
     const [homeserver, mac] = environment.nodes;
     const project = homeserver.projects[0];
     const transcriptPath = path.join(environment.home, ".pi", "sessions", "lock-session.jsonl");
-    await writeFile(transcriptPath, `${JSON.stringify({ type: "session", version: 3, id: "lock-session", timestamp: "2026-01-01T00:00:00.000Z", cwd: project.path })}\n`);
+    await writeFile(transcriptPath, `${JSON.stringify({ type: "session", version: 3, id: "lock-session", timestamp: "2026-01-01T00:00:00.000Z", cwd: project.path })}\n${JSON.stringify({ type: "message", id: "lock-session-message", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "Open this conversation" }] } })}\n`);
     for (const node of environment.nodes) children.push(await startDevNode(environment, node));
     await pairTwinNodes(environment);
 
-    // Nobody has ever prompted this conversation, so opening it is what creates its owner.
+    // The conversation has no owner yet; opening it claims ownership on this node.
     const first = await openConversation(environment, homeserver, project.id, transcriptPath, sockets);
     assert.equal(first.ownership, null, "The node that opens an unowned conversation owns it");
 
