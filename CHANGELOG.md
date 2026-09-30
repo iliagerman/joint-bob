@@ -10,7 +10,7 @@ Every deployment is a version. The newest section must always match the
 - Empty drafts are automatically cleaned up after 1 hour if owned or 7 days if not yet owned.
 - Pinned, ticket, and scheduled conversations are always preserved from automatic deletion.
 - Added conversationRetentionDays setting to configure the retention period.
-- Recent conversations now refresh pinned transcripts from each harness correctly, keeping shared sessions and review status available across nodes.
+- Pinned transcripts now load correctly from each harness node, keeping shared sessions and review status available across the cluster.
 
 ## 2.13.24 — 2026-09-30
 
