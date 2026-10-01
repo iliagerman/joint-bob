@@ -53,6 +53,8 @@ export const machineRoutes = new Set([
   "GET /cluster/git/commit-diff",
   "POST /cluster/git/ask",
   "POST /cluster/git/reviews/ask",
+  "GET /cluster/git/github",
+  "POST /cluster/git/github",
   "DELETE /cluster/sessions/delete",
   "POST /cluster/sessions/fork",
   "POST /cluster/sessions/by-the-way",
