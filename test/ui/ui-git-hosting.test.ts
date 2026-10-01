@@ -18,7 +18,8 @@ test("GitHub PR and pipeline tabs show list-first navigation and mobile workflow
       { id: 12, name: "build (node 20)", status: "completed", conclusion: "success", steps: [{ name: "Compile", status: "completed", conclusion: "success" }] },
       { id: 13, name: "build (node 22)", status: "completed", conclusion: "failure", steps: [{ name: "Test", status: "completed", conclusion: "failure" }] },
       { id: 14, name: "summary", status: "completed", conclusion: "skipped", steps: [] },
-    ], groups: [{ key: "build", needs: [], jobIds: [12, 13] }, { key: "summary", needs: ["build"], jobIds: [14] }], truncated: false } });
+      { id: 15, name: "release", status: "in_progress", conclusion: null, steps: [{ name: "Run tests", status: "in_progress", conclusion: null }] },
+    ], groups: [{ key: "build", needs: [], jobIds: [12, 13] }, { key: "summary", needs: ["build"], jobIds: [14, 15] }], truncated: false } });
     if (params.get("op") === "log") return route.fulfill({ json: { text: "FAIL src/retry.ts", truncated: false } });
     return route.fulfill({ status: 400, json: { error: "Unexpected fixture request" } });
   });
@@ -52,7 +53,10 @@ test("GitHub PR and pipeline tabs show list-first navigation and mobile workflow
   assert.equal(await page.getByTestId("git-review-tab-pipelines").isVisible(), true);
   await page.getByTestId("git-hosting-run-row").click();
   await page.locator('.git-hosting-graph-group[data-group="build"]').waitFor();
-  assert.equal(await page.locator(".git-hosting-graph-job").count(), 3);
+  assert.equal(await page.locator(".git-hosting-graph-job").count(), 4);
+  assert.equal(await page.getByTestId("git-hosting-nav-job-15").innerText(), "◌ release", "a running job is not shown as passed");
+  assert.equal(await page.getByTestId("git-hosting-graph-job-15").innerText(), "◌ release");
+  assert.equal(await page.getByTestId("git-hosting-nav-job-12").innerText(), "✓ build (node 20)");
   await page.getByTestId("git-hosting-job-log").click();
   await page.getByText("FAIL src/retry.ts").waitFor();
   await page.getByTestId("git-hosting-back").click();

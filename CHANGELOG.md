@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Git review now shows status marks for all jobs, including those in progress or queued.
+
 ## 2.25.0 — 2026-10-01
 
 - Git diffs now display side-by-side with old and new code in separate columns, including line numbers.

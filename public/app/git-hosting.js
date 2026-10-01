@@ -33,6 +33,12 @@ function button(text, action, className = "ghost compact", testid = "") {
   return element;
 }
 
+// Only a completed, non-failed job earns a check; queued and running jobs have no conclusion yet.
+function jobMark(job) {
+  if (job.status !== "completed") return "◌";
+  return job.conclusion === "failure" ? "✕" : job.conclusion === "skipped" ? "–" : "✓";
+}
+
 function status(text) { elements.gitReviewStatus.textContent = text; }
 function validView(expected, version) { return tab === expected && generation === version && elements.gitReviewDialog.open; }
 
@@ -250,7 +256,7 @@ function renderRunDetail() {
   const workspace = node("div", "git-hosting-workspace");
   const nav = node("aside", "git-hosting-job-nav");
   nav.append(node("h4", "", "All jobs"));
-  for (const job of jobs) nav.append(button(`${job.conclusion === "failure" ? "✕" : job.conclusion === "skipped" ? "–" : "✓"} ${job.name}`, () => selectJob(job.id), `git-hosting-nav-job${jobId === job.id ? " is-active" : ""}`, `git-hosting-nav-job-${job.id}`));
+  for (const job of jobs) nav.append(button(`${jobMark(job)} ${job.name}`, () => selectJob(job.id), `git-hosting-nav-job${jobId === job.id ? " is-active" : ""}`, `git-hosting-nav-job-${job.id}`));
   const main = node("div", "git-hosting-workspace-main");
   main.append(renderGraph(groups, jobs));
   if (graphWarning) main.append(node("p", "git-hosting-note", graphWarning));
@@ -279,7 +285,7 @@ function renderGraph(groups, jobs) {
       if (group.needs.length) card.append(node("small", "", `Needs ${group.needs.join(", ")}`));
       for (const id of group.jobIds) {
         const job = jobs.find((item) => item.id === id);
-        card.append(button(`${job.conclusion === "failure" ? "✕" : job.conclusion === "skipped" ? "–" : "✓"} ${job.name}`, () => selectJob(id), `git-hosting-graph-job${jobId === id ? " is-active" : ""}`, `git-hosting-graph-job-${id}`));
+        card.append(button(`${jobMark(job)} ${job.name}`, () => selectJob(id), `git-hosting-graph-job${jobId === id ? " is-active" : ""}`, `git-hosting-graph-job-${id}`));
       }
       column.append(card);
     }

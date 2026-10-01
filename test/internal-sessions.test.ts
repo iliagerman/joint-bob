@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,6 +21,17 @@ test("internal IDs remain native UUIDs and legacy detection does not hide discus
   assert.ok(isInternalSession(id));
   assert.ok(isInternalSession(randomUUID(), syncResolverPrompt([])));
   assert.equal(isInternalSession(randomUUID(), "Please fix this prompt: " + syncResolverPrompt([])), false);
+});
+
+test("Git review runs are internal, including transcripts written before they had internal IDs", async () => {
+  const source = await readFile(new URL("../src/server/git-review-run.ts", import.meta.url), "utf8");
+  assert.match(source, /sessionId: internalSessionId\(\)/, "review sessions use the reserved ID prefix");
+  for (const prompt of [
+    "Read ONLY the supplied conversation transcript. Which pending paths did the coding agent say it changed for this conversation? Return a JSON array",
+    "Review the pending changes only. Return ONLY JSON: {\"summary\":string,\"items\":[]}",
+    "You are a read-only code reviewer. Explain code changes; never modify files, run mutating commands, stage, commit, or push.",
+  ]) assert.ok(isInternalSession(randomUUID(), prompt), prompt.slice(0, 40));
+  assert.equal(isInternalSession(randomUUID(), "Why does the Git review prompt say: Read ONLY the supplied conversation transcript?"), false);
 });
 
 test("all harness listings hide new, empty and legacy fixer sessions, including renamed and refreshed transcripts", async () => {
