@@ -1,8 +1,9 @@
 import { api } from "./api.js";
 import { state } from "./state.js";
 import { confirmAction, toast } from "./shell.js";
+import { createMultiSelect } from "./multi-select.js";
 import { formatPlanPrice, formatUsageCost } from "./usage-format.js";
-import { renderUsageCharts } from "./usage-charts.js";
+import { renderModelSplit, renderUsageTrend } from "./usage-charts.js";
 
 const dialog = document.querySelector("#usageDialog");
 const filters = document.querySelector("#usageFilters");
@@ -10,14 +11,35 @@ const status = document.querySelector("#usageStatus");
 const notice = document.querySelector("#usageNotice");
 const summary = document.querySelector("#usageSummary");
 const breakdowns = document.querySelector("#usageBreakdowns");
+const dimensionNav = document.querySelector("#usageDimensions");
+const trend = document.querySelector("#usageTrend");
+const clusterField = document.querySelector("#usageClusterField");
+const clearFilters = document.querySelector("#usageClearFilters");
 const subscriptionList = document.querySelector("#subscriptionList");
 const planStatus = document.querySelector("#subscriptionPlanStatus");
 const editor = document.querySelector("#subscriptionEditor");
 const planForm = document.querySelector("#subscriptionForm");
 const quotaRows = document.querySelector("#quotaRows");
 const refreshButton = document.querySelector("#usageRefresh");
-const charts = document.querySelector("#usageCharts");
 const pagination = document.querySelector("#usageConversationPagination");
+
+const DIMENSIONS = [
+  { key: "projects", label: "Projects", column: "Project", filter: (key) => ({ projectId: key }) },
+  { key: "conversations", label: "Conversations", column: "Conversation", filter: (key) => ({ conversationId: key }) },
+  { key: "classifications", label: "Labels", column: "Label", filter: (key) => ({ classification: key }) },
+  { key: "difficulties", label: "Difficulty", column: "Difficulty", filter: (key) => ({ difficulty: key }) },
+  { key: "models", label: "Models", column: "Model" },
+  { key: "days", label: "Days", column: "Day", filter: (key) => ({ from: key, to: key }) },
+];
+const COLUMNS = [
+  { key: "cost", label: "Cost", value: (totals) => totals.apiCostUsd ?? -1 },
+  { key: "share", label: "Share" },
+  { key: "tokens", label: "Tokens", value: (totals) => totals.totalTokens },
+  { key: "cache", label: "Cache", value: (totals) => cacheShare(totals) ?? -1 },
+  { key: "requests", label: "Requests", value: (totals) => totals.requests },
+  { key: "tools", label: "Tools", value: (totals) => totals.toolCalls },
+  { key: "errors", label: "Errors", value: (totals) => totals.toolErrors },
+];
 
 let requestGeneration = 0;
 let page = 1;
@@ -29,6 +51,16 @@ let detectionError = "";
 let inventory = { projects: [], conversations: [], classifications: [] };
 let plans = [];
 let harnesses = [];
+let latest = null;
+let dimension = "projects";
+const sorts = new Map();
+let expanded = "";
+const splits = new Map();
+let clusterValues = new Set();
+
+const clusterFilter = createMultiSelect({ id: "usageClusterFilter", testid: "usage-cluster-filter", label: "Clusters", prompt: "All clusters", placeholder: "Search clusters" });
+clusterField.append(clusterFilter.root);
+
 export function localDateTime(iso) {
   if (!iso) return "";
   const date = new Date(iso);
@@ -43,12 +75,32 @@ function element(tag, text, className) {
   return node;
 }
 
-function harnessId(harness) {
-  return harness.id || harness.harnessId || harness.engine || harness.key;
+export function compactCount(value) {
+  const units = [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e4, "K"]];
+  for (const [size, suffix] of units) if (value >= size) return `${(value / size).toFixed(size === 1e4 ? 1 : 2).replace(/\.?0+$/, "")}${suffix}`;
+  return value.toLocaleString();
 }
-
-function harnessLabel(harness) {
-  return harness.label || harness.name || harnessId(harness);
+function cacheShare(totals) {
+  const denominator = totals.input + totals.cacheRead + totals.cacheWrite5m + totals.cacheWrite1h + totals.cacheWriteUnknown;
+  return denominator ? totals.cacheRead / denominator : null;
+}
+const percent = (value) => value === null ? "—" : `${(value * 100).toFixed(value > 0 && value < 0.01 ? 2 : 1)}%`;
+function partialMark(totals) {
+  const mark = element("span", undefined, "usage-partial");
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "partial");
+  mark.title = `Partial: ${totals.requests - totals.pricedRequests} of ${totals.requests} requests unpriced; this is a lower bound`;
+  return mark;
+}
+function costNode(tag, totals) {
+  const node = element(tag, formatUsageCost({ ...totals, partial: false }));
+  if (totals.partial) node.append(partialMark(totals));
+  return node;
+}
+function countNode(tag, value) {
+  const node = element(tag, compactCount(value));
+  node.title = value.toLocaleString();
+  return node;
 }
 
 function setOptions(select, options, firstLabel) {
@@ -59,6 +111,14 @@ function setOptions(select, options, firstLabel) {
     select.add(new Option(selected, selected));
   }
   select.value = selected;
+}
+
+function harnessId(harness) {
+  return harness.id || harness.harnessId || harness.engine || harness.key;
+}
+
+function harnessLabel(harness) {
+  return harness.label || harness.name || harnessId(harness);
 }
 
 function updateHarnessOptions(selected = "") {
@@ -103,78 +163,232 @@ function updateInventory(data) {
     value: label, label,
   })), "All labels");
 }
-function metric(label, value) {
-  const article = element("article", undefined, "usage-metric");
-  article.append(element("span", label), element("strong", value));
-  return article;
+
+/** "This node" is usage recorded here; a cluster is usage its other members recorded. */
+function syncClusterOptions() {
+  const clusters = [...(state.clusters || [])].sort((left, right) => left.name.localeCompare(right.name));
+  const others = (cluster) => cluster.members.filter((member) => member.nodeId !== state.localNodeId).map((member) => member.name || member.nodeId);
+  clusterFilter.setOptions([
+    { value: "local", label: "This node", detail: "Usage recorded on this node" },
+    ...clusters.map((cluster) => ({ value: cluster.id, label: cluster.name, detail: `Usage from ${others(cluster).join(", ") || "no other nodes yet"}` })),
+  ]);
+  const kept = new Set([...clusterValues].filter((value) => value === "local" || clusters.some((cluster) => cluster.id === value)));
+  if (kept.size !== clusterValues.size) { clusterValues = kept; clusterFilter.setValues(kept); }
+  clusterField.hidden = !clusters.length && !clusterValues.size;
+}
+
+function stat(label, value, detail) {
+  const item = element("div", undefined, "usage-stat");
+  item.append(element("span", label), value, element("small", detail));
+  return item;
 }
 function renderSummary(totals) {
-  const denominator = totals.input + totals.cacheRead + totals.cacheWrite5m
-    + totals.cacheWrite1h + totals.cacheWriteUnknown;
+  const unpriced = Math.max(0, totals.requests - totals.pricedRequests);
   summary.replaceChildren(
-    metric("API-equivalent cost", formatUsageCost(totals)),
-    metric("Total tokens", totals.totalTokens.toLocaleString()),
-    metric("Input / output", `${totals.input.toLocaleString()} / ${totals.output.toLocaleString()}`),
-    metric("Cache read share", denominator ? `${(totals.cacheRead / denominator * 100).toFixed(1)}%` : "Unavailable"),
-    metric("Requests priced", `${totals.pricedRequests} / ${totals.requests}`),
-    metric("Tool calls / errors", `${totals.toolCalls} / ${totals.toolErrors}`),
-    metric("Reasoning tokens", totals.reasoning.toLocaleString()),
+    stat("API-equivalent cost", costNode("strong", totals), `${totals.pricedRequests.toLocaleString()} of ${totals.requests.toLocaleString()} requests priced`),
+    stat("Tokens", countNode("strong", totals.totalTokens), `in ${compactCount(totals.input)} / out ${compactCount(totals.output)}`),
+    stat("Cache read", element("strong", cacheShare(totals) === null ? "Unavailable" : percent(cacheShare(totals))), "of input tokens"),
+    stat("Requests", element("strong", totals.requests.toLocaleString()), `${unpriced.toLocaleString()} unpriced`),
+    stat("Tool calls", element("strong", totals.toolCalls.toLocaleString()), `${totals.toolErrors.toLocaleString()} errors`),
+    stat("Reasoning", countNode("strong", totals.reasoning), "tokens"),
   );
 }
-function renderTable(title, firstColumnLabel, rows, names = new Map()) {
-  const section = element("section", undefined, "usage-breakdown");
-  section.append(element("h4", title));
-  const table = element("table");
-  const columnLabels = [firstColumnLabel, "Cost", "Tokens", "Requests", "Tools"];
-  const head = element("tr");
-  for (const label of columnLabels) {
-    const header = element("th", label);
-    header.scope = "col";
-    head.append(header);
+
+function dimensionCount(data, key) {
+  return key === "conversations" ? data.conversationPagination.total : data.breakdowns[key].length;
+}
+function renderDimensions(data) {
+  dimensionNav.replaceChildren(...DIMENSIONS.map((item) => {
+    const button = element("button", undefined, "usage-dimension");
+    button.type = "button";
+    button.dataset.dimension = item.key;
+    button.dataset.testid = `usage-dimension-${item.key}`;
+    button.setAttribute("aria-pressed", String(item.key === dimension));
+    button.append(element("span", item.label), element("small", dimensionCount(data, item.key).toLocaleString()));
+    return button;
+  }));
+}
+
+const HARNESS_PREFIXES = [[/^\[Claude\]\s*/, "Claude", "claude"], [/^\[F\]\s*/, "Fork", "fork"]];
+function rowName(data, key) {
+  if (dimension === "projects") return { text: data.names.projects.get(key) || key };
+  if (dimension === "conversations") {
+    const conversation = data.names.conversations.get(key);
+    const title = conversation?.title || key;
+    const project = conversation ? data.names.projects.get(conversation.projectId) : undefined;
+    for (const [pattern, label, kind] of HARNESS_PREFIXES) {
+      if (pattern.test(title)) return { text: title.replace(pattern, ""), full: title, badge: label, kind, detail: project };
+    }
+    return { text: title, detail: project };
   }
+  if (dimension === "classifications") return { text: key || "Unclassified" };
+  if (dimension === "difficulties") return { text: key === "not-classified" || !key ? "Not classified" : `Level ${key}` };
+  if (dimension === "models") return { text: key || "Unknown model", mono: true };
+  return { text: key };
+}
+function nameOrder(left, right) {
+  if (dimension === "difficulties") {
+    const level = (key) => key === "not-classified" ? 11 : Number(key);
+    return level(left.key) - level(right.key);
+  }
+  return String(left.label).localeCompare(String(right.label));
+}
+function currentSort() {
+  return sorts.get(dimension) || (dimension === "days" ? { key: "name", direction: -1 } : { key: "cost", direction: -1 });
+}
+function sortedRows(rows) {
+  // Conversations arrive one server page at a time, already ordered by cost.
+  if (dimension === "conversations") return rows;
+  const { key, direction } = currentSort();
+  const column = COLUMNS.find((item) => item.key === key);
+  return [...rows].sort((left, right) => {
+    const order = column ? column.value(left.totals) - column.value(right.totals) : nameOrder(left, right);
+    return order * direction || String(left.key).localeCompare(String(right.key));
+  });
+}
+function sortDescription() {
+  const { key, direction } = currentSort();
+  const column = COLUMNS.find((item) => item.key === key);
+  const descending = direction < 0;
+  if (column) return `Sorted by ${column.label.toLowerCase()}, ${descending ? "highest" : "lowest"} first`;
+  if (dimension === "days") return `Sorted by day, ${descending ? "newest" : "oldest"} first`;
+  if (dimension === "difficulties") return `Sorted by difficulty, ${descending ? "hardest" : "easiest"} first`;
+  return `Sorted by name, ${descending ? "Z to A" : "A to Z"}`;
+}
+function headerCell(label, key) {
+  const header = element("th");
+  header.scope = "col";
+  if (dimension === "conversations" || !key) { header.textContent = label; return header; }
+  const sort = currentSort();
+  const button = element("button", label, "usage-sort");
+  button.type = "button";
+  button.dataset.sort = key;
+  if (sort.key === key) header.setAttribute("aria-sort", sort.direction < 0 ? "descending" : "ascending");
+  header.append(button);
+  return header;
+}
+function nameCell(name, item, expandable) {
+  const cell = element("td", undefined, "usage-name-cell");
+  cell.title = name.full || name.text;
+  const target = expandable ? element("button", undefined, "usage-expand") : element("div", undefined, "usage-expand static");
+  if (expandable) {
+    target.type = "button";
+    target.dataset.expand = item.key;
+    target.setAttribute("aria-expanded", String(expanded === item.key));
+  }
+  if (name.badge) target.append(element("span", name.badge, `usage-harness ${name.kind}`));
+  target.append(element("span", name.text, `usage-name${name.mono ? " mono" : ""}`));
+  cell.append(target);
+  if (name.detail) cell.append(element("small", name.detail, "usage-name-detail"));
+  return cell;
+}
+function shareCell(item, max, total) {
+  const cell = element("td", undefined, "usage-share-cell");
+  cell.dataset.label = "Share";
+  const cost = item.totals.apiCostUsd;
+  const track = element("i", undefined, "usage-share-track");
+  const fill = element("b");
+  fill.style.width = `${cost && max ? cost / max * 100 : 0}%`;
+  track.append(fill);
+  cell.append(track, element("span", cost !== null && total ? percent(cost / total) : "—"));
+  return cell;
+}
+function detailRow(item) {
+  const row = element("tr", undefined, "usage-detail-row");
+  const cell = element("td");
+  cell.colSpan = COLUMNS.length + 1;
+  const split = splits.get(`${dimension}:${item.key}`);
+  if (!split) cell.append(element("p", "Loading model split…", "usage-split-empty"));
+  else if (split.error) cell.append(element("p", `Model split unavailable: ${split.error}`, "usage-split-empty"));
+  else cell.append(element("p", "Cost by model", "usage-split-title"), renderModelSplit(split.rows));
+  row.append(cell);
+  return row;
+}
+function renderTable(data) {
+  const config = DIMENSIONS.find((item) => item.key === dimension);
+  const rows = data.breakdowns[dimension].map((item) => ({ ...item, label: rowName(data, item.key).text }));
+  const section = element("section", undefined, "usage-breakdown");
+  section.dataset.dimension = dimension;
+  if (dimension === "conversations") section.dataset.testid = "usage-conversations-table";
+  const table = element("table");
+  table.append(element("caption", `${config.label} by API-equivalent cost`, "sr-only"));
+  const head = element("tr");
+  head.append(headerCell(config.column, "name"), ...COLUMNS.map((column) => headerCell(column.label, column.value ? column.key : "")));
   const thead = element("thead");
   thead.append(head);
-  table.append(thead);
   const body = element("tbody");
-  for (const item of rows.slice(0, 20)) {
+  const max = Math.max(0, ...rows.map((item) => item.totals.apiCostUsd ?? 0));
+  const total = data.summary.apiCostUsd;
+  for (const item of sortedRows(rows)) {
     const row = element("tr");
-    const name = names.get(item.key) || item.key || "Not classified";
-    const nameCell = element("td", name);
-    nameCell.title = name;
-    row.append(nameCell);
-    const numericValues = [formatUsageCost(item.totals), item.totals.totalTokens.toLocaleString(), String(item.totals.requests), String(item.totals.toolCalls)];
-    numericValues.forEach((value, index) => {
-      const cell = element("td", value);
-      cell.dataset.label = columnLabels[index + 1];
-      row.append(cell);
-    });
+    const isExpanded = expanded === item.key;
+    if (isExpanded) row.className = "expanded";
+    row.append(nameCell(rowName(data, item.key), item, Boolean(config.filter)));
+    const cost = costNode("td", item.totals);
+    cost.className = "usage-cost-cell";
+    cost.dataset.label = "Cost";
+    row.append(cost, shareCell(item, max, total));
+    for (const [label, node] of [
+      ["Tokens", countNode("td", item.totals.totalTokens)],
+      ["Cache", element("td", percent(cacheShare(item.totals)))],
+      ["Requests", element("td", item.totals.requests.toLocaleString())],
+      ["Tools", element("td", item.totals.toolCalls.toLocaleString())],
+      ["Errors", element("td", item.totals.toolErrors.toLocaleString())],
+    ]) { node.dataset.label = label; row.append(node); }
     body.append(row);
+    if (isExpanded) body.append(detailRow(item));
   }
   if (!rows.length) {
-    const cell = element("td", "No usage in this scope."); cell.colSpan = 5;
+    const cell = element("td", "No usage in this scope.", "usage-empty"); cell.colSpan = COLUMNS.length + 1;
     const row = element("tr"); row.append(cell); body.append(row);
   }
-  table.append(body); section.append(table); return section;
+  table.append(thead, body);
+  section.append(table);
+  const shown = dimension === "conversations" ? data.conversationPagination.total : rows.length;
+  const footer = element("footer", undefined, "usage-breakdown-foot");
+  footer.append(element("span", `${shown.toLocaleString()} ${config.label.toLowerCase()}`));
+  if (dimension === "conversations") footer.append(pagination);
+  else footer.append(element("span", sortDescription()));
+  pagination.hidden = dimension !== "conversations";
+  section.append(footer);
+  breakdowns.replaceChildren(section);
 }
+function renderBreakdowns() {
+  if (!latest) return;
+  renderDimensions(latest);
+  renderTable(latest);
+}
+
+async function loadSplit(key) {
+  const config = DIMENSIONS.find((item) => item.key === dimension);
+  const cacheKey = `${dimension}:${key}`;
+  if (splits.has(cacheKey) || !config.filter) return;
+  const parameters = new URLSearchParams(queryString());
+  for (const [name, value] of Object.entries(config.filter(key))) parameters.set(name, value);
+  parameters.set("refresh", "false"); parameters.set("pageSize", "1");
+  const scope = snapshotScope;
+  try {
+    const data = await api(`/api/usage?${parameters}`, { signal: AbortSignal.timeout(20000) });
+    if (scope === snapshotScope) splits.set(cacheKey, { rows: data.breakdowns.models });
+  } catch (error) {
+    if (scope === snapshotScope) splits.set(cacheKey, { error: error.message });
+  }
+  if (scope === snapshotScope) renderBreakdowns();
+}
+
 function renderUsage(data) {
   hasSnapshot = true;
-  updateInventory(data); renderSummary(data.summary); renderUsageCharts(charts, data);
-  const projectNames = new Map(data.projects.map((item) => [item.id, item.name]));
-  const conversationNames = new Map(data.conversations.map((item) => [item.conversationId, item.title || item.conversationId]));
-  const labels = {
-    projects: { title: "Projects", column: "Project" },
-    conversations: { title: "Conversations", column: "Conversation" },
-    classifications: { title: "Existing labels", column: "Existing label" },
-    difficulties: { title: "Classifier difficulties", column: "Classifier difficulty" },
-    models: { title: "Models", column: "Model" },
-    days: { title: "Days", column: "Day" },
+  updateInventory(data);
+  latest = {
+    ...data,
+    names: {
+      projects: new Map(data.projects.map((item) => [item.id, item.name])),
+      conversations: new Map(data.conversations.map((item) => [item.conversationId, item])),
+    },
   };
-  const sections = Object.entries(labels).map(([key, labelsForTable]) => {
-    const section = renderTable(labelsForTable.title, labelsForTable.column, data.breakdowns[key], key === "projects" ? projectNames : key === "conversations" ? conversationNames : new Map());
-    if (key === "conversations") { section.dataset.testid = "usage-conversations-table"; section.querySelector("h4").after(pagination); }
-    return section;
-  });
-  breakdowns.replaceChildren(...sections);
+  renderSummary(data.summary);
+  renderUsageTrend(trend, data.breakdowns.days);
+  renderBreakdowns();
   const paging = data.conversationPagination;
   pagination.querySelector("span").textContent = paging.totalPages ? `Page ${paging.page} of ${paging.totalPages}` : "Page 0 of 0";
   pagination.querySelector('[data-page="previous"]').disabled = paging.page <= 1;
@@ -183,28 +397,38 @@ function renderUsage(data) {
   notice.removeAttribute("role");
   const missing = data.summary.unavailableSessions || 0;
   const unpriced = Math.max(0, data.summary.requests - data.summary.pricedRequests);
-  notice.className = missing || unpriced || data.summary.partial ? "usage-warning" : "";
-  notice.textContent = data.coverage.error || (missing || unpriced || data.summary.partial ? `Partial coverage: ${missing} sessions unavailable; ${unpriced} requests unpriced.` : "");
+  const partial = missing || unpriced || data.summary.partial;
+  notice.className = data.coverage.error ? "usage-error" : partial ? "usage-warning" : "";
+  notice.replaceChildren();
+  if (data.coverage.error) notice.textContent = data.coverage.error;
+  else if (partial) notice.append(element("strong", "Partial coverage"), ` ${missing.toLocaleString()} sessions unavailable · ${unpriced.toLocaleString()} requests unpriced. Values marked `, partialMark(data.summary), " are lower bounds.");
+}
+function activeFilterCount() {
+  return [...new FormData(filters)].filter(([, value]) => value).length + clusterValues.size;
 }
 function queryString() {
   const parameters = new URLSearchParams();
   for (const [key, value] of new FormData(filters)) {
     if (value) parameters.set(key, String(value));
   }
+  if (clusterValues.size) parameters.set("clusters", [...clusterValues].sort().join(","));
   return parameters.toString();
 }
 function stopPolling(){if(pollTimer)clearTimeout(pollTimer);pollTimer=null;}
 async function loadUsage({ polling = false } = {}) {
   stopPolling();
   const scope = queryString();
-  if (scope !== snapshotScope) { hasSnapshot = false; snapshotScope = scope; }
+  clearFilters.hidden = !activeFilterCount();
+  if (scope !== snapshotScope) { hasSnapshot = false; snapshotScope = scope; splits.clear(); expanded = ""; }
   const generation = ++requestGeneration;
   status.textContent = hasSnapshot ? "Updating usage…" : "Loading usage…";
   if (!hasSnapshot) {
     notice.className = "";
     notice.removeAttribute("role");
     notice.textContent = "";
+    latest = null;
     summary.replaceChildren(element("p", "Loading totals…"));
+    trend.replaceChildren();
     breakdowns.replaceChildren(element("p", "Loading breakdowns…"));
   }
   refreshButton.disabled = true;
@@ -350,6 +574,37 @@ document.querySelector("#subscriptionCancel").addEventListener("click", () => {
 });
 document.querySelector("#quotaAdd").addEventListener("click", () => quotaRows.append(quotaRow()));
 filters.addEventListener("change", () => { page=1; void loadUsage(); });
+clusterFilter.onChange((values) => { clusterValues = values; page = 1; void loadUsage(); });
+window.addEventListener("cluster-filters-changed", syncClusterOptions);
+clearFilters.addEventListener("click", () => {
+  filters.reset();
+  clusterValues = new Set();
+  clusterFilter.setValues(clusterValues);
+  page = 1;
+  void loadUsage();
+});
+dimensionNav.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-dimension]");
+  if (!button || button.dataset.dimension === dimension) return;
+  dimension = button.dataset.dimension;
+  expanded = "";
+  renderBreakdowns();
+});
+breakdowns.addEventListener("click", (event) => {
+  const sort = event.target.closest("[data-sort]");
+  if (sort) {
+    const current = currentSort();
+    const key = sort.dataset.sort;
+    sorts.set(dimension, { key, direction: current.key === key ? -current.direction : key === "name" ? 1 : -1 });
+    renderBreakdowns();
+    return;
+  }
+  const toggle = event.target.closest("[data-expand]");
+  if (!toggle) return;
+  expanded = expanded === toggle.dataset.expand ? "" : toggle.dataset.expand;
+  renderBreakdowns();
+  if (expanded) void loadSplit(expanded);
+});
 filters.addEventListener("submit", (event) => {
   event.preventDefault();
   page = 1;
@@ -373,6 +628,7 @@ export function openUsageDashboard(initialFilters = {}) {
   }
   if (!dialog.open) dialog.showModal();
   showTab("overview");
+  syncClusterOptions();
   editor.open = false;
   void loadHarnesses().catch((error) => {
     planStatus.textContent = `Harnesses unavailable: ${error.message}`;

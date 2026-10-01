@@ -60,7 +60,6 @@ test("usage dashboard edits subscription price and manual quota on desktop and m
   await page.locator(".subscription-harness-group").filter({ has: page.getByRole("heading", { name: "Pi", exact: true }) }).getByText("Work account").waitFor();
   await page.locator(".subscription-harness-group").filter({ has: page.getByRole("heading", { name: "Claude", exact: true }) }).getByText("Second account").waitFor();
   await page.getByTestId("usage-tab-overview").click();
-  await page.locator(".usage-filter-details > summary").click();
   const classificationFilter = page.getByTestId("usage-classification-filter");
   if (await classificationFilter.locator("option").count() > 1) {
     await classificationFilter.selectOption({ index: 1 });
@@ -98,8 +97,20 @@ test("usage dashboard edits subscription price and manual quota on desktop and m
   assert.deepEqual(errors, []);
 });
 
-test("usage dashboard renders charts, paginates, remains responsive, and preserves snapshots", { timeout: 240_000 }, async (t) => {
+test("usage dashboard groups, filters by cluster, paginates, remains responsive, and preserves snapshots", { timeout: 240_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
+  const errors: string[] = [];
+  page.on("pageerror", (error: Error) => errors.push(error.message));
+  const clusterId = "6f1f6a8e-2b0e-4c55-9f53-0d1b6e2a7c11";
+  await page.route("**/api/clusters", async (route: any) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    const local = body.clusters[0]?.members?.[0]?.nodeId ?? "local-node";
+    body.clusters.push({ id: clusterId, name: "Usage cluster", originalNodeId: local, managerNodeId: local, managerEpoch: 1, closed: false, autoShareProjects: false, pendingDeliveries: 0,
+      members: [{ clusterId, nodeId: "9b2c7d4e-5f60-4a1b-8c2d-3e4f5a6b7c8d", name: "Peer node", url: "http://127.0.0.1:9", autoShareProjects: false, joinSequence: 2 }] });
+    await route.fulfill({ response, json: body });
+  });
   await login(page, environment, node.url);
 
   const unbrokenTitle = "x".repeat(100);
@@ -143,7 +154,7 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
         projects: [{ key: "project-internal-id", totals: totals(cost) }],
         conversations: visible.map((item, index) => ({ key: item.conversationId, totals: totals(index + 1, 1) })),
         classifications: [{ key: "feature", totals: totals(3) }],
-        difficulties: [{ key: "medium", totals: totals(3) }],
+        difficulties: [{ key: "10", totals: totals(1) }, { key: "3", totals: totals(3) }],
         models: [{ key: "model-a", totals: totals(10) }, { key: "model-b", totals: totals(2) }],
         days: [{ key: "2023-01-02", totals: totals(2) }, { key: "2025-06-15", totals: totals(8) }],
       },
@@ -180,19 +191,47 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
   await page.keyboard.press("Control+Alt+Shift+C");
   const dialog = page.getByTestId("usage-dialog");
   await dialog.waitFor({ state: "visible" });
-  await page.waitForFunction(() => document.querySelectorAll(".usage-chart-column").length === 2);
+  await dialog.locator("#usageTrend svg.usage-trend-line").waitFor();
+  const firstStat = dialog.locator(".usage-stat strong").first();
+  assert.equal(await firstStat.textContent(), "$12");
+  assert.equal(await firstStat.locator(".usage-partial").getAttribute("aria-label"), "partial", "partial cost is marked, not spelled out");
 
-  const donutBox = await dialog.locator(".usage-donut").boundingBox();
-  assert.ok(donutBox && donutBox.width > 0 && donutBox.height > 0);
-  const heights = await dialog.locator(".usage-chart-column").evaluateAll((bars: HTMLElement[]) => bars.map((bar) => bar.getBoundingClientRect().height));
-  assert.ok(heights.every((height) => height > 0));
-  assert.notEqual(heights[0], heights[1], "different day costs produce different bar heights");
-  const usageCharts = dialog.locator("#usageCharts");
-  await usageCharts.getByText("Readable Project", { exact: true }).first().waitFor();
-  assert.equal(await usageCharts.getByText("project-internal-id", { exact: true }).count(), 0);
+  const breakdowns = page.getByTestId("usage-breakdowns");
+  assert.equal(await dialog.locator('[data-testid="usage-dimension-projects"]').getAttribute("aria-pressed"), "true");
+  await breakdowns.getByText("Readable Project", { exact: true }).waitFor();
+  assert.equal(await breakdowns.getByText("project-internal-id", { exact: true }).count(), 0);
+  await breakdowns.locator("[data-expand]").first().click();
+  await breakdowns.locator(".usage-split-bar i").nth(1).waitFor();
+  assert.equal(await breakdowns.locator(".usage-split-bar i").count(), 2, "expanded row splits its cost by model");
+  const segments = await breakdowns.locator(".usage-split-bar i").evaluateAll((items: HTMLElement[]) => items.map((item) => getComputedStyle(item).backgroundColor));
+  assert.ok(segments.every((colour) => colour !== "rgba(0, 0, 0, 0)" && colour !== "transparent"), "model colours are defined");
+  assert.notEqual(segments[0], segments[1]);
 
+  await dialog.getByTestId("usage-dimension-models").click();
+  const firstCell = () => breakdowns.locator("tbody tr").first().locator(".usage-name");
+  assert.equal(await firstCell().textContent(), "model-a", "rows sort by cost, highest first");
+  await breakdowns.locator('[data-sort="cost"]').click();
+  assert.equal(await firstCell().textContent(), "model-b", "selecting Cost again reverses the order");
+  await dialog.getByTestId("usage-dimension-difficulties").click();
+  await breakdowns.locator('[data-sort="name"]').click();
+  assert.deepEqual(await breakdowns.locator("tbody .usage-name").allTextContents(), ["Level 3", "Level 10"], "difficulty sorts numerically");
+
+  const clusterTrigger = dialog.getByTestId("usage-cluster-filter-trigger");
+  await clusterTrigger.waitFor();
+  await clusterTrigger.click();
+  const clusterRequest = page.waitForRequest((request: any) => new URL(request.url()).searchParams.get("clusters") === clusterId);
+  await dialog.getByTestId("usage-cluster-filter-options").getByText("Usage cluster", { exact: true }).click();
+  await clusterRequest;
+  await dialog.locator("#usageTitle").click();
+  await dialog.getByTestId("usage-clear-filters").waitFor();
+  const clearedRequest = page.waitForRequest((request: any) => new URL(request.url()).pathname === "/api/usage" && !new URL(request.url()).searchParams.has("clusters"));
+  await dialog.getByTestId("usage-clear-filters").click();
+  await clearedRequest;
+
+  await dialog.getByTestId("usage-dimension-conversations").click();
   const conversationSection = page.getByTestId("usage-conversations-table");
   const rows = () => conversationSection.locator("tbody tr");
+  await rows().first().waitFor();
   assert.equal(await rows().count(), 20);
   const pagination = page.locator("#usageConversationPagination");
   assert.equal(await conversationSection.locator("#usageConversationPagination").count(), 1, "pagination is inside conversations");
@@ -217,30 +256,24 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
     const card = dialog.locator(".usage-card");
     const cardBox = await card.boundingBox();
     assert.ok(cardBox && cardBox.x >= 0 && cardBox.x + cardBox.width <= viewport.width);
-    for (const chart of await dialog.locator(".usage-chart").all()) {
-      const box = await chart.boundingBox();
-      assert.ok(box && cardBox && box.x >= cardBox.x && box.x + box.width <= cardBox.x + cardBox.width);
-    }
     assert.equal(await card.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth), true);
-    for (const section of await dialog.locator(".usage-breakdown").all()) {
-      const sectionBox = await section.boundingBox();
-      const tableBox = await section.locator("table").boundingBox();
-      assert.ok(sectionBox && cardBox && sectionBox.x >= cardBox.x && sectionBox.x + sectionBox.width <= cardBox.x + cardBox.width + 1);
-      assert.ok(tableBox && tableBox.x >= sectionBox.x - 1 && tableBox.x + tableBox.width <= sectionBox.x + sectionBox.width + 1);
-      const fits = await section.evaluate((element: HTMLElement) => ({
-        width: element.scrollWidth <= element.clientWidth,
-        height: element.scrollHeight <= element.clientHeight,
+    for (const region of await dialog.locator(".usage-strip, .usage-sidebar, .usage-ledger, .usage-breakdown").all()) {
+      const box = await region.boundingBox();
+      assert.ok(box && cardBox && box.x >= cardBox.x && box.x + box.width <= cardBox.x + cardBox.width + 1, `region fits the card at ${viewport.width}px`);
+      const fits = await region.evaluate((element: HTMLElement) => ({
+        width: element.scrollWidth <= element.clientWidth + 1,
+        height: element.scrollHeight <= element.clientHeight + 1,
       }));
-      assert.deepEqual(fits, { width: true, height: true }, `breakdown has no nested scrolling at ${viewport.width}px`);
+      assert.deepEqual(fits, { width: true, height: true }, `no nested scrolling at ${viewport.width}px`);
     }
-    for (const cell of await dialog.locator(".usage-breakdown td").all()) {
-      assert.equal(await cell.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth + 1), true);
+    for (const cell of await dialog.locator(".usage-breakdown td, .usage-stat").all()) {
+      assert.equal(await cell.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth + 1), true, `cell content fits at ${viewport.width}px`);
     }
-    const firstNameCell = conversationSection.locator("tbody tr").first().locator("td").first();
-    assert.equal(await firstNameCell.textContent(), expectedFirstName, "the complete conversation name remains in the cell");
+    const firstNameCell = rows().first().locator("td").first();
+    assert.equal(await firstNameCell.locator(".usage-name").textContent(), expectedFirstName, "the complete conversation name remains in the cell");
     assert.equal(await firstNameCell.getAttribute("title"), expectedFirstName);
     if (viewport.width <= 700) {
-      const tokensLabel = await conversationSection.locator("tbody tr").first().locator("td").nth(2).evaluate(
+      const tokensLabel = await rows().first().locator('td[data-label="Tokens"]').evaluate(
         (element: HTMLElement) => getComputedStyle(element, "::before").content,
       );
       assert.ok(tokensLabel.includes("Tokens"), `mobile numeric cell exposes its Tokens label at ${viewport.width}px`);
@@ -248,14 +281,13 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
   }
 
   await page.setViewportSize({ width: 1200, height: 800 });
-  await dialog.locator(".usage-filter-details > summary").click();
   gateRefresh = true;
   await page.locator("#usageRefresh").click();
   await page.getByText("Updating usage…", { exact: true }).waitFor();
-  await dialog.getByText("$12 · partial", { exact: true }).first().waitFor();
+  assert.equal(await firstStat.textContent(), "$12", "the previous snapshot stays while refreshing");
   if (page.clock?.install) await page.clock.install();
   releaseRefresh?.();
-  await dialog.getByText("$30 · partial", { exact: true }).first().waitFor();
+  await page.waitForFunction(() => document.querySelector(".usage-stat strong")?.textContent === "$30");
   await dialog.evaluate((element: HTMLDialogElement) => {
     (window as any).__usageCloseObserved = false;
     element.addEventListener("close", () => { (window as any).__usageCloseObserved = true; }, { once: true });
@@ -267,6 +299,7 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
   if (page.clock?.fastForward) await page.clock.fastForward(10_000);
   await page.waitForFunction(() => true);
   assert.equal(usageGets, requestsAtClose, "closing the dashboard stops polling");
+  assert.deepEqual(errors, []);
 });
 
 test("subscription prices save while a real usage read is blocked", { timeout: 240_000 }, async (t) => {

@@ -150,6 +150,10 @@ function where(db: DatabaseSync, filters: UsageFilters, alias = "e"): { sql: str
   if (filters.from) { clauses.push(`${alias}.occurred_at>=?`); args.push(filters.from); }
   if (filters.to) { clauses.push(`${alias}.occurred_at<?`); args.push(filters.to); }
   if (filters.classification) { clauses.push(`${classification(db)}=?`); args.push(filters.classification); }
+  if (filters.originNodeIds) {
+    if (!filters.originNodeIds.length) return { sql: " AND 0", args: [] };
+    clauses.push(`${alias}.origin_node_id IN (${filters.originNodeIds.map(() => "?").join(",")})`); args.push(...filters.originNodeIds);
+  }
   return { sql: ` AND ${clauses.join(" AND ")}`, args };
 }
 function totalsRow(row: Record<string, number | null>): UsageTotals {
@@ -194,7 +198,8 @@ function source(db: DatabaseSync, filters: UsageFilters, dimension?: UsageDimens
     LEFT JOIN usage_difficulty d ON d.turn_id=(SELECT x.turn_id FROM usage_difficulty x WHERE ${difficultyProject}=${eventProject} AND x.conversation_id=e.conversation_id AND x.session_id=e.session_id AND x.engine=e.engine AND json_extract(x.payload,'$.endedAt') IS NOT NULL AND json_extract(x.payload,'$.status') IN ('classified','inherited') AND e.occurred_at>=json_extract(x.payload,'$.startedAt') AND e.occurred_at<=json_extract(x.payload,'$.endedAt') ORDER BY json_extract(x.payload,'$.startedAt') DESC LIMIT 1)` : ""}`;
 }
 function unavailableInventory(db: DatabaseSync, filters: UsageFilters): number {
-  if (!filters.projectIds.length || filters.provider || filters.modelId || filters.from || filters.to || filters.difficulty) return 0;
+  // Inventory rows carry no origin node, so node-scoped totals cannot attribute them.
+  if (!filters.projectIds.length || filters.provider || filters.modelId || filters.from || filters.to || filters.difficulty || filters.originNodeIds) return 0;
   const projectIds = rawProjectIds(db, filters);
   if (!projectIds.length) return 0;
   const clauses = [`i.project_id IN (${projectIds.map(() => "?").join(",")})`, "i.usage_status IN ('missing','unavailable')"];

@@ -1,5 +1,8 @@
 import { formatUsageCost } from "./usage-format.js";
 
+const SVG = "http://www.w3.org/2000/svg";
+export const SERIES_COUNT = 6;
+
 const known = (rows) => rows.map((row) => ({
   name: String(row.key || "Unknown"),
   value: Number(row.totals?.apiCostUsd),
@@ -28,84 +31,58 @@ function node(tag, text, className) {
   if (className) item.className = className;
   return item;
 }
-function empty(title, message) {
-  const section = node("section", undefined, "usage-chart");
-  section.setAttribute("aria-label", title);
-  section.append(node("h4", title), node("p", message, "usage-chart-empty"));
-  return section;
-}
-function bars(title, rows, limit) {
-  const values = groupKnownCosts(rows, limit);
-  if (!values.length) return empty(title, "No positively priced API usage is available for this scope.");
-  const max = Math.max(...values.map((item) => item.value));
-  const section = node("section", undefined, "usage-chart");
-  section.setAttribute("aria-label", `${title}, known API-equivalent cost only`);
-  section.append(node("h4", title));
-  const list = node("ul", undefined, "usage-chart-bars");
-  for (const item of values) {
-    const row = node("li");
-    const label = node("span", item.name, "usage-chart-label");
-    label.title = item.name;
-    const track = node("span", undefined, "usage-chart-track");
-    const fill = node("i", undefined, "usage-chart-fill");
-    fill.style.width = `${item.value / max * 100}%`;
-    track.append(fill);
-    row.append(label, track, node("strong", money(item.value)));
-    list.append(row);
+
+/** Sparkline of the latest populated days; unknown costs are skipped, never drawn as zero. */
+export function renderUsageTrend(host, dayRows) {
+  const days = selectCostDays(dayRows);
+  const label = node("span", "Daily cost", "usage-trend-label");
+  if (days.length < 2) {
+    host.replaceChildren(label, node("span", days.length ? `${money(days[0].value)} on ${days[0].name}` : "No priced daily usage in this scope", "usage-trend-value"));
+    return;
   }
-  section.append(list);
-  return section;
+  const max = Math.max(...days.map((day) => day.value));
+  const width = 300, height = 40;
+  const points = days.map((day, index) => [index / (days.length - 1) * width, height - 3 - day.value / max * (height - 6)]);
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("class", "usage-trend-line");
+  svg.setAttribute("aria-label", `Known API-equivalent cost over ${days.length} populated days, ${days[0].name} to ${days.at(-1).name}`);
+  const path = document.createElementNS(SVG, "path");
+  path.setAttribute("d", points.map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" "));
+  path.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.append(path);
+  const total = days.reduce((sum, day) => sum + day.value, 0);
+  const latest = days.at(-1);
+  const value = node("span", `${money(latest.value)} on ${latest.name.slice(5)}`, "usage-trend-value");
+  value.title = `Average ${money(total / days.length)} per populated day`;
+  host.replaceChildren(label, svg, value);
 }
-function donut(rows) {
-  const values = groupKnownCosts(rows, 5);
-  if (!values.length) return empty("Models", "No positively priced model usage is available; unknown costs are not drawn as zero.");
+
+/** Proportional model bar with a legend, for one expanded breakdown row. */
+export function renderModelSplit(rows) {
+  const values = groupKnownCosts(rows, SERIES_COUNT - 1);
+  const wrap = node("div", undefined, "usage-split");
+  if (!values.length) { wrap.append(node("p", "No priced model usage for this row.", "usage-split-empty")); return wrap; }
   const total = values.reduce((sum, item) => sum + item.value, 0);
-  let offset = 0;
-  const stops = values.map((item, index) => {
-    const start = offset;
-    offset += item.value / total * 100;
-    return `var(--usage-chart-${index % 6}) ${start}% ${offset}%`;
-  });
-  const section = node("section", undefined, "usage-chart");
-  section.setAttribute("aria-label", `Models, ${money(total)} known API-equivalent cost`);
-  section.append(node("h4", "Models"));
-  const graphic = node("div", undefined, "usage-donut");
-  graphic.style.background = `conic-gradient(${stops.join(",")})`;
-  graphic.setAttribute("role", "img");
-  graphic.setAttribute("aria-label", `${money(total)} known cost split among ${values.length} model groups`);
-  const legend = node("ul", undefined, "usage-chart-legend");
+  const bar = node("div", undefined, "usage-split-bar");
+  bar.setAttribute("role", "img");
+  bar.setAttribute("aria-label", `${money(total)} known cost split among ${values.length} model groups`);
+  const legend = node("ul", undefined, "usage-split-legend");
   values.forEach((item, index) => {
-    const row = node("li");
+    const series = item.name === "Other" ? SERIES_COUNT - 1 : index;
+    const segment = node("i");
+    segment.dataset.series = String(series);
+    segment.style.width = `${item.value / total * 100}%`;
+    segment.title = `${item.name}: ${money(item.value)}`;
+    bar.append(segment);
+    const entry = node("li");
     const swatch = node("i");
-    swatch.style.background = `var(--usage-chart-${index % 6})`;
-    row.append(swatch, node("span", item.name), node("strong", money(item.value)));
-    legend.append(row);
+    swatch.dataset.series = String(series);
+    entry.append(swatch, node("span", item.name), node("strong", money(item.value)), node("em", `${(item.value / total * 100).toFixed(1)}%`));
+    legend.append(entry);
   });
-  section.append(graphic, legend);
-  return section;
-}
-function dayColumns(rows) {
-  const values = selectCostDays(rows);
-  if (!values.length) return empty("Last 30 populated days", "No positively priced API usage is available for this scope.");
-  const max = Math.max(...values.map((item) => item.value));
-  const section = node("section", undefined, "usage-chart usage-day-chart");
-  section.setAttribute("aria-label", "Last 30 populated days, chronological known API-equivalent cost");
-  section.append(node("h4", "Last 30 populated days"));
-  const list = node("ol", undefined, "usage-chart-columns");
-  for (const item of values) {
-    const column = node("li");
-    column.setAttribute("aria-label", `${item.name}: ${money(item.value)}`);
-    const bar = node("i", undefined, "usage-chart-column");
-    bar.style.height = `${item.value / max * 100}%`;
-    column.append(bar, node("span", item.name.slice(5)), node("strong", money(item.value)));
-    list.append(column);
-  }
-  section.append(list);
-  return section;
-}
-export function renderUsageCharts(host, data) {
-  const names = new Map((data.projects || []).map((project) => [project.id, project.name]));
-  const projectRows = data.breakdowns.projects.map((row) => ({ ...row, key: names.get(row.key) || row.key }));
-  host.replaceChildren(bars("Projects", projectRows, 8), donut(data.breakdowns.models), dayColumns(data.breakdowns.days));
-  if (data.summary.partial) host.prepend(node("p", "Charts show known positive API-equivalent costs only; this scope has missing or unpriced usage.", "usage-chart-note"));
+  wrap.append(bar, legend);
+  return wrap;
 }

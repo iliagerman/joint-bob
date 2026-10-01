@@ -5,6 +5,7 @@ import path from "node:path";
 import test, { after, before } from "node:test";
 import type { ChildProcess } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import { ensureClusterSharingPolicySchema } from "../src/cluster-sharing-policy.js";
 import { ensureUsageSchema } from "../src/usage-ledger.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 
@@ -60,4 +61,26 @@ test("manual subscription persists, validates price, and deletes", async () => {
 });
 test("custom label filter is accepted and accounts are not exposed", async () => {
   const response = await api<Record<string, unknown>>(node, session, "GET", "/usage?classification=Custom%20label"); assert.equal(response.status, 200); assert.equal("accounts" in response.body, false);
+});
+test("usage API filters by the node the usage was recorded on", async () => {
+  const clusterId = "6f1f6a8e-2b0e-4c55-9f53-0d1b6e2a7c11";
+  const peerId = "9b2c7d4e-5f60-4a1b-8c2d-3e4f5a6b7c8d";
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  ensureClusterSharingPolicySchema(db);
+  db.prepare("INSERT INTO sharing_clusters(id,name,original_node_id,manager_node_id,manager_epoch,next_join_sequence,closed) VALUES(?,?,?,?,1,3,0)").run(clusterId, "Usage cluster", node.nodeId, node.nodeId);
+  db.prepare("INSERT INTO sharing_memberships(cluster_id,node_id,join_sequence) VALUES(?,?,1),(?,?,2)").run(clusterId, node.nodeId, clusterId, peerId);
+  const payload = { id: "peer-usage", projectId: node.projects[0].id, conversationId: "peer-usage", sessionId: "peer-usage", engine: "pi", provider: "test", modelId: "fixture", occurredAt: "2025-02-01T12:00:00.000Z", requestId: null, input: 1, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteUnknown: 0, reasoning: 0, apiCostUsd: 7, pricing: null, usageStatus: "reported", difficultyLevel: null, difficultyConfidence: null, difficultyStatus: "unknown", turnId: null, toolCalls: 0, toolErrors: 0 };
+  db.prepare("INSERT INTO model_usage_events(id,project_id,conversation_id,session_id,engine,occurred_at,payload,origin_node_id) VALUES(?,?,?,?,?,?,?,?)").run(payload.id, payload.projectId, payload.id, payload.id, "pi", payload.occurredAt, JSON.stringify(payload), peerId);
+  try {
+    const cost = async (query: string) => (await api<any>(node, session, "GET", `/usage?refresh=false&${query}`)).body.summary.apiCostUsd;
+    assert.equal(await cost("clusters=local"), 45, "this node excludes the peer's usage");
+    assert.equal(await cost(`clusters=${clusterId}`), 7, "a cluster is its other members");
+    assert.equal(await cost(`clusters=local,${clusterId}`), 52);
+    assert.equal(await cost(""), 52);
+    assert.equal((await api(node, session, "GET", "/usage?refresh=false&clusters=00000000-0000-4000-8000-000000000000")).status, 404);
+    assert.equal((await api(node, session, "GET", "/usage?refresh=false&clusters=not-a-cluster")).status, 400);
+  } finally {
+    db.exec(`DELETE FROM model_usage_events WHERE id='peer-usage'; DELETE FROM sharing_memberships WHERE cluster_id='${clusterId}'; DELETE FROM sharing_clusters WHERE id='${clusterId}';`);
+    db.close();
+  }
 });

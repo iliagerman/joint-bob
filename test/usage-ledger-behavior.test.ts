@@ -39,3 +39,12 @@ test("catalog updates retain captured rates and later tool errors", () => {
 const replicatedEvent: UsageEvent = {id:"event",projectId:"p",conversationId:"c",sessionId:"s",engine:"pi",provider:"x",modelId:"m",occurredAt:"2025-01-01T00:00:00.000Z",requestId:"r",input:2,output:3,cacheRead:0,cacheWrite5m:0,cacheWrite1h:0,reasoning:1,apiCostUsd:null,pricing:null,usageStatus:"reported",difficultyLevel:null,difficultyConfidence:null,difficultyStatus:"not-classified",turnId:null,toolCalls:0,toolErrors:0};
 test("replicated native request is idempotent",()=>{const db=new DatabaseSync(":memory:");ensureUsageSchema(db);const replication={id:"repl",originNodeId:"node",entityType:"model.usage",entityKey:replicatedEvent.id,operation:"upsert",payload:{projectId:replicatedEvent.projectId,event: replicatedEvent,originNodeId:"node"},createdAt:replicatedEvent.occurredAt};applyUsageEvent(db,replication);applyUsageEvent(db,replication);assert.equal((db.prepare("SELECT count(*) count FROM model_usage_events").get() as {count:number}).count,1);});
 test("replication validates entity identity",()=>{const db=new DatabaseSync(":memory:");ensureUsageSchema(db);assert.throws(()=>applyUsageEvent(db,{id:"x",originNodeId:"node",entityType:"model.usage",entityKey:"wrong",operation:"upsert",payload:{projectId:replicatedEvent.projectId,event: replicatedEvent,originNodeId:"node"},createdAt:replicatedEvent.occurredAt}));});
+
+test("origin node filter scopes totals to the nodes that recorded the usage", () => {
+  saveUsageEvent(event({ id: "here", output: 1 }), "node-a");
+  saveUsageEvent(event({ id: "there", output: 2 }), "node-b");
+  assert.equal(usageTotals({ projectIds: ["project"], originNodeIds: ["node-a"] }).output, 1);
+  assert.equal(usageTotals({ projectIds: ["project"], originNodeIds: ["node-a", "node-b"] }).output, 3);
+  assert.equal(usageTotals({ projectIds: ["project"], originNodeIds: [] }).requests, 0, "an empty node set matches nothing");
+  assert.equal(usageTotals({ projectIds: ["project"] }).requests, 2);
+});
