@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Git review displays diffs side-by-side with line numbers and lets you set a default reviewer in Settings → Git.
+
 ## 2.24.0 — 2026-10-01
 
 - Secret accounts now support Stripe and Cloudflare as providers for managing API keys.

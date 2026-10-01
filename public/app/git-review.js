@@ -3,6 +3,7 @@ import { loadGitHosting, resetGitHosting } from "./git-hosting.js";
 import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { fillModelOptions, fillThinkingOptions } from "./git-reviewer-options.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 import { activeChatSession } from "./terminal.js";
@@ -231,25 +232,71 @@ function markActiveRow() {
   for (const row of elements.gitReviewList.querySelectorAll(".git-review-file, .git-review-commit")) row.classList.remove("is-active");
 }
 
+function diffCell(className, text) {
+  const cell = document.createElement("span");
+  cell.className = `git-diff-cell ${className}`;
+  cell.textContent = text;
+  return cell;
+}
+
+function diffRow(left, right) {
+  const row = document.createElement("div");
+  row.className = "git-diff-row";
+  row.dataset.testid = "git-diff-row";
+  const leftKind = left ? (left.kind === "del" ? " is-del" : "") : " is-empty";
+  const rightKind = right ? (right.kind === "add" ? " is-add" : "") : " is-empty";
+  row.append(
+    diffCell(`is-number${leftKind}`, left ? String(left.number) : ""),
+    diffCell(`is-code${leftKind}`, left?.text ?? ""),
+    diffCell(`is-number${rightKind}`, right ? String(right.number) : ""),
+    diffCell(`is-code${rightKind}`, right?.text ?? ""),
+  );
+  return row;
+}
+
+function diffNote(className, text) {
+  const note = document.createElement("div");
+  note.className = `git-diff-note ${className}`;
+  note.textContent = text;
+  return note;
+}
+
+// Unified patch → side-by-side rows. Removed and added runs pair up line by line;
+// the longer run leaves blank cells on the other side.
 function renderDiff(diff) {
-  if (diff.binary) { elements.gitReviewDiff.textContent = "Binary file — no textual diff."; return; }
-  if (!diff.patch) { elements.gitReviewDiff.textContent = "No changes."; return; }
   elements.gitReviewDiff.textContent = "";
+  if (diff.binary) { elements.gitReviewDiff.append(diffNote("is-meta", "Binary file — no textual diff.")); return; }
+  if (!diff.patch) { elements.gitReviewDiff.append(diffNote("is-meta", "No changes.")); return; }
+  let oldLine = 0;
+  let newLine = 0;
+  let removed = [];
+  let added = [];
+  const flush = () => {
+    for (let index = 0; index < Math.max(removed.length, added.length); index += 1) elements.gitReviewDiff.append(diffRow(removed[index], added[index]));
+    removed = [];
+    added = [];
+  };
   for (const line of diff.patch.split("\n")) {
-    const span = document.createElement("span");
-    span.className = "git-diff-line";
-    if (line.startsWith("+") && !line.startsWith("+++")) span.classList.add("is-add");
-    else if (line.startsWith("-") && !line.startsWith("---")) span.classList.add("is-del");
-    else if (line.startsWith("@@")) span.classList.add("is-hunk");
-    span.textContent = line || " ";
-    elements.gitReviewDiff.append(span, document.createTextNode("\n"));
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) {
+      flush();
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      elements.gitReviewDiff.append(diffNote("is-hunk", line));
+    } else if (!oldLine && !newLine) {
+      if (line) elements.gitReviewDiff.append(diffNote("is-meta", line));
+    } else if (line.startsWith("-")) removed.push({ kind: "del", number: oldLine++, text: line.slice(1) });
+    else if (line.startsWith("+")) added.push({ kind: "add", number: newLine++, text: line.slice(1) });
+    else if (!line || line.startsWith("\\")) continue;
+    else {
+      flush();
+      if (line.startsWith("diff --git")) { oldLine = 0; newLine = 0; elements.gitReviewDiff.append(diffNote("is-meta", line)); continue; }
+      const text = line.slice(1);
+      elements.gitReviewDiff.append(diffRow({ kind: "context", number: oldLine++, text }, { kind: "context", number: newLine++, text }));
+    }
   }
-  if (diff.truncated) {
-    const note = document.createElement("span");
-    note.className = "git-diff-line is-hunk";
-    note.textContent = "… diff truncated";
-    elements.gitReviewDiff.append(note);
-  }
+  flush();
+  if (diff.truncated) elements.gitReviewDiff.append(diffNote("is-hunk", "… diff truncated"));
 }
 
 async function loadHistory() {
@@ -345,6 +392,12 @@ async function ensurePickers() {
 }
 
 function chooseReviewer() {
+  const saved = state.gitReviewer;
+  if (saved && git.harnesses.some((harness) => harness.id === saved.harnessId)) {
+    elements.gitReviewHarness.value = saved.harnessId;
+    syncModelOptions(saved);
+    return;
+  }
   const opposite = git.lastHarness === "claude" ? "pi" : git.lastHarness === "pi" ? "claude" : null;
   const preferred = git.harnesses.find((harness) => harness.id === opposite);
   elements.gitReviewHarness.value = preferred?.id ?? git.harnesses.find(({ ready }) => ready)?.id ?? "";
@@ -355,20 +408,10 @@ function selectedHarness() {
   return git.harnesses.find((harness) => harness.id === elements.gitReviewHarness.value);
 }
 
-function syncModelOptions() {
+function syncModelOptions(preferred) {
   const harness = selectedHarness();
   if (!harness) return;
-  const models = git.models.filter((model) => model.harnessId === harness.id);
-  elements.gitReviewModel.replaceChildren(...(models.length
-    ? models.map((model) => { const option = new Option(model.label, model.id); option.dataset.provider = model.provider; return option; })
-    : [new Option(harness.defaults.modelId, harness.defaults.modelId)]));
-  const preferredModel = harness.id === "pi" ? "gpt-6-sol" : harness.id === "claude" ? "claude-opus-5-5" : harness.defaults.modelId;
-  const option = [...elements.gitReviewModel.options].find((item) => item.value === preferredModel);
-  if (option) elements.gitReviewModel.value = preferredModel;
-  const selected = models.find((model) => model.id === elements.gitReviewModel.value);
-  const levels = selected?.thinkingLevels ?? harness.configuration?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-  elements.gitReviewThinking.replaceChildren(...levels.map((level) => new Option(level, level)));
-  elements.gitReviewThinking.value = levels.includes("xhigh") ? "xhigh" : harness.defaults.thinkingLevel && levels.includes(harness.defaults.thinkingLevel) ? harness.defaults.thinkingLevel : levels[0];
+  fillModelOptions(harness, git.models, elements.gitReviewModel, elements.gitReviewThinking, preferred);
 }
 
 async function openAsk() {
@@ -567,10 +610,7 @@ elements.gitReviewAskCloseButton.addEventListener("click", () => { elements.gitR
 elements.gitReviewHarness.addEventListener("change", () => { git.reviewerTouched = true; syncModelOptions(); });
 elements.gitReviewModel.addEventListener("change", () => {
   git.reviewerTouched = true;
-  const model = git.models.find((item) => item.harnessId === elements.gitReviewHarness.value && item.id === elements.gitReviewModel.value);
-  const levels = model?.thinkingLevels ?? selectedHarness()?.configuration?.thinkingLevels ?? [];
-  elements.gitReviewThinking.replaceChildren(...levels.map((level) => new Option(level, level)));
-  elements.gitReviewThinking.value = levels.includes("xhigh") ? "xhigh" : levels[0];
+  fillThinkingOptions(selectedHarness(), git.models, elements.gitReviewModel, elements.gitReviewThinking);
 });
 elements.gitReviewAllChanges.addEventListener("change", () => {
   git.scopeRequest += 1;

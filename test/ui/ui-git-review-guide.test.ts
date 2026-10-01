@@ -62,7 +62,7 @@ test("conversation Git review hides other files and orders guided comments with 
   const [{ conversationId, ...request }] = requests as Array<{ conversationId: string; scope: string; paths: string[]; harnessId: string; provider: string; modelId: string; thinkingLevel: string }>;
   assert.ok(conversationId, "review stays attached to the active conversation");
   assert.deepEqual(request, { scope: "conversation", paths: ["mine.ts", "important.ts"], harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "xhigh" });
-  assert.match(await page.getByTestId("git-review-diff").innerText(), /\+new/);
+  assert.match(await page.getByTestId("git-review-diff").innerText(), /new/);
   await page.getByTestId("git-review-all-changes").check();
   assert.equal(await page.getByTestId("git-review-file").count(), 3);
   assert.equal(await page.getByTestId("git-review-guide").isVisible(), false);

@@ -159,6 +159,7 @@ export async function initializeApplication() {
   state.pinnedProjectIds = preferences.pinnedProjectIds || [];
   state.pinnedSessionPaths = preferences.pinnedSessionPaths || [];
   state.conversationLastRead = preferences.conversationLastRead || {};
+  state.gitReviewer = preferences.gitReviewer;
   state.replicatedPinnedProjectIds = pins.projectIds || [];
   state.pinnedConversations = pins.conversations || [];
   state.recentSessions = recents.recentSessions || [];
