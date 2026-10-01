@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.23.0 — 2026-10-01
+
+- Compare usage across time periods with trend deltas and month/week-to-date analysis.
+- Usage dashboard pagination now adapts to screen height for better readability without horizontal scrolling.
+- Cluster dropdown and date bucketing now display in your local timezone.
+- Added period-based usage tracking and analytics with improved query performance.
+
 ## 2.22.0 — 2026-10-01
 
 - Usage dashboard redesigned to fit the window without scrolling: every dimension pages rows now, cluster dropdown is readable, Compare periods tab shows month and week to date against prior periods with trend deltas, pagination adapts to screen height, and dates are bucketed in your local timezone.
