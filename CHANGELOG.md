@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.22.0 — 2026-10-01
 
-- Browser machine settings now distinguish between cluster defaults (shared with all members) and this machine's private overrides; Settings got a new Browser tab for your per-machine choices, keeping them separate from cluster configuration.
+- Browser machines have their own **Settings → Browser** tab. Choices made there apply only to that machine and no longer sync to twins; defaults copied from other machines by earlier releases are cleared.
+- For a project shared in a cluster, the cluster's default browser machine now wins over a machine's own default, and each machine can replace it for one cluster without affecting other members. Projects in no cluster, or whose clusters have no default, use the machine's own default.
+- Cluster default browser machines are set in **Settings → Cluster → Browser machine defaults**.
+- Installing or updating downloads the Chromium pinned by Joint Bob's Playwright; a failed download warns instead of aborting the update.
 
 ## 2.21.2 — 2026-10-01
 
