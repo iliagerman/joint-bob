@@ -39,7 +39,7 @@ test("searchable secret-type picker filters accounts and starts new accounts on 
     assert.ok((await picker.locator("svg path").getAttribute("d"))?.startsWith("M19.9 4.4"), "chosen provider has an icon");
     await page.getByTestId("secret-account-list").getByText("No Stripe accounts.").waitFor();
     await page.getByTestId("secret-account-add-button").click();
-    assert.equal(await page.getByTestId("secret-account-provider-input").inputValue(), "stripe");
+    assert.equal(await page.getByTestId("secret-account-provider-input").getAttribute("data-value"), "stripe");
     assert.equal(await page.getByTestId("secret-variable-name-input").inputValue(), "STRIPE_API_KEY");
     assert.equal(await page.getByTestId("secret-variable-kind-select").inputValue(), "value");
     const iconPath = await page.getByTestId("secret-account-provider-icon").locator("svg path").getAttribute("d");
@@ -69,7 +69,7 @@ test("searchable secret-type picker filters accounts and starts new accounts on 
     await options.first().click();
     await page.getByTestId("secret-account-list").getByText("No Cloudflare accounts.").waitFor();
     await page.getByTestId("secret-account-add-button").click();
-    assert.equal(await page.getByTestId("secret-account-provider-input").inputValue(), "cloudflare");
+    assert.equal(await page.getByTestId("secret-account-provider-input").getAttribute("data-value"), "cloudflare");
     assert.equal(await page.getByTestId("secret-variable-name-input").inputValue(), "CLOUDFLARE_API_KEY");
     assert.ok((await page.getByTestId("secret-account-provider-icon").locator("svg path").getAttribute("d"))?.startsWith("M20.2 13.2"));
     await page.getByTestId("secret-account-label-input").fill("Cloudflare test");
@@ -92,6 +92,30 @@ test("searchable secret-type picker filters accounts and starts new accounts on 
     await options.first().click();
     assert.equal(await picker.getAttribute("data-value"), "all");
     await cloudflareRow.waitFor();
+    for (const [query, label] of [["openai", "OpenAI"], ["z.ai", "Z.AI"], ["graphana", "Grafana"], ["data dog", "Datadog"], ["postgre", "PostgreSQL"], ["ms sql", "MS SQL"], ["mognodb", "MongoDB"]]) {
+      await picker.click();
+      await search.fill(query);
+      assert.deepEqual(await options.allTextContents(), [label]);
+      assert.equal(await options.first().locator("svg path").count() > 0, true, `${label} has an icon`);
+      await search.press("Escape");
+    }
+    await page.getByTestId("secret-account-add-button").click();
+    const provider = page.getByTestId("secret-account-provider-input");
+    const providerSearch = page.getByTestId("secret-account-provider-input-search");
+    assert.equal(await providerSearch.evaluate((input) => input === document.activeElement), true, "plus opens the searchable type picker");
+    await providerSearch.fill("mognodb");
+    assert.deepEqual(await page.getByTestId("secret-account-provider-input-option").allTextContents(), ["MongoDB"]);
+    await providerSearch.press("Enter");
+    assert.equal(await provider.getAttribute("data-value"), "mongodb");
+    assert.equal(await page.getByTestId("secret-variable-name-input").inputValue(), "MONGODB_URI");
+    await page.getByTestId("secret-account-label-input").fill("Test MongoDB");
+    await page.getByTestId("secret-variable-value-input").fill("mongodb://synthetic.invalid/test");
+    const mongoCreated = page.waitForResponse((response) => response.url().endsWith("/api/secrets/accounts") && response.request().method() === "POST");
+    await page.getByTestId("secret-account-save-button").click();
+    assert.equal((await mongoCreated).status(), 201);
+    await page.getByTestId("secret-account-dialog").waitFor({ state: "hidden" });
+    await picker.click(); await search.fill("mongo"); await options.first().click();
+    await page.getByTestId("secret-account-list").getByText("Test MongoDB · MongoDB").waitFor();
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

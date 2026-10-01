@@ -57,6 +57,22 @@ test("secret accounts redact saved values, retain omitted edits, and expose only
   });
 });
 
+test("new provider types retain encrypted values and export their chosen variable", async () => {
+  await withSecrets("more-providers", async (secrets) => {
+    for (const [provider, variable] of [
+      ["openai", "OPENAI_API_KEY"], ["zai", "ZAI_API_KEY"], ["grafana", "GRAFANA_API_KEY"],
+      ["datadog", "DD_API_KEY"], ["postgres", "DATABASE_URL"],
+      ["mssql", "MSSQL_CONNECTION_STRING"], ["mongodb", "MONGODB_URI"],
+    ] as const) {
+      const account = await secrets.saveSecretAccount({ label: provider, provider, variables: [{ name: variable, kind: "value", value: `synthetic-${provider}` }] });
+      await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+      assert.equal(secrets.genericSecretEnvironment("project-a")[variable], `synthetic-${provider}`);
+      assert.match(secrets.agentCredentialContext("project-a"), new RegExp(provider));
+      assert.doesNotMatch(JSON.stringify(await secrets.listSecretAccounts()), new RegExp(`synthetic-${provider}`));
+    }
+  });
+});
+
 test("Google file secrets are private files and context never includes values", async () => {
   await withSecrets("google", async (secrets) => {
     const json = '{"type":"service_account"}\n';

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added secret account support for OpenAI, Z.AI, Grafana, Datadog, PostgreSQL, MS SQL, and MongoDB with searchable provider selection.
+
 ## 2.30.0 — 2026-10-01
 
 - Secret type filtering in Settings now uses a searchable picker instead of fixed buttons.

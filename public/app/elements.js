@@ -373,7 +373,7 @@ export const elements = {
   secretAccountForm: document.querySelector("#secretAccountForm"),
   secretAccountTitle: document.querySelector("#secretAccountTitle"),
   secretAccountLabelInput: document.querySelector("#secretAccountLabelInput"),
-  secretAccountProviderInput: document.querySelector("#secretAccountProviderInput"),
+  secretAccountProviderPicker: document.querySelector("#secretAccountProviderPicker"),
   secretAccountProviderIcon: document.querySelector("#secretAccountProviderIcon"),
   secretAccountProviderHint: document.querySelector("#secretAccountProviderHint"),
   secretAccountOriginInput: document.querySelector("#secretAccountOriginInput"),

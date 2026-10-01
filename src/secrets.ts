@@ -7,7 +7,7 @@ import { isHarnessId, type HarnessId } from "./types.js";
 import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "./cluster-v2-errors.js";
 
-export type SecretProvider = "aws" | "google" | "github" | "stripe" | "cloudflare" | "custom" | "website";
+export type SecretProvider = "aws" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "zai" | "grafana" | "datadog" | "postgres" | "mssql" | "mongodb" | "custom" | "website";
 export type SecretKind = "value" | "file";
 /** Attachment tiers, broadest first. Resolution merges them in this order. */
 export type SecretScopeType = "workspace" | "project" | "conversation";
@@ -115,7 +115,7 @@ function assertScope(scopeType: string, scopeId: string): asserts scopeType is S
 }
 
 function assertInput(input: SecretAccountInput): void {
-  if (!(["aws", "google", "github", "stripe", "cloudflare", "custom", "website"] as string[]).includes(input.provider)) throw new Error("Secret provider must be aws, google, github, stripe, cloudflare, custom, or website");
+  if (!(["aws", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "postgres", "mssql", "mongodb", "custom", "website"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
   if (!input.label.trim() || input.label.trim().length > 64 || /[\x00-\x1f\x7f]/.test(input.label)) throw new Error("Secret account label must be between 1 and 64 characters without control characters");
   if (input.variables.length < 1 || input.variables.length > 20) throw new Error("Secret accounts need between 1 and 20 variables");
   const names = new Set<string>();
@@ -432,6 +432,13 @@ const providerHints: Record<SecretProvider, string> = {
   github: "the gh CLI, the GitHub API and git push all read these automatically",
   stripe: "use STRIPE_API_KEY to configure the Stripe CLI or SDK",
   cloudflare: "use CLOUDFLARE_API_KEY to authenticate with the Cloudflare API (global keys also require an account email)",
+  openai: "use OPENAI_API_KEY with OpenAI tools and SDKs",
+  zai: "use ZAI_API_KEY with Z.AI tools and SDKs",
+  grafana: "use GRAFANA_API_KEY with Grafana APIs",
+  datadog: "use DD_API_KEY with Datadog tools and SDKs",
+  postgres: "use DATABASE_URL to connect to PostgreSQL",
+  mssql: "use MSSQL_CONNECTION_STRING to connect to Microsoft SQL Server",
+  mongodb: "use MONGODB_URI to connect to MongoDB",
   custom: "plain environment variables for this project",
   website: "structured website sign-in credentials filled through login-fill at the bound origin",
 };

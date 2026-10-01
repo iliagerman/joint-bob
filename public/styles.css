@@ -2034,7 +2034,11 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .changelog-entry li { color: var(--text); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .changelog-entry ul:empty { display: none; }
 
-.secret-type-picker { width: min(240px, 100%); }
+.secret-type-toolbar { display: flex; align-items: stretch; gap: 8px; }
+.secret-type-picker { width: min(240px, calc(100% - 48px)); }
+.secret-type-add { width: 40px; min-width: 40px; padding: 0; font-size: 21px; line-height: 1; }
+.secret-provider-field { display: grid; gap: 6px; color: var(--text); font-size: 12px; font-weight: 550; }
+#secretAccountProviderPicker { width: 100%; }
 .secret-type-select :is(.searchable-select-trigger, .searchable-select-option) { display: flex; align-items: center; gap: 10px; }
 .secret-type-select .secret-provider-icon, .secret-type-select .row-menu-icon { flex: 0 0 18px; width: 18px; height: 18px; }
 .secret-account-list, .secret-scope-list { display: grid; gap: 8px; }
@@ -2054,6 +2058,13 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .secret-provider-icon.github { color: var(--text); }
 .secret-provider-icon.stripe { color: #635bff; }
 .secret-provider-icon.cloudflare { color: #f38020; }
+.secret-provider-icon.openai { color: #10a37f; }
+.secret-provider-icon.zai { color: #5c68d7; }
+.secret-provider-icon.grafana { color: #f46800; }
+.secret-provider-icon.datadog { color: #8a55ad; }
+.secret-provider-icon.postgres { color: #336791; }
+.secret-provider-icon.mssql { color: #cc2927; }
+.secret-provider-icon.mongodb { color: #47a248; }
 .secret-provider-icon.website { color: #2f9e6c; }
 .secret-provider-icon.custom { color: var(--accent); }
 

@@ -17,7 +17,7 @@ let secretScopeTarget = null;
 let secretTypeFilter = "all";
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
-const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", custom: "Custom", website: "Website" };
+const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", openai: "OpenAI", zai: "Z.AI", grafana: "Grafana", datadog: "Datadog", postgres: "PostgreSQL", mssql: "MS SQL", mongodb: "MongoDB", website: "Website", custom: "Custom" };
 /** Shown under the provider picker so the choice explains itself before anything is typed. */
 const providerHints = {
   aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
@@ -25,6 +25,13 @@ const providerHints = {
   github: "A personal access token. The gh CLI and the GitHub API read it, and GITHUB_TOKEN is filled in from GH_TOKEN. Git pushes keep using the GitHub group set under Projects.",
   stripe: "A Stripe API key. STRIPE_API_KEY is exported to attached agent sessions for use with Stripe tools and SDKs. Use a restricted or test key when possible.",
   cloudflare: "A Cloudflare API key exported as CLOUDFLARE_API_KEY to attached agent sessions. Global API keys also require your account email; use a scoped API token instead when possible (as a Custom secret).",
+  openai: "OPENAI_API_KEY for OpenAI tools and SDKs.",
+  zai: "ZAI_API_KEY for Z.AI tools and SDKs.",
+  grafana: "GRAFANA_API_KEY for Grafana APIs. Use a scoped service account token where possible.",
+  datadog: "DD_API_KEY for Datadog tools and SDKs. Add DD_APP_KEY separately if your integration needs one.",
+  postgres: "DATABASE_URL for PostgreSQL clients. Paste the full connection URL.",
+  mssql: "MSSQL_CONNECTION_STRING for Microsoft SQL Server clients. Paste the connection string.",
+  mongodb: "MONGODB_URI for MongoDB clients. Paste the connection URI.",
   custom: "Any environment variables you need. Every agent session in the scopes you assign this account to receives them.",
   website: "Structured website sign-in. Set the exact website origin, then LOGIN_USERNAME and LOGIN_PASSWORD (add more fields the form needs). The agent fills them at that origin with login-fill; values never enter the shell. Sharing sends encrypted-at-rest copies to selected nodes.",
 };
@@ -48,6 +55,8 @@ function secretProviderPresets(provider) {
   if (provider === "github") return [{ name: "GH_TOKEN", kind: "value" }];
   if (provider === "stripe") return [{ name: "STRIPE_API_KEY", kind: "value" }];
   if (provider === "cloudflare") return [{ name: "CLOUDFLARE_API_KEY", kind: "value" }];
+  const single = { openai: "OPENAI_API_KEY", zai: "ZAI_API_KEY", grafana: "GRAFANA_API_KEY", datadog: "DD_API_KEY", postgres: "DATABASE_URL", mssql: "MSSQL_CONNECTION_STRING", mongodb: "MONGODB_URI" }[provider];
+  if (single) return [{ name: single, kind: "value" }];
   if (provider === "website") return [{ name: "LOGIN_USERNAME", kind: "value" }, { name: "LOGIN_PASSWORD", kind: "value" }];
   return [{ name: "", kind: "value" }];
 }
@@ -55,7 +64,7 @@ function secretProviderPresets(provider) {
 function secretValuePlaceholder(kind, configured) {
   if (configured) return "Leave blank to keep the saved value";
   if (kind !== "file") return "Secret value";
-  return elements.secretAccountProviderInput.value === "google" ? "Paste the Google service account JSON" : "Paste the file contents";
+  return secretProviderPicker.value === "google" ? "Paste the Google service account JSON" : "Paste the file contents";
 }
 
 function createSecretValueControl(kind, configured, currentValue = "") {
@@ -199,14 +208,21 @@ const secretTypePicker = createSearchableSelect({
   icon: (provider) => provider === "all" ? menuIcon("key") : providerIcon(provider),
 });
 secretTypePicker.root.classList.add("secret-type-select");
-secretTypePicker.setOptions([
-  { value: "all", label: "All types" },
-  ...Object.entries(providerLabels).map(([value, label]) => ({ value, label })),
-]);
+const providerOptions = Object.entries(providerLabels).map(([value, label]) => ({ value, label, keywords: { grafana: "graphana", mongodb: "mognodb" }[value] }));
+secretTypePicker.setOptions([{ value: "all", label: "All types" }, ...providerOptions]);
 // Icons are initialized after the module graph finishes loading (icons.js is cyclic).
 queueMicrotask(() => secretTypePicker.setValue("all"));
 secretTypePicker.onChange((name) => { secretTypeFilter = name; renderSecretAccounts(); });
 elements.secretTypePicker.append(secretTypePicker.root);
+
+const secretProviderPicker = createSearchableSelect({
+  id: "secretAccountProviderInput", testid: "secret-account-provider-input", label: "Provider",
+  placeholder: "Search providers", emptyText: "No providers found", icon: providerIcon,
+});
+secretProviderPicker.root.classList.add("secret-type-select");
+secretProviderPicker.setOptions(providerOptions);
+secretProviderPicker.onChange(applySecretProviderPreset);
+elements.secretAccountProviderPicker.append(secretProviderPicker.root);
 
 async function deleteSecretAccount(account) {
   const confirmed = await confirmAction({
@@ -227,7 +243,7 @@ async function deleteSecretAccount(account) {
  * user already typed, and never touches the rows of an account that is being edited.
  */
 function applySecretProviderPreset() {
-  const provider = elements.secretAccountProviderInput.value;
+  const provider = secretProviderPicker.value;
   elements.secretAccountProviderIcon.replaceChildren(providerIcon(provider));
   elements.secretAccountProviderHint.textContent = providerHints[provider];
   const typed = [...elements.secretVariableRows.children].some((row) => row.querySelector("[data-secret-value]").value.trim());
@@ -244,7 +260,7 @@ function openSecretAccount(account = null, projectId = null, onSaved = null) {
   elements.secretAccountLabelInput.value = account?.label ?? "";
   elements.secretAccountOriginInput.value = account?.websiteOrigin ?? "";
   // A provider selected above the list starts the form on that provider; "all" keeps AWS.
-  elements.secretAccountProviderInput.value = account?.provider ?? (secretTypeFilter === "all" ? "aws" : secretTypeFilter);
+  secretProviderPicker.setValue(account?.provider ?? (secretTypeFilter === "all" ? "aws" : secretTypeFilter));
   // Node-local is the default, so a new account never leaves this node by accident.
   // Project-owned accounts never leave this node either, so the toggle is locked off for them.
   const ownedByProject = Boolean(projectId || account?.projectId);
@@ -302,7 +318,10 @@ elements.secretScopeForm.addEventListener("submit", async (event) => {
   await api(`/api/secrets/scopes/${encodeURIComponent(secretScopeTarget.scopeType)}/${encodeURIComponent(secretScopeTarget.scopeId)}`, { method: "PUT", body: JSON.stringify({ accountIds }) });
   elements.secretScopeDialog.close(); toast("Secret accounts saved");
 });
-elements.secretAccountAddButton.addEventListener("click", () => openSecretAccount());
+elements.secretAccountAddButton.addEventListener("click", () => {
+  openSecretAccount();
+  secretProviderPicker.trigger.click();
+});
 elements.secretScopeAddButton.addEventListener("click", () => {
   const ticked = checkedSecretScopeIds();
   openSecretAccount(null, secretScopeTarget.scopeType === "project" ? secretScopeTarget.scopeId : null, (account) => renderSecretScopeList([...ticked, account.id]));
@@ -314,15 +333,12 @@ elements.secretAccountDialog.addEventListener("close", () => {
   onAccountSaved = null;
   for (const control of elements.secretVariableRows.querySelectorAll("[data-secret-value]")) control.value = "";
 });
-elements.secretAccountProviderInput.addEventListener("change", () => {
-  applySecretProviderPreset();
-});
 elements.secretAccountOriginInput.addEventListener("input", () => {
   for (const row of elements.secretVariableRows.children) refreshSecretValueControl(row);
 });
 
 async function saveSecretAccount() {
-  const provider = elements.secretAccountProviderInput.value;
+  const provider = secretProviderPicker.value;
   const websiteOrigin = elements.secretAccountOriginInput.value.trim();
   const variables = [...elements.secretVariableRows.children].map((row) => {
     const name = row.querySelector("[data-secret-name]").value.trim();

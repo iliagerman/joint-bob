@@ -120,7 +120,7 @@ export const sessionRecoverySchema = z.object({ engine: registeredHarnessIdSchem
   operation: z.literal("upsert"),
   value: z.object({
     label: z.string().trim().min(1).max(64),
-    provider: z.enum(["aws", "google", "github", "stripe", "cloudflare", "custom", "website"]),
+    provider: z.enum(["aws", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "postgres", "mssql", "mongodb", "custom", "website"]),
     variables: z.array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000) }).strict()).min(1).max(20),
     websiteOrigin: z.string().max(2048).nullable().optional(),
     workspaceIds: z.array(z.string().trim().min(1).max(300)).max(100).optional(),
@@ -134,7 +134,7 @@ export const secretCredentialBatchSchema = z.object({ events: z.array(secretCred
 export const socketSecretAccountIdsSchema = z.array(z.string().uuid()).max(100);
 const secretVariableSchema = z.object({ name: z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000).optional() }).strict();
 const websiteOriginSchema = z.string().max(2048).refine((value) => { try { normalizeWebsiteOrigin(value); return true; } catch { return false; } }, "Website origin is invalid").transform(normalizeWebsiteOrigin);
-export const secretAccountSchema = z.object({ label: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f]/.test(value), "Secret account label cannot contain control characters"), provider: z.enum(["aws", "google", "github", "stripe", "cloudflare", "custom", "website"]), replicate: z.boolean().optional(), websiteOrigin: websiteOriginSchema.nullable().optional(), projectId: z.string().trim().min(1).max(300).optional(), variables: z.array(secretVariableSchema).min(1).max(20) }).strict().refine((value) => !(value.projectId && value.replicate), "Project-scoped secret accounts cannot replicate");
+export const secretAccountSchema = z.object({ label: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f]/.test(value), "Secret account label cannot contain control characters"), provider: z.enum(["aws", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "postgres", "mssql", "mongodb", "custom", "website"]), replicate: z.boolean().optional(), websiteOrigin: websiteOriginSchema.nullable().optional(), projectId: z.string().trim().min(1).max(300).optional(), variables: z.array(secretVariableSchema).min(1).max(20) }).strict().refine((value) => !(value.projectId && value.replicate), "Project-scoped secret accounts cannot replicate");
 export const secretScopeParamsSchema = z.object({ scopeType: z.enum(["workspace", "project", "conversation"]), scopeId: z.string().trim().min(1).max(300) });
 export const secretScopeSchema = z.object({ accountIds: z.array(z.string().uuid()).max(100) }).strict();
 const taskStatusSchema = z.enum(["backlog", "planning", "in_progress", "review", "done"]);

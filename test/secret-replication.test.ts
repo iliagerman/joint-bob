@@ -61,6 +61,16 @@ test("a node-local account produces no outbound replication row", async () => {
   });
 });
 
+test("new provider accounts can be replicated without losing their type", async () => {
+  await withNode("new-providers", async ({ secrets, replication }) => {
+    const account = await secrets.saveSecretAccount({ label: "PostgreSQL", provider: "postgres", replicate: true, variables: [{ name: "DATABASE_URL", kind: "value", value: "postgres://synthetic.invalid/test" }] });
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+    assert.equal(events.find((event: { entityKey: string }) => event.entityKey === account.id)?.value.provider, "postgres");
+  });
+});
+
 test("replicated accounts carry their workspace attachments", async () => {
   await withNode("workspace-outbox", async ({ dataDir, secrets, replication }) => {
     const database = new DatabaseSync(path.join(dataDir, "node.db"));

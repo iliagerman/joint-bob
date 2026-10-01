@@ -33,7 +33,9 @@ test("a secret account created from the project picker belongs to that project o
     await page.getByTestId("secret-scope-add-button").click();
     const form = page.getByTestId("secret-account-dialog");
     await form.waitFor();
-    await page.getByTestId("secret-account-provider-input").selectOption("custom");
+    await page.getByTestId("secret-account-provider-input").click();
+    await page.getByTestId("secret-account-provider-input-search").fill("custom");
+    await page.getByTestId("secret-account-provider-input-option").click();
     await page.getByTestId("secret-account-label-input").fill("Project token");
     await page.getByTestId("secret-variable-name-input").first().fill("PROJECT_TOKEN");
     await page.getByTestId("secret-variable-value-input").first().fill("synthetic-project-token");
@@ -71,7 +73,9 @@ test("a secret account created from the project picker belongs to that project o
     await page.getByTestId("secret-scope-add-button").click();
     await form.waitFor();
     assert.equal(await page.locator("#secretAccountTitle").textContent(), "Add secret account", "the form is not project-scoped");
-    await page.getByTestId("secret-account-provider-input").selectOption("custom");
+    await page.getByTestId("secret-account-provider-input").click();
+    await page.getByTestId("secret-account-provider-input-search").fill("custom");
+    await page.getByTestId("secret-account-provider-input-option").click();
     await page.getByTestId("secret-account-label-input").fill("Workspace token");
     await page.getByTestId("secret-variable-name-input").first().fill("WORKSPACE_TOKEN");
     await page.getByTestId("secret-variable-value-input").first().fill("synthetic-workspace-token");

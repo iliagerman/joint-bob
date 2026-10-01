@@ -41,7 +41,8 @@ test("website secrets stay masked, origin-bound, editable, and usable in project
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-secrets").click();
     await page.getByTestId("secret-account-add-button").click();
-    await page.getByTestId("secret-account-provider-input").selectOption("custom");
+    await page.getByTestId("secret-account-provider-input-search").fill("custom");
+    await page.getByTestId("secret-account-provider-input-option").click();
     const origin = page.getByTestId("secret-account-origin-input");
     await origin.fill("https://mobile.example");
     assert.equal(await page.getByTestId("secret-account-replicate-toggle").isEnabled(), true, "website accounts may replicate");
@@ -180,7 +181,9 @@ test("a website account is created from the workspace picker and attaches to tha
     await workspaceRow.getByTestId("workspace-secrets-button").click();
     // The picker creates the account it is missing, instead of sending the user to Settings.
     await page.getByTestId("secret-scope-add-button").click();
-    await page.getByTestId("secret-account-provider-input").selectOption("website");
+    await page.getByTestId("secret-account-provider-input").click();
+    await page.getByTestId("secret-account-provider-input-search").fill("website");
+    await page.getByTestId("secret-account-provider-input-option").click();
     await page.getByTestId("secret-account-origin-input").fill("https://workspace.example");
     await page.getByTestId("secret-account-label-input").fill("Workspace login");
     const values = page.getByTestId("secret-variable-value-input");

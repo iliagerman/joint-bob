@@ -3,7 +3,7 @@
  * current choice behind a chevron and cannot be typed into. Opening it shows a search box over
  * the list; typing narrows the list, and only a listed option can be chosen.
  *
- * Options are `{ value, label, detail? }`; search matches label, value, and detail.
+ * Options are `{ value, label, detail?, keywords? }`; search matches label, value, detail, and keywords.
  */
 export function createSearchableSelect({ id, testid, label, prompt = "Choose…", placeholder = "Search", emptyText = "No matches", optionTestid = `${testid}-option`, listTestid = `${testid}-options`, icon }) {
   const root = document.createElement("div");
@@ -57,8 +57,8 @@ export function createSearchableSelect({ id, testid, label, prompt = "Choose…"
   }
 
   function render() {
-    const needle = search.value.trim().toLocaleLowerCase();
-    const matches = options.filter((option) => !needle || [option.label, option.value, option.detail].some((text) => text?.toLocaleLowerCase().includes(needle)));
+    const needle = search.value.trim().toLocaleLowerCase().replace(/[.\s-]/g, "");
+    const matches = options.filter((option) => !needle || [option.label, option.value, option.detail, option.keywords].some((text) => text?.toLocaleLowerCase().replace(/[.\s-]/g, "").includes(needle)));
     list.replaceChildren(...matches.map((option, index) => {
       const item = document.createElement("button");
       item.type = "button"; item.role = "option"; item.id = `${id}Option${index}`; item.tabIndex = -1;
