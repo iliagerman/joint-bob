@@ -3,6 +3,20 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.21.0 — 2026-10-01
+
+- Usage dashboard unified all dimensions (projects, conversations, labels, difficulty, models, days) into one responsive table with sidebar grouping and cluster filtering.
+- Expanded rows show cost split by model with proportional visualization.
+- Daily cost trend sparkline added above the table.
+- Pagination now only applies to conversations; other dimensions display all rows on one page.
+- Table columns are sortable by cost or name via header buttons.
+- Partial costs display with amber markers instead of text notation.
+- Token counts are now compact with exact values shown on hover.
+- Difficulty sorts numerically (1–10) instead of alphabetically.
+- Claude and fork title prefixes now display as badges.
+- Cache share and tool errors columns added to usage breakdown.
+- Model chart colors now defined for both light and dark themes.
+
 ## 2.20.0 — 2026-10-01
 
 - Clusters can now suggest a default browser machine for new conversations, with each member's own choice remaining private to their twin.
