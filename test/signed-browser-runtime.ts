@@ -36,15 +36,21 @@ test('selected signed peers route native browser commands and enforce profile gr
   const evaluated=await api<{result:unknown}>(left,sa,'POST',`/browser/sessions/${id}/command${suffix}`,{action:'evaluate',expression:'document.title'});
   assert.equal(evaluated.status,200,JSON.stringify(evaluated.body));assert.equal(evaluated.body.result,'Signed browser fixture');
   const query=`?nodeId=${right.nodeId}&projectId=${projectId}`;
-  const grant=await api(left,sa,'PUT',`/browser/profiles/${profileId}/access${query}`,{grant:{scope:'project',projectId}});
-  assert.equal(grant.status,200,JSON.stringify(grant.body));
-  assert.equal((await api(left,sa,'PUT',`/browser/profiles/${profileId}/access${query}`,{grant:{scope:'global'}})).status,403,'remote caller cannot grant global profile access');
-  const denied=await api(left,sa,'PUT',`/browser/profiles/${profileId}/access${query}`,{grant:{scope:'project',projectId:right.projects[0].id}});
-  assert.equal(denied.status,403,'remote caller cannot grant an unshared project');
+  const remoteShare=await api(left,sa,'PUT',`/browser/profiles/${profileId}/access${query}`,{grant:{scope:'project',projectId}});
+  assert.equal(remoteShare.status,403,'only the owning machine and its twins change a profile\'s sharing');
+  assert.match((remoteShare.body as {error:string}).error,/twins/);
   assert.equal((await api(left,sa,'POST',`/browser/sessions/${id}/command${suffix}`,{action:'close'})).status,200);
-  const revoke=await api(right,sb,'PUT',`/browser/profiles/${profileId}/access?projectId=${projectId}`,{crossNodeAccess:false});
+  const other=await api(left,sa,'POST','/browser/sessions'+suffix,{projectId,conversationId:randomUUID(),engine:'pi',appNodeId:left.nodeId,profileId});
+  assert.equal(other.status,403,'an unshared profile stays with the conversation that created it');
+  const share=await api(right,sb,'PUT',`/browser/profiles/${profileId}/access?projectId=${projectId}`,{grant:{scope:'project',projectId}});
+  assert.equal(share.status,200,JSON.stringify(share.body));
+  const reused=await api<{session:{id:string}}>(left,sa,'POST','/browser/sessions'+suffix,{projectId,conversationId:randomUUID(),engine:'pi',appNodeId:left.nodeId,profileId});
+  assert.equal(reused.status,201,JSON.stringify(reused.body));
+  assert.equal((await api(left,sa,'POST',`/browser/sessions/${reused.body.session.id}/command${suffix}`,{action:'takeControl'})).status,200);
+  assert.equal((await api(left,sa,'POST',`/browser/sessions/${reused.body.session.id}/command${suffix}`,{action:'close'})).status,200);
+  const revoke=await api(right,sb,'PUT',`/browser/profiles/${profileId}/access?projectId=${projectId}`,{revoke:{scope:'project',projectId}});
   assert.equal(revoke.status,200);
   const blocked=await api(left,sa,'POST','/browser/sessions'+suffix,{projectId,conversationId:randomUUID(),engine:'pi',appNodeId:left.nodeId,profileId});
-  assert.equal(blocked.status,403,'profile owner can revoke cross-node launch immediately');
+  assert.equal(blocked.status,403,'removing the share stops other conversations at once');
  }finally{await Promise.all(servers.map(stopDevNode));fixture.closeAllConnections();await new Promise<void>(resolve=>fixture.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 });

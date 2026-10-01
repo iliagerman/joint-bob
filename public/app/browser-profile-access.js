@@ -1,11 +1,41 @@
-// Browser profile access management for the viewer's profiles list. Scope
-// grants decide which conversations may open a profile; the cross-node flag
-// decides whether paired nodes may reach it through the relay. Loaded beside
+// Browser profile access management for the viewer's profiles list. Shares decide
+// which conversations, on which machines, may open a profile. Loaded beside
 // browser-viewer.js on the standalone page and imported by the app's
 // browser.js; the viewer picks the factory up from globalThis so its own
 // source stays import-free for synthetic-DOM harnesses.
 
-const OWNER_ONLY = /owning node/i;
+const OWNER_ONLY = /owning node|machine and its twins/i;
+const SCOPE_ORDER = ["cluster", "node", "workspace", "project", "conversation"];
+const SCOPE_LABELS = { cluster: "Cluster", node: "Machine", workspace: "Workspace", project: "Project", conversation: "Conversation" };
+
+/** The broadest share decides the profile's chip. */
+export function shareScopeLabel(grants) {
+  const scope = SCOPE_ORDER.find((candidate) => grants.some((grant) => grant.scope === candidate));
+  return scope ? SCOPE_LABELS[scope] : "No access";
+}
+export function shareGrantPayload(grant) {
+  const payload = { scope: grant.scope };
+  for (const key of ["projectId", "conversationId", "workspaceId", "nodeId", "clusterId"]) if (grant[key]) payload[key] = grant[key];
+  return payload;
+}
+export function shareGrantValue(grant) {
+  const pin = grant.nodeId && (grant.scope === "project" || grant.scope === "conversation") ? `@${grant.nodeId}` : "";
+  if (grant.scope === "project") return `project:${grant.projectId}${pin}`;
+  if (grant.scope === "conversation") return `conversation:${grant.projectId}:${grant.conversationId}${pin}`;
+  if (grant.scope === "workspace") return `workspace:${grant.nodeId}:${grant.workspaceId}`;
+  if (grant.scope === "node") return `node:${grant.nodeId}`;
+  return `cluster:${grant.clusterId}`;
+}
+/** names: { machine(id), project(id), conversation(projectId, id), workspace(id), cluster(id) } */
+export function describeShare(grant, names, current = {}) {
+  const pinned = grant.nodeId && (grant.scope === "project" || grant.scope === "conversation") ? ` on ${names.machine(grant.nodeId)}` : "";
+  if (grant.scope === "cluster") return `Everyone in cluster ${names.cluster(grant.clusterId)}`;
+  if (grant.scope === "node") return `Every conversation on ${names.machine(grant.nodeId)}`;
+  if (grant.scope === "workspace") return `Workspace ${names.workspace(grant.workspaceId)} on ${names.machine(grant.nodeId)}`;
+  if (grant.scope === "project") return `Project · ${names.project(grant.projectId)}${pinned}`;
+  if (grant.projectId === current.projectId && grant.conversationId === current.conversationId) return `This conversation${pinned}`;
+  return `Conversation · ${names.conversation(grant.projectId, grant.conversationId)}${pinned}`;
+}
 
 export function createProfileAccessControls({ api, accessRequest, confirm: confirmAccess, machineName, identity, onChanged }) {
   // Panel state survives the viewer re-rendering the list after every change.
@@ -18,14 +48,9 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
   let projectsLoad = null;
 
   const grantsOf = (profile) => Array.isArray(profile.grants) ? profile.grants : [];
-  const scopeLabel = (grants) => grants.some((grant) => grant.scope === "global") ? "Global"
-    : grants.some((grant) => grant.scope === "project") ? "Project"
-    : grants.length ? "Conversation"
-    : "No access";
-  const grantValue = (grant) => grant.scope === "global" ? "global:"
-    : grant.scope === "project" ? `project:${grant.projectId ?? ""}`
-    : `conversation:${grant.projectId ?? ""}:${grant.conversationId ?? ""}`;
-  const grantPayload = (grant) => ({ scope: grant.scope, ...(grant.projectId ? { projectId: grant.projectId } : {}), ...(grant.conversationId ? { conversationId: grant.conversationId } : {}) });
+  const scopeLabel = shareScopeLabel;
+  const grantValue = shareGrantValue;
+  const grantPayload = shareGrantPayload;
 
   const ensureProjects = () => projectsLoad ??= api("/api/projects?syncStatus=false")
     .then((result) => {
@@ -51,11 +76,13 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
   };
 
   function describeGrant(grant) {
-    const current = identity() ?? {};
-    if (grant.scope === "global") return "All projects (global)";
-    if (grant.scope === "project") return `Project · ${projectNames.get(grant.projectId) ?? grant.projectId ?? ""}`;
-    if (grant.projectId === current.projectId && grant.conversationId === current.conversationId) return "This conversation";
-    return `Conversation · ${conversationTitles.get(grant.projectId)?.get(grant.conversationId) ?? grant.conversationId ?? ""}`;
+    return describeShare(grant, {
+      machine: (id) => machineName(id) || id,
+      project: (id) => projectNames.get(id) ?? id ?? "",
+      conversation: (projectId, id) => conversationTitles.get(projectId)?.get(id) ?? id ?? "",
+      workspace: (id) => id,
+      cluster: (id) => id,
+    }, identity() ?? {});
   }
 
   function renderProfileRow(profile, handlers) {
@@ -88,14 +115,9 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
     panel.className = "browser-profile-access";
     panel.dataset.testid = "browser-profile-access";
 
-    const crossRow = document.createElement("label");
-    crossRow.className = "browser-profile-cross-node-row";
-    const cross = document.createElement("input");
-    cross.type = "checkbox";
-    cross.dataset.testid = "browser-profile-cross-node";
-    const crossText = document.createElement("span");
-    crossText.textContent = "Allow other nodes to open this profile through the relay";
-    crossRow.append(cross, crossText);
+    const sharingHint = document.createElement("p");
+    sharingHint.className = "browser-hint";
+    sharingHint.textContent = "Its logins stay on its machine; other machines reach it only through a share. Share with a workspace or a cluster from Settings → Browser → Profiles.";
 
     const grantsList = document.createElement("div");
     grantsList.className = "browser-profile-grants";
@@ -128,7 +150,7 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
     status.dataset.testid = "browser-profile-access-status";
     status.textContent = statusLines.get(profile.id) ?? "";
 
-    panel.append(crossRow, grantsList, form, status);
+    panel.append(sharingHint, grantsList, form, status);
     item.append(label, toggle, remove, panel);
 
     const setStatus = (text) => { statusLines.set(profile.id, text); status.textContent = text; };
@@ -138,7 +160,7 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
     async function apply(update, successText) {
       if (pending) return;
       pending = true;
-      const controls = [cross, add, ...grantsList.querySelectorAll("button")];
+      const controls = [add, ...grantsList.querySelectorAll("button")];
       for (const control of controls) control.disabled = true;
       try {
         const result = await accessRequest(profile.id, update);
@@ -149,7 +171,6 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
         // instead of leaving a silently reverted control.
         const hint = failure instanceof Error && OWNER_ONLY.test(failure.message) ? ` Manage this profile on ${describeOwner()}.` : "";
         setStatus(`${failure instanceof Error ? failure.message : "Access change failed."}${hint}`);
-        cross.checked = profile.crossNodeAccess !== false;
         renderGrants();
       } finally {
         pending = false;
@@ -180,7 +201,7 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
       if (!grants.length) {
         const empty = document.createElement("p");
         empty.className = "browser-hint";
-        empty.textContent = "No conversation can open this profile yet. Grant access below.";
+        empty.textContent = "No conversation can open this profile yet. Share it below.";
         grantsList.append(empty);
       }
     }
@@ -188,7 +209,7 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
     function renderScopeOptions() {
       const current = identity() ?? {};
       const options = [new Option("Grant access to…", "")];
-      options.push(new Option("All projects (global)", "global"));
+      if (profile.nodeId) options.push(new Option(`Every conversation on ${machineName(profile.nodeId) || "its machine"}`, `node:${profile.nodeId}`));
       if (current.projectId) options.push(new Option(`This project (${projectNames.get(current.projectId) ?? current.projectId})`, `project:${current.projectId}`));
       options.push(new Option("Another project…", "project"));
       if (current.projectId && current.conversationId) options.push(new Option("This conversation", `conversation:${current.projectId}:${current.conversationId}`));
@@ -231,11 +252,6 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
         || (value === "conversation" && !(conversationProject.value && conversation.value));
     }
 
-    cross.addEventListener("change", () => {
-      void apply({ crossNodeAccess: cross.checked },
-        cross.checked ? "Cross-node access enabled. Paired nodes may open this profile." : "Cross-node access disabled. This profile is limited to its own node.");
-    });
-
     scope.addEventListener("change", syncGrantForm);
     projectChoice.addEventListener("change", syncGrantForm);
     conversationProject.addEventListener("change", () => { void fillConversations(); });
@@ -244,19 +260,19 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const value = scope.value;
-      const grant = value === "global" ? { scope: "global" }
+      const grant = value.startsWith("node:") ? { scope: "node", nodeId: value.slice("node:".length) }
         : value === "project" ? { scope: "project", projectId: projectChoice.value }
         : value.startsWith("project:") ? { scope: "project", projectId: value.slice("project:".length) }
         : value === "conversation" ? { scope: "conversation", projectId: conversationProject.value, conversationId: conversation.value }
         : value.startsWith("conversation:")
           ? (([projectId, conversationId]) => ({ scope: "conversation", projectId, conversationId }))(value.slice("conversation:".length).split(":"))
           : null;
-      if (!grant || (grant.scope !== "global" && !grant.projectId) || (grant.scope === "conversation" && !grant.conversationId)) return;
+      if (!grant || (grant.scope !== "node" && !grant.projectId) || (grant.scope === "conversation" && !grant.conversationId)) return;
       void (async () => {
-        if (grant.scope === "global" && !(await confirmAccess({
-          title: "Grant every project access?",
-          message: `Any conversation on ${describeOwner()} could open “${profile.label}” and use its signed-in websites. Other nodes still need cross-node access enabled. Prefer a project or a single conversation when possible.`,
-          confirmLabel: "Grant everyone",
+        if (grant.scope === "node" && !(await confirmAccess({
+          title: "Share with every conversation on this machine?",
+          message: `Any conversation on ${describeOwner()} could open “${profile.label}” and use its signed-in websites. Prefer a project or a single conversation when possible.`,
+          confirmLabel: "Share",
         }))) return;
         await apply({ grant }, `Access granted: ${describeGrant(grant)}.`);
         scope.value = "";
@@ -265,7 +281,6 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
     });
 
     async function hydrate() {
-      cross.checked = profile.crossNodeAccess !== false;
       status.textContent = statusLines.get(profile.id) ?? "";
       renderScopeOptions();
       syncGrantForm();
@@ -289,7 +304,7 @@ export function createProfileAccessControls({ api, accessRequest, confirm: confi
     });
     syncOpen();
     // A re-render after an access change rebuilds the row with its panel open;
-    // hydrate it so grants, labels and the cross-node state come back.
+    // hydrate it so grants and labels come back.
     if (!panel.hidden) void hydrate();
 
     return item;

@@ -49,6 +49,7 @@ export const state = {
   // Per conversation, the newest message time (epoch ms) the reader has viewed.
   // Mirrors the server-side preference so read marks follow the account.
   conversationLastRead: {},
+  gitReviewer: null,
   replicatedPinnedProjectIds: [],
   pinnedConversations: [],
   recentSessions: [],

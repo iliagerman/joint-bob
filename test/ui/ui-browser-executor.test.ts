@@ -242,6 +242,11 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
     const commands: any[] = [], starts: any[] = [], queries: URL[] = [], requests: URL[] = [];
     let defaultNodeId = node.nodeId, conversationNodeId: string | null = null, clusterDefaultNodeId: string | null = null, clusterOverrideNodeId: string | null = null;
     const clusterDefaultSaves: Array<{ clusterId: string; executorNodeId: string | null }> = [], clusterOverrideSaves: typeof clusterDefaultSaves = [];
+    const directoryChanges: Array<{ nodeId: string; id: string; change: any }> = [];
+    const directory: any[] = [
+      { id: "gmail-profile", label: "Gmail", nodeId: executorId, nodeName: "Ubuntu", sites: ["https://mail.google.com"], grants: [{ scope: "conversation", projectId: "home-project", conversationId: "conversation-1234567890" }], canManage: true, holder: null },
+      { id: "team-profile", label: "Team login", nodeId: executorId, nodeName: "Ubuntu", sites: [], grants: [{ scope: "cluster", clusterId: homeClusterId }], canManage: false, holder: { inUse: true } },
+    ];
     let profileGate: Promise<void> | undefined, configGate: Promise<void> | undefined;
     const sessions: any[] = [];
     let profiles = [{ id: profileId, projectId: "unused", label: "Work login", persistent: true, nodeId: node.nodeId }];
@@ -285,6 +290,16 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
         result = { nodeId: conversationNodeId, effectiveNodeId: conversationNodeId || defaultNodeId };
       } else if (url.pathname === "/api/browser/config") { if (configGate) await configGate; defaultNodeId = body.executorNodeId; result = { executorNodeId: defaultNodeId }; }
       else if (url.pathname.startsWith("/api/browser/cluster-defaults/") && method === "PUT") { clusterDefaultNodeId = body.executorNodeId; clusterDefaultSaves.push({ clusterId: decodeURIComponent(url.pathname.split("/").at(-1)!), executorNodeId: body.executorNodeId }); result = {}; }
+      else if (url.pathname === "/api/browser/directory") result = { profiles: directory, unavailableNodes: [] };
+      else if (url.pathname === "/api/browser/share-targets") result = { localNodeId: node.nodeId, nodes: [{ id: node.nodeId, name: "Mac laptop" }, { id: executorId, name: "Ubuntu" }], clusters: [{ id: homeClusterId, name: "Home cluster", nodes: [] }], workspaces: [{ id: "personal", label: "Personal" }] };
+      else if (url.pathname.startsWith("/api/browser/directory/") && method === "POST") {
+        const [nodeId, id] = url.pathname.split("/").slice(-2);
+        directoryChanges.push({ nodeId, id, change: body });
+        const target = directory.find(profile => profile.id === id);
+        if (body.grant) target.grants.push(body.grant);
+        if (body.revoke) target.grants = target.grants.filter((grant: any) => JSON.stringify(grant) !== JSON.stringify(body.revoke));
+        result = { profile: target };
+      }
       else if (url.pathname.startsWith("/api/browser/cluster-overrides/") && method === "PUT") { clusterOverrideNodeId = body.executorNodeId; clusterOverrideSaves.push({ clusterId: decodeURIComponent(url.pathname.split("/").at(-1)!), executorNodeId: body.executorNodeId }); result = {}; }
       else if (url.pathname === "/api/browser/profiles") {
         if (profileGate) await profileGate;
@@ -332,7 +347,7 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
     await page.goto(node.url);
     try { await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click(); }
     catch (error) { console.error("browser-ui boot:", await page.locator("body").innerText()); throw error; }
-    return { page, commands, starts, sessions, queries, requests, clusterDefaultSaves, clusterOverrideSaves, sendState, sendFrame, setDefault: (id: string) => { defaultNodeId = id; }, delayConfig: (gate: Promise<void>) => { configGate = gate; }, delayProfiles: (gate: Promise<void>) => { profileGate = gate; }, disconnect: () => socket?.close(), connections: () => connections, offline: () => { unavailable = true; } };
+    return { page, commands, starts, sessions, queries, requests, clusterDefaultSaves, clusterOverrideSaves, directoryChanges, sendState, sendFrame, setDefault: (id: string) => { defaultNodeId = id; }, delayConfig: (gate: Promise<void>) => { configGate = gate; }, delayProfiles: (gate: Promise<void>) => { profileGate = gate; }, disconnect: () => socket?.close(), connections: () => connections, offline: () => { unavailable = true; } };
   }
   async function openConversation(page: Page, title = "Short one") {
     await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: title }) }).first().click();
@@ -456,6 +471,35 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
         await f.page.getByTestId("browser-status-check").click();
         await f.page.getByTestId("browser-status").filter({ hasText: "Node offline" }).waitFor();
         assert.equal(await f.page.locator("#settingsDialog").isVisible(), true);
+      } finally { await f.page.close(); }
+    });
+    await t.test("Settings lists every reachable profile and shares one through its own machine", async () => {
+      const f = await setup();
+      try {
+        await f.page.getByTestId("settings-open-button").click();
+        await f.page.getByTestId("settings-tab-browser").click();
+        const rows = f.page.getByTestId("browser-profile-directory-row");
+        await rows.nth(1).waitFor();
+        const gmail = rows.filter({ hasText: "Gmail" }), team = rows.filter({ hasText: "Team login" });
+        assert.match(await gmail.innerText(), /Gmail · Ubuntu/);
+        assert.match(await gmail.innerText(), /Sites: mail\.google\.com/);
+        assert.match(await gmail.innerText(), /Conversation ·/);
+        assert.match(await team.innerText(), /Everyone in cluster Home cluster/);
+        assert.match(await team.innerText(), /In use by another conversation · Shared with this machine · read-only/);
+        assert.equal(await team.getByTestId("browser-profile-share").count(), 0, "another machine's shared profile is read-only here");
+        await gmail.getByTestId("browser-profile-share").click();
+        const dialog = f.page.getByTestId("browser-profile-share-dialog");
+        await dialog.waitFor();
+        await dialog.getByText("Everyone in cluster Home cluster", { exact: true }).click();
+        await dialog.getByText("Workspace Personal on Mac laptop", { exact: true }).click();
+        await dialog.getByTestId("browser-profile-share-save").click();
+        await f.page.getByTestId("confirm-accept-button").click();
+        await f.page.getByText("Browser profile sharing saved", { exact: true }).waitFor();
+        assert.deepEqual(f.directoryChanges, [
+          { nodeId: executorId, id: "gmail-profile", change: { grant: { scope: "cluster", clusterId: homeClusterId } } },
+          { nodeId: executorId, id: "gmail-profile", change: { grant: { scope: "workspace", workspaceId: "personal", nodeId: node.nodeId } } },
+        ], "changes go to the machine that owns the profile");
+        await gmail.filter({ hasText: "Cluster · " }).waitFor();
       } finally { await f.page.close(); }
     });
     await t.test("expanding side panels leaves the browser viewer open", async () => {

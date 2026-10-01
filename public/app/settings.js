@@ -18,6 +18,7 @@ import { renderSessions } from "./session-list.js";
 import { createSearchableSelect } from "./searchable-select.js";
 import { refreshSessionsQuietly } from "./socket.js";
 import { loadWorkspaces } from "./workspaces.js";
+import { loadGitReviewerSettings } from "./git-reviewer-options.js";
 
 /** Compares two "major.minor.patch" strings; anything else never counts as newer. */
 function isNewerVersion(candidate, baseline) {
@@ -104,6 +105,7 @@ function selectSettingsTab(name) {
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
+  if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
 }
 
 let runtimeDefaults;

@@ -539,6 +539,11 @@ export const userPreferencesSchema = z.object({
   canvasKeymap: canvasKeymapPreferenceSchema.optional(),
   conversationLastRead: z.record(z.string().min(1).max(200), z.number().int().nonnegative())
     .refine((marks) => Object.keys(marks).length <= 400, "Too many conversation read marks").optional(),
+  gitReviewer: z.object({
+    harnessId: registeredHarnessIdSchema,
+    modelId: z.string().trim().min(1).max(300),
+    thinkingLevel: z.string().trim().min(1).max(40),
+  }).strict().nullable().optional(),
 }).strict();
 export const socketMessageSchema = z.object({
   type: z.string().max(40),

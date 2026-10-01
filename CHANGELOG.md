@@ -5,7 +5,19 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
-- Skills, MCP servers, and browser profiles can now be shared with individual conversations and workspaces for finer access control than cluster-wide sharing.
+- Browser profiles can now be shared by scope: conversation, project, workspace, machine, or cluster. Settings → Browser → Profiles shows all reachable profiles with their sharing configuration and holder state.
+- Skills and MCP servers management is now in Settings with improved sharing controls: select conversation, project, or workspace scope, or share to individual machines and clusters.
+
+## 2.25.1 — 2026-10-01
+
+- Git review runs no longer appear in your conversation history.
+- Pipeline jobs without a completed status now show as running instead of passed.
+
+## 2.25.0 — 2026-10-01
+
+- Git diffs now display side-by-side with old and new code in separate columns, including line numbers.
+- Git review dialog enlarged to fill most of the screen for better visibility.
+- Settings → Git added to configure default reviewer harness, model, and effort; Automatic picks the opposite of the conversation's last harness.
 
 ## 2.24.0 — 2026-10-01
 

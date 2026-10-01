@@ -174,11 +174,12 @@ export async function localMonitorRead(ownerNodeId: string, value: BrowserMonito
   const serialized = JSON.stringify(authorization);
   const binding = authorization.monitor.binding;
   // A remote monitor owner reads this node's browser through the same profile the
-  // conversation uses: a node-restricted profile refuses it here and again after
-  // every queued page read, exactly like every other relayed browser path.
+  // conversation uses: a profile not shared with that machine refuses it here and
+  // again after every queued page read, exactly like every other relayed browser path.
   const assertProfileNodeAccess = async () => {
     if (ownerNodeId === local.id) return;
-    if (browserRuntime().profileOrNull(binding.profileId)?.crossNodeAccess === false) throw new BrowserRequestError(403, "Browser profile is restricted to this node");
+    if (!browserRuntime().profileUsable(binding.profileId, { nodeId: ownerNodeId, projectId: authorization.monitor.projectId, conversationId: binding.conversationId }))
+      throw new BrowserRequestError(403, "Browser profile is not shared with this node");
   };
   await assertProfileNodeAccess();
   return browserRuntime().inspectMonitor({ sessionId: binding.sessionId, projectId: authorization.monitor.projectId, conversationId: binding.conversationId, profileId: binding.profileId, pageId: binding.pageId,

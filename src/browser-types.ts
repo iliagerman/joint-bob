@@ -17,6 +17,8 @@ export const browserStartSchema = browserIdentitySchema.extend({
   profileId: z.string().uuid().optional(),
   profileName: z.string().trim().min(1).max(80).optional(),
   skipLoginPause: z.boolean().optional(),
+  /** The caller's workspace on its own machine; trusted only from that machine. */
+  workspaceId: z.string().min(1).max(200).optional(),
 }).refine(value => !(value.profileId && value.profileName), "Choose a profile ID or a new profile name, not both");
 export type BrowserStart = z.infer<typeof browserStartSchema>;
 export interface BrowserSessionRecord extends BrowserStart {
@@ -26,7 +28,11 @@ export interface BrowserSessionRecord extends BrowserStart {
   updatedAt: string;
   error?: string;
   restoreOnRestart?: boolean;
+  /** The machine whose conversation holds the session, as authenticated when it started. */
+  accessNodeId?: string;
 }
+/** Who is asking to use a profile, as the owning machine verified it. */
+export interface BrowserAccess { nodeId: string; projectId: string; conversationId?: string; workspaceId?: string | null }
 export const browserLoginRequestSchema = z.object({
   id: z.string().uuid(),
   expectedOrigin: browserWebUrlSchema.refine(value => new URL(value).origin === value, "Expected origin must not include a path, query, or credentials"),
@@ -56,16 +62,33 @@ export interface BrowserSessionView extends BrowserSessionRecord {
   dialog: { id: string; pageId: string; type: string; message: string; defaultValue: string } | null;
   downloads: Array<{ id: string; name: string; ready: boolean; error?: string }>;
 }
-export interface BrowserProfile { id: string; projectId: string; label: string; createdAt: string; updatedAt: string; persistent?: boolean; /** Independent of grants: when false, paired nodes cannot use this profile through the relay. */ crossNodeAccess?: boolean; /** Present on listings; the access grants that make this profile usable. */ grants?: BrowserProfileGrant[]; }
-export type BrowserProfileGrantScope = "global" | "project" | "conversation";
-export interface BrowserProfileGrant { scope: BrowserProfileGrantScope; projectId?: string; conversationId?: string; createdAt: string; }
+export interface BrowserProfile { id: string; projectId: string; label: string; createdAt: string; updatedAt: string; persistent?: boolean; /** Origins this profile's tabs have used, most recent first. */ sites?: string[]; /** Present on listings; the access grants that make this profile usable. */ grants?: BrowserProfileGrant[]; }
+/**
+ * A profile is usable only through its grants. conversation and project grants match
+ * from any machine unless nodeId pins them to one; node covers every conversation on a
+ * machine; workspace covers one machine's workspace; cluster covers every member machine.
+ */
+export type BrowserProfileGrantScope = "conversation" | "project" | "workspace" | "node" | "cluster";
+export interface BrowserProfileGrant { scope: BrowserProfileGrantScope; projectId?: string; conversationId?: string; workspaceId?: string; nodeId?: string; clusterId?: string; /** The machine that made the grant; a conversation grant shows in Settings only there. */ originNodeId?: string; createdAt: string; }
+const grantText = z.string().min(1).max(200);
 export const browserProfileGrantInputSchema = z.object({
-  scope: z.enum(["global", "project", "conversation"]),
-  projectId: z.string().min(1).max(200).optional(),
-  conversationId: z.string().min(1).max(200).optional(),
-}).refine(value => (value.scope === "global") === (value.projectId === undefined && value.conversationId === undefined)
-  && (value.scope === "conversation") === (value.projectId !== undefined && value.conversationId !== undefined)
-  && (value.scope === "project") === (value.projectId !== undefined && value.conversationId === undefined), "Grant scope does not match its project and conversation");
+  scope: z.enum(["conversation", "project", "workspace", "node", "cluster"]),
+  projectId: grantText.optional(),
+  conversationId: grantText.optional(),
+  workspaceId: grantText.optional(),
+  nodeId: z.string().uuid().optional(),
+  clusterId: z.string().uuid().optional(),
+}).strict().refine(value => {
+  const has = (key: "projectId" | "conversationId" | "workspaceId" | "nodeId" | "clusterId") => value[key] !== undefined;
+  switch (value.scope) {
+    case "conversation": return has("projectId") && has("conversationId") && !has("workspaceId") && !has("clusterId");
+    case "project": return has("projectId") && !has("conversationId") && !has("workspaceId") && !has("clusterId");
+    case "workspace": return has("workspaceId") && has("nodeId") && !has("projectId") && !has("conversationId") && !has("clusterId");
+    case "node": return has("nodeId") && !has("projectId") && !has("conversationId") && !has("workspaceId") && !has("clusterId");
+    case "cluster": return has("clusterId") && !has("projectId") && !has("conversationId") && !has("workspaceId") && !has("nodeId");
+  }
+}, "Grant scope does not match its targets");
+export type BrowserProfileGrantInput = z.infer<typeof browserProfileGrantInputSchema>;
 export interface BrowserCapability { supported: boolean; available: boolean; executable: string | null; reason: string | null; }
 
 const text = z.string().max(100_000);

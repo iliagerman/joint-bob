@@ -44,7 +44,7 @@ test("an agent requires configuration but explicit starts and default changes ig
     await configureBrowserExecutor(null);
     assert.equal((await runtime.get(result.session.id)).state,"running","Changing default must not close or move an active browser");
     assert.equal(result.session.appNodeId, node.id);
-    assert.deepEqual(actual, args);
+    assert.deepEqual(actual, { ...args, workspaceId: project.type }, "a start also carries the caller's own workspace");
     await assert.rejects(localBrowserOperation({ operation: "start", args: { ...args, appNodeId: randomUUID() } }, { kind: "agent" }), /no longer paired/i);
   } finally { watchClients.delete(project.id); t.mock.restoreAll(); store.close(); await closeBrowserRuntime(); }
 });

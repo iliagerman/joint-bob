@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { internalSessionId } from "../internal-sessions.js";
 import { getHarness, getHarnessRuntime } from "../harnesses.js";
 import type { HarnessEvent, HarnessModelSettings, HarnessSession } from "../harnesses/runtime.js";
 import type { GitReviewSelection } from "../git-review-threads.js";
@@ -92,8 +92,7 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
   const adapter = getHarness(input.harnessId);
   if (!adapter.runtime) throw new GitReviewRunError(400, `${adapter.label} cannot run reviews`);
   const runtime = await getHarnessRuntime(input.harnessId);
-  const sessionId = randomUUID();
-  const session = await runtime.open({ projectId: input.projectId, cwd: input.cwd, sessionId });
+  const session = await runtime.open({ projectId: input.projectId, cwd: input.cwd, sessionId: internalSessionId() });
   const events: HarnessEvent[] = [];
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "agent_start") events.length = 0;

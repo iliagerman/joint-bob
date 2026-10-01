@@ -172,7 +172,7 @@ test("profile secrets encrypted in node.db, scoped to project, immutable on retr
   assert.deepEqual(store.profileState(profile.id, "project"), secret);
   store.close();
   const reopened = new BrowserStore();
-  assert.deepEqual(reopened.profiles("project").map(({ id, label, persistent, crossNodeAccess }) => ({ id, label, persistent, crossNodeAccess })), [{ id: profile.id, label: profile.label, persistent: false, crossNodeAccess: false }]);
+  assert.deepEqual(reopened.profiles("project").map(({ id, label, persistent }) => ({ id, label, persistent })), [{ id: profile.id, label: profile.label, persistent: false }]);
   reopened.deleteProfile(profile.id, "project");
   assert.throws(() => reopened.profileState(profile.id, "project"), /profile/i);
   reopened.close();

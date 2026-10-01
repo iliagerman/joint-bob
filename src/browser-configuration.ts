@@ -24,6 +24,7 @@ function db(): DatabaseSync {
     node_id TEXT, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL,
     PRIMARY KEY(project_id, engine, conversation_id))`);
   database.exec("CREATE TABLE IF NOT EXISTS browser_cluster_defaults (cluster_id TEXT PRIMARY KEY, executor_node_id TEXT, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL)");
+  database.exec("CREATE TABLE IF NOT EXISTS browser_session_nodes (project_id TEXT NOT NULL, conversation_id TEXT NOT NULL, node_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(project_id, conversation_id, node_id))");
   database.exec("CREATE TABLE IF NOT EXISTS browser_cluster_overrides (cluster_id TEXT PRIMARY KEY, executor_node_id TEXT NOT NULL, updated_at TEXT NOT NULL)");
   return database;
 }
@@ -79,4 +80,15 @@ export function setBrowserClusterOverride(clusterId: string, executorNodeId: str
   if (executorNodeId === null) { db().prepare("DELETE FROM browser_cluster_overrides WHERE cluster_id=?").run(clusterId); return; }
   db().prepare(`INSERT INTO browser_cluster_overrides (cluster_id,executor_node_id,updated_at) VALUES (?,?,?)
     ON CONFLICT(cluster_id) DO UPDATE SET executor_node_id=excluded.executor_node_id,updated_at=excluded.updated_at`).run(clusterId, executorNodeId, new Date().toISOString());
+}
+/** Machines this node opened a conversation's browsers on, so lookups find them even when the project is not shared there. */
+export function recordBrowserSessionNode(projectId: string, conversationId: string, nodeId: string): void {
+  db().prepare("INSERT INTO browser_session_nodes (project_id,conversation_id,node_id,updated_at) VALUES (?,?,?,?) ON CONFLICT(project_id,conversation_id,node_id) DO UPDATE SET updated_at=excluded.updated_at")
+    .run(projectId, conversationId, nodeId, new Date().toISOString());
+}
+export function readBrowserSessionNodes(projectId: string, conversationId?: string): string[] {
+  const rows = (conversationId
+    ? db().prepare("SELECT DISTINCT node_id AS nodeId FROM browser_session_nodes WHERE project_id=? AND conversation_id=?").all(projectId, conversationId)
+    : db().prepare("SELECT DISTINCT node_id AS nodeId FROM browser_session_nodes WHERE project_id=?").all(projectId)) as Array<{ nodeId: string }>;
+  return rows.map(row => row.nodeId);
 }

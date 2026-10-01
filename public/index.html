@@ -597,6 +597,7 @@
           <option value="browser">Browser</option>
           <option value="workspaces">Workspaces</option>
           <option value="engines">Harnesses</option>
+          <option value="git">Git</option>
           <option value="classifiers">Classifiers</option>
           <option value="resources">Resources</option>
           <option value="shortcuts">Shortcuts</option>
@@ -615,6 +616,7 @@
           <button class="settings-tab" type="button" data-settings-tab="browser" role="tab" id="settingsTab-browser" aria-controls="settingsPanel-browser" aria-selected="false" tabindex="-1" data-testid="settings-tab-browser">Browser</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Harnesses</button>
+          <button class="settings-tab" type="button" data-settings-tab="git" role="tab" id="settingsTab-git" aria-controls="settingsPanel-git" aria-selected="false" tabindex="-1" data-testid="settings-tab-git">Git</button>
           <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers">Classifiers</button>
           <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources">Resources</button>
           <button class="settings-tab" type="button" data-settings-tab="shortcuts" role="tab" id="settingsTab-shortcuts" aria-controls="settingsPanel-shortcuts" aria-selected="false" tabindex="-1" data-testid="settings-tab-shortcuts">Shortcuts</button>
@@ -930,6 +932,12 @@
           <p class="engine-readiness" id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></p>
         </section>
 
+        <section class="settings-panel" id="settingsPanel-git" role="tabpanel" aria-labelledby="settingsTab-git" tabindex="0" hidden>
+          <p>Choose the default reviewer for Git review comments. Automatic picks the opposite harness to the one used last in the conversation. Changes save immediately.</p>
+          <label>Reviewer<select id="settingsGitReviewerHarness" data-testid="settings-git-reviewer-harness"></select></label>
+          <label id="settingsGitReviewerModelLabel">Model<select id="settingsGitReviewerModel" data-testid="settings-git-reviewer-model"></select></label>
+          <label id="settingsGitReviewerThinkingLabel">Effort<select id="settingsGitReviewerThinking" data-testid="settings-git-reviewer-thinking"></select></label>
+        </section>
         <section class="settings-panel" id="settingsPanel-classifiers" role="tabpanel" aria-labelledby="settingsTab-classifiers" tabindex="0" hidden>
           <p>Named routing configurations choose the model and reasoning for each prompt by difficulty. Each node keeps its own configurations, picks the active one independently, and can share one with the eligible nodes of its clusters. The classifier's API key comes from the matching variable on an attached secret account.</p>
           <fieldset class="phase-settings">
@@ -1348,7 +1356,7 @@
             </div>
             <div class="git-review-detail-content">
               <section id="gitReviewGuide" class="git-review-guide" hidden data-testid="git-review-guide"></section>
-              <pre class="git-review-diff" id="gitReviewDiff" data-testid="git-review-diff" tabindex="0"></pre>
+              <div class="git-review-diff" id="gitReviewDiff" data-testid="git-review-diff" tabindex="0"></div>
             </div>
           </section>
         </div>

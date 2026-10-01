@@ -33,7 +33,7 @@ function signedSocketAuthorization(sender: SeededNode, recipient: SeededNode, ta
 }
 
 async function seedProfile(node: SeededNode, label: string) {
-  await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts'; const store = new BrowserStore(); const profile = store.saveProfile(${JSON.stringify(node.projects[0].id)}, ${JSON.stringify(label)}, {cookies:[],origins:[]}); store.grantProfileAccess(profile.id, {scope:'project', projectId:profile.projectId}); store.setProfileCrossNode(profile.id, true); store.close();`], {
+  await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts'; const store = new BrowserStore(); const profile = store.saveProfile(${JSON.stringify(node.projects[0].id)}, ${JSON.stringify(label)}, {cookies:[],origins:[]}); store.grantProfileAccess(profile.id, {scope:'project', projectId:profile.projectId}); store.close();`], {
     cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: node.dataDir }, timeout: 15000,
   });
 }

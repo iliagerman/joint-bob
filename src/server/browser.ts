@@ -5,13 +5,13 @@ import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch, runtimeSocketHeaders, trackRuntimeSocket } from "./runtime-peers.js";
 import type { DatabaseSync } from "node:sqlite";
-import { applyBrowserClusterDefault, applyBrowserConfiguration, browserClusterDefaultSchema, clearBrowserConfiguration, readBrowserClusterDefault, readBrowserClusterDefaults, readBrowserClusterOverrides, readBrowserConfiguration, setBrowserClusterOverride, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema } from "../browser-configuration.js";
-import { getSharingCluster, listSharingClusterMembers, listSharingMemberships } from "../cluster-sharing-policy.js";
+import { applyBrowserClusterDefault, applyBrowserConfiguration, browserClusterDefaultSchema, clearBrowserConfiguration, readBrowserClusterDefault, readBrowserClusterDefaults, readBrowserClusterOverrides, readBrowserConfiguration, readBrowserSessionNodes, recordBrowserSessionNode, setBrowserClusterOverride, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema } from "../browser-configuration.js";
+import { getSharingCluster, isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { browserCapability, BrowserRuntime } from "../browser-runtime.js";
 import { browserCommandSchema, browserStartSchema, browserIdentitySchema, browserProfileGrantInputSchema, type BrowserActor, type BrowserProfile, type BrowserSessionView } from "../browser-types.js";
 import { enqueueSystemPrompt } from "../prompt-queue.js";
-import { getProject } from "../store.js";
+import { getProject, listProjects, listWorkspaces } from "../store.js";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
 import { broadcastToProject, wakeQueuedConversations } from "./realtime.js";
 import { isPeerUnreachable } from "./peer-availability.js";
@@ -210,158 +210,237 @@ async function peerRequest(peerId: string, route: string, body: unknown, timeout
 const idSchema = z.string().uuid();
 const profileAccessContextSchema = z.object({ id: idSchema, projectId: z.string().min(1).max(200), conversationId: z.string().min(1).max(200).optional() });
 export const profileAccessUpdateSchema = z.object({
-  crossNodeAccess: z.boolean().optional(),
   grant: browserProfileGrantInputSchema.optional(),
   revoke: browserProfileGrantInputSchema.optional(),
-}).strict().refine(update => [update.crossNodeAccess, update.grant, update.revoke].filter(value => value !== undefined).length <= 1,
+}).strict().refine(update => [update.grant, update.revoke].filter(value => value !== undefined).length <= 1,
   "Send one profile access change per request; an empty body reads the current access");
+export const profileChangeSchema = z.union([
+  z.object({ grant: browserProfileGrantInputSchema }).strict(),
+  z.object({ revoke: browserProfileGrantInputSchema }).strict(),
+  z.object({ label: z.string().trim().min(1).max(80) }).strict(),
+  z.object({ close: z.literal(true) }).strict(),
+  z.object({ delete: z.literal(true) }).strict(),
+]);
+const workspaceIdSchema = z.string().min(1).max(200);
 export const browserOperationSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("start"), args: browserStartSchema }),
   z.object({ operation: z.literal("list"), args: browserIdentitySchema.partial() }),
   z.object({ operation: z.literal("get"), args: z.object({ id: idSchema }) }),
   z.object({ operation: z.literal("forget"), args: z.object({ id: idSchema }) }),
   z.object({ operation: z.literal("command"), args: z.object({ id: idSchema, command: browserCommandSchema }) }),
-  z.object({ operation: z.literal("profiles"), args: z.object({ projectId: z.string().min(1).max(200), conversationId: z.string().min(1).max(200).optional() }) }),
+  z.object({ operation: z.literal("profiles"), args: z.object({ projectId: z.string().min(1).max(200), conversationId: z.string().min(1).max(200).optional(), workspaceId: workspaceIdSchema.optional() }) }),
   z.object({ operation: z.literal("deleteProfile"), args: profileAccessContextSchema }),
   z.object({ operation: z.literal("profileAccess"), args: profileAccessContextSchema.extend({ update: profileAccessUpdateSchema }) }),
+  z.object({ operation: z.literal("directory"), args: z.object({ projectIds: z.array(z.string().min(1).max(200)).max(2000) }) }),
+  z.object({ operation: z.literal("manageProfile"), args: z.object({ id: idSchema, change: profileChangeSchema }) }),
 ]);
 export type BrowserOperation = z.infer<typeof browserOperationSchema>;
+type BrowserGrant = NonNullable<BrowserProfile["grants"]>[number];
+
+function trustedTwin(db: DatabaseSync, local: string, nodeId: string): boolean {
+  try { return isTrustedTwin(db, local, nodeId); } catch { return false; }
+}
+/** Whether a share can let some conversation on this machine use the profile. */
+async function grantReachesNode(grant: BrowserGrant, nodeId: string, projectIds: Set<string> | null): Promise<boolean> {
+  switch (grant.scope) {
+    case "node": case "workspace": return grant.nodeId === nodeId;
+    case "cluster": {
+      const db = await clusterV2Database(), members = clusterMemberIds(db, grant.clusterId!);
+      return members.includes(nodeId) && members.includes((await getClusterNode()).id);
+    }
+    default: {
+      if (grant.nodeId && grant.nodeId !== nodeId) return false;
+      // A conversation's own profile shows only where that conversation made it; it is not a share.
+      if (grant.scope === "conversation" && !grant.nodeId && grant.originNodeId) return grant.originNodeId === nodeId;
+      if (projectIds && !projectIds.has(grant.projectId!)) return false;
+      const project = await getProject(grant.projectId!);
+      return !project || await clusterPeerMayAccessProject(nodeId, project.id);
+    }
+  }
+}
+async function reachingGrants(grants: BrowserGrant[], nodeId: string, projectIds: Set<string> | null): Promise<BrowserGrant[]> {
+  const reached = await Promise.all(grants.map(async grant => await grantReachesNode(grant, nodeId, projectIds) ? grant : null));
+  return reached.filter((grant): grant is BrowserGrant => grant !== null);
+}
+/**
+ * A relayed caller reaches a session when it belongs to that caller's own conversation,
+ * or to a conversation in a project shared with it whose profile is shared with it too.
+ */
+export async function relayedSessionAllowed(machineNodeId: string, session: { accessNodeId?: string; appNodeId: string; projectId: string; conversationId: string; profileId?: string }): Promise<boolean> {
+  if ((session.accessNodeId ?? session.appNodeId) === machineNodeId) return true;
+  const project = await getProject(session.projectId);
+  if (!project || !(await clusterPeerMayAccessProject(machineNodeId, project.id))) return false;
+  return !session.profileId || browserRuntime().profileUsable(session.profileId, { nodeId: machineNodeId, projectId: session.projectId, conversationId: session.conversationId });
+}
+const notSharedWithNode = "Browser session is not shared with this node";
+/** Grants name canonical projects when this machine knows them, and keep another machine's own project ids as given. */
+async function normalizeGrant(grant: z.infer<typeof browserProfileGrantInputSchema>, local: string): Promise<z.infer<typeof browserProfileGrantInputSchema>> {
+  const value = { ...grant };
+  if (value.projectId) value.projectId = (await getProject(value.projectId))?.id ?? value.projectId;
+  if (value.nodeId && value.nodeId !== local && !(await getRuntimePeer(value.nodeId))) throw new BrowserRequestError(400, "That machine is not paired with this one");
+  if (value.clusterId && !clusterMemberIds(await clusterV2Database(), value.clusterId).includes(local)) throw new BrowserRequestError(400, "This machine is not a member of that cluster");
+  return value;
+}
+
 export async function localBrowserOperation(input: BrowserOperation, actor: BrowserActor, machineNodeId?: string, agentIdentity?: z.infer<typeof browserIdentitySchema>): Promise<unknown> {
   const operation = browserOperationSchema.parse(input);
   const local = await getClusterNode();
   const service = browserRuntime();
+  const db = await clusterV2Database();
   // Legacy central-runner records name another app node, but their browser
   // history, downloads and profiles still belong to this physical node.
   const view = (session: BrowserSessionView) => ({ ...session, nodeId: local.id });
-  // Cross-node access is an independent per-profile toggle. When it is off, the
-  // owning node serves the profile and its sessions; relayed requests stop here,
-  // before grant checks or any native launch.
-  const assertNodeAccess = (profile: { crossNodeAccess?: boolean } | null): void => {
-    if (!machineNodeId || !profile || profile.crossNodeAccess !== false) return;
-    throw new BrowserRequestError(403, "Browser profile is restricted to this node");
+  const callerNodeId = machineNodeId ?? local.id;
+  // Only this machine and its twins change a profile, and only a profile shared with them.
+  const assertManager = async (profile: BrowserProfile): Promise<void> => {
+    if (!machineNodeId) return;
+    if (actor.kind !== "human" || !trustedTwin(db, local.id, machineNodeId) || !(await reachingGrants(service.profileGrants(profile.id), machineNodeId, null)).length)
+      throw new BrowserRequestError(403, "Only this profile's machine and its twins can manage it");
   };
-  // A relayed caller sees grant metadata only for projects its invitation
-  // shares. An agent — local or relayed — sees only the grants its own project
-  // and conversation make usable; assignments naming other conversations or
-  // projects are not its metadata to read.
-  const visibleGrants = async (grants: BrowserProfile["grants"]): Promise<BrowserProfile["grants"]> => {
+  // An agent sees only the grants that let its own conversation use the profile. A relayed
+  // human sees every share from a twin, otherwise only the shares that reach its machine.
+  const visibleGrants = async (grants: BrowserProfile["grants"], access?: { projectId: string; conversationId?: string }): Promise<BrowserProfile["grants"]> => {
     if (!grants) return grants;
-    const agentScope = agentIdentity ?? (actor.kind === "agent" && operation.operation === "profiles" ? { projectId: operation.args.projectId, conversationId: operation.args.conversationId } : undefined);
-    if (agentScope) return grants.filter(grant => grant.scope === "global"
+    const agentScope = agentIdentity ?? (actor.kind === "agent" ? access : undefined);
+    if (agentScope) return grants.filter(grant => grant.scope === "cluster"
+      || ((grant.scope === "node" || grant.scope === "workspace") && grant.nodeId === callerNodeId)
       || (grant.projectId === agentScope.projectId && (grant.scope !== "conversation" || grant.conversationId === agentScope.conversationId)));
-    if (!machineNodeId) return grants;
-    const allowed = await Promise.all(grants.map(async grant => grant.projectId === undefined || await clusterPeerMayAccessProject(machineNodeId, grant.projectId) ? grant : null));
-    return allowed.filter(grant => grant !== null);
+    if (!machineNodeId || trustedTwin(db, local.id, machineNodeId)) return grants;
+    return reachingGrants(grants, machineNodeId, null);
   };
-  const projectId = "projectId" in operation.args ? operation.args.projectId : "id" in operation.args ? (await service.get(operation.args.id)).projectId : undefined;
-  if (projectId) {
-    const project = await getProject(projectId);
-    if (!project) throw new BrowserRequestError(404, "Project not found on browser node");
-    if (machineNodeId && !(await clusterPeerMayAccessProject(machineNodeId, projectId))) throw new BrowserRequestError(403, "Project is not shared with this node");
-    if ("projectId" in operation.args) operation.args.projectId = project.id;
+  // A relayed caller may name a project this machine does not have: one that lives only on
+  // the caller. It then reaches only its own sessions and profiles shared with it.
+  let foreignProject = false;
+  if ("projectId" in operation.args && operation.args.projectId) {
+    const project = await getProject(operation.args.projectId);
+    if (project) {
+      if (machineNodeId && !(await clusterPeerMayAccessProject(machineNodeId, project.id))) throw new BrowserRequestError(403, "Project is not shared with this node");
+      operation.args.projectId = project.id;
+    } else if (machineNodeId && ["start", "list", "profiles"].includes(operation.operation)) foreignProject = true;
+    else throw new BrowserRequestError(404, "Project not found on browser node");
   }
-  // Grants reference canonical project ids; a grant naming another project must
-  // resolve on this, the profile-owning node.
-  const canonicalGrantProject = async (projectId: string | undefined): Promise<string | undefined> => {
-    if (projectId === undefined) return undefined;
-    const project = await getProject(projectId);
-    if (!project) throw new BrowserRequestError(404, "Grant project not found on browser node");
-    if (machineNodeId && !(await clusterPeerMayAccessProject(machineNodeId, project.id))) throw new BrowserRequestError(403, "Project is not shared with this node");
-    return project.id;
-  };
   // The agent identity is enforced for local operations too, not only on the
   // relay: a conversation's agent may touch only its own sessions and profiles.
   // A revoked grant hides the session and its metadata — except closing, which
   // stays available through the same shared permission check as every path.
   const assertAgentSession = async (id: string, exemptClose = false): Promise<BrowserSessionView> => {
     const session = await service.get(id);
+    if (machineNodeId && !(await relayedSessionAllowed(machineNodeId, session))) throw new BrowserRequestError(403, notSharedWithNode);
     if (agentIdentity) {
       if (session.projectId !== agentIdentity.projectId || session.conversationId !== agentIdentity.conversationId)
         throw new BrowserRequestError(403, "Browser is not attached to this conversation");
-      if (session.profileId && !exemptClose && !service.profileUsable(session.profileId, session.projectId, session.conversationId))
+      if (session.profileId && !exemptClose && !service.profileUsable(session.profileId, service.sessionAccess(session)))
         throw new BrowserRequestError(403, "Browser profile grant was revoked for this conversation");
     }
     return session;
   };
-  // Management is bound to the actual profile, not the project id in the URL: the
-  // caller must reach the profile through its home project, one of its grants, or
-  // the conversation the viewer is attached to.
+  // Viewer-side management is bound to the actual profile, not the project id in the URL:
+  // the caller must reach the profile through its home project or one of its grants.
   const assertManageable = (profile: { id: string; projectId: string }, projectId: string, conversationId?: string): void => {
-    if (profile.projectId === projectId || service.profileUsable(profile.id, projectId) || (conversationId && service.profileUsable(profile.id, projectId, conversationId))) return;
+    if (profile.projectId === projectId || service.profileUsable(profile.id, { nodeId: callerNodeId, projectId, conversationId })) return;
     throw new BrowserRequestError(403, "Browser profile cannot be managed from this project");
+  };
+  const profileState = (profileId: string, projectId: string, conversationId?: string) => {
+    const holder = service.profileHolder(profileId);
+    if (!holder) return "idle" as const;
+    return holder.projectId === projectId && holder.conversationId === conversationId ? "open-here" as const : "in-use" as const;
   };
   switch (operation.operation) {
     case "start": {
       await knownNode(operation.args.appNodeId);
-      if (operation.args.profileId) {
-        const profile = service.profile(operation.args.profileId); // 404 when this node does not own it
-        assertNodeAccess(profile);
-        if (!service.profileUsable(operation.args.profileId, operation.args.projectId, operation.args.conversationId))
+      // A relayed start is made for the caller's own conversation; the caller vouches only for its own workspace.
+      if (foreignProject && operation.args.appNodeId !== machineNodeId) throw new BrowserRequestError(403, "Project is not shared with this node");
+      const accessNodeId = callerNodeId;
+      const workspaceId = machineNodeId
+        ? (operation.args.appNodeId === machineNodeId ? operation.args.workspaceId : undefined)
+        : (await getProject(operation.args.projectId))?.type;
+      const args = { ...operation.args, workspaceId: workspaceId || undefined };
+      if (args.profileId) {
+        service.profile(args.profileId); // 404 when this node does not own it
+        if (!service.profileUsable(args.profileId, { nodeId: accessNodeId, projectId: args.projectId, conversationId: args.conversationId, workspaceId: args.workspaceId ?? null }))
           throw new BrowserRequestError(403, "Browser profile is not granted to this conversation");
       }
-      return { session: view(await service.create(operation.args, actor.kind === "agent" ? actor.credentialOrigins ?? [] : [], { remote: Boolean(machineNodeId) })) };
+      return { session: view(await service.create(args, actor.kind === "agent" ? actor.credentialOrigins ?? [] : [], { accessNodeId })) };
     }
     case "list": {
       const sessions = (await service.list(operation.args)).map(view);
       // An agent's listing redacts live page and account metadata for sessions
       // whose profile grant is gone; identity fields stay so it can close them.
       // Humans — local or relayed — keep the full view.
-      const redacted = sessions.map(session => actor.kind === "agent" && session.profileId && !service.profileUsable(session.profileId, session.projectId, session.conversationId)
+      const redacted = sessions.map(session => actor.kind === "agent" && session.profileId && !service.profileUsable(session.profileId, service.sessionAccess(session))
         ? { ...session, tabs: [], activePageId: null, loginRequest: null, downloads: [], fileChooser: false, fileChooserRequest: null, dialog: null, accessRevoked: true }
         : session);
-      const allowed = machineNodeId ? await Promise.all(redacted.map(async session => (await clusterPeerMayAccessProject(machineNodeId, session.projectId)) && service.profileOrNull(session.profileId)?.crossNodeAccess !== false ? session : null)) : redacted;
+      const allowed = machineNodeId ? await Promise.all(redacted.map(async session => await relayedSessionAllowed(machineNodeId, session) ? session : null)) : redacted;
       return { sessions: allowed.filter(Boolean) };
     }
-    case "get": { const session = await assertAgentSession(operation.args.id); await assertNodeAccess(service.profileOrNull(session.profileId)); return { session: view(session) }; }
-    case "forget": { const session = await assertAgentSession(operation.args.id); await assertNodeAccess(service.profileOrNull(session.profileId)); await service.forget(operation.args.id); return { forgotten: true, projectId: session.projectId }; }
+    case "get": { const session = await assertAgentSession(operation.args.id); return { session: view(session) }; }
+    case "forget": { const session = await assertAgentSession(operation.args.id); await service.forget(operation.args.id); return { forgotten: true, projectId: session.projectId }; }
     case "command": {
-      const session = await assertAgentSession(operation.args.id, operation.args.command.action === "close");
-      await assertNodeAccess(service.profileOrNull(session.profileId));
+      await assertAgentSession(operation.args.id, operation.args.command.action === "close");
       const result = await service.execute(operation.args.id, operation.args.command, actor, Boolean(machineNodeId));
       const updated = view(await service.get(operation.args.id));
       if (operation.args.command.action === "completeLogin") announceBrowserLoginCompleted(updated, operation.args.command.requestId);
       return { result, session: updated };
     }
     case "profiles": {
-      // Grant-based listing: what this conversation may open. Agents and relayed
-      // callers see strictly granted, cross-node-allowed profiles. The owner
-      // node's human also sees its project's other entities — profiles granted
-      // only elsewhere stay manageable and grantable — with their real grants,
-      // without granting any conversation implicit access.
-      const profiles = await service.usableProfiles(operation.args.projectId, operation.args.conversationId);
-      const localHuman = !machineNodeId && actor.kind === "human";
-      const dormant = localHuman
-        ? (await service.profiles(operation.args.projectId)).filter(profile => !profiles.some(visible => visible.id === profile.id)).map(profile => ({ ...profile, grants: service.profileGrants(profile.id) }))
+      // Grant-based listing: what this conversation may open. The owner node's human
+      // also sees its project's other entities — profiles granted only elsewhere stay
+      // manageable and grantable — without granting any conversation implicit access.
+      const { projectId, conversationId } = operation.args;
+      const workspaceId = machineNodeId ? operation.args.workspaceId ?? null : (await getProject(projectId))?.type ?? null;
+      const profiles = await service.usableProfiles({ nodeId: callerNodeId, projectId, conversationId, workspaceId });
+      const dormant = !machineNodeId && actor.kind === "human" && !foreignProject
+        ? (await service.profiles(projectId)).filter(profile => !profiles.some(visible => visible.id === profile.id)).map(profile => ({ ...profile, grants: service.profileGrants(profile.id) }))
         : [];
-      return { profiles: await Promise.all([...profiles, ...dormant].filter(profile => profile.crossNodeAccess !== false || !machineNodeId).map(async profile => ({ ...profile, grants: await visibleGrants(profile.grants), nodeId: local.id }))) };
+      return { profiles: await Promise.all([...profiles, ...dormant].map(async profile => ({ ...profile, grants: await visibleGrants(profile.grants, { projectId, conversationId }), nodeId: local.id, state: profileState(profile.id, projectId, conversationId) }))) };
     }
     case "deleteProfile": {
       const profile = service.profile(operation.args.id);
-      assertNodeAccess(profile);
+      await assertManager(profile);
       assertManageable(profile, operation.args.projectId);
-      await service.deleteProfile(operation.args.id, operation.args.projectId);
+      await service.deleteProfile(operation.args.id, profile.projectId);
       return { deleted: true };
     }
     case "profileAccess": {
       const profile = service.profile(operation.args.id);
-      assertNodeAccess(profile);
       // Management is bound to the actual profile: the caller must reach it through
       // its home project or a grant, not through an arbitrary shared project id.
       assertManageable(profile, operation.args.projectId, operation.args.conversationId);
       const update = operation.args.update;
-      if (machineNodeId && update.grant?.scope === "global") throw new BrowserRequestError(403, "Global profile access can only be granted on the profile's owning node");
-      if (machineNodeId && update.crossNodeAccess === true) throw new BrowserRequestError(403, "Cross-node profile access can only be enabled on the profile's owning node");
-      let next = profile;
-      if (update.crossNodeAccess !== undefined) next = await service.setProfileCrossNode(operation.args.id, update.crossNodeAccess);
-      for (const [kind, grant] of [["grant", update.grant], ["revoke", update.revoke]] as const) {
-        if (!grant) continue;
-        const projectId = await canonicalGrantProject(grant.projectId);
-        const grants = kind === "grant"
-          ? service.grantProfileAccess(operation.args.id, { scope: grant.scope, ...(projectId ? { projectId } : {}), ...(grant.conversationId ? { conversationId: grant.conversationId } : {}) })
-          : service.revokeProfileAccess(operation.args.id, { scope: grant.scope, ...(projectId ? { projectId } : {}), ...(grant.conversationId ? { conversationId: grant.conversationId } : {}) });
-        next = { ...next, grants };
+      if (update.grant || update.revoke) await assertManager(profile);
+      if (update.grant) service.grantProfileAccess(operation.args.id, await normalizeGrant(update.grant, local.id), callerNodeId);
+      if (update.revoke) service.revokeProfileAccess(operation.args.id, await normalizeGrant(update.revoke, local.id).catch(() => update.revoke!));
+      return { profile: { ...service.profile(operation.args.id), grants: await visibleGrants(service.profileGrants(operation.args.id)), nodeId: local.id } };
+    }
+    case "directory": {
+      if (actor.kind !== "human") throw new BrowserRequestError(403, "Only people can list every browser profile");
+      const manager = !machineNodeId || trustedTwin(db, local.id, machineNodeId);
+      const projectIds = machineNodeId ? new Set(operation.args.projectIds) : null;
+      const entries = [];
+      for (const profile of service.allProfiles()) {
+        const grants = profile.grants ?? [];
+        const reaching = machineNodeId ? await reachingGrants(grants, machineNodeId, projectIds) : grants;
+        // A profile nobody shared with the caller's machine stays invisible there, twins included.
+        if (machineNodeId && !reaching.length) continue;
+        const holder = service.profileHolder(profile.id);
+        entries.push({
+          ...profile, nodeId: local.id, grants: manager ? grants : reaching, canManage: manager,
+          holder: holder ? (manager ? { sessionId: holder.id, projectId: holder.projectId, engine: holder.engine, conversationId: holder.conversationId, appNodeId: holder.accessNodeId ?? holder.appNodeId, state: holder.state } : { inUse: true }) : null,
+        });
       }
-      return { profile: { ...next, grants: await visibleGrants(service.profileGrants(operation.args.id)), nodeId: local.id } };
+      return { profiles: entries };
+    }
+    case "manageProfile": {
+      if (actor.kind !== "human") throw new BrowserRequestError(403, "Agents cannot manage browser profiles");
+      const profile = service.profile(operation.args.id);
+      await assertManager(profile);
+      const change = operation.args.change;
+      if ("grant" in change) service.grantProfileAccess(profile.id, await normalizeGrant(change.grant, local.id), callerNodeId);
+      else if ("revoke" in change) service.revokeProfileAccess(profile.id, await normalizeGrant(change.revoke, local.id).catch(() => change.revoke));
+      else if ("label" in change) service.renameProfile(profile.id, change.label);
+      else if ("close" in change) await service.closeProfileSessions(profile.id);
+      else { await service.deleteProfile(profile.id, profile.projectId); return { deleted: true }; }
+      return { profile: { ...service.profile(profile.id), grants: service.profileGrants(profile.id), nodeId: local.id } };
     }
   }
 }
@@ -398,10 +477,18 @@ export async function browserOperation(input: BrowserOperation, actor: BrowserAc
   if (operation.operation === "forget") broadcastToProject((result as { projectId: string }).projectId, { type: "browserSessionsChanged" });
   return result;
 }
+/** Machines that can hold this conversation's browsers: those sharing its project, plus any it opened a shared profile on. */
+async function sessionPeers(projectId?: string, conversationId?: string) {
+  const peers = await sharedBrowserPeers(projectId);
+  if (!projectId) return peers;
+  const recorded = readBrowserSessionNodes(projectId, conversationId).filter(nodeId => !peers.some(peer => peer.id === nodeId));
+  const extra = await Promise.all(recorded.map(nodeId => getRuntimePeer(nodeId)));
+  return [...peers, ...extra.filter((peer): peer is NonNullable<typeof peer> => Boolean(peer))];
+}
 async function discoverBrowsers(operation: Extract<BrowserOperation, { operation: "list" }>, actor: BrowserActor, identity?: z.infer<typeof browserIdentitySchema>): Promise<BrowserDiscovery> {
   const local = await localBrowserOperation(operation, actor) as { sessions: BrowserSessionView[] };
   const result: BrowserDiscovery = { sessions: local.sessions, unavailableNodes: [] };
-  await Promise.all((await sharedBrowserPeers(operation.args.projectId)).map(async peer => {
+  await Promise.all((await sessionPeers(operation.args.projectId, operation.args.conversationId)).map(async peer => {
     try {
       const remote = await peerSnapshot(`browser:${JSON.stringify([operation, actor, identity ?? null])}`, peer.id,
         async () => await (await peerRequest(peer.id, "operation", { ...operation, actor, identity }, 5000)).json() as { sessions: BrowserSessionView[] },
@@ -416,13 +503,14 @@ async function discoverBrowsers(operation: Extract<BrowserOperation, { operation
   return result;
 }
 
-/** Every usable profile across this node and shared peers, for one conversation. */
+/** Every profile this conversation may use, on this node and every paired machine, since a share can come from any of them. */
 export async function discoverBrowserProfiles(identity: z.infer<typeof browserIdentitySchema>, actor: BrowserActor, options: { conversationScoped?: boolean } = {}): Promise<BrowserDiscovery & { profiles: Array<BrowserProfile & { nodeId: string }> }> {
-  const args = { projectId: identity.projectId, ...(options.conversationScoped === false ? {} : { conversationId: identity.conversationId }) };
+  const workspaceId = (await getProject(identity.projectId))?.type;
+  const args = { projectId: identity.projectId, ...(options.conversationScoped === false ? {} : { conversationId: identity.conversationId }), ...(workspaceId ? { workspaceId } : {}) };
   const localNode = await getClusterNode();
   const local = await localBrowserOperation({ operation: "profiles", args }, actor) as { profiles: BrowserProfile[] };
   const result: BrowserDiscovery & { profiles: Array<BrowserProfile & { nodeId: string }> } = { sessions: [], unavailableNodes: [], profiles: local.profiles.map(profile => ({ ...profile, nodeId: localNode.id })) };
-  await Promise.all((await sharedBrowserPeers(identity.projectId)).map(async peer => {
+  await Promise.all((await listRuntimePeers()).map(async peer => {
     try {
       const remote = await peerSnapshot(`browser-profiles:${JSON.stringify([args, actor, identity])}`, peer.id,
         async () => await (await peerRequest(peer.id, "operation", { operation: "profiles", args, actor, identity }, 5000)).json() as { profiles: BrowserProfile[] },
@@ -440,6 +528,9 @@ export async function discoverBrowserProfiles(identity: z.infer<typeof browserId
 }
 async function startBrowser(operation: Extract<BrowserOperation, { operation: "start" }>, actor: BrowserActor, nodeId?: string, identity?: z.infer<typeof browserIdentitySchema>) {
   const scope = browserIdentitySchema.parse(operation.args);
+  // The browser machine trusts a caller only about the caller's own workspace.
+  const workspaceId = (await getProject(scope.projectId))?.type;
+  operation = { ...operation, args: { ...operation.args, workspaceId: workspaceId || undefined } };
   if (operation.args.profileId) {
     const listed = await discoverBrowsers({ operation: "list", args: scope }, actor, identity);
     const attached = listed.sessions.filter(session => session.profileId === operation.args.profileId);
@@ -461,13 +552,15 @@ async function startBrowser(operation: Extract<BrowserOperation, { operation: "s
         requireCompleteDiscovery(listed);
         if (browserRuntime().profileOrNull(operation.args.profileId)) nodeId = (await getClusterNode()).id;
         else {
+          // A profile lives on exactly one machine, so finding it settles the route even
+          // while unrelated machines are offline; only a miss needs the full picture.
           const scoped = await discoverBrowserProfiles(scope, actor);
-          requireCompleteDiscovery(scoped);
           let holder = scoped.profiles.find(profile => profile.id === operation.args.profileId);
           if (!holder) {
+            requireCompleteDiscovery(scoped);
             const unscoped = await discoverBrowserProfiles(scope, actor, { conversationScoped: false });
-            requireCompleteDiscovery(unscoped);
             holder = unscoped.profiles.find(profile => profile.id === operation.args.profileId);
+            if (!holder) requireCompleteDiscovery(unscoped);
           }
           if (!holder) throw new BrowserRequestError(404, "Browser profile not found on any paired browser machine");
           nodeId = holder.nodeId;
@@ -478,15 +571,22 @@ async function startBrowser(operation: Extract<BrowserOperation, { operation: "s
   if (!nodeId) throw new BrowserRequestError(409, "Choose a browser machine in Settings first");
   await knownNode(nodeId);
   if (nodeId === (await getClusterNode()).id) return localBrowserOperation(operation, actor);
-  return (await peerRequest(nodeId, "operation", { ...operation, actor, identity })).json();
+  const result = await (await peerRequest(nodeId, "operation", { ...operation, actor, identity })).json();
+  recordBrowserSessionNode(scope.projectId, scope.conversationId, nodeId);
+  return result;
 }
-export async function authorizeBrowserAgent(operation: BrowserOperation, input: z.infer<typeof browserIdentitySchema>) {
-  const identity = await canonicalBrowserIdentity(input);
+/** machineNodeId is the relaying machine; its conversation's project may exist only there. */
+export async function authorizeBrowserAgent(operation: BrowserOperation, input: z.infer<typeof browserIdentitySchema>, machineNodeId?: string) {
+  const parsed = browserIdentitySchema.parse(input);
+  const known = await getProject(parsed.projectId);
+  if (!known && !machineNodeId) throw new BrowserRequestError(404, "Project not found");
+  const identity = { ...parsed, projectId: known?.id ?? parsed.projectId };
+  const accessNodeId = machineNodeId ?? (await getClusterNode()).id;
   if ("projectId" in operation.args) {
     const project = await getProject(operation.args.projectId!);
-    if (project?.id !== identity.projectId) throw new BrowserRequestError(403, "Browser project does not match agent identity");
+    if ((project?.id ?? operation.args.projectId) !== identity.projectId) throw new BrowserRequestError(403, "Browser project does not match agent identity");
   }
-  if (operation.operation === "deleteProfile" || operation.operation === "profileAccess") throw new BrowserRequestError(403, "Agents cannot manage browser profiles");
+  if (operation.operation === "deleteProfile" || operation.operation === "profileAccess" || operation.operation === "manageProfile" || operation.operation === "directory") throw new BrowserRequestError(403, "Agents cannot manage browser profiles");
   if (operation.operation === "list" || operation.operation === "start") {
     if (operation.args.engine !== identity.engine || operation.args.conversationId !== identity.conversationId) throw new BrowserRequestError(403, "Browser conversation does not match agent identity");
   }
@@ -496,13 +596,51 @@ export async function authorizeBrowserAgent(operation: BrowserOperation, input: 
     // A revoked grant pauses the conversation's automation at once; closing stays
     // available so the agent can end the session it can no longer drive.
     if (session.profileId && !(operation.operation === "command" && operation.args.command.action === "close")
-      && !browserRuntime().profileUsable(session.profileId, identity.projectId, identity.conversationId))
+      && !browserRuntime().profileUsable(session.profileId, browserRuntime().sessionAccess(session)))
       throw new BrowserRequestError(403, "Browser profile grant was revoked for this conversation");
   }
   if (operation.operation === "start" && operation.args.profileId) {
-    if (!browserRuntime().profileUsable(operation.args.profileId, identity.projectId, identity.conversationId)) throw new BrowserRequestError(403, "Browser profile is not granted to this conversation");
+    const workspaceId = machineNodeId ? operation.args.workspaceId ?? null : known?.type ?? null;
+    if (!browserRuntime().profileUsable(operation.args.profileId, { nodeId: accessNodeId, projectId: identity.projectId, conversationId: identity.conversationId, workspaceId })) throw new BrowserRequestError(403, "Browser profile is not granted to this conversation");
   }
   return identity;
+}
+/** Every browser profile this machine may see, across the cluster, for Settings. */
+export async function browserProfileDirectory(actor: BrowserActor) {
+  const local = await getClusterNode();
+  const projectIds = (await listProjects()).map(project => project.id);
+  const own = await localBrowserOperation({ operation: "directory", args: { projectIds } }, actor) as { profiles: Array<BrowserProfile & { nodeId: string }> };
+  const result = { profiles: own.profiles.map(profile => ({ ...profile, nodeName: local.name })), unavailableNodes: [] as Array<{ nodeId: string; name: string; reason: string }> };
+  await Promise.all((await listRuntimePeers()).map(async peer => {
+    try {
+      const remote = await peerSnapshot(`browser-directory:${JSON.stringify([actor, projectIds])}`, peer.id,
+        async () => await (await peerRequest(peer.id, "operation", { operation: "directory", args: { projectIds }, actor }, 5000)).json() as { profiles: Array<BrowserProfile & { nodeId: string }> },
+        { unreachable: browserPeerUnreachable });
+      result.profiles.push(...remote.value.profiles.map(profile => ({ ...profile, nodeId: peer.id, nodeName: peer.name })));
+      if (!remote.fresh) result.unavailableNodes.push({ nodeId: peer.id, name: peer.name, reason: staleSnapshotReason(remote.fetchedAt) });
+    } catch (error) {
+      result.unavailableNodes.push({ nodeId: peer.id, name: peer.name, reason: error instanceof Error ? error.message : "Browser node unavailable" });
+    }
+  }));
+  return result;
+}
+/** Changes a profile on the machine that owns it. */
+export async function manageBrowserProfile(nodeId: string, id: string, change: z.infer<typeof profileChangeSchema>, actor: BrowserActor) {
+  const operation: BrowserOperation = { operation: "manageProfile", args: { id: idSchema.parse(id), change: profileChangeSchema.parse(change) } };
+  if (idSchema.parse(nodeId) === (await getClusterNode()).id) return localBrowserOperation(operation, actor);
+  await knownNode(nodeId);
+  return (await peerRequest(nodeId, "operation", { ...operation, actor })).json();
+}
+/** What a profile can be shared with from this machine: machines, clusters, and this machine's workspaces. */
+export async function browserShareTargets() {
+  const local = await getClusterNode(), db = await clusterV2Database();
+  const peers = await listRuntimePeers();
+  const names = new Map<string, string>([[local.id, local.name], ...peers.map(peer => [peer.id, peer.name] as [string, string])]);
+  const clusters = (await memberClusterIds()).flatMap(clusterId => {
+    try { return [{ id: clusterId, name: getSharingCluster(db, clusterId).name, nodes: clusterMemberIds(db, clusterId).map(id => ({ id, name: names.get(id) ?? id })) }]; }
+    catch { return []; }
+  });
+  return { localNodeId: local.id, nodes: [...names].map(([id, name]) => ({ id, name })), clusters, workspaces: (await listWorkspaces()).map(workspace => ({ id: workspace.id, label: workspace.label })) };
 }
 export async function browserSessionOwner(id: string, actor: BrowserActor, identity?: z.infer<typeof browserIdentitySchema>): Promise<string> {
   idSchema.parse(id);
@@ -515,7 +653,7 @@ export async function browserSessionOwner(id: string, actor: BrowserActor, ident
       await (await peerRequest(peer.id, "operation", { operation: "get", args: { id }, actor, identity }, 5000)).json();
       owners.push(peer.id);
     } catch (error) {
-      if (error instanceof BrowserRequestError && ((error.status === 404 && error.message === "Browser session not found") || (error.status === 403 && (/Project is not shared/.test(error.message) || /restricted to this node/.test(error.message))))) return;
+      if (error instanceof BrowserRequestError && ((error.status === 404 && error.message === "Browser session not found") || (error.status === 403 && (/Project is not shared/.test(error.message) || error.message === notSharedWithNode)))) return;
       unavailable.push(peer.id);
     }
   }));
@@ -541,8 +679,7 @@ export async function attachBrowserViewer(socket: WebSocket, url: URL, actor: Br
     const id = idSchema.parse(url.searchParams.get("browserSessionId"));
     if (machineNodeId) {
       const session = await browserRuntime().get(id);
-      if (!(await clusterPeerMayAccessProject(machineNodeId, session.projectId))) throw Error("Project is not shared");
-      if (browserRuntime().profileOrNull(session.profileId)?.crossNodeAccess === false) throw Error("Browser profile is restricted to this node");
+      if (!(await relayedSessionAllowed(machineNodeId, session))) throw Error(notSharedWithNode);
       trackRuntimeSocket(socket,machineNodeId,session.projectId);
       await browserRuntime().attachViewer(id, socket, actor, true); return;
     }

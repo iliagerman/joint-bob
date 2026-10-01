@@ -7,9 +7,9 @@ import { chromium, type BrowserContext, type Page, type CDPSession, type Dialog,
 import { WebSocket } from "ws";
 import { resolveDataDirectory } from "./data-directory.js";
 import { getClusterNode } from "./cluster.js";
-import { BrowserStore, type RecoveryState } from "./browser-store.js";
+import { BrowserStore, profileBusyMessage, type RecoveryState } from "./browser-store.js";
 import { prepareProfile, profileDirectory } from "./browser-profile-files.js";
-import { browserCommandSchema, browserStartSchema, type BrowserActor, type BrowserCapability, type BrowserCommand, type BrowserProfile, type BrowserProfileGrant, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
+import { browserCommandSchema, browserStartSchema, type BrowserAccess, type BrowserActor, type BrowserCapability, type BrowserSessionRecord, type BrowserCommand, type BrowserProfile, type BrowserProfileGrant, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
 import { createMonitorReadExpression, normalizeMonitorRead, type MonitorReadInput } from "./browser-monitor-checkers.js";
 import { BrowserMonitorCheckError } from "./browser-monitor-scheduler.js";
 import type { MonitorCheckResult } from "./browser-monitor-types.js";
@@ -178,7 +178,7 @@ export class BrowserRuntime {
           // A restart never resurrects a session whose conversation lost its grant:
           // that would re-hold the profile's one-active-conversation lease and block
           // a conversation that is still allowed to use it.
-          if (!this.store.profileUsable(profile.id, row.projectId, row.conversationId)) throw new Error("Browser profile grant was revoked for this conversation");
+          if (!this.store.profileUsable(profile.id, this.store.sessionAccess(row))) throw new Error("Browser profile grant was revoked for this conversation");
           await this.launchSession(row, row.id, this.store.recovery(row.id));
         } catch (error) {
           // A revoked grant is permanent until re-granted: clear the restore intent so
@@ -193,27 +193,26 @@ export class BrowserRuntime {
     await Promise.all(this.recoveries.values());
   }
 
-  create(input: BrowserStart, credentialOrigins: string[] = [], options: { remote?: boolean } = {}): Promise<BrowserSessionView> {
+  /** accessNodeId is the machine the caller authenticated as; it defaults to the conversation's app node. */
+  create(input: BrowserStart, credentialOrigins: string[] = [], options: { accessNodeId?: string } = {}): Promise<BrowserSessionView> {
     const start = browserStartSchema.parse(input);
     const job = this.creates.then(() => { void this.ready(); return this.createSession(start, credentialOrigins, options); });
     this.creates = job.catch(() => {});
     return job;
   }
 
-  private async createSession(start: BrowserStart, credentialOrigins: string[], options: { remote?: boolean } = {}): Promise<BrowserSessionView> {
+  private async createSession(start: BrowserStart, credentialOrigins: string[], options: { accessNodeId?: string } = {}): Promise<BrowserSessionView> {
     if (this.closed) throw new Error("Browser runtime on this node is closed");
+    const accessNodeId = options.accessNodeId ?? start.appNodeId;
+    const access: BrowserAccess = { nodeId: accessNodeId, projectId: start.projectId, conversationId: start.conversationId, workspaceId: start.workspaceId ?? null };
     const associated = this.store.list(start);
     if (!start.profileId && !start.profileName) {
-      const ids = [...new Set(associated.map(row => row.profileId).filter((id): id is string => Boolean(id)).filter(id => this.store.profileUsable(id, start.projectId, start.conversationId)))];
+      const ids = [...new Set(associated.map(row => row.profileId).filter((id): id is string => Boolean(id)).filter(id => this.store.profileUsable(id, access)))];
       if (ids.length > 1) throw new Error("Multiple browser profiles associated; supply explicit profileId");
       start = { ...start, profileId: ids[0] };
     }
     if (start.profileId) {
-      this.assertProfileGranted(start.profileId, start.projectId, start.conversationId);
-      // The relayed start gates cross-node access after implicit resolution too:
-      // a remote caller with no explicit profile must not reopen a node-restricted
-      // profile that this conversation happens to have used before.
-      if (options.remote && this.store.profile(start.profileId).crossNodeAccess === false) throw new Error("Browser profile is restricted to this node");
+      this.assertProfileGranted(start.profileId, access);
       const existing = associated.find(row => row.state === "running" && row.profileId === start.profileId);
       if (existing) {
         const live = this.sessions.get(existing.id);
@@ -226,23 +225,23 @@ export class BrowserRuntime {
         return this.launchSession(start, pending.id, this.store.recovery(pending.id), credentialOrigins);
       }
       try { this.store.assertProfileUnused(start.profileId); }
-      catch { throw new Error("Browser profile is already active in another conversation. Close it there first."); }
+      catch { throw new Error(profileBusyMessage); }
     } else {
       const capability = await (this.options.capability ?? browserCapability)();
       if (!capability.supported || !capability.available || !capability.executable) throw new Error(capability.reason || "Browser unavailable on this node");
       const labels = new Set(this.store.profiles(start.projectId).map(profile => profile.label));
       let label = "Default";
       for (let n = 2; labels.has(label); n++) label = `Default ${n}`;
-      const created = this.store.createProfile(start.projectId, start.profileName ?? label, options.remote === true);
-      // A new profile attaches to exactly the conversation that created it; widen
-      // it from the viewer's Access controls when other conversations need it.
-      this.store.grantProfileAccess(created.id, { scope: "conversation", projectId: start.projectId, conversationId: start.conversationId });
+      const created = this.store.createProfile(start.projectId, start.profileName ?? label);
+      // A new profile attaches to exactly the conversation that created it, wherever that
+      // conversation runs; anything wider is an explicit share.
+      this.store.grantProfileAccess(created.id, { scope: "conversation", projectId: start.projectId, conversationId: start.conversationId }, accessNodeId);
       start = { ...start, profileId: created.id };
     }
-    return this.launchSession(start, undefined, undefined, credentialOrigins);
+    return this.launchSession(start, undefined, undefined, credentialOrigins, accessNodeId);
   }
 
-  private async launchSession(start: BrowserStart, restoreId?: string, recovery?: RecoveryState, credentialOrigins: string[] = recovery?.credentialOrigins ?? []): Promise<BrowserSessionView> {
+  private async launchSession(start: BrowserStart, restoreId?: string, recovery?: RecoveryState, credentialOrigins: string[] = recovery?.credentialOrigins ?? [], accessNodeId?: string): Promise<BrowserSessionView> {
     const profile = this.store.profile(start.profileId!);
     const lease = profileDirectory(profile.id);
     if (profileLeases.has(lease)) throw new Error("Browser profile already in use");
@@ -252,7 +251,7 @@ export class BrowserRuntime {
     let id = restoreId;
     try {
       // Reserve in SQLite before yielding to native launch or filesystem I/O.
-      if (!id) id = this.store.create(start).id;
+      if (!id) id = this.store.create(start, accessNodeId).id;
       const capability = await (this.options.capability ?? browserCapability)();
       if (!capability.supported || !capability.available || !capability.executable) throw new Error(capability.reason || "Browser unavailable on this node");
       const directory = await prepareProfile(profile.id);
@@ -338,33 +337,51 @@ export class BrowserRuntime {
 
   /** Conversation-grant gate shared by every start path. Grants are the only way a
       conversation may open a profile; humans widen them from the viewer's Access UI. */
-  private assertProfileGranted(profileId: string, projectId: string, conversationId: string): void {
-    if (!this.store.profileUsable(profileId, projectId, conversationId)) throw new Error("Browser profile is not granted to this conversation");
+  private assertProfileGranted(profileId: string, access: BrowserAccess): void {
+    if (!this.store.profileUsable(profileId, access)) throw new Error("Browser profile is not granted to this conversation");
   }
 
-  profileUsable(profileId: string, projectId: string, conversationId?: string): boolean { void this.ready(); return this.store.profileUsable(profileId, projectId, conversationId); }
+  profileUsable(profileId: string, access: BrowserAccess): boolean { void this.ready(); return this.store.profileUsable(profileId, access); }
+  sessionAccess(record: BrowserSessionRecord): BrowserAccess { return this.store.sessionAccess(record); }
+  allProfiles(): BrowserProfile[] { void this.ready(); return this.store.allProfiles().map(profile => ({ ...profile, grants: this.store.profileGrants(profile.id) })); }
+  profileHolder(profileId: string): BrowserSessionRecord | null { void this.ready(); return this.store.profileHolder(profileId); }
+  renameProfile(profileId: string, label: string): BrowserProfile { void this.ready(); return this.store.renameProfile(profileId, label); }
   profile(profileId: string): BrowserProfile { void this.ready(); return this.store.profile(profileId); }
   profileOrNull(profileId: string | undefined): BrowserProfile | null { if (!profileId) return null; try { return this.profile(profileId); } catch { return null; } }
-  usableProfiles(projectId: string, conversationId?: string): Promise<BrowserProfile[]> { void this.ready(); return Promise.resolve(this.store.usableProfiles(projectId, conversationId)); }
+  usableProfiles(access: BrowserAccess): Promise<BrowserProfile[]> { void this.ready(); return Promise.resolve(this.store.usableProfiles(access)); }
   profileGrants(profileId: string) { void this.ready(); return this.store.profileGrants(profileId); }
-  grantProfileAccess(profileId: string, grant: { scope: BrowserProfileGrant["scope"]; projectId?: string; conversationId?: string }) { void this.ready(); return this.store.grantProfileAccess(profileId, grant); }
-  revokeProfileAccess(profileId: string, grant: { scope: BrowserProfileGrant["scope"]; projectId?: string; conversationId?: string }) { void this.ready(); return this.store.revokeProfileAccess(profileId, grant); }
-  async setProfileCrossNode(profileId: string, allowed: boolean): Promise<BrowserProfile> {
+  grantProfileAccess(profileId: string, grant: Omit<BrowserProfileGrant, "createdAt" | "originNodeId">, originNodeId?: string) { void this.ready(); return this.store.grantProfileAccess(profileId, grant, originNodeId); }
+  /** Narrowing a share also ends the remote eyes: viewers attached through the cluster
+      relay — tracked by their transport, never a caller-supplied id — reconnect and are
+      authorized again against the remaining grants. */
+  revokeProfileAccess(profileId: string, grant: Omit<BrowserProfileGrant, "createdAt" | "originNodeId">) {
     void this.ready();
-    const profile = this.store.setProfileCrossNode(profileId, allowed);
-    if (!allowed) await this.detachRemoteViewers(profileId);
-    return profile;
-  }
-
-  // Restricting a profile to this node ends the remote eyes too: viewers attached
-  // through the cluster relay — tracked by their actual transport, never by the
-  // caller-supplied actor id — are detached at once instead of streaming until
-  // they happen to disconnect.
-  private async detachRemoteViewers(profileId: string): Promise<void> {
+    const grants = this.store.revokeProfileAccess(profileId, grant);
     for (const session of this.sessions.values()) {
       if (session.profileId !== profileId) continue;
-      for (const ws of session.viewers) if (this.viewerRemote.get(ws)) ws.close(1008, "Browser profile is restricted to this node");
+      for (const ws of session.viewers) if (this.viewerRemote.get(ws)) ws.close(1008, "Browser profile sharing changed; reconnect to continue viewing");
     }
+    return grants;
+  }
+
+  /** Ends whichever conversation holds the profile, so another may open it. */
+  async closeProfileSessions(profileId: string): Promise<number> {
+    void this.ready();
+    let closed = 0;
+    for (const session of [...this.sessions.values()]) {
+      if (session.profileId !== profileId || session.stopped) continue;
+      await this.stop(session, "closed");
+      closed++;
+    }
+    const holder = this.store.profileHolder(profileId);
+    if (holder && !this.sessions.has(holder.id)) {
+      this.cancelledRecoveries.add(holder.id);
+      await this.recoveries.get(holder.id);
+      this.store.setRestoreIntent(holder.id, false);
+      this.store.finish(holder.id, "closed");
+      closed++;
+    }
+    return closed;
   }
   dropConversationGrants(projectId: string, conversationId: string) { void this.ready(); return this.store.dropConversationGrants(projectId, conversationId); }
 
@@ -412,18 +429,10 @@ export class BrowserRuntime {
     void this.ready();
     let command: BrowserCommand;
     let session: LiveSession;
-    // A relayed command rechecks the cross-node toggle while it waits in the
-    // queue: restricting a profile must stop already-queued remote input too.
-    const assertRemoteAllowed = (): void => {
-      if (!remote) return;
-      const live = this.sessions.get(id);
-      if (live?.profileId && this.store.profileOrNull(live.profileId)?.crossNodeAccess === false) throw new Error("Browser profile is restricted to this node");
-    };
     try {
       command = browserCommandSchema.parse(input);
       if (actor.kind === "human" && (!actor.id || actor.id.length > 500)) throw new Error("Authenticated human actor ID must contain 1..500 characters");
       if (command.action === "close" && !this.sessions.has(id)) return this.endRecovery(id, actor);
-      assertRemoteAllowed();
       session = this.live(id);
       if (actor.kind === "agent") { session.credentialOrigins = actor.credentialOrigins ?? []; this.checkpoint(session); }
       if (actor.kind === "agent" && command.action !== "requestLogin" && this.store.loginRequest(session.id)) throw new Error("Browser login required; automation paused");
@@ -454,7 +463,6 @@ export class BrowserRuntime {
     } catch (error) { return Promise.reject(error); }
     return session.queue.run("interactive", async () => {
       this.live(id);
-      assertRemoteAllowed();
       this.authorize(session, command, actor); // Recheck after queued work, not at enqueue time.
       if (command.action === "upload") {
         if (command.selector) command = { ...command, expectedPageId: command.expectedPageId ?? session.activePageId ?? undefined };
@@ -495,7 +503,7 @@ export class BrowserRuntime {
     if (this.sessions.get(grant.sessionId) !== session || session.stopped) throw new BrowserMonitorCheckError("browser-stopped", "Browser session is not running");
     const record = this.store.get(grant.sessionId);
     if (record.projectId !== grant.projectId || record.conversationId !== grant.conversationId || record.profileId !== grant.profileId || session.profileId !== grant.profileId) throw new BrowserMonitorCheckError("wrong-account", "Browser session identity does not match monitor grant");
-    if (!this.store.profileUsable(grant.profileId, grant.projectId, grant.conversationId)) throw new BrowserMonitorCheckError("wrong-account", "Browser profile grant was revoked for this conversation");
+    if (!this.store.profileUsable(grant.profileId, this.store.sessionAccess(record))) throw new BrowserMonitorCheckError("wrong-account", "Browser profile grant was revoked for this conversation");
     if (session.activePageId !== grant.pageId || !session.pages.has(grant.pageId)) throw new BrowserMonitorCheckError("target-missing", "Browser tab changed");
     if (this.store.loginRequest(session.id)) throw new BrowserMonitorCheckError("needs-login", "Browser login required; automation paused");
     if (session.human) throw new BrowserMonitorCheckError("paused-by-human", "Browser is under human control");
@@ -529,7 +537,7 @@ export class BrowserRuntime {
     // Resuming the agent — or completing a login handoff, which also returns
     // automation ownership — is refused while the grant is gone, so control never
     // "returns" to an agent whose every command would then fail.
-    if (session.profileId && !this.store.profileUsable(session.profileId, session.projectId, session.conversationId)
+    if (session.profileId && !this.store.profileUsable(session.profileId, this.store.sessionAccess(this.store.get(session.id)))
       && (command.action === "resumeAgent" || command.action === "completeLogin" || (actor.kind === "agent" && command.action !== "close"))) {
       throw new Error("Browser profile grant was revoked for this conversation");
     }
@@ -874,6 +882,7 @@ export class BrowserRuntime {
       const url = new URL(page.url());
       return ["http:", "https:"].includes(url.protocol) ? url.origin : "about:blank";
     });
+    if (session.profileId) this.store.recordSites(session.profileId, origins);
     this.store.checkpoint(session.id, { origins, activeIndex: Math.min(99, [...session.pages.keys()].indexOf(session.activePageId!)), human: session.human, ...(session.credentialOrigins.length ? { credentialOrigins: session.credentialOrigins } : {}) });
   }
 

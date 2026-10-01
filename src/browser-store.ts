@@ -5,7 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { resolveDataDirectory } from "./data-directory.js";
 import { encryptSecretValue, decryptSecretValue } from "./secrets.js";
-import { browserLoginRequestSchema, type BrowserLoginRequest, type BrowserProfile, type BrowserProfileGrant, type BrowserSessionRecord, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
+import { browserLoginRequestSchema, type BrowserAccess, type BrowserLoginRequest, type BrowserProfile, type BrowserProfileGrant, type BrowserSessionRecord, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
 
 /** Conversation deletion drops that conversation's profile assignments everywhere
     on this node. The profile entities themselves are durable and stay. */
@@ -18,9 +18,15 @@ export function dropBrowserConversationGrants(projectId: string, conversationId:
 /** Same drop inside an existing node.db handle, for replication apply: the browser
     tables may not exist yet on a node that never opened a browser session. */
 export function dropConversationGrantsInDatabase(db: DatabaseSync, projectId: string, conversationId: string): void {
-  db.exec("CREATE TABLE IF NOT EXISTS browser_profile_grants (profileId TEXT NOT NULL, scope TEXT NOT NULL, projectId TEXT, conversationId TEXT, createdAt TEXT NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS browser_profile_grant_identity ON browser_profile_grants(profileId, scope, ifnull(projectId, ''), ifnull(conversationId, ''))");
+  db.exec(`CREATE TABLE IF NOT EXISTS browser_profile_grants (${grantColumns})`);
   db.prepare("DELETE FROM browser_profile_grants WHERE scope = 'conversation' AND projectId = ? AND conversationId = ?").run(projectId, conversationId);
 }
+
+const grantColumns = "profileId TEXT NOT NULL, scope TEXT NOT NULL, projectId TEXT, conversationId TEXT, workspaceId TEXT, nodeId TEXT, clusterId TEXT, originNodeId TEXT, createdAt TEXT NOT NULL";
+const grantTargets = ["projectId", "conversationId", "workspaceId", "nodeId", "clusterId"] as const;
+type GrantTargets = Record<(typeof grantTargets)[number], string | null>;
+type GrantInput = Pick<BrowserProfileGrant, "scope" | (typeof grantTargets)[number]>;
+const maxSites = 20;
 
 type Identity = { projectId?: string; engine?: string; conversationId?: string };
 export type RecoveryState = { origins: string[]; activeIndex: number; human: string | null; credentialOrigins?: string[] };
@@ -44,7 +50,16 @@ function validateRecovery(value: unknown): RecoveryState {
   if (!result.success) throw new Error("Invalid browser recovery state");
   return result.data;
 }
-type SessionRow = Omit<BrowserSessionRecord, "restoreOnRestart" | "profileId" | "url" | "error"> & { profileId: string | null; url: string | null; error: string | null; restoreOnRestart: number; recovery: string; loginRequest: string | null };
+type SessionRow = Omit<BrowserSessionRecord, "restoreOnRestart" | "profileId" | "url" | "error" | "workspaceId" | "accessNodeId"> & { profileId: string | null; url: string | null; error: string | null; restoreOnRestart: number; recovery: string; loginRequest: string | null; workspaceId: string | null; accessNodeId: string | null };
+export const profileBusyMessage = "Browser profile is already active in another conversation. Close it there first, or close it from Settings → Browser → Profiles.";
+type ProfileRow = Omit<BrowserProfile, "persistent" | "sites" | "grants"> & { persistent: number; sites: string };
+const profileColumns = "id, projectId, label, createdAt, updatedAt, persistent, sites";
+function profileFromRow(row: ProfileRow): BrowserProfile {
+  let sites: string[] = [];
+  try { const parsed = JSON.parse(row.sites); if (Array.isArray(parsed)) sites = parsed.filter((site): site is string => typeof site === "string"); }
+  catch { /* A damaged list only loses the hint. */ }
+  return { id: row.id, projectId: row.projectId, label: row.label, createdAt: row.createdAt, updatedAt: row.updatedAt, persistent: Boolean(row.persistent), sites };
+}
 
 /** Node-local metadata. Neither these tables nor encrypted login states replicate. */
 export class BrowserStore {
@@ -64,9 +79,7 @@ export class BrowserStore {
         id TEXT PRIMARY KEY, projectId TEXT NOT NULL, label TEXT NOT NULL,
         createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, stateEncrypted TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS browser_profile_grants (
-        profileId TEXT NOT NULL, scope TEXT NOT NULL, projectId TEXT, conversationId TEXT, createdAt TEXT NOT NULL
-      );
+      CREATE TABLE IF NOT EXISTS browser_profile_grants (${grantColumns});
       CREATE TABLE IF NOT EXISTS browser_migrations (
         id TEXT PRIMARY KEY, appliedAt TEXT NOT NULL
       );
@@ -81,7 +94,12 @@ export class BrowserStore {
     try {
       this.addColumn("browser_profiles", "persistent", "INTEGER NOT NULL DEFAULT 0");
       this.addColumn("browser_profiles", "crossNodeAccess", "INTEGER NOT NULL DEFAULT 0");
-      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS browser_profile_grant_identity ON browser_profile_grants(profileId, scope, ifnull(projectId, ''), ifnull(conversationId, ''))");
+      for (const column of ["workspaceId", "nodeId", "clusterId", "originNodeId"]) this.addColumn("browser_profile_grants", column, "TEXT");
+      this.addColumn("browser_profiles", "sites", "TEXT NOT NULL DEFAULT '[]'");
+      this.addColumn("browser_sessions", "workspaceId", "TEXT");
+      this.addColumn("browser_sessions", "accessNodeId", "TEXT");
+      this.db.exec(`DROP INDEX IF EXISTS browser_profile_grant_identity;
+        CREATE UNIQUE INDEX IF NOT EXISTS browser_profile_grant_targets ON browser_profile_grants(profileId, scope, ${grantTargets.map(column => `ifnull(${column}, '')`).join(", ")})`);
       this.addColumn("browser_sessions", "restoreOnRestart", "INTEGER NOT NULL DEFAULT 0");
       this.addColumn("browser_sessions", "loginRequest", "TEXT");
       const legacy = !this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'browser_running_profile'").get();
@@ -110,8 +128,39 @@ export class BrowserStore {
         this.db.exec("UPDATE browser_profiles SET crossNodeAccess = 1");
         this.db.prepare("INSERT OR IGNORE INTO browser_migrations (id, appliedAt) VALUES ('profile-grants-conversation-backfill', ?)").run(new Date().toISOString());
       }
+      this.migrateGrantScopes();
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); this.db.close(); throw error; }
+  }
+
+  /**
+   * Sharing replaces the old node-wide "global" grant and the relay toggle. Nothing may
+   * reach further than before: global grants become this machine, and grants on profiles
+   * the toggle kept off the relay are pinned to this machine.
+   */
+  private migrateGrantScopes(): void {
+    if (this.db.prepare("SELECT 1 FROM browser_migrations WHERE id = 'profile-grants-sharing-scopes'").get()) return;
+    const local = this.localNodeId();
+    const pending = this.db.prepare(`SELECT 1 FROM browser_profile_grants WHERE scope = 'global'
+      OR (scope IN ('project', 'conversation') AND nodeId IS NULL AND profileId IN (SELECT id FROM browser_profiles WHERE crossNodeAccess = 0)) LIMIT 1`).get();
+    // A node without an identity yet has no legacy grants to pin; retry once it has one.
+    if (pending && !local) return;
+    if (local) {
+      this.db.prepare("UPDATE OR IGNORE browser_profile_grants SET scope = 'node', nodeId = ? WHERE scope = 'global'").run(local);
+      this.db.exec("DELETE FROM browser_profile_grants WHERE scope = 'global'");
+      this.db.prepare("UPDATE OR IGNORE browser_profile_grants SET nodeId = ? WHERE scope IN ('project', 'conversation') AND nodeId IS NULL AND profileId IN (SELECT id FROM browser_profiles WHERE crossNodeAccess = 0)").run(local);
+    }
+    this.db.exec("UPDATE browser_sessions SET accessNodeId = appNodeId WHERE accessNodeId IS NULL");
+    this.db.prepare("INSERT OR IGNORE INTO browser_migrations (id, appliedAt) VALUES ('profile-grants-sharing-scopes', ?)").run(new Date().toISOString());
+  }
+
+  private tableExists(name: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
+  }
+
+  private localNodeId(): string | null {
+    if (!this.tableExists("cluster_node")) return null;
+    return (this.db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id ?? null;
   }
 
   private addColumn(table: string, column: string, definition: string): void {
@@ -126,18 +175,18 @@ export class BrowserStore {
 
   }
 
-  create(start: BrowserStart): BrowserSessionRecord {
+  create(start: BrowserStart, accessNodeId?: string): BrowserSessionRecord {
     const now = new Date().toISOString();
     const persistent = start.profileId ? this.profile(start.profileId).persistent === true : false;
     const origin = !start.url || start.url === "about:blank" ? "about:blank" : new URL(start.url).origin;
     const recovery = validateRecovery({ origins: [origin], activeIndex: 0, human: null });
-    const row = { ...start, url: start.url ? origin : undefined, id: randomUUID(), state: "running" as const, restoreOnRestart: persistent, createdAt: now, updatedAt: now };
+    const row = { ...start, url: start.url ? origin : undefined, id: randomUUID(), state: "running" as const, restoreOnRestart: persistent, createdAt: now, updatedAt: now, accessNodeId: accessNodeId ?? start.appNodeId };
     try {
-      this.db.prepare("INSERT INTO browser_sessions (id, projectId, engine, conversationId, appNodeId, url, profileId, state, createdAt, updatedAt, restoreOnRestart, recovery) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-        .run(row.id, row.projectId, row.engine, row.conversationId, row.appNodeId, row.url ?? null, row.profileId ?? null, row.state, now, now, persistent ? 1 : 0, JSON.stringify(recovery));
+      this.db.prepare("INSERT INTO browser_sessions (id, projectId, engine, conversationId, appNodeId, url, profileId, state, createdAt, updatedAt, restoreOnRestart, recovery, workspaceId, accessNodeId) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(row.id, row.projectId, row.engine, row.conversationId, row.appNodeId, row.url ?? null, row.profileId ?? null, row.state, now, now, persistent ? 1 : 0, JSON.stringify(recovery), start.workspaceId ?? null, accessNodeId ?? start.appNodeId);
     } catch (error) {
       // The unique live lease means another conversation holds the profile.
-      if (error instanceof Error && /UNIQUE constraint failed: browser_sessions.profileId/.test(error.message)) throw new Error("Browser profile is already active in another conversation. Close it there first.");
+      if (error instanceof Error && /UNIQUE constraint failed: browser_sessions.profileId/.test(error.message)) throw new Error(profileBusyMessage);
       throw error;
     }
     return row;
@@ -222,14 +271,39 @@ export class BrowserStore {
   }
 
   profiles(projectId: string): BrowserProfile[] {
-    const rows = this.db.prepare("SELECT id, projectId, label, createdAt, updatedAt, persistent, crossNodeAccess FROM browser_profiles WHERE projectId = ? ORDER BY createdAt DESC").all(projectId) as unknown as BrowserProfile[];
-    return rows.map(row => ({ ...row, persistent: Boolean(row.persistent), crossNodeAccess: Boolean(row.crossNodeAccess) }));
+    return (this.db.prepare(`SELECT ${profileColumns} FROM browser_profiles WHERE projectId = ? ORDER BY createdAt DESC`).all(projectId) as unknown as ProfileRow[]).map(profileFromRow);
+  }
+
+  allProfiles(): BrowserProfile[] {
+    return (this.db.prepare(`SELECT ${profileColumns} FROM browser_profiles ORDER BY createdAt DESC`).all() as unknown as ProfileRow[]).map(profileFromRow);
   }
 
   profile(id: string): BrowserProfile {
-    const row = this.db.prepare("SELECT id, projectId, label, createdAt, updatedAt, persistent, crossNodeAccess FROM browser_profiles WHERE id = ?").get(id) as unknown as BrowserProfile | undefined;
+    const row = this.db.prepare(`SELECT ${profileColumns} FROM browser_profiles WHERE id = ?`).get(id) as unknown as ProfileRow | undefined;
     if (!row) throw new Error("Browser profile not found");
-    return { ...row, persistent: Boolean(row.persistent), crossNodeAccess: Boolean(row.crossNodeAccess) };
+    return profileFromRow(row);
+  }
+
+  /** Remembers where the profile's tabs have been, so people and agents can tell which account it holds. */
+  recordSites(id: string, origins: string[]): void {
+    const fresh = origins.filter(origin => origin !== "about:blank");
+    if (!fresh.length) return;
+    const known = this.profileOrNull(id)?.sites;
+    if (!known) return;
+    const sites = [...new Set([...fresh, ...known])].slice(0, maxSites);
+    if (sites.length === known.length && sites.every((site, index) => site === known[index])) return;
+    this.db.prepare("UPDATE browser_profiles SET sites = ? WHERE id = ?").run(JSON.stringify(sites), id);
+  }
+
+  /** The session that holds the profile's single live lease, if any. */
+  profileHolder(id: string): BrowserSessionRecord | null {
+    const row = this.db.prepare("SELECT * FROM browser_sessions WHERE profileId = ? AND (state = 'running' OR restoreOnRestart = 1) ORDER BY updatedAt DESC LIMIT 1").get(id) as unknown as SessionRow | undefined;
+    return row ? this.record(row) : null;
+  }
+
+  /** The identity a session's conversation was authenticated with when it started. */
+  sessionAccess(record: BrowserSessionRecord): BrowserAccess {
+    return { nodeId: record.accessNodeId ?? record.appNodeId, projectId: record.projectId, conversationId: record.conversationId, workspaceId: record.workspaceId ?? null };
   }
 
   profileOrNull(id: string | undefined | null): BrowserProfile | null {
@@ -239,68 +313,85 @@ export class BrowserStore {
 
   profileGrants(id: string): BrowserProfileGrant[] {
     this.profile(id);
-    return (this.db.prepare("SELECT scope, projectId, conversationId, createdAt FROM browser_profile_grants WHERE profileId = ? ORDER BY createdAt, scope").all(id) as unknown as Array<BrowserProfileGrant>).map(grant => ({
-      scope: grant.scope,
-      ...(grant.projectId ? { projectId: grant.projectId } : {}),
-      ...(grant.conversationId ? { conversationId: grant.conversationId } : {}),
-      createdAt: grant.createdAt,
-    }));
+    const rows = this.db.prepare(`SELECT scope, ${grantTargets.join(", ")}, originNodeId, createdAt FROM browser_profile_grants WHERE profileId = ? ORDER BY createdAt, scope`).all(id) as unknown as Array<GrantTargets & { scope: BrowserProfileGrant["scope"]; originNodeId: string | null; createdAt: string }>;
+    return rows.map(row => {
+      const grant: BrowserProfileGrant = { scope: row.scope, createdAt: row.createdAt };
+      for (const key of grantTargets) if (row[key]) grant[key] = row[key]!;
+      if (row.originNodeId) grant.originNodeId = row.originNodeId;
+      return grant;
+    });
   }
 
-  private validateGrant(id: string, grant: Pick<BrowserProfileGrant, "scope" | "projectId" | "conversationId">): { scope: BrowserProfileGrant["scope"]; projectId: string | null; conversationId: string | null } {
+  private validateGrant(id: string, grant: GrantInput): GrantTargets & { scope: BrowserProfileGrant["scope"] } {
     this.profile(id);
-    const identifier = (value: string | undefined, max = 200) => typeof value === "string" && value.length >= 1 && value.length <= max ? value : null;
-    if (grant.scope === "global") {
-      if (grant.projectId !== undefined || grant.conversationId !== undefined) throw new Error("A global grant takes no project or conversation");
-      return { scope: grant.scope, projectId: null, conversationId: null };
+    const value = (key: (typeof grantTargets)[number]) => {
+      const raw = grant[key];
+      if (raw === undefined) return null;
+      if (typeof raw !== "string" || !raw.length || raw.length > 200) throw new Error(`Grant ${key} must contain 1..200 characters`);
+      return raw;
+    };
+    const targets = Object.fromEntries(grantTargets.map(key => [key, value(key)])) as GrantTargets;
+    const required: Record<BrowserProfileGrant["scope"], Array<(typeof grantTargets)[number]>> = {
+      conversation: ["projectId", "conversationId"], project: ["projectId"], workspace: ["workspaceId", "nodeId"], node: ["nodeId"], cluster: ["clusterId"],
+    };
+    // conversation and project grants may additionally pin a machine.
+    const optional: Partial<Record<BrowserProfileGrant["scope"], Array<(typeof grantTargets)[number]>>> = { conversation: ["nodeId"], project: ["nodeId"] };
+    const needed = required[grant.scope];
+    if (!needed) throw new Error("Unknown browser profile grant scope");
+    for (const key of grantTargets) {
+      const present = targets[key] !== null;
+      if (needed.includes(key) && !present) throw new Error(`A ${grant.scope} grant needs ${key}`);
+      if (!needed.includes(key) && !optional[grant.scope]?.includes(key) && present) throw new Error(`A ${grant.scope} grant takes no ${key}`);
     }
-    if (grant.scope === "project") {
-      const projectId = identifier(grant.projectId);
-      if (!projectId || grant.conversationId !== undefined) throw new Error("A project grant takes exactly a project");
-      return { scope: grant.scope, projectId, conversationId: null };
-    }
-    if (grant.scope === "conversation") {
-      const projectId = identifier(grant.projectId), conversationId = identifier(grant.conversationId);
-      if (!projectId || !conversationId) throw new Error("A conversation grant takes exactly a project and a conversation");
-      return { scope: grant.scope, projectId, conversationId };
-    }
-    throw new Error("Unknown browser profile grant scope");
+    return { scope: grant.scope, ...targets };
   }
 
-  grantProfileAccess(id: string, grant: Pick<BrowserProfileGrant, "scope" | "projectId" | "conversationId">): BrowserProfileGrant[] {
+  grantProfileAccess(id: string, grant: GrantInput, originNodeId?: string): BrowserProfileGrant[] {
     const valid = this.validateGrant(id, grant);
-    this.db.prepare("INSERT OR IGNORE INTO browser_profile_grants (profileId, scope, projectId, conversationId, createdAt) VALUES (?,?,?,?,?)")
-      .run(id, valid.scope, valid.projectId, valid.conversationId, new Date().toISOString());
+    this.db.prepare(`INSERT OR IGNORE INTO browser_profile_grants (profileId, scope, ${grantTargets.join(", ")}, originNodeId, createdAt) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(id, valid.scope, ...grantTargets.map(key => valid[key]), originNodeId ?? null, new Date().toISOString());
     return this.profileGrants(id);
   }
 
-  revokeProfileAccess(id: string, grant: Pick<BrowserProfileGrant, "scope" | "projectId" | "conversationId">): BrowserProfileGrant[] {
+  revokeProfileAccess(id: string, grant: GrantInput): BrowserProfileGrant[] {
     const valid = this.validateGrant(id, grant);
-    const changes = this.db.prepare("DELETE FROM browser_profile_grants WHERE profileId = ? AND scope = ? AND ifnull(projectId, '') = ? AND ifnull(conversationId, '') = ?")
-      .run(id, valid.scope, valid.projectId ?? "", valid.conversationId ?? "").changes;
+    const changes = this.db.prepare(`DELETE FROM browser_profile_grants WHERE profileId = ? AND scope = ? AND ${grantTargets.map(key => `ifnull(${key}, '') = ?`).join(" AND ")}`)
+      .run(id, valid.scope, ...grantTargets.map(key => valid[key] ?? "")).changes;
     if (!changes) throw new Error("Browser profile grant not found");
     return this.profileGrants(id);
   }
 
-  setProfileCrossNode(id: string, allowed: boolean): BrowserProfile {
-    this.profile(id);
-    this.db.prepare("UPDATE browser_profiles SET crossNodeAccess = ?, updatedAt = ? WHERE id = ?").run(allowed ? 1 : 0, new Date().toISOString(), id);
-    return this.profile(id);
+  /** SQL matching the grants that let this caller use a profile. */
+  private grantMatch(access: BrowserAccess): { sql: string; params: string[] } {
+    const clauses: string[] = [], params: string[] = [];
+    if (access.conversationId) {
+      clauses.push("(g.scope = 'conversation' AND g.projectId = ? AND g.conversationId = ? AND (g.nodeId IS NULL OR g.nodeId = ?))");
+      params.push(access.projectId, access.conversationId, access.nodeId);
+    }
+    clauses.push("(g.scope = 'project' AND g.projectId = ? AND (g.nodeId IS NULL OR g.nodeId = ?))", "(g.scope = 'node' AND g.nodeId = ?)");
+    params.push(access.projectId, access.nodeId, access.nodeId);
+    if (access.workspaceId) {
+      clauses.push("(g.scope = 'workspace' AND g.nodeId = ? AND g.workspaceId = ?)");
+      params.push(access.nodeId, access.workspaceId);
+    }
+    if (this.tableExists("sharing_memberships")) {
+      // Both the caller and this machine must still belong to the cluster.
+      const local = this.localNodeId();
+      clauses.push(`(g.scope = 'cluster' AND EXISTS (SELECT 1 FROM sharing_memberships m WHERE m.cluster_id = g.clusterId AND m.node_id = ?)${local ? " AND EXISTS (SELECT 1 FROM sharing_memberships o WHERE o.cluster_id = g.clusterId AND o.node_id = ?)" : ""})`);
+      params.push(access.nodeId, ...(local ? [local] : []));
+    }
+    return { sql: clauses.join(" OR "), params };
   }
 
-  profileUsable(id: string, projectId: string, conversationId?: string): boolean {
-    return Boolean(this.db.prepare(`SELECT 1 FROM browser_profile_grants WHERE profileId = ? AND (
-      scope = 'global' OR (scope = 'project' AND projectId = ?)${conversationId ? " OR (scope = 'conversation' AND projectId = ? AND conversationId = ?)" : ""}
-    ) LIMIT 1`).get(id, projectId, ...(conversationId ? [projectId, conversationId] : [])));
+  profileUsable(id: string, access: BrowserAccess): boolean {
+    const match = this.grantMatch(access);
+    return Boolean(this.db.prepare(`SELECT 1 FROM browser_profile_grants g WHERE g.profileId = ? AND (${match.sql}) LIMIT 1`).get(id, ...match.params));
   }
 
-  usableProfiles(projectId: string, conversationId?: string): BrowserProfile[] {
-    return this.profiles(projectId)
-      .concat((this.db.prepare(`SELECT DISTINCT browser_profiles.id FROM browser_profiles JOIN browser_profile_grants ON browser_profile_grants.profileId = browser_profiles.id
-        WHERE browser_profiles.projectId != ? AND (scope = 'global' OR (scope = 'project' AND browser_profile_grants.projectId = ?)${conversationId ? " OR (scope = 'conversation' AND browser_profile_grants.projectId = ? AND conversationId = ?)" : ""})`)
-        .all(projectId, projectId, ...(conversationId ? [projectId, conversationId] : [])) as unknown as Array<{ id: string }>).map(({ id }) => this.profile(id)))
-      .filter((profile, index, all) => all.findIndex(other => other.id === profile.id) === index)
-      .filter(profile => this.profileUsable(profile.id, projectId, conversationId))
+  usableProfiles(access: BrowserAccess): BrowserProfile[] {
+    const match = this.grantMatch(access);
+    const ids = this.db.prepare(`SELECT DISTINCT g.profileId AS id FROM browser_profile_grants g JOIN browser_profiles p ON p.id = g.profileId WHERE ${match.sql}`).all(...match.params) as unknown as Array<{ id: string }>;
+    return ids.map(({ id }) => this.profile(id))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .map(profile => ({ ...profile, grants: this.profileGrants(profile.id) }));
   }
@@ -313,7 +404,7 @@ export class BrowserStore {
 
   saveProfile(projectId: string, label: string, state: unknown): BrowserProfile {
     const now = new Date().toISOString();
-    const profile = { id: randomUUID(), projectId, label, createdAt: now, updatedAt: now, persistent: false };
+    const profile = { id: randomUUID(), projectId, label, createdAt: now, updatedAt: now, persistent: false, sites: [] };
     this.db.prepare("INSERT INTO browser_profiles (id, projectId, label, createdAt, updatedAt, stateEncrypted) VALUES (?,?,?,?,?,?)").run(profile.id, projectId, label, now, now, encryptSecretValue(JSON.stringify(state)));
     return profile;
   }
@@ -331,11 +422,11 @@ export class BrowserStore {
     return label;
   }
 
-  createProfile(projectId: string, label: string, crossNodeAccess = false): BrowserProfile {
+  createProfile(projectId: string, label: string): BrowserProfile {
     const now = new Date().toISOString();
-    const profile = { id: randomUUID(), projectId, label: this.validateLabel(projectId, label), createdAt: now, updatedAt: now, persistent: true, crossNodeAccess };
-    this.db.prepare("INSERT INTO browser_profiles (id, projectId, label, createdAt, updatedAt, stateEncrypted, persistent, crossNodeAccess) VALUES (?,?,?,?,?,'',1,?)")
-      .run(profile.id, profile.projectId, profile.label, now, now, crossNodeAccess ? 1 : 0);
+    const profile = { id: randomUUID(), projectId, label: this.validateLabel(projectId, label), createdAt: now, updatedAt: now, persistent: true, sites: [] };
+    this.db.prepare("INSERT INTO browser_profiles (id, projectId, label, createdAt, updatedAt, stateEncrypted, persistent) VALUES (?,?,?,?,?,'',1)")
+      .run(profile.id, profile.projectId, profile.label, now, now);
     return profile;
   }
 
@@ -369,8 +460,8 @@ export class BrowserStore {
       filesystem removal: not live, and reachable from this project. */
   assertProfileDeletable(id: string, projectId: string): void {
     this.assertProfileUnused(id);
-    // The entity can be deleted from its home project or any project it is granted to.
-    if (this.profile(id).projectId !== projectId && !this.profileUsable(id, projectId)) throw new Error("Browser profile not found in this project");
+    // The entity can be deleted from its home project or any project a grant names.
+    if (this.profile(id).projectId !== projectId && !this.db.prepare("SELECT 1 FROM browser_profile_grants WHERE profileId = ? AND projectId = ? LIMIT 1").get(id, projectId)) throw new Error("Browser profile not found in this project");
   }
 
   saveDownload(sessionId: string, item: BrowserSessionView["downloads"][number]): void {
@@ -386,7 +477,8 @@ export class BrowserStore {
   close(): void { this.db.close(); }
 
   private record(row: SessionRow): BrowserSessionRecord {
-    const { recovery, loginRequest, ...record } = row;
-    return { ...record, restoreOnRestart: Boolean(row.restoreOnRestart), url: row.url ?? undefined, profileId: row.profileId ?? undefined, error: row.error ?? undefined };
+    const { recovery, loginRequest, workspaceId, accessNodeId, ...record } = row;
+    return { ...record, restoreOnRestart: Boolean(row.restoreOnRestart), url: row.url ?? undefined, profileId: row.profileId ?? undefined, error: row.error ?? undefined,
+      ...(workspaceId ? { workspaceId } : {}), accessNodeId: accessNodeId ?? row.appNodeId };
   }
 }

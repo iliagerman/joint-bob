@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { Page } from "playwright";
+import { nativeUiFixture } from "./native-ui-fixture.js";
+
+const status = { branch: "main", ahead: 0, behind: 0, detached: false, staged: [], unstaged: [
+  { path: "app.ts", kind: "modified", staged: false },
+], untracked: [], clean: false };
+const patch = [
+  "diff --git a/app.ts b/app.ts",
+  "--- a/app.ts",
+  "+++ b/app.ts",
+  "@@ -1,3 +1,4 @@",
+  " keep",
+  "-old",
+  "+new",
+  "+added",
+  " tail",
+].join("\n");
+
+async function routeFixtures(page: Page) {
+  await page.route("**/api/projects/*/git/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/status")) return route.fulfill({ json: status });
+    if (url.pathname.endsWith("/scope")) return route.fulfill({ json: { paths: ["app.ts"], lastHarness: "claude" } });
+    if (url.pathname.endsWith("/diff")) return route.fulfill({ json: { patch, binary: false, truncated: false } });
+    return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
+  });
+  await page.route("**/api/harnesses", (route) => route.fulfill({ json: { harnesses: [
+    { id: "pi", label: "Pi", runtimeConfigured: true, ready: true, defaults: { modelId: "gpt-6-sol", thinkingLevel: "medium" }, configuration: { fixedProvider: "openai-codex", thinkingLevels: ["low", "xhigh"] } },
+    { id: "claude", label: "Claude", runtimeConfigured: true, ready: true, defaults: { modelId: "claude-opus-5-5", thinkingLevel: "medium" }, configuration: { fixedProvider: "claude", thinkingLevels: ["low", "high", "xhigh"] } },
+  ] } }));
+  await page.route("**/api/models", (route) => route.fulfill({ json: { models: [
+    { harnessId: "pi", id: "gpt-6-sol", label: "GPT-6 Sol", provider: "openai-codex", thinkingLevels: ["low", "xhigh"] },
+    { harnessId: "claude", id: "claude-opus-5-5", label: "Opus 5.5", provider: "claude", thinkingLevels: ["low", "high", "xhigh"] },
+    { harnessId: "claude", id: "claude-sonnet-5-5", label: "Sonnet 5.5", provider: "claude", thinkingLevels: ["low", "high", "xhigh"] },
+  ] } }));
+}
+
+async function signIn(page: Page, url: string, username: string, password: string) {
+  await page.goto(url);
+  await page.getByTestId("login-username-input").fill(username);
+  await page.getByTestId("login-password-input").fill(password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card").first().click();
+}
+
+test("Git review fills most of the screen and shows diffs side by side", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await routeFixtures(page);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.getByTestId("chat-git-button").click();
+  await page.getByTestId("git-review-file").first().click();
+  await page.getByTestId("git-diff-row").first().waitFor();
+  const viewport = page.viewportSize()!;
+  const card = await page.locator(".git-review-card").boundingBox();
+  assert.ok(card && card.width >= viewport.width * 0.9 && card.height >= viewport.height * 0.85, "dialog takes most of the screen");
+  const rows = await page.getByTestId("git-diff-row").evaluateAll((items) => items.map((row) => [...row.querySelectorAll(".git-diff-cell")].map((cell) => cell.textContent)));
+  assert.deepEqual(rows, [
+    ["1", "keep", "1", "keep"],
+    ["2", "old", "2", "new"],
+    ["", "", "3", "added"],
+    ["3", "tail", "4", "tail"],
+  ]);
+});
+
+test("Settings default Git reviewer overrides the conversation-based choice", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await routeFixtures(page);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-git").click();
+  assert.equal(await page.getByTestId("settings-git-reviewer-harness").inputValue(), "");
+  await page.getByTestId("settings-git-reviewer-harness").selectOption("claude");
+  await page.getByTestId("settings-git-reviewer-model").selectOption("claude-sonnet-5-5");
+  await page.getByTestId("settings-git-reviewer-thinking").selectOption("high");
+  await page.waitForFunction(async () => (await (await fetch("/api/preferences")).json()).gitReviewer?.thinkingLevel === "high");
+  await page.getByTestId("settings-cancel-button").click();
+  await page.getByTestId("chat-git-button").click();
+  await page.waitForFunction(() => document.querySelector<HTMLSelectElement>("#gitReviewThinking")?.value === "high");
+  assert.equal(await page.getByTestId("git-review-harness").inputValue(), "claude");
+  assert.equal(await page.getByTestId("git-review-model").inputValue(), "claude-sonnet-5-5");
+  await page.getByTestId("git-review-close-button").click();
+  await page.reload();
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-git").click();
+  assert.equal(await page.getByTestId("settings-git-reviewer-model").inputValue(), "claude-sonnet-5-5");
+});

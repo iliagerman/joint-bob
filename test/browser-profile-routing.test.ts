@@ -25,7 +25,7 @@ async function fixture(t: TestContext) {
   const grantedIds = new Set(sessions.map(session => session.profileId));
   t.mock.method(runtime, "profiles", async () => profiles);
   t.mock.method(runtime, "usableProfiles", async () => profiles.filter(profile => grantedIds.has(profile.id)));
-  t.mock.method(runtime, "profileUsable", (id: string, projectId: string, conversationId?: string) => grantedIds.has(id) && projectId === identity.projectId && (!conversationId || conversationId === identity.conversationId));
+  t.mock.method(runtime, "profileUsable", (id: string, access: { projectId: string; conversationId?: string }) => grantedIds.has(id) && access.projectId === identity.projectId && (!access.conversationId || access.conversationId === identity.conversationId));
   t.mock.method(runtime, "profile", (id: string) => { const profile = profiles.find(profile => profile.id === id); if (!profile) throw new Error("Browser profile not found"); return profile; });
   const executed: string[] = [], started: BrowserStart[] = [];
   t.mock.method(runtime, "list", async (actual: unknown) => { assert.deepEqual(actual, identity); return sessions; });

@@ -74,17 +74,16 @@ test("browser profile scope grants gate every server and agent path while conver
     const strangerView = await api<ProfilesReply>(node, auth, "GET", `/browser/profiles?${new URLSearchParams({ projectId: project.id, conversationId: strangerConversation })}`);
     assert.deepEqual(strangerView.body.profiles.map(profile => profile.id), [profileId], "the local human keeps managing a home-project profile granted only to another conversation");
     assert.deepEqual(strangerView.body.profiles[0].grants!.map(({ scope, projectId, conversationId }) => ({ scope, projectId, conversationId })), [{ scope: "conversation", projectId: project.id, conversationId: grantedConversation }], "the manageable listing carries the profile's real grants");
-    assert.equal(visible.body.profiles[0].crossNodeAccess, false, "new profiles are node-only until cross-node access is explicitly allowed");
 
     // Management is bound to the actual profile, not the project id in the URL: an
     // arbitrary project the profile is not granted to cannot manage it.
     const ungrantedProject = node.projects[2];
-    const hijack = await api(node, auth, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: ungrantedProject.id, conversationId: randomUUID() })}`, { grant: { scope: "global" } });
+    const hijack = await api(node, auth, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: ungrantedProject.id, conversationId: randomUUID() })}`, { grant: { scope: "node", nodeId: node.nodeId } });
     assert.equal(hijack.status, 403, JSON.stringify(hijack.body));
     assert.match(hijack.body.error, /cannot be managed|not granted/i);
     assert.equal((await api<AccessReply>(node, auth, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: ungrantedProject.id })}`, {})).status, 403, "even a read of access state requires visibility");
 
-    // Project and global grants widen access; multiple projects can hold assignments.
+    // Project and machine shares widen access; multiple projects can hold assignments.
     assert.equal((await api(node, auth, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: grantedConversation })}`, { grant: { scope: "project", projectId: otherProject.id } })).status, 200);
     const otherList = await api<ProfilesReply>(node, auth, "GET", `/browser/profiles?${new URLSearchParams({ projectId: otherProject.id, conversationId: randomUUID() })}`);
     assert.deepEqual(otherList.body.profiles.map(profile => profile.id), [profileId]);
@@ -110,9 +109,8 @@ test("browser profile scope grants gate every server and agent path while conver
 
     // Agents cannot manage grants, cross-node access, or delete the entity.
     for (const body of [
-      { grant: { scope: "global" } },
+      { grant: { scope: "node", nodeId: node.nodeId } },
       { revoke: { scope: "conversation", projectId: project.id, conversationId: grantedConversation } },
-      { crossNodeAccess: false },
     ]) {
       const attempt = await fetch(agentGranted.url, { method: "PUT", headers: { Authorization: `Bearer ${agentGranted.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
       assert.equal(attempt.status, 401, "the agent bridge never reaches profile management");
@@ -125,17 +123,11 @@ test("browser profile scope grants gate every server and agent path while conver
     // One access change per request: a combined update must be refused whole,
     // before any mutation, so a failing later step cannot leave earlier changes applied.
     const before = await api<AccessReply>(node, auth, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: grantedConversation })}`, {});
-    const combined = await api<AccessReply>(node, auth, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: grantedConversation })}`, { crossNodeAccess: false, grant: { scope: "project", projectId: "does-not-exist" } });
+    const combined = await api<AccessReply>(node, auth, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: grantedConversation })}`, { revoke: { scope: "project", projectId: otherProject.id }, grant: { scope: "project", projectId: "does-not-exist" } });
     assert.equal(combined.status, 400, JSON.stringify(combined.body));
     const after = await api<AccessReply>(node, auth, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: grantedConversation })}`, {});
     assert.deepEqual(after.body.profile.grants!.map(({ scope }) => scope), before.body.profile.grants!.map(({ scope }) => scope), "a refused combined request must not change grants");
-    assert.equal(after.body.profile.crossNodeAccess, before.body.profile.crossNodeAccess, "a refused combined request must not change the cross-node toggle");
-
-    // Cross-node access is an independent toggle: turning it off keeps grants intact.
-    const restricted = await api<AccessReply>(node, auth, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: grantedConversation })}`, { crossNodeAccess: true });
-    assert.equal(restricted.status, 200);
-    assert.equal(restricted.body.profile.crossNodeAccess, true);
-    assert.equal(restricted.body.profile.grants!.length, 2, "grants are untouched by the cross-node toggle");
+    assert.equal(after.body.profile.grants!.length, 2);
 
     // Conversation deletion removes that conversation's assignment, not the entity or other grants.
     const sessions = await api<{ sessions: Array<{ id: string; harnessId: string; title: string }> }>(node, auth, "GET", `/projects/${project.id}/sessions`);

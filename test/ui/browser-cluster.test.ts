@@ -147,10 +147,10 @@ test("conversation browser runs independently of its agent node and stays pinned
   }
 });
 
-// Scope-grant and cross-node enforcement at the live-browser level: a restricted
-// profile stops already-queued remote commands, and a revoked grant redacts live
-// page metadata from the agent's own listing while the owner node keeps seeing it.
-test("cross-node restriction stops queued remote commands and revoked grants redact agent status", { timeout: 240000 }, async (t) => {
+// Share enforcement at the live-browser level: removing a share stops already-queued
+// remote commands, and redacts live page metadata from the agent's own listing while
+// the owner node keeps seeing it.
+test("a removed share stops queued remote commands and redacts agent status", { timeout: 240000 }, async (t) => {
   const executablePath = await chromeExecutable();
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-browser-grants-"));
   const servers: ChildProcess[] = [];
@@ -182,10 +182,10 @@ test("cross-node restriction stops queued remote commands and revoked grants red
     const agentEnv = JSON.parse(issued.stdout) as { url: string; token: string };
     const agent = async (body: unknown) => fetch(agentEnv.url, { method: "POST", headers: { Authorization: `Bearer ${agentEnv.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
     // Both queued commands travel the agent relay, so they pass the relay's own
-    // cross-node admission before the toggle and only the queue recheck can stop them.
+    // admission before the share is removed and only the queue recheck can stop them.
     const remoteCommand = (command: unknown) => agent({ operation: "command", profileId: session.profileId, command });
 
-    // A relayed start creates the profile cross-node-enabled, granted to this conversation.
+    // A relayed start creates the profile, usable by exactly this conversation.
     releaseSlow = undefined;
     const started = await (await agent({ operation: "start", url: fixtureOrigin })).json() as { session: BrowserSessionView };
     const session = started.session;
@@ -194,23 +194,21 @@ test("cross-node restriction stops queued remote commands and revoked grants red
     const projectsOnB = await api<{ projects: Array<{ id: string; name: string }> }>(b, authB, "GET", "/projects");
     const projectOnB = projectsOnB.body.projects.find(candidate => candidate.name === a.projects[0].name)!;
 
-    // Hold one remote command in flight, enqueue a second behind it, then restrict
-    // the profile: the queued command must be refused before touching the page.
+    // Hold one remote command in flight, enqueue a second behind it, then remove the
+    // conversation's share: the queued command must be refused before touching the page.
     releaseSlow = () => {};
     const first = remoteCommand({ action: "navigate", url: `${fixtureOrigin}/slow` });
     await new Promise(resolve => setTimeout(resolve, 800));
     const second = remoteCommand({ action: "evaluate", expression: "window.__queued = true" });
     await new Promise(resolve => setTimeout(resolve, 200));
-    assert.equal((await api<{ profile: { crossNodeAccess: boolean } }>(b, authB, "PUT", `/browser/profiles/${session.profileId}/access?${new URLSearchParams({ projectId: projectOnB.id, conversationId })}`, { crossNodeAccess: false })).status, 200);
+    assert.equal((await api(b, authB, "PUT", `/browser/profiles/${session.profileId}/access?${new URLSearchParams({ projectId: projectOnB.id, conversationId })}`, { revoke: { scope: "conversation", projectId: projectOnB.id, conversationId } })).status, 200);
     assert.equal((await first).status, 200, "the admitted command finishes");
     const refused = await second;
     const refusal = await refused.json() as { error: string };
     assert.equal(refused.status, 403, JSON.stringify(refusal));
-    assert.match(refusal.error, /restricted to this node/i, "a command queued before the toggle must be refused when its turn comes");
-    assert.equal((await api(b, authB, "PUT", `/browser/profiles/${session.profileId}/access?${new URLSearchParams({ projectId: projectOnB.id, conversationId })}`, { crossNodeAccess: true })).status, 200, "the owner node re-enables cross-node access");
+    assert.match(refusal.error, /revoked/i, "a command queued before the share was removed must be refused when its turn comes");
 
-    // A revoked conversation grant redacts live metadata from the agent's own status…
-    await api(b, authB, "PUT", `/browser/profiles/${session.profileId}/access?${new URLSearchParams({ projectId: projectOnB.id, conversationId })}`, { revoke: { scope: "conversation", projectId: projectOnB.id, conversationId } });
+    // The removed share redacts live metadata from the agent's own status…
     const ownerView = await api<{ session: BrowserSessionView }>(b, authB, "GET", `/browser/sessions/${session.id}?nodeId=${b.nodeId}`);
     assert.ok(ownerView.body.session.tabs.length >= 1, "the owner node still sees live tabs");
     const status = await (await agent({ operation: "status" })).json() as { sessions: BrowserSessionView[] };

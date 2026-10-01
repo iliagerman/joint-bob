@@ -35,7 +35,7 @@ async function agentCall(agent: Agent, body: unknown) {
   return { status: response.status, body: await response.json().catch(() => ({})) as Record<string, unknown> };
 }
 
-test("profile scope grants, cross-node toggle, and human takeover are enforced end to end in a real browser", { timeout: 240000 }, async t => {
+test("profile shares and human takeover are enforced end to end in a real browser", { timeout: 240000 }, async t => {
   const executablePath = await chromeExecutable();
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-profile-access-"));
   const servers: ChildProcess[] = [];
@@ -84,7 +84,7 @@ test("profile scope grants, cross-node toggle, and human takeover are enforced e
     const sessionB = (reopened.body as { session: BrowserSessionView }).session;
     assert.equal(sessionB.profileId, session.profileId);
 
-    // The viewer manages access: grant rows, removal, and the cross-node toggle.
+    // The viewer manages access: share rows, removal, and machine-wide sharing.
     // The profiles section needs a conversation browser machine preference so the
     // listing has an owner node to load from; a fresh node has none configured.
     await api(node, auth, "PUT", `/browser/preferences?${new URLSearchParams({ projectId: project.id, engine: "pi", conversationId: conversationB })}`, { nodeId: node.nodeId });
@@ -106,12 +106,17 @@ test("profile scope grants, cross-node toggle, and human takeover are enforced e
     await viewer.keyboard.press("Tab");
     assert.equal(await row.getByTestId("browser-delete-profile").evaluate(element => element === document.activeElement), true, "Tab from Access reaches Delete, matching visual action order");
     await row.getByTestId("browser-profile-access-toggle").click();
-    await row.getByTestId("browser-profile-cross-node").waitFor();
-    assert.equal(await row.getByTestId("browser-profile-cross-node").isChecked(), false, "new profiles are node-only until cross-node access is explicitly allowed");
-    await row.getByTestId("browser-profile-cross-node").click();
-    await row.getByTestId("browser-profile-access-status").filter({ hasText: /Cross-node access enabled/i }).waitFor();
+    await row.getByTestId("browser-profile-grant-scope").waitFor();
+    assert.equal(await row.getByTestId("browser-profile-cross-node").count(), 0, "sharing replaces the old relay toggle");
+    // Sharing with every conversation on the profile's machine asks first.
+    await row.getByTestId("browser-profile-grant-scope").selectOption(`node:${node.nodeId}`);
+    await row.getByTestId("browser-profile-grant-add").click();
+    await viewer.getByTestId("browser-confirm-accept").click();
+    await row.getByTestId("browser-profile-access-status").filter({ hasText: /Access granted: Every conversation on/ }).waitFor();
     const access = await api<{ profile: BrowserProfile }>(node, auth, "PUT", `/browser/profiles/${session.profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: conversationB })}`, {});
-    assert.equal(access.body.profile.crossNodeAccess, true, "the cross-node toggle writes through the UI");
+    assert.ok(access.body.profile.grants!.some(grant => grant.scope === "node" && grant.nodeId === node.nodeId), "the machine share writes through the UI");
+    await row.locator(`[data-testid="browser-profile-grant-remove"][data-scope="node:${node.nodeId}"]`).click();
+    await row.locator(`[data-testid="browser-profile-grant"][data-scope="node:${node.nodeId}"]`).waitFor({ state: "detached" });
 
     // The grant picker targets real projects and conversations by name: another
     // project, then another conversation of that other project, each removable.

@@ -7,7 +7,7 @@ import { getClusterNode } from "../../cluster.js";
 import { readBrowserClusterDefault, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema, browserClusterDefaultSchema } from "../../browser-configuration.js";
 import { browserIdentitySchema, browserStartSchema, browserCommandSchema, type BrowserActor } from "../../browser-types.js";
 import { type AuthSession } from "../../auth.js";
-import { acceptBrowserClusterDefault, configureClusterBrowserDefault, configureClusterBrowserOverride, browserRuntime, browserStatus, localBrowserStatus, configureBrowserExecutor, browserPreferences, canonicalBrowserIdentity, authorizeBrowserAgent, requireCompleteDiscovery, discoverBrowserProfiles, type BrowserDiscovery, browserOperation, browserOperationSchema, profileAccessUpdateSchema, localBrowserOperation, BrowserRequestError, browserDownload, browserSessionOwner } from "../browser.js";
+import { acceptBrowserClusterDefault, configureClusterBrowserDefault, configureClusterBrowserOverride, browserRuntime, browserStatus, localBrowserStatus, configureBrowserExecutor, browserPreferences, canonicalBrowserIdentity, authorizeBrowserAgent, relayedSessionAllowed, requireCompleteDiscovery, discoverBrowserProfiles, type BrowserDiscovery, browserOperation, browserOperationSchema, profileAccessUpdateSchema, profileChangeSchema, browserProfileDirectory, manageBrowserProfile, browserShareTargets, localBrowserOperation, BrowserRequestError, browserDownload, browserSessionOwner } from "../browser.js";
 import { clusterPeerMayAccessProject } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { browserAgentCredential, browserAgentCredentialOrigins } from "../../browser-agent.js";
@@ -21,7 +21,7 @@ function route(handler: (request: Request, response: Response) => Promise<void>)
     void handler(request, response).catch(error => {
       if (response.headersSent) { response.destroy(); return; }
       const message = error instanceof Error ? error.message.split("\n")[0] : "Browser request failed";
-      const status = error instanceof BrowserRequestError ? error.status : error instanceof z.ZodError ? 400 : /restricted to this node/i.test(message) ? 403 : /not found|unknown (browser|session|profile|download)/i.test(message) ? 404 : 409;
+      const status = error instanceof BrowserRequestError ? error.status : error instanceof z.ZodError ? 400 : /grant was revoked|not granted to this conversation|not shared with this node/i.test(message) ? 403 : /not found|unknown (browser|session|profile|download)/i.test(message) ? 404 : 409;
       sendError(response, status, error instanceof z.ZodError ? "Invalid browser request" : message);
     });
   };
@@ -96,6 +96,11 @@ app.put("/api/browser/profiles/:id/access", route(async (request,response) => {
   const args = { id: id.parse(request.params.id), projectId: query.projectId, ...(query.conversationId ? { conversationId: query.conversationId } : {}), update: profileAccessUpdateSchema.parse(request.body) };
   response.json(await browserOperation({operation:"profileAccess",args},await human(response),targetNode(request)));
 }));
+app.get("/api/browser/directory", route(async (_request,response) => { response.json(await browserProfileDirectory(await human(response))); }));
+app.get("/api/browser/share-targets", route(async (_request,response) => { await human(response); response.json(await browserShareTargets()); }));
+app.post("/api/browser/directory/:nodeId/:id", route(async (request,response) => {
+  response.json(await manageBrowserProfile(id.parse(request.params.nodeId),id.parse(request.params.id),profileChangeSchema.parse(request.body),await human(response)));
+}));
 app.get("/api/browser/sessions/:id/downloads/:downloadId", route(async (request,response) => {
   const sessionId=id.parse(request.params.id);
   const nodeId=targetNode(request) ?? await browserSessionOwner(sessionId,await human(response));
@@ -126,7 +131,7 @@ app.post("/api/cluster/browser/preferences",route(async (request,response)=>{
 app.post("/api/cluster/browser/operation",route(async (request,response)=>{
   const caller=machine(response);
   const operation=browserOperationSchema.parse(request.body), actor=actorSchema.parse(request.body.actor);
-  const identity=actor.kind==="agent" ? await authorizeBrowserAgent(operation,browserIdentitySchema.parse(request.body.identity)) : undefined;
+  const identity=actor.kind==="agent" ? await authorizeBrowserAgent(operation,browserIdentitySchema.parse(request.body.identity),caller) : undefined;
   // Agents see profiles through their conversation's grants only, never a bare project listing.
   if(identity && operation.operation==="profiles") operation.args.conversationId=identity.conversationId;
   const result=await localBrowserOperation(operation,actor,caller);
@@ -136,9 +141,8 @@ app.post("/api/cluster/browser/download",route(async (request,response)=>{
   const caller=machine(response);
   const body=z.object({id,downloadId:id}).parse(request.body);
   const session=await browserRuntime().get(body.id);
-  if (!(await clusterPeerMayAccessProject(caller,session.projectId))) throw new BrowserRequestError(403,"Project is not shared with this node");
-  if (browserRuntime().profileOrNull(session.profileId)?.crossNodeAccess===false) throw new BrowserRequestError(403,"Browser profile is restricted to this node");
-  if(request.body.identity) await authorizeBrowserAgent({operation:"get",args:{id:body.id}},browserIdentitySchema.parse(request.body.identity));
+  if (!(await relayedSessionAllowed(caller,session))) throw new BrowserRequestError(403,"Browser session is not shared with this node");
+  if(request.body.identity) await authorizeBrowserAgent({operation:"get",args:{id:body.id}},browserIdentitySchema.parse(request.body.identity),caller);
   const file=await browserRuntime().download(body.id,body.downloadId);attachment(response,file.name);response.setHeader("x-browser-filename",encodeURIComponent(file.name));
   await pipeline(createReadStream(file.path),response);
 }));
@@ -182,7 +186,7 @@ app.post("/api/browser/agent",route(async (request,response)=>{
       // Only fixed permission errors are safe to disclose. A relayed page error
       // also arrives as BrowserRequestError and can contain the filled secret.
       const text=error instanceof Error ? error.message : "";
-      if (["Browser profile grant was revoked for this conversation", "Browser profile is not granted to this conversation", "Browser profile is restricted to this node"].includes(text))
+      if (["Browser profile grant was revoked for this conversation", "Browser profile is not granted to this conversation", "Browser profile is not shared with this node"].includes(text))
         throw new BrowserRequestError(403,text);
       throw new BrowserRequestError(409,"Website credential fill failed; inspect the page and account access before continuing");
     }

@@ -96,8 +96,6 @@ test("native browser monitor remains owner-authoritative across detection, repla
         projectId: projectB.id, engine: "pi", conversationId, appNodeId: nodeB.nodeId, url: `${origin}/${route}`, profileName,
       });
       assert.equal(response.status, 201, JSON.stringify(response.body));
-      const shared = await api(nodeB, authB, "PUT", `/browser/profiles/${response.body.session.profileId}/access?projectId=${projectB.id}`, { crossNodeAccess: true });
-      assert.equal(shared.status, 200, JSON.stringify(shared.body));
       return response.body.session;
     };
     const browserCommand = async (sessionId: string, action: "takeControl" | "resumeAgent" | "close") => {
