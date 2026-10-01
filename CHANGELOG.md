@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.21.1 — 2026-10-01
 
 - Git review toolbar reorganized into rows for better alignment; shows all pending files when conversation scope is empty, with clarifying message.
 
