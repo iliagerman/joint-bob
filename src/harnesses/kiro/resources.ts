@@ -157,7 +157,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   if (agentsInfo.isSymbolicLink() || !agentsInfo.isDirectory()) throw new Error("Kiro agents path must be a real directory");
   const relativeAgents = path.relative(path.resolve(runtime.configPath), path.resolve(agents));
   if (relativeAgents.startsWith("..") || path.isAbsolute(relativeAgents)) throw new Error("Kiro agents path is outside KIRO_HOME");
-  const scoped = getScopedResourcePaths(options.projectId);
+  const scoped = getScopedResourcePaths(options.projectId, options.conversationId ?? options.sessionId);
   const instructions = await commonAgentInstructionFiles(undefined, [...scoped.global.rules, ...scoped.project.rules]);
   const resources = agentResourcePaths();
   const skillRoots = [

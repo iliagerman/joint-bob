@@ -12,6 +12,7 @@ import { configuredRuntime, detectExecutable, runtimeOverrides } from "./harness
 import type { HarnessAdapter } from "./harnesses/contract.js";
 import { decrypt, save, setting, settingsDatabase, value } from "./settings-store.js";
 import { defaultManagedHome } from "./managed-home.js";
+import { scopedSkillRoots } from "./scoped-skills.js";
 import { DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES, validSubprocessLifetime } from "../scripts/subprocess-lifetime.mjs";
 
 export interface RuntimeSettings {
@@ -231,8 +232,11 @@ export function getProjectResourcePaths(projectId: string): ResourcePaths {
   return readResourcePaths(`projects.${projectId}.resources.`);
 }
 
-export function getScopedResourcePaths(projectId?: string): ScopedResourcePaths {
-  return { global: getSettings().resources, project: projectId ? getProjectResourcePaths(projectId) : emptyResourcePaths() };
+/** Skills shared to this project's workspace or to this conversation load with the project's own. */
+export function getScopedResourcePaths(projectId?: string, conversationId?: string): ScopedResourcePaths {
+  const project = projectId ? getProjectResourcePaths(projectId) : emptyResourcePaths();
+  const scoped = scopedSkillRoots(projectId, conversationId);
+  return { global: getSettings().resources, project: scoped.length ? { ...project, skills: [...project.skills, ...scoped] } : project };
 }
 
 export function getSettings(): SettingsResponse {

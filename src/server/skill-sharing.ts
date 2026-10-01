@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -12,15 +12,27 @@ import { resolveDataDirectory } from "../data-directory.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { getSettings } from "../settings.js";
 import { pauseSyncthingFolders } from "../syncthing.js";
-import { authorizedSkillClusters, buildSkillBundle, ensureSkillSharingSchema, installSkillBundle, listReceivedSkills, setSkillShares, skillBundleDigest, skillClusterIds, skillNodeIds, validateSkillName, type ReceivedSkill } from "../skill-sharing.js";
+import { authorizedSkillClusters, buildSkillBundle, ensureSkillSharingSchema, installSkillBundle, listReceivedScopedSkills, listReceivedSkills, setSkillShares, skillBundleDigest, skillClusterIds, skillNodeIds, skillScopeGrants, validateSkillName, type ReceivedScopedSkill, type ReceivedSkill, type SkillConversationGrant, type SkillScopeGrants } from "../skill-sharing.js";
 import { backupRemovedSkill, markReceived, receivedOwner, skillSuppressed, suppressSkill, unlinkSkillAliases, unmarkReceived, withSkillMutation } from "../skill-sharing-files.js";
+import { ensureResourceSharingSchema } from "../cluster-sharing.js";
+import { scopedSkillDirectory, scopedSkillParent, writeScopedSkillIndex } from "../scoped-skills.js";
+import { mayShareProject } from "./sharing-files.js";
 import { sendError } from "./http-auth.js";
 import { app } from "./state.js";
 
 const nameSchema = z.string().min(1).max(200).refine((value) => { try { validateSkillName(value); return true; } catch { return false; } });
-const selectionSchema = z.object({ clusterIds: z.array(z.string().uuid()).max(100), nodeIds: z.array(z.string().uuid()).max(100).default([]) }).strict();
+const conversationGrantSchema = z.object({ projectId: z.string().min(1).max(200), conversationId: z.string().min(1).max(300) }).strict();
+const selectionSchema = z.object({
+  clusterIds: z.array(z.string().uuid()).max(100),
+  nodeIds: z.array(z.string().uuid()).max(100).default([]),
+  workspaceIds: z.array(z.string().min(1).max(300)).max(100).default([]),
+  conversations: z.array(conversationGrantSchema).max(200).default([]),
+}).strict();
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const manifestSchema = z.object({ ownerNodeId: z.string().uuid(), skills: z.array(z.object({ name: nameSchema, digest: digestSchema }).strict()).max(512) }).strict()
+  .refine((value) => new Set(value.skills.map((skill) => skill.name.toLowerCase())).size === value.skills.length, "Duplicate skill names");
+const scopedManifestSchema = z.object({ ownerNodeId: z.string().uuid(), skills: z.array(z.object({ name: nameSchema, digest: digestSchema,
+  projectIds: z.array(z.string().min(1).max(200)).max(500), conversations: z.array(conversationGrantSchema).max(500) }).strict()).max(512) }).strict()
   .refine((value) => new Set(value.skills.map((skill) => skill.name.toLowerCase())).size === value.skills.length, "Duplicate skill names");
 const bundleReplySchema = z.object({ name: nameSchema, digest: digestSchema, bundle: z.unknown() }).strict();
 const MAX_MANIFEST_BYTES = 128 * 1024;
@@ -101,13 +113,57 @@ async function localView() {
   for (const name of await managedNames()) {
     const source = received.find((item) => item.name === name);
     const owner = source?.ownerNodeId ?? await receivedOwner(agentResourcePaths().sharedSkills, name);
+    const scopes = owner ? { workspaceIds: [], conversations: [] } : skillScopeGrants(db, name);
     skills.push({ name, path: await realpath(path.join(agentResourcePaths().sharedSkills, name)), kind: owner ? "received" : "local",
-      clusterIds: owner ? [] : skillClusterIds(db, node.id, name), nodeIds: owner ? [] : skillNodeIds(db, node.id, name),
+      clusterIds: owner ? [] : skillClusterIds(db, node.id, name), nodeIds: owner ? [] : skillNodeIds(db, node.id, name), ...scopes,
       receivedFrom: owner, receivedFromName: owner ? nodes.get(owner)?.name ?? owner : null, lastSync: source?.updatedAt });
   }
   const peerStatus = (db.prepare("SELECT owner_node_id AS ownerNodeId,last_success AS lastSuccess,last_error AS error FROM skill_peer_status").all() as Array<{ ownerNodeId: string; lastSuccess: string | null; error: string | null }>)
     .map((status) => ({ ...status, ownerName: nodes.get(status.ownerNodeId)?.name ?? status.ownerNodeId }));
-  return { clusters, nodes: [...nodes.values()].sort((left, right) => left.name.localeCompare(right.name)), legacy: legacyStatus, skills, peerStatus };
+  // Workspaces this node owns; a received "Shared projects" workspace belongs to its owner.
+  const registry = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cluster_v2_project_workspaces'").get();
+  const workspaces = db.prepare(`SELECT w.id,w.label FROM workspaces w${registry ? " WHERE NOT EXISTS (SELECT 1 FROM cluster_v2_project_workspaces r WHERE r.workspace_id=w.id)" : ""} ORDER BY w.label,w.id`).all() as Array<{ id: string; label: string }>;
+  return { clusters, nodes: [...nodes.values()].sort((left, right) => left.name.localeCompare(right.name)), workspaces, legacy: legacyStatus, skills, peerStatus };
+}
+
+/** Where a receiver may load a skill when no cluster or node grant gives it the whole skill. */
+function scopedGrantFor(db: DatabaseSync, owner: string, receiver: string, name: string): { projectIds: string[]; conversations: SkillConversationGrant[] } {
+  const scopes = skillScopeGrants(db, name);
+  if (!scopes.workspaceIds.length && !scopes.conversations.length) return { projectIds: [], conversations: [] };
+  ensureResourceSharingSchema(db);
+  const shared = (projectId: string) => mayShareProject(db, owner, receiver, projectId);
+  const projectIds = new Set<string>();
+  const inWorkspace = db.prepare("SELECT id FROM projects WHERE workspace_id=? ORDER BY id");
+  for (const workspaceId of scopes.workspaceIds) {
+    for (const { id } of inWorkspace.all(workspaceId) as Array<{ id: string }>) if (shared(id)) projectIds.add(id);
+  }
+  const conversations = scopes.conversations.filter((item) => !projectIds.has(item.projectId) && shared(item.projectId));
+  return { projectIds: [...projectIds], conversations };
+}
+function scopedOnly(db: DatabaseSync, owner: string, receiver: string, name: string) {
+  if (authorizedSkillClusters(db, owner, receiver, name).length) return undefined;
+  const grant = scopedGrantFor(db, owner, receiver, name);
+  return grant.projectIds.length || grant.conversations.length ? grant : undefined;
+}
+
+async function scopedManifestFor(receiver: string) {
+  const db = await clusterV2Database(), owner = (await getClusterNode()).id;
+  requirePeer(db, owner, receiver);
+  await ensureLegacySkillSyncPaused();
+  return withSkillMutation(async () => {
+    const skills = [];
+    for (const name of await managedNames()) {
+      if (await receivedOwner(agentResourcePaths().sharedSkills, name)) continue;
+      if (!scopedOnly(db, owner, receiver, name)) continue;
+      const built = await buildSkillBundle(path.join(agentResourcePaths().sharedSkills, name), name);
+      const grant = scopedOnly(db, owner, receiver, name);
+      if (grant) skills.push({ name, digest: built.digest, ...grant });
+    }
+    requirePeer(db, owner, receiver);
+    const result = scopedManifestSchema.parse({ ownerNodeId: owner, skills });
+    if (Buffer.byteLength(JSON.stringify(result)) > MAX_MANIFEST_BYTES) throw failure("Skill manifest exceeds limit", 413);
+    return result;
+  });
 }
 
 async function manifestFor(receiver: string) {
@@ -131,7 +187,7 @@ async function manifestFor(receiver: string) {
 async function bundleFor(receiver: string, name: string) {
   const db = await clusterV2Database(), owner = (await getClusterNode()).id;
   const authorized = async () => {
-    if (!authorizedSkillClusters(db, owner, receiver, name).length || await receivedOwner(agentResourcePaths().sharedSkills, name)
+    if ((!authorizedSkillClusters(db, owner, receiver, name).length && !scopedOnly(db, owner, receiver, name)) || await receivedOwner(agentResourcePaths().sharedSkills, name)
       || await skillSuppressed(agentResourcePaths().sharedSkills, name)) throw failure("Forbidden", 403);
   };
   await authorized();
@@ -162,7 +218,7 @@ async function readBounded(response: Response, limit: number): Promise<unknown> 
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } finally { await reader.cancel(); }
 }
-async function signedSkillPost(db: DatabaseSync, local: string, peer: string, cluster: string, target: string, payload: unknown, limit: number) {
+async function signedSkillPost(db: DatabaseSync, local: string, peer: string, cluster: string, target: string, payload: unknown, limit: number, missingOk = false) {
   requirePeer(db, local, peer, cluster);
   const descriptor = db.prepare("SELECT url FROM cluster_v2_membership_nodes WHERE cluster_id=? AND node_id=?").get(cluster, peer) as { url: string };
   const body = Buffer.from(JSON.stringify(payload));
@@ -170,6 +226,8 @@ async function signedSkillPost(db: DatabaseSync, local: string, peer: string, cl
     method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), body,
     headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, local, peer, "POST", target, body) },
   });
+  // An owner on an older release has no scoped manifest, so it grants nothing scoped.
+  if (missingOk && response.status === 404) { await response.body?.cancel(); return null; }
   if (!response.ok) { await response.body?.cancel(); throw failure(`Cluster peer request failed (${response.status})`, 503); }
   const result = await readBounded(response, limit);
   requirePeer(db, local, peer, cluster);
@@ -210,6 +268,68 @@ async function installOffered(db: DatabaseSync, local: string, owner: string, cl
     }
   });
 }
+async function removeScoped(db: DatabaseSync, prior: ReceivedScopedSkill): Promise<void> {
+  const destination = scopedSkillDirectory(prior.name);
+  if (await existing(destination)) {
+    if ((await buildSkillBundle(destination, prior.name)).digest !== prior.digest) throw failure(`Modified received skill preserved: ${prior.name}`);
+    await backupRemovedSkill(destination);
+  }
+  await rm(scopedSkillParent(prior.name), { recursive: true, force: true });
+  db.prepare("DELETE FROM received_scoped_skills WHERE owner_node_id=? AND name=?").run(prior.ownerNodeId, prior.name);
+}
+
+type ScopedOffer = { name: string; digest: string; projectIds: string[]; conversations: SkillConversationGrant[] };
+async function installScoped(db: DatabaseSync, local: string, owner: string, cluster: string, offered: ScopedOffer): Promise<void> {
+  const destination = scopedSkillDirectory(offered.name);
+  const scope = [JSON.stringify(offered.projectIds), JSON.stringify(offered.conversations)];
+  // A scoped copy never shadows a skill every conversation here already loads.
+  const assertNoConflict = async () => {
+    const other = listReceivedScopedSkills(db).find((item) => item.name === offered.name && item.ownerNodeId !== owner);
+    if (other || (await managedNames()).includes(offered.name)) throw failure(`Skill name conflict: ${offered.name}`);
+  };
+  const unchanged = await withSkillMutation(async () => {
+    await assertNoConflict();
+    const prior = listReceivedScopedSkills(db).find((item) => item.name === offered.name);
+    if (!prior || !await existing(destination)) return false;
+    if ((await buildSkillBundle(destination, offered.name)).digest !== prior.digest) throw failure(`Modified received skill preserved: ${offered.name}`);
+    if (prior.digest !== offered.digest) return false;
+    db.prepare("UPDATE received_scoped_skills SET project_ids=?,conversations=? WHERE owner_node_id=? AND name=?").run(...scope, owner, offered.name);
+    return true;
+  });
+  if (unchanged) return;
+  const fetched = bundleReplySchema.parse(await signedSkillPost(db, local, owner, cluster, "/api/cluster/v2/skills/bundle", { name: offered.name }, MAX_BUNDLE_RESPONSE_BYTES));
+  if (fetched.name !== offered.name || fetched.digest !== offered.digest || skillBundleDigest(fetched.bundle) !== offered.digest) throw failure("Skill digest mismatch");
+  await withSkillMutation(async () => {
+    requirePeer(db, local, owner, cluster);
+    await assertNoConflict();
+    const prior = listReceivedScopedSkills(db).find((item) => item.name === offered.name);
+    if (await existing(destination)) {
+      if (!prior) throw failure(`Skill name conflict: ${offered.name}`);
+      if ((await buildSkillBundle(destination, offered.name)).digest !== prior.digest) throw failure(`Modified received skill preserved: ${offered.name}`);
+    }
+    await installSkillBundle(fetched.bundle, offered.name, destination, path.join(resolveDataDirectory(), "skill-staging"));
+    db.prepare("INSERT OR REPLACE INTO received_scoped_skills VALUES(?,?,?,?,?,?)").run(owner, offered.name, offered.digest, new Date().toISOString(), ...scope);
+  });
+}
+async function syncScopedOwner(db: DatabaseSync, local: string, owner: string, cluster: string, errors: Error[]): Promise<void> {
+  const reply = await signedSkillPost(db, local, owner, cluster, "/api/cluster/v2/skills/scoped-manifest", {}, MAX_MANIFEST_BYTES, true);
+  const manifest = reply === null ? { ownerNodeId: owner, skills: [] } : scopedManifestSchema.parse(reply);
+  if (manifest.ownerNodeId !== owner) throw failure("Peer returned the wrong owner");
+  for (const offered of manifest.skills) {
+    try { await installScoped(db, local, owner, cluster, offered); }
+    catch (error) { errors.push(error as Error); }
+  }
+  await withSkillMutation(async () => {
+    requirePeer(db, local, owner, cluster);
+    for (const prior of listReceivedScopedSkills(db).filter((item) => item.ownerNodeId === owner && !manifest.skills.some((skill) => skill.name === item.name))) {
+      try { await removeScoped(db, prior); } catch (error) { errors.push(error as Error); }
+    }
+  });
+}
+function writeScopedIndex(db: DatabaseSync): void {
+  writeScopedSkillIndex(listReceivedScopedSkills(db).map(({ name, projectIds, conversations }) => ({ name, projectIds, conversations })));
+}
+
 function recordPeerError(db: DatabaseSync, owner: string, error: unknown): void {
   db.prepare("INSERT INTO skill_peer_status(owner_node_id,last_error) VALUES(?,?) ON CONFLICT(owner_node_id) DO UPDATE SET last_error=excluded.last_error")
     .run(owner, (error as Error).message);
@@ -229,6 +349,7 @@ async function syncOwner(db: DatabaseSync, local: string, owner: string, cluster
         try { await removeReceived(db, prior); } catch (error) { errors.push(error as Error); }
       }
     });
+    await syncScopedOwner(db, local, owner, cluster, errors);
     if (errors.length) throw new Error(errors.map((error) => error.message).join("; "));
     db.prepare("INSERT OR REPLACE INTO skill_peer_status VALUES(?,?,NULL)").run(owner, new Date().toISOString());
   } catch (error) { recordPeerError(db, owner, error); }
@@ -247,26 +368,31 @@ async function syncSkills(): Promise<void> {
       try { await removeReceived(db, prior); }
       catch (error) { recordPeerError(db, prior.ownerNodeId, error); }
     }
+    for (const prior of listReceivedScopedSkills(db)) if (!peers.has(prior.ownerNodeId)) {
+      try { await removeScoped(db, prior); }
+      catch (error) { recordPeerError(db, prior.ownerNodeId, error); }
+    }
   });
   // No mutation lock spans network I/O: two owners can pull from one another.
-  await Promise.all([...peers].map(([owner, cluster]) => syncOwner(db, local, owner, cluster)));
+  try { await Promise.all([...peers].map(([owner, cluster]) => syncOwner(db, local, owner, cluster))); }
+  finally { writeScopedIndex(db); }
 }
 export async function refreshSharedSkills(): Promise<void> {
   if (!refresh) refresh = syncSkills().finally(() => { refresh = undefined; });
   return refresh;
 }
 
-async function shareSkill(name: string, ids: string[], nodeIds: string[]) {
+async function shareSkill(name: string, ids: string[], nodeIds: string[], scopes: SkillScopeGrants) {
   await ensureLegacySkillSyncPaused();
   return withSkillMutation(async () => {
     const db = await clusterV2Database(), local = (await getClusterNode()).id;
     const root = agentResourcePaths().sharedSkills;
     if (await receivedOwner(root, name)) throw failure("Received skills cannot be reshared", 403);
     if (!(await managedNames()).includes(name)) throw failure("Managed skill not found", 404);
-    if (ids.length || nodeIds.length) await buildSkillBundle(path.join(root, name), name);
-    try { setSkillShares(db, local, name, ids, nodeIds); }
+    if (ids.length || nodeIds.length || scopes.workspaceIds.length || scopes.conversations.length) await buildSkillBundle(path.join(root, name), name);
+    try { setSkillShares(db, local, name, ids, nodeIds, scopes); }
     catch (error) { throw failure((error as Error).message, 400); }
-    return { name, clusterIds: skillClusterIds(db, local, name), nodeIds: skillNodeIds(db, local, name) };
+    return { name, clusterIds: skillClusterIds(db, local, name), nodeIds: skillNodeIds(db, local, name), ...skillScopeGrants(db, name) };
   });
 }
 async function removeSkill(name: string) {
@@ -299,9 +425,13 @@ function route(action: (request: Request, response: HttpResponse) => Promise<unk
 }
 export function registerSkillSharingRoutes(): void {
 app.get("/api/resources/skills/sharing", route(async () => localView()));
-app.put("/api/resources/skills/:name/sharing", route(async (request) => { const selection = selectionSchema.parse(request.body); return shareSkill(nameSchema.parse(request.params.name), selection.clusterIds, selection.nodeIds); }));
+app.put("/api/resources/skills/:name/sharing", route(async (request) => {
+  const selection = selectionSchema.parse(request.body);
+  return shareSkill(nameSchema.parse(request.params.name), selection.clusterIds, selection.nodeIds, { workspaceIds: selection.workspaceIds, conversations: selection.conversations });
+}));
 app.delete("/api/resources/skills/:name", route(async (request) => removeSkill(nameSchema.parse(request.params.name))));
 app.post("/api/resources/skills/refresh", route(async (request) => { z.object({}).strict().parse(request.body); await refreshSharedSkills(); return localView(); }));
 app.post("/api/cluster/v2/skills/manifest", route(async (request, response) => { z.object({}).strict().parse(request.body); return manifestFor(response.locals.machineNodeId); }, true));
+app.post("/api/cluster/v2/skills/scoped-manifest", route(async (request, response) => { z.object({}).strict().parse(request.body); return scopedManifestFor(response.locals.machineNodeId); }, true));
 app.post("/api/cluster/v2/skills/bundle", route(async (request, response) => bundleFor(response.locals.machineNodeId, z.object({ name: nameSchema }).strict().parse(request.body).name), true));
 }

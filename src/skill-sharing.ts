@@ -10,9 +10,14 @@ export const MAX_SKILL_FILES = 512;
 export interface SkillBundleFile { path: string; content: string; executable: boolean }
 export interface SkillBundle { files: SkillBundleFile[] }
 export interface ReceivedSkill { ownerNodeId: string; name: string; digest: string; updatedAt: string }
+export interface SkillConversationGrant { projectId: string; conversationId: string }
+/** Grants narrower than a node: a workspace's projects, or single conversations. */
+export interface SkillScopeGrants { workspaceIds: string[]; conversations: SkillConversationGrant[] }
+export interface ReceivedScopedSkill extends ReceivedSkill { projectIds: string[]; conversations: SkillConversationGrant[] }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const skillName = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/;
+const conversationIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,299}$/;
 
 export function validateSkillName(name: string): void {
   if (!skillName.test(name) || name === "." || name === "..") throw new Error("Invalid skill name");
@@ -26,12 +31,44 @@ export function ensureSkillSharingSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS skill_shares(name TEXT NOT NULL,cluster_id TEXT NOT NULL,owner_join_sequence INTEGER NOT NULL,PRIMARY KEY(name,cluster_id));
 CREATE TABLE IF NOT EXISTS received_skills(owner_node_id TEXT NOT NULL,name TEXT NOT NULL,digest TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(owner_node_id,name),UNIQUE(name));
 CREATE TABLE IF NOT EXISTS skill_peer_status(owner_node_id TEXT PRIMARY KEY,last_success TEXT,last_error TEXT);
-CREATE TABLE IF NOT EXISTS skill_node_shares(name TEXT NOT NULL,node_id TEXT NOT NULL,cluster_id TEXT NOT NULL,owner_join_sequence INTEGER NOT NULL,receiver_join_sequence INTEGER NOT NULL,PRIMARY KEY(name,node_id));`);
+CREATE TABLE IF NOT EXISTS skill_node_shares(name TEXT NOT NULL,node_id TEXT NOT NULL,cluster_id TEXT NOT NULL,owner_join_sequence INTEGER NOT NULL,receiver_join_sequence INTEGER NOT NULL,PRIMARY KEY(name,node_id));
+CREATE TABLE IF NOT EXISTS skill_scope_shares(name TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('workspace','conversation')),target_id TEXT NOT NULL,project_id TEXT NOT NULL DEFAULT '',PRIMARY KEY(name,kind,target_id,project_id));
+CREATE TABLE IF NOT EXISTS received_scoped_skills(owner_node_id TEXT NOT NULL,name TEXT NOT NULL,digest TEXT NOT NULL,updated_at TEXT NOT NULL,project_ids TEXT NOT NULL,conversations TEXT NOT NULL,PRIMARY KEY(owner_node_id,name),UNIQUE(name));`);
 }
 
-export function setSkillShares(db: DatabaseSync, ownerNodeId: string, name: string, clusterIds: string[], nodeIds: string[] = []): void {
+function hasTable(db: DatabaseSync, name: string): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+}
+
+/** Only workspaces this node owns can be named; a received "Shared projects" workspace belongs to its owner. */
+function validateScopes(db: DatabaseSync, scopes: SkillScopeGrants): void {
+  if (new Set(scopes.workspaceIds).size !== scopes.workspaceIds.length) throw new Error("Duplicate workspace selection");
+  const conversationKeys = scopes.conversations.map((item) => `${item.projectId}\0${item.conversationId}`);
+  if (new Set(conversationKeys).size !== conversationKeys.length) throw new Error("Duplicate conversation selection");
+  const received = hasTable(db, "cluster_v2_project_workspaces") ? db.prepare("SELECT 1 FROM cluster_v2_project_workspaces WHERE workspace_id=?") : undefined;
+  for (const workspaceId of scopes.workspaceIds) {
+    if (!db.prepare("SELECT 1 FROM workspaces WHERE id=?").get(workspaceId) || received?.get(workspaceId)) throw new Error("Workspace is not on this node");
+  }
+  for (const { projectId, conversationId } of scopes.conversations) {
+    if (!conversationIdPattern.test(conversationId)) throw new Error("Invalid conversation ID");
+    if (!db.prepare("SELECT 1 FROM projects WHERE id=?").get(projectId)) throw new Error("Conversation's project is not on this node");
+  }
+}
+
+export function skillScopeGrants(db: DatabaseSync, name: string): SkillScopeGrants {
   ensureSkillSharingSchema(db);
   validateSkillName(name);
+  const rows = db.prepare("SELECT kind,target_id,project_id FROM skill_scope_shares WHERE name=? ORDER BY kind,project_id,target_id").all(name) as unknown as Array<{ kind: string; target_id: string; project_id: string }>;
+  return {
+    workspaceIds: rows.filter((row) => row.kind === "workspace").map((row) => row.target_id),
+    conversations: rows.filter((row) => row.kind === "conversation").map((row) => ({ projectId: row.project_id, conversationId: row.target_id })),
+  };
+}
+
+export function setSkillShares(db: DatabaseSync, ownerNodeId: string, name: string, clusterIds: string[], nodeIds: string[] = [], scopes: SkillScopeGrants = { workspaceIds: [], conversations: [] }): void {
+  ensureSkillSharingSchema(db);
+  validateSkillName(name);
+  validateScopes(db, scopes);
   if (new Set(clusterIds).size !== clusterIds.length) throw new Error("Duplicate cluster selection");
   if (new Set(nodeIds).size !== nodeIds.length) throw new Error("Duplicate node selection");
   const owned = listSharingMemberships(db, ownerNodeId);
@@ -61,6 +98,10 @@ export function setSkillShares(db: DatabaseSync, ownerNodeId: string, name: stri
     for (const row of rows) insert.run(name, row.clusterId, row.sequence);
     const insertNode = db.prepare("INSERT INTO skill_node_shares VALUES(?,?,?,?,?)");
     for (const row of nodeRows) insertNode.run(name, row.nodeId, row.clusterId, row.ownerSequence, row.receiverSequence);
+    db.prepare("DELETE FROM skill_scope_shares WHERE name=?").run(name);
+    const insertScope = db.prepare("INSERT INTO skill_scope_shares VALUES(?,?,?,?)");
+    for (const workspaceId of scopes.workspaceIds) insertScope.run(name, "workspace", workspaceId, "");
+    for (const item of scopes.conversations) insertScope.run(name, "conversation", item.conversationId, item.projectId);
     db.exec("RELEASE skill_share_write");
   } catch (error) {
     db.exec("ROLLBACK TO skill_share_write; RELEASE skill_share_write");
@@ -102,6 +143,13 @@ export function listReceivedSkills(db: DatabaseSync): ReceivedSkill[] {
   ensureSkillSharingSchema(db);
   const rows = db.prepare("SELECT owner_node_id,name,digest,updated_at FROM received_skills ORDER BY name").all() as unknown as Array<{owner_node_id:string;name:string;digest:string;updated_at:string}>;
   return rows.map((row) => ({ ownerNodeId: row.owner_node_id, name: row.name, digest: row.digest, updatedAt: row.updated_at }));
+}
+
+export function listReceivedScopedSkills(db: DatabaseSync): ReceivedScopedSkill[] {
+  ensureSkillSharingSchema(db);
+  const rows = db.prepare("SELECT owner_node_id,name,digest,updated_at,project_ids,conversations FROM received_scoped_skills ORDER BY name").all() as unknown as Array<{owner_node_id:string;name:string;digest:string;updated_at:string;project_ids:string;conversations:string}>;
+  return rows.map((row) => ({ ownerNodeId: row.owner_node_id, name: row.name, digest: row.digest, updatedAt: row.updated_at,
+    projectIds: JSON.parse(row.project_ids) as string[], conversations: JSON.parse(row.conversations) as SkillConversationGrant[] }));
 }
 
 function forbidden(relative: string): boolean {

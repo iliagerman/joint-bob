@@ -186,9 +186,9 @@ export async function reloadPiSkills(handle: PiSessionHandle): Promise<void> {
   } finally { handle.reloadingSkills = false; }
 }
 
-function skillsOverride(cwd: string, projectId: string, agentDir: string) {
+function skillsOverride(cwd: string, projectId: string, agentDir: string, conversationId?: string) {
   return (current: { skills: Skill[]; diagnostics: ReturnType<typeof loadSkills>["diagnostics"] }) => {
-    const configured = getScopedResourcePaths(projectId);
+    const configured = getScopedResourcePaths(projectId, conversationId);
     const roots = [agentResourcePaths().sharedSkills, ...configured.global.skills, path.join(cwd, ".pi", "skills"), ...configured.project.skills];
     const byName = new Map(current.skills.map((skill) => [skill.name, skill]));
     const diagnostics = [...current.diagnostics];
@@ -666,7 +666,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   });
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(options.cwd, agentDir);
-  const configured = getScopedResourcePaths(options.projectId);
+  const configured = getScopedResourcePaths(options.projectId, logicalConversationId);
   const commonInstructions = await commonAgentInstructionFiles(undefined, [...configured.global.rules, ...configured.project.rules]);
   const resources = piAgentResourcePaths(undefined, configured);
   const resourceLoader = new DefaultResourceLoader({
@@ -674,7 +674,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     agentDir,
     settingsManager,
     additionalExtensionPaths: resources.extensions,
-    skillsOverride: skillsOverride(options.cwd, options.projectId, agentDir),
+    skillsOverride: skillsOverride(options.cwd, options.projectId, agentDir, logicalConversationId),
     additionalPromptTemplatePaths: resources.prompts,
     additionalThemePaths: resources.themes,
     agentsFilesOverride: (current) => ({

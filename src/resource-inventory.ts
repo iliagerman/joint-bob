@@ -6,12 +6,13 @@ import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime } from "./harnesses/runtime-configuration.js";
 import { defaultSkillRoots, listSkills } from "./skills.js";
 import { getScopedResourcePaths } from "./settings.js";
+import { scopedSkillsRoot } from "./scoped-skills.js";
 import type { HarnessId } from "./types.js";
 
 /** Harnesses whose runs load MCP servers; Pi has no MCP client. */
 const MCP_HARNESSES: HarnessId[] = ["claude", "kiro"];
 
-export type SkillOrigin = "shared" | "user" | "project";
+export type SkillOrigin = "shared" | "scoped" | "user" | "project";
 
 export interface InventorySkill {
   name: string;
@@ -162,15 +163,16 @@ export async function listMcpServers(projectPath?: string, resourceRoot?: string
   return [...shared, ...groups.flat()];
 }
 
-async function inventorySkills(projectPath: string | undefined, projectId: string | undefined, sharedRoot: string): Promise<InventorySkill[]> {
-  const configured = getScopedResourcePaths(projectId);
+async function inventorySkills(projectPath: string | undefined, projectId: string | undefined, sharedRoot: string, conversationId?: string): Promise<InventorySkill[]> {
+  const configured = getScopedResourcePaths(projectId, conversationId);
   // Without a project, only user-level skills apply; a path that cannot exist keeps project roots empty.
   const summaries = await listSkills(projectPath ?? path.join(os.tmpdir(), "joint-bob-no-project"), { ...defaultSkillRoots(), shared: sharedRoot, global: configured.global.skills, project: projectPath ? configured.project.skills : [] });
   const shared = await resolved(sharedRoot);
+  const scoped = await resolved(scopedSkillsRoot());
   const byKey = new Map<string, InventorySkill>();
   for (const summary of summaries) {
     const location = await resolved(summary.path ?? "");
-    const origin: SkillOrigin = summary.scope === "project" ? "project" : inside(shared, location) ? "shared" : "user";
+    const origin: SkillOrigin = inside(scoped, location) ? "scoped" : summary.scope === "project" ? "project" : inside(shared, location) ? "shared" : "user";
     const key = `${origin}\0${summary.name}`;
     const existing = byKey.get(key);
     if (existing) { if (!existing.harnesses.includes(summary.harness)) existing.harnesses.push(summary.harness); continue; }
@@ -180,10 +182,10 @@ async function inventorySkills(projectPath: string | undefined, projectId: strin
 }
 
 /** Everything this node would load: skills per harness and MCP servers, for one project or node-wide. */
-export async function resourceInventory(options: { projectPath?: string; projectId?: string; resourceRoot?: string } = {}): Promise<ResourceInventory> {
+export async function resourceInventory(options: { projectPath?: string; projectId?: string; conversationId?: string; resourceRoot?: string } = {}): Promise<ResourceInventory> {
   const paths = agentResourcePaths(options.resourceRoot);
   const [skills, mcpServers] = await Promise.all([
-    inventorySkills(options.projectPath, options.projectId, paths.sharedSkills),
+    inventorySkills(options.projectPath, options.projectId, paths.sharedSkills, options.conversationId),
     listMcpServers(options.projectPath, options.resourceRoot),
   ]);
   const harnesses = listDiscoveredHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label, mcp: MCP_HARNESSES.includes(adapter.id) }));

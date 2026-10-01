@@ -7,7 +7,7 @@ import test from "node:test";
 import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
-test("skills & tools shows a conversation's skills and MCP servers and imports skills from a folder", { timeout: 120_000 }, async () => {
+test("Settings → Resources shows a conversation's skills and MCP servers, pages without scrolling, and imports skills from a folder", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "resources-ui-")); let server: ChildProcess | undefined; let browser;
   try {
     const environment = await seedDevEnvironment(root, 1); const node = environment.nodes[0];
@@ -26,8 +26,9 @@ test("skills & tools shows a conversation's skills and MCP servers and imports s
     await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
 
     await page.getByTestId("chat-resources-button").click();
-    const dialog = page.getByTestId("resources-dialog");
+    const dialog = page.getByTestId("resources-panel");
     await dialog.waitFor();
+    assert.equal(await page.getByTestId("settings-tab-resources").getAttribute("aria-selected"), "true", "Skills & tools opens the Resources settings page, not its own dialog");
     await page.getByTestId("resources-summary").getByText(/Internal Assistant · .+ conversation/).waitFor();
     assert.equal(await page.getByTestId("resources-scope-select").inputValue(), "conversation");
     assert.equal(await page.getByTestId("resources-harness-select").isDisabled(), true);
@@ -48,7 +49,8 @@ test("skills & tools shows a conversation's skills and MCP servers and imports s
     await page.getByTestId("resources-search-input").fill("handy");
     const skill = page.getByTestId("resources-skill-row").filter({ hasText: "handy" });
     await skill.getByText("active", { exact: true }).waitFor();
-    await skill.getByText("shared", { exact: true }).waitFor();
+    await skill.getByText("managed", { exact: true }).waitFor();
+    await skill.getByTestId("skill-sharing-summary").getByText("Local only", { exact: true }).waitFor();
 
     await page.getByTestId("resources-search-input").fill("");
     await page.getByTestId("resources-tab-mcp").click();
@@ -63,13 +65,19 @@ test("skills & tools shows a conversation's skills and MCP servers and imports s
     await page.getByTestId("resources-summary").getByText(/Every node/).waitFor();
     assert.equal(await page.getByTestId("resources-harness-select").isDisabled(), false);
 
-    for (const width of [1440, 390]) {
-      await page.setViewportSize({ width, height: 900 });
-      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      const box = await dialog.locator(".dialog-card").boundingBox();
-      assert.ok(box && box.x >= 0 && box.x + box.width <= width, `dialog fits at ${width}px`);
+    await page.getByTestId("resources-tab-skills").click();
+    for (const [width, height] of [[1440, 900], [1440, 560], [390, 900]]) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+      const box = await dialog.boundingBox();
+      assert.ok(box && box.x >= 0 && box.x + box.width <= width, `panel fits at ${width}px`);
+      const overflow = await dialog.evaluate((panel) => [panel, panel.querySelector("#resourcesList")].map((element) => element!.scrollHeight - element!.clientHeight));
+      assert.ok(overflow.every((extra) => extra <= 1), `no vertical scrolling at ${width}×${height}: ${overflow}`);
     }
-    await page.getByTestId("resources-dialog-close-button").click();
+
+    await page.getByTestId("resources-tab-paths").click();
+    await page.getByTestId("settings-resource-skills-paths").waitFor();
+    await page.getByTestId("settings-cancel-button").click();
     assert.deepEqual(errors, []);
   } finally { if (browser) await browser.close(); if (server) await stopDevNode(server); await rm(root, { recursive: true, force: true }); }
 });

@@ -50,6 +50,7 @@ export interface ClaudeRunOptions {
   projectId?: string;
   resumeSessionId?: string;
   sessionId?: string;
+  conversationId?: string;
   model?: string;
   effort?: string | null;
   /** Built-in tools Claude may use this turn; omitted means the CLI default set. */
@@ -516,6 +517,7 @@ export async function runClaudeConversationPrompt(options: ClaudeRunOptions & { 
   const conversationId = record?.conversationId ?? sessionId;
   return runClaudePrompt({
     ...options,
+    conversationId,
     model: options.model === undefined && !options.resumeSessionId ? defaults.modelId : options.model,
     effort: options.effort === undefined && !options.resumeSessionId ? defaults.thinkingLevel : options.effort,
     env: { ...options.env, ...agentCapabilityEnvironment(options.projectId, "claude", conversationId, { engine: "claude", sessionId }) },
@@ -538,7 +540,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   if (options.model) args.push("--model", options.model);
   if (options.effort) args.push("--effort", options.effort);
   if (options.tools) args.push("--tools", options.tools.join(","));
-  args.push(...claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId), options.systemInstructions));
+  args.push(...claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId, options.conversationId), options.systemInstructions));
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();

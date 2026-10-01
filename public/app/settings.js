@@ -1,5 +1,6 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { loadBrowserStatus } from "./browser.js";
+import { loadBrowserProfileDirectory } from "./browser-profiles-settings.js";
 import { fillShortcutSettings } from "./shortcut-settings.js";
 import { loadSkills } from "./composer-dialogs.js";
 import { showSignedOut } from "./auth.js";
@@ -9,6 +10,7 @@ import { elements } from "./elements.js";
 import { loadNtfyServicesPanel } from "./ntfy.js";
 import { loadMfaSettings } from "./mfa.js";
 import { loadRoutingConfigs, saveDirtyRoutingConfig } from "./routing-configs.js";
+import { showResourcesPanel } from "./resources.js";
 import { loadSecretAccounts } from "./secrets.js";
 import { confirmAction, syncNotifyButton, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -97,9 +99,11 @@ function selectSettingsTab(name) {
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
   if (elements.settingsTabsSelect) elements.settingsTabsSelect.value = name;
   if (name === "cluster" || name === "browser") void loadBrowserStatus();
+  if (name === "browser") void loadBrowserProfileDirectory();
   if (name === "notifications") void loadNtfyServicesPanel();
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "logs") renderClientLogs();
+  if (name === "resources") showResourcesPanel();
 }
 
 let runtimeDefaults;

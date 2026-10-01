@@ -874,6 +874,12 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-browser" role="tabpanel" aria-labelledby="settingsTab-browser" tabindex="0" hidden>
+          <fieldset class="phase-settings" data-testid="settings-browser-profiles">
+            <legend>Profiles</legend>
+            <p>Signed-in browser profiles on every machine you can reach. A profile's logins stay on its machine; a shared conversation anywhere opens it there. A new profile is usable only by the conversation that created it until you share it.</p>
+            <div id="browserProfileDirectory" class="secret-account-list" data-testid="browser-profile-directory"></div>
+            <p class="settings-hint" id="browserProfileDirectoryStatus" role="status" data-testid="browser-profile-directory-status"></p>
+          </fieldset>
           <fieldset class="phase-settings">
             <legend>This machine's browser machines</legend>
             <p>Choose where new browsers open from this machine, independent of where the agent runs. Choices here apply only to this machine. Conversations and individual starts can still override them, and existing accounts stay on their original machines.</p>
@@ -962,24 +968,63 @@
           </section>
         </section>
 
-        <section class="settings-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden>
-          <p>Additional to managed and native defaults. Enter one absolute file or folder per line; replace lines or add multiple folders (up to 20) per type. Project-scoped folders are additional and more specific than these global lists.</p>
-          <label>Skills
-            <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourceSkillsPaths" data-testid="settings-resource-skills-paths"></textarea><button class="ghost" type="button" id="settingsResourceSkillsBrowse" data-testid="settings-resource-skills-browse">Browse</button></span>
-          </label>
-          <p class="settings-hint">Save settings first when changing load paths. Sync local skills publishes entire trusted skill folders (including executable scripts) to the Syncthing-managed shared skills folder. Local sources stay untouched; matching shared skills are backed up and replaced. Removed local skills do not delete shared copies. Sync again after local edits. Scripts are shared with paired nodes.</p>
-          <div class="github-group-actions"><button class="ghost" type="button" id="settingsResourcesButton" data-testid="settings-resources-button">View &amp; add skills and tools</button><button class="ghost" type="button" id="settingsSyncSkillsButton" data-testid="settings-sync-skills-button">Sync local skills</button><button class="ghost" type="button" id="settingsReloadSkillsButton" data-testid="settings-reload-skills-button">Reload skills</button></div>
-          <p class="settings-hint">Reload updates idle Pi sessions on this node. Peers need Reload skills after Syncthing finishes.</p>
-          <p id="settingsSkillsStatus" data-testid="settings-skills-status" role="status" aria-live="polite"></p>
-          <label>Prompts
-            <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourcePromptsPaths" data-testid="settings-resource-prompts-paths"></textarea><button class="ghost" type="button" id="settingsResourcePromptsBrowse" data-testid="settings-resource-prompts-browse">Browse</button></span>
-          </label>
-          <label>Rules
-            <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourceRulesPaths" data-testid="settings-resource-rules-paths"></textarea><button class="ghost" type="button" id="settingsResourceRulesBrowse" data-testid="settings-resource-rules-browse">Browse</button></span>
-          </label>
-          <label>Plugins
-            <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourcePluginsPaths" data-testid="settings-resource-plugins-paths"></textarea><button class="ghost" type="button" id="settingsResourcePluginsBrowse" data-testid="settings-resource-plugins-browse">Browse</button></span>
-          </label>
+        <section class="settings-panel resources-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden data-testid="resources-panel">
+          <p class="settings-hint" id="resourcesSummary" data-testid="resources-summary"></p>
+          <div class="resources-toolbar">
+            <select id="resourcesScopeSelect" aria-label="Show resources for" data-testid="resources-scope-select">
+              <option value="conversation">This conversation</option>
+              <option value="project">This project, every node</option>
+              <option value="cluster">Every node</option>
+            </select>
+            <select id="resourcesHarnessSelect" aria-label="Agent" data-testid="resources-harness-select"></select>
+            <label class="search-shell" for="resourcesSearchInput">
+              <span class="sr-only">Search skills and tools</span>
+              <input id="resourcesSearchInput" type="search" autocomplete="off" placeholder="Search" data-testid="resources-search-input" />
+            </label>
+            <button class="ghost compact" type="button" id="resourcesRefreshButton" data-testid="resources-refresh-button">Refresh</button>
+          </div>
+          <div class="resources-tabs" role="tablist" aria-label="Resource types">
+            <button type="button" role="tab" data-resources-tab="skills" aria-selected="true" data-testid="resources-tab-skills">Skills <span id="resourcesSkillsCount"></span></button>
+            <button type="button" role="tab" data-resources-tab="mcp" aria-selected="false" data-testid="resources-tab-mcp">MCP servers <span id="resourcesMcpCount"></span></button>
+            <button type="button" role="tab" data-resources-tab="add" aria-selected="false" data-testid="resources-tab-add">+ Add skills</button>
+            <button type="button" role="tab" data-resources-tab="paths" aria-selected="false" data-testid="resources-tab-paths">Load paths</button>
+          </div>
+          <div class="resources-share-bar" id="resourcesShareBar" data-testid="resources-share-bar" hidden></div>
+          <div class="resources-list resources-page" id="resourcesList" role="tabpanel" data-testid="resources-list"></div>
+          <div class="resources-pager" id="resourcesListPager" data-testid="resources-list-pager" hidden></div>
+          <section class="resources-add" id="resourcesAddPanel" role="tabpanel" data-testid="resources-add-panel" hidden>
+            <label>Bring skills from a folder on this node
+              <span class="folder-input-row"><input id="resourcesScanPath" type="text" autocomplete="off" spellcheck="false" value="~/.agents/skills" data-testid="resources-scan-path" /><button class="ghost" type="button" id="resourcesScanButton" data-testid="resources-scan-button">Scan</button></span>
+            </label>
+            <div class="resources-sources" id="resourcesScanSources" data-testid="resources-scan-sources"></div>
+            <div class="resources-list resources-page" id="resourcesScanList" data-testid="resources-scan-list"></div>
+            <div class="resources-pager" id="resourcesScanPager" data-testid="resources-scan-pager" hidden></div>
+            <div class="github-group-actions">
+              <button class="ghost" type="button" id="resourcesSelectNewButton" data-testid="resources-select-new-button">Select new and changed</button>
+              <button class="primary" type="button" id="resourcesImportButton" data-testid="resources-import-button" disabled>Import selected</button>
+            </div>
+            <p class="settings-hint">Import copies whole skill folders, scripts included, into this node's managed skills. Every agent on this node sees them; they stay on this node until you share them from the Skills tab.</p>
+          </section>
+          <section class="resources-paths" id="resourcesPathsPanel" role="tabpanel" data-testid="resources-paths-panel" hidden>
+            <p>Additional to managed and native defaults. Enter one absolute file or folder per line; replace lines or add multiple folders (up to 20) per type. Project-scoped folders are additional and more specific than these global lists.</p>
+            <label>Skills
+              <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourceSkillsPaths" data-testid="settings-resource-skills-paths"></textarea><button class="ghost" type="button" id="settingsResourceSkillsBrowse" data-testid="settings-resource-skills-browse">Browse</button></span>
+            </label>
+            <p class="settings-hint">Save settings first when changing load paths. Sync local skills copies whole skill folders from these paths, scripts included, into this node's managed skills. They stay on this node until you share them from the Skills tab. Local sources stay untouched; matching managed skills are backed up and replaced.</p>
+            <div class="github-group-actions"><button class="ghost" type="button" id="settingsSyncSkillsButton" data-testid="settings-sync-skills-button">Sync local skills</button><button class="ghost" type="button" id="settingsReloadSkillsButton" data-testid="settings-reload-skills-button">Reload skills</button></div>
+            <p class="settings-hint">Reload updates idle Pi sessions on this node. Claude and Kiro pick up changes on their next run.</p>
+            <p id="settingsSkillsStatus" data-testid="settings-skills-status" role="status" aria-live="polite"></p>
+            <label>Prompts
+              <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourcePromptsPaths" data-testid="settings-resource-prompts-paths"></textarea><button class="ghost" type="button" id="settingsResourcePromptsBrowse" data-testid="settings-resource-prompts-browse">Browse</button></span>
+            </label>
+            <label>Rules
+              <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourceRulesPaths" data-testid="settings-resource-rules-paths"></textarea><button class="ghost" type="button" id="settingsResourceRulesBrowse" data-testid="settings-resource-rules-browse">Browse</button></span>
+            </label>
+            <label>Plugins
+              <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourcePluginsPaths" data-testid="settings-resource-plugins-paths"></textarea><button class="ghost" type="button" id="settingsResourcePluginsBrowse" data-testid="settings-resource-plugins-browse">Browse</button></span>
+            </label>
+          </section>
+          <p class="resources-status" id="resourcesStatus" role="status" aria-live="polite" data-testid="resources-status"></p>
         </section>
 
         <section class="settings-panel" id="settingsPanel-shortcuts" role="tabpanel" aria-labelledby="settingsTab-shortcuts" tabindex="0" hidden>
@@ -1210,58 +1255,6 @@
         <div class="tools-dialog-list" id="toolsDialogList"></div>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="closeToolsDialogButton" data-testid="tools-dialog-close-button">Close</button>
-        </div>
-      </div>
-    </dialog>
-
-    <dialog id="resourcesDialog" data-testid="resources-dialog">
-      <div class="dialog-card resources-card">
-        <div>
-          <span class="eyebrow">Skills &amp; tools</span>
-          <h2 id="resourcesDialogTitle">Skills &amp; tools</h2>
-          <p class="settings-hint" id="resourcesDialogSummary" data-testid="resources-summary"></p>
-        </div>
-        <div class="resources-toolbar">
-          <select id="resourcesScopeSelect" aria-label="Show resources for" data-testid="resources-scope-select">
-            <option value="conversation">This conversation</option>
-            <option value="project">This project, every node</option>
-            <option value="cluster">Every node</option>
-          </select>
-          <select id="resourcesHarnessSelect" aria-label="Agent" data-testid="resources-harness-select"></select>
-          <label class="search-shell" for="resourcesSearchInput">
-            <span class="sr-only">Search skills and tools</span>
-            <input id="resourcesSearchInput" type="search" autocomplete="off" placeholder="Search" data-testid="resources-search-input" />
-          </label>
-        </div>
-        <div class="resources-tabs" role="tablist" aria-label="Resource types">
-          <button type="button" role="tab" data-resources-tab="skills" aria-selected="true" data-testid="resources-tab-skills">Skills <span id="resourcesSkillsCount"></span></button>
-          <button type="button" role="tab" data-resources-tab="mcp" aria-selected="false" data-testid="resources-tab-mcp">MCP servers <span id="resourcesMcpCount"></span></button>
-          <button type="button" role="tab" data-resources-tab="add" aria-selected="false" data-testid="resources-tab-add">+ Add</button>
-        </div>
-        <div class="resources-share-bar" id="resourcesShareBar" data-testid="resources-share-bar" hidden></div>
-        <div class="resources-list" id="resourcesList" role="tabpanel" data-testid="resources-list"></div>
-        <div class="resources-pager" id="resourcesListPager" data-testid="resources-list-pager" hidden></div>
-        <section class="resources-add" id="resourcesAddPanel" role="tabpanel" data-testid="resources-add-panel" hidden>
-          <label>Bring skills from a folder on this node
-            <span class="folder-input-row"><input id="resourcesScanPath" type="text" autocomplete="off" spellcheck="false" value="~/.agents/skills" data-testid="resources-scan-path" /><button class="ghost" type="button" id="resourcesScanButton" data-testid="resources-scan-button">Scan</button></span>
-          </label>
-          <div class="resources-sources" id="resourcesScanSources" data-testid="resources-scan-sources"></div>
-          <div class="resources-list" id="resourcesScanList" data-testid="resources-scan-list"></div>
-          <div class="resources-pager" id="resourcesScanPager" data-testid="resources-scan-pager" hidden></div>
-          <div class="github-group-actions">
-            <button class="ghost" type="button" id="resourcesSelectNewButton" data-testid="resources-select-new-button">Select new and changed</button>
-            <button class="primary" type="button" id="resourcesImportButton" data-testid="resources-import-button" disabled>Import selected</button>
-          </div>
-          <p class="settings-hint">Import copies whole skill folders, scripts included, into the managed skills folder. Every agent on this node sees them; they stay on this node until you share them from the Skills tab. Idle Pi sessions reload right away; Claude and Kiro pick them up on their next run.</p>
-          <h3 class="resources-subheading">Share MCP servers</h3>
-          <p class="settings-hint">These servers are configured for only one agent on this node. Sharing a server adds it to the shared MCP config, which Claude and Kiro load on every node. Its command, arguments, headers and environment values are copied as they are.</p>
-          <div class="resources-list" id="resourcesMcpShareList" data-testid="resources-mcp-share-list"></div>
-          <div class="github-group-actions"><button class="ghost" type="button" id="resourcesShareMcpButton" data-testid="resources-share-mcp-button" disabled>Share selected</button></div>
-        </section>
-        <p class="resources-status" id="resourcesStatus" role="status" aria-live="polite" data-testid="resources-status"></p>
-        <div class="dialog-actions">
-          <button class="ghost" type="button" id="resourcesRefreshButton" data-testid="resources-refresh-button">Refresh</button>
-          <button class="ghost" type="button" id="closeResourcesDialogButton" data-testid="resources-dialog-close-button">Close</button>
         </div>
       </div>
     </dialog>

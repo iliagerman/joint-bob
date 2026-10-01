@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Skills, MCP servers, and browser profiles can now be shared with individual conversations and workspaces for finer access control than cluster-wide sharing.
+
 ## 2.24.0 — 2026-10-01
 
 - Secret accounts now support Stripe and Cloudflare as providers for managing API keys.

@@ -25,7 +25,7 @@ interface NodeInventory {
   error?: string;
 }
 
-const inventoryQuerySchema = z.object({ projectId: z.string().min(1).max(200).optional(), cluster: z.enum(["0", "1"]).optional() }).strict();
+const inventoryQuerySchema = z.object({ projectId: z.string().min(1).max(200).optional(), conversationId: z.string().min(1).max(300).optional(), cluster: z.enum(["0", "1"]).optional() }).strict();
 const peerInventorySchema = z.object({ projectId: z.string().min(1).max(200).optional() }).strict();
 const scanQuerySchema = z.object({ path: z.string().min(1).max(4096) }).strict();
 const shareMcpSchema = z.object({ file: z.string().min(1).max(4096), names: z.array(z.string().min(1).max(200)).min(1).max(100), projectId: z.string().min(1).max(200).optional() }).strict();
@@ -35,9 +35,9 @@ function expandHome(candidate: string): string {
   return candidate.startsWith("~/") ? path.join(os.homedir(), candidate.slice(2)) : candidate;
 }
 
-async function localInventory(projectId?: string): Promise<ResourceInventory> {
+async function localInventory(projectId?: string, conversationId?: string): Promise<ResourceInventory> {
   const project = projectId ? await getProject(projectId) : undefined;
-  return resourceInventory(project ? { projectPath: project.path, projectId: project.id } : {});
+  return resourceInventory(project ? { projectPath: project.path, projectId: project.id, conversationId } : {});
 }
 
 app.get("/api/resources/inventory", async (request, response, next) => {
@@ -45,7 +45,7 @@ app.get("/api/resources/inventory", async (request, response, next) => {
     const query = inventoryQuerySchema.parse(request.query);
     if (query.projectId && !await getProject(query.projectId)) { sendError(response, 404, "Project not found"); return; }
     const local = await getClusterNode();
-    const nodes: NodeInventory[] = [{ node: { id: local.id, name: local.name, local: true, online: true }, inventory: await localInventory(query.projectId) }];
+    const nodes: NodeInventory[] = [{ node: { id: local.id, name: local.name, local: true, online: true }, inventory: await localInventory(query.projectId, query.conversationId) }];
     if (query.cluster === "1") {
       const peers = await listRuntimePeers(query.projectId);
       nodes.push(...await Promise.all(peers.map(async (peer): Promise<NodeInventory> => {
@@ -81,7 +81,8 @@ app.post(["/api/cluster/resources/inventory", "/api/cluster/v2/runtime/resources
     const received = new Set(listReceivedSkills(db).map((skill) => skill.name));
     // A node-wide inventory must not disclose user/native names. Managed received
     // skills are not relayable, and owner skills appear only under an explicit grant.
-    const skills = inventory.skills.filter((skill) => skill.origin === "project"
+    // Scoped copies were granted to this node's conversations, not to its peers.
+    const skills = inventory.skills.filter((skill) => skill.origin === "scoped" ? false : skill.origin === "project"
       ? Boolean(projectId)
       : skill.origin === "shared" && !received.has(skill.name) && authorizedSkillClusters(db, local.id, sender, skill.name).length > 0);
     response.json({ ...inventory, skills: skills.map((skill) => ({ ...skill, path: "" })), mcpServers: inventory.mcpServers.map((server) => ({ ...server, file: "" })), sharedSkillsPath: "", mcpConfigPath: "" });
