@@ -3,12 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Usage dashboard redesigned to fit the window without scrolling: every dimension pages rows now, cluster dropdown is readable, Compare periods tab shows month and week to date against prior periods with trend deltas, pagination adapts to screen height, and dates are bucketed in your local timezone.
-
 ## 2.22.0 — 2026-10-01
 
+- Usage dashboard redesigned to fit the window without scrolling: every dimension pages rows now, cluster dropdown is readable, Compare periods tab shows month and week to date against prior periods with trend deltas, pagination adapts to screen height, and dates are bucketed in your local timezone.
 - Browser machines have their own **Settings → Browser** tab. Choices made there apply only to that machine and no longer sync to twins; defaults copied from other machines by earlier releases are cleared.
 - For a project shared in a cluster, the cluster's default browser machine now wins over a machine's own default, and each machine can replace it for one cluster without affecting other members. Projects in no cluster, or whose clusters have no default, use the machine's own default.
 - Cluster default browser machines are set in **Settings → Cluster → Browser machine defaults**.
