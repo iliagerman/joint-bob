@@ -1978,9 +1978,7 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 }
 .settings-tab:hover { color: var(--text); }
 .settings-tab[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.18)); }
-/* Sub-tabs inside one settings panel: secret types, installed harnesses. Same segmented
-   control as the outer tab strip, one size down. Secret tabs mark the current one with
-   aria-pressed, harness tabs with aria-selected; both read as the same pill. */
+/* Harness sub-tabs use the same segmented control as the outer tab strip, one size down. */
 .settings-subtabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .settings-subtab { flex: 0 0 auto; min-height: 32px; padding: 0 12px; border: 0; border-radius: calc(var(--radius-ctl) - 3px); background: transparent; color: var(--muted); font-size: 12px; font-weight: 550; cursor: pointer; transition: color 140ms ease, background-color 140ms ease; }
 .settings-subtab:hover { color: var(--text); }
@@ -2036,6 +2034,9 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .changelog-entry li { color: var(--text); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .changelog-entry ul:empty { display: none; }
 
+.secret-type-picker { width: min(240px, 100%); }
+.secret-type-select :is(.searchable-select-trigger, .searchable-select-option) { display: flex; align-items: center; gap: 10px; }
+.secret-type-select .secret-provider-icon, .secret-type-select .row-menu-icon { flex: 0 0 18px; width: 18px; height: 18px; }
 .secret-account-list, .secret-scope-list { display: grid; gap: 8px; }
 .secret-sharing-card { width: min(480px, calc(100vw - 24px)); max-height: min(75vh, 680px); overflow-y: auto; }
 .secret-sharing-card fieldset { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 10px 12px; }

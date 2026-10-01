@@ -7,7 +7,7 @@ import { type Browser } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
-test("Stripe and Cloudflare tabs create API-key accounts with distinct icons", { timeout: 240_000 }, async () => {
+test("searchable secret-type picker filters accounts and starts new accounts on the chosen provider", { timeout: 240_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-stripe-secrets-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
@@ -25,7 +25,18 @@ test("Stripe and Cloudflare tabs create API-key accounts with distinct icons", {
     await page.getByText("Internal Assistant", { exact: true }).waitFor();
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-secrets").click();
-    await page.getByTestId("secret-tab-stripe").click();
+    const picker = page.getByTestId("secret-type-select");
+    assert.equal(await page.locator("#secretTypeTabs").count(), 0, "old tab row is gone");
+    assert.equal(await picker.getAttribute("data-value"), "all");
+    await picker.click();
+    const search = page.getByTestId("secret-type-select-search");
+    await search.fill("stri");
+    const options = page.getByTestId("secret-type-select-option");
+    assert.deepEqual(await options.allTextContents(), ["Stripe"]);
+    assert.ok((await options.first().locator("svg path").getAttribute("d"))?.startsWith("M19.9 4.4"), "Stripe option uses brand icon");
+    await options.first().click();
+    assert.equal(await picker.getAttribute("data-value"), "stripe");
+    assert.ok((await picker.locator("svg path").getAttribute("d"))?.startsWith("M19.9 4.4"), "chosen provider has an icon");
     await page.getByTestId("secret-account-list").getByText("No Stripe accounts.").waitFor();
     await page.getByTestId("secret-account-add-button").click();
     assert.equal(await page.getByTestId("secret-account-provider-input").inputValue(), "stripe");
@@ -51,7 +62,11 @@ test("Stripe and Cloudflare tabs create API-key accounts with distinct icons", {
     assert.equal(await page.getByTestId("secret-variable-name-input").inputValue(), "STRIPE_API_KEY");
     await page.getByTestId("secret-account-cancel-button").click();
 
-    await page.getByTestId("secret-tab-cloudflare").click();
+    await picker.click();
+    await search.fill("cloud");
+    assert.deepEqual(await options.allTextContents(), ["Cloudflare"]);
+    assert.ok((await options.first().locator("svg path").getAttribute("d"))?.startsWith("M20.2 13.2"));
+    await options.first().click();
     await page.getByTestId("secret-account-list").getByText("No Cloudflare accounts.").waitFor();
     await page.getByTestId("secret-account-add-button").click();
     assert.equal(await page.getByTestId("secret-account-provider-input").inputValue(), "cloudflare");
@@ -70,6 +85,13 @@ test("Stripe and Cloudflare tabs create API-key accounts with distinct icons", {
     const cloudflareRow = page.getByTestId("secret-account-list").locator('.secret-account-row[data-provider="cloudflare"]');
     await cloudflareRow.getByText("Cloudflare test · Cloudflare").waitFor();
     assert.ok((await cloudflareRow.getByTestId("secret-account-provider-badge").locator("svg path").getAttribute("d"))?.startsWith("M20.2 13.2"));
+    await picker.click();
+    await search.fill("missing provider");
+    assert.equal(await page.getByTestId("secret-type-select-options").innerText(), "No types found");
+    await search.fill("all");
+    await options.first().click();
+    assert.equal(await picker.getAttribute("data-value"), "all");
+    await cloudflareRow.waitFor();
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

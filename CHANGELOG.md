@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Secret type filtering in Settings now uses a searchable picker instead of fixed buttons.
+
 ## 2.28.1 — 2026-10-01
 
 - Git review now syncs with GitHub to fetch pull requests and check status in real time, with fixed route signing for proper authentication.

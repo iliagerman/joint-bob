@@ -5,7 +5,7 @@
  *
  * Options are `{ value, label, detail? }`; search matches label, value, and detail.
  */
-export function createSearchableSelect({ id, testid, label, prompt = "Choose…", placeholder = "Search", emptyText = "No matches", optionTestid = `${testid}-option`, listTestid = `${testid}-options` }) {
+export function createSearchableSelect({ id, testid, label, prompt = "Choose…", placeholder = "Search", emptyText = "No matches", optionTestid = `${testid}-option`, listTestid = `${testid}-options`, icon }) {
   const root = document.createElement("div");
   root.className = "searchable-select";
   const trigger = document.createElement("button");
@@ -31,7 +31,7 @@ export function createSearchableSelect({ id, testid, label, prompt = "Choose…"
   const selected = () => options.find((option) => option.value === trigger.dataset.value);
   const showSelected = () => {
     const label = selected()?.label ?? trigger.dataset.value;
-    trigger.textContent = label || prompt;
+    trigger.replaceChildren(...(label && icon ? [icon(trigger.dataset.value)] : []), document.createTextNode(label || prompt));
     trigger.classList.toggle("empty", !label);
   };
 
@@ -64,7 +64,8 @@ export function createSearchableSelect({ id, testid, label, prompt = "Choose…"
       item.type = "button"; item.role = "option"; item.id = `${id}Option${index}`; item.tabIndex = -1;
       item.className = "searchable-select-option"; item.dataset.testid = optionTestid; item.dataset.value = option.value;
       item.setAttribute("aria-selected", String(option.value === trigger.dataset.value));
-      item.textContent = option.label;
+      if (icon) item.append(icon(option.value));
+      item.append(document.createTextNode(option.label));
       if (option.detail && option.detail !== option.label) {
         const detail = document.createElement("span"); detail.className = "searchable-select-option-detail"; detail.textContent = option.detail; item.append(detail);
       }

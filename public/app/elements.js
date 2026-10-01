@@ -191,7 +191,7 @@ export const elements = {
   workspaceList: document.querySelector("#workspaceList"),
   workspaceNameInput: document.querySelector("#workspaceNameInput"),
   workspaceAddButton: document.querySelector("#workspaceAddButton"),
-  secretTypeTabs: Array.from(document.querySelectorAll("[data-secret-tab]")),
+  secretTypePicker: document.querySelector("#secretTypePicker"),
   harnessTabs: Array.from(document.querySelectorAll("#harnessTabs [data-harness-tab]")),
   settingsRuntimeStatus: document.querySelector("#settingsRuntimeStatus"),
   settingsCheckRuntimePathsButton: document.querySelector("#settingsCheckRuntimePathsButton"),

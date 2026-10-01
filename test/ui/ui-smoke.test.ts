@@ -213,11 +213,14 @@ test("settings sub-tabs, shortcut search, and the account panel stay focused", a
   assert.ok(await page.getByTestId("settings-change-password-button").isVisible());
   assert.equal(await page.locator("#settingsPanel-account").getByText("Revoke").count(), 0, "no per-session revoke buttons");
 
-  // Secrets: one tab per secret type.
+  // Secrets: search the type picker to narrow the account list.
   await page.getByTestId("settings-tab-secrets").click();
-  await page.getByTestId("secret-tab-github").click();
+  await page.getByTestId("secret-type-select").click();
+  await page.getByTestId("secret-type-select-search").fill("github");
+  await page.getByTestId("secret-type-select-option").click();
   await page.getByTestId("secret-account-list").getByText("No GitHub accounts.").waitFor();
-  await page.getByTestId("secret-tab-all").click();
+  await page.getByTestId("secret-type-select").click();
+  await page.getByTestId("secret-type-select-option").filter({ hasText: "All types" }).click();
 
   // Shortcuts: the search box fuzzy-filters the command rows.
   await page.getByTestId("settings-tab-shortcuts").click();

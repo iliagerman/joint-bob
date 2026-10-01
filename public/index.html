@@ -781,16 +781,7 @@
 
         <section class="settings-panel" id="settingsPanel-secrets" role="tabpanel" aria-labelledby="settingsTab-secrets" tabindex="0" hidden>
           <p>Named AWS, Google, GitHub, Stripe, Cloudflare, website, and custom accounts are encrypted and stay on this node unless you mark one to replicate. Attach them to a workspace, a project, or a single conversation.</p>
-          <div class="settings-subtabs" role="group" aria-label="Secret types" id="secretTypeTabs">
-            <button class="settings-subtab" type="button" data-secret-tab="all" aria-pressed="true" data-testid="secret-tab-all">All</button>
-            <button class="settings-subtab" type="button" data-secret-tab="aws" aria-pressed="false" data-testid="secret-tab-aws">AWS</button>
-            <button class="settings-subtab" type="button" data-secret-tab="google" aria-pressed="false" data-testid="secret-tab-google">Google</button>
-            <button class="settings-subtab" type="button" data-secret-tab="github" aria-pressed="false" data-testid="secret-tab-github">GitHub</button>
-            <button class="settings-subtab" type="button" data-secret-tab="stripe" aria-pressed="false" data-testid="secret-tab-stripe">Stripe</button>
-            <button class="settings-subtab" type="button" data-secret-tab="cloudflare" aria-pressed="false" data-testid="secret-tab-cloudflare">Cloudflare</button>
-            <button class="settings-subtab" type="button" data-secret-tab="website" aria-pressed="false" data-testid="secret-tab-website">Website</button>
-            <button class="settings-subtab" type="button" data-secret-tab="custom" aria-pressed="false" data-testid="secret-tab-custom">Custom</button>
-          </div>
+          <div id="secretTypePicker" class="secret-type-picker"></div>
           <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><div class="github-group-actions"><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button></div></fieldset>
         </section>
 

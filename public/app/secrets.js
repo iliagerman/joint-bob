@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
-import { brandIcon, brandIconPaths } from "./icons.js";
+import { brandIcon, brandIconPaths, menuIcon } from "./icons.js";
+import { createSearchableSelect } from "./searchable-select.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 
@@ -12,7 +13,7 @@ let creatingForProjectId = null;
 // Set while the account form was opened from a picker that wants the new account ticked.
 let onAccountSaved = null;
 let secretScopeTarget = null;
-// Which provider tab Settings shows; "all" lists every account.
+// Which provider Settings shows; "all" lists every account.
 let secretTypeFilter = "all";
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
@@ -192,16 +193,20 @@ export async function loadSecretAccounts() {
   renderSecretAccounts();
 }
 
-/** The provider tabs above the list: one per secret type, plus "all". */
-function selectSecretTypeTab(name) {
-  secretTypeFilter = name;
-  for (const tab of elements.secretTypeTabs) {
-    const selected = tab.dataset.secretTab === name;
-    tab.setAttribute("aria-pressed", selected ? "true" : "false");
-  }
-  renderSecretAccounts();
-}
-for (const tab of elements.secretTypeTabs) tab.addEventListener("click", () => selectSecretTypeTab(tab.dataset.secretTab));
+const secretTypePicker = createSearchableSelect({
+  id: "secretTypeSelect", testid: "secret-type-select", label: "Secret type",
+  placeholder: "Search secret types", emptyText: "No types found",
+  icon: (provider) => provider === "all" ? menuIcon("key") : providerIcon(provider),
+});
+secretTypePicker.root.classList.add("secret-type-select");
+secretTypePicker.setOptions([
+  { value: "all", label: "All types" },
+  ...Object.entries(providerLabels).map(([value, label]) => ({ value, label })),
+]);
+// Icons are initialized after the module graph finishes loading (icons.js is cyclic).
+queueMicrotask(() => secretTypePicker.setValue("all"));
+secretTypePicker.onChange((name) => { secretTypeFilter = name; renderSecretAccounts(); });
+elements.secretTypePicker.append(secretTypePicker.root);
 
 async function deleteSecretAccount(account) {
   const confirmed = await confirmAction({
@@ -238,7 +243,7 @@ function openSecretAccount(account = null, projectId = null, onSaved = null) {
   elements.secretAccountTitle.textContent = account ? "Edit secret account" : projectId ? "Add project secret" : "Add secret account";
   elements.secretAccountLabelInput.value = account?.label ?? "";
   elements.secretAccountOriginInput.value = account?.websiteOrigin ?? "";
-  // A provider tab opened from the list starts the form on that provider; "all" keeps AWS.
+  // A provider selected above the list starts the form on that provider; "all" keeps AWS.
   elements.secretAccountProviderInput.value = account?.provider ?? (secretTypeFilter === "all" ? "aws" : secretTypeFilter);
   // Node-local is the default, so a new account never leaves this node by accident.
   // Project-owned accounts never leave this node either, so the toggle is locked off for them.
