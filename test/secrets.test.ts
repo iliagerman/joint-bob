@@ -134,6 +134,36 @@ test("a GitHub token produces the whole git push contract, and no token produces
   });
 });
 
+test("Stripe API keys are redacted and exported only for attached projects", async () => {
+  await withSecrets("stripe", async (secrets) => {
+    const account = await secrets.saveSecretAccount({ label: "Stripe test", provider: "stripe", variables: [{ name: "STRIPE_API_KEY", kind: "value", value: "sk_test_synthetic" }] });
+    assert.deepEqual((await secrets.listSecretAccounts()).find((item) => item.id === account.id), account);
+    assert.equal(secrets.genericSecretEnvironment("project-a").STRIPE_API_KEY, undefined);
+    await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+    assert.equal(secrets.genericSecretEnvironment("project-a").STRIPE_API_KEY, "sk_test_synthetic");
+    const context = secrets.agentCredentialContext("project-a");
+    assert.match(context, /stripe.*STRIPE_API_KEY.*Stripe CLI or SDK/);
+    assert.doesNotMatch(context, /sk_test_synthetic/);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Typo", provider: "stripe", variables: [{ name: "STRIPE_KEY", kind: "value", value: "sk_test_other" }] }), /exactly one STRIPE_API_KEY/);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "File", provider: "stripe", variables: [{ name: "STRIPE_API_KEY", kind: "file", value: "sk_test_other" }] }), /exactly one STRIPE_API_KEY/);
+  });
+});
+
+test("Cloudflare API keys are redacted and exported only for attached projects", async () => {
+  await withSecrets("cloudflare", async (secrets) => {
+    const account = await secrets.saveSecretAccount({ label: "Cloudflare test", provider: "cloudflare", variables: [{ name: "CLOUDFLARE_API_KEY", kind: "value", value: "synthetic-cf-key" }] });
+    assert.deepEqual((await secrets.listSecretAccounts()).find((item) => item.id === account.id), account);
+    assert.equal(secrets.genericSecretEnvironment("project-a").CLOUDFLARE_API_KEY, undefined);
+    await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+    assert.equal(secrets.genericSecretEnvironment("project-a").CLOUDFLARE_API_KEY, "synthetic-cf-key");
+    const context = secrets.agentCredentialContext("project-a");
+    assert.match(context, /cloudflare.*CLOUDFLARE_API_KEY.*Cloudflare API/);
+    assert.doesNotMatch(context, /synthetic-cf-key/);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Typo", provider: "cloudflare", variables: [{ name: "CF_KEY", kind: "value", value: "other" }] }), /exactly one CLOUDFLARE_API_KEY/);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "File", provider: "cloudflare", variables: [{ name: "CLOUDFLARE_API_KEY", kind: "file", value: "other" }] }), /exactly one CLOUDFLARE_API_KEY/);
+  });
+});
+
 test("a conversation carries the accounts picked before its session id exists", async () => {
   await withSecrets("pending", async (secrets) => {
     const account = await secrets.saveSecretAccount({ label: "picked", provider: "custom", variables: [{ name: "TOKEN", kind: "value", value: "picked" }] });

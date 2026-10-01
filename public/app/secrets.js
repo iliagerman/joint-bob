@@ -16,12 +16,14 @@ let secretScopeTarget = null;
 let secretTypeFilter = "all";
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
-const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", custom: "Custom", website: "Website" };
+const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", custom: "Custom", website: "Website" };
 /** Shown under the provider picker so the choice explains itself before anything is typed. */
 const providerHints = {
   aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
   google: "Paste the Google service account JSON. It is stored privately and GOOGLE_APPLICATION_CREDENTIALS points gcloud and the Google SDKs at it.",
   github: "A personal access token. The gh CLI and the GitHub API read it, and GITHUB_TOKEN is filled in from GH_TOKEN. Git pushes keep using the GitHub group set under Projects.",
+  stripe: "A Stripe API key. STRIPE_API_KEY is exported to attached agent sessions for use with Stripe tools and SDKs. Use a restricted or test key when possible.",
+  cloudflare: "A Cloudflare API key exported as CLOUDFLARE_API_KEY to attached agent sessions. Global API keys also require your account email; use a scoped API token instead when possible (as a Custom secret).",
   custom: "Any environment variables you need. Every agent session in the scopes you assign this account to receives them.",
   website: "Structured website sign-in. Set the exact website origin, then LOGIN_USERNAME and LOGIN_PASSWORD (add more fields the form needs). The agent fills them at that origin with login-fill; values never enter the shell. Sharing sends encrypted-at-rest copies to selected nodes.",
 };
@@ -43,6 +45,8 @@ function secretProviderPresets(provider) {
   if (provider === "aws") return [{ name: "AWS_ACCESS_KEY_ID", kind: "value" }, { name: "AWS_SECRET_ACCESS_KEY", kind: "value" }];
   if (provider === "google") return [{ name: "GOOGLE_APPLICATION_CREDENTIALS", kind: "file" }];
   if (provider === "github") return [{ name: "GH_TOKEN", kind: "value" }];
+  if (provider === "stripe") return [{ name: "STRIPE_API_KEY", kind: "value" }];
+  if (provider === "cloudflare") return [{ name: "CLOUDFLARE_API_KEY", kind: "value" }];
   if (provider === "website") return [{ name: "LOGIN_USERNAME", kind: "value" }, { name: "LOGIN_PASSWORD", kind: "value" }];
   return [{ name: "", kind: "value" }];
 }

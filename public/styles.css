@@ -2051,6 +2051,8 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .secret-provider-icon.aws { color: #ff9900; }
 .secret-provider-icon.google { color: #4285f4; }
 .secret-provider-icon.github { color: var(--text); }
+.secret-provider-icon.stripe { color: #635bff; }
+.secret-provider-icon.cloudflare { color: #f38020; }
 .secret-provider-icon.website { color: #2f9e6c; }
 .secret-provider-icon.custom { color: var(--accent); }
 

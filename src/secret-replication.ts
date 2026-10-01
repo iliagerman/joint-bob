@@ -82,7 +82,7 @@ function validateEvent(event: SecretCredentialEvent): void {
   if (!event.originNodeId) throw new Error("Secret credential event needs an origin node ID");
   const value = event.value;
   if (!value || typeof value.label !== "string" || !value.label.trim() || value.label.length > 64) throw new Error("Secret credential event needs a label");
-  if (!(["aws", "google", "github", "custom", "website"] as string[]).includes(value.provider)) throw new Error("Secret credential event provider is invalid");
+  if (!(["aws", "google", "github", "stripe", "cloudflare", "custom", "website"] as string[]).includes(value.provider)) throw new Error("Secret credential event provider is invalid");
   if (value.provider === "website" && value.websiteOrigin == null) throw new Error("Website secret accounts require a website origin");
   if (value.websiteOrigin != null && (typeof value.websiteOrigin !== "string" || normalizeWebsiteOrigin(value.websiteOrigin) !== value.websiteOrigin)) throw new Error("Secret credential event website origin is invalid");
   if (!Array.isArray(value.variables) || value.variables.length < 1 || value.variables.length > 20) throw new Error("Secret credential event needs between 1 and 20 variables");

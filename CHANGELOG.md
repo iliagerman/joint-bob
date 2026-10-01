@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Secret accounts now support Stripe and Cloudflare as providers for managing API keys.
+
 ## 2.23.0 — 2026-10-01
 
 - Compare usage across time periods with trend deltas and month/week-to-date analysis.

@@ -7,7 +7,7 @@ import { isHarnessId, type HarnessId } from "./types.js";
 import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "./cluster-v2-errors.js";
 
-export type SecretProvider = "aws" | "google" | "github" | "custom" | "website";
+export type SecretProvider = "aws" | "google" | "github" | "stripe" | "cloudflare" | "custom" | "website";
 export type SecretKind = "value" | "file";
 /** Attachment tiers, broadest first. Resolution merges them in this order. */
 export type SecretScopeType = "workspace" | "project" | "conversation";
@@ -115,7 +115,7 @@ function assertScope(scopeType: string, scopeId: string): asserts scopeType is S
 }
 
 function assertInput(input: SecretAccountInput): void {
-  if (!(["aws", "google", "github", "custom", "website"] as string[]).includes(input.provider)) throw new Error("Secret provider must be aws, google, github, custom, or website");
+  if (!(["aws", "google", "github", "stripe", "cloudflare", "custom", "website"] as string[]).includes(input.provider)) throw new Error("Secret provider must be aws, google, github, stripe, cloudflare, custom, or website");
   if (!input.label.trim() || input.label.trim().length > 64 || /[\x00-\x1f\x7f]/.test(input.label)) throw new Error("Secret account label must be between 1 and 64 characters without control characters");
   if (input.variables.length < 1 || input.variables.length > 20) throw new Error("Secret accounts need between 1 and 20 variables");
   const names = new Set<string>();
@@ -129,6 +129,12 @@ function assertInput(input: SecretAccountInput): void {
   // The GitHub provider owns its variable name, so a typo cannot silently disable git push.
   if (input.provider === "github" && (input.variables.length !== 1 || input.variables[0].name !== GITHUB_TOKEN_VARIABLE || input.variables[0].kind !== "value")) {
     throw new Error(`GitHub secret accounts hold exactly one ${GITHUB_TOKEN_VARIABLE} value`);
+  }
+  if (input.provider === "stripe" && (input.variables.length !== 1 || input.variables[0].name !== "STRIPE_API_KEY" || input.variables[0].kind !== "value")) {
+    throw new Error("Stripe secret accounts hold exactly one STRIPE_API_KEY value");
+  }
+  if (input.provider === "cloudflare" && (input.variables.length !== 1 || input.variables[0].name !== "CLOUDFLARE_API_KEY" || input.variables[0].kind !== "value")) {
+    throw new Error("Cloudflare secret accounts hold exactly one CLOUDFLARE_API_KEY value");
   }
 }
 
@@ -424,6 +430,8 @@ const providerHints: Record<SecretProvider, string> = {
   aws: "the AWS CLI and AWS SDKs read these automatically",
   google: "gcloud and the Google SDKs read GOOGLE_APPLICATION_CREDENTIALS automatically",
   github: "the gh CLI, the GitHub API and git push all read these automatically",
+  stripe: "use STRIPE_API_KEY to configure the Stripe CLI or SDK",
+  cloudflare: "use CLOUDFLARE_API_KEY to authenticate with the Cloudflare API (global keys also require an account email)",
   custom: "plain environment variables for this project",
   website: "structured website sign-in credentials filled through login-fill at the bound origin",
 };
