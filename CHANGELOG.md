@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Browser machine settings now distinguish between cluster defaults (shared with all members) and this machine's private overrides; Settings got a new Browser tab for your per-machine choices, keeping them separate from cluster configuration.
+
 ## 2.21.2 — 2026-10-01
 
 - Idle chat sessions are now automatically compacted in the background when detached, improving memory efficiency.

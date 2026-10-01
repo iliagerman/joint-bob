@@ -83,6 +83,9 @@ function renderClientLogs() {
   elements.settingsClientLogs.scrollTo(0, elements.settingsClientLogs.scrollHeight);
 }
 
+// These panels guard their own loading and do not depend on Save settings.
+const ownLoading = (panel) => panel.id === "settingsPanel-cluster" || panel.id === "settingsPanel-browser";
+
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(name) {
   elements.settingsForm.dataset.tab = name;
@@ -93,7 +96,7 @@ function selectSettingsTab(name) {
   }
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
   if (elements.settingsTabsSelect) elements.settingsTabsSelect.value = name;
-  if (name === "cluster") void loadBrowserStatus();
+  if (name === "cluster" || name === "browser") void loadBrowserStatus();
   if (name === "notifications") void loadNtfyServicesPanel();
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "logs") renderClientLogs();
@@ -301,7 +304,7 @@ export async function openSettings(tab = "account") {
   elements.settingsRestartMessage.textContent = "Loading settings…";
   // Navigation stays usable. Cluster actions have their own loading guard and
   // do not depend on local harness/model discovery or Save settings.
-  for (const panel of elements.settingsPanels) panel.inert = panel.id !== "settingsPanel-cluster";
+  for (const panel of elements.settingsPanels) panel.inert = !ownLoading(panel);
   for (const load of [loadSecretAccounts, loadChangelogPanel, loadMfaSettings, loadClusterPanel, loadUpdatesPanel, loadWorkspaces]) {
     void load().catch((error) => toast(error.message));
   }
@@ -313,7 +316,7 @@ export async function openSettings(tab = "account") {
     settingsLoading = false;
     elements.settingsForm.removeAttribute("aria-busy");
     elements.settingsRestartMessage.classList.remove("is-loading");
-    for (const panel of elements.settingsPanels) panel.inert = !settingsReady && panel.id !== "settingsPanel-cluster";
+    for (const panel of elements.settingsPanels) panel.inert = !settingsReady && !ownLoading(panel);
     if (!settingsReady) elements.settingsRestartMessage.textContent = "Could not load settings. Close and try again.";
   }
 }

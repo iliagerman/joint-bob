@@ -8,7 +8,7 @@ import { browserIdentitySchema, type BrowserConfiguration } from "./browser-type
 export const browserPreferenceSchema = browserIdentitySchema.extend({ nodeId: z.string().uuid().nullable(), originNodeId: z.string().uuid(), updatedAt: z.string().datetime() });
 export type BrowserPreference = z.infer<typeof browserPreferenceSchema>;
 
-/** This machine's own default browser machine, shared only with its twins. Null follows the cluster default. */
+/** This machine's fallback browser machine for projects whose clusters suggest none. Never leaves this machine. */
 export const browserConfigurationSchema = z.object({ executorNodeId: z.string().uuid().nullable(), originNodeId: z.string().uuid(), updatedAt: z.string().datetime() });
 /** A cluster's suggested browser machine, shared only among that cluster's members. */
 export const browserClusterDefaultSchema = z.object({ clusterId: z.string().uuid(), executorNodeId: z.string().uuid().nullable(), originNodeId: z.string().uuid(), updatedAt: z.string().datetime() });
@@ -24,6 +24,7 @@ function db(): DatabaseSync {
     node_id TEXT, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL,
     PRIMARY KEY(project_id, engine, conversation_id))`);
   database.exec("CREATE TABLE IF NOT EXISTS browser_cluster_defaults (cluster_id TEXT PRIMARY KEY, executor_node_id TEXT, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL)");
+  database.exec("CREATE TABLE IF NOT EXISTS browser_cluster_overrides (cluster_id TEXT PRIMARY KEY, executor_node_id TEXT NOT NULL, updated_at TEXT NOT NULL)");
   return database;
 }
 export function readBrowserConfiguration(): BrowserConfiguration {
@@ -67,4 +68,15 @@ export function applyBrowserClusterDefault(input: BrowserClusterDefault): void {
   db().prepare(`INSERT INTO browser_cluster_defaults (cluster_id,executor_node_id,updated_at,origin_node_id) VALUES (?,?,?,?)
     ON CONFLICT(cluster_id) DO UPDATE SET executor_node_id=excluded.executor_node_id,updated_at=excluded.updated_at,origin_node_id=excluded.origin_node_id
     WHERE excluded.updated_at > browser_cluster_defaults.updated_at OR (excluded.updated_at = browser_cluster_defaults.updated_at AND excluded.origin_node_id > browser_cluster_defaults.origin_node_id)`).run(value.clusterId, value.executorNodeId, value.updatedAt, value.originNodeId);
+}
+export interface BrowserClusterOverride { clusterId: string; executorNodeId: string; updatedAt: string }
+/** This machine's own replacement for a cluster's suggestion. Never leaves this machine. */
+export function readBrowserClusterOverrides(): BrowserClusterOverride[] {
+  return db().prepare("SELECT cluster_id AS clusterId, executor_node_id AS executorNodeId, updated_at AS updatedAt FROM browser_cluster_overrides ORDER BY cluster_id").all() as unknown as BrowserClusterOverride[];
+}
+/** Null returns this machine to the cluster's suggestion. */
+export function setBrowserClusterOverride(clusterId: string, executorNodeId: string | null): void {
+  if (executorNodeId === null) { db().prepare("DELETE FROM browser_cluster_overrides WHERE cluster_id=?").run(clusterId); return; }
+  db().prepare(`INSERT INTO browser_cluster_overrides (cluster_id,executor_node_id,updated_at) VALUES (?,?,?)
+    ON CONFLICT(cluster_id) DO UPDATE SET executor_node_id=excluded.executor_node_id,updated_at=excluded.updated_at`).run(clusterId, executorNodeId, new Date().toISOString());
 }

@@ -595,6 +595,7 @@
           <option value="commands">Commands</option>
           <option value="secrets">Secrets</option>
           <option value="cluster">Cluster</option>
+          <option value="browser">Browser</option>
           <option value="workspaces">Workspaces</option>
           <option value="engines">Harnesses</option>
           <option value="classifiers">Classifiers</option>
@@ -612,6 +613,7 @@
           <button class="settings-tab" type="button" data-settings-tab="commands" role="tab" id="settingsTab-commands" aria-controls="settingsPanel-commands" aria-selected="false" tabindex="-1" data-testid="settings-tab-commands">Commands</button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
+          <button class="settings-tab" type="button" data-settings-tab="browser" role="tab" id="settingsTab-browser" aria-controls="settingsPanel-browser" aria-selected="false" tabindex="-1" data-testid="settings-tab-browser">Browser</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Harnesses</button>
           <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers">Classifiers</button>
@@ -863,17 +865,26 @@
             <button class="ghost" type="button" id="clusterSaveButton" data-testid="cluster-save-button">Save this machine</button>
           </details>
           <details class="phase-settings" id="clusterBrowserSettings" data-testid="cluster-browser-section">
-            <summary data-testid="cluster-browser-summary">Browser machines</summary>
-            <p>Choose where new browsers open, independent of where the agent runs. Conversations and individual starts can override it. Existing accounts stay on their original machines. Browsers are never installed automatically.</p>
-            <label>Default browser machine<select id="settingsBrowserExecutor" data-testid="settings-browser-executor" disabled><option value="">Use cluster default</option></select></label>
-            <p class="settings-hint">“Use cluster default” follows the machine each project's cluster suggests. A machine you pick here stays this machine's choice until you switch back; other members cannot change it. Projects that are not shared in a cluster use only this choice.</p>
+            <summary data-testid="cluster-browser-summary">Browser machine defaults</summary>
+            <p>The machine each cluster's members open new browsers on for projects shared in that cluster. Every member sees the change. A member can replace it for its own machine in <strong>Settings → Browser</strong>.</p>
             <div id="settingsBrowserClusterDefaults" data-testid="settings-browser-cluster-defaults"></div>
+          </details>
+          </div>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-browser" role="tabpanel" aria-labelledby="settingsTab-browser" tabindex="0" hidden>
+          <fieldset class="phase-settings">
+            <legend>This machine's browser machines</legend>
+            <p>Choose where new browsers open from this machine, independent of where the agent runs. Choices here apply only to this machine. Conversations and individual starts can still override them, and existing accounts stay on their original machines.</p>
+            <p class="settings-hint">Order: the conversation's choice, then this machine's choice for the project's cluster, then the cluster default, then the default below.</p>
+            <div id="settingsBrowserClusterOverrides" data-testid="settings-browser-cluster-overrides"></div>
+            <label>Default browser machine<select id="settingsBrowserExecutor" data-testid="settings-browser-executor" disabled><option value="">No default</option></select></label>
+            <p class="settings-hint">Used for projects that are not shared in a cluster, or whose clusters have no default browser machine.</p>
             <div class="github-group-actions">
               <button class="ghost" type="button" id="browserStatusCheck" data-testid="browser-status-check">Check status</button>
             </div>
             <p class="settings-hint" id="browserStatus" data-testid="browser-status" role="status">Browser status has not been checked.</p>
-          </details>
-          </div>
+          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-workspaces" role="tabpanel" aria-labelledby="settingsTab-workspaces" tabindex="0" hidden>

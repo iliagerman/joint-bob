@@ -24,7 +24,7 @@ interface DetectionOptions {
   candidates?: string[];
 }
 
-/** Detect installed browsers on this node; never download a browser. */
+/** Detect installed browsers on this node; downloads happen only during installation. */
 export async function browserCapability(options: DetectionOptions = {}): Promise<BrowserCapability> {
   const unavailable = (supported: boolean, reason: string): BrowserCapability => ({ supported, available: false, executable: null, reason });
   const override = options.executable ?? process.env.JOINT_BOB_BROWSER_EXECUTABLE;

@@ -79,36 +79,48 @@ export async function loadBrowserStatus() {
       option.disabled = !node.available || !node.reachable;
       return option;
     };
-    const missingOption = (id) => { const option = new Option(`${id} · Unavailable`, id); option.disabled = true; return option; };
-    const options = nodes.map(machineOption);
-    if (config.executorNodeId && !nodes.some((node) => node.id === config.executorNodeId)) options.push(missingOption(config.executorNodeId));
-    select.replaceChildren(new Option("Use cluster default", ""), ...options);
+    const machineName = (id) => nodes.find((node) => node.id === id)?.name ?? id;
+    const choices = (candidates, selected) => {
+      const options = candidates.map(machineOption);
+      if (selected && !candidates.some((node) => node.id === selected)) { const option = new Option(`${machineName(selected)} · Unavailable`, selected); option.disabled = true; options.push(option); }
+      return options;
+    };
+    select.replaceChildren(new Option("No default", ""), ...choices(nodes, config.executorNodeId));
     select.value = config.executorNodeId || ""; select.disabled = false;
-    renderClusterDefaults(clusters, nodes, machineOption, missingOption);
+    const members = (cluster) => nodes.filter((node) => cluster.memberNodeIds.includes(node.id));
+    renderClusterChoices("#settingsBrowserClusterDefaults", clusters, {
+      label: (cluster) => `Default for cluster “${cluster.name}”`,
+      testid: "settings-browser-cluster-default", path: "cluster-defaults", value: (cluster) => cluster.executorNodeId,
+      options: (cluster) => [new Option("No cluster default", ""), ...choices(members(cluster), cluster.executorNodeId)],
+      saved: (cluster) => `Default browser machine for ${cluster.name} saved for every member.`,
+    });
+    renderClusterChoices("#settingsBrowserClusterOverrides", clusters, {
+      label: (cluster) => `Projects in cluster “${cluster.name}”`,
+      testid: "settings-browser-cluster-override", path: "cluster-overrides", value: (cluster) => cluster.overrideNodeId,
+      options: (cluster) => [new Option(`Use cluster default · ${cluster.executorNodeId ? machineName(cluster.executorNodeId) : "none, uses the default below"}`, ""), ...choices(members(cluster), cluster.overrideNodeId)],
+      saved: (cluster) => `Browser machine for ${cluster.name} saved on this machine only.`,
+    });
     status.textContent = nodes.map((node) => `${node.name}: ${node.available && node.reachable ? "Ready" : node.reason || "Unavailable"}. ${node.runningCount} running.`).join(" ");
   } catch (error) { status.textContent = `Browser status unavailable: ${error.message}. Try Check status again.`; }
   finally { statusLoading = false; check.disabled = false; }
 }
-/** One suggestion per cluster this machine belongs to; members follow it unless they picked their own machine. */
-function renderClusterDefaults(clusters, nodes, machineOption, missingOption) {
-  const container = document.querySelector("#settingsBrowserClusterDefaults");
+function renderClusterChoices(selector, clusters, spec) {
+  const container = document.querySelector(selector);
+  if (!clusters.length) { container.textContent = "This machine is not a member of any cluster."; return; }
   container.replaceChildren(...clusters.map((cluster) => {
     const label = document.createElement("label");
-    label.textContent = `Default for cluster “${cluster.name}”`;
+    label.textContent = spec.label(cluster);
     const choice = document.createElement("select");
-    choice.dataset.testid = "settings-browser-cluster-default";
+    choice.dataset.testid = spec.testid;
     choice.dataset.clusterId = cluster.id;
-    const members = nodes.filter((node) => cluster.memberNodeIds.includes(node.id));
-    const options = members.map(machineOption);
-    if (cluster.executorNodeId && !members.some((node) => node.id === cluster.executorNodeId)) options.push(missingOption(cluster.executorNodeId));
-    choice.replaceChildren(new Option("No cluster default", ""), ...options);
-    choice.value = cluster.executorNodeId || "";
+    choice.replaceChildren(...spec.options(cluster));
+    choice.value = spec.value(cluster) || "";
     choice.addEventListener("change", async () => {
       if (statusLoading) return;
       statusLoading = true; choice.disabled = true;
       try {
-        await api(`/api/browser/cluster-defaults/${encodeURIComponent(cluster.id)}`, { method: "PUT", body: JSON.stringify({ executorNodeId: choice.value || null }) });
-        toast(`Default browser machine for ${cluster.name} saved.`);
+        await api(`/api/browser/${spec.path}/${encodeURIComponent(cluster.id)}`, { method: "PUT", body: JSON.stringify({ executorNodeId: choice.value || null }) });
+        toast(spec.saved(cluster));
       } catch (error) { toast(error.message); }
       finally { statusLoading = false; }
       await loadBrowserStatus();
@@ -126,7 +138,7 @@ document.querySelector("#settingsBrowserExecutor").addEventListener("change", as
   document.querySelector("#browserStatusCheck").disabled = true;
   try {
     await api("/api/browser/config", { method: "PUT", body: JSON.stringify({ executorNodeId: select.value || null }) });
-    toast("Default browser machine saved. Existing accounts are unchanged.");
+    toast("Default browser machine saved on this machine only. Existing accounts are unchanged.");
   } catch (error) { toast(error.message); }
   finally { statusLoading = false; }
   await loadBrowserStatus();

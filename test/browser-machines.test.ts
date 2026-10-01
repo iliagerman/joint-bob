@@ -52,11 +52,12 @@ test("global default and scoped conversation preference converge across real pai
   const start = { projectId:a.projects[0].id, engine:"pi", conversationId, appNodeId:a.nodeId };
   assert.match((await request(0,"POST","/browser/sessions",start)).body.error,/Settings|configur/i);
   assert.equal((await request(0,"PUT","/browser/config",{executorNodeId:b.nodeId})).status,200);
-  assert.equal((await request(1,"GET","/browser/config")).body.config.executorNodeId,b.nodeId);
+  assert.equal((await request(1,"GET","/browser/config")).body.config.executorNodeId,null,"a machine's default stays on the machine that chose it");
   const preference = `/browser/preferences?${query()}`;
-  assert.deepEqual((await request(1,"GET",preference)).body,{nodeId:null,effectiveNodeId:b.nodeId,defaultNodeId:b.nodeId,defaultSource:"machine"});
+  assert.deepEqual((await request(0,"GET",preference)).body,{nodeId:null,effectiveNodeId:b.nodeId,defaultNodeId:b.nodeId,defaultSource:"machine"});
+  assert.deepEqual((await request(1,"GET",preference)).body,{nodeId:null,effectiveNodeId:null,defaultNodeId:null,defaultSource:null});
   assert.equal((await request(0,"PUT",preference,{nodeId:a.nodeId})).status,200);
-  assert.deepEqual((await request(1,"GET",preference)).body,{nodeId:a.nodeId,effectiveNodeId:a.nodeId,defaultNodeId:b.nodeId,defaultSource:"machine"});
+  assert.deepEqual((await request(1,"GET",preference)).body,{nodeId:a.nodeId,effectiveNodeId:a.nodeId,defaultNodeId:null,defaultSource:null});
   assert.match((await request(0,"POST","/browser/sessions",start)).body.error,new RegExp(`browser-${a.key}`));
   assert.match((await request(0,"POST",`/browser/sessions?nodeId=${b.nodeId}`,start)).body.error,new RegExp(`browser-${b.key}`));
   assert.equal((await request(1,"PUT",preference,{nodeId:null})).status,200);

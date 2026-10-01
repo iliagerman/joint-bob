@@ -173,7 +173,7 @@ test("cluster page lists clusters, finds nodes fuzzily, splits what you get from
 
     // The cluster panel precedes the machine and browser settings, and fits a phone.
     const order = await page.getByTestId("settingsPanel-cluster").evaluate((panel) => {
-      const list = panel.querySelector("#clusterCanvas")!, machine = panel.querySelector("#clusterNodeNameInput")!, browserSelect = panel.querySelector("#settingsBrowserExecutor")!;
+      const list = panel.querySelector("#clusterCanvas")!, machine = panel.querySelector("#clusterNodeNameInput")!, browserSelect = panel.querySelector("#settingsBrowserClusterDefaults")!;
       return Boolean(list.compareDocumentPosition(machine) & Node.DOCUMENT_POSITION_FOLLOWING) && Boolean(machine.compareDocumentPosition(browserSelect) & Node.DOCUMENT_POSITION_FOLLOWING);
     });
     assert.equal(order, true);

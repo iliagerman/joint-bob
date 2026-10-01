@@ -5,8 +5,8 @@ import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch, runtimeSocketHeaders, trackRuntimeSocket } from "./runtime-peers.js";
 import type { DatabaseSync } from "node:sqlite";
-import { applyBrowserClusterDefault, applyBrowserConfiguration, browserClusterDefaultSchema, browserConfigurationSchema, clearBrowserConfiguration, readBrowserClusterDefault, readBrowserClusterDefaults, readBrowserConfiguration, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema } from "../browser-configuration.js";
-import { getSharingCluster, isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../cluster-sharing-policy.js";
+import { applyBrowserClusterDefault, applyBrowserConfiguration, browserClusterDefaultSchema, clearBrowserConfiguration, readBrowserClusterDefault, readBrowserClusterDefaults, readBrowserClusterOverrides, readBrowserConfiguration, setBrowserClusterOverride, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema } from "../browser-configuration.js";
+import { getSharingCluster, listSharingClusterMembers, listSharingMemberships } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { browserCapability, BrowserRuntime } from "../browser-runtime.js";
 import { browserCommandSchema, browserStartSchema, browserIdentitySchema, browserProfileGrantInputSchema, type BrowserActor, type BrowserProfile, type BrowserSessionView } from "../browser-types.js";
@@ -21,29 +21,18 @@ export class BrowserRequestError extends Error { constructor(public status: numb
 let runtime: BrowserRuntime | undefined;
 export function browserRuntime(): BrowserRuntime { return runtime ??= new BrowserRuntime(); }
 export async function closeBrowserRuntime(): Promise<void> { await runtime?.close(); runtime = undefined; }
-// Old releases adopt the config in any peer's status reply; non-twins get one too old to win.
+// Old releases adopt the config in any peer's status reply; peers get one too old to win.
 const unsetBrowserConfiguration = { executorNodeId: null, updatedAt: "1970-01-01T00:00:00.000Z", originNodeId: "00000000-0000-0000-0000-000000000000" };
-function trustedTwin(db: DatabaseSync, local: string, nodeId: string): boolean {
-  try { return isTrustedTwin(db, local, nodeId); } catch { return false; }
-}
 function clusterMemberIds(db: DatabaseSync, clusterId: string): string[] {
   try { return listSharingClusterMembers(db, clusterId).map(member => member.nodeId); } catch { return []; }
 }
-/** A machine's default is its user's own choice: it travels between twins only, and never as another member's choice. */
-function ownBrowserChoice(db: DatabaseSync, local: string, originNodeId: string): boolean {
-  return originNodeId === local || trustedTwin(db, local, originNodeId);
-}
 let browserDefaultVetted = false;
-/** Earlier releases copied any peer's default, so another member's choice may be stored here. */
+/** Earlier releases copied peers' defaults, so a choice made on another machine may be stored here. */
 async function vetBrowserDefault(): Promise<void> {
   if (browserDefaultVetted) return;
   browserDefaultVetted = true;
   const config = readBrowserConfiguration();
-  if (config.executorNodeId !== null && !ownBrowserChoice(await clusterV2Database(), (await getClusterNode()).id, config.originNodeId)) clearBrowserConfiguration();
-}
-export async function acceptBrowserConfiguration(senderNodeId: string, input: unknown): Promise<void> {
-  const value = browserConfigurationSchema.parse(input), db = await clusterV2Database(), local = (await getClusterNode()).id;
-  if (trustedTwin(db, local, senderNodeId) && ownBrowserChoice(db, local, value.originNodeId)) applyBrowserConfiguration(value);
+  if (config.executorNodeId !== null && config.originNodeId !== (await getClusterNode()).id) clearBrowserConfiguration();
 }
 /** A cluster's suggestion comes only from its members and names one of its members. */
 export async function acceptBrowserClusterDefault(senderNodeId: string, input: unknown): Promise<boolean> {
@@ -60,35 +49,46 @@ export async function localBrowserStatus(callerNodeId?: string) {
   const shared = (clusterId: string) => !callerNodeId || clusterMemberIds(db, clusterId).includes(callerNodeId);
   return {
     node: { id: node.id, name: node.name },
-    config: !callerNodeId || trustedTwin(db, node.id, callerNodeId) ? readBrowserConfiguration() : unsetBrowserConfiguration,
+    config: callerNodeId ? unsetBrowserConfiguration : readBrowserConfiguration(),
     clusterDefaults: readBrowserClusterDefaults().filter(entry => shared(entry.clusterId) && clusterMemberIds(db, entry.clusterId).includes(node.id)),
     capability: await browserCapability(),
     runningCount: (await browserRuntime().list()).filter(row => row.state === "running").length,
   };
 }
-async function browserClusters() {
+async function memberClusterIds(): Promise<string[]> {
   const db = await clusterV2Database(), local = (await getClusterNode()).id;
-  return listSharingMemberships(db, local).flatMap(({ clusterId }) => {
+  try { return listSharingMemberships(db, local).map(({ clusterId }) => clusterId); } catch { return []; }
+}
+async function browserClusters() {
+  const db = await clusterV2Database(), overrides = readBrowserClusterOverrides();
+  return (await memberClusterIds()).flatMap(clusterId => {
     try {
-      const suggestion = readBrowserClusterDefault(clusterId);
-      return [{ id: clusterId, name: getSharingCluster(db, clusterId).name, memberNodeIds: clusterMemberIds(db, clusterId), executorNodeId: suggestion?.executorNodeId ?? null }];
+      return [{
+        id: clusterId, name: getSharingCluster(db, clusterId).name, memberNodeIds: clusterMemberIds(db, clusterId),
+        executorNodeId: readBrowserClusterDefault(clusterId)?.executorNodeId ?? null,
+        overrideNodeId: overrides.find(entry => entry.clusterId === clusterId)?.executorNodeId ?? null,
+      }];
     } catch { return []; }
   });
 }
+export type BrowserDefaultSource = "override" | "cluster" | "machine";
 /**
- * The machine a new browser opens on when its conversation chose none: this machine's own
- * choice, else the suggestion of a cluster the project is shared in. A project in no cluster
- * takes nothing from any cluster.
+ * The machine a new browser opens on when its conversation chose none. For a project shared in a
+ * cluster: this machine's override for that cluster, else the cluster's suggestion. Otherwise, or
+ * when its clusters suggest nothing, this machine's own default.
  */
-export async function browserDefault(projectId?: string): Promise<{ nodeId: string | null; source: "machine" | "cluster" | null; clusterId?: string }> {
+export async function browserDefault(projectId?: string): Promise<{ nodeId: string | null; source: BrowserDefaultSource | null; clusterId?: string }> {
   await vetBrowserDefault();
+  const members = new Set(await memberClusterIds());
+  const clusters = new Set(((projectId ? (await getProject(projectId))?.clusterIds : undefined) ?? []).filter(clusterId => members.has(clusterId)));
+  const latest = <T extends { clusterId: string; updatedAt: string; executorNodeId: string | null }>(entries: T[]) =>
+    entries.filter(entry => entry.executorNodeId && clusters.has(entry.clusterId)).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  const override = latest(readBrowserClusterOverrides());
+  if (override) return { nodeId: override.executorNodeId, source: "override", clusterId: override.clusterId };
+  const suggestion = latest(readBrowserClusterDefaults());
+  if (suggestion) return { nodeId: suggestion.executorNodeId, source: "cluster", clusterId: suggestion.clusterId };
   const own = readBrowserConfiguration().executorNodeId;
-  if (own) return { nodeId: own, source: "machine" };
-  const clusters = new Set((projectId ? (await getProject(projectId))?.clusterIds : undefined) ?? []);
-  const suggestion = readBrowserClusterDefaults()
-    .filter(entry => entry.executorNodeId && clusters.has(entry.clusterId))
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.originNodeId.localeCompare(left.originNodeId))[0];
-  return suggestion ? { nodeId: suggestion.executorNodeId, source: "cluster", clusterId: suggestion.clusterId } : { nodeId: null, source: null };
+  return own ? { nodeId: own, source: "machine" } : { nodeId: null, source: null };
 }
 /** With a project, lists only the machines that project is shared with, so a conversation never offers another cluster's machines. */
 export async function browserStatus(nodeId?: string, projectId?: string) {
@@ -105,7 +105,6 @@ export async function browserStatus(nodeId?: string, projectId?: string) {
       return { id: peer.id, name: peer.name, supported: false, available: false, executable: null, reachable: false, runningCount: 0, reason: error instanceof Error ? error.message : "Browser node unavailable" };
     }
     // Pull-on-use convergence also covers a node that was offline when a default changed.
-    await acceptBrowserConfiguration(peer.id, status.config).catch(() => {});
     for (const entry of status.clusterDefaults ?? []) await acceptBrowserClusterDefault(peer.id, entry).catch(() => false);
     return { id: peer.id, name: peer.name, ...status.capability, reachable: true, runningCount: status.runningCount };
   })));
@@ -115,16 +114,21 @@ async function knownNode(nodeId: string): Promise<void> {
   idSchema.parse(nodeId);
   if (nodeId !== (await getClusterNode()).id && !(await getRuntimePeer(nodeId))) throw new BrowserRequestError(503, "Browser node is no longer paired");
 }
-/** Sets this machine's own default; null follows the cluster default. Only twins share it. */
+/** Sets this machine's fallback for projects whose clusters suggest no machine. Stays on this machine. */
 export async function configureBrowserExecutor(executorNodeId: string | null) {
   if (executorNodeId) await knownNode(executorNodeId);
-  await browserStatus();
+  await vetBrowserDefault();
+  applyBrowserConfiguration({ executorNodeId, originNodeId: (await getClusterNode()).id, updatedAt: nextVersion(readBrowserConfiguration().updatedAt) });
+  return browserStatus();
+}
+/** Replaces a cluster's suggestion on this machine only; null follows the cluster again. */
+export async function configureClusterBrowserOverride(clusterId: string, executorNodeId: string | null) {
+  idSchema.parse(clusterId);
   const db = await clusterV2Database(), local = (await getClusterNode()).id;
-  applyBrowserConfiguration({ executorNodeId, originNodeId: local, updatedAt: nextVersion(readBrowserConfiguration().updatedAt) });
-  await Promise.all((await listRuntimePeers()).filter(peer => trustedTwin(db, local, peer.id)).map(async peer => {
-    try { await peerRequest(peer.id, "config", readBrowserConfiguration(), 5000); }
-    catch (error) { console.warn(`Browser configuration sync to ${peer.id} failed`, error); }
-  }));
+  const members = clusterMemberIds(db, clusterId);
+  if (!members.includes(local)) throw new BrowserRequestError(404, "This machine is not a member of that cluster");
+  if (executorNodeId && !members.includes(executorNodeId)) throw new BrowserRequestError(400, "That machine is not a member of this cluster");
+  setBrowserClusterOverride(clusterId, executorNodeId);
   return browserStatus();
 }
 /** Sets the browser machine a cluster suggests to its members; null clears the suggestion. */

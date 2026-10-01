@@ -4,10 +4,10 @@ import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { app } from "../state.js";
 import { getClusterNode } from "../../cluster.js";
-import { readBrowserClusterDefault, readBrowserConfiguration, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema, browserClusterDefaultSchema } from "../../browser-configuration.js";
+import { readBrowserClusterDefault, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema, browserClusterDefaultSchema } from "../../browser-configuration.js";
 import { browserIdentitySchema, browserStartSchema, browserCommandSchema, type BrowserActor } from "../../browser-types.js";
 import { type AuthSession } from "../../auth.js";
-import { acceptBrowserClusterDefault, acceptBrowserConfiguration, configureClusterBrowserDefault, browserRuntime, browserStatus, localBrowserStatus, configureBrowserExecutor, browserPreferences, canonicalBrowserIdentity, authorizeBrowserAgent, requireCompleteDiscovery, discoverBrowserProfiles, type BrowserDiscovery, browserOperation, browserOperationSchema, profileAccessUpdateSchema, localBrowserOperation, BrowserRequestError, browserDownload, browserSessionOwner } from "../browser.js";
+import { acceptBrowserClusterDefault, configureClusterBrowserDefault, configureClusterBrowserOverride, browserRuntime, browserStatus, localBrowserStatus, configureBrowserExecutor, browserPreferences, canonicalBrowserIdentity, authorizeBrowserAgent, requireCompleteDiscovery, discoverBrowserProfiles, type BrowserDiscovery, browserOperation, browserOperationSchema, profileAccessUpdateSchema, localBrowserOperation, BrowserRequestError, browserDownload, browserSessionOwner } from "../browser.js";
 import { clusterPeerMayAccessProject } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { browserAgentCredential, browserAgentCredentialOrigins } from "../../browser-agent.js";
@@ -51,6 +51,11 @@ app.put("/api/browser/cluster-defaults/:clusterId", route(async (request,respons
   await human(response);
   const { executorNodeId } = z.object({executorNodeId:id.nullable()}).parse(request.body);
   response.json(await configureClusterBrowserDefault(id.parse(request.params.clusterId), executorNodeId));
+}));
+app.put("/api/browser/cluster-overrides/:clusterId", route(async (request,response) => {
+  await human(response);
+  const { executorNodeId } = z.object({executorNodeId:id.nullable()}).parse(request.body);
+  response.json(await configureClusterBrowserOverride(id.parse(request.params.clusterId), executorNodeId));
 }));
 app.get("/api/browser/preferences", route(async (request,response) => {
   await human(response); response.json(await browserPreferences(browserIdentitySchema.parse(request.query)));
@@ -99,9 +104,8 @@ app.get("/api/browser/sessions/:id/downloads/:downloadId", route(async (request,
 }));
 
 app.post("/api/cluster/browser/status",route(async (_request,response)=>{response.json(await localBrowserStatus(machine(response)));}));
-app.post("/api/cluster/browser/config",route(async (request,response)=>{
-  await acceptBrowserConfiguration(machine(response), request.body); response.json({config:readBrowserConfiguration()});
-}));
+// Earlier releases still push their own default here; each machine's default stays its own.
+app.post("/api/cluster/browser/config",route(async (_request,response)=>{ machine(response); response.json({}); }));
 app.post("/api/cluster/browser/cluster-default",route(async (request,response)=>{
   const value=browserClusterDefaultSchema.parse(request.body);
   if (!(await acceptBrowserClusterDefault(machine(response), value))) throw new BrowserRequestError(403,"Not a member of that cluster");
