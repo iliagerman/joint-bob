@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.21.2 — 2026-10-01
+
+- Idle chat sessions are now automatically compacted in the background when detached, improving memory efficiency.
+
 ## 2.21.1 — 2026-10-01
 
 - Git review toolbar reorganized into rows for better alignment; shows all pending files when conversation scope is empty, with clarifying message.
