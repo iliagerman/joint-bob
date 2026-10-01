@@ -3,10 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.26.0 — 2026-10-01
 
-- Browser profiles can now be shared by scope: conversation, project, workspace, machine, or cluster. Settings → Browser → Profiles shows all reachable profiles with their sharing configuration and holder state.
-- Skills and MCP servers management is now in Settings with improved sharing controls: select conversation, project, or workspace scope, or share to individual machines and clusters.
+- Skills can now be shared to specific workspaces or conversations, with scope-based access control.
+- Browser profiles can now be shared by scope: conversation, project, workspace, machine, or cluster.
+- Scoped skill and profile shares are stored separately, letting receivers revoke them without affecting cluster or node grants.
+- Skills and browser profiles management moved to Settings → Resources with improved layout and controls.
+- Resource lists now paginate to fit your screen height instead of scrolling vertically.
 
 ## 2.25.1 — 2026-10-01
 
