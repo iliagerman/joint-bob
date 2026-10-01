@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.25.1 — 2026-10-01
 
-- Git review now shows status marks for all jobs, including those in progress or queued.
+- Git review runs no longer appear in your conversation history.
+- Pipeline jobs without a completed status now show as running instead of passed.
 
 ## 2.25.0 — 2026-10-01
 
