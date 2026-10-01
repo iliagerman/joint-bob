@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added options for configuring git review settings.
+
 ## 2.26.0 — 2026-10-01
 
 - Skills can now be shared to specific workspaces or conversations, with scope-based access control.
