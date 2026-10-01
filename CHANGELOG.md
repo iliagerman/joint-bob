@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.32.0 — 2026-10-01
 
 - Code review now displays a loading animation while the reviewer works and restores the previous review when reopening if the files haven't changed.
 
