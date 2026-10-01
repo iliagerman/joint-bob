@@ -380,7 +380,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   }
   function renderMachines() {
     for (const [name, label, inherited, selected] of [
-      ["conversation-node", "Use Settings default", configuration.executorNodeId, preference.nodeId || ""],
+      ["conversation-node", preference.defaultSource === "cluster" ? "Use cluster default" : "Use Settings default", preference.defaultNodeId ?? configuration.executorNodeId, preference.nodeId || ""],
       ["start-node", "Use conversation setting", preference.effectiveNodeId, get("start-node").value],
     ]) {
       const options = nodes.map((node) => {

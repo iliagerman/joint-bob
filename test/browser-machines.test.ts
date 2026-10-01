@@ -24,6 +24,8 @@ before(async () => {
 }, { timeout: 120000 });
 after(async () => { await Promise.all(servers.map(stopDevNode)); await rm(root, { recursive: true, force: true }); });
 function query() { return new URLSearchParams({ projectId: env.nodes[0].projects[0].id, engine: "pi", conversationId }); }
+/** The conversation's own machine choice, apart from whatever default it would otherwise inherit. */
+function conversationChoice(body: { nodeId: string | null; effectiveNodeId: string | null }) { return { nodeId: body.nodeId, effectiveNodeId: body.effectiveNodeId }; }
 async function request(index: number, method: string, url: string, body?: unknown) { return api<any>(env.nodes[index], logins[index], method, url, body); }
 async function childCode(index: number, code: string) {
   const node=env.nodes[index];
@@ -52,13 +54,13 @@ test("global default and scoped conversation preference converge across real pai
   assert.equal((await request(0,"PUT","/browser/config",{executorNodeId:b.nodeId})).status,200);
   assert.equal((await request(1,"GET","/browser/config")).body.config.executorNodeId,b.nodeId);
   const preference = `/browser/preferences?${query()}`;
-  assert.deepEqual((await request(1,"GET",preference)).body,{nodeId:null,effectiveNodeId:b.nodeId});
+  assert.deepEqual((await request(1,"GET",preference)).body,{nodeId:null,effectiveNodeId:b.nodeId,defaultNodeId:b.nodeId,defaultSource:"machine"});
   assert.equal((await request(0,"PUT",preference,{nodeId:a.nodeId})).status,200);
-  assert.deepEqual((await request(1,"GET",preference)).body,{nodeId:a.nodeId,effectiveNodeId:a.nodeId});
+  assert.deepEqual((await request(1,"GET",preference)).body,{nodeId:a.nodeId,effectiveNodeId:a.nodeId,defaultNodeId:b.nodeId,defaultSource:"machine"});
   assert.match((await request(0,"POST","/browser/sessions",start)).body.error,new RegExp(`browser-${a.key}`));
   assert.match((await request(0,"POST",`/browser/sessions?nodeId=${b.nodeId}`,start)).body.error,new RegExp(`browser-${b.key}`));
   assert.equal((await request(1,"PUT",preference,{nodeId:null})).status,200);
-  assert.deepEqual((await request(0,"GET",preference)).body,{nodeId:null,effectiveNodeId:b.nodeId});
+  assert.deepEqual((await request(0,"GET",preference)).body,{nodeId:null,effectiveNodeId:b.nodeId,defaultNodeId:b.nodeId,defaultSource:"machine"});
   assert.equal((await request(0,"GET",`/browser/preferences?${new URLSearchParams({projectId:randomUUID(),engine:"pi",conversationId})}`)).status,404);
   assert.equal((await request(0,"PUT",preference,{nodeId:randomUUID()})).status,503);
 });
@@ -171,9 +173,9 @@ test("logical conversation preference and remote recovery commands survive engin
   const [a,b]=env.nodes;
   await request(0,"PUT",`/browser/preferences?${query()}`,{nodeId:b.nodeId});
   const switchedQuery=query();switchedQuery.set("engine","claude");
-  assert.deepEqual((await request(1,"GET",`/browser/preferences?${switchedQuery}`)).body,{nodeId:b.nodeId,effectiveNodeId:b.nodeId});
+  assert.deepEqual(conversationChoice((await request(1,"GET",`/browser/preferences?${switchedQuery}`)).body),{nodeId:b.nodeId,effectiveNodeId:b.nodeId});
   await request(1,"PUT",`/browser/preferences?${switchedQuery}`,{nodeId:a.nodeId});
-  assert.deepEqual((await request(0,"GET",`/browser/preferences?${query()}`)).body,{nodeId:a.nodeId,effectiveNodeId:a.nodeId});
+  assert.deepEqual(conversationChoice((await request(0,"GET",`/browser/preferences?${query()}`)).body),{nodeId:a.nodeId,effectiveNodeId:a.nodeId});
   const listed=await agent(0,{operation:"status"},"claude");
   const remote=listed.body.sessions.find((s:any)=>s.nodeId===b.nodeId);
   const db=new DatabaseSync(path.join(b.dataDir,"node.db"));
@@ -295,5 +297,5 @@ test("offline discovery is explicit, rejects guesses, and preferences converge a
     const unknown=await request(0,"GET",`/browser/sessions/${randomUUID()}`);assert.equal(unknown.status,503,"Missing exact ID plus offline peer must not select another account");
     assert.equal((await request(0,"PUT",`/browser/preferences?${query()}`,{nodeId:b.nodeId})).status,200);
   } finally {db.close();servers[1]=await startDevNode(env,b,{JOINT_BOB_BROWSER_EXECUTABLE:`/missing/browser-${b.key}`});}
-  assert.deepEqual((await request(1,"GET",`/browser/preferences?${query()}`)).body,{nodeId:b.nodeId,effectiveNodeId:b.nodeId});
+  assert.deepEqual(conversationChoice((await request(1,"GET",`/browser/preferences?${query()}`)).body),{nodeId:b.nodeId,effectiveNodeId:b.nodeId});
 });

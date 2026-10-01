@@ -73,20 +73,49 @@ export async function loadBrowserStatus() {
   select.disabled = true;
   status.textContent = "Checking browser machines…";
   try {
-    const { config, nodes } = await api("/api/browser/status");
-    const options = nodes.map((node) => {
+    const { config, nodes, clusters = [] } = await api("/api/browser/status");
+    const machineOption = (node) => {
       const option = new Option(`${node.name}${node.available && node.reachable ? "" : ` · ${node.reason || "Unavailable"}`}`, node.id);
       option.disabled = !node.available || !node.reachable;
       return option;
-    });
-    if (config.executorNodeId && !nodes.some((node) => node.id === config.executorNodeId)) {
-      const option = new Option(`${config.executorNodeId} · Unavailable`, config.executorNodeId); option.disabled = true; options.push(option);
-    }
-    select.replaceChildren(new Option("Not configured", ""), ...options);
+    };
+    const missingOption = (id) => { const option = new Option(`${id} · Unavailable`, id); option.disabled = true; return option; };
+    const options = nodes.map(machineOption);
+    if (config.executorNodeId && !nodes.some((node) => node.id === config.executorNodeId)) options.push(missingOption(config.executorNodeId));
+    select.replaceChildren(new Option("Use cluster default", ""), ...options);
     select.value = config.executorNodeId || ""; select.disabled = false;
+    renderClusterDefaults(clusters, nodes, machineOption, missingOption);
     status.textContent = nodes.map((node) => `${node.name}: ${node.available && node.reachable ? "Ready" : node.reason || "Unavailable"}. ${node.runningCount} running.`).join(" ");
   } catch (error) { status.textContent = `Browser status unavailable: ${error.message}. Try Check status again.`; }
   finally { statusLoading = false; check.disabled = false; }
+}
+/** One suggestion per cluster this machine belongs to; members follow it unless they picked their own machine. */
+function renderClusterDefaults(clusters, nodes, machineOption, missingOption) {
+  const container = document.querySelector("#settingsBrowserClusterDefaults");
+  container.replaceChildren(...clusters.map((cluster) => {
+    const label = document.createElement("label");
+    label.textContent = `Default for cluster “${cluster.name}”`;
+    const choice = document.createElement("select");
+    choice.dataset.testid = "settings-browser-cluster-default";
+    choice.dataset.clusterId = cluster.id;
+    const members = nodes.filter((node) => cluster.memberNodeIds.includes(node.id));
+    const options = members.map(machineOption);
+    if (cluster.executorNodeId && !members.some((node) => node.id === cluster.executorNodeId)) options.push(missingOption(cluster.executorNodeId));
+    choice.replaceChildren(new Option("No cluster default", ""), ...options);
+    choice.value = cluster.executorNodeId || "";
+    choice.addEventListener("change", async () => {
+      if (statusLoading) return;
+      statusLoading = true; choice.disabled = true;
+      try {
+        await api(`/api/browser/cluster-defaults/${encodeURIComponent(cluster.id)}`, { method: "PUT", body: JSON.stringify({ executorNodeId: choice.value || null }) });
+        toast(`Default browser machine for ${cluster.name} saved.`);
+      } catch (error) { toast(error.message); }
+      finally { statusLoading = false; }
+      await loadBrowserStatus();
+    });
+    label.append(choice);
+    return label;
+  }));
 }
 document.querySelector("#browserStatusCheck").addEventListener("click", loadBrowserStatus);
 document.querySelector("#settingsBrowserExecutor").addEventListener("change", async (event) => {

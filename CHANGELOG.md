@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Browser machines can now have cluster-wide default suggestions, shared among project members.
+
 ## 2.19.4 — 2026-09-30
 
 - Costs tables now use the full width, with readable wrapped names, exact numeric values, and labelled mobile rows without nested scrolling.

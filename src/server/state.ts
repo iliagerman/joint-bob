@@ -32,6 +32,7 @@ export const machineRoutes = new Set([
   "POST /cluster/resources/inventory",
   "POST /cluster/browser/status",
   "POST /cluster/browser/config",
+  "POST /cluster/browser/cluster-default",
   "POST /cluster/browser/preferences",
   "POST /cluster/browser/operation",
   "POST /cluster/browser/download",

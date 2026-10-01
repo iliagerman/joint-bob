@@ -849,8 +849,10 @@
           </details>
           <details class="phase-settings" id="clusterBrowserSettings" data-testid="cluster-browser-section">
             <summary data-testid="cluster-browser-summary">Browser machines</summary>
-            <p>Choose the default machine for new browsers, independent of where the agent runs. Conversations and individual starts can override it. Existing accounts stay on their original machines. Browsers are never installed automatically. Apply this default with Save settings.</p>
-            <label>Default browser machine<select id="settingsBrowserExecutor" data-testid="settings-browser-executor" disabled><option value="">Not configured</option></select></label>
+            <p>Choose where new browsers open, independent of where the agent runs. Conversations and individual starts can override it. Existing accounts stay on their original machines. Browsers are never installed automatically.</p>
+            <label>Default browser machine<select id="settingsBrowserExecutor" data-testid="settings-browser-executor" disabled><option value="">Use cluster default</option></select></label>
+            <p class="settings-hint">“Use cluster default” follows the machine each project's cluster suggests. A machine you pick here stays this machine's choice until you switch back; other members cannot change it. Projects that are not shared in a cluster use only this choice.</p>
+            <div id="settingsBrowserClusterDefaults" data-testid="settings-browser-cluster-defaults"></div>
             <div class="github-group-actions">
               <button class="ghost" type="button" id="browserStatusCheck" data-testid="browser-status-check">Check status</button>
             </div>

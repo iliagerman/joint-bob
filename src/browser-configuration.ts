@@ -8,7 +8,11 @@ import { browserIdentitySchema, type BrowserConfiguration } from "./browser-type
 export const browserPreferenceSchema = browserIdentitySchema.extend({ nodeId: z.string().uuid().nullable(), originNodeId: z.string().uuid(), updatedAt: z.string().datetime() });
 export type BrowserPreference = z.infer<typeof browserPreferenceSchema>;
 
+/** This machine's own default browser machine, shared only with its twins. Null follows the cluster default. */
 export const browserConfigurationSchema = z.object({ executorNodeId: z.string().uuid().nullable(), originNodeId: z.string().uuid(), updatedAt: z.string().datetime() });
+/** A cluster's suggested browser machine, shared only among that cluster's members. */
+export const browserClusterDefaultSchema = z.object({ clusterId: z.string().uuid(), executorNodeId: z.string().uuid().nullable(), originNodeId: z.string().uuid(), updatedAt: z.string().datetime() });
+export type BrowserClusterDefault = z.infer<typeof browserClusterDefaultSchema>;
 let database: DatabaseSync | undefined;
 function db(): DatabaseSync {
   if (database) return database;
@@ -19,6 +23,7 @@ function db(): DatabaseSync {
     project_id TEXT NOT NULL, engine TEXT NOT NULL, conversation_id TEXT NOT NULL,
     node_id TEXT, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL,
     PRIMARY KEY(project_id, engine, conversation_id))`);
+  database.exec("CREATE TABLE IF NOT EXISTS browser_cluster_defaults (cluster_id TEXT PRIMARY KEY, executor_node_id TEXT, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL)");
   return database;
 }
 export function readBrowserConfiguration(): BrowserConfiguration {
@@ -45,4 +50,21 @@ export function applyBrowserConfiguration(input: BrowserConfiguration): void {
   db().prepare(`INSERT INTO browser_cluster_configuration (singleton,executor_node_id,updated_at,origin_node_id) VALUES (1,?,?,?)
     ON CONFLICT(singleton) DO UPDATE SET executor_node_id=excluded.executor_node_id,updated_at=excluded.updated_at,origin_node_id=excluded.origin_node_id
     WHERE excluded.updated_at > browser_cluster_configuration.updated_at OR (excluded.updated_at = browser_cluster_configuration.updated_at AND excluded.origin_node_id > browser_cluster_configuration.origin_node_id)`).run(value.executorNodeId, value.updatedAt, value.originNodeId);
+}
+/** Drops a machine default that this machine's user did not choose. */
+export function clearBrowserConfiguration(): void {
+  db().prepare("DELETE FROM browser_cluster_configuration WHERE singleton=1").run();
+}
+export function readBrowserClusterDefaults(): BrowserClusterDefault[] {
+  const rows = db().prepare("SELECT cluster_id AS clusterId, executor_node_id AS executorNodeId, updated_at AS updatedAt, origin_node_id AS originNodeId FROM browser_cluster_defaults ORDER BY cluster_id").all();
+  return rows.map(row => browserClusterDefaultSchema.parse(row));
+}
+export function readBrowserClusterDefault(clusterId: string): BrowserClusterDefault | null {
+  return readBrowserClusterDefaults().find(entry => entry.clusterId === clusterId) ?? null;
+}
+export function applyBrowserClusterDefault(input: BrowserClusterDefault): void {
+  const value = browserClusterDefaultSchema.parse(input);
+  db().prepare(`INSERT INTO browser_cluster_defaults (cluster_id,executor_node_id,updated_at,origin_node_id) VALUES (?,?,?,?)
+    ON CONFLICT(cluster_id) DO UPDATE SET executor_node_id=excluded.executor_node_id,updated_at=excluded.updated_at,origin_node_id=excluded.origin_node_id
+    WHERE excluded.updated_at > browser_cluster_defaults.updated_at OR (excluded.updated_at = browser_cluster_defaults.updated_at AND excluded.origin_node_id > browser_cluster_defaults.origin_node_id)`).run(value.clusterId, value.executorNodeId, value.updatedAt, value.originNodeId);
 }

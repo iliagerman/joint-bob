@@ -22,11 +22,12 @@ test("Settings lists paired browser machines and saves the independent default",
     { id: "linux", name: "Ubuntu", available: true, reachable: true, runningCount: 0 },
     { id: "offline", name: "Offline", available: false, reachable: false, reason: "Unreachable", runningCount: 0 },
   ] };
+  const clusterDefaults = { children: [] as unknown[], replaceChildren(...children: unknown[]) { this.children = children; } };
   const context = runInNewContext(`${source.replace(/^import .*;\n/gm, "").replace(/export /g, "")}\n({ load: loadBrowserStatus })`, {
     URLSearchParams,
     api: async (url: string, options: any = {}) => { requests.push({ url, body: options.body && JSON.parse(options.body) }); if (url === "/api/browser/config") { await saveGate; result.config.executorNodeId = JSON.parse(options.body).executorNodeId; } if (result instanceof Error) throw result; return result; },
     Option: class { disabled = false; constructor(public label: string, public value: string) {} }, toast() {},
-    document: { querySelector: (selector: string) => selector === "#browserStatus" ? status : selector === "#browserStatusCheck" ? check : select, body: {} },
+    document: { querySelector: (selector: string) => selector === "#browserStatus" ? status : selector === "#browserStatusCheck" ? check : selector === "#settingsBrowserClusterDefaults" ? clusterDefaults : select, body: {} },
     state, elements: { openBrowserButton: check, expandProjectsButton: check, expandChatsButton: check },
     MutationObserver: class { observe() {} }, window: { addEventListener() {} },
   });
@@ -230,6 +231,7 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
   } catch (error) { await stopDevNode(server); await rm(root, { recursive: true, force: true }); throw error; }
   const pageErrors: string[] = [];
   const executorId = "11111111-1111-4111-8111-111111111111";
+  const homeClusterId = "22222222-2222-4222-8222-222222222222";
   const pageId = "22222222-2222-4222-8222-222222222222";
   const profileId = "33333333-3333-4333-8333-333333333333";
   async function setup() {
@@ -238,7 +240,8 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
     page.on("console", (message) => { if (message.type() === "error") console.error("browser-ui console:", message.text()); });
     page.on("requestfailed", (request) => console.error("browser-ui request failed:", request.url(), request.failure()));
     const commands: any[] = [], starts: any[] = [], queries: URL[] = [], requests: URL[] = [];
-    let defaultNodeId = node.nodeId, conversationNodeId: string | null = null;
+    let defaultNodeId = node.nodeId, conversationNodeId: string | null = null, clusterDefaultNodeId: string | null = null;
+    const clusterDefaultSaves: Array<{ clusterId: string; executorNodeId: string | null }> = [];
     let profileGate: Promise<void> | undefined, configGate: Promise<void> | undefined;
     const sessions: any[] = [];
     let profiles = [{ id: profileId, projectId: "unused", label: "Work login", persistent: true, nodeId: node.nodeId }];
@@ -276,11 +279,12 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
       let result: any;
       if (url.pathname === "/api/browser/status") {
         if (unavailable) return route.fulfill({ status: 503, json: { error: "Node offline" } });
-        result = { config: { executorNodeId: defaultNodeId }, nodes: [{ id: node.nodeId, name: "Mac laptop", available: true, reachable: true, runningCount: sessions.length }, { id: executorId, name: "Ubuntu", available: true, reachable: true, runningCount: 0 }] };
+        result = { config: { executorNodeId: defaultNodeId }, clusters: [{ id: homeClusterId, name: "Home cluster", memberNodeIds: [node.nodeId, executorId], executorNodeId: clusterDefaultNodeId }], nodes: [{ id: node.nodeId, name: "Mac laptop", available: true, reachable: true, runningCount: sessions.length }, { id: executorId, name: "Ubuntu", available: true, reachable: true, runningCount: 0 }] };
       } else if (url.pathname === "/api/browser/preferences") {
         if (method === "PUT") conversationNodeId = body.nodeId;
         result = { nodeId: conversationNodeId, effectiveNodeId: conversationNodeId || defaultNodeId };
       } else if (url.pathname === "/api/browser/config") { if (configGate) await configGate; defaultNodeId = body.executorNodeId; result = { executorNodeId: defaultNodeId }; }
+      else if (url.pathname.startsWith("/api/browser/cluster-defaults/") && method === "PUT") { clusterDefaultNodeId = body.executorNodeId; clusterDefaultSaves.push({ clusterId: decodeURIComponent(url.pathname.split("/").at(-1)!), executorNodeId: body.executorNodeId }); result = {}; }
       else if (url.pathname === "/api/browser/profiles") {
         if (profileGate) await profileGate;
         result = { profiles: profiles.filter(profile => profile.nodeId === url.searchParams.get("nodeId")) };
@@ -327,7 +331,7 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
     await page.goto(node.url);
     try { await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click(); }
     catch (error) { console.error("browser-ui boot:", await page.locator("body").innerText()); throw error; }
-    return { page, commands, starts, sessions, queries, requests, sendState, sendFrame, setDefault: (id: string) => { defaultNodeId = id; }, delayConfig: (gate: Promise<void>) => { configGate = gate; }, delayProfiles: (gate: Promise<void>) => { profileGate = gate; }, disconnect: () => socket?.close(), connections: () => connections, offline: () => { unavailable = true; } };
+    return { page, commands, starts, sessions, queries, requests, clusterDefaultSaves, sendState, sendFrame, setDefault: (id: string) => { defaultNodeId = id; }, delayConfig: (gate: Promise<void>) => { configGate = gate; }, delayProfiles: (gate: Promise<void>) => { profileGate = gate; }, disconnect: () => socket?.close(), connections: () => connections, offline: () => { unavailable = true; } };
   }
   async function openConversation(page: Page, title = "Short one") {
     await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: title }) }).first().click();
@@ -410,7 +414,14 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
         await f.page.getByTestId("cluster-browser-summary").click();
         await f.page.getByTestId("browser-status").filter({ hasText: "Mac laptop: Ready" }).waitFor();
         const select = f.page.getByTestId("settings-browser-executor");
-        assert.deepEqual(await select.locator("option").allTextContents(), ["Not configured", "Mac laptop", "Ubuntu"]);
+        assert.deepEqual(await select.locator("option").allTextContents(), ["Use cluster default", "Mac laptop", "Ubuntu"]);
+        const clusterDefault = f.page.getByTestId("settings-browser-cluster-default");
+        assert.equal(await f.page.getByText("Default for cluster “Home cluster”").count(), 1);
+        assert.deepEqual(await clusterDefault.locator("option").allTextContents(), ["No cluster default", "Mac laptop", "Ubuntu"]);
+        await clusterDefault.selectOption(executorId);
+        await f.page.getByText("Default browser machine for Home cluster saved.", { exact: true }).waitFor();
+        assert.deepEqual(f.clusterDefaultSaves, [{ clusterId: homeClusterId, executorNodeId: executorId }]);
+        assert.equal(await f.page.getByTestId("settings-browser-cluster-default").inputValue(), executorId);
         let release!: () => void;
         f.delayConfig(new Promise(resolve => { release = resolve; }));
         try {
