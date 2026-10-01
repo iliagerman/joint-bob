@@ -94,7 +94,9 @@ function applyRecentSessionActivity(sessionsByProject) {
     if (!sessions) return entry;
     const session = sessions.find((candidate) => sessionMatchesRecent(candidate, entry));
     const updatedAt = session?.updatedAt ?? session?.createdAt ?? null;
-    if (!updatedAt || updatedAt === entry.updatedAt) return entry;
+    // Only a newer time moves the stored row, which keeps the latest. Sending an older one
+    // (this node lists the conversation behind another) got the newer one back, then again.
+    if (!updatedAt || (entry.updatedAt && Date.parse(updatedAt) <= Date.parse(entry.updatedAt))) return entry;
     const changed = { ...entry, updatedAt };
     changedEntries.push(changed);
     return changed;

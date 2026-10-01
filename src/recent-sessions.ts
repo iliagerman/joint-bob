@@ -108,7 +108,7 @@ function applyDelete(db: DatabaseSync, payload: RecentPayload, target: Pick<Sync
     .run(payload.username, target.projectId, target.engine, target.sessionId, payload.updatedAt, payload.originNodeId);
   return true;
 }
-function applyUpsert(db: DatabaseSync, payload: RecentPayload, target: Pick<SyncedRecentSession, "projectId" | "engine" | "sessionId">): boolean {
+function applyUpsert(db: DatabaseSync, payload: RecentPayload, target: Pick<SyncedRecentSession, "projectId" | "engine" | "sessionId">, local = false): boolean {
   const incoming = { updated_at: payload.updatedAt, origin_node_id: payload.originNodeId };
   const tombstone = rowFor(db, "user_recent_session_tombstones", payload.username, target) as Stamp | undefined;
   if (tombstone && !newerStamp(incoming, tombstone)) return false;
@@ -124,10 +124,11 @@ function applyUpsert(db: DatabaseSync, payload: RecentPayload, target: Pick<Sync
     stamp: active && newerStamp({ updated_at: active.updated_at, origin_node_id: active.origin_node_id }, incoming)
       ? { updated_at: active.updated_at, origin_node_id: active.origin_node_id } : incoming,
   };
-  const changed = !active || merged.sessionPath !== active.session_path || merged.title !== active.title
-    || merged.openedAt !== active.opened_at || merged.activityUpdatedAt !== active.activity_updated_at
-    || merged.stamp.updated_at !== active.updated_at || merged.stamp.origin_node_id !== active.origin_node_id || Boolean(tombstone);
-  if (!changed) return false;
+  const contentChanged = !active || merged.sessionPath !== active.session_path || merged.title !== active.title
+    || merged.openedAt !== active.opened_at || merged.activityUpdatedAt !== active.activity_updated_at || Boolean(tombstone);
+  const stampChanged = !active || merged.stamp.updated_at !== active.updated_at || merged.stamp.origin_node_id !== active.origin_node_id;
+  // A local write always carries a fresh stamp, so only a content change counts.
+  if (local ? !contentChanged : !contentChanged && !stampChanged) return false;
   db.prepare(`INSERT INTO user_recent_sessions (username, project_id, engine, session_id, session_path, title, opened_at, activity_updated_at, updated_at, origin_node_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(username, project_id, engine, session_id) DO UPDATE SET session_path=excluded.session_path, title=excluded.title, opened_at=excluded.opened_at, activity_updated_at=excluded.activity_updated_at, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
@@ -135,9 +136,9 @@ function applyUpsert(db: DatabaseSync, payload: RecentPayload, target: Pick<Sync
   if (tombstone) db.prepare("DELETE FROM user_recent_session_tombstones WHERE username = ? AND project_id = ? AND engine = ? AND session_id = ?").run(payload.username, target.projectId, target.engine, target.sessionId);
   return true;
 }
-function apply(db: DatabaseSync, payload: RecentPayload): boolean {
+function apply(db: DatabaseSync, payload: RecentPayload, local = false): boolean {
   const target = { projectId: resolveProjectAlias(db, payload.projectId), engine: payload.engine, sessionId: payload.sessionId };
-  return payload.recent === null ? applyDelete(db, payload, target) : applyUpsert(db, payload, target);
+  return payload.recent === null ? applyDelete(db, payload, target) : applyUpsert(db, payload, target, local);
 }
 function nextUpdatedAt(db: DatabaseSync, username: string, target: Pick<SyncedRecentSession, "projectId" | "engine" | "sessionId">): string {
   const current = currentStamp(db, username, target);
@@ -146,16 +147,22 @@ function nextUpdatedAt(db: DatabaseSync, username: string, target: Pick<SyncedRe
 function publish(db: DatabaseSync, operation: "upsert" | "delete", payload: RecentPayload): void {
   enqueueReplicationEvent(db, { originNodeId: payload.originNodeId, entityType: "user.recent", entityKey: entityKey(payload.username, payload), operation, payload });
 }
-export function setUserRecentSession(username: string, recent: SyncedRecentSession, originNodeId: string): SyncedRecentSession[] {
+/** `changed` is false when the row already said this. Browsers report the activity time they
+    list, so an unchanged or older one is common, and publishing it anyway made every node's
+    browsers reload recents and report again, forever (2026-10: one row sent every ~4s). */
+export function setUserRecentSession(username: string, recent: SyncedRecentSession, originNodeId: string): { recentSessions: SyncedRecentSession[]; changed: boolean } {
   if (!validRecent(recent)) throw new Error("Invalid recent session");
   const db = recentDatabase();
+  let changed: boolean;
   db.exec("BEGIN IMMEDIATE");
   try {
     const canonical = { ...recent, projectId: resolveProjectAlias(db, recent.projectId), sessionPath: portableStoredPath(recent.sessionPath) };
     const payload: RecentPayload = { username, projectId: canonical.projectId, engine: canonical.engine, sessionId: canonical.sessionId, recent: canonical, updatedAt: nextUpdatedAt(db, username, canonical), originNodeId };
-    apply(db, payload); publish(db, "upsert", payload); db.exec("COMMIT");
+    changed = apply(db, payload, true);
+    if (changed) publish(db, "upsert", payload);
+    db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
-  return listUserRecentSessions(username);
+  return { recentSessions: listUserRecentSessions(username), changed };
 }
 export function removeUserRecentSession(username: string, target: Pick<SyncedRecentSession, "projectId" | "engine" | "sessionId">, originNodeId: string): SyncedRecentSession[] {
   if (!target.projectId || !isHarnessId(target.engine) || !target.sessionId) throw new Error("Invalid recent session");

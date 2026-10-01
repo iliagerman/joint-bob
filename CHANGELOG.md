@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Recent conversations no longer refresh across the cluster when a browser reports activity you already have.
+
 ## 2.26.1 — 2026-10-01
 
 - The 2.26.0 release could not ship because the app’s offline copy missed the git reviewer options; it now includes them, so 2.26.0’s changes reach every machine with this version.

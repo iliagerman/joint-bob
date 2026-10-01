@@ -45,6 +45,26 @@ test("recent upserts and deletes publish stable per-conversation events", async 
   } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
+test("re-reporting a recent with unchanged or older activity publishes nothing", async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-recents-unchanged-"));
+  try {
+    createNode(dataDir);
+    const recents = await freshRecents(dataDir);
+    const reported = { ...recent(), updatedAt: "2026-09-02T12:30:00.000Z" };
+    assert.equal(recents.setUserRecentSession("ilia", reported, "node-a").changed, true);
+    assert.equal(recents.setUserRecentSession("ilia", reported, "node-a").changed, false, "the same row again");
+    const older = recents.setUserRecentSession("ilia", { ...reported, updatedAt: "2026-09-02T12:10:00.000Z" }, "node-a");
+    assert.equal(older.changed, false, "a browser listing the conversation behind the stored activity");
+    assert.equal(older.recentSessions[0].updatedAt, "2026-09-02T12:30:00.000Z");
+    const newer = recents.setUserRecentSession("ilia", { ...reported, updatedAt: "2026-09-02T12:45:00.000Z" }, "node-a");
+    assert.equal(newer.changed, true);
+    assert.equal(newer.recentSessions[0].updatedAt, "2026-09-02T12:45:00.000Z");
+    const db = new DatabaseSync(path.join(dataDir, "node.db"), { readOnly: true });
+    assert.equal((db.prepare("SELECT count(*) n FROM replication_outbox WHERE entity_type = 'user.recent'").get() as { n: number }).n, 2);
+    db.close();
+  } finally { await rm(dataDir, { recursive: true, force: true }); }
+});
+
 test("recent paths are stored relative to the node home and legacy absolute rows repair on read", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-recents-portable-"));
   try {

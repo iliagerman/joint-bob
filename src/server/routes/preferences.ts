@@ -58,8 +58,9 @@ app.put("/api/recents", async (request, response, next) => {
     const project = await getProject(entry.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const local = await getClusterNode();
-    response.json({ recentSessions: setUserRecentSession(session.username, { ...entry, projectId: project.id }, local.id) });
-    broadcastToAllClients({ type: "recentsChanged" });
+    const { recentSessions, changed } = setUserRecentSession(session.username, { ...entry, projectId: project.id }, local.id);
+    response.json({ recentSessions });
+    if (changed) broadcastToAllClients({ type: "recentsChanged" });
   } catch (error) { next(error); }
 });
 
