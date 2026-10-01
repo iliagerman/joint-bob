@@ -3,16 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.26.1 — 2026-10-01
 
-- Added options for configuring git review settings.
+- The 2.26.0 release could not ship because the app’s offline copy missed the git reviewer options; it now includes them, so 2.26.0’s changes reach every machine with this version.
 
 ## 2.26.0 — 2026-10-01
 
 - Skills can now be shared to specific workspaces or conversations, with scope-based access control.
-- Browser profiles can now be shared by scope: conversation, project, workspace, machine, or cluster.
+- **Settings → Browser → Profiles** lists the browser profiles on every machine you can reach, with their sites and who has them open. Share a profile with conversations, a project, a workspace, a machine, or a whole cluster; logins stay on the profile's machine and shared conversations elsewhere open it there. A new profile stays with the conversation that created it until you share it, and unshared profiles never appear on other machines.
 - Scoped skill and profile shares are stored separately, letting receivers revoke them without affecting cluster or node grants.
-- Skills and browser profiles management moved to Settings → Resources with improved layout and controls.
+- Skills management moved to Settings → Resources with improved layout and controls.
 - Resource lists now paginate to fit your screen height instead of scrolling vertically.
 
 ## 2.25.1 — 2026-10-01
