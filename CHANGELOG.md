@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.19.4 — 2026-09-30
 
-- Fixed usage breakdown tables to properly wrap content and remain responsive on mobile devices.
+- Costs tables now use the full width, with readable wrapped names, exact numeric values, and labelled mobile rows without nested scrolling.
 
 ## 2.19.3 — 2026-10-01
 
