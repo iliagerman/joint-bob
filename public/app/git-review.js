@@ -119,6 +119,7 @@ async function loadChanges() {
     elements.gitReviewBranch.textContent = `${status.branch}${status.upstream ? ` → ${status.upstream}` : ""}${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}`;
     if (git.conversationId && git.scopePaths === null) await loadConversationScope();
     renderChangeList(status);
+    if (!git.guide && !status.clean) await restoreLatestGuide();
     setStatus(status.clean ? "Working tree clean" : git.scopePaths === null && git.conversationId ? "Conversation file list unavailable. Refresh or include other pending changes." : "");
   } catch (error) {
     setStatus(error.message);
@@ -126,11 +127,50 @@ async function loadChanges() {
   }
 }
 
-async function loadConversationScope() {
+/** Animated placeholder shown while a coding agent works on the user's behalf. */
+function showLoading(container, message) {
+  const box = document.createElement("div");
+  box.className = "git-review-loading";
+  box.dataset.testid = "git-review-loading";
+  box.setAttribute("role", "status");
+  const head = document.createElement("div");
+  head.className = "git-review-loading-head";
+  const spinner = document.createElement("span");
+  spinner.className = "git-review-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  text.textContent = message;
+  head.append(spinner, text);
+  box.append(head);
+  for (let index = 0; index < 4; index += 1) {
+    const bar = document.createElement("span");
+    bar.className = "git-review-skeleton";
+    bar.setAttribute("aria-hidden", "true");
+    box.append(bar);
+  }
+  container.replaceChildren(box);
+}
+
+// Reopening shows the last generated review again while its diff is unchanged.
+async function restoreLatestGuide() {
+  const request = git.scopeRequest;
+  const latest = await api(gitApiUrl("guide-latest", { conversationId: git.conversationId }));
+  if (!latest.guide || request !== git.scopeRequest || !elements.gitReviewDialog.open || git.guide) return;
+  if (latest.scope === "all") elements.gitReviewAllChanges.checked = true;
+  git.guide = { guide: latest.guide, paths: latest.paths, patches: latest.patches, fingerprint: latest.fingerprint, threadId: latest.thread.id };
+  git.focusIndex = 0;
+  elements.gitReviewFocus.checked = true;
+  renderAmbiguity();
+  renderGuide();
+  renderChangeList(git.status);
+}
+
+async function loadConversationScope(refresh = false) {
   const request = ++git.scopeRequest;
   setStatus("Asking the coding agent which pending files it changed…");
+  showLoading(elements.gitReviewList, "Asking the coding agent which files it changed…");
   try {
-    const scope = await api(gitApiUrl("scope", { conversationId: git.conversationId }));
+    const scope = await api(gitApiUrl("scope", { conversationId: git.conversationId, refresh: refresh ? "1" : undefined }));
     if (request !== git.scopeRequest || !elements.gitReviewDialog.open) return;
     git.scopePaths = scope.paths;
     git.lastHarness = scope.lastHarness;
@@ -517,6 +557,8 @@ async function generateGuide() {
   if (!harness?.ready) { toast("Selected reviewer is unavailable on this node"); return; }
   elements.gitReviewGenerate.disabled = true;
   setStatus("Generating ranked review comments…");
+  elements.gitReviewGuide.hidden = false;
+  showLoading(elements.gitReviewGuide, "The reviewer is reading the changes and ranking them…");
   try {
     const provider = elements.gitReviewModel.selectedOptions[0]?.dataset.provider || harness.configuration?.fixedProvider;
     const response = await api(gitApiUrl("guide"), { method: "POST", body: JSON.stringify({
@@ -532,7 +574,7 @@ async function generateGuide() {
     renderGuide();
     if (git.status) renderChangeList(git.status);
     setStatus("Review saved for 7 days. File scope is agent-claimed, not proven ownership.");
-  } catch (error) { setStatus(error.message); toast(error.message, 10000); }
+  } catch (error) { renderGuide(); setStatus(error.message); toast(error.message, 10000); }
   finally { elements.gitReviewGenerate.disabled = false; }
 }
 
@@ -626,6 +668,6 @@ elements.gitReviewAllChanges.addEventListener("change", () => {
 });
 elements.gitReviewThinking.addEventListener("change", () => { git.reviewerTouched = true; });
 elements.gitReviewFocus.addEventListener("change", renderGuide);
-elements.gitReviewRefreshScope.addEventListener("click", async () => { if (!git.conversationId) return; await loadConversationScope(); git.guide = null; renderGuide(); if (git.status) renderChangeList(git.status); });
+elements.gitReviewRefreshScope.addEventListener("click", async () => { if (!git.conversationId) return; await loadConversationScope(true); git.guide = null; renderGuide(); if (git.status) renderChangeList(git.status); });
 elements.gitReviewGenerate.addEventListener("click", () => { void generateGuide(); });
 elements.gitReviewAskForm.addEventListener("submit", submitAsk);

@@ -334,16 +334,16 @@ const guideRequest = z.object({
   thinkingLevel: gitReviewAskSchema.shape.thinkingLevel,
 }).strict();
 
-async function discoverScope(projectId: string, cwd: string, conversationId: string): Promise<unknown> {
+async function discoverScope(projectId: string, cwd: string, conversationId: string, refresh: boolean): Promise<unknown> {
   const project = await getProject(projectId);
   if (!project) throw new GitReviewError(404, "Project not found");
-  return discoverConversationFiles(project, cwd, conversationId);
+  return discoverConversationFiles(project, cwd, conversationId, refresh);
 }
 
 app.get("/api/cluster/git/scope", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    response.json(await discoverScope(queryString(request, "projectId"), await reviewCwd(queryString(request, "projectId"), queryOptional(request, "taskId")), queryString(request, "conversationId")));
+    response.json(await discoverScope(queryString(request, "projectId"), await reviewCwd(queryString(request, "projectId"), queryOptional(request, "taskId")), queryString(request, "conversationId"), queryOptional(request, "refresh") === "1"));
   } catch (error) { handleGitError(response, error, next); }
 });
 
@@ -351,8 +351,9 @@ app.get("/api/projects/:projectId/git/scope", async (request, response, next) =>
   try {
     const conversationId = queryString(request, "conversationId");
     if (!conversationId) throw new GitReviewError(400, "Conversation required");
-    await withOwningNode(request, response, "/api/cluster/git/scope", { conversationId }, async () =>
-      discoverScope(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId")), conversationId));
+    const refresh = queryOptional(request, "refresh") === "1";
+    await withOwningNode(request, response, "/api/cluster/git/scope", { conversationId, ...(refresh ? { refresh: "1" } : {}) }, async () =>
+      discoverScope(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId")), conversationId, refresh));
   } catch (error) { handleGitError(response, error, next); }
 });
 
@@ -405,6 +406,34 @@ app.get("/api/projects/:projectId/git/guide-fresh", async (request, response, ne
       const saved = JSON.parse(thread.messages[1].text) as { paths: string[]; fingerprint: string };
       const current = await pendingReviewDiff(await reviewCwd(thread.projectId, queryOptional(request, "taskId")), saved.paths);
       return { fresh: current.fingerprint === saved.fingerprint };
+    });
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+// The newest generated review for a conversation (or the whole project), only while its diff is unchanged.
+async function latestFreshGuide(projectId: string, cwd: string, conversationId: string | null): Promise<unknown> {
+  const summary = listGitReviewThreads(projectId, conversationId).find((thread) => thread.question === "Generated review comments");
+  if (!summary) return { latest: null };
+  const thread = getGitReviewThread(summary.id)!;
+  const saved = JSON.parse(thread.messages[1].text) as { guide: unknown; paths: string[]; patches: Record<string, string>; fingerprint: string; scope: string };
+  if ((await pendingReviewDiff(cwd, saved.paths)).fingerprint !== saved.fingerprint) return { latest: null };
+  return { thread: { id: thread.id }, ...saved };
+}
+
+app.get("/api/cluster/git/guide-latest", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const projectId = queryString(request, "projectId");
+    response.json(await latestFreshGuide(projectId, await reviewCwd(projectId, queryOptional(request, "taskId")), queryOptional(request, "conversationId") ?? null));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.get("/api/projects/:projectId/git/guide-latest", async (request, response, next) => {
+  try {
+    const conversationId = queryOptional(request, "conversationId");
+    await withOwningNode(request, response, "/api/cluster/git/guide-latest", conversationId ? { conversationId } : {}, async () => {
+      if (!await getProject(request.params.projectId)) throw new GitReviewError(404, "Project not found");
+      return latestFreshGuide(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId")), conversationId ?? null);
     });
   } catch (error) { handleGitError(response, error, next); }
 });

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Code review now displays a loading animation while the reviewer works and restores the previous review when reopening if the files haven't changed.
+
 ## 2.31.0 — 2026-10-01
 
 - Added secret account support for OpenAI, Z.AI, Grafana, Datadog, PostgreSQL, MS SQL, and MongoDB with searchable provider selection.

@@ -37,22 +37,30 @@ export async function conversationReviewContext(project: ProjectRecord, conversa
   return { transcript: messages.join("\n\n").slice(-45_000), lastHarness };
 }
 
-const discoveries = new Map<string, { paths: string[]; expires: number }>();
+// The agent's answer is reused while the transcript and pending paths are unchanged.
+const discoveries = new Map<string, { paths: string[]; lastHarness: string; fingerprint: string; expires: number }>();
 
 export function checkedConversationFiles(projectId: string, cwd: string, conversationId: string, paths: string[]): void {
   const saved = discoveries.get(JSON.stringify([projectId, cwd, conversationId]));
   if (!saved || saved.expires < Date.now() || paths.some((file) => !saved.paths.includes(file))) throw new GitReviewError(409, "Conversation file list expired; refresh it before reviewing");
 }
 
-export async function discoverConversationFiles(project: ProjectRecord, cwd: string, conversationId: string): Promise<{ paths: string[]; lastHarness: string }> {
+export async function discoverConversationFiles(project: ProjectRecord, cwd: string, conversationId: string, refresh = false): Promise<{ paths: string[]; lastHarness: string }> {
   const { transcript, lastHarness } = await conversationReviewContext(project, conversationId);
   const status = await gitStatus(cwd);
   const pending = [...status.staged, ...status.unstaged, ...status.untracked];
+  const candidatePaths = [...new Set(pending.map(({ path }) => path))];
+  const key = JSON.stringify([project.id, cwd, conversationId]);
+  const fingerprint = createHash("sha256").update(JSON.stringify([candidatePaths, transcript])).digest("hex");
+  const saved = discoveries.get(key);
+  if (!refresh && saved?.fingerprint === fingerprint) {
+    saved.expires = Date.now() + 10 * 60_000;
+    return { paths: saved.paths, lastHarness: saved.lastHarness };
+  }
   if (!pending.length) {
-    discoveries.set(JSON.stringify([project.id, cwd, conversationId]), { paths: [], expires: Date.now() + 10 * 60_000 });
+    discoveries.set(key, { paths: [], lastHarness, fingerprint, expires: Date.now() + 10 * 60_000 });
     return { paths: [], lastHarness };
   }
-  const candidatePaths = [...new Set(pending.map(({ path }) => path))];
   if (JSON.stringify(candidatePaths).length + transcript.length > 110_000) throw new GitReviewError(413, "Too many pending paths to identify safely");
   const result = await runGitReview({
     projectId: project.id, cwd, harnessId: lastHarness, provider: "", modelId: "", thinkingLevel: "",
@@ -62,7 +70,7 @@ export async function discoverConversationFiles(project: ProjectRecord, cwd: str
   const claimed = z.array(z.string().max(2000)).max(500).parse(parseJson(result.answer));
   const allowed = new Set(candidatePaths);
   const paths = [...new Set(claimed.filter((file) => allowed.has(file)))];
-  discoveries.set(JSON.stringify([project.id, cwd, conversationId]), { paths, expires: Date.now() + 10 * 60_000 });
+  discoveries.set(key, { paths, lastHarness, fingerprint, expires: Date.now() + 10 * 60_000 });
   return { paths, lastHarness };
 }
 
