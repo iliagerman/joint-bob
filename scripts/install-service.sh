@@ -72,6 +72,8 @@ cd "${REPO_ROOT}"
 if [ "${mode}" = --build-only ]; then
   "${NPM_BIN}" ci
   "${NPM_BIN}" run build
+  # Install Chromium browser for browser automation
+  npx --no-save playwright install chromium
 fi
 package_bin="${REPO_ROOT}/node_modules/.bin"
 syncthing_bin="$("${REPO_ROOT}/scripts/install-syncthing.sh")"
