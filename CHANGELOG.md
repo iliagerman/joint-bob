@@ -3,6 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+- Git projects now keep local HEAD in sync with pushed commits from other nodes before each turn, so you don't see all files as edited after Syncthing copies them.
+
 ## 2.27.0 — 2026-10-01
 
 - Recent conversations no longer refresh across the cluster when a browser reports activity you already have.

@@ -127,6 +127,12 @@
           "variant": "warn",
           "title": "A lost manager without a twin",
           "body": "A cluster whose manager is lost and had no twin cannot choose a new manager. Keep the machine that manages a cluster twinned with another machine you own."
+        },
+        {
+          "kind": "callout",
+          "variant": "info",
+          "title": "Git history on synced projects",
+          "body": "Syncthing never copies `.git`, so a commit pushed from one node leaves the others' HEAD behind files they already have. Before every user message and goal turn, a node whose project is a git repository runs `git fetch` and moves HEAD and the index (never the files) to the upstream commit, but only when the files on disk already hold that commit, this node has no unpushed commits, and nothing is staged. Otherwise HEAD is left alone. A failed fetch is logged and the turn continues."
         }
       ]
     },
@@ -170,7 +176,8 @@
             "An event a twin was refused and later becomes eligible for is sent at the next full outbox search, within about 5 minutes.",
             "Shared agent skills (the agent-resources Syncthing folder) do not synchronize between nodes.",
             "A node advertises one URL to all its clusters, so every cluster must reach it at that URL.",
-            "Tasks still assigned to a lost machine keep that assignment until they are handed off."
+            "Tasks still assigned to a lost machine keep that assignment until they are handed off.",
+            "Git catch-up follows commits that reached the remote. A commit that was never pushed stays on its node, and its files appear as uncommitted edits on other nodes until it is pushed. Commits made in a terminal, outside a conversation, are picked up at that project's next user message."
           ]
         }
       ]

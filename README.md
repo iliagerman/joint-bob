@@ -255,6 +255,8 @@ Projects created through the UI synchronize through per-project Syncthing folder
 
 Joint Bob copies or moves the complete local folder, including `.git`, `node_modules`, and hidden files. `.git`, `node_modules`, build output, environment files, credentials, and logs are excluded from Syncthing at every depth.
 
+Because `.git` stays on each node, a commit pushed from one node would leave the other nodes' git HEAD behind the files they already received. Before every user message and goal turn, Joint Bob checks whether the project is a git repository. If it is, it runs `git fetch` and moves HEAD and the index, never the files, to the upstream commit. It does that only when the files on disk already match that commit, the node has no unpushed commits, and nothing is staged. Commit and push from the same node: an unpushed commit stays on the node that made it.
+
 Ticket agents work in the synchronized `<home>/tickets` folder. Handoff waits for the destination node to report that the workspace is synchronized. Archiving a ticket moves it to Done and removes its workspace. Deleting a ticket removes its workspace and task record.
 
 Existing Git-backed tickets keep their worktree and merge behavior. New tickets do not create a branch and do not show **Merge to main**.

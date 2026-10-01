@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -228,6 +229,57 @@ test("a Kiro turn that ends without a reply is reported and stays visible after 
     assert.equal(typeof error!.timestamp, "string");
     assert.equal(history.indexOf(error!), history.length - 1, "the failure follows the turn that failed");
     assert.equal(history.filter((message) => message.role === "user").length, 1);
+  } finally {
+    for (const socket of sockets) socket.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Syncthing delivers a project's files to every node but never `.git`, so a commit
+// pushed from another node leaves this node's HEAD behind. Each user message first
+// moves HEAD to the pushed commit once the files on disk already hold it.
+test("a user message first moves a synced project's git HEAD to the commit another node pushed", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "harness-chat-git-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  const sockets: WebSocket[] = [];
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { encoding: "utf8" }).trim();
+  try {
+    const environment = await seedDevEnvironment(root, 1);
+    const node = environment.nodes[0];
+    const executable = path.join(environment.home, "bin", "kiro-fixture");
+    const configPath = path.join(environment.home, ".kiro");
+    const sessionPath = path.join(configPath, "sessions");
+    await Promise.all([mkdir(path.dirname(executable), { recursive: true }), mkdir(sessionPath, { recursive: true })]);
+    await writeFile(executable, fixtureSource);
+    await chmod(executable, 0o700);
+    configureKiro(node.dataDir, executable, configPath, sessionPath);
+    const project = projectNamed(node, "Joint Bob");
+    const origin = path.join(root, "origin.git");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
+    await writeFile(path.join(project.path, "app.txt"), "v1\n");
+    git(project.path, "init", "-q", "-b", "main");
+    git(project.path, "add", "app.txt");
+    git(project.path, "commit", "-q", "-m", "first");
+    git(project.path, "remote", "add", "origin", origin);
+    git(project.path, "push", "-q", "-u", "origin", "main");
+    const laptop = path.join(root, "laptop");
+    execFileSync("git", ["clone", "-q", origin, laptop]);
+    await writeFile(path.join(laptop, "app.txt"), "v2\n");
+    git(laptop, "commit", "-q", "-am", "second");
+    git(laptop, "push", "-q", "origin", "main");
+    const pushed = git(laptop, "rev-parse", "HEAD");
+    await writeFile(path.join(project.path, "app.txt"), "v2\n");
+
+    server = await startDevNode(environment, node);
+    const auth = await signIn(environment, node);
+    const chat = openChat(node.url, auth.cookie, project.id, "kiro:new");
+    sockets.push(chat.socket);
+    await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "ready" && message.engine === "kiro"));
+    chat.socket.send(JSON.stringify({ type: "prompt", message: "hello" }));
+    await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "promptCompleted"));
+    assert.equal(git(project.path, "rev-parse", "HEAD"), pushed);
+    assert.equal(git(project.path, "status", "--porcelain", "--untracked-files=no"), "");
   } finally {
     for (const socket of sockets) socket.close();
     if (server) await stopDevNode(server);

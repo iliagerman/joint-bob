@@ -19,6 +19,7 @@ import type { HarnessModelSettings, HarnessSession } from "../harnesses/runtime.
 import { setSessionTitle } from "../names.js";
 import { conversationScopeId, genericSecretEnvironment, getScopeSecretAccounts } from "../secrets.js";
 import { getProjectLock } from "../project-locks.js";
+import { catchUpGitHead } from "../git-catch-up.js";
 import { getSettings } from "../settings.js";
 import { beginQueuedPrompt, bumpRoutingPromptCount, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, readRoutingState, recordQueueSettings, recordRoutingEval, resetQueuedPromptAttempt, setRoutingMode, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { queuedAttachments } from "../queued-attachments.js";
@@ -304,6 +305,15 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   return result("classified", { ...configured, classifierId: classifier.id, level: classification.level, confidence: classification.confidence, mapped: true });
 }
 
+/** A failed fetch must not block the conversation; the turn runs on the HEAD this node has. */
+async function catchUpProjectGit(connection: HarnessChatConnection): Promise<void> {
+  try {
+    await catchUpGitHead(connection.cwd, genericSecretEnvironment(connection.project.id));
+  } catch (error) {
+    console.warn("Git catch-up before turn failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
+  }
+}
+
 async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
   if (queued.dispatchState === "starting" || startingIds.has(queued.id)) throw new Error("Queued prompt start is uncertain; edit or cancel it before retrying");
   await ensureCurrentSession(connection);
@@ -316,6 +326,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
     if (queued.settings) await applyQueuedSettings(connection, queued.settings);
     const difficulty = await routePromptByDifficulty(connection, queued);
     await writable(connection);
+    await catchUpProjectGit(connection);
     await connection.shared.session.preflight();
     const attachments = await queuedAttachments(connection.cwd, queued, getSettings().digestAttachments ? describeImage : undefined);
     await writable(connection);
@@ -383,6 +394,7 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
   markHarnessInput(connection.shared);
   try {
     await writable(connection);
+    await catchUpProjectGit(connection);
     await connection.shared.session.preflight();
     await connection.shared.session.prompt({ text: goalPrompt(goal), beforeStart: () => writable(connection) });
     const assistantText = latestAssistantText(connection.shared.session);
