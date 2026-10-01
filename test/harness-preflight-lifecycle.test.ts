@@ -122,6 +122,40 @@ test("closed client is not attached when queued prompt rebinds", async (context)
   } finally { cleanup(fixture); }
 });
 
+test("auto compact wakes after a detached conversation becomes idle", async (context) => {
+  const fixture = await setup(context, Promise.resolve(), () => {});
+  const session = fixture.shared.session;
+  let busy = false;
+  let percent = 0;
+  let compactions = 0;
+  let notifyIdle: (() => void) | undefined;
+  const originalPrompt = session.prompt.bind(session);
+  const originalSubscribe = session.subscribe.bind(session);
+  session.subscribe = (listener) => {
+    notifyIdle = () => listener({ type: "status" });
+    return originalSubscribe(listener);
+  };
+  session.prompt = async (input) => { await originalPrompt(input); busy = true; percent = 90; };
+  session.isBusy = () => busy;
+  session.status = () => ({ contextUsage: { usedTokens: percent, contextWindow: 100, percent } }) as ReturnType<HarnessSession["status"]>;
+  const compacted = deferred();
+  session.compact = async () => { compactions++; percent = 0; compacted.resolve(); };
+  try {
+    fixture.shared.clients.delete(fixture.socket);
+    harnessChatConnections.delete(fixture.connection);
+    await drainHarnessPromptQueue(fixture.connection);
+    assert.equal(compactions, 0, "harness is still busy after the prompt returns");
+    busy = false;
+    notifyIdle?.();
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([compacted.promise, new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("idle wake did not compact")), 2_000); })]);
+    } finally { clearTimeout(timeout); }
+    assert.equal(compactions, 1);
+    assert.equal(fixture.shared.clients.size, 0);
+  } finally { cleanup(fixture); }
+});
+
 test("rejected preflight releases its pin without starting the queued prompt", async (context) => {
   const gate = deferred();
   let enteredResolve!: () => void;

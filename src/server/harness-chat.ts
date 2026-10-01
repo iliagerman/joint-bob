@@ -51,6 +51,7 @@ export interface AttachOptions {
 export const harnessChatConnections = new Set<HarnessChatConnection>();
 const mutations = new Map<string, Promise<void>>();
 const drains = new Map<string, Promise<void>>();
+const idleWakes = new Map<string, () => void>();
 const pausedDrains = new Set<string>();
 const startingIds = new Set<string>();
 // Keyed by conversation, not session object: a reopened session must not retry a
@@ -400,10 +401,36 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
   }
 }
 
+function wakeWhenHarnessIdle(connection: HarnessChatConnection): void {
+  const key = queueKey(connection);
+  if (idleWakes.has(key)) return;
+  const shared = connection.shared;
+  let timer: NodeJS.Timeout;
+  let unsubscribe: () => void;
+  const cleanup = () => {
+    clearInterval(timer);
+    unsubscribe();
+    if (idleWakes.get(key) === cleanup) idleWakes.delete(key);
+  };
+  const check = () => {
+    if (connection.shared !== shared || findHarnessSession(shared.projectId, shared.engine, shared.session.id) !== shared) return cleanup();
+    if (harnessTurnBusy(shared)) return;
+    cleanup();
+    // The idle event may fire before the old drain has removed itself from the map.
+    setImmediate(() => void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) })));
+  };
+  unsubscribe = shared.session.subscribe(() => queueMicrotask(check));
+  timer = setInterval(check, 2_000);
+  timer.unref();
+  idleWakes.set(key, cleanup);
+  queueMicrotask(check);
+}
+
 async function drainLoop(connection: HarnessChatConnection): Promise<void> {
   for (;;) {
     await ensureCurrentSession(connection);
-    if (pausedDrains.has(queueKey(connection)) || harnessTurnBusy(connection.shared)) return;
+    if (pausedDrains.has(queueKey(connection))) return;
+    if (harnessTurnBusy(connection.shared)) { wakeWhenHarnessIdle(connection); return; }
     if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
     const next = listQueuedPrompts(queueKey(connection))[0];
     if (next?.systemEventId && next.dispatchState === "starting") {
@@ -431,6 +458,7 @@ export function harnessPromptQueueIsDraining(key: string): boolean { return drai
 export function drainHarnessPromptQueue(connection: HarnessChatConnection): Promise<void> {
   const key = queueKey(connection);
   const existing = drains.get(key); if (existing) return existing;
+  idleWakes.get(key)?.();
   const drain = drainLoop(connection).finally(() => drains.delete(key));
   drains.set(key, drain); return drain;
 }
