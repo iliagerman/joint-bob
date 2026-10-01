@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.20.0 — 2026-10-01
 
-- Browser machines can now have cluster-wide default suggestions, shared among project members.
+- Clusters can now suggest a default browser machine for new conversations, with each member's own choice remaining private to their twin.
+- Settings displays the default browser machine with "Use cluster default" as the new baseline, plus one dropdown per cluster showing that cluster's suggested machine.
+- Browser default resolution now follows the order: conversation choice, then machine choice, then cluster suggestion if shared, else none.
+- Leaked browser defaults from earlier releases are automatically cleaned up unless they came from your own twin.
 
 ## 2.19.4 — 2026-09-30
 
