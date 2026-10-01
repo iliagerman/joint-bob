@@ -72,8 +72,10 @@ cd "${REPO_ROOT}"
 if [ "${mode}" = --build-only ]; then
   "${NPM_BIN}" ci
   "${NPM_BIN}" run build
-  # Install Chromium browser for browser automation
-  npx --no-save playwright install chromium
+  # Pinned to playwright-core, so the detected chromium.executablePath() matches this release.
+  if [ -z "${JOINT_BOB_BROWSER_EXECUTABLE:-}" ]; then
+    "${REPO_ROOT}/node_modules/.bin/playwright-core" install --no-shell --no-progress chromium || echo "Warning: Playwright Chromium download failed; browsers need Chrome, Chromium, or JOINT_BOB_BROWSER_EXECUTABLE on this machine." >&2
+  fi
 fi
 package_bin="${REPO_ROOT}/node_modules/.bin"
 syncthing_bin="$("${REPO_ROOT}/scripts/install-syncthing.sh")"

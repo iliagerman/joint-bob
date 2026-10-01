@@ -307,18 +307,18 @@ Website-bound accounts replicate like any other account when marked to replicate
 
 ## Conversation browsers
 
-Browsers can run on a different machine from the conversation's agent. New sessions use the browser-session machine override, then the conversation override, then the default browser machine in Settings. Existing sessions and login profiles stay on their original machine. Ubuntu and macOS are supported. Other systems can use an explicit browser binary or Playwright Chromium when available. No desktop or monitor is required. Existing default-executor settings are retained. Update both nodes before using cross-node browser control.
+Browsers can run on a different machine from the conversation's agent. New sessions use the browser-session machine override, then the conversation override, then the Settings default. For a project shared in a cluster, the Settings default is this machine's choice for that cluster in **Settings → Browser**, else the cluster default from **Settings → Cluster → Browser machine defaults**. Projects in no cluster, or whose clusters have no default, use the **Default browser machine** in **Settings → Browser**. Choices in **Settings → Browser** apply only to the machine where they are made; a cluster default applies to every member. Existing sessions and login profiles stay on their original machine. Ubuntu and macOS are supported. Other systems can use an explicit browser binary or Playwright Chromium when available. No desktop or monitor is required. Existing default-executor settings are retained. Update both nodes before using cross-node browser control.
 
-Install Google Chrome or Chromium on each machine that will run browsers. Joint Bob never installs browsers automatically. On Ubuntu, you can manually install the pinned Playwright browser and system libraries from the installed app, as the user that runs the service:
+Installing or updating Joint Bob downloads the pinned Playwright Chromium unless `JOINT_BOB_BROWSER_EXECUTABLE` is set; a failed download only warns. Google Chrome or Chromium installed on the machine is preferred when present. Browsers are never installed at runtime. On Ubuntu, Chromium also needs system libraries, which require sudo; install them from the installed app, as the user that runs the service:
 
 ```bash
 cd ~/.local/share/joint-bob/app
 ./node_modules/.bin/playwright-core install --with-deps chromium
 ```
 
-Installing system libraries may request sudo. For an existing browser in a nonstandard location, set `JOINT_BOB_BROWSER_EXECUTABLE=/absolute/path/to/chrome` in that node's `~/.joint-bob/env` and restart its service. Settings checks installed executables; starting a browser reports missing libraries or launch errors. It never downloads software silently.
+Installing system libraries may request sudo. For an existing browser in a nonstandard location, set `JOINT_BOB_BROWSER_EXECUTABLE=/absolute/path/to/chrome` in that node's `~/.joint-bob/env` and restart its service. Settings checks installed executables; starting a browser reports missing libraries or launch errors. It never downloads software outside installation.
 
-1. Open **Settings → Cluster** and select the default browser machine. Check its installed-browser capability; unavailable machines do not trigger a fallback.
+1. Open **Settings → Browser** and select this machine's default browser machine and, optionally, its choice per cluster. Set shared cluster defaults in **Settings → Cluster → Browser machine defaults**. Check installed-browser capability; unavailable machines do not trigger a fallback.
 2. Open a conversation and choose **Browser** in its toolbar (under **⋯ More chat actions** when collapsed). Keep **Use Settings default**, or choose a conversation-specific browser machine. When starting an account, keep **Use conversation setting**, or choose a machine for that browser session. Create a named profile or open an existing one. Use the account picker to view another account without closing the first.
 3. Watch beside the conversation or choose **Open in tab**. **Take control** pauses agent browser input. **Resume agent** hands it back.
 4. **Close viewer** leaves the browser running. **End browser** closes only the selected account's tabs; other accounts remain running. Closing a viewer while under human control leaves the agent paused.
