@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Git review toolbar reorganized into rows for better alignment; shows all pending files when conversation scope is empty, with clarifying message.
+
 ## 2.21.0 — 2026-10-01
 
 - Usage dashboard unified all dimensions (projects, conversations, labels, difficulty, models, days) into one responsive table with sidebar grouping and cluster filtering.

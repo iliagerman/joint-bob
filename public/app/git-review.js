@@ -89,10 +89,17 @@ function applyTab(tab) {
   elements.gitReviewBody.hidden = hosting;
   elements.gitReviewHosting.hidden = !hosting;
   elements.gitReviewDialog.querySelector(".git-review-card").classList.toggle("is-hosting", hosting);
-  // Agent-declared file lists are useful scope, not proof of file ownership.
-  const showAmbiguity = Boolean(git.conversationId) && tab === "changes";
-  elements.gitReviewAmbiguity.hidden = !showAmbiguity;
-  if (showAmbiguity) elements.gitReviewAmbiguity.textContent = "File list is claimed by the coding agent, not proven by Git. Other conversations may have edited the same files.";
+  renderAmbiguity();
+}
+
+// Agent-declared file lists are useful scope, not proof of file ownership.
+function renderAmbiguity() {
+  const show = Boolean(git.conversationId) && git.tab === "changes";
+  elements.gitReviewAmbiguity.hidden = !show;
+  if (!show) return;
+  elements.gitReviewAmbiguity.textContent = git.scopePaths?.length === 0 && elements.gitReviewAllChanges.checked
+    ? "The coding agent claimed none of the pending files for this conversation, so all pending changes are shown."
+    : "File list is claimed by the coding agent, not proven by Git. Other conversations may have edited the same files.";
 }
 
 async function loadCurrentTab() {
@@ -126,6 +133,9 @@ async function loadConversationScope() {
     if (request !== git.scopeRequest || !elements.gitReviewDialog.open) return;
     git.scopePaths = scope.paths;
     git.lastHarness = scope.lastHarness;
+    // An empty claim would hide every pending file, so show them all instead.
+    if (!scope.paths.length) elements.gitReviewAllChanges.checked = true;
+    renderAmbiguity();
     if (git.harnesses.length && !git.reviewerTouched) chooseReviewer();
   } catch (error) {
     git.scopePaths = null;
@@ -243,14 +253,6 @@ function renderDiff(diff) {
 }
 
 async function loadHistory() {
-  if (git.conversationId && !elements.gitReviewAllChanges.checked) {
-    elements.gitReviewList.textContent = "";
-    elements.gitReviewDiff.textContent = "";
-    elements.gitReviewDiffPath.textContent = "";
-    elements.gitReviewAskButton.hidden = true;
-    setStatus("History is project-wide. Include other pending changes to see repository history.");
-    return;
-  }
   setStatus("Loading history…");
   try {
     const body = await api(gitApiUrl("history", { limit: 50 }));
@@ -579,8 +581,8 @@ elements.gitReviewAllChanges.addEventListener("change", () => {
   elements.gitReviewAskButton.hidden = true;
   elements.gitReviewAskForm.hidden = true;
   renderGuide();
-  if (git.tab === "history") void loadHistory();
-  else if (git.status) renderChangeList(git.status);
+  renderAmbiguity();
+  if (git.status) renderChangeList(git.status);
 });
 elements.gitReviewThinking.addEventListener("change", () => { git.reviewerTouched = true; });
 elements.gitReviewFocus.addEventListener("change", renderGuide);

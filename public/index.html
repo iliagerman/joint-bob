@@ -1320,15 +1320,19 @@
         </div>
         <p class="git-review-ambiguity" id="gitReviewAmbiguity" hidden data-testid="git-review-ambiguity"></p>
         <div class="git-review-toolbar" id="gitReviewToolbar">
-          <label><input id="gitReviewAllChanges" type="checkbox" data-testid="git-review-all-changes"> Include other pending changes</label>
-          <label><input id="gitReviewFocus" type="checkbox" data-testid="git-review-focus"> Focus mode</label>
-          <button class="ghost compact" id="gitReviewRefreshScope" type="button" data-testid="git-review-refresh-scope">Refresh conversation files</button>
-          <div class="git-review-ask-controls">
-            <label>Reviewer<select id="gitReviewHarness" data-testid="git-review-harness"></select></label>
-            <label>Model<select id="gitReviewModel" data-testid="git-review-model"></select></label>
-            <label>Effort<select id="gitReviewThinking" data-testid="git-review-thinking"></select></label>
+          <div class="git-review-toolbar-row">
+            <label><input id="gitReviewAllChanges" type="checkbox" data-testid="git-review-all-changes"> Include other pending changes</label>
+            <label><input id="gitReviewFocus" type="checkbox" data-testid="git-review-focus"> Focus mode</label>
+            <button class="ghost compact" id="gitReviewRefreshScope" type="button" data-testid="git-review-refresh-scope">Refresh conversation files</button>
           </div>
-          <button class="primary compact" id="gitReviewGenerate" type="button" data-testid="git-review-generate">Generate review comments</button>
+          <div class="git-review-toolbar-row">
+            <div class="git-review-ask-controls">
+              <label>Reviewer<select id="gitReviewHarness" data-testid="git-review-harness"></select></label>
+              <label>Model<select id="gitReviewModel" data-testid="git-review-model"></select></label>
+              <label>Effort<select id="gitReviewThinking" data-testid="git-review-thinking"></select></label>
+            </div>
+            <button class="primary compact" id="gitReviewGenerate" type="button" data-testid="git-review-generate">Generate review comments</button>
+          </div>
         </div>
         <div class="git-review-body" id="gitReviewBody">
           <aside class="git-review-list" id="gitReviewList" data-testid="git-review-list" aria-label="Changed files and commits"></aside>

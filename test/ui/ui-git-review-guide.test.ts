@@ -67,3 +67,43 @@ test("conversation Git review hides other files and orders guided comments with 
   assert.equal(await page.getByTestId("git-review-file").count(), 3);
   assert.equal(await page.getByTestId("git-review-guide").isVisible(), false);
 });
+
+test("conversation Git review shows all pending files when none are claimed, aligns toolbar, and loads history", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const status = { branch: "main", upstream: "origin/main", ahead: 0, behind: 0, detached: false, staged: [], unstaged: [
+    { path: "other.ts", kind: "modified", staged: false },
+    { path: "second.ts", kind: "modified", staged: false },
+  ], untracked: [], clean: false };
+  await page.route("**/api/projects/*/git/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/status")) return route.fulfill({ json: status });
+    if (url.pathname.endsWith("/scope")) return route.fulfill({ json: { paths: [], lastHarness: "claude" } });
+    if (url.pathname.endsWith("/history")) return route.fulfill({ json: { commits: [{ hash: "abc1234", shortHash: "abc1234", subject: "Earlier commit", author: "Dev", date: "2026-09-30T00:00:00Z" }] } });
+    return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
+  });
+  await page.goto(node.url);
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card").first().click();
+  await page.getByTestId("chat-git-button").click();
+  await page.getByTestId("git-review-file").first().waitFor();
+  assert.equal(await page.getByTestId("git-review-file").count(), 2);
+  assert.equal(await page.getByTestId("git-review-all-changes").isChecked(), true);
+  assert.match(await page.getByTestId("git-review-ambiguity").innerText(), /claimed none of the pending files/);
+  const checkbox = await page.getByTestId("git-review-all-changes").boundingBox();
+  assert.ok(checkbox && checkbox.width >= 12, "include-other checkbox is visible");
+  const generate = await page.getByTestId("git-review-generate").boundingBox();
+  const refresh = await page.getByTestId("git-review-refresh-scope").boundingBox();
+  const harness = await page.getByTestId("git-review-harness").boundingBox();
+  const effort = await page.getByTestId("git-review-thinking").boundingBox();
+  assert.ok(generate && refresh && harness && effort);
+  assert.ok(Math.abs(harness.y - effort.y) < 2, "reviewer pickers share one row");
+  assert.ok(Math.abs(generate.y + generate.height - (harness.y + harness.height)) < 2, "generate button lines up with reviewer pickers");
+  assert.ok(Math.abs(checkbox.y + checkbox.height / 2 - (refresh.y + refresh.height / 2)) < 2, "scope controls share one row");
+  await page.getByTestId("git-review-all-changes").uncheck();
+  await page.getByTestId("git-review-tab-history").click();
+  await page.getByTestId("git-review-commit").first().waitFor();
+  assert.match(await page.getByTestId("git-review-list").innerText(), /Earlier commit/);
+});
