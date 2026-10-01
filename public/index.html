@@ -539,33 +539,32 @@
 
     <dialog id="usageDialog" data-testid="usage-dialog" aria-labelledby="usageTitle">
       <div class="dialog-card usage-card">
-        <header class="usage-heading"><div><span class="eyebrow">Costs</span><h2 id="usageTitle">Costs &amp; subscriptions</h2><p>See estimated API usage or set what you pay for each harness.</p></div><button type="button" class="ghost" data-testid="usage-close">Close</button></header>
-        <nav class="usage-tabs" aria-label="Costs views"><button type="button" aria-pressed="true" data-testid="usage-tab-overview">Overview</button><button type="button" aria-pressed="false" data-testid="usage-tab-subscriptions">Harness subscriptions</button></nav>
+        <header class="usage-heading"><div class="usage-title"><span class="eyebrow">Costs</span><h2 id="usageTitle">Costs &amp; subscriptions</h2></div><nav class="usage-tabs" aria-label="Costs views"><button type="button" aria-pressed="true" data-testid="usage-tab-overview">Overview</button><button type="button" aria-pressed="false" data-testid="usage-tab-compare">Compare periods</button><button type="button" aria-pressed="false" data-testid="usage-tab-subscriptions">Harness subscriptions</button></nav><div class="usage-status-row" id="usageStatusRow"><div id="usageStatus" role="status" aria-live="polite">Loading usage…</div><div id="usageNotice"></div><button type="button" class="ghost" id="usageRefresh" data-testid="usage-refresh">Refresh usage</button></div><button type="button" class="ghost usage-close" data-testid="usage-close">Close</button></header>
+        <form id="usageFilters" class="usage-toolbar" aria-label="Filter usage">
+          <label class="usage-period-field"><span class="sr-only">Period</span><select name="period" data-testid="usage-period-filter"><option value="month">This month</option><option value="last-month">Last month</option><option value="30d">Last 30 days</option><option value="90d">Last 90 days</option><option value="all">All time</option><option value="custom">Custom range</option></select></label>
+          <span class="usage-date-range" hidden><label><span class="sr-only">From</span><input name="from" type="date" aria-label="From" data-testid="usage-from-filter" /></label><span aria-hidden="true">–</span><label><span class="sr-only">To</span><input name="to" type="date" aria-label="To" data-testid="usage-to-filter" /></label></span>
+          <div id="usageClusterField" class="usage-cluster-field" hidden></div>
+          <label><span class="sr-only">Project</span><select name="projectId" data-testid="usage-project-filter"><option value="">All projects</option></select></label>
+          <label><span class="sr-only">Conversation</span><select name="conversationId" data-testid="usage-conversation-filter"><option value="">All conversations</option></select></label>
+          <label><span class="sr-only">Label</span><select name="classification" data-testid="usage-classification-filter"><option value="">All labels</option></select></label>
+          <label><span class="sr-only">Difficulty</span><select name="difficulty" data-testid="usage-difficulty-filter"><option value="">All difficulties</option><option value="not-classified">Not classified</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
+          <details class="usage-more-filters" data-testid="usage-more-filters"><summary>More filters</summary><div class="usage-more-popover"><label>Model<input name="modelId" data-testid="usage-model-filter" /></label><label>Engine<input name="engine" data-testid="usage-engine-filter" /></label><label>Provider<input name="provider" data-testid="usage-provider-filter" /></label></div></details>
+          <button type="button" class="ghost usage-clear-filters" id="usageClearFilters" data-testid="usage-clear-filters" hidden>Clear filters</button>
+        </form>
         <section id="usageOverviewPanel" class="usage-overview" data-usage-panel="overview">
-          <div class="usage-status-row"><div id="usageStatus" role="status" aria-live="polite">Loading usage…</div><button type="button" class="ghost" id="usageRefresh" data-testid="usage-refresh">Refresh usage</button></div>
-          <div id="usageNotice"></div>
           <div id="usageSummary" class="usage-strip" data-testid="usage-summary" aria-label="Totals"><p>Loading totals…</p></div>
-          <div class="usage-body">
-            <aside class="usage-sidebar" aria-label="Group and filter usage">
-              <p class="usage-sidebar-label" id="usageGroupLabel">Group by</p>
-              <div id="usageDimensions" class="usage-dimensions" role="group" aria-labelledby="usageGroupLabel" data-testid="usage-dimensions"></div>
-              <p class="usage-sidebar-label">Filters</p>
-              <form id="usageFilters" class="usage-filters">
-                <div id="usageClusterField" class="usage-cluster-field" hidden><span>Clusters</span></div>
-                <label>Project<select name="projectId" data-testid="usage-project-filter"><option value="">All projects</option></select></label><label>Conversation<select name="conversationId" data-testid="usage-conversation-filter"><option value="">All conversations</option></select></label><label>Label<select name="classification" data-testid="usage-classification-filter"><option value="">All labels</option></select></label><label>Difficulty<select name="difficulty" data-testid="usage-difficulty-filter"><option value="">All difficulties</option><option value="not-classified">Not classified</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></label>
-                <div class="usage-date-range"><label>From<input name="from" type="date" data-testid="usage-from-filter" /></label><label>To<input name="to" type="date" data-testid="usage-to-filter" /></label></div>
-                <details class="usage-more-filters" data-testid="usage-more-filters"><summary>More filters</summary><label>Model<input name="modelId" data-testid="usage-model-filter" /></label><label>Engine<input name="engine" data-testid="usage-engine-filter" /></label><label>Provider<input name="provider" data-testid="usage-provider-filter" /></label></details>
-                <button type="button" class="ghost usage-clear-filters" id="usageClearFilters" data-testid="usage-clear-filters" hidden>Clear filters</button>
-              </form>
-            </aside>
-            <section class="usage-ledger" aria-labelledby="usageLedgerTitle">
-              <h3 id="usageLedgerTitle" class="sr-only">Cost breakdown</h3>
-              <div id="usageTrend" class="usage-trend" data-testid="usage-trend"></div>
-              <div id="usageBreakdowns" data-testid="usage-breakdowns"><p>Loading breakdowns…</p></div>
-              <div id="usageConversationPagination" class="usage-pagination" hidden><button type="button" data-page="previous" data-testid="usage-page-previous">Previous</button><span>Page 0 of 0</span><button type="button" data-page="next" data-testid="usage-page-next">Next</button></div>
-            </section>
-          </div>
+          <section class="usage-ledger" aria-labelledby="usageLedgerTitle">
+            <h3 id="usageLedgerTitle" class="sr-only">Cost breakdown</h3>
+            <div class="usage-ledger-head"><span class="usage-ledger-label" id="usageGroupLabel">Group by</span><div id="usageDimensions" class="usage-dimensions" role="group" aria-labelledby="usageGroupLabel" data-testid="usage-dimensions"></div><div id="usageTrend" class="usage-trend" data-testid="usage-trend"></div></div>
+            <div id="usageBreakdowns" class="usage-table-host" data-testid="usage-breakdowns"><p>Loading breakdowns…</p></div>
+            <footer class="usage-ledger-foot"><span id="usageRowCount"></span><span id="usageSortNote"></span><div id="usagePagination" class="usage-pagination" data-testid="usage-pagination"><button type="button" data-page="previous" data-testid="usage-page-previous">Previous</button><span>Page 1 of 1</span><button type="button" data-page="next" data-testid="usage-page-next">Next</button></div></footer>
+          </section>
           <p class="usage-source">API-equivalent estimates, not subscription fees or invoices. Tool service fees are not included.</p>
+        </section>
+        <section id="usageComparePanel" class="usage-compare" data-usage-panel="compare" hidden>
+          <div class="usage-status-row"><div id="usageCompareStatus" role="status" aria-live="polite"></div></div>
+          <div id="usageCompare" class="usage-compare-grid" data-testid="usage-compare"></div>
+          <p class="usage-source">Known API-equivalent cost through the same day of each period, in your local time. Uses the filters above except the period.</p>
         </section>
         <section class="usage-subscriptions" id="usageSubscriptionsPanel" data-usage-panel="subscriptions" hidden>
           <div class="usage-section-heading"><div><h3>Subscription prices by harness</h3><p>Choose a harness and enter the price you actually pay. Fees are not calculated from token usage.</p></div><button type="button" id="subscriptionAdd" data-testid="subscription-add">Add price</button></div>

@@ -27,6 +27,7 @@ const querySchema = z.object({
     .pipe(z.array(z.union([z.literal("local"), z.string().uuid()])).max(50)).optional(),
   page: z.coerce.number().int().positive().max(1_000_000).default(1),
   pageSize: z.coerce.number().int().positive().max(50).default(20),
+  utcOffset: z.coerce.number().int().min(-840).max(840).default(0),
   refresh: z.enum(["true", "false"]).default("true"),
 }).strict().refine((value) => !value.from || !value.to || value.from <= value.to, { message: "from must not be after to" });
 type UsageQuery = z.infer<typeof querySchema>;
@@ -60,14 +61,15 @@ async function dashboard(query: UsageQuery, suppliedProjects?: Awaited<ReturnTyp
   const projects = suppliedProjects ?? await projectsWithSharedNames(false);
   const ids = projects.map((project) => project.id);
   if (query.projectId && !ids.includes(query.projectId)) throw Object.assign(new Error("Project not found"), { statusCode: 404 });
-  const end = query.to ? new Date(`${query.to}T00:00:00.000Z`) : undefined;
-  if (end) end.setUTCDate(end.getUTCDate() + 1);
-  const { page: _page, pageSize: _pageSize, refresh: _refresh, clusters, ...filterQuery } = query;
+  // Dates are the viewer's calendar days: utcOffset is minutes east of UTC, as the browser reports it.
+  const midnight = (day: string, addDays = 0) => new Date(Date.parse(`${day}T00:00:00.000Z`) + addDays * 86_400_000 - query.utcOffset * 60_000).toISOString();
+  const { page: _page, pageSize: _pageSize, refresh: _refresh, clusters, utcOffset, ...filterQuery } = query;
   const filters: UsageFilters = {
     projectIds: ids, ...filterQuery,
     ...(clusters ? { originNodeIds: await originNodeIds(clusters) } : {}),
-    from: query.from ? `${query.from}T00:00:00.000Z` : undefined,
-    to: end?.toISOString(),
+    ...(utcOffset ? { dayOffsetMinutes: utcOffset } : {}),
+    from: query.from ? midnight(query.from) : undefined,
+    to: query.to ? midnight(query.to, 1) : undefined,
   };
   let conversationPage = usageConversationPage(filters, query.page, query.pageSize);
   const totalPages = Math.max(1, Math.ceil(conversationPage.total / query.pageSize));

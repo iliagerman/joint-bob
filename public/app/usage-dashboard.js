@@ -4,6 +4,8 @@ import { confirmAction, toast } from "./shell.js";
 import { createMultiSelect } from "./multi-select.js";
 import { formatPlanPrice, formatUsageCost } from "./usage-format.js";
 import { renderModelSplit, renderUsageTrend } from "./usage-charts.js";
+import { comparePeriods, isoDate, localeWeekStart, periodWindows, presetRange } from "./usage-periods.js";
+import { renderComparison } from "./usage-compare.js";
 
 const dialog = document.querySelector("#usageDialog");
 const filters = document.querySelector("#usageFilters");
@@ -21,7 +23,15 @@ const editor = document.querySelector("#subscriptionEditor");
 const planForm = document.querySelector("#subscriptionForm");
 const quotaRows = document.querySelector("#quotaRows");
 const refreshButton = document.querySelector("#usageRefresh");
-const pagination = document.querySelector("#usageConversationPagination");
+const pagination = document.querySelector("#usagePagination");
+const rowCount = document.querySelector("#usageRowCount");
+const sortNote = document.querySelector("#usageSortNote");
+const dateRange = filters.querySelector(".usage-date-range");
+const compareHost = document.querySelector("#usageCompare");
+const compareStatus = document.querySelector("#usageCompareStatus");
+// Wide and tall enough, the dialog fits the window and the table pages instead of scrolling.
+const FIT = window.matchMedia("(min-width: 701px) and (min-height: 560px)");
+const PERIOD_FIELDS = new Set(["period", "from", "to"]);
 
 const DIMENSIONS = [
   { key: "projects", label: "Projects", column: "Project", filter: (key) => ({ projectId: key }) },
@@ -43,6 +53,9 @@ const COLUMNS = [
 
 let requestGeneration = 0;
 let page = 1;
+const clientPages = new Map();
+let pageSize = 10;
+let refitTimer = null;
 let pollTimer = null;
 let hasSnapshot = false;
 let snapshotScope = "";
@@ -54,11 +67,16 @@ let harnesses = [];
 let latest = null;
 let dimension = "projects";
 const sorts = new Map();
-let expanded = "";
+let selected = "";
 const splits = new Map();
 let clusterValues = new Set();
+let activeTab = "overview";
+let compareGeneration = 0;
+let compareScope = "";
+let compareViews = [];
 
 const clusterFilter = createMultiSelect({ id: "usageClusterFilter", testid: "usage-cluster-filter", label: "Clusters", prompt: "All clusters", placeholder: "Search clusters" });
+clusterFilter.root.classList.add("usage-cluster-select");
 clusterField.append(clusterFilter.root);
 
 export function localDateTime(iso) {
@@ -168,9 +186,10 @@ function updateInventory(data) {
 function syncClusterOptions() {
   const clusters = [...(state.clusters || [])].sort((left, right) => left.name.localeCompare(right.name));
   const others = (cluster) => cluster.members.filter((member) => member.nodeId !== state.localNodeId).map((member) => member.name || member.nodeId);
+  const detail = (names) => !names.length ? "No other nodes yet" : names.length === 1 ? names[0] : `${names.length} nodes: ${names.join(", ")}`;
   clusterFilter.setOptions([
-    { value: "local", label: "This node", detail: "Usage recorded on this node" },
-    ...clusters.map((cluster) => ({ value: cluster.id, label: cluster.name, detail: `Usage from ${others(cluster).join(", ") || "no other nodes yet"}` })),
+    { value: "local", label: "This node", detail: "Recorded on this node" },
+    ...clusters.map((cluster) => ({ value: cluster.id, label: cluster.name, detail: detail(others(cluster)) })),
   ]);
   const kept = new Set([...clusterValues].filter((value) => value === "local" || clusters.some((cluster) => cluster.id === value)));
   if (kept.size !== clusterValues.size) { clusterValues = kept; clusterFilter.setValues(kept); }
@@ -247,6 +266,7 @@ function sortedRows(rows) {
   });
 }
 function sortDescription() {
+  if (dimension === "conversations") return "Sorted by cost, highest first";
   const { key, direction } = currentSort();
   const column = COLUMNS.find((item) => item.key === key);
   const descending = direction < 0;
@@ -267,19 +287,21 @@ function headerCell(label, key) {
   header.append(button);
   return header;
 }
-function nameCell(name, item, expandable) {
+function nameCell(name, item, selectable) {
   const cell = element("td", undefined, "usage-name-cell");
-  cell.title = name.full || name.text;
-  const target = expandable ? element("button", undefined, "usage-expand") : element("div", undefined, "usage-expand static");
-  if (expandable) {
+  cell.title = [name.full || name.text, name.detail].filter(Boolean).join("\n");
+  const target = selectable ? element("button", undefined, "usage-select") : element("div", undefined, "usage-select static");
+  if (selectable) {
     target.type = "button";
-    target.dataset.expand = item.key;
-    target.setAttribute("aria-expanded", String(expanded === item.key));
+    target.dataset.select = item.key;
+    target.setAttribute("aria-pressed", String(selected === item.key));
   }
-  if (name.badge) target.append(element("span", name.badge, `usage-harness ${name.kind}`));
-  target.append(element("span", name.text, `usage-name${name.mono ? " mono" : ""}`));
+  const line = element("span", undefined, "usage-name-line");
+  if (name.badge) line.append(element("span", name.badge, `usage-harness ${name.kind}`));
+  line.append(element("span", name.text, `usage-name${name.mono ? " mono" : ""}`));
+  target.append(line);
+  if (name.detail) target.append(element("small", name.detail, "usage-name-detail"));
   cell.append(target);
-  if (name.detail) cell.append(element("small", name.detail, "usage-name-detail"));
   return cell;
 }
 function shareCell(item, max, total) {
@@ -290,19 +312,38 @@ function shareCell(item, max, total) {
   const fill = element("b");
   fill.style.width = `${cost && max ? cost / max * 100 : 0}%`;
   track.append(fill);
-  cell.append(track, element("span", cost !== null && total ? percent(cost / total) : "—"));
+  const wrap = element("span", undefined, "usage-share");
+  wrap.append(track, element("span", cost !== null && total ? percent(cost / total) : "—"));
+  cell.append(wrap);
   return cell;
 }
-function detailRow(item) {
-  const row = element("tr", undefined, "usage-detail-row");
-  const cell = element("td");
-  cell.colSpan = COLUMNS.length + 1;
-  const split = splits.get(`${dimension}:${item.key}`);
-  if (!split) cell.append(element("p", "Loading model split…", "usage-split-empty"));
-  else if (split.error) cell.append(element("p", `Model split unavailable: ${split.error}`, "usage-split-empty"));
-  else cell.append(element("p", "Cost by model", "usage-split-title"), renderModelSplit(split.rows));
-  row.append(cell);
-  return row;
+/** The strip above the table: the daily trend, or the selected row's cost by model. */
+function renderFocus() {
+  if (!latest) return;
+  if (!selected) { renderUsageTrend(trend, latest.breakdowns.days); return; }
+  const head = element("div", undefined, "usage-focus-head");
+  head.append(element("span", "Cost by model", "usage-trend-label"), element("strong", rowName(latest, selected).text, "usage-focus-name"));
+  const split = splits.get(`${dimension}:${selected}`);
+  const body = !split ? element("p", "Loading model split…", "usage-split-empty")
+    : split.error ? element("p", `Model split unavailable: ${split.error}`, "usage-split-empty")
+      : renderModelSplit(split.rows);
+  const close = element("button", "Daily cost", "ghost usage-focus-close");
+  close.type = "button";
+  close.dataset.testid = "usage-split-close";
+  close.setAttribute("aria-label", "Show daily cost");
+  trend.replaceChildren(head, body, close);
+}
+function pageWindow(data, rows) {
+  if (dimension === "conversations") {
+    const paging = data.conversationPagination;
+    const start = (paging.page - 1) * paging.pageSize;
+    return { rows, page: paging.page, pages: Math.max(1, paging.totalPages), total: paging.total, start };
+  }
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const current = Math.min(clientPages.get(dimension) || 1, pages);
+  clientPages.set(dimension, current);
+  const start = (current - 1) * pageSize;
+  return { rows: rows.slice(start, start + pageSize), page: current, pages, total: rows.length, start };
 }
 function renderTable(data) {
   const config = DIMENSIONS.find((item) => item.key === dimension);
@@ -319,10 +360,10 @@ function renderTable(data) {
   const body = element("tbody");
   const max = Math.max(0, ...rows.map((item) => item.totals.apiCostUsd ?? 0));
   const total = data.summary.apiCostUsd;
-  for (const item of sortedRows(rows)) {
+  const view = pageWindow(data, sortedRows(rows));
+  for (const item of view.rows) {
     const row = element("tr");
-    const isExpanded = expanded === item.key;
-    if (isExpanded) row.className = "expanded";
+    if (selected === item.key) row.className = "selected";
     row.append(nameCell(rowName(data, item.key), item, Boolean(config.filter)));
     const cost = costNode("td", item.totals);
     cost.className = "usage-cost-cell";
@@ -336,7 +377,6 @@ function renderTable(data) {
       ["Errors", element("td", item.totals.toolErrors.toLocaleString())],
     ]) { node.dataset.label = label; row.append(node); }
     body.append(row);
-    if (isExpanded) body.append(detailRow(item));
   }
   if (!rows.length) {
     const cell = element("td", "No usage in this scope.", "usage-empty"); cell.colSpan = COLUMNS.length + 1;
@@ -344,26 +384,48 @@ function renderTable(data) {
   }
   table.append(thead, body);
   section.append(table);
-  const shown = dimension === "conversations" ? data.conversationPagination.total : rows.length;
-  const footer = element("footer", undefined, "usage-breakdown-foot");
-  footer.append(element("span", `${shown.toLocaleString()} ${config.label.toLowerCase()}`));
-  if (dimension === "conversations") footer.append(pagination);
-  else footer.append(element("span", sortDescription()));
-  pagination.hidden = dimension !== "conversations";
-  section.append(footer);
   breakdowns.replaceChildren(section);
+  const label = config.label.toLowerCase();
+  rowCount.textContent = view.total ? `${(view.start + 1).toLocaleString()}–${(view.start + view.rows.length).toLocaleString()} of ${view.total.toLocaleString()} ${label}` : `0 ${label}`;
+  sortNote.textContent = sortDescription();
+  pagination.hidden = view.pages <= 1;
+  pagination.querySelector("span").textContent = `Page ${view.page} of ${view.pages}`;
+  pagination.querySelector('[data-page="previous"]').disabled = view.page <= 1;
+  pagination.querySelector('[data-page="next"]').disabled = view.page >= view.pages;
 }
 function renderBreakdowns() {
   if (!latest) return;
   renderDimensions(latest);
+  renderFocus();
   renderTable(latest);
+  requestAnimationFrame(refit);
 }
+
+/** Rows that fit under the header without scrolling; measured from the rendered table. */
+function rowsThatFit() {
+  if (!FIT.matches) return 10;
+  const head = breakdowns.querySelector("thead")?.getBoundingClientRect().height || 33;
+  const row = breakdowns.querySelector("tbody tr:not(:has(.usage-empty))")?.getBoundingClientRect().height || 41;
+  return Math.max(3, Math.min(50, Math.floor((breakdowns.clientHeight - head) / row)));
+}
+function refit() {
+  if (!dialog.open || activeTab !== "overview") return;
+  const size = rowsThatFit();
+  if (size === pageSize) return;
+  const first = dimension === "conversations" ? (page - 1) * pageSize : ((clientPages.get(dimension) || 1) - 1) * pageSize;
+  pageSize = size;
+  if (dimension !== "conversations") { clientPages.set(dimension, Math.floor(first / size) + 1); renderBreakdowns(); return; }
+  page = Math.floor(first / size) + 1;
+  clearTimeout(refitTimer);
+  refitTimer = setTimeout(() => void loadUsage({ polling: true }), 150);
+}
+new ResizeObserver(() => refit()).observe(breakdowns);
 
 async function loadSplit(key) {
   const config = DIMENSIONS.find((item) => item.key === dimension);
   const cacheKey = `${dimension}:${key}`;
   if (splits.has(cacheKey) || !config.filter) return;
-  const parameters = new URLSearchParams(queryString());
+  const parameters = scopeParameters();
   for (const [name, value] of Object.entries(config.filter(key))) parameters.set(name, value);
   parameters.set("refresh", "false"); parameters.set("pageSize", "1");
   const scope = snapshotScope;
@@ -373,7 +435,7 @@ async function loadSplit(key) {
   } catch (error) {
     if (scope === snapshotScope) splits.set(cacheKey, { error: error.message });
   }
-  if (scope === snapshotScope) renderBreakdowns();
+  if (scope === snapshotScope) renderFocus();
 }
 
 function renderUsage(data) {
@@ -387,39 +449,56 @@ function renderUsage(data) {
     },
   };
   renderSummary(data.summary);
-  renderUsageTrend(trend, data.breakdowns.days);
+  page = data.conversationPagination.page;
   renderBreakdowns();
-  const paging = data.conversationPagination;
-  pagination.querySelector("span").textContent = paging.totalPages ? `Page ${paging.page} of ${paging.totalPages}` : "Page 0 of 0";
-  pagination.querySelector('[data-page="previous"]').disabled = paging.page <= 1;
-  pagination.querySelector('[data-page="next"]').disabled = !paging.totalPages || paging.page >= paging.totalPages;
-  page = paging.page;
   notice.removeAttribute("role");
+  notice.title = "";
   const missing = data.summary.unavailableSessions || 0;
   const unpriced = Math.max(0, data.summary.requests - data.summary.pricedRequests);
   const partial = missing || unpriced || data.summary.partial;
   notice.className = data.coverage.error ? "usage-error" : partial ? "usage-warning" : "";
   notice.replaceChildren();
   if (data.coverage.error) notice.textContent = data.coverage.error;
-  else if (partial) notice.append(element("strong", "Partial coverage"), ` ${missing.toLocaleString()} sessions unavailable · ${unpriced.toLocaleString()} requests unpriced. Values marked `, partialMark(data.summary), " are lower bounds.");
+  else if (partial) {
+    notice.append(element("strong", "Partial coverage"), ` ${missing.toLocaleString()} sessions unavailable · ${unpriced.toLocaleString()} requests unpriced. Values marked `, partialMark(data.summary), " are lower bounds.");
+    notice.title = notice.textContent.replace("marked  are", "marked with a dot are");
+  }
+}
+function periodRange() {
+  const preset = filters.elements.period.value;
+  if (preset === "custom") return { from: filters.elements.from.value, to: filters.elements.to.value };
+  return presetRange(preset);
+}
+function scopeFilterCount() {
+  return [...new FormData(filters)].filter(([key, value]) => value && !PERIOD_FIELDS.has(key)).length + clusterValues.size;
 }
 function activeFilterCount() {
-  return [...new FormData(filters)].filter(([, value]) => value).length + clusterValues.size;
+  return scopeFilterCount() + (filters.elements.period.value === "month" ? 0 : 1);
 }
-function queryString() {
+/** API parameters for the filters; `dates: false` leaves the period to the caller. */
+function scopeParameters({ dates = true } = {}) {
   const parameters = new URLSearchParams();
   for (const [key, value] of new FormData(filters)) {
-    if (value) parameters.set(key, String(value));
+    if (value && !PERIOD_FIELDS.has(key)) parameters.set(key, String(value));
   }
   if (clusterValues.size) parameters.set("clusters", [...clusterValues].sort().join(","));
-  return parameters.toString();
+  if (dates) {
+    const { from, to } = periodRange();
+    if (from) parameters.set("from", from);
+    if (to) parameters.set("to", to);
+  }
+  parameters.set("utcOffset", String(-new Date().getTimezoneOffset()));
+  return parameters;
+}
+function queryString() {
+  return scopeParameters().toString();
 }
 function stopPolling(){if(pollTimer)clearTimeout(pollTimer);pollTimer=null;}
 async function loadUsage({ polling = false } = {}) {
   stopPolling();
   const scope = queryString();
   clearFilters.hidden = !activeFilterCount();
-  if (scope !== snapshotScope) { hasSnapshot = false; snapshotScope = scope; splits.clear(); expanded = ""; }
+  if (scope !== snapshotScope) { hasSnapshot = false; snapshotScope = scope; splits.clear(); selected = ""; clientPages.clear(); }
   const generation = ++requestGeneration;
   status.textContent = hasSnapshot ? "Updating usage…" : "Loading usage…";
   if (!hasSnapshot) {
@@ -433,7 +512,7 @@ async function loadUsage({ polling = false } = {}) {
   }
   refreshButton.disabled = true;
   try {
-    const parameters = new URLSearchParams(queryString()); parameters.set("page", String(page)); parameters.set("pageSize", "20"); if(polling)parameters.set("refresh","false");
+    const parameters = new URLSearchParams(scope); parameters.set("page", String(page)); parameters.set("pageSize", String(pageSize)); if(polling)parameters.set("refresh","false");
     const data = await api(`/api/usage?${parameters}`, {
       signal: AbortSignal.timeout(20000),
     });
@@ -459,6 +538,42 @@ async function loadUsage({ polling = false } = {}) {
     if (generation === requestGeneration) refreshButton.disabled = false;
   }
 }
+
+/** This month and week so far against the same days of the three before each. */
+async function loadCompare({ force = false } = {}) {
+  const today = new Date();
+  const weekStart = localeWeekStart();
+  const parameters = scopeParameters({ dates: false });
+  parameters.set("from", isoDate(periodWindows("month", today, weekStart).at(-1).start));
+  parameters.set("to", isoDate(today));
+  parameters.set("refresh", "false");
+  parameters.set("pageSize", "1");
+  const scope = parameters.toString();
+  if (!force && scope === compareScope && compareViews.length) return;
+  compareScope = scope;
+  const generation = ++compareGeneration;
+  compareStatus.className = "";
+  compareStatus.textContent = "Loading comparison…";
+  try {
+    const data = await api(`/api/usage?${parameters}`, { signal: AbortSignal.timeout(20000) });
+    if (generation !== compareGeneration) return;
+    compareHost.replaceChildren();
+    compareViews = ["month", "week"].map((kind) => renderComparison(compareHost, comparePeriods(data.breakdowns.days, kind, today, weekStart)));
+    const filtered = scopeFilterCount();
+    compareStatus.textContent = filtered ? `Filtered by ${filtered} filter${filtered === 1 ? "" : "s"} · Clear filters to compare all usage` : "All recorded usage";
+  } catch (error) {
+    if (generation !== compareGeneration) return;
+    compareScope = "";
+    compareViews = [];
+    compareStatus.className = "usage-error";
+    compareStatus.textContent = `Comparison unavailable: ${error.message}`;
+  }
+}
+let redrawFrame = 0;
+new ResizeObserver(() => {
+  cancelAnimationFrame(redrawFrame);
+  redrawFrame = requestAnimationFrame(() => { if (activeTab === "compare") for (const view of compareViews) view.redraw(); });
+}).observe(compareHost);
 async function loadDetections(){try{detections=(await api("/api/subscription-usage/detected")).detections||[];detectionError="";renderPlans();}catch(error){detections=[];detectionError=`Detection unavailable: ${error.message}`;renderPlans();}}
 async function loadPlans() {
   planStatus.textContent = "Loading subscription prices…";
@@ -476,12 +591,18 @@ async function loadPlans() {
 function quotaRow(q={}){const row=element("div",undefined,"quota-row");row.dataset.id=q.id||crypto.randomUUID();row.dataset.capturedAt=q.capturedAt||new Date().toISOString();for(const [label,name,type,value] of [["Label","label","text",q.label],["Used","used","number",q.used],["Limit","limit","number",q.limit],["Reset","resetsAt","datetime-local",localDateTime(q.resetsAt)]]){const w=element("label",label),input=element("input");input.name=name;input.type=type;if(type==="number"){input.min="0";input.step="any";}if(name==="label")input.required=true;input.value=value??"";input.dataset.testid=`quota-${name==="resetsAt"?"reset":name}`;if(name==="resetsAt"&&q.resetsAt)input.dataset.originalIso=q.resetsAt;input.addEventListener("input",()=>row.dataset.dirty="true");w.append(input);row.append(w);}const unit=element("select");unit.name="unit";unit.dataset.testid="quota-unit";for(const v of ["percent","credits","requests","tokens"])unit.add(new Option(v,v));unit.value=q.unit||"percent";unit.addEventListener("change",()=>row.dataset.dirty="true");const label=element("label","Unit");label.append(unit);row.append(label);const remove=element("button","Remove","ghost");remove.type="button";remove.dataset.testid="quota-remove";remove.addEventListener("click",()=>row.remove());row.append(remove);return row;}
 function quotaPayload(row){const value=n=>row.querySelector(`[name="${n}"]`).value,num=n=>value(n)===""?null:Number(value(n)),used=num("used"),limit=num("limit"),reset=row.querySelector('[name="resetsAt"]');return{id:row.dataset.id,label:value("label"),used,limit,remaining:used!==null&&limit!==null?Math.max(0,limit-used):null,unit:value("unit"),resetsAt:value("resetsAt")?(reset.dataset.originalIso&&value("resetsAt")===localDateTime(reset.dataset.originalIso)?reset.dataset.originalIso:new Date(value("resetsAt")).toISOString()):null,capturedAt:row.dataset.dirty?new Date().toISOString():row.dataset.capturedAt,source:"manual"};}
 function showTab(name) {
+  activeTab = name;
   for (const button of dialog.querySelectorAll(".usage-tabs button")) {
     button.setAttribute("aria-pressed", String(button.dataset.testid === `usage-tab-${name}`));
   }
   for (const panel of dialog.querySelectorAll("[data-usage-panel]")) {
     panel.hidden = panel.dataset.usagePanel !== name;
   }
+  filters.hidden = name === "subscriptions";
+  document.querySelector("#usageStatusRow").hidden = name !== "overview";
+  filters.classList.toggle("comparing", name === "compare");
+  if (name === "compare") void loadCompare();
+  if (name === "overview") requestAnimationFrame(refit);
 }
 function openEditor(plan, harness) {
   showTab("subscriptions");
@@ -562,32 +683,58 @@ document.querySelectorAll("[data-usage-open]").forEach((button) => {
   button.addEventListener("click", () => openUsageDashboard());
 });
 document.querySelector("[data-testid='usage-close']").addEventListener("click", () => dialog.close());
-dialog.addEventListener("close",()=>{stopPolling();requestGeneration++;});
+dialog.addEventListener("close",()=>{stopPolling();requestGeneration++;compareGeneration++;});
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { stopPolling(); requestGeneration++; }
   else if (dialog.open && hasSnapshot) void loadUsage({ polling: true });
 });
-pagination.addEventListener("click",event=>{const direction=event.target.closest("button")?.dataset.page;if(!direction)return;page=Math.max(1,page+(direction==="next"?1:-1));void loadUsage();});
+pagination.addEventListener("click", (event) => {
+  const direction = event.target.closest("button")?.dataset.page;
+  if (!direction) return;
+  const step = direction === "next" ? 1 : -1;
+  if (dimension === "conversations") { page = Math.max(1, page + step); void loadUsage(); return; }
+  clientPages.set(dimension, Math.max(1, (clientPages.get(dimension) || 1) + step));
+  renderBreakdowns();
+});
 document.querySelector("#subscriptionAdd").addEventListener("click", () => openEditor(null));
 document.querySelector("#subscriptionCancel").addEventListener("click", () => {
   editor.open = false;
 });
 document.querySelector("#quotaAdd").addEventListener("click", () => quotaRows.append(quotaRow()));
-filters.addEventListener("change", () => { page=1; void loadUsage(); });
-clusterFilter.onChange((values) => { clusterValues = values; page = 1; void loadUsage(); });
+function showPeriod() {
+  const custom = filters.elements.period.value === "custom";
+  if (custom && !filters.elements.from.value && !filters.elements.to.value) {
+    const { from, to } = presetRange("month");
+    filters.elements.from.value = from;
+    filters.elements.to.value = to;
+  }
+  dateRange.hidden = !custom;
+}
+function scopeChanged() {
+  page = 1;
+  clientPages.clear();
+  if (activeTab === "compare") void loadCompare();
+  void loadUsage();
+}
+filters.addEventListener("change", (event) => {
+  if (event.target.name === "period") showPeriod();
+  scopeChanged();
+});
+clusterFilter.onChange((values) => { clusterValues = values; scopeChanged(); });
 window.addEventListener("cluster-filters-changed", syncClusterOptions);
 clearFilters.addEventListener("click", () => {
   filters.reset();
+  showPeriod();
   clusterValues = new Set();
   clusterFilter.setValues(clusterValues);
-  page = 1;
-  void loadUsage();
+  scopeChanged();
 });
 dimensionNav.addEventListener("click", (event) => {
   const button = event.target.closest("[data-dimension]");
   if (!button || button.dataset.dimension === dimension) return;
   dimension = button.dataset.dimension;
-  expanded = "";
+  selected = "";
+  if (dimension === "conversations" && latest && latest.conversationPagination.pageSize !== pageSize) { page = 1; void loadUsage({ polling: true }); }
   renderBreakdowns();
 });
 breakdowns.addEventListener("click", (event) => {
@@ -596,19 +743,24 @@ breakdowns.addEventListener("click", (event) => {
     const current = currentSort();
     const key = sort.dataset.sort;
     sorts.set(dimension, { key, direction: current.key === key ? -current.direction : key === "name" ? 1 : -1 });
+    clientPages.set(dimension, 1);
     renderBreakdowns();
     return;
   }
-  const toggle = event.target.closest("[data-expand]");
+  const toggle = event.target.closest("[data-select]");
   if (!toggle) return;
-  expanded = expanded === toggle.dataset.expand ? "" : toggle.dataset.expand;
+  selected = selected === toggle.dataset.select ? "" : toggle.dataset.select;
   renderBreakdowns();
-  if (expanded) void loadSplit(expanded);
+  if (selected) void loadSplit(selected);
+});
+trend.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-testid='usage-split-close']")) return;
+  selected = "";
+  renderBreakdowns();
 });
 filters.addEventListener("submit", (event) => {
   event.preventDefault();
-  page = 1;
-  void loadUsage();
+  scopeChanged();
 });
 refreshButton.addEventListener("click", async () => {
   refreshButton.disabled = true;
@@ -622,7 +774,10 @@ refreshButton.addEventListener("click", async () => {
   }
 });
 
+/** Opens on this month: the period resets on every open, other filters persist. */
 export function openUsageDashboard(initialFilters = {}) {
+  filters.elements.period.value = "month";
+  showPeriod();
   for (const [key, value] of Object.entries(initialFilters)) {
     if (filters.elements[key]) filters.elements[key].value = value;
   }
@@ -635,6 +790,7 @@ export function openUsageDashboard(initialFilters = {}) {
   });
   void loadPlans();
   void loadDetections();
-  page=1;
+  page = 1;
+  pageSize = rowsThatFit();
   void loadUsage();
 }

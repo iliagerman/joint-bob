@@ -53,4 +53,4 @@ export interface UsageTotals {
   partial: boolean;
 }
 export type UsageDimension = "project" | "conversation" | "classification" | "difficulty" | "model" | "day" | "engine";
-export interface UsageFilters { projectIds: string[]; projectId?: string; conversationId?: string; sessionId?: string; provider?: string; modelId?: string; engine?: string; classification?: string; difficulty?: string; from?: string; to?: string; originNodeIds?: string[]; }
+export interface UsageFilters { projectIds: string[]; projectId?: string; conversationId?: string; sessionId?: string; provider?: string; modelId?: string; engine?: string; classification?: string; difficulty?: string; from?: string; to?: string; originNodeIds?: string[]; dayOffsetMinutes?: number; }

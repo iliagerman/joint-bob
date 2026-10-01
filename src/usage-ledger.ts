@@ -238,13 +238,17 @@ export function usageConversationPage(filters: UsageFilters, page: number, pageS
     .all(...condition.args, pageSize, (page - 1) * pageSize) as unknown as Array<Record<string, number | null> & { key: string }>;
   return { rows: rows.map((row) => ({ key: row.key, totals: totalsRow(row) })), total: Number(count.total) };
 }
+function dayExpression(offsetMinutes = 0): string {
+  if (!Number.isInteger(offsetMinutes) || Math.abs(offsetMinutes) > 840) throw new RangeError("Invalid day offset");
+  return offsetMinutes ? `date(e.occurred_at,'${offsetMinutes > 0 ? "+" : ""}${offsetMinutes} minutes')` : "substr(e.occurred_at,1,10)";
+}
 export function usageBreakdown(filters: UsageFilters, dimension: UsageDimension): Array<{ key: string; totals: UsageTotals }> {
   const db = usageDatabase();
   const condition = where(db, filters);
   const expressions: Record<UsageDimension, string> = {
     project: canonicalProject(db, "e"), conversation: "e.conversation_id", classification: classification(db),
     difficulty: difficultyExpression(),
-    model: "json_extract(e.payload,'$.modelId')", day: "substr(e.occurred_at,1,10)", engine: "e.engine",
+    model: "json_extract(e.payload,'$.modelId')", day: dayExpression(filters.dayOffsetMinutes), engine: "e.engine",
   };
   const rows = db.prepare(`SELECT ${expressions[dimension]} key,${aggregate} FROM ${source(db, filters, dimension)} WHERE 1=1${condition.sql} GROUP BY key ORDER BY key`)
     .all(...condition.args) as unknown as Array<Record<string, number | null> & { key: string }>;

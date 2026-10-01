@@ -84,3 +84,22 @@ test("usage API filters by the node the usage was recorded on", async () => {
     db.close();
   }
 });
+test("usage API reads dates and day buckets in the viewer's time zone", async () => {
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  const payload = { id: "late-evening", projectId: node.projects[0].id, conversationId: "late-evening", sessionId: "late-evening", engine: "pi", provider: "test", modelId: "fixture", occurredAt: "2025-03-01T22:30:00.000Z", requestId: null, input: 1, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteUnknown: 0, reasoning: 0, apiCostUsd: 3, pricing: null, usageStatus: "reported", difficultyLevel: null, difficultyConfidence: null, difficultyStatus: "unknown", turnId: null, toolCalls: 0, toolErrors: 0 };
+  db.prepare("INSERT INTO model_usage_events(id,project_id,conversation_id,session_id,engine,occurred_at,payload,origin_node_id) VALUES(?,?,?,?,?,?,?,?)").run(payload.id, payload.projectId, payload.id, payload.id, "pi", payload.occurredAt, JSON.stringify(payload), node.nodeId);
+  try {
+    const read = async (query: string) => (await api<any>(node, session, "GET", `/usage?refresh=false&${query}`)).body;
+    const east = await read("from=2025-03-02&to=2025-03-02&utcOffset=180");
+    assert.equal(east.summary.apiCostUsd, 3, "22:30 UTC is already the next day three hours east");
+    assert.deepEqual(east.breakdowns.days.map((day: { key: string }) => day.key), ["2025-03-02"]);
+    assert.equal((await read("from=2025-03-02&to=2025-03-02")).summary.requests, 0, "without an offset the day is UTC");
+    const west = await read("from=2025-03-01&to=2025-03-01&utcOffset=-300");
+    assert.equal(west.summary.apiCostUsd, 3);
+    assert.deepEqual(west.breakdowns.days.map((day: { key: string }) => day.key), ["2025-03-01"]);
+    for (const offset of ["900", "-841", "1.5"]) assert.equal((await api(node, session, "GET", `/usage?refresh=false&utcOffset=${offset}`)).status, 400);
+  } finally {
+    db.exec("DELETE FROM model_usage_events WHERE id='late-evening';");
+    db.close();
+  }
+});

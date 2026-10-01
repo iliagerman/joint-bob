@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
+import { isoDate } from "../../public/app/usage-periods.js";
+
+async function until(check: () => Promise<boolean>, message: string): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail(message);
+}
 
 async function login(page: any, environment: any, url: string): Promise<void> {
   await page.goto(url);
@@ -130,6 +139,12 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   let gateRefresh = false;
   let releaseRefresh: (() => void) | undefined;
   let usageGets = 0;
+  let lastPageSize = 0;
+  const today = new Date();
+  const dayRows = Array.from({ length: 130 }, (_, index) => ({
+    key: isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - index)),
+    totals: { ...totals(1), partial: false },
+  })).reverse();
   const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
 
   await page.route("**/api/usage**", async (route: any) => {
@@ -143,8 +158,10 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
     usageGets += 1;
     if (gateRefresh) { await refreshGate; gateRefresh = false; updated = true; }
     const requestedPage = Number(url.searchParams.get("page") || 1);
-    const start = (requestedPage - 1) * 20;
-    const visible = conversations.slice(start, start + 20);
+    const size = Number(url.searchParams.get("pageSize") || 20);
+    if (size > 1) lastPageSize = size;
+    const start = (requestedPage - 1) * size;
+    const visible = conversations.slice(start, start + size);
     const cost = updated ? 30 : 12;
     const body = {
       projects: [{ id: "project-internal-id", name: "Readable Project" }],
@@ -156,9 +173,9 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
         classifications: [{ key: "feature", totals: totals(3) }],
         difficulties: [{ key: "10", totals: totals(1) }, { key: "3", totals: totals(3) }],
         models: [{ key: "model-a", totals: totals(10) }, { key: "model-b", totals: totals(2) }],
-        days: [{ key: "2023-01-02", totals: totals(2) }, { key: "2025-06-15", totals: totals(8) }],
+        days: dayRows,
       },
-      conversationPagination: { page: requestedPage, pageSize: 20, total: 45, totalPages: 3 },
+      conversationPagination: { page: requestedPage, pageSize: size, total: 45, totalPages: Math.ceil(45 / size) },
       coverage: { error: "", refreshing: updated, refreshedAt: "2025-06-16T12:00:00.000Z" },
     };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
@@ -188,8 +205,13 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   await page.keyboard.up("Control");
   await costsBadge.waitFor({ state: "hidden" });
 
+  const firstRequest = page.waitForRequest((request: any) => new URL(request.url()).pathname === "/api/usage");
   await page.keyboard.press("Control+Alt+Shift+C");
   const dialog = page.getByTestId("usage-dialog");
+  const opened = new URL((await firstRequest).url()).searchParams;
+  assert.equal(opened.get("from"), isoDate(new Date(today.getFullYear(), today.getMonth(), 1)), "the period starts on the first of this month");
+  assert.equal(opened.get("utcOffset"), String(-today.getTimezoneOffset()), "dates are the viewer's local days");
+  assert.equal(await dialog.getByTestId("usage-period-filter").inputValue(), "month");
   await dialog.waitFor({ state: "visible" });
   await dialog.locator("#usageTrend svg.usage-trend-line").waitFor();
   const firstStat = dialog.locator(".usage-stat strong").first();
@@ -200,12 +222,17 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   assert.equal(await dialog.locator('[data-testid="usage-dimension-projects"]').getAttribute("aria-pressed"), "true");
   await breakdowns.getByText("Readable Project", { exact: true }).waitFor();
   assert.equal(await breakdowns.getByText("project-internal-id", { exact: true }).count(), 0);
-  await breakdowns.locator("[data-expand]").first().click();
-  await breakdowns.locator(".usage-split-bar i").nth(1).waitFor();
-  assert.equal(await breakdowns.locator(".usage-split-bar i").count(), 2, "expanded row splits its cost by model");
-  const segments = await breakdowns.locator(".usage-split-bar i").evaluateAll((items: HTMLElement[]) => items.map((item) => getComputedStyle(item).backgroundColor));
+  await breakdowns.locator("[data-select]").first().click();
+  const splitBar = dialog.locator("#usageTrend .usage-split-bar i");
+  await splitBar.nth(1).waitFor();
+  assert.equal(await splitBar.count(), 2, "the selected row splits its cost by model above the table");
+  assert.equal(await breakdowns.locator("tr.selected").count(), 1);
+  const segments = await splitBar.evaluateAll((items: HTMLElement[]) => items.map((item) => getComputedStyle(item).backgroundColor));
   assert.ok(segments.every((colour) => colour !== "rgba(0, 0, 0, 0)" && colour !== "transparent"), "model colours are defined");
   assert.notEqual(segments[0], segments[1]);
+  await dialog.getByTestId("usage-split-close").click();
+  await dialog.locator("#usageTrend svg.usage-trend-line").waitFor();
+  assert.equal(await breakdowns.locator("tr.selected").count(), 0);
 
   await dialog.getByTestId("usage-dimension-models").click();
   const firstCell = () => breakdowns.locator("tbody tr").first().locator(".usage-name");
@@ -220,6 +247,14 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   await clusterTrigger.waitFor();
   await clusterTrigger.click();
   const clusterRequest = page.waitForRequest((request: any) => new URL(request.url()).searchParams.get("clusters") === clusterId);
+  const clusterOptions = await dialog.getByTestId("usage-cluster-filter-options").locator("[role='option']").all();
+  for (const option of clusterOptions) {
+    const parts = await option.evaluate((item: HTMLElement) => [...item.children].map((child) => {
+      const box = child.getBoundingClientRect(), own = item.getBoundingClientRect();
+      return box.top >= own.top - 0.5 && box.bottom <= own.bottom + 0.5 && child.scrollHeight <= child.clientHeight + 1;
+    }));
+    assert.ok(parts.every(Boolean), "each cluster option keeps its name and detail inside its own row");
+  }
   await dialog.getByTestId("usage-cluster-filter-options").getByText("Usage cluster", { exact: true }).click();
   await clusterRequest;
   await dialog.locator("#usageTitle").click();
@@ -228,52 +263,72 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   await dialog.getByTestId("usage-clear-filters").click();
   await clearedRequest;
 
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await dialog.getByTestId("usage-dimension-days").click();
+  const dayTable = breakdowns.locator("tbody tr");
+  const footer = dialog.locator(".usage-ledger-foot");
+  await until(async () => (await dayTable.count()) > 3 && (await dayTable.count()) < 20, "days page to fit the table");
+  const daysPerPage = await dayTable.count();
+  assert.equal(await footer.locator("#usageRowCount").textContent(), `1–${daysPerPage} of 130 days`);
+  assert.equal(await breakdowns.locator("tbody .usage-name").first().textContent(), dayRows.at(-1)!.key, "days start with the newest");
+  await dialog.getByTestId("usage-page-next").click();
+  assert.equal(await footer.locator("#usageRowCount").textContent(), `${daysPerPage + 1}–${daysPerPage * 2} of 130 days`, "every grouping pages, not only conversations");
+  assert.equal(await breakdowns.locator("tbody .usage-name").first().textContent(), dayRows.at(-1 - daysPerPage)!.key);
+
   await dialog.getByTestId("usage-dimension-conversations").click();
   const conversationSection = page.getByTestId("usage-conversations-table");
   const rows = () => conversationSection.locator("tbody tr");
-  await rows().first().waitFor();
-  assert.equal(await rows().count(), 20);
-  const pagination = page.locator("#usageConversationPagination");
-  assert.equal(await conversationSection.locator("#usageConversationPagination").count(), 1, "pagination is inside conversations");
+  const pagination = page.getByTestId("usage-pagination");
+  await until(async () => lastPageSize > 0 && (await rows().count()) === lastPageSize, "conversation page to match the rows that fit");
+  const perPage = lastPageSize;
+  const pages = Math.ceil(45 / perPage);
+  assert.ok(perPage >= 4 && perPage < 20, `about a screen of conversations per page, got ${perPage}`);
+  await pagination.getByText(`Page 1 of ${pages}`).waitFor();
   await pagination.locator('[data-page="next"]').click();
-  await pagination.getByText("Page 2 of 3").waitFor();
-  assert.equal(await rows().count(), 20);
-  await pagination.locator('[data-page="next"]').click();
-  await pagination.getByText("Page 3 of 3").waitFor();
-  assert.equal(await rows().count(), 5);
+  await pagination.getByText(`Page 2 of ${pages}`).waitFor();
+  assert.equal(await rows().count(), perPage);
+  for (let index = 2; index < pages; index++) await pagination.locator('[data-page="next"]').click();
+  await pagination.getByText(`Page ${pages} of ${pages}`).waitFor();
+  assert.equal(await rows().count(), 45 - (pages - 1) * perPage);
   await pagination.locator('[data-page="previous"]').click();
-  await pagination.getByText("Page 2 of 3").waitFor();
-  assert.equal(await rows().count(), 20);
+  await pagination.getByText(`Page ${pages - 1} of ${pages}`).waitFor();
 
-  const expectedFirstName = conversations[20].title;
   for (const viewport of [
     { width: 1100, height: 800 },
     { width: 800, height: 800 },
+    { width: 1300, height: 600 },
     { width: 520, height: 700 },
     { width: 390, height: 520 },
   ]) {
     await page.setViewportSize(viewport);
+    const fits = viewport.width > 700 && viewport.height >= 560;
     const card = dialog.locator(".usage-card");
+    await until(async () => (await rows().count()) === lastPageSize, `rows to settle at ${viewport.width}x${viewport.height}`);
+    if (fits) {
+      await until(() => card.evaluate((element: HTMLElement) => element.scrollHeight <= element.clientHeight + 1), `the dialog fits without scrolling at ${viewport.width}x${viewport.height}`);
+      await until(() => dialog.locator("#usageBreakdowns").evaluate((element: HTMLElement) => element.scrollHeight <= element.clientHeight + 1), `the page of rows fits its table at ${viewport.width}x${viewport.height}`);
+      await until(async () => (await rows().count()) === lastPageSize, `rows to settle at ${viewport.width}x${viewport.height}`);
+    } else {
+      await until(async () => lastPageSize === 10 && (await rows().count()) === 10, `small screens page ten rows and scroll the dialog at ${viewport.width}px`);
+    }
     const cardBox = await card.boundingBox();
     assert.ok(cardBox && cardBox.x >= 0 && cardBox.x + cardBox.width <= viewport.width);
     assert.equal(await card.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth), true);
-    for (const region of await dialog.locator(".usage-strip, .usage-sidebar, .usage-ledger, .usage-breakdown").all()) {
+    for (const region of await dialog.locator(".usage-toolbar, .usage-strip, .usage-ledger, .usage-breakdown").all()) {
       const box = await region.boundingBox();
       assert.ok(box && cardBox && box.x >= cardBox.x && box.x + box.width <= cardBox.x + cardBox.width + 1, `region fits the card at ${viewport.width}px`);
-      const fits = await region.evaluate((element: HTMLElement) => ({
-        width: element.scrollWidth <= element.clientWidth + 1,
-        height: element.scrollHeight <= element.clientHeight + 1,
-      }));
-      assert.deepEqual(fits, { width: true, height: true }, `no nested scrolling at ${viewport.width}px`);
+      assert.equal(await region.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth + 1), true, `no sideways scrolling at ${viewport.width}px`);
     }
-    for (const cell of await dialog.locator(".usage-breakdown td, .usage-stat").all()) {
-      assert.equal(await cell.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth + 1), true, `cell content fits at ${viewport.width}px`);
-    }
-    const firstNameCell = rows().first().locator("td").first();
-    assert.equal(await firstNameCell.locator(".usage-name").textContent(), expectedFirstName, "the complete conversation name remains in the cell");
-    assert.equal(await firstNameCell.getAttribute("title"), expectedFirstName);
+    const clipped = await dialog.evaluate((element: HTMLElement) => [...element.querySelectorAll<HTMLElement>(".usage-breakdown td:not(:first-child), .usage-stat strong")]
+      .filter((cell) => cell.scrollWidth > cell.clientWidth + 1).map((cell) => cell.textContent));
+    assert.deepEqual(clipped, [], `numbers are never clipped at ${viewport.width}px`);
+    const firstRow = rows().first();
+    const key = await firstRow.locator("[data-select]").getAttribute("data-select");
+    const expectedName = conversations.find((item) => item.conversationId === key)!.title;
+    assert.equal(await firstRow.locator(".usage-name").textContent(), expectedName, "the complete conversation name remains in the cell");
+    assert.equal(await firstRow.locator("td").first().getAttribute("title"), expectedName);
     if (viewport.width <= 700) {
-      const tokensLabel = await rows().first().locator('td[data-label="Tokens"]').evaluate(
+      const tokensLabel = await firstRow.locator('td[data-label="Tokens"]').evaluate(
         (element: HTMLElement) => getComputedStyle(element, "::before").content,
       );
       assert.ok(tokensLabel.includes("Tokens"), `mobile numeric cell exposes its Tokens label at ${viewport.width}px`);
@@ -281,6 +336,29 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   }
 
   await page.setViewportSize({ width: 1200, height: 800 });
+  const compareRequest = page.waitForRequest((request: any) => new URL(request.url()).searchParams.get("pageSize") === "1" && new URL(request.url()).searchParams.get("from") === isoDate(new Date(today.getFullYear(), today.getMonth() - 3, 1)));
+  await dialog.getByTestId("usage-tab-compare").click();
+  assert.equal(new URL((await compareRequest).url()).searchParams.get("to"), isoDate(today), "compare reads the three months before this one");
+  assert.equal(await dialog.getByTestId("usage-period-filter").isVisible(), false, "the period filter does not apply to comparisons");
+  const month = dialog.getByTestId("usage-compare-month");
+  await month.waitFor();
+  const dayOfMonth = today.getDate();
+  assert.equal(await month.getByTestId("usage-compare-month-value").textContent(), `$${dayOfMonth}`, "one dollar a day so far this month");
+  assert.equal(await month.getByTestId("usage-compare-row").count(), 4, "this month and the three before it");
+  const previousMonthLength = new Date(today.getFullYear(), today.getMonth(), 0).getDate();
+  assert.equal(await month.getByTestId("usage-compare-row-value").nth(1).textContent(), `$${Math.min(dayOfMonth, previousMonthLength)}`, "last month through the same day");
+  const week = dialog.getByTestId("usage-compare-week");
+  const elapsed = Number((await week.locator("header p").textContent())!.match(/^Day (\d) of 7/)![1]);
+  assert.equal(await week.getByTestId("usage-compare-week-value").textContent(), `$${elapsed}`);
+  assert.deepEqual(await week.getByTestId("usage-compare-row-value").allTextContents(), Array(4).fill(`$${elapsed}`), "each earlier week through the same weekday");
+  const hover = month.getByTestId("usage-compare-hover");
+  const hoverBox = (await hover.boundingBox())!;
+  await page.mouse.move(hoverBox.x + hoverBox.width / 2, hoverBox.y + hoverBox.height / 2);
+  await month.locator(".usage-compare-tooltip:not([hidden])").waitFor();
+  assert.equal(await month.locator(".usage-compare-tooltip span").count(), 4, "the hover lists every period");
+  assert.equal(await dialog.locator(".usage-card").evaluate((element: HTMLElement) => element.scrollHeight <= element.clientHeight + 1), true, "the comparison fits without scrolling");
+  await dialog.getByTestId("usage-tab-overview").click();
+
   gateRefresh = true;
   await page.locator("#usageRefresh").click();
   await page.getByText("Updating usage…", { exact: true }).waitFor();
