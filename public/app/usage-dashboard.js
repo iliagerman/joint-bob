@@ -121,12 +121,17 @@ function renderSummary(totals) {
     metric("Reasoning tokens", totals.reasoning.toLocaleString()),
   );
 }
-function renderTable(title, rows, names = new Map()) {
+function renderTable(title, firstColumnLabel, rows, names = new Map()) {
   const section = element("section", undefined, "usage-breakdown");
   section.append(element("h4", title));
   const table = element("table");
+  const columnLabels = [firstColumnLabel, "Cost", "Tokens", "Requests", "Tools"];
   const head = element("tr");
-  for (const label of [title.slice(0, -1), "Cost", "Tokens", "Requests", "Tools"]) head.append(element("th", label));
+  for (const label of columnLabels) {
+    const header = element("th", label);
+    header.scope = "col";
+    head.append(header);
+  }
   const thead = element("thead");
   thead.append(head);
   table.append(thead);
@@ -134,7 +139,15 @@ function renderTable(title, rows, names = new Map()) {
   for (const item of rows.slice(0, 20)) {
     const row = element("tr");
     const name = names.get(item.key) || item.key || "Not classified";
-    for (const value of [name, formatUsageCost(item.totals), item.totals.totalTokens.toLocaleString(), String(item.totals.requests), String(item.totals.toolCalls)]) row.append(element("td", value));
+    const nameCell = element("td", name);
+    nameCell.title = name;
+    row.append(nameCell);
+    const numericValues = [formatUsageCost(item.totals), item.totals.totalTokens.toLocaleString(), String(item.totals.requests), String(item.totals.toolCalls)];
+    numericValues.forEach((value, index) => {
+      const cell = element("td", value);
+      cell.dataset.label = columnLabels[index + 1];
+      row.append(cell);
+    });
     body.append(row);
   }
   if (!rows.length) {
@@ -148,9 +161,16 @@ function renderUsage(data) {
   updateInventory(data); renderSummary(data.summary); renderUsageCharts(charts, data);
   const projectNames = new Map(data.projects.map((item) => [item.id, item.name]));
   const conversationNames = new Map(data.conversations.map((item) => [item.conversationId, item.title || item.conversationId]));
-  const labels = { projects: "Projects", conversations: "Conversations", classifications: "Existing labels", difficulties: "Classifier difficulties", models: "Models", days: "Days" };
-  const sections = Object.entries(labels).map(([key, label]) => {
-    const section = renderTable(label, data.breakdowns[key], key === "projects" ? projectNames : key === "conversations" ? conversationNames : new Map());
+  const labels = {
+    projects: { title: "Projects", column: "Project" },
+    conversations: { title: "Conversations", column: "Conversation" },
+    classifications: { title: "Existing labels", column: "Existing label" },
+    difficulties: { title: "Classifier difficulties", column: "Classifier difficulty" },
+    models: { title: "Models", column: "Model" },
+    days: { title: "Days", column: "Day" },
+  };
+  const sections = Object.entries(labels).map(([key, labelsForTable]) => {
+    const section = renderTable(labelsForTable.title, labelsForTable.column, data.breakdowns[key], key === "projects" ? projectNames : key === "conversations" ? conversationNames : new Map());
     if (key === "conversations") { section.dataset.testid = "usage-conversations-table"; section.querySelector("h4").after(pagination); }
     return section;
   });

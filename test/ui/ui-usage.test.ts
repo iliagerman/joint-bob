@@ -102,13 +102,16 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
   const { page, environment, node } = await nativeUiFixture(t);
   await login(page, environment, node.url);
 
+  const unbrokenTitle = "x".repeat(100);
   const conversations = Array.from({ length: 45 }, (_, index) => ({
     conversationId: `conversation-${index + 1}`,
-    title: `Conversation ${index + 1}`,
+    title: index === 20
+      ? `Conversation ${index + 1}: ${unbrokenTitle}`
+      : `Conversation ${index + 1}: a long descriptive discussion about preserving complete usage breakdown names`,
   }));
   const totals = (cost: number, requests = 2) => ({
     apiCostUsd: cost, partial: true, input: 100, output: 50, cacheRead: 10,
-    cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteUnknown: 0, totalTokens: 160,
+    cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteUnknown: 0, totalTokens: 28413502076,
     pricedRequests: requests, requests, toolCalls: 1, toolErrors: 0, reasoning: 5,
     unavailableSessions: 0,
   });
@@ -203,7 +206,13 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
   await pagination.getByText("Page 2 of 3").waitFor();
   assert.equal(await rows().count(), 20);
 
-  for (const viewport of [{ width: 390, height: 520 }, { width: 520, height: 700 }]) {
+  const expectedFirstName = conversations[20].title;
+  for (const viewport of [
+    { width: 1100, height: 800 },
+    { width: 800, height: 800 },
+    { width: 520, height: 700 },
+    { width: 390, height: 520 },
+  ]) {
     await page.setViewportSize(viewport);
     const card = dialog.locator(".usage-card");
     const cardBox = await card.boundingBox();
@@ -213,6 +222,29 @@ test("usage dashboard renders charts, paginates, remains responsive, and preserv
       assert.ok(box && cardBox && box.x >= cardBox.x && box.x + box.width <= cardBox.x + cardBox.width);
     }
     assert.equal(await card.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth), true);
+    for (const section of await dialog.locator(".usage-breakdown").all()) {
+      const sectionBox = await section.boundingBox();
+      const tableBox = await section.locator("table").boundingBox();
+      assert.ok(sectionBox && cardBox && sectionBox.x >= cardBox.x && sectionBox.x + sectionBox.width <= cardBox.x + cardBox.width + 1);
+      assert.ok(tableBox && tableBox.x >= sectionBox.x - 1 && tableBox.x + tableBox.width <= sectionBox.x + sectionBox.width + 1);
+      const fits = await section.evaluate((element: HTMLElement) => ({
+        width: element.scrollWidth <= element.clientWidth,
+        height: element.scrollHeight <= element.clientHeight,
+      }));
+      assert.deepEqual(fits, { width: true, height: true }, `breakdown has no nested scrolling at ${viewport.width}px`);
+    }
+    for (const cell of await dialog.locator(".usage-breakdown td").all()) {
+      assert.equal(await cell.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth + 1), true);
+    }
+    const firstNameCell = conversationSection.locator("tbody tr").first().locator("td").first();
+    assert.equal(await firstNameCell.textContent(), expectedFirstName, "the complete conversation name remains in the cell");
+    assert.equal(await firstNameCell.getAttribute("title"), expectedFirstName);
+    if (viewport.width <= 700) {
+      const tokensLabel = await conversationSection.locator("tbody tr").first().locator("td").nth(2).evaluate(
+        (element: HTMLElement) => getComputedStyle(element, "::before").content,
+      );
+      assert.ok(tokensLabel.includes("Tokens"), `mobile numeric cell exposes its Tokens label at ${viewport.width}px`);
+    }
   }
 
   await page.setViewportSize({ width: 1200, height: 800 });
