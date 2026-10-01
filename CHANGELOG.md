@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Recent conversations no longer refresh across the cluster when a browser reports activity you already have.
+- Database storage is now reclaimed automatically: replication event history is pruned every 15 minutes.
 
 ## 2.26.1 — 2026-10-01
 

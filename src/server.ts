@@ -10,6 +10,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
+import { runReplicationHousekeeping } from "./server/replication-housekeeping.js";
 import { removeAllDeletedTranscripts } from "./server/deleted-transcripts.js";
 import { flushSuccessionNotices } from "./server/succession.js";
 import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, sweepRuntimeLeases, sweepStaleConversations } from "./server/maintenance.js";
@@ -148,6 +149,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     setInterval(() => reapInactiveConversations().catch((error) => console.warn("Inactive conversation reap failed", error)), 60_000).unref();
     setInterval(() => sweepStaleConversations().catch((error) => console.warn("Stale conversation sweep failed", error)), 60_000).unref();
     setInterval(() => void runSyncCheck(), 5 * 60_000).unref();
+    // First run comes a quarter hour after start, clear of the release health check.
+    setInterval(() => { if (clusterWorkAllowed()) runReplicationHousekeeping().catch((error) => console.warn("Replication housekeeping failed", error)); }, 15 * 60_000).unref();
     setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
     setInterval(() => {
       void initializeStartupReadiness();

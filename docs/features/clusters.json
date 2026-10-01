@@ -107,7 +107,7 @@
           "items": [
             { "heading": "Hubs", "body": "For each cluster, the node that makes a change sends it only to two hubs: the lowest and the highest numbered other members that answer. If a hub does not answer, the next member in line takes its place." },
             { "heading": "Forwarding", "body": "A hub applies the change and forwards it to every other member of that cluster that may see it. Each relayed event carries its origin's signature; a hub cannot forge or alter it." },
-            { "heading": "Catch-up", "body": "Every node keeps each cluster event it holds in a relay log. At start-up and every minute a node pulls everything after its cursor from the two hubs, so a node that was offline, or missed a forward, catches up. A project shared with a cluster later sends its earlier events once." },
+            { "heading": "Catch-up", "body": "Every node keeps each cluster event it holds in a relay log. At start-up and every minute a node pulls everything after its cursor from the two hubs, so a node that was offline, or missed a forward, catches up. A project shared with a cluster later sends its earlier events once, except usage and recent-conversation events past their retention window." },
             { "heading": "Out-of-order events", "body": "Some events can only be placed once an earlier one has arrived, such as a conversation's ownership before its conversation record. A receiver sets such an event aside and applies it when it can, instead of refusing the batch. Events that never fit are dropped after 7 days." },
             { "heading": "Twins", "body": "Twins keep direct delivery. A cluster whose other members are all twins of this node needs no hubs." }
           ]
@@ -166,7 +166,7 @@
         {
           "kind": "bullets",
           "items": [
-            "Relay logs and the event outbox are not pruned yet.",
+            "Every 15 minutes a node prunes its replication tables: usage events leave the outbox and relay log after 30 days, recent-conversation events after 7, inbox receipts after 14, and delivered hub queue rows after a day; a recent-conversation event repeated word for word by a newer one goes at once. Other event types are kept, so a node or project share added later gets only that much usage and recents history from other nodes.",
             "An event a twin was refused and later becomes eligible for is sent at the next full outbox search, within about 5 minutes.",
             "Shared agent skills (the agent-resources Syncthing folder) do not synchronize between nodes.",
             "A node advertises one URL to all its clusters, so every cluster must reach it at that URL.",
