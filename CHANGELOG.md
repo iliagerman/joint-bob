@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.33.1 — 2026-10-02
 
-- Markdown formatting now renders as assistant text arrives during streaming instead of waiting for the response to complete.
+- Markdown formatting now renders while the response streams in instead of waiting for the complete message.
 
 ## 2.33.0 — 2026-10-02
 
