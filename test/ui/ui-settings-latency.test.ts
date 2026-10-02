@@ -125,6 +125,7 @@ test("Cluster loading failures offer retry and selected-cluster spinners ignore 
     fail = false;
     await page.getByTestId("cluster-retry").click();
     await page.getByTestId("cluster-item").filter({ hasText: "Alpha" }).click();
+    await page.getByTestId("cluster-tab-sharing").click();
     await page.locator('[data-testid="sharing-status"].is-loading').waitFor();
     await page.getByTestId("cluster-item").filter({ hasText: "Beta" }).click();
     await page.getByTestId("cluster-sharing").getByText("You share with Beta").waitFor();

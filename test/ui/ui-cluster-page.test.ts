@@ -95,7 +95,7 @@ test("cluster page lists clusters, finds nodes fuzzily, splits what you get from
     await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor();
     await openClusterSettings(page);
 
-    // The list: one row per cluster with its faces and what flows each way.
+    // The map: one card per cluster with its faces and what flows each way, around this node.
     const items = page.getByTestId("cluster-item");
     assert.equal(await items.count(), 2);
     const researchItem = items.filter({ hasText: "Research" });
@@ -121,11 +121,13 @@ test("cluster page lists clusters, finds nodes fuzzily, splits what you get from
     assert.match(await members.first().innerText(), /You/);
     assert.match(await members.first().innerText(), /Manager/);
     await page.getByTestId(`cluster-member-make-twin-${nodeB.nodeId}`).waitFor();
+    await page.getByTestId("cluster-tab-received").click();
     const receivedGroups = page.getByTestId("cluster-owner-group");
     assert.equal(await receivedGroups.count(), 1);
     assert.match(await receivedGroups.innerText(), /from Remote fixture node[\s\S]*Remote research/);
     assert.equal(await page.getByTestId("cluster-received").getByText("Operations shared").count(), 0, "another cluster's project does not leak in");
     const sharing = page.getByTestId("cluster-sharing");
+    await page.getByTestId("cluster-tab-sharing").click();
     await page.getByTestId("sharing-save").waitFor();
     assert.match(await sharing.innerText(), /shared with every node in Research \(Remote fixture node\)/);
     assert.equal(await sharing.getByText("Remote research").count(), 0, "a received project cannot be reshared");
@@ -134,7 +136,8 @@ test("cluster page lists clusters, finds nodes fuzzily, splits what you get from
     await items.filter({ hasText: "Operations" }).click();
     await details.getByRole("heading", { name: "Operations" }).waitFor();
     assert.equal(await members.count(), 1);
-    await page.getByTestId("cluster-received").getByText("Nothing yet.", { exact: false }).waitFor();
+    await page.getByTestId("cluster-tab-received").click();
+    await page.getByTestId("cluster-received").getByText("No projects shared with you in Operations.", { exact: true }).waitFor();
 
     // Fuzzy search finds a node by a few of its letters and opens its cluster.
     const search = page.getByTestId("cluster-search-input");
@@ -156,6 +159,7 @@ test("cluster page lists clusters, finds nodes fuzzily, splits what you get from
     await items.filter({ hasText: "Research" }).focus();
     await page.keyboard.press("Enter");
     await details.getByRole("heading", { name: "Research" }).waitFor();
+    await page.getByTestId("cluster-tab-sharing").click();
     await sharing.getByText("You share with Research").waitFor();
     await page.getByTestId("sharing-save").waitFor();
 
@@ -177,11 +181,23 @@ test("cluster page lists clusters, finds nodes fuzzily, splits what you get from
       return Boolean(list.compareDocumentPosition(machine) & Node.DOCUMENT_POSITION_FOLLOWING) && Boolean(machine.compareDocumentPosition(browserSelect) & Node.DOCUMENT_POSITION_FOLLOWING);
     });
     assert.equal(order, true);
+    const canvas = page.getByTestId("cluster-canvas");
+    assert.equal(await canvas.evaluate((element) => getComputedStyle(element).display), "block", "a wide screen draws the map");
+    assert.equal(await canvas.locator(".cluster-map-wires line").count(), 2, "one wire to each cluster");
+
+    // This machine opens from the middle of the map.
+    await page.getByTestId("cluster-map-local").click();
+    await page.getByTestId("cluster-machine-section").getByText("Discoverable URL").waitFor();
+    assert.equal(await page.getByTestId("cluster-detail-pane").isVisible(), false);
+    await items.filter({ hasText: "Research" }).click();
+    await details.getByRole("heading", { name: "Research" }).waitFor();
+
     await page.setViewportSize({ width: 390, height: 844 });
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, "no horizontal overflow on a phone");
-    const [receivedBox, sharingBox] = await Promise.all([page.getByTestId("cluster-received").boundingBox(), sharing.boundingBox()]);
-    assert.ok(receivedBox && sharingBox && sharingBox.y > receivedBox.y, "the two columns stack on a phone");
+    assert.equal(await canvas.evaluate((element) => getComputedStyle(element).display), "grid", "a phone lists the map's nodes as cards");
+    const [mapBox, inspectorBox] = await Promise.all([canvas.boundingBox(), page.getByTestId("cluster-inspector").boundingBox()]);
+    assert.ok(mapBox && inspectorBox && inspectorBox.y >= mapBox.y + mapBox.height, "the inspector stacks below the map on a phone");
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByTestId("settings-cancel-button").click();
     await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });

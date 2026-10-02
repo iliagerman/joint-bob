@@ -85,6 +85,10 @@ test("cluster sharing is one selection for the whole cluster, and twin states, r
     await page.getByText("Internal Assistant", { exact: true }).waitFor();
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-cluster").click();
+    // The map selects a cluster or this machine; the inspector shows one section at a time.
+    const showClusterNodes = async () => { await page.getByTestId("cluster-item").first().click(); await page.getByTestId("cluster-tab-nodes").click(); };
+    const showTwins = async () => { await page.getByTestId("cluster-map-local").click(); await page.getByTestId("cluster-machine-tab-twins").click(); };
+    await page.getByTestId("cluster-tab-sharing").click();
     await page.getByTestId("sharing-save").waitFor();
 
     // One selection for the whole cluster, with long lists that scroll and search.
@@ -120,15 +124,18 @@ test("cluster sharing is one selection for the whole cluster, and twin states, r
     // An incoming request shows as a banner and on the requesting node's row.
     const banner = page.getByTestId("cluster-twin-request");
     assert.match(await banner.innerText(), /Beta asks to be twins with this node \(via Home\)/);
+    await page.getByTestId("cluster-tab-nodes").click();
     await page.getByTestId(`cluster-member-accept-${beta}`).waitFor();
+    await page.getByTestId(`cluster-member-twin-${homeserver}`).waitFor();
+    assert.equal(await page.getByTestId(`cluster-member-sync-${homeserver}`).innerText(), "Not enabled");
+    assert.equal(await page.getByTestId("cluster-map-twin").count(), 1, "the map shows the twin above this node");
 
-    // The existing twin never started sharing: choose the original owner and enable it.
+    // The existing twin never started sharing: this machine's Twins tab chooses the original owner and enables it.
+    await showTwins();
     const twins = page.getByTestId("cluster-nodes");
     const homeRow = twins.getByTestId("cluster-node-row").filter({ hasText: "Homeserver" });
     await homeRow.getByText("Connected", { exact: true }).waitFor();
     assert.match(await homeRow.getByTestId("twin-sharing-status").innerText(), /Not enabled · 2 twin-shared projects/);
-    await page.getByTestId(`cluster-member-twin-${homeserver}`).waitFor();
-    assert.equal(await page.getByTestId(`cluster-member-sync-${homeserver}`).innerText(), "Not enabled");
     await homeRow.getByTestId("twin-sharing-owner").selectOption(homeserver);
     await page.waitForResponse((response) => response.url().endsWith("/api/twins/requests"));
     assert.equal(await homeRow.getByTestId("twin-sharing-owner").inputValue(), homeserver, "polling keeps an unfinished owner choice");
@@ -140,15 +147,16 @@ test("cluster sharing is one selection for the whole cluster, and twin states, r
     await homeRow.getByTestId("twin-sharing-status").getByText("Peer unavailable", { exact: false }).waitFor();
     assert.deepEqual(calls.splice(0), [`sharing:${homeserver}`]);
     assert.equal(await homeRow.getByTestId("twin-sharing-owner").count(), 0, "an established owner cannot be reassigned on retry");
-    assert.equal(await page.getByTestId(`cluster-member-sync-${homeserver}`).innerText(), "Error");
+    assert.match(await homeRow.getByTestId("twin-sharing-status").innerText(), /^Error/);
     await homeRow.getByTestId("twin-retry-sharing").click();
     await page.getByTestId("confirm-accept-button").click();
     await homeRow.getByTestId("twin-sharing-status").getByText("Syncing", { exact: false }).waitFor();
     assert.deepEqual(calls.splice(0), [`sharing:${node.nodeId}`], "retry keeps the owner the twin already has");
     twin = { ...twin, state: "ready", pendingDeliveries: 0 };
-    await page.getByTestId(`cluster-member-sync-${homeserver}`).getByText("Up to date", { exact: true }).waitFor({ timeout: 10_000 });
+    await homeRow.getByTestId("twin-sharing-status").getByText("Up to date", { exact: false }).waitFor({ timeout: 10_000 });
     failRead = true;
     await homeRow.getByTestId("twin-sharing-status").getByText("Status service unavailable", { exact: false }).waitFor({ timeout: 10_000 });
+    await showClusterNodes();
     assert.equal(await page.getByTestId(`cluster-member-sync-${homeserver}`).innerText(), "Error");
     failRead = false;
     await page.getByTestId(`cluster-member-sync-${homeserver}`).getByText("Up to date", { exact: true }).waitFor({ timeout: 10_000 });
@@ -158,9 +166,12 @@ test("cluster sharing is one selection for the whole cluster, and twin states, r
     await page.getByTestId("confirm-accept-button").click();
     await page.getByTestId(`cluster-member-twin-${beta}`).waitFor();
     assert.equal(await banner.count(), 0);
+    assert.equal(await page.getByTestId("cluster-map-twin").count(), 2);
+    await showTwins();
     const betaRow = twins.getByTestId("cluster-node-row").filter({ hasText: "Beta" });
     assert.match(await betaRow.getByTestId("cluster-node-status").innerText(), /Not connected — Peer unavailable/);
     assert.equal(await betaRow.getAttribute("data-state"), "offline");
+    await showClusterNodes();
     await page.getByTestId(`cluster-member-unpair-${beta}`).click();
     await page.getByTestId("confirm-cancel-button").click();
     assert.deepEqual(calls.splice(0), ["accept"]);
@@ -171,7 +182,7 @@ test("cluster sharing is one selection for the whole cluster, and twin states, r
     await page.getByTestId(`cluster-member-twin-${homeserver}`).waitFor();
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByTestId("cluster-nodes").scrollIntoViewIfNeeded();
+    await page.getByTestId("cluster-inspector").scrollIntoViewIfNeeded();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, "the cluster page fits a phone");
     assert.deepEqual(pageErrors, []);
   } finally { await browser?.close(); if (server) await stopDevNode(server); await rm(root, { recursive: true, force: true }); }

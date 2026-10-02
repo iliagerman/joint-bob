@@ -35,8 +35,8 @@
           "title": "Frontend",
           "columns": ["File", "Responsibility"],
           "rows": [
-            ["`public/app/cluster-panel.js`", "Settings > Cluster: the cluster list and the open cluster's nodes, what this node gets from it and shares with it; create, invite, join, leave; this node's name and URL."],
-            ["`public/app/cluster-canvas.js`", "The cluster list with fuzzy search over cluster and node names, and the node strip that marks this node, the manager, and twins."],
+            ["`public/app/cluster-panel.js`", "Settings > Cluster: a map of this node, its twins and its clusters, and an inspector for the selection. A cluster has tabs for its nodes, what this node gets from it, what it shares with it, and its invitation; a node lists its clusters and twin actions; this machine has its name and discoverable URL, its twins, and the browser machine defaults. Create, join, leave."],
+            ["`public/app/cluster-canvas.js`", "The cluster map: this node in the middle, twins above on dashed wires, a page of six clusters around it, narrowed by fuzzy search over cluster and node names. Below 640px of width the same buttons flow into a card grid. Also the node strip that marks this node, the manager, and twins."],
             ["`public/app/cluster-twins.js`", "Twin requests between cluster members, each twin's sync state, unpairing, pairing by link, and **Machine lost**."],
             ["`public/app/cluster-filters.js`", "The Clusters filters above the project and conversation lists."],
             ["`public/app/cluster-sharing.js`", "What this node shares with a cluster: one selection that reaches every member."],

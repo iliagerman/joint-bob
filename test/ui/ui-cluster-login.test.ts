@@ -100,6 +100,10 @@ test("the cluster settings list says which nodes are connected", async () => {
 
   await macPage.getByTestId("settings-open-button").click();
   await macPage.getByTestId("settings-tab-cluster").click();
+  // The twin sits above this machine on the map; this machine's Twins tab lists both.
+  await macPage.getByTestId("cluster-map-twin").filter({ hasText: homeserver.name }).waitFor({ timeout: 30_000 });
+  await macPage.getByTestId("cluster-map-local").click();
+  await macPage.getByTestId("cluster-machine-tab-twins").click();
   const rows = macPage.getByTestId("cluster-node-row");
   await rows.first().waitFor({ timeout: 30_000 });
   assert.equal(await rows.count(), 2, "one row for this node and one for its peer");

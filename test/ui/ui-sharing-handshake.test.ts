@@ -76,7 +76,9 @@ test("cluster members pair as twins by request and acceptance, and unpair from t
     }
     await pb.getByTestId(`cluster-member-twin-${nodeA.nodeId}`).waitFor();
     await pa.getByTestId(`cluster-member-twin-${nodeB.nodeId}`).waitFor({ timeout: 10_000 });
-    // The twins section lists the new twin with its connection and sync state.
+    // This machine's Twins tab lists the new twin with its connection and sync state.
+    const showTwins = async () => { await pa.getByTestId("cluster-map-local").click(); await pa.getByTestId("cluster-machine-tab-twins").click(); };
+    await showTwins();
     const twinRow = pa.getByTestId("cluster-nodes").getByTestId("cluster-node-row").filter({ hasText: nodeB.name });
     await twinRow.getByTestId("twin-sharing-status").waitFor({ timeout: 10_000 });
     const strip = pa.getByTestId("cluster-strip");
@@ -86,6 +88,8 @@ test("cluster members pair as twins by request and acceptance, and unpair from t
     assert.equal(sharing.body.initialized, true, "accepting starts sharing without another step");
 
     // Unpairing from the node row asks first, then revokes.
+    await pa.getByTestId("cluster-item").first().click();
+    await pa.getByTestId("cluster-tab-nodes").click();
     await pa.getByTestId(`cluster-member-unpair-${nodeB.nodeId}`).click();
     await pa.getByTestId("confirm-cancel-button").click();
     assert.equal((await relationships(nodeA, sa))[0].status, "active");
@@ -95,6 +99,7 @@ test("cluster members pair as twins by request and acceptance, and unpair from t
     assert.equal((await relationships(nodeA, sa))[0].status, "revoked");
 
     // Pairing by link still works for nodes outside any cluster, and its fields are labelled.
+    await showTwins();
     await pa.getByTestId("cluster-twin-link").locator("summary").click();
     await pa.getByTestId("twin-invite").click();
     await pa.getByTestId("confirm-cancel-button").click();

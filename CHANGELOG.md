@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Settings > Cluster now displays a visual map with this node in the center, its twins above it on dashed wires, and a paginated grid of clusters around it; click any node or cluster to inspect its details in a side panel, with tabs for nodes, sharing, invitations, and this machine's settings.
+
 ## 2.32.0 — 2026-10-01
 
 - Code review now displays a loading animation while the reviewer works and restores the previous review when reopening if the files haven't changed.

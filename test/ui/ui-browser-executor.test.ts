@@ -428,7 +428,8 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
         await f.page.getByTestId("settings-open-button").click();
         // Cluster defaults are shared settings of the cluster.
         await f.page.getByTestId("settings-tab-cluster").click();
-        await f.page.getByTestId("cluster-browser-summary").click();
+        await f.page.getByTestId("cluster-map-local").click();
+        await f.page.getByTestId("cluster-machine-tab-browser").click();
         const clusterDefault = f.page.getByTestId("settings-browser-cluster-default");
         await clusterDefault.waitFor();
         assert.equal(await f.page.getByText("Default for cluster “Home cluster”").count(), 1);

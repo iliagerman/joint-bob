@@ -90,14 +90,14 @@ async function declineRequest(item, onChange) {
   await onChange();
 }
 
-async function unpair(relationship, name, onChange) {
+export async function unpair(relationship, name, onChange) {
   if (!await confirmAction({ eyebrow: "Twins", title: `Stop being twins with ${name}?`, message: `Nothing new is copied between this node and ${name}. Files already copied stay where they are. Sharing through clusters is unchanged.`, confirmLabel: "Unpair", destructive: true })) return;
   const result = await api(`/api/twins/${relationship.relationshipId}`, { method: "DELETE" });
   toast(result.pending ? `Unpaired here; ${name} will be told when it is reachable` : `Unpaired from ${name}`);
   await onChange({ projects: true });
 }
 
-async function declareLost(relationship, name, onChange) {
+export async function declareLost(relationship, name, onChange) {
   if (!await confirmAction({ eyebrow: "Twins", title: `Declare ${name} lost?`, message: `Only when ${name} is gone for good. This node becomes the owner of everything ${name} owned, removes it from its clusters, and unpairs it. A rebuilt machine gets everything back by pairing as a twin with this node.`, confirmLabel: "Declare lost", destructive: true })) return;
   const result = await api(`/api/twins/${relationship.relationshipId}/lost`, { method: "POST", body: JSON.stringify({ confirmLost: true }) });
   toast(`${name} was declared lost. This node now owns its ${result.projects} project${result.projects === 1 ? "" : "s"}.`);
@@ -150,7 +150,7 @@ export function renderTwinRequests(container, clusters, onChange) {
   }));
 }
 
-function twinName(nodeId, clusters) {
+export function twinName(nodeId, clusters) {
   for (const cluster of clusters) {
     const member = cluster.members.find((candidate) => candidate.nodeId === nodeId);
     if (member?.name) return member.name;
