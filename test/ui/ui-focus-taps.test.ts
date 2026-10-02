@@ -49,6 +49,18 @@ test("focus controls support single, double, and triple taps", { timeout: 180_00
   await page.waitForFunction(() => !document.querySelector<HTMLTextAreaElement>("#messageInput")!.value);
   assert.equal(await fab.isVisible(), true, "double-tapping send must not hide the controls button");
 
+  await page.evaluate(`(async () => {
+    const { state } = await import('/app/state.js');
+    state.conversationCommands = { start: { enabled: false, prompt: '' }, end: { enabled: true, prompt: 'Finish and push.' } };
+    window.sentPrompts = [];
+    state.socket = { readyState: WebSocket.OPEN, send(value) { window.sentPrompts.push(JSON.parse(value).message); } };
+    document.querySelector('#messageInput').value = 'Keep this draft';
+  })()`);
+  for (let i = 0; i < 2; i++) await page.touchscreen.tap(send.x + send.width / 2, send.y + send.height / 2);
+  await page.waitForTimeout(450);
+  assert.deepEqual(await page.evaluate('window.sentPrompts'), ["Finish and push."], "double-tap Send runs the end command once");
+  assert.equal(await page.locator("#messageInput").inputValue(), "Keep this draft");
+
   const start = await fab.boundingBox();
   assert.ok(start);
   const cdp = await context.newCDPSession(page);

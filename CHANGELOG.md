@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.33.2 — 2026-10-02
+
+- Send button now responds to double-tap gestures to run conversation commands.
+
 ## 2.33.1 — 2026-10-02
 
 - Markdown formatting now renders while the response streams in instead of waiting for the complete message.
