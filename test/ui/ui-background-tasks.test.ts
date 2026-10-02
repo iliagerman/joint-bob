@@ -121,7 +121,29 @@ test("task scope clears while another session is connecting", { timeout: 180_000
   }
 });
 
-test("a live supervisor task streams safely, stops, and remains in history after reload", { timeout: 180_000 }, async (t) => {
+test("tasks are listed for the open conversation's project, not the sidebar selection", { timeout: 180_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const diagnostics = attachDiagnostics(page);
+  try {
+    await loginAndOpenShortOne(page, environment, node);
+    const scope = await activeScope(page);
+    await page.evaluate(async () => {
+      const { state } = await import("/app/state.js");
+      state.activeProjectId = "other-project";
+    });
+    const listed = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return url.pathname === "/api/background-tasks" && url.searchParams.get("conversationId") === scope.conversationId;
+    });
+    await page.getByTestId("background-tasks-open").click();
+    assert.equal(new URL((await listed).url()).searchParams.get("projectId"), scope.projectId);
+  } catch (error) {
+    await recordFailure(page, diagnostics);
+    throw error;
+  }
+});
+
+test("a live supervisor task streams safely, stops, and remains in history after reload",{ timeout: 180_000 }, async (t) => {
   const errors: Error[] = [];
   const { page, environment, node } = await nativeUiFixture(t, (root) => ({ JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log") }));
   const diagnostics = attachDiagnostics(page);

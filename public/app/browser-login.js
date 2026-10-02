@@ -10,8 +10,9 @@ let popup = null, discovering = false, discoveryOutage = false, timer = null;
 function identity() {
   const conversationId = state.activeConversationId || state.activeSessionId;
   const appNodeId = state.conversationLock?.nodeId || state.activeNodeId;
-  if (!state.authenticated || !state.activeProjectId || !state.engine || !conversationId || !appNodeId) return null;
-  return { projectId: state.activeProjectId, engine: state.engine, conversationId, appNodeId };
+  const projectId = state.activeConversationProjectId || state.activeProjectId;
+  if (!state.authenticated || !projectId || !state.engine || !conversationId || !appNodeId) return null;
+  return { projectId, engine: state.engine, conversationId, appNodeId };
 }
 // A conversation can move to another app node while its browser remains on the original
 // machine. The handoff follows the conversation, not its current execution node.

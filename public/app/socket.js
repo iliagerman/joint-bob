@@ -152,6 +152,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     state.pendingQuickNoteConversion = null;
     state.conversationSegments = null;
     state.activeConversationId = null;
+    state.activeConversationProjectId = null;
     syncBackgroundTasks();
     state.scheduledTurn = false;
     state.scheduledAssistantText = "";
@@ -231,6 +232,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     renderConversationLock();
     state.activeSessionId = payload.sessionId || state.activeSessionId;
     state.activeConversationId = payload.conversationId || payload.sessionId || null;
+    state.activeConversationProjectId = payload.project?.id || state.activeProjectId;
     state.conversationSegments = payload.segments || null;
     state.scheduledTurn = payload.scheduledTurn === true;
     state.scheduledAssistantText = "";

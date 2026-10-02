@@ -96,6 +96,8 @@ export const state = {
   activeNodeId: null,
   activeSessionId: null,
   activeConversationId: null,
+  // The project the open conversation belongs to, which the sidebar selection need not match.
+  activeConversationProjectId: null,
   conversationSegments: null,
   // Previous review watermark for the conversation currently being opened.
   reviewHighlightAfter: null,

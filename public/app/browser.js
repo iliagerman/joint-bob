@@ -12,8 +12,9 @@ let viewer = null, viewerKey = null, panel;
 function browserIdentity() {
   const conversationId = state.activeConversationId || state.activeSessionId;
   const appNodeId = state.conversationLock?.nodeId || state.activeNodeId;
-  if (!state.activeProjectId || !conversationId || !appNodeId) return null;
-  return { projectId: state.activeProjectId, engine: state.engine, conversationId, appNodeId };
+  const projectId = state.activeConversationProjectId || state.activeProjectId;
+  if (!projectId || !conversationId || !appNodeId) return null;
+  return { projectId, engine: state.engine, conversationId, appNodeId };
 }
 function identityKey(identity) {
   return identity ? JSON.stringify([identity.projectId, identity.engine, identity.conversationId, identity.appNodeId]) : null;

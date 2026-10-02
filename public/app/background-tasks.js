@@ -35,8 +35,9 @@ let nodes = new Map();
 
 function scope() {
   const conversationId = state.activeConversationId;
-  return state.authenticated && state.activeProjectId && conversationId
-    ? { projectId: state.activeProjectId, conversationId }
+  const projectId = state.activeConversationProjectId;
+  return state.authenticated && projectId && conversationId
+    ? { projectId, conversationId }
     : null;
 }
 

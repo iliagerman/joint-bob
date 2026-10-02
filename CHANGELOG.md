@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Background tasks now display for the conversation you have open, regardless of which project is selected in the sidebar.
+
 ## 2.33.4 — 2026-10-02
 
 - Ask AI in Git review now stays fully visible at the bottom of the dialog on desktop and mobile.
