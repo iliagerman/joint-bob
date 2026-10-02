@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.33.0 — 2026-10-02
 
-- Settings > Cluster now displays a visual map with this node in the center, its twins above it on dashed wires, and a paginated grid of clusters around it; click any node or cluster to inspect its details in a side panel, with tabs for nodes, sharing, invitations, and this machine's settings.
+- Settings > Cluster redesigned with a visual map showing this machine centered, twins above on dashed wires, and clusters around it; click any to inspect its details in a panel with tabs for nodes, sharing, invitations, and settings. Below 640px the map converts to a card grid with the inspector stacking below.
+- Renamed "Private Tailscale URL" to "Discoverable URL" in cluster settings.
 
 ## 2.32.0 — 2026-10-01
 
