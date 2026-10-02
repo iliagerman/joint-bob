@@ -3202,8 +3202,8 @@ body.file-view { overflow: auto; }
 .cluster-search input { border-color: var(--line); }
 .cluster-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; min-width: 0; }
 @container cluster (min-width: 1000px) {
-  .cluster-layout { grid-template-columns: minmax(0, 1fr) minmax(340px, 400px); }
-  .cluster-inspector { position: sticky; top: 0; }
+  .cluster-layout { grid-template-columns: minmax(0, 1fr) minmax(340px, 400px); align-items: stretch; }
+  .cluster-map-pane { grid-template-rows: minmax(0, 1fr) auto; }
 }
 .cluster-map-pane { container: cluster-map / inline-size; display: grid; gap: 8px; min-width: 0; }
 .cluster-map { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 8px; min-width: 0; }
@@ -3230,7 +3230,7 @@ body.file-view { overflow: auto; }
 .cluster-map-pager { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); font-size: 12px; }
 .cluster-map-pager[hidden] { display: none; }
 @container cluster-map (min-width: 640px) {
-  .cluster-map { display: block; height: clamp(440px, 72cqi, 540px); overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-card); background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 7%, var(--surface)), var(--panel) 72%); }
+  .cluster-map { display: block; height: 100%; min-height: clamp(520px, 72cqi, 680px); overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-card); background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 7%, var(--surface)), var(--panel) 72%); }
   .cluster-map-wires { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
   .cluster-map-node { position: absolute; top: var(--y); left: var(--x); width: 184px; transform: translate(-50%, -50%); }
   .cluster-map .cluster-item-top strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow-wrap: anywhere; }

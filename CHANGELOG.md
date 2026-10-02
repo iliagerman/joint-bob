@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Cluster page layout improved: the cluster map and inspector panel now align properly side by side on wider screens.
+
 ## 2.33.2 — 2026-10-02
 
 - Send button now responds to double-tap gestures to run conversation commands.

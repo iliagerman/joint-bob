@@ -191,6 +191,10 @@ test("cluster page lists clusters, finds nodes fuzzily, splits what you get from
     assert.equal(await page.getByTestId("cluster-detail-pane").isVisible(), false);
     await items.filter({ hasText: "Research" }).click();
     await details.getByRole("heading", { name: "Research" }).waitFor();
+    const [wideMap, widePane, wideInspector] = await Promise.all([canvas.boundingBox(), page.locator(".cluster-map-pane").boundingBox(), page.getByTestId("cluster-inspector").boundingBox()]);
+    assert.ok(wideMap && widePane && wideInspector, "the map and inspector render side by side");
+    assert.ok(Math.abs(wideMap.y - wideInspector.y) < 1 && Math.abs(widePane.y + widePane.height - (wideInspector.y + wideInspector.height)) < 1, "the map pane lines up with the inspector");
+    assert.ok(wideMap.height >= 520, `the wide map is at least 520px tall, got ${wideMap.height}`);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
