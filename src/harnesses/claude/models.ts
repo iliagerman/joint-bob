@@ -59,6 +59,8 @@ async function queryClaudeModels(executable: string): Promise<ClaudeModel[]> {
       { cwd: os.tmpdir(), env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) }, timeout: 20_000, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => (error ? reject(error) : resolve(String(stdout))),
     );
+    // A CLI that exits before reading its input breaks the pipe; the callback already reports that run.
+    child.stdin?.on("error", () => {});
     child.stdin?.end(`${JSON.stringify({ type: "control_request", request_id: "models", request: { subtype: "initialize" } })}\n`);
   });
   for (const line of output.split("\n")) {

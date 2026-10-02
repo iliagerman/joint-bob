@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Listing models no longer crashes a node when the Claude CLI exits before answering; the picker falls back to the built-in Claude aliases.
+
 ## 2.35.1 — 2026-10-02
 
 - Costs button now displays with visible text on mobile focus controls, matching other toolbar buttons.
