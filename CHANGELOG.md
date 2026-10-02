@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.33.7 — 2026-10-02
 
-- Git review layout reorganized: reviewer selection and generate button now sit in a dedicated section between the status area and the Ask AI composer, improving visual clarity and preventing layout conflicts.
+- Reviewer, model, and effort controls now sit beside the Ask AI composer instead of at the top of Git review.
 
 ## 2.33.6 — 2026-10-02
 
