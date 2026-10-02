@@ -10,7 +10,9 @@ if [ -f "${HOME}/.joint-bob/env" ]; then
 fi
 COMMIT="${1:-$(git -C "${ROOT}" rev-parse HEAD)}"
 DESTINATION="${2:-all}"
+BACKUP_KEEP="${JOINT_BOB_DEPLOY_BACKUP_KEEP:-5}"
 [[ "${COMMIT}" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected a 40-character commit" >&2; exit 1; }
+[[ "${BACKUP_KEEP}" =~ ^[1-9][0-9]*$ ]] || { echo "JOINT_BOB_DEPLOY_BACKUP_KEEP must be a positive integer" >&2; exit 1; }
 case "${DESTINATION}" in
   local | homeserver | all) ;;
   *) echo "Destination must be local, homeserver, or all" >&2; exit 1 ;;
@@ -43,6 +45,7 @@ db.exec(`VACUUM INTO '${process.env.BACKUP_DB.replaceAll("'", "''")}'`);
 db.close();
 NODE
   chmod 600 "${backup_db}"
+  ls -1t "${backup_dir}"/pre-deploy-*.db | tail -n "+$((BACKUP_KEEP + 1))" | while read -r old; do rm -f -- "${old}"; done
 }
 
 if [ "${DESTINATION}" != "local" ]; then
@@ -50,7 +53,7 @@ if [ "${DESTINATION}" != "local" ]; then
   remote_package=".joint-bob/deploy/${COMMIT}/joint-bob.tgz"
   ssh "${DEPLOY_TARGET}" "mkdir -p ~/.joint-bob/deploy/${COMMIT} ~/.joint-bob/backups; chmod 700 ~/.joint-bob/deploy ~/.joint-bob/deploy/${COMMIT} ~/.joint-bob/backups"
   scp "${package}" "${DEPLOY_TARGET}:${remote_package}"
-  ssh "${DEPLOY_TARGET}" "COMMIT='${COMMIT}' PACKAGE='${remote_package}' bash -s" <<'REMOTE'
+  ssh "${DEPLOY_TARGET}" "COMMIT='${COMMIT}' PACKAGE='${remote_package}' BACKUP_KEEP='${BACKUP_KEEP}' bash -s" <<'REMOTE'
 set -euo pipefail
 node_bin="$(command -v node)"
 if [ -f "$HOME/.joint-bob/node.db" ]; then
@@ -62,6 +65,7 @@ db.exec(`VACUUM INTO '${process.env.BACKUP_DB.replaceAll("'", "''")}'`);
 db.close();
 NODE
   chmod 600 "$backup_db"
+  ls -1t "$HOME"/.joint-bob/backups/pre-deploy-*.db | tail -n "+$((BACKUP_KEEP + 1))" | while read -r old; do rm -f -- "$old"; done
 fi
 extract="$HOME/.joint-bob/deploy/${COMMIT}/extract"
 rm -rf "$extract"
