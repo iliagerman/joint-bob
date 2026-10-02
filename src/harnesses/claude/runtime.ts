@@ -16,6 +16,7 @@ import { listRunningClaudeSessions, stopClaudeSession } from "../../claude-runti
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts } from "../../secrets.js";
 import { getSettings } from "../../settings.js";
 import { claudeConversationDefault } from "../claude.defaults.js";
+import { claudeModelLabel, effortIds } from "./models.js";
 import type { ChatMessage, ContextUsage, SessionStatus } from "../../types.js";
 import { stopProcessGroup } from "../process-lifecycle.js";
 import type {
@@ -29,15 +30,17 @@ import type {
 } from "../runtime.js";
 
 const execute = promisify(execFile);
-const modelIds = ["fable", "claude-opus-5-5", "claude-opus-5", "opus", "sonnet", "haiku"];
-const effortIds = ["default", "low", "medium", "high", "xhigh", "max"];
 type Listener = (event: HarnessEvent) => void;
 /** Text spoken so far in the running turn, and the tool names its bubbles carry. */
 interface TurnTranscript { assistant: string; tools: Map<string, { name: string; startedAt: number }> }
 
+// Checks the shape only: the CLI owns the catalogue and rejects unknown models itself, and
+// discovering it here would launch the CLI on every settings change.
+const CLAUDE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,99}$/;
+
 function validate(settings: HarnessModelSettings): void {
   if (settings.provider !== "claude") throw new Error("Provider must be claude");
-  if (!modelIds.includes(settings.modelId)) throw new Error("Unsupported Claude model");
+  if (!CLAUDE_MODEL_ID.test(settings.modelId)) throw new Error("Unsupported Claude model");
   if (!effortIds.includes(settings.reasoning)) throw new Error("Unsupported Claude effort");
   if (settings.enabledTools && settings.enabledTools.some((name) => typeof name !== "string" || !name)) {
     throw new Error("Invalid Claude tool selection");
@@ -92,7 +95,7 @@ class ClaudeSession implements HarnessSession {
       sessionFile: this.file,
       sessionId: this.id,
       sessionName: this.pendingTitle,
-      model: { provider: "claude", id: this.config.modelId, label: this.config.modelId },
+      model: { provider: "claude", id: this.config.modelId, label: claudeModelLabel(this.config.modelId) },
       thinkingLevel: this.config.reasoning,
       availableThinkingLevels: effortIds,
       isStreaming: this.running,
@@ -348,10 +351,6 @@ const runtime: HarnessRuntime = {
     const session = new ClaudeSession(options);
     await session.load();
     return session;
-  },
-
-  async models() {
-    return modelIds.map((id) => ({ provider: "claude", id, label: id, thinkingLevels: effortIds }));
   },
 
   async providers() {

@@ -1,5 +1,5 @@
 import type { AuthSession } from "../../auth.js";
-import { getHarnessRuntime, listHarnesses } from "../../harnesses.js";
+import { getHarnessRuntime, listHarnesses, listHarnessModels } from "../../harnesses.js";
 import { addNtfyService, deleteNtfyService, getNtfyService, importNtfyService, listNtfyServices, setDefaultNtfyService } from "../../ntfy.js";
 import { isHarnessId, type HarnessId } from "../../types.js";
 import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "../../push.js";
@@ -150,7 +150,7 @@ app.get("/api/harnesses/:id/model-options", async (request, response, next) => {
       return;
     }
     const runtime = await getHarnessRuntime(id);
-    const [providers, models] = await Promise.all([runtime.providers(), runtime.models()]);
+    const [providers, models] = await Promise.all([runtime.providers(), listHarnessModels(id)]);
     response.json({ providers, models });
   } catch (error) {
     next(error);
@@ -165,8 +165,8 @@ app.get("/api/models", async (request, response, next) => {
       return;
     }
     const adapters = raw ? listHarnesses().filter(({ id }) => id === raw) : listHarnesses();
-    const groups = await Promise.all(adapters.filter(({ runtime }) => runtime).map(async ({ id }) =>
-      (await getHarnessRuntime(id).then((runtime) => runtime.models())).map((model) => ({ ...model, harnessId: id }))));
+    const groups = await Promise.all(adapters.filter(({ models }) => models).map(async ({ id }) =>
+      (await listHarnessModels(id)).map((model) => ({ ...model, harnessId: id }))));
     response.json({ models: groups.flat() });
   } catch (error) {
     next(error);

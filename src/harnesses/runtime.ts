@@ -24,10 +24,11 @@ export interface HarnessSession {
   reload(): Promise<void>; setSafeguards(enabled: boolean): Promise<void>;
   cancel(): Promise<void>; stopForUpdate(): Promise<void>; dispose(): void;
 }
+/** A selectable model and the reasoning levels it accepts. */
+export type HarnessModel = ModelSummary & { thinkingLevels: string[] };
 export interface HarnessRuntime {
   open(options: HarnessOpenOptions): Promise<HarnessSession>;
-  models(): Promise<Array<ModelSummary & { thinkingLevels: string[] }>>;
-  /** Providers with usable configuration on this node; every model from `models()` belongs to one of them. */
+  /** Providers with usable configuration on this node; every model the harness lists belongs to one of them. */
   providers(): Promise<HarnessProvider[]>;
   validateSettings(settings: HarnessModelSettings): Promise<void>;
   readiness(cwd: string, env?: NodeJS.ProcessEnv): Promise<string[]>;

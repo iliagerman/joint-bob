@@ -33,8 +33,9 @@ test("built-in harnesses expose lazy runtime sessions", async () => {
   assert.deepEqual(adapters.map(({ id }) => id), ["pi", "claude", "kiro"]);
   for (const adapter of adapters) {
     assert.equal(typeof adapter.runtime, "function");
+    assert.equal(typeof adapter.models, "function", `${adapter.id}.models`);
     const runtime = await adapter.runtime!();
-    for (const method of ["open", "models", "providers", "validateSettings", "readiness"] as const) assert.equal(typeof runtime[method], "function", `${adapter.id}.${method}`);
+    for (const method of ["open", "providers", "validateSettings", "readiness"] as const) assert.equal(typeof runtime[method], "function", `${adapter.id}.${method}`);
   }
 });
 
@@ -45,7 +46,7 @@ test("Claude drafts stay unmaterialized and use configured defaults", async () =
   assert.equal(session.file, undefined);
   assert.deepEqual(session.settings(), {
     provider: "claude",
-    modelId: "claude-opus-5-5",
+    modelId: "opus",
     reasoning: "medium",
   });
   session.dispose();
@@ -69,7 +70,7 @@ test("restored Claude sessions retain native defaults and saved tools before dis
     const adapter = listDiscoveredHarnesses().find(({ id }) => id === "claude")!;
     const runtime = await adapter.runtime!();
     const session = await runtime.open({ projectId: "project", cwd: root, sessionId: "legacy", sessionPath: `claude:${transcript}` });
-    assert.deepEqual(session.settings(), { provider: "claude", modelId: "claude-opus-5-5", reasoning: "default" });
+    assert.deepEqual(session.settings(), { provider: "claude", modelId: "opus", reasoning: "default" });
     await session.configure({ provider: "claude", modelId: "claude-opus-5", reasoning: "default", enabledTools: ["Bash"] });
     assert.deepEqual(session.settings().enabledTools, ["Bash"]);
     assert.deepEqual(session.tools(), [{ name: "Bash", description: "Bash", active: true }]);

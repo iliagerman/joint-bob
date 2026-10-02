@@ -25,6 +25,7 @@ function isWithin(filePath: string, root: string): boolean {
 export default defineHarness({
   id: "claude", label: "Claude", order: 20, defaults: claudeConversationDefault, configuration,
   runtime: async () => (await import("./claude/runtime.js")).default,
+  models: async () => (await import("./claude/models.js")).claudeModels(),
   fork: async () => (await import("./claude/fork.js")).snapshotClaudeFork,
   resources: async () => (await import("./claude/resources.js")).default,
   paths: {

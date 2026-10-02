@@ -25,6 +25,7 @@ function sessionDir(cwd: string): string { const safe = `--${cwd.replace(/^[/\\]
 export default defineHarness({
   id: "pi", label: "Pi", order: 10, defaults: piConversationDefault, configuration,
   runtime: async () => (await import("./pi/runtime.js")).default,
+  models: async () => (await import("./pi/models.js")).piModels(),
   fork: async () => (await import("./pi/fork.js")).snapshotPiFork,
   resources: async () => (await import("./pi/resources.js")).default,
   paths: {

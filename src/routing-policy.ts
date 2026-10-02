@@ -236,9 +236,9 @@ export function defaultRoutingPolicy(): RoutingPolicy {
         ? [
           { level: "1", provider: "claude", modelId: "haiku", thinkingLevel: "low", description: "Direct CLI commands, shell inspection, lookups, and other short mechanical terminal work that does not change git history." },
           { level: "3", provider: "claude", modelId: "haiku", thinkingLevel: "low", description: "Git operations such as reviewing diffs, preparing commits, resolving straightforward conflicts, and managing an existing branch." },
-          { level: "5", provider: "claude", modelId: "claude-opus-5-5", thinkingLevel: "medium", description: "Debugging a reported error, reproducing a failure, tracing its cause, and making a focused fix." },
-          { level: "7", provider: "claude", modelId: "claude-opus-5-5", thinkingLevel: "high", description: "Software development that implements or refactors a feature across the codebase and verifies the result." },
-          { level: "10", provider: "claude", modelId: "claude-opus-5-5", thinkingLevel: "xhigh", description: "Complex planning, architecture, ambiguous multi-system design, or high-risk work that needs deep analysis before implementation." },
+          { level: "5", provider: "claude", modelId: "opus", thinkingLevel: "medium", description: "Debugging a reported error, reproducing a failure, tracing its cause, and making a focused fix." },
+          { level: "7", provider: "claude", modelId: "opus", thinkingLevel: "high", description: "Software development that implements or refactors a feature across the codebase and verifies the result." },
+          { level: "10", provider: "claude", modelId: "opus", thinkingLevel: "xhigh", description: "Complex planning, architecture, ambiguous multi-system design, or high-risk work that needs deep analysis before implementation." },
         ]
         : [];
     for (const tier of tiers) {

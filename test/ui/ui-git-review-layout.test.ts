@@ -28,11 +28,11 @@ async function routeFixtures(page: Page) {
   });
   await page.route("**/api/harnesses", (route) => route.fulfill({ json: { harnesses: [
     { id: "pi", label: "Pi", runtimeConfigured: true, ready: true, defaults: { modelId: "gpt-6-sol", thinkingLevel: "medium" }, configuration: { fixedProvider: "openai-codex", thinkingLevels: ["low", "xhigh"] } },
-    { id: "claude", label: "Claude", runtimeConfigured: true, ready: true, defaults: { modelId: "claude-opus-5-5", thinkingLevel: "medium" }, configuration: { fixedProvider: "claude", thinkingLevels: ["low", "high", "xhigh"] } },
+    { id: "claude", label: "Claude", runtimeConfigured: true, ready: true, defaults: { modelId: "opus", thinkingLevel: "medium" }, configuration: { fixedProvider: "claude", thinkingLevels: ["low", "high", "xhigh"] } },
   ] } }));
   await page.route("**/api/models", (route) => route.fulfill({ json: { models: [
     { harnessId: "pi", id: "gpt-6-sol", label: "GPT-6 Sol", provider: "openai-codex", thinkingLevels: ["low", "xhigh"] },
-    { harnessId: "claude", id: "claude-opus-5-5", label: "Opus 5.5", provider: "claude", thinkingLevels: ["low", "high", "xhigh"] },
+    { harnessId: "claude", id: "opus", label: "Opus 5.5", provider: "claude", thinkingLevels: ["low", "high", "xhigh"] },
     { harnessId: "claude", id: "claude-sonnet-5-5", label: "Sonnet 5.5", provider: "claude", thinkingLevels: ["low", "high", "xhigh"] },
   ] } }));
 }

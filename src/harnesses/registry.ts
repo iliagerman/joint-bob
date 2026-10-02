@@ -17,6 +17,7 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function isHarnessAdapter(value: unknown): value is HarnessAdapter {
   if (!isRecord(value) || !isHarnessId(value.id) || typeof value.label !== "string" || !value.label.trim()) return false;
+  if (value.runtime !== undefined && typeof value.models !== "function") return false;
   if (value.order !== undefined && (typeof value.order !== "number" || !Number.isFinite(value.order))) return false;
   if (!isRecord(value.paths) || typeof value.paths.newSession !== "string" || !value.paths.newSession.trim()) return false;
   if (typeof value.paths.ownsSession !== "function" || typeof value.paths.ownsTranscript !== "function" || typeof value.paths.sessionId !== "function") return false;

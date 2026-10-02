@@ -26,6 +26,7 @@ test("harness registry exposes adapters instead of UI-specific engine checks", (
     assert.equal(typeof harness.sessions.list, "function");
     assert.equal(typeof harness.sessions.refresh, "function");
     assert.equal(typeof harness.sessions.loadMessages, "function");
+    assert.equal(typeof harness.models, "function", `${harness.id} harness file must expose its models`);
   }
   assert.equal(harnessForSessionPath("new").id, "pi");
   assert.equal(harnessForSessionPath("draft:pi:session").id, "pi");
@@ -101,6 +102,7 @@ test("rejects adapter IDs and labels unsafe for routing", async () => {
       ["unsafe-id.harness.js", fixtureAdapter("unsafe_id")],
       ["blank-label.harness.js", fixtureAdapter("fake").replace('label: "fake"', 'label: "   "')],
       ["blank-new.harness.js", fixtureAdapter("fake").replace('newSession: "fake:new"', 'newSession: "   "')],
+      ["runtime-without-models.harness.js", fixtureAdapter("fake").replace('label: "fake",', 'label: "fake",\n  runtime: async () => ({}),')],
     ];
     for (const [fileName, adapter] of malformed) {
       const filePath = path.join(directory, fileName);

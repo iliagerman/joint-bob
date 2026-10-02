@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import runtime from "../src/harnesses/kiro/runtime.js";
+import { kiroModels } from "../src/harnesses/kiro/models.js";
 import { getSettings, updateSettings } from "../src/settings.js";
 
 const levels = ["low", "medium", "high", "xhigh", "max"];
@@ -41,7 +41,7 @@ test("Kiro discovers and refreshes the native model catalogue before a session",
       ],
       default_model: "gpt-fixture",
     }));
-    assert.deepEqual(await runtime.models(), [
+    assert.deepEqual(await kiroModels(), [
       { provider: "kiro", id: "gpt-fixture", label: "GPT Fixture", thinkingLevels: levels },
       { provider: "kiro", id: "opus-fixture", label: "Opus Fixture", thinkingLevels: levels },
     ]);
@@ -50,17 +50,17 @@ test("Kiro discovers and refreshes the native model catalogue before a session",
       models: [{ model_id: "third-fixture", model_name: "Third Fixture" }],
       default_model: "third-fixture",
     }));
-    assert.deepEqual(await runtime.models(), [
+    assert.deepEqual(await kiroModels(), [
       { provider: "kiro", id: "third-fixture", label: "Third Fixture", thinkingLevels: levels },
     ]);
     assert.deepEqual(await readdir(sessionPath), []);
 
     await writeFile(cataloguePath, JSON.stringify({ models: [{ model_id: 3, model_name: "Bad" }] }));
-    await assert.rejects(runtime.models(), /Invalid Kiro ACP model ID/);
+    await assert.rejects(kiroModels(), /Invalid Kiro ACP model ID/);
     await writeFile(cataloguePath, JSON.stringify({ models: {} }));
-    await assert.rejects(runtime.models(), /Invalid Kiro ACP model catalogue/);
+    await assert.rejects(kiroModels(), /Invalid Kiro ACP model catalogue/);
     await writeFile(cataloguePath, "not json");
-    await assert.rejects(runtime.models(), SyntaxError);
+    await assert.rejects(kiroModels(), SyntaxError);
 
     const warnings: unknown[][] = [];
     console.warn = (...args: unknown[]) => { warnings.push(args); };
@@ -68,7 +68,7 @@ test("Kiro discovers and refreshes the native model catalogue before a session",
       runtimes: { ...previousSettings.runtimes, kiro: { executable: path.join(root, "missing"), configPath, sessionPath } },
       syncthing: { endpoint: "" },
     });
-    assert.deepEqual(await runtime.models(), fallback);
+    assert.deepEqual(await kiroModels(), fallback);
     assert.equal(warnings.length, 1);
 
     updateSettings({
@@ -76,7 +76,7 @@ test("Kiro discovers and refreshes the native model catalogue before a session",
       syncthing: { endpoint: "" },
     });
     await writeFile(cataloguePath, "__FAIL__");
-    assert.deepEqual(await runtime.models(), fallback);
+    assert.deepEqual(await kiroModels(), fallback);
     assert.equal(warnings.length, 2);
   } finally {
     console.warn = originalWarn;

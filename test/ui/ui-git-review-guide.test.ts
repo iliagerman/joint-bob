@@ -27,11 +27,11 @@ test("conversation Git review hides other files and orders guided comments with 
   });
   await page.route("**/api/harnesses", (route) => route.fulfill({ json: { harnesses: [
     { id: "pi", label: "Pi", runtimeConfigured: true, ready: true, defaults: { modelId: "gpt-6-sol", thinkingLevel: "medium" }, configuration: { fixedProvider: "openai-codex", thinkingLevels: ["low", "xhigh"] } },
-    { id: "claude", label: "Claude", runtimeConfigured: true, ready: true, defaults: { modelId: "claude-opus-5-5", thinkingLevel: "medium" }, configuration: { fixedProvider: "claude", thinkingLevels: ["low", "xhigh"] } },
+    { id: "claude", label: "Claude", runtimeConfigured: true, ready: true, defaults: { modelId: "opus", thinkingLevel: "medium" }, configuration: { fixedProvider: "claude", thinkingLevels: ["low", "xhigh"] } },
   ] } }));
   await page.route("**/api/models", (route) => route.fulfill({ json: { models: [
     { harnessId: "pi", id: "gpt-6-sol", label: "GPT-6 Sol", provider: "openai-codex", thinkingLevels: ["low", "xhigh"] },
-    { harnessId: "claude", id: "claude-opus-5-5", label: "Opus 5.5", provider: "claude", thinkingLevels: ["low", "xhigh"] },
+    { harnessId: "claude", id: "opus", label: "Opus 5.5", provider: "claude", thinkingLevels: ["low", "xhigh"] },
   ] } }));
   await page.goto(node.url);
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -50,7 +50,7 @@ test("conversation Git review hides other files and orders guided comments with 
   lastHarness = "pi";
   await page.getByTestId("git-review-refresh-scope").click();
   await page.waitForFunction(() => document.querySelector<HTMLSelectElement>("#gitReviewHarness")?.value === "claude");
-  assert.equal(await page.getByTestId("git-review-model").inputValue(), "claude-opus-5-5");
+  assert.equal(await page.getByTestId("git-review-model").inputValue(), "opus");
   assert.equal(await page.getByTestId("git-review-thinking").inputValue(), "xhigh");
   lastHarness = "claude";
   await page.getByTestId("git-review-refresh-scope").click();

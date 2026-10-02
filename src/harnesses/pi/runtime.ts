@@ -266,16 +266,6 @@ const runtime: HarnessRuntime = {
     return new PiSession(options, handle);
   },
 
-  async models() {
-    return (await service.listAvailableModels()).map((model) => ({
-      ...model,
-      thinkingLevels: service.modelThinkingLevels(model.provider, model.id),
-      ...(["openai", "openai-codex"].includes(model.provider)
-        ? { providerLabel: "GPT", providerIcon: "openai" }
-        : model.provider === "zai" ? { providerLabel: "GLM" } : {}),
-    }));
-  },
-
   async providers() {
     // Pi lists only models whose provider has usable authentication, so their providers are the configured ones.
     const ids = [...new Set((await service.listAvailableModels()).map((model) => model.provider))];

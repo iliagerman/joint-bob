@@ -5,7 +5,7 @@ import { state } from "./state.js";
 import { toast } from "./shell.js";
 
 const DEFAULT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-const PREFERRED_MODEL = { pi: "gpt-6-sol", claude: "claude-opus-5-5" };
+const PREFERRED_MODEL = { pi: "gpt-6-sol", claude: "opus" };
 
 /** Fills the effort picker for the chosen model, keeping `preferred` when that level exists. */
 export function fillThinkingOptions(harness, models, modelSelect, thinkingSelect, preferred) {

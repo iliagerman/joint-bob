@@ -25,8 +25,8 @@ test("Pi model catalogue supplies native provider presentation metadata", async 
     const previousSettings = settings.getSettings();
     settings.updateSettings({ ...previousSettings, pi: { ...previousSettings.runtimes.pi, configPath } });
     try {
-      const runtime = (await import("../src/harnesses/pi/runtime.js")).default;
-      const models = await runtime.models();
+      const { listHarnessModels } = await import("../src/harnesses.js");
+      const models = await listHarnessModels("pi");
       const gpt = models.find(({ provider, id }) => provider === "openai-codex" && id === "fixture-gpt");
       const glm = models.find(({ provider, id }) => provider === "zai" && id === "fixture-glm");
       assert.equal(gpt?.providerLabel, "GPT");

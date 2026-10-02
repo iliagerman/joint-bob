@@ -11,6 +11,7 @@ function within(file: string): boolean { const relative = path.relative(path.joi
 export default defineHarness({
   id: "kiro", label: "Kiro", order: 30, defaults: kiroConversationDefault, configuration,
   runtime: async () => (await import("./kiro/runtime.js")).default,
+  models: async () => (await import("./kiro/models.js")).kiroModels(),
   fork: async () => (await import("./kiro/fork.js")).snapshotKiroFork,
   resources: async () => (await import("./kiro/resources.js")).default,
   paths: { newSession: "kiro:new", ownsSession: (value) => value.startsWith("kiro:") || value.startsWith("draft:kiro:"), ownsTranscript: (file) => file.endsWith(".jsonl") && within(file), sessionId: (value) => value === "kiro:new" || value.startsWith("draft:") ? undefined : path.basename(value.replace(/^kiro:/, ""), ".jsonl") || undefined, localize: (value, home) => localizeTranscript(value, home, ".kiro", "kiro:", "Kiro"), transcriptFile: (value) => { const file = path.resolve(value.replace(/^kiro:/, "")); if (!value.startsWith("kiro:") || !file.endsWith(".jsonl") || !within(file)) throw new Error("Kiro transcript is outside the configured transcript root"); return file; } },

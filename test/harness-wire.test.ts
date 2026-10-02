@@ -147,7 +147,7 @@ test("synthetic Kiro ACP covers new, resume, frontend events, empty turns, and c
     // pick the user turn by role instead of counting back from the end.
     assert.equal(session.messages.findLast(({ role }) => role === "user")?.text, "actual question");
     assert.equal((await readKiroSession(session.file!.replace(/^kiro:/, ""))).messages.findLast(({ role }) => role === "user")?.text, "actual question");
-    assert.deepEqual((await runtime.models()).map(({ id }) => id), ["fixture-model-current", "fixture-model-alternative"]);
+    assert.deepEqual((await adapter.models!()).map(({ id }) => id), ["fixture-model-current", "fixture-model-alternative"]);
     assert.deepEqual(session.status().model, { provider: "kiro", id: "fixture-model-current", label: "Fixture Current" });
     assert.deepEqual(session.status().contextUsage, { percent: 42.5 });
     assert.equal(session.status().contextUsage?.usedTokens, undefined);

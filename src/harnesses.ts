@@ -6,7 +6,7 @@ import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverr
 import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
 import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
-import type { HarnessRuntime } from "./harnesses/runtime.js";
+import type { HarnessModel, HarnessRuntime } from "./harnesses/runtime.js";
 import type { HarnessId, SessionSummary } from "./types.js";
 import { conversationUsage, usageTotals } from "./usage-ledger.js";
 import { scheduleUsageIngest } from "./usage-ingest.js";
@@ -146,6 +146,13 @@ export async function getHarnessRuntime(id: HarnessId): Promise<HarnessRuntime> 
     runtimePromises.delete(id);
     throw error;
   }
+}
+
+/** The models a harness lists on this node, read from its harness file. */
+export async function listHarnessModels(id: HarnessId): Promise<HarnessModel[]> {
+  const adapter = getHarness(id);
+  if (!adapter.models) throw new Error(`${adapter.label} does not list models`);
+  return adapter.models();
 }
 
 export function harnessForProvider(provider: string): HarnessAdapter {

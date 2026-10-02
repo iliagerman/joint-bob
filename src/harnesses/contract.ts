@@ -1,7 +1,7 @@
 import type { ChatMessage, HarnessId, ProjectRecord, SessionSummary } from "../types.js";
 import type { HarnessConfiguration } from "./runtime-configuration.js";
 import type { HarnessFork } from "./fork.js";
-import type { HarnessRuntime } from "./runtime.js";
+import type { HarnessModel, HarnessRuntime } from "./runtime.js";
 import type { HarnessResources } from "./resource-contract.js";
 import type { SessionProjectPaths } from "./shared-paths.js";
 
@@ -21,6 +21,8 @@ export interface HarnessAdapter<TId extends HarnessId = HarnessId> {
   defaults: import("./defaults.js").ConversationDefault;
   configuration?: HarnessConfiguration;
   runtime?: () => Promise<HarnessRuntime>;
+  /** The models this node can run through the harness; required whenever `runtime` is set. */
+  models?: () => Promise<HarnessModel[]>;
   fork?: () => Promise<HarnessFork>;
   resources?: () => Promise<HarnessResources>;
   paths: {

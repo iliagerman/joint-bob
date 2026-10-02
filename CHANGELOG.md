@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Model selection now uses shorter aliases (like "opus" and "haiku") and automatically discovers available models from the installed CLI.
+
 ## 2.34.0 — 2026-10-02
 
 - Claude model list auto-updates from the installed CLI whenever new versions are released, so the app always shows the latest models without requiring an update.

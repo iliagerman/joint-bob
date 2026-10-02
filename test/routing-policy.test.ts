@@ -157,9 +157,9 @@ test("defaultRoutingPolicy maps task categories for Pi and Claude", () => {
   assert.deepEqual(Object.entries(claude).map(([level, mapping]) => [level, mapping!.modelId, mapping!.thinkingLevel]), [
     ["1", "haiku", "low"],
     ["3", "haiku", "low"],
-    ["5", "claude-opus-5-5", "medium"],
-    ["7", "claude-opus-5-5", "high"],
-    ["10", "claude-opus-5-5", "xhigh"],
+    ["5", "opus", "medium"],
+    ["7", "opus", "high"],
+    ["10", "opus", "xhigh"],
   ]);
   assert.ok(Object.values(generated.harnesses.kiro.levels).every((mapping) => !mapping), "Kiro has no guessed defaults");
   assert.equal(generated.contextMessages, 1);

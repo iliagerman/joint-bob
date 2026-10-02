@@ -2,7 +2,7 @@ import { z } from "zod";
 import { listDifficultyClassifiers } from "../../classifiers/registry.js";
 import { getClusterNode } from "../../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
-import { getHarnessRuntime, listHarnesses } from "../../harnesses.js";
+import { listHarnesses, listHarnessModels } from "../../harnesses.js";
 import { applyRoutingConfigEvents, createRoutingConfig, DEFAULT_ROUTING_CONFIG_ID, defaultRoutingConfig, deleteRoutingConfig, enqueueRoutingConfigDeliveries, getRoutingConfig, listRoutingConfigs, pendingRoutingConfigDeliveryCount, routingConfigDatabase, routingConfigEventFor, routingConfigEventSchema, routingConfigShareTargets, routingConfigWarning, RoutingConfigError, setRoutingConfigSelection, updateRoutingConfig, type RoutingConfigEvent, type StoredRoutingConfig } from "../../routing-configs.js";
 import { automaticRoutingModelAllowed, defaultRoutingPolicy, listRoutingPolicies, RoutingPolicyError, routingPolicyDatabase, validateRoutingPolicy } from "../../routing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
@@ -24,9 +24,9 @@ function localAuth(response: { locals: { authSession?: unknown; machineAuth?: un
 async function routingModels(): Promise<Array<{ id: string; label: string; thinkingLevels: string[]; fixedProvider?: string; models: Array<{ provider: string; id: string; label: string; providerLabel?: string }> }>> {
   const groups = [];
   for (const adapter of listHarnesses()) {
-    if (!adapter.runtime || !adapter.configuration) continue;
+    if (!adapter.models || !adapter.configuration) continue;
     let models: Array<{ provider: string; id: string; label: string; providerLabel?: string }> = [];
-    try { models = (await (await getHarnessRuntime(adapter.id)).models()).filter((model) => automaticRoutingModelAllowed(model.provider, model.id)).map((model) => ({ provider: model.provider, id: model.id, label: model.label, ...(model.providerLabel ? { providerLabel: model.providerLabel } : {}) })); }
+    try { models = (await listHarnessModels(adapter.id)).filter((model) => automaticRoutingModelAllowed(model.provider, model.id)).map((model) => ({ provider: model.provider, id: model.id, label: model.label, ...(model.providerLabel ? { providerLabel: model.providerLabel } : {}) })); }
     catch { /* A node without that runtime ready still shows the configuration, just without its model list. */ }
     groups.push({ id: adapter.id, label: adapter.label, thinkingLevels: adapter.configuration.thinkingLevels as string[], ...(adapter.configuration.fixedProvider ? { fixedProvider: adapter.configuration.fixedProvider } : {}), models });
   }

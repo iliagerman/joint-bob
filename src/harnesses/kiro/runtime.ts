@@ -22,13 +22,12 @@ import { configuredRuntime } from "../runtime-configuration.js";
 import { expandKiroPrompt, kiroAgentProfile, kiroToolCategories } from "./resources.js";
 import { appendKiroRecord, initializeKiroSession, readKiroSession } from "./storage.js";
 import { createKiroConnection } from "./transport.js";
+import { kiroThinkingLevels as levels } from "./models.js";
 
 const execute = promisify(execFile);
-const levels = ["low", "medium", "high", "xhigh", "max"];
 type Listener = (event: HarnessEvent) => void;
 type JsonObject = Record<string, unknown>;
 type Connection = ReturnType<typeof createKiroConnection>;
-type DiscoveredModel = ModelSummary & { thinkingLevels: string[] };
 type CompactionTerminal = { type: "completed" } | { type: "failed"; error: string };
 
 function object(value: unknown, label: string): JsonObject {
@@ -53,31 +52,6 @@ function runtimeSettings() {
   return configuredRuntime("kiro", configured);
 }
 
-async function discoverModels(): Promise<DiscoveredModel[]> {
-  const settings = runtimeSettings();
-  let stdout: string;
-  try {
-    ({ stdout } = await execute(settings.executable || "kiro-cli", ["chat", "--list-models", "--format", "json"], {
-      env: { ...process.env, KIRO_HOME: settings.configPath },
-      timeout: 5_000,
-      maxBuffer: 1024 * 1024,
-    }));
-  } catch (error) {
-    console.warn("Kiro model discovery unavailable", { code: (error as NodeJS.ErrnoException).code });
-    return [{ provider: "kiro", id: "default", label: "Kiro default", thinkingLevels: levels }];
-  }
-  const catalogue = object(JSON.parse(stdout), "model catalogue");
-  if (!Array.isArray(catalogue.models)) throw new Error("Invalid Kiro ACP model catalogue");
-  return catalogue.models.map((value) => {
-    const model = object(value, "catalogue model");
-    return {
-      provider: "kiro",
-      id: requiredString(model.model_id, "model ID"),
-      label: requiredString(model.model_name, "model name"),
-      thinkingLevels: levels,
-    };
-  });
-}
 
 class KiroSession implements HarnessSession {
   readonly id: string;
@@ -666,10 +640,6 @@ const runtime: HarnessRuntime = {
     const session = new KiroSession(options);
     await session.load();
     return session;
-  },
-
-  async models() {
-    return discoverModels();
   },
 
   async providers() {

@@ -14,7 +14,7 @@ import { activeRoutingConfig, routingConfigDatabase, routingConfigWarning, type 
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
-import { getHarness, getHarnessRuntime, harnessForProvider, listHarnesses, listHarnessSessions } from "../harnesses.js";
+import { getHarness, getHarnessRuntime, harnessForProvider, listHarnesses, listHarnessModels, listHarnessSessions } from "../harnesses.js";
 import type { HarnessModelSettings, HarnessSession } from "../harnesses/runtime.js";
 import { setSessionTitle } from "../names.js";
 import { conversationScopeId, genericSecretEnvironment, getScopeSecretAccounts } from "../secrets.js";
@@ -550,7 +550,7 @@ function markRoutingManual(connection: HarnessChatConnection): void {
 }
 
 async function models(connection: HarnessChatConnection): Promise<void> {
-  const groups = await Promise.all(listHarnesses().filter((adapter) => adapter.runtime).map(async (adapter) => (await (await getHarnessRuntime(adapter.id)).models()).map((model) => ({ ...model, harnessId: adapter.id }))));
+  const groups = await Promise.all(listHarnesses().filter((adapter) => adapter.models).map(async (adapter) => (await listHarnessModels(adapter.id)).map((model) => ({ ...model, harnessId: adapter.id }))));
   send(connection.socket, { type: "models", models: groups.flat() });
 }
 
@@ -616,7 +616,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
     recordQueueSettings(queueKey(connection), currentSettings(connection)); markRoutingManual(connection); sendHarnessStatus(connection.shared); return true;
   }
   if (message.type === "cycleModel") {
-    const available = await (await getHarnessRuntime(connection.engine)).models();
+    const available = await listHarnessModels(connection.engine);
     if (!available.length) throw new Error("No models are available");
     const settings = connection.shared.session.settings();
     const index = available.findIndex((model) => model.provider === settings.provider && model.id === settings.modelId);
