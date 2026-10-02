@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Markdown formatting now renders as assistant text arrives during streaming instead of waiting for the response to complete.
+
 ## 2.33.0 — 2026-10-02
 
 - Settings > Cluster redesigned with a visual map showing this machine centered, twins above on dashed wires, and clusters around it; click any to inspect its details in a panel with tabs for nodes, sharing, invitations, and settings. Below 640px the map converts to a card grid with the inspector stacking below.

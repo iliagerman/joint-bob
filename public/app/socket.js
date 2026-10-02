@@ -441,7 +441,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     clearThinkingBubble();
     const text = visibleAssistantText(payload.text);
     if (!state.assistantBubble) appendMessage("assistant", text);
-    else renderBubbleContent(state.assistantBubble, text, true);
+    else renderBubbleContent(state.assistantBubble, text);
     state.assistantBubble = null;
     state.assistantRawText = "";
     return;

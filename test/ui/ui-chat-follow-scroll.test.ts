@@ -226,7 +226,7 @@ const supplied = args.indexOf('--session-id');
 const resumed = args.indexOf('--resume');
 const sessionId = supplied >= 0 ? args[supplied + 1] : args[resumed + 1];
 console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: sessionId }));
-const filler = ('Streaming follow check line. ').repeat(140);
+const filler = '## Stream heading\\n\\n**Bold streaming text**\\n\\n| Slice | Status |\\n| --- | --- |\\n| 3b | Streaming |\\n\\n' + ('Streaming follow check line. ').repeat(140);
 for (const chunk of filler.match(/.{1,70}/gs) ?? []) {
   console.log(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: chunk } } }));
   await new Promise((resolve) => setTimeout(resolve, 40));
@@ -278,6 +278,17 @@ test("a live streaming reply follows the reader, releases on scroll-away, and re
   await waitFrames();
 
   await startLongStream("please stream a long reply once", "streamed reply to start growing");
+  const streamingBubble = page.locator("#messages .message.assistant").last().locator(".message-content");
+  const streamed = await streamingBubble.evaluate((el) => ({
+    length: el.textContent.length,
+    heading: el.querySelector("h2")?.textContent,
+    bold: el.querySelector("strong")?.textContent,
+    cell: el.querySelector("table tbody td")?.textContent,
+  }));
+  assert.ok(streamed.length < 3_000, "reply is still streaming when formatting is checked");
+  assert.equal(streamed.heading, "Stream heading", "heading renders before completion");
+  assert.equal(streamed.bold, "Bold streaming text", "bold renders before completion");
+  assert.equal(streamed.cell, "3b", "table renders before completion");
   const duringStream = await metrics();
   assert.ok(distanceFromBottom(duringStream) < BOTTOM_THRESHOLD_PX, `pane follows the live stream at the bottom, ${distanceFromBottom(duringStream)}px away`);
 

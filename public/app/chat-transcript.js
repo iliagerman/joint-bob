@@ -382,44 +382,29 @@ function renderToolContent(container, text) {
   container.replaceChildren(...nodes);
 }
 
-// Coalesce bursts to one paint per frame. Assistant deltas stay plain text while
-// streaming so markdown parsing cannot block the composer; the final event formats once.
-export function renderBubbleContent(bubble, text, flush = false) {
+// Coalesce bursts to one paint per frame, formatting partial assistant text as
+// it arrives rather than leaving raw Markdown visible until the turn ends.
+export function renderBubbleContent(bubble, text) {
   bubble._raw = text;
   const content = bubble.querySelector(".message-content") || bubble;
-  if (bubble.dataset.role === "assistant" && text && !flush && !bubble._hasRenderedText) {
-    if (bubble._renderRaf) cancelAnimationFrame(bubble._renderRaf);
-    bubble._renderRaf = 0;
-    bubble._renderFinal = false;
-    bubble._hasRenderedText = true;
-    content.textContent = text;
-    requestPinChat();
-    return;
-  }
-  bubble._renderFinal = bubble._renderFinal || flush;
   if (bubble._renderRaf) return;
   bubble._renderRaf = requestAnimationFrame(() => {
     bubble._renderRaf = 0;
     const role = bubble.dataset.role;
-    if (role === "assistant" && !bubble._renderFinal) content.textContent = bubble._raw;
-    else if (role === "assistant" || role === "user") {
+    if (role === "assistant" || role === "user") {
       renderMarkdown(content, bubble._raw, { resolveFileUrl: role === "assistant" ? projectFileUrl : undefined });
     }
     else if (role === "tool-output") renderToolContent(content, bubble._raw);
     else content.textContent = prettyText(bubble._raw);
-    bubble._renderFinal = false;
     // Streaming grows the bubble inside this frame, so the pin must run after it.
     requestPinChat();
   });
 }
 
-// The Claude harness streams text deltas with no completion event, so a bubble
-// left in plain-text mode never gets its markdown pass and shows raw "##" and
-// backticks until the transcript is reloaded. Flush it whenever the stream
-// moves on from the current assistant bubble. The raw text goes with it, or the
-// next bubble after a tool call would repeat every earlier block of the turn.
+// The raw text goes with the bubble when the stream moves on, or the next
+// bubble after a tool call would repeat every earlier block of the turn.
 export function finalizeAssistantBubble() {
-  if (state.assistantBubble) renderBubbleContent(state.assistantBubble, state.assistantBubble._raw, true);
+  if (state.assistantBubble) renderBubbleContent(state.assistantBubble, state.assistantBubble._raw);
   state.assistantBubble = null;
   state.assistantRawText = "";
 }
@@ -587,7 +572,7 @@ export function appendMessage(role, text, timestamp = true, attachments = [], re
     if (meta.childElementCount) bubble.append(meta);
     scheduleMarkViewed();
   }
-  renderBubbleContent(bubble, presentation.text, true);
+  renderBubbleContent(bubble, presentation.text);
   appendBeforeQueuedMessages(bubble);
   if (isMarkdown) appendCopyButton(bubble, role === "assistant" ? assistantAttribution(attribution) : null);
   requestPinChat();
@@ -838,7 +823,7 @@ export function markMessageQueued(bubble, queueId, editableText = null, settings
 export function updateQueuedMessage(queueId, text, editableText, settings = null, revision = 1) {
   const bubble = elements.messages.querySelector(`[data-queue-id="${queueId}"]`);
   if (!bubble) return;
-  renderBubbleContent(bubble, text, true);
+  renderBubbleContent(bubble, text);
   bubble.dataset.queueSettings = JSON.stringify(settings);
   bubble.dataset.queueRevision = String(revision);
   bubble.dataset.queuedEditableText = editableText;
