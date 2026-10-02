@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.35.1 — 2026-10-02
 
 - Costs button now displays with visible text on mobile focus controls, matching other toolbar buttons.
 
