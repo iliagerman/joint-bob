@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.33.4 — 2026-10-02
+
+- Ask AI in Git review now stays fully visible at the bottom of the dialog on desktop and mobile.
+
 ## 2.33.3 — 2026-10-02
 
 - Cluster map now stretches to match the inspector panel height on wider layouts, with both columns filling their panes instead of the map staying at a fixed height.

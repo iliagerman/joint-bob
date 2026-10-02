@@ -65,6 +65,31 @@ test("Git review fills most of the screen and shows diffs side by side", { timeo
   ]);
 });
 
+test("Ask AI composer fits the Git dialog without clipping or empty space below", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await routeFixtures(page);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.getByTestId("chat-git-button").click();
+  await page.getByTestId("git-review-file").first().click();
+  await page.getByTestId("git-review-ask-button").click();
+  const card = await page.locator(".git-review-card").boundingBox();
+  const form = await page.getByTestId("git-review-ask-form").boundingBox();
+  const question = await page.getByTestId("git-review-question").boundingBox();
+  const submit = await page.getByTestId("git-review-ask-submit").boundingBox();
+  assert.ok(card && form && question && submit);
+  assert.ok(form.y + form.height <= card.y + card.height, "Ask AI form stays inside the dialog");
+  assert.ok(card.y + card.height - (form.y + form.height) < 4, "no empty strip below Ask AI form");
+  assert.ok(question.y + question.height <= form.y + form.height, "question stays visible");
+  assert.ok(submit.y + submit.height <= form.y + form.height, "Ask button stays visible");
+  await page.setViewportSize({ width: 600, height: 700 });
+  const mobileCard = await page.locator(".git-review-card").boundingBox();
+  const mobileForm = await page.getByTestId("git-review-ask-form").boundingBox();
+  const mobileSubmit = await page.getByTestId("git-review-ask-submit").boundingBox();
+  assert.ok(mobileCard && mobileForm && mobileSubmit);
+  assert.ok(mobileCard.y + mobileCard.height - (mobileForm.y + mobileForm.height) < 4, "mobile composer reaches dialog bottom");
+  assert.ok(mobileSubmit.y + mobileSubmit.height <= mobileForm.y + mobileForm.height, "mobile Ask button stays visible");
+});
+
 test("Settings default Git reviewer overrides the conversation-based choice", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await routeFixtures(page);
@@ -85,5 +110,6 @@ test("Settings default Git reviewer overrides the conversation-based choice", { 
   await page.reload();
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-git").click();
+  await page.waitForFunction(() => document.querySelector<HTMLSelectElement>("#settingsGitReviewerModel")?.value === "claude-sonnet-5-5");
   assert.equal(await page.getByTestId("settings-git-reviewer-model").inputValue(), "claude-sonnet-5-5");
 });
