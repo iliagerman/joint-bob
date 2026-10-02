@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.33.5 — 2026-10-02
 
 - Background tasks now display for the conversation you have open, regardless of which project is selected in the sidebar.
 
