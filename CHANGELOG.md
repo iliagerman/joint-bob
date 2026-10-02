@@ -3,20 +3,18 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.35.0 — 2026-10-03
 
-- Model selection now uses shorter aliases (like "opus" and "haiku") and automatically discovers available models from the installed CLI.
+- The Claude model picker now lists every model the installed Claude CLI offers, under the same names as the CLI's /model picker (Opus 5.5, Fable 5.1, Sonnet 5.5, Opus 4.8, ...), and picks up new models automatically within 10 minutes.
+- New Claude conversations default to the CLI's Opus alias, so they follow the newest Opus release without an app update.
 
 ## 2.34.0 — 2026-10-02
 
-- Claude model list auto-updates from the installed CLI whenever new versions are released, so the app always shows the latest models without requiring an update.
-- Model IDs now display as both short aliases (e.g., "claude-opus") and pinned versions (e.g., "claude-opus-5-5") for clarity.
+- Website account usernames now display as readable text instead of being masked as passwords.
 
 ## 2.33.7 — 2026-10-02
 
 - Reviewer, model, and effort controls now sit beside the Ask AI composer instead of at the top of Git review.
-- Website account usernames now display as readable text instead of being masked as passwords.
-- Claude model list auto-updates from the installed CLI, showing new releases without requiring an app update.
 
 ## 2.33.6 — 2026-10-02
 
