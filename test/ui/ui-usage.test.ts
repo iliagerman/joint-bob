@@ -185,9 +185,10 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   const focusOpener = page.getByTestId("focus-usage-open");
   for (const costsOpener of [opener, focusOpener]) {
     assert.equal(await costsOpener.getAttribute("data-shortcut-hint"), "costs");
-    assert.equal((await costsOpener.textContent())?.includes("Costs"), false, "icon opener has no visible Costs text");
     assert.equal(await costsOpener.locator("svg").count(), 1);
   }
+  assert.equal((await opener.textContent())?.includes("Costs"), false, "toolbar icon opener has no visible Costs text");
+  assert.equal((await focusOpener.textContent())?.includes("Costs"), true, "mobile controls label Costs like their neighbors");
   assert.equal(await opener.getAttribute("aria-label"), "Costs", "icon opener has an accessible name");
   const iconBox = await opener.locator("svg").boundingBox();
   assert.ok(iconBox && iconBox.width > 0 && iconBox.height > 0, "costs icon has visible geometry");

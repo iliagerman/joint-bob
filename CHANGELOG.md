@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Costs button now displays with visible text on mobile focus controls, matching other toolbar buttons.
+
 ## 2.35.0 — 2026-10-03
 
 - The Claude model picker now lists every model the installed Claude CLI offers, under the same names as the CLI's /model picker (Opus 5.5, Fable 5.1, Sonnet 5.5, Opus 4.8, ...), and picks up new models automatically within 10 minutes.
