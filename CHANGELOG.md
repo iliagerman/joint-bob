@@ -6,6 +6,8 @@ Every deployment is a version. The newest section must always match the
 ## 2.33.7 — 2026-10-02
 
 - Reviewer, model, and effort controls now sit beside the Ask AI composer instead of at the top of Git review.
+- Website account usernames now display as readable text instead of being masked as passwords.
+- Claude model list auto-updates from the installed CLI, showing new releases without requiring an app update.
 
 ## 2.33.6 — 2026-10-02
 

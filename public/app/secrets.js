@@ -67,12 +67,13 @@ function secretValuePlaceholder(kind, configured) {
   return secretProviderPicker.value === "google" ? "Paste the Google service account JSON" : "Paste the file contents";
 }
 
-function createSecretValueControl(kind, configured, currentValue = "") {
-  const masked = Boolean(elements.secretAccountOriginInput.value.trim()) && kind === "value";
-  const control = document.createElement(masked ? "input" : "textarea");
-  if (masked) {
-    control.type = "password";
-    control.autocomplete = "new-password";
+function createSecretValueControl(kind, configured, name, currentValue = "") {
+  const bound = Boolean(elements.secretAccountOriginInput.value.trim()) && kind === "value";
+  const control = document.createElement(bound ? "input" : "textarea");
+  if (bound) {
+    const username = /(?:^|_)USERNAME$/i.test(name);
+    control.type = username ? "text" : "password";
+    control.autocomplete = username ? "off" : "new-password";
   }
   control.setAttribute("aria-label", "Secret value");
   control.placeholder = secretValuePlaceholder(kind, configured);
@@ -85,9 +86,14 @@ function createSecretValueControl(kind, configured, currentValue = "") {
 function refreshSecretValueControl(row, configured = row.dataset.secretConfigured === "true") {
   const kind = row.querySelector("[data-secret-kind]").value;
   const current = row.querySelector("[data-secret-value]");
-  const replacement = createSecretValueControl(kind, configured, current.value);
-  if (replacement.tagName === current.tagName) current.placeholder = replacement.placeholder;
-  else current.replaceWith(replacement);
+  const replacement = createSecretValueControl(kind, configured, row.querySelector("[data-secret-name]").value.trim(), current.value);
+  if (replacement.tagName === current.tagName) {
+    current.placeholder = replacement.placeholder;
+    if (current.tagName === "INPUT") {
+      current.type = replacement.type;
+      current.autocomplete = replacement.autocomplete;
+    }
+  } else current.replaceWith(replacement);
 }
 
 function secretRow(variable = { name: "", kind: "value", configured: false }) {
@@ -108,7 +114,8 @@ function secretRow(variable = { name: "", kind: "value", configured: false }) {
   kind.dataset.testid = "secret-variable-kind-select";
   for (const value of ["value", "file"]) { const option = document.createElement("option"); option.value = value; option.textContent = value === "file" ? "File content" : "Value"; kind.append(option); }
   kind.value = variable.kind;
-  const value = createSecretValueControl(variable.kind, variable.configured);
+  const value = createSecretValueControl(variable.kind, variable.configured, variable.name);
+  name.addEventListener("input", () => refreshSecretValueControl(row));
   kind.addEventListener("change", () => refreshSecretValueControl(row, variable.configured));
   const remove = document.createElement("button");
   remove.type = "button";

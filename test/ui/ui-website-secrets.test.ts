@@ -21,7 +21,7 @@ async function storedValuesMatch(home: string, dataDir: string, projectId: strin
   return JSON.parse(result.stdout) as boolean;
 }
 
-test("website secrets stay masked, origin-bound, editable, and usable in project scope", { timeout: 240_000 }, async () => {
+test("website usernames stay readable, other credentials stay masked, and accounts remain origin-bound", { timeout: 240_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-website-secrets-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
@@ -54,9 +54,17 @@ test("website secrets stay masked, origin-bound, editable, and usable in project
     await page.getByTestId("secret-variable-add-button").click();
     await names.nth(1).fill("LOGIN_PASSWORD");
     await values.nth(1).fill("synthetic-password");
+    await page.getByTestId("secret-variable-add-button").click();
+    await names.nth(2).fill("CUSTOM_API_KEY");
+    await values.nth(2).fill("synthetic-key");
     assert.deepEqual(await values.evaluateAll((items) => items.map((item) => ({ type: (item as HTMLInputElement).type, autocomplete: item.getAttribute("autocomplete") }))), [
-      { type: "password", autocomplete: "new-password" }, { type: "password", autocomplete: "new-password" },
+      { type: "text", autocomplete: "off" }, { type: "password", autocomplete: "new-password" }, { type: "password", autocomplete: "new-password" },
     ]);
+    await names.first().fill("LOGIN_PASSWORD_ALT");
+    assert.equal(await values.first().getAttribute("type"), "password", "renaming username masks its typed value");
+    await names.first().fill("LOGIN_USERNAME");
+    assert.equal(await values.first().inputValue(), "synthetic-user", "renaming preserves the typed value");
+    await page.getByTestId("secret-variable-remove-button").nth(2).click();
     const createdResponse = page.waitForResponse((response) => response.url().endsWith("/api/secrets/accounts") && response.request().method() === "POST");
     await page.getByTestId("secret-account-save-button").click();
     const created = await createdResponse;
@@ -110,7 +118,7 @@ test("website secrets stay masked, origin-bound, editable, and usable in project
     assert.equal(await storedValuesMatch(environment.home, node.dataDir, projectId, accountId, "https://mobile.example", "rotated-synthetic-password"), true, "rejected saves preserve stored values");
 
     await origin.fill("https://mobile.example");
-    assert.deepEqual(await values.evaluateAll((items) => items.map((item) => (item as HTMLInputElement).type)), ["password", "password"]);
+    assert.deepEqual(await values.evaluateAll((items) => items.map((item) => (item as HTMLInputElement).type)), ["text", "password"]);
     await mkdir("tmp", { recursive: true });
     for (const [width, file] of [[1440, "desktop"], [390, "mobile"]] as const) {
       await page.setViewportSize({ width, height: 900 });
