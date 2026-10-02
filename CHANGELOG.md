@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.33.3 — 2026-10-02
 
-- Cluster page layout improved: the cluster map and inspector panel now align properly side by side on wider screens.
+- Cluster map now stretches to match the inspector panel height on wider layouts, with both columns filling their panes instead of the map staying at a fixed height.
 
 ## 2.33.2 — 2026-10-02
 
