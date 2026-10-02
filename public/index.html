@@ -1353,14 +1353,6 @@
             <label><input id="gitReviewFocus" type="checkbox" data-testid="git-review-focus"> Focus mode</label>
             <button class="ghost compact" id="gitReviewRefreshScope" type="button" data-testid="git-review-refresh-scope">Refresh conversation files</button>
           </div>
-          <div class="git-review-toolbar-row">
-            <div class="git-review-ask-controls">
-              <label>Reviewer<select id="gitReviewHarness" data-testid="git-review-harness"></select></label>
-              <label>Model<select id="gitReviewModel" data-testid="git-review-model"></select></label>
-              <label>Effort<select id="gitReviewThinking" data-testid="git-review-thinking"></select></label>
-            </div>
-            <button class="primary compact" id="gitReviewGenerate" type="button" data-testid="git-review-generate">Generate review comments</button>
-          </div>
         </div>
         <div class="git-review-body" id="gitReviewBody">
           <aside class="git-review-list" id="gitReviewList" data-testid="git-review-list" aria-label="Changed files and commits"></aside>
@@ -1377,6 +1369,14 @@
         </div>
         <section class="git-hosting" id="gitReviewHosting" aria-label="GitHub pull requests and pipelines" hidden></section>
         <p class="git-review-status" id="gitReviewStatus" role="status" aria-live="polite"></p>
+        <div class="git-review-reviewer git-review-toolbar-row" id="gitReviewReviewer">
+          <div class="git-review-ask-controls">
+            <label>Reviewer<select id="gitReviewHarness" data-testid="git-review-harness"></select></label>
+            <label>Model<select id="gitReviewModel" data-testid="git-review-model"></select></label>
+            <label>Effort<select id="gitReviewThinking" data-testid="git-review-thinking"></select></label>
+          </div>
+          <button class="primary compact" id="gitReviewGenerate" type="button" data-testid="git-review-generate">Generate review comments</button>
+        </div>
         <form class="git-review-ask" id="gitReviewAskForm" hidden data-testid="git-review-ask-form">
           <div class="git-review-ask-head">
             <span class="eyebrow" id="gitReviewAskTarget">Ask about this change</span>

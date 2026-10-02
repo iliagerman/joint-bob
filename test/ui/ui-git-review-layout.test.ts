@@ -76,7 +76,12 @@ test("Ask AI composer fits the Git dialog without clipping or empty space below"
   const form = await page.getByTestId("git-review-ask-form").boundingBox();
   const question = await page.getByTestId("git-review-question").boundingBox();
   const submit = await page.getByTestId("git-review-ask-submit").boundingBox();
-  assert.ok(card && form && question && submit);
+  const model = await page.getByTestId("git-review-model").boundingBox();
+  const generate = await page.getByTestId("git-review-generate").boundingBox();
+  assert.ok(card && form && question && submit && model && generate);
+  assert.ok(model.y > card.y + card.height / 2, "reviewer selectors sit near the composer, not the dialog header");
+  assert.ok(question.y - (model.y + model.height) < 120, "model selector stays close to the question");
+  assert.ok(Math.abs(model.y + model.height - (generate.y + generate.height)) < 3, "generate button stays beside reviewer selectors");
   assert.ok(form.y + form.height <= card.y + card.height, "Ask AI form stays inside the dialog");
   assert.ok(card.y + card.height - (form.y + form.height) < 4, "no empty strip below Ask AI form");
   assert.ok(question.y + question.height <= form.y + form.height, "question stays visible");
@@ -85,7 +90,9 @@ test("Ask AI composer fits the Git dialog without clipping or empty space below"
   const mobileCard = await page.locator(".git-review-card").boundingBox();
   const mobileForm = await page.getByTestId("git-review-ask-form").boundingBox();
   const mobileSubmit = await page.getByTestId("git-review-ask-submit").boundingBox();
-  assert.ok(mobileCard && mobileForm && mobileSubmit);
+  const mobileModel = await page.getByTestId("git-review-model").boundingBox();
+  assert.ok(mobileCard && mobileForm && mobileSubmit && mobileModel);
+  assert.ok(mobileModel.y < mobileForm.y && mobileForm.y - (mobileModel.y + mobileModel.height) < 80, "mobile reviewer selectors sit beside the composer");
   assert.ok(mobileCard.y + mobileCard.height - (mobileForm.y + mobileForm.height) < 4, "mobile composer reaches dialog bottom");
   assert.ok(mobileSubmit.y + mobileSubmit.height <= mobileForm.y + mobileForm.height, "mobile Ask button stays visible");
 });
