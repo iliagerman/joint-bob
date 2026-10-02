@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.34.0 — 2026-10-02
+
+- Claude model list auto-updates from the installed CLI whenever new versions are released, so the app always shows the latest models without requiring an update.
+- Model IDs now display as both short aliases (e.g., "claude-opus") and pinned versions (e.g., "claude-opus-5-5") for clarity.
+
 ## 2.33.7 — 2026-10-02
 
 - Reviewer, model, and effort controls now sit beside the Ask AI composer instead of at the top of Git review.
