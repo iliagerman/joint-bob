@@ -131,7 +131,10 @@ async function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:
  if(ownership&&ownership.ownerNodeId!==peer.nodeId)return;
  const existing=await lstat(destination).catch(error=>{if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error;});
  if(existing&&(!existing.isFile()||existing.isSymbolicLink()))throw new Error('Shared transcript destination is not a regular file');
- if(existing&&receipt?.hash===entry.hash)return;
+ // A receipt describes the bytes we installed, not the bytes still on disk.
+ // Another file synchronizer can replace the local copy after the receipt is saved.
+ const localHash=existing?await fileHash(destination,existing):undefined;
+ if(existing&&receipt?.path===destination&&receipt.hash===entry.hash&&localHash===entry.hash)return;
  await safeParent(root,destination);
  const target='/api/cluster/v2/transcripts/file?'+new URLSearchParams({projectId,engine:entry.engine,sessionId:entry.sessionId});
  const response=await peerGet(peer,target);if(!response.body)throw new Error('Empty transcript response');
@@ -139,8 +142,9 @@ async function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:
  try{
   await pipeline(Readable.fromWeb(response.body as never),new Transform({transform(chunk,_encoding,callback){bytes+=chunk.length;if(bytes>entry.size){callback(new Error('Transcript exceeds advertised size'));return;}hash.update(chunk);callback(null,chunk);}}),createWriteStream(temporary,{flags:'wx',mode:0o600}));
   if(bytes!==entry.size||hash.digest('hex')!==entry.hash)throw new Error('Transcript changed during transfer');
-  // Unowned legacy copies may only extend a matching transcript, never truncate it.
-  if(existing&&!ownership){
+  // A local copy changed since the last receipt may contain unsent work. Repair
+  // truncated copies, but never overwrite divergent bytes without review.
+  if(existing&&(!ownership||receipt?.hash!==localHash)){
    await extendsTranscript(destination,temporary,Math.min(existing.size,entry.size));
    if(existing.size>entry.size)return;
   }

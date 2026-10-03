@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -71,6 +71,16 @@ test("a twin already holding an earlier segment of a conversation accepts it ins
       assert.deepEqual(errors, [], "the project's transcript sharing does not fail");
       assert.ok(receipts.includes(first) && receipts.includes(second), `both segments are received (${JSON.stringify(receipts)})`);
     });
+
+    // A second file synchronizer (or an interrupted restore) can replace a received
+    // transcript after its receipt was saved. An unchanged remote inventory must
+    // still repair the stale local bytes, not trust the receipt forever.
+    const remoteFile = path.join(b.home, ".pi", "sessions", `${second}.jsonl`);
+    const fullTranscript = await readFile(remoteFile, "utf8");
+    await writeFile(remoteFile, fullTranscript.slice(0, fullTranscript.indexOf("\n") + 1));
+    await eventually(async () => {
+      assert.equal(await readFile(remoteFile, "utf8"), fullTranscript, "receiver repairs stale transcript despite matching receipt");
+    }, 75_000);
   } finally {
     await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });

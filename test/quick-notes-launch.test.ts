@@ -138,7 +138,8 @@ test("the queue enforces the parallel limit, FIFO order, and refill; schedules g
     const third = await createNote(node, session, project.id, "FIFO three");
     await until("two parallel launches", async () => {
       const statuses = await Promise.all([first, second].map((note) => noteStatus(node, session, note.id)));
-      return statuses.every((status) => status.status === "started" || status.status === "completed");
+      return statuses.every((status) => status.status === "started" || status.status === "completed")
+        && (await engineLogLines(log)).length === 2;
     });
     assert.deepEqual((await engineLogLines(log)).length, 2, "maxParallel 2 runs exactly two held turns");
     await new Promise(resolve => setTimeout(resolve, 1_500));

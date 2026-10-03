@@ -416,17 +416,23 @@ async function claudeFilesInHistory(project: SessionProjectPaths & { historyDays
   return selected.filter((filePath): filePath is string => filePath !== null);
 }
 
+function selectClaudeCopies(summaries: SessionSummary[]): SessionSummary[] {
+  const byId = new Map<string, SessionSummary>();
+  const recency = (summary: SessionSummary) => summary.updatedAt ?? summary.createdAt ?? "";
+  for (const summary of summaries) {
+    const current = byId.get(summary.id);
+    // Several encoded-path copies can remain after a takeover. Use transcript
+    // event time, not scan order, to select the copy with the newest messages.
+    if (!current || recency(summary) > recency(current)) byId.set(summary.id, summary);
+  }
+  return [...byId.values()];
+}
+
 export async function listClaudeSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }): Promise<SessionSummary[]> {
   const files = await claudeFilesInHistory(project, await claudeSessionFiles(project));
   const startPrompt = getSettings().conversationCommands.start.prompt.trim();
   const summaries = await mapWithConcurrency(files, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath, startPrompt));
-  // A conversation claimed from another node exists under that node's encoded
-  // directory as well as this node's, so the same transcript is read twice.
-  // `claudeProjectDirs` lists this node's own project path first, so keeping the
-  // first summary per id shows the copy a turn here actually resumes.
-  const byId = new Map<string, SessionSummary>();
-  for (const summary of summaries) if (summary && !byId.has(summary.id)) byId.set(summary.id, summary);
-  return [...byId.values()];
+  return selectClaudeCopies(summaries.filter((summary): summary is SessionSummary => summary !== null));
 }
 
 export async function refreshClaudeSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }, previous: SessionSummary[], changedFiles: string[]): Promise<SessionSummary[]> {
@@ -436,9 +442,7 @@ export async function refreshClaudeSessions(project: SessionProjectPaths & { his
   const selected = await claudeFilesInHistory(project, [...changed]);
   const startPrompt = getSettings().conversationCommands.start.prompt.trim();
   const refreshed = await mapWithConcurrency(selected, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath, startPrompt));
-  const byId = new Map(retained.map((session) => [session.id, session]));
-  for (const session of refreshed) if (session) byId.set(session.id, session);
-  return [...byId.values()];
+  return selectClaudeCopies([...retained, ...refreshed.filter((session): session is SessionSummary => session !== null)]);
 }
 
 function resolveClaudeSessionPath(sessionPath: string): string {
