@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Twin nodes now immediately show when remote turns need review, instead of waiting up to 30 seconds for the next transcript pull.
+
 ## 2.36.0 — 2026-10-03
 
 - GitHub accounts can now hold both an API token and SSH key; the app automatically routes git requests to the matching account by owner and protocol.

@@ -52,7 +52,8 @@ app.post("/api/cluster/v2/credentials/scoped",handler(async(request,response)=>{
 
 app.get("/api/cluster/v2/transcripts",handler(async(request,response)=>{
   const query=transcriptQuery.parse(request.query);
-  response.json({entries:await sharedTranscriptInventory(machineOnly(response),query.projectId)});
+  const only=query.engine&&query.sessionId?{engine:query.engine,sessionId:query.sessionId}:undefined;
+  response.json({entries:await sharedTranscriptInventory(machineOnly(response),query.projectId,only)});
 }));
 app.get("/api/cluster/v2/transcripts/file",handler(async(request,response)=>{
   const query=transcriptQuery.required().parse(request.query);

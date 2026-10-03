@@ -225,14 +225,41 @@ export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<Ru
   return [...entries.values()];
 }
 
-let runtimeLeasePushInProgress = false;
+let runtimeLeaseBuildInProgress = false;
+const runtimeLeasePushesInFlight = new Set<string>();
 let localRuntimeLeaseSignature = "[]";
 
+async function pushRuntimeLeaseSnapshot(peer: { id: string; url: string }, body: string): Promise<void> {
+  try {
+    const response = await runtimeFetch(`${peer.url}/api/cluster/sessions/runtime-snapshot`, {
+      method: "POST",
+      // Our own machine token, so the receiving peer can bind the snapshot to
+      // this node's identity instead of trusting the declared nodeId.
+      headers: { "Content-Type": "application/json" },
+      body,
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) throw new Error(`Peer returned ${response.status}`);
+  } catch (error) {
+    console.warn(`Runtime lease push to ${peer.id} failed: ${error instanceof Error ? error.message : "lease replication failed"}`);
+  }
+}
+
+/** Each peer must apply snapshots in generation order, so a peer whose previous push is
+    still in flight skips this one rather than overlapping it. Peers do not wait for each
+    other: one that timed out used to stretch every peer's two-second cadence to its
+    five-second timeout, and remote running state lagged by as much. */
+export function pushToIdlePeers<T extends { id: string }>(peers: T[], push: (peer: T) => Promise<void>): void {
+  for (const peer of peers) {
+    if (runtimeLeasePushesInFlight.has(peer.id)) continue;
+    runtimeLeasePushesInFlight.add(peer.id);
+    void push(peer).finally(() => runtimeLeasePushesInFlight.delete(peer.id));
+  }
+}
+
 export async function pushRuntimeLeaseSnapshots(): Promise<void> {
-  // Snapshots must be applied in generation order; a push still in flight when the
-  // interval fires again is skipped rather than overlapped.
-  if (runtimeLeasePushInProgress) return;
-  runtimeLeasePushInProgress = true;
+  if (runtimeLeaseBuildInProgress) return;
+  runtimeLeaseBuildInProgress = true;
   try {
     const local = await getClusterNode();
     const leases = await buildRuntimeLeaseSnapshot(local.id);
@@ -247,24 +274,10 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
     const peers = await listRuntimePeers();
     if (!peers.length) return;
     const generatedAt = leases.length ? leases[0].updatedAt : new Date().toISOString();
-    // One slow peer must not delay the others past the lease TTL.
-    await Promise.all(peers.map(async (peer) => {
-      try {
-        const response = await runtimeFetch(`${peer.url}/api/cluster/sessions/runtime-snapshot`, {
-          method: "POST",
-          // Our own machine token, so the receiving peer can bind the snapshot to
-          // this node's identity instead of trusting the declared nodeId.
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ nodeId: local.id, generatedAt, leases }),
-          signal: AbortSignal.timeout(5_000),
-        });
-        if (!response.ok) throw new Error(`Peer returned ${response.status}`);
-      } catch (error) {
-        console.warn(`Runtime lease push to ${peer.id} failed: ${error instanceof Error ? error.message : "lease replication failed"}`);
-      }
-    }));
+    const body = JSON.stringify({ nodeId: local.id, generatedAt, leases });
+    pushToIdlePeers(peers, (peer) => pushRuntimeLeaseSnapshot(peer, body));
   } finally {
-    runtimeLeasePushInProgress = false;
+    runtimeLeaseBuildInProgress = false;
   }
 }
 

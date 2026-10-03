@@ -50,6 +50,25 @@ test("marking a conversation reviewed enqueues a replication event keyed by stab
   }
 });
 
+test("a local review follows its conversation from draft to transcript, like a peer review", async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-review-path-"));
+  try {
+    const reviews = await freshModule(dataDir, `${Date.now()}-path`);
+    const draft = { path: "draft:pi:session-a", engine: "pi" as const, sessionId: "session-a", updatedAt: "2026-09-01T10:00:00.000Z", running: false };
+    reviews.syncConversationReviewStates("user-1", "ilia", "project-1", [draft]);
+    const db = new DatabaseSync(path.join(dataDir, "node.db"));
+    db.prepare("UPDATE conversation_review_tracking SET initialized_at = '2026-01-01T00:00:00.000Z'").run();
+    reviews.markConversationReviewed("user-1", "ilia", "project-1", draft, "node-a");
+    const transcript = { ...draft, path: "/home/user/.pi/agent/sessions/session-a.jsonl" };
+    assert.equal(reviews.syncConversationReviewStates("user-1", "ilia", "project-1", [transcript]).get(transcript.path), "reviewed");
+    const rows = db.prepare("SELECT reviewed_at FROM replicated_review_watermarks WHERE username = 'ilia' AND session_id = 'session-a'").all() as Array<{ reviewed_at: string }>;
+    assert.deepEqual(rows.map((row) => row.reviewed_at), [draft.updatedAt]);
+    db.close();
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("replicated watermarks keep the highest value through duplicates and reordering", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-review-merge-"));
   const previous = process.env.PI_WEB_DATA_DIR;

@@ -190,11 +190,37 @@ export function sweepExpiredRuntimeLeases(db: DatabaseSync, now = new Date()): s
   return rows.map((row) => `${row.engine}\n${row.session_id}`);
 }
 
+/** A node's live leases, read before applying its next snapshot to learn which runs it ends. */
+export function liveRuntimeLeases(db: DatabaseSync, nodeId: string, now = new Date()): RuntimeLeaseInput[] {
+  ensureConversationRuntimeSchema(db);
+  const rows = db.prepare("SELECT engine, session_id, owner_node_id, ownership_epoch, run_id, background_running, updated_at, expires_at FROM conversation_runtime_leases WHERE owner_node_id = ?").all(nodeId) as unknown as LeaseRow[];
+  return rows.map(rowToLease).filter((lease) => leaseLive(lease, now));
+}
+
+/*
+ * A run a peer has just ended. Its last messages reach this node by a transcript pull,
+ * and until they land, review state would be judged against the older copy and show the
+ * finished turn as reviewed while the peer shows it as needing review. The run keeps
+ * showing until the pull lands; the bound covers a pull that never answers.
+ */
+const ENDED_RUN_HOLD_MS = 10_000;
+const endedRunHolds = new Map<string, { backgroundRunning: boolean; until: number }>();
+
+export function holdEndedRun(engine: ConversationEngine, sessionId: string, backgroundRunning: boolean, now = Date.now()): void {
+  endedRunHolds.set(`${engine}\n${sessionId}`, { backgroundRunning, until: now + ENDED_RUN_HOLD_MS });
+}
+
+export function releaseEndedRun(engine: ConversationEngine, sessionId: string): void {
+  endedRunHolds.delete(`${engine}\n${sessionId}`);
+}
+
 /** Current remote activity for a conversation; expired leases never count. */
 export function conversationLeaseState(engine: ConversationEngine, sessionId: string, now = new Date()): { running: boolean; backgroundRunning: boolean } {
   const row = runtimeDatabase().prepare("SELECT engine, session_id, owner_node_id, ownership_epoch, run_id, background_running, updated_at, expires_at FROM conversation_runtime_leases WHERE engine = ? AND session_id = ?").get(engine, sessionId) as unknown as LeaseRow | undefined;
-  const running = Boolean(row && leaseLive(rowToLease(row), now));
-  return { running, backgroundRunning: Boolean(running && row?.background_running) };
+  if (row && leaseLive(rowToLease(row), now)) return { running: true, backgroundRunning: Boolean(row.background_running) };
+  const hold = endedRunHolds.get(`${engine}\n${sessionId}`);
+  if (hold && hold.until > now.getTime()) return { running: true, backgroundRunning: hold.backgroundRunning };
+  return { running: false, backgroundRunning: false };
 }
 
 /** A conversation is remotely running when a live lease says so. */

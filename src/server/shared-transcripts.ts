@@ -15,7 +15,7 @@ import { clearHarnessSessionCache, getHarness, harnessForSessionPath, listHarnes
 import { getProject } from "../store.js";
 import { listTasks } from '../tasks.js';
 import { getConversationOwnership } from "../conversation-ownership.js";
-import { deletedConversationKeys, ensureConversationRecord } from "../conversation-records.js";
+import { deletedConversationKeys, ensureConversationRecord, ensureConversationRecordSchema } from "../conversation-records.js";
 import { replicationPeers } from "./replication-v2.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
 import { fetchPeer, whilePeerOptional } from "./peer-availability.js";
@@ -23,6 +23,7 @@ import { fetchPeer, whilePeerOptional } from "./peer-availability.js";
 export const transcriptQuery=z.object({projectId:z.string().min(1).max(300),engine:z.string().min(1).max(80).optional(),sessionId:z.string().min(1).max(300).optional()}).strict();
 const entrySchema=z.object({engine:z.string().min(1).max(80),sessionId:z.string().min(1).max(300),relativePath:z.string().min(1).max(4096),size:z.number().int().min(0).max(1024*1024*1024),hash:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
 type Entry=z.infer<typeof entrySchema>;
+const inventorySchema=z.object({entries:z.array(entrySchema).max(10000)}).strict();
 function ensureSchema(db:DatabaseSync):void{
  db.exec(`CREATE TABLE IF NOT EXISTS cluster_v2_transcript_receipts(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,engine TEXT NOT NULL,session_id TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(peer_id,project_id,engine,session_id));
  CREATE TABLE IF NOT EXISTS cluster_v2_transcript_progress(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,PRIMARY KEY(peer_id,project_id));
@@ -79,10 +80,12 @@ async function localTranscriptFile(session:{engine:string;path:string}):Promise<
  if(!(await lstat(file)).isFile()||!within(await realpath(adapter.sync.transcriptRoot()),await realpath(file)))throw new ClusterV2HttpError(409,"Conversation transcript is not a regular local file");
  return file;
 }
-export async function sharedTranscriptInventory(peer:string,projectId:string):Promise<Entry[]>{
+/** A peer catching up on one conversation names it, so only that transcript is hashed and sent. */
+export async function sharedTranscriptInventory(peer:string,projectId:string,only?:{engine:string;sessionId:string}):Promise<Entry[]>{
  const entries:Entry[]=[];
  for(const session of await sourceTranscripts(peer,projectId)){
   if(session.path.startsWith('draft:'))continue;
+  if(only&&(session.engine!==only.engine||session.id!==only.sessionId))continue;
   const adapter=getHarness(session.engine),file=await localTranscriptFile(session),info=await stat(file);
   entries.push(entrySchema.parse({engine:session.engine,sessionId:session.id,relativePath:path.relative(adapter.sync.transcriptRoot(),file),size:info.size,hash:await fileHash(file,info)}));
  }
@@ -168,12 +171,37 @@ export async function assertSharedTranscriptReady(projectId:string,sessionPath:s
  const peer=replicationPeers(db,local.id).find(peer=>peer.nodeId===sourceId);
  if(!peer||!mayShareProject(db,local.id,peer.nodeId,projectId))throw new Error('Conversation owner is unavailable');
  const target='/api/cluster/v2/transcripts?'+new URLSearchParams({projectId});
- const payload=z.object({entries:z.array(entrySchema).max(10000)}).strict().parse(await(await peerGet(peer,target)).json());
+ const payload=inventorySchema.parse(await(await peerGet(peer,target)).json());
  const entry=payload.entries.find(entry=>entry.engine===adapter.id&&entry.sessionId===sessionId);
  if(!entry)throw new Error('Conversation transcript is not available on its owner');
  await receiveTranscript(db,peer,projectId,entry);
  const receipt=db.prepare('SELECT path,hash FROM cluster_v2_transcript_receipts WHERE peer_id=? AND project_id=? AND engine=? AND session_id=?').get(peer.nodeId,projectId,entry.engine,entry.sessionId) as {path:string;hash:string}|undefined;
  if(!receipt||receipt.hash!==entry.hash||await fileHash(receipt.path,await stat(receipt.path))!==entry.hash)throw new Error('Conversation transcript is not synchronized on this node');
+}
+
+/** Pulls one conversation from the peer that just ended a run in it, instead of waiting up
+    to PULL_INTERVAL_MS for the periodic pull. An owner that ignores the filter answers with
+    its whole inventory, which still contains the entry. Each inventory costs the owner a
+    catalog build, so a catch-up already under way is joined rather than repeated. */
+const activeCatchUps=new Map<string,Promise<void>>();
+export function catchUpSharedTranscript(peerId:string,engine:string,sessionId:string):Promise<void>{
+ const key=JSON.stringify([peerId,engine,sessionId]),active=activeCatchUps.get(key);
+ if(active)return active;
+ const run=catchUpSharedTranscriptNow(peerId,engine,sessionId).finally(()=>activeCatchUps.delete(key));
+ activeCatchUps.set(key,run);
+ return run;
+}
+async function catchUpSharedTranscriptNow(peerId:string,engine:string,sessionId:string):Promise<void>{
+ const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);ensureConversationRecordSchema(db);
+ const peer=replicationPeers(db,local.id).find(peer=>peer.nodeId===peerId);
+ if(!peer)return;
+ const projects=db.prepare('SELECT DISTINCT project_id FROM conversation_records WHERE engine=? AND session_id=?').all(engine,sessionId) as unknown as Array<{project_id:string}>;
+ for(const {project_id:projectId} of projects){
+  if(!mayShareProject(db,local.id,peer.nodeId,projectId)||!await getProject(projectId))continue;
+  const target='/api/cluster/v2/transcripts?'+new URLSearchParams({projectId,engine,sessionId});
+  const entry=inventorySchema.parse(await(await peerGet(peer,target)).json()).entries.find(entry=>entry.engine===engine&&entry.sessionId===sessionId);
+  if(entry)await receiveTranscript(db,peer,projectId,entry);
+ }
 }
 
 let activeFlush:Promise<void>|undefined;
@@ -204,7 +232,7 @@ async function runSharedTranscripts():Promise<void>{
   pulledAt.set(key,Date.now());
   const target='/api/cluster/v2/transcripts?'+new URLSearchParams({projectId});
   // A peer known to be down is skipped until its next probe instead of waited on.
-  const payload=z.object({entries:z.array(entrySchema).max(10000)}).strict().parse(await(await whilePeerOptional(()=>peerGet(peer,target))).json());
+  const payload=inventorySchema.parse(await(await whilePeerOptional(()=>peerGet(peer,target))).json());
   for(const entry of payload.entries)await receiveTranscript(db,peer,projectId,entry);
   db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=?').run(peer.nodeId,projectId);
   db.prepare('INSERT OR IGNORE INTO cluster_v2_transcript_progress VALUES(?,?)').run(peer.nodeId,projectId);

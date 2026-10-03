@@ -154,3 +154,24 @@ test("runtime leases preserve background work as a distinct live state", async (
     return Promise.resolve();
   });
 });
+test("an ended run keeps showing until its transcript is caught up, and never past its bound", async () => {
+  await withRuntime((runtime, db) => {
+    const now = new Date("2026-09-01T12:00:00.000Z");
+    runtime.applyRuntimeLeaseSnapshot(db, "node-b", now.toISOString(), [lease({ backgroundRunning: true })], now);
+    const live = runtime.liveRuntimeLeases(db, "node-b", now);
+    assert.deepEqual(live.map((entry) => [entry.sessionId, entry.backgroundRunning]), [["session-a", true]]);
+    const ended = new Date(now.getTime() + 2_000);
+    runtime.applyRuntimeLeaseSnapshot(db, "node-b", ended.toISOString(), [], ended);
+    assert.deepEqual(runtime.liveRuntimeLeases(db, "node-b", ended), []);
+
+    runtime.holdEndedRun("pi", "session-a", true, ended.getTime());
+    assert.deepEqual(runtime.conversationLeaseState("pi", "session-a", ended), { running: true, backgroundRunning: true });
+    runtime.releaseEndedRun("pi", "session-a");
+    assert.deepEqual(runtime.conversationLeaseState("pi", "session-a", ended), { running: false, backgroundRunning: false });
+
+    runtime.holdEndedRun("pi", "session-a", false, ended.getTime());
+    assert.equal(runtime.conversationLeaseRunning("pi", "session-a", new Date(ended.getTime() + 9_000)), true);
+    assert.equal(runtime.conversationLeaseRunning("pi", "session-a", new Date(ended.getTime() + 10_000)), false, "a catch-up that never answers cannot pin the run");
+    return Promise.resolve();
+  });
+});

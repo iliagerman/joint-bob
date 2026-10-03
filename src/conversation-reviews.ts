@@ -260,6 +260,9 @@ export function markConversationsReviewed(
       if (!session.updatedAt || !validReviewWatermark(session.updatedAt)) throw new Error("Conversation review watermark is invalid");
       const reviewedAt = new Date(session.updatedAt).toISOString();
       statement.run(userId, projectId, session.path, reviewedAt, reviewedAt);
+      // Keep the same identity-keyed watermark locally as on peers. A draft can
+      // become a transcript (or move paths) before the next listing.
+      upsertReviewWatermark(db, username, projectId, session.engine, session.sessionId, reviewedAt, originNodeId);
       publishReview(db, username, projectId, session, reviewedAt, originNodeId);
     }
     db.exec("COMMIT");
@@ -303,17 +306,20 @@ function reviewPayload(event: ReplicationEvent): ReviewPayload {
   return value as ReviewPayload;
 }
 
-export function applyConversationReviewEvent(db: DatabaseSync, event: ReplicationEvent): void {
-  const payload = reviewPayload(event);
+function upsertReviewWatermark(db: DatabaseSync, username: string, projectId: string, engine: ConversationEngine, sessionId: string, reviewedAt: string, originNodeId: string): void {
   ensureConversationReviewReplicaSchema(db);
-  const projectId = resolveProjectAlias(db, payload.projectId);
   db.prepare(`
     INSERT INTO replicated_review_watermarks (username, project_id, engine, session_id, reviewed_at, origin_node_id)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(username, project_id, engine, session_id) DO UPDATE SET
       reviewed_at = MAX(replicated_review_watermarks.reviewed_at, excluded.reviewed_at),
       origin_node_id = excluded.origin_node_id
-  `).run(payload.username, projectId, payload.engine, payload.sessionId, new Date(payload.reviewedAt).toISOString(), payload.originNodeId);
+  `).run(username, projectId, engine, sessionId, reviewedAt, originNodeId);
+}
+
+export function applyConversationReviewEvent(db: DatabaseSync, event: ReplicationEvent): void {
+  const payload = reviewPayload(event);
+  upsertReviewWatermark(db, payload.username, resolveProjectAlias(db, payload.projectId), payload.engine, payload.sessionId, new Date(payload.reviewedAt).toISOString(), payload.originNodeId);
 }
 
 /**
