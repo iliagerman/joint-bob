@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { isHarnessId, type HarnessId } from "./types.js";
 import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "./cluster-v2-errors.js";
+import { applyGithubAccounts, assertGithubAccountsDistinct, assertGithubVariableNames, finalizeGithubVariables, githubAccount, githubAccountContext, githubAccountSummary, githubOwnerFromRemote, GITHUB_TOKEN_VARIABLE, type GithubAccount, type GithubAccountSummary } from "./github-credentials.js";
 
 export type SecretProvider = "aws" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "zai" | "grafana" | "datadog" | "postgres" | "mssql" | "mongodb" | "custom" | "website";
 export type SecretKind = "value" | "file";
@@ -19,14 +20,13 @@ export interface SecretConversation { engine: ConversationEngineId; sessionId?: 
 export interface SecretVariable { name: string; kind: SecretKind; configured: true }
 /** `projectId` marks an account owned by one project: it is attached to that project on creation, never
     replicates, and is offered only in that project's pickers. Absent means global to this node. */
-export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; websiteOrigin?: string; projectId?: string; shared?: boolean; readOnly?: boolean; ownerNodeId?: string }
+export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; github?: GithubAccountSummary; websiteOrigin?: string; projectId?: string; shared?: boolean; readOnly?: boolean; ownerNodeId?: string }
 export interface SecretAccountInput { id?: string; label: string; provider: SecretProvider; replicate?: boolean; variables: Array<{ name: string; kind: SecretKind; value?: string }>; websiteOrigin?: string | null; projectId?: string }
 export interface WebsiteCredentialAccount { id: string; origin: string; variables: Array<{ name: string; kind: SecretKind; value: string }> }
 type StoredVariable = { name: string; kind: SecretKind; value: string };
 type AccountRow = { id: string; label: string; provider: SecretProvider; replicate: number; variables_encrypted: string; website_origin: string | null; project_id: string | null; origin_node_id: string };
 
-/** A `github` account's variable set is fixed: the user never types the name. */
-export const GITHUB_TOKEN_VARIABLE = "GH_TOKEN";
+export { GITHUB_TOKEN_VARIABLE };
 
 const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
@@ -126,10 +126,8 @@ function assertInput(input: SecretAccountInput): void {
     if (variable.kind !== "value" && variable.kind !== "file") throw new Error("Secret variable kind must be value or file");
     if (variable.value !== undefined && variable.value.length > 100000) throw new Error("Secret value must be at most 100000 characters");
   }
-  // The GitHub provider owns its variable name, so a typo cannot silently disable git push.
-  if (input.provider === "github" && (input.variables.length !== 1 || input.variables[0].name !== GITHUB_TOKEN_VARIABLE || input.variables[0].kind !== "value")) {
-    throw new Error(`GitHub secret accounts hold exactly one ${GITHUB_TOKEN_VARIABLE} value`);
-  }
+  // The GitHub provider owns its variable names, so a typo cannot silently disable git push.
+  if (input.provider === "github") assertGithubVariableNames(input.variables);
   if (input.provider === "stripe" && (input.variables.length !== 1 || input.variables[0].name !== "STRIPE_API_KEY" || input.variables[0].kind !== "value")) {
     throw new Error("Stripe secret accounts hold exactly one STRIPE_API_KEY value");
   }
@@ -164,7 +162,7 @@ function publicAccount(row: AccountRow): SecretAccount {
     || hasTable('cluster_v2_secret_grants') && Boolean(db().prepare('SELECT 1 FROM cluster_v2_secret_grants WHERE account_id=? LIMIT 1').get(row.id))
     || hasTable('cluster_v2_share_selections') && Boolean(db().prepare("SELECT 1 FROM secret_assignments a JOIN cluster_v2_share_selections s ON s.kind='workspace' AND s.resource_id=a.scope_id WHERE a.account_id=? AND a.scope_type='workspace' LIMIT 1").get(row.id))
     || Boolean(row.replicate && hasTable('sharing_resource_shares') && db().prepare("SELECT 1 FROM secret_assignments a JOIN sharing_resource_shares s ON s.kind='project' AND s.resource_id=a.scope_id WHERE a.account_id=? AND a.scope_type='project' LIMIT 1").get(row.id));
-  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })), ...(row.website_origin ? { websiteOrigin: row.website_origin } : {}), ...(row.project_id ? { projectId: row.project_id } : {}), ...(shared ? {shared:true} : {}), ...(readOnly ? {readOnly:true,ownerNodeId:row.origin_node_id} : {}) };
+  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })), ...(row.provider === "github" ? { github: githubAccountSummary(githubAccount(row.id, row.label, storedVariables(row))) } : {}), ...(row.website_origin ? { websiteOrigin: row.website_origin } : {}), ...(row.project_id ? { projectId: row.project_id } : {}), ...(shared ? {shared:true} : {}), ...(readOnly ? {readOnly:true,ownerNodeId:row.origin_node_id} : {}) };
 }
 
 export function clearSecretAccountFiles(id: string): void {
@@ -207,7 +205,10 @@ function scopeRows(scopeType: SecretScopeType, scopeId: string): AccountRow[] {
 function assertNoCollision(rows: AccountRow[]): void {
   const names = new Set<string>();
   const origins = new Set<string>();
+  // Several GitHub accounts may be attached together; the remote decides which one git uses.
+  assertGithubAccountsDistinct(rows.filter((row) => row.provider === "github").map(rowGithubAccount));
   for (const row of rows) {
+    if (row.provider === "github") continue;
     if (row.website_origin) {
       if (origins.has(row.website_origin)) throw new Error("Selected website accounts have duplicate origins");
       origins.add(row.website_origin);
@@ -288,11 +289,12 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
     if (duplicate) throw new Error("Selected website accounts have duplicate origins");
   }
   const oldValues = new Map((old ? storedVariables(old) : []).map((item) => [`${item.name}:${item.kind}`, item.value]));
-  const variables = input.variables.map((item) => {
+  const merged = input.variables.map((item) => {
     const value = item.value === undefined || item.value === "" ? oldValues.get(`${item.name}:${item.kind}`) : item.value;
     if (value === undefined) throw new Error("New secret variables require a value");
     return { name: item.name, kind: item.kind, value };
   });
+  const variables = input.provider === "github" ? finalizeGithubVariables(merged) : merged;
   const replicate = input.replicate ? 1 : 0;
   const now = new Date().toISOString();
   db().exec("BEGIN IMMEDIATE");
@@ -306,7 +308,7 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
     throw error;
   }
   clearSecretAccountFiles(id);
-  return { id, label: input.label.trim(), provider: input.provider, replicate: Boolean(replicate), variables: variables.map(({ name, kind }) => ({ name, kind, configured: true })), ...(websiteOrigin ? { websiteOrigin } : {}), ...(projectId ? { projectId } : {}) };
+  return { id, label: input.label.trim(), provider: input.provider, replicate: Boolean(replicate), variables: variables.map(({ name, kind }) => ({ name, kind, configured: true })), ...(input.provider === "github" ? { github: githubAccountSummary(githubAccount(id, input.label.trim(), variables)) } : {}), ...(websiteOrigin ? { websiteOrigin } : {}), ...(projectId ? { projectId } : {}) };
 }
 
 export async function deleteSecretAccount(accountId: string): Promise<void> {
@@ -392,11 +394,42 @@ function applyGitHubEnvironment(values: NodeJS.ProcessEnv): void {
   values.GIT_TERMINAL_PROMPT = "0";
 }
 
+function rowGithubAccount(row: AccountRow): GithubAccount {
+  return githubAccount(row.id, row.label, storedVariables(row));
+}
+
+/** Narrowest scope first, so the most specific account wins any tie. */
+function resolvedGithubAccounts(project: string, conversation?: SecretConversation): GithubAccount[] {
+  return resolved(project, conversation).filter(({ row }) => row.provider === "github").map(({ row }) => rowGithubAccount(row)).reverse();
+}
+
+export function githubAccountsForProject(project: string, conversation?: SecretConversation): GithubAccount[] {
+  return resolvedGithubAccounts(project, conversation);
+}
+
+/** Read straight from .git/config: this runs on every environment build, so it never spawns git. */
+function projectRepoOwner(project: string): string | undefined {
+  if (!hasTable("projects") || !(db().prepare("PRAGMA table_info(projects)").all() as unknown as Array<{ name: string }>).some((column) => column.name === "path")) return undefined;
+  const row = db().prepare("SELECT path FROM projects WHERE id = ?").get(canonicalScopeId("project", project)) as { path: string } | undefined;
+  if (!row?.path) return undefined;
+  try {
+    const config = readFileSync(path.join(row.path, ".git", "config"), "utf8");
+    const url = config.match(/\[remote "origin"\][^[]*?\burl\s*=\s*(\S+)/)?.[1];
+    return url ? githubOwnerFromRemote(url) : undefined;
+  } catch { return undefined; }
+}
+
 export function genericSecretEnvironment(project: string, conversation?: SecretConversation): NodeJS.ProcessEnv {
   const values: NodeJS.ProcessEnv = {};
-  for (const { row } of resolved(project, conversation)) if (!row.website_origin) for (const variable of storedVariables(row)) {
+  for (const { row } of resolved(project, conversation)) if (!row.website_origin && row.provider !== "github") for (const variable of storedVariables(row)) {
     values[variable.name] = variable.kind === "value" ? variable.value : secretFilePath(row.id, variable.name, variable.value);
   }
+  const github = resolvedGithubAccounts(project, conversation);
+  applyGithubAccounts(values, github, {
+    dataDir,
+    repoOwner: github.filter((account) => account.token).length > 1 ? projectRepoOwner(project) : undefined,
+    keyFile: (account) => secretFilePath(account.id, "GITHUB_SSH_KEY", account.sshKey!),
+  });
   applyGitHubEnvironment(values);
   return values;
 }
@@ -451,6 +484,10 @@ export function agentCredentialContext(project: string, conversation?: SecretCon
   const lines = ["## Available secret accounts", "This is the current account list for this message, replacing any earlier list."];
   if (ordinary.length) lines.push("Non-website credentials below are already exported into your shell. Use the matching CLI directly and never ask the user for the values, which stay hidden from you.");
   for (const { row, scope } of ordinary) {
+    if (row.provider === "github") {
+      lines.push(`- github ${JSON.stringify(row.label)} (${scope}): ${githubAccountContext(rowGithubAccount(row))}. The gh CLI, the GitHub API and git read these automatically.`);
+      continue;
+    }
     const variables = storedVariables(row).map((item) => `${item.name}${item.kind === "file" ? " (secret file path)" : ""}`).join(", ");
     lines.push(`- ${row.provider} ${JSON.stringify(row.label)} (${scope}): ${variables} - ${providerHints[row.provider]}`);
   }

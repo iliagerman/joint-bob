@@ -7,13 +7,20 @@ const exec = promisify(execFile);
 const API = "https://api.github.com";
 const MAX_LOG_BYTES = 1024 * 1024;
 type GithubCall = (route: string, method?: string, body?: object) => Promise<unknown>;
+/** Picks a token per repository, so two GitHub accounts can serve different remotes. */
+export interface GithubCredentials { tokenFor(repository: { owner: string; host?: string }): string | undefined; sshHosts?: string[] }
+type Credentials = string | undefined | GithubCredentials;
 
-export async function githubRepository(cwd: string): Promise<{ owner: string; repo: string }> {
+function tokenFor(credentials: Credentials, repository: { owner: string; host?: string }): string | undefined {
+  return typeof credentials === "object" ? credentials.tokenFor(repository) : credentials;
+}
+
+export async function githubRepository(cwd: string, credentials?: Credentials, request: typeof fetch = fetch): Promise<{ owner: string; repo: string; host?: string }> {
   let remote: string;
   try { remote = (await exec("git", ["-C", cwd, "remote", "get-url", "origin"], { timeout: 10_000 })).stdout.trim(); }
   catch { throw new GitReviewError(400, "GitHub remote origin is not configured"); }
-  const ssh = remote.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
-  let parts = ssh?.slice(1);
+  const scp = remote.match(/^git@([A-Za-z0-9][A-Za-z0-9_.-]*):([^/]+)\/([^/]+?)(?:\.git)?$/);
+  let parts = scp?.slice(2);
   if (!parts) {
     let url: URL;
     try { url = new URL(remote); } catch { throw new GitReviewError(400, "GitHub remote origin is invalid"); }
@@ -23,7 +30,28 @@ export async function githubRepository(cwd: string): Promise<{ owner: string; re
     parts = url.pathname.replace(/^\//, "").replace(/\.git$/, "").split("/");
   }
   if (parts.length !== 2 || !parts.every((part) => /^[A-Za-z0-9_.-]+$/.test(part) && part !== "." && part !== "..")) throw new GitReviewError(400, "GitHub remote origin is invalid");
-  return { owner: parts[0], repo: parts[1] };
+  const [owner, repo] = parts;
+  if (!scp || scp[1] === "github.com") return { owner, repo };
+  const host = scp[1];
+  const known = typeof credentials === "object" && credentials.sshHosts?.some((item) => item.toLowerCase() === host.toLowerCase());
+  if (!known) await assertSshAliasIsGithub(host, `/repos/${owner}/${repo}`, tokenFor(credentials, { owner, host }), request);
+  return { owner, repo, host };
+}
+
+// SSH host aliases (git@work:owner/repo) resolve via ~/.ssh/config, which may be absent on this node.
+async function assertSshAliasIsGithub(host: string, repoRoute: string, token: string | undefined, request: typeof fetch): Promise<void> {
+  let resolved = host;
+  try {
+    const config = (await exec("ssh", ["-G", "--", host], { timeout: 10_000 })).stdout;
+    resolved = config.match(/^hostname (\S+)$/m)?.[1]?.toLowerCase() ?? host;
+  } catch { /* ssh unavailable: confirm through the API */ }
+  if (resolved === "github.com") return;
+  if (resolved !== host.toLowerCase() || host.includes(".")) throw new GitReviewError(400, "GitHub remote origin is required");
+  try { await githubRequest(repoRoute, token, request, ""); }
+  catch (error) {
+    if (error instanceof GitReviewError && error.status === 502) throw error;
+    throw new GitReviewError(400, `GitHub remote host "${host}" is not configured on this machine and the repository was not found with the GitHub token`);
+  }
 }
 
 function assertId(id: number, label: string): void {
@@ -140,8 +168,9 @@ async function downloadJobLog(url: string, token: string | undefined, request: t
   return { text: Buffer.concat(chunks).subarray(0, MAX_LOG_BYTES).toString("utf8"), truncated: bytes > MAX_LOG_BYTES };
 }
 
-export async function createGitHubReview(cwd: string, token: string | undefined, request: typeof fetch = fetch) {
-  const { owner, repo } = await githubRepository(cwd);
+export async function createGitHubReview(cwd: string, credentials: Credentials, request: typeof fetch = fetch) {
+  const { owner, repo, host } = await githubRepository(cwd, credentials, request);
+  const token = tokenFor(credentials, { owner, host });
   const base = `/repos/${owner}/${repo}`;
   const call: GithubCall = (route, method, body) => githubRequest(base, token, request, route, method, body);
   const log = (id: number) => {

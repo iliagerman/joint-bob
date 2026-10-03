@@ -1606,6 +1606,32 @@
         <p class="secret-provider-hint" id="secretAccountProviderHint" data-testid="secret-account-provider-hint"></p>
         <label>Website origin <span class="muted">(optional)</span><input id="secretAccountOriginInput" data-testid="secret-account-origin-input" type="url" placeholder="https://mobile.com" autocomplete="off" spellcheck="false" aria-describedby="secretAccountOriginHint" /></label>
         <p class="secret-provider-hint" id="secretAccountOriginHint">Use the exact HTTPS scheme, host, and port; subdomains are separate. Assigned scopes authorize ordinary automatic sign-in; MFA and CAPTCHA remain human-only. Bound values are not exported to the shell. Sharing sends an encrypted-at-rest copy to selected nodes; authorized browser sign-in can also use them. Clear the origin to use ordinary environment secrets.</p>
+        <div id="secretGithubFields" class="secret-github-fields" data-testid="secret-github-fields" hidden>
+          <label>API token <span class="muted">(Pipelines, pull requests, gh CLI and HTTPS git)</span><input id="secretGithubTokenInput" type="password" autocomplete="new-password" spellcheck="false" data-testid="secret-github-token-input" /></label>
+          <button type="button" class="ghost compact" id="secretGithubTokenRemoveButton" data-testid="secret-github-token-remove-button" hidden>Remove saved token</button>
+          <div class="secret-github-key">
+            <label for="secretGithubSshKeyInput">SSH key <span class="muted">(optional, used for git clone, fetch and push)</span></label>
+            <textarea id="secretGithubSshKeyInput" spellcheck="false" autocomplete="off" placeholder="Paste a private key: -----BEGIN OPENSSH PRIVATE KEY----- …" data-testid="secret-github-ssh-key-input"></textarea>
+            <div class="secret-github-actions">
+              <button type="button" class="ghost compact" id="secretGithubSshKeyUploadButton" data-testid="secret-github-ssh-key-upload-button">Upload key file</button>
+              <input type="file" id="secretGithubSshKeyFileInput" data-testid="secret-github-ssh-key-file-input" hidden />
+              <button type="button" class="ghost compact" id="secretGithubSshKeyGenerateButton" data-testid="secret-github-ssh-key-generate-button">Generate new key</button>
+              <button type="button" class="ghost compact danger" id="secretGithubSshKeyRemoveButton" data-testid="secret-github-ssh-key-remove-button" hidden>Remove saved key</button>
+            </div>
+            <div class="secret-github-public-key" id="secretGithubPublicKey" data-testid="secret-github-public-key" hidden>
+              <span id="secretGithubFingerprint" data-testid="secret-github-fingerprint"></span>
+              <code id="secretGithubPublicKeyText"></code>
+              <div class="secret-github-actions"><button type="button" class="ghost compact" id="secretGithubPublicKeyCopyButton" data-testid="secret-github-public-key-copy-button">Copy public key</button><span class="muted">Add it on GitHub under Settings → SSH and GPG keys.</span></div>
+            </div>
+          </div>
+          <label>SSH host alias <span class="muted">(the host in git@<em>alias</em>:owner/repo, defaults to github.com)</span><input id="secretGithubSshHostInput" autocomplete="off" spellcheck="false" placeholder="github.com" data-testid="secret-github-ssh-host-input" /></label>
+          <label>GitHub owners <span class="muted">(users and organizations this account serves, comma separated)</span><input id="secretGithubOwnersInput" autocomplete="off" spellcheck="false" placeholder="my-user, my-org" data-testid="secret-github-owners-input" /></label>
+          <fieldset class="secret-github-protocol">
+            <legend>Git access</legend>
+            <label class="checkbox-row"><input type="radio" name="secretGithubProtocol" value="ssh" data-testid="secret-github-protocol-ssh" /> SSH key</label>
+            <label class="checkbox-row"><input type="radio" name="secretGithubProtocol" value="https" data-testid="secret-github-protocol-https" /> HTTPS with the API token</label>
+          </fieldset>
+        </div>
         <div id="secretVariableRows" data-testid="secret-variable-rows"></div>
         <button type="button" class="ghost" id="secretVariableAddButton" data-testid="secret-variable-add-button">Add environment variable</button>
         <label class="checkbox-row"><input id="secretAccountReplicateInput" type="checkbox" data-testid="secret-account-replicate-toggle" /> Replicate this account to paired nodes</label>

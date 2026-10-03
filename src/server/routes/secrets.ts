@@ -11,6 +11,7 @@ import { getClusterNode } from "../../cluster.js";
 import { ensureSecretSharingSchema, secretGrants, setSecretGrants } from "../scoped-credentials.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { mayShareProject } from "../sharing-files.js";
+import { generateSshKeyPair } from "../../github-credentials.js";
 
 app.get("/api/secrets/destinations", async (_request, response, next) => {
   try {
@@ -106,3 +107,6 @@ app.delete("/api/workspaces/:workspaceId", async (request, response, next) => {
   }
 });
 
+app.post("/api/secrets/github-ssh-key", (_request, response, next) => {
+  try { response.json(generateSshKeyPair("joint-bob")); } catch (error) { next(error); }
+});

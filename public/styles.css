@@ -2077,6 +2077,15 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 /* Each variable is its own card: the name needs the full width to stay readable, and the
    value is a paste target, so squeezing all four controls onto one line truncated both. */
 #secretVariableRows { display: grid; gap: 10px; }
+.secret-github-fields { display: grid; gap: 10px; }
+.secret-github-fields > button { justify-self: start; }
+.secret-github-key { display: grid; gap: 6px; }
+.secret-github-key textarea { min-height: 78px; resize: vertical; font-family: var(--mono); font-size: 11.5px; }
+.secret-github-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
+.secret-github-public-key { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); font-size: 12px; }
+.secret-github-public-key code { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; user-select: all; }
+.secret-github-protocol { display: grid; gap: 4px; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
+.secret-github-protocol legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
 .secret-variable-row { display: grid; grid-template-columns: minmax(0, 1fr) 132px auto; gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .secret-variable-row input { font-family: var(--mono); font-size: 11.5px; }
 .secret-variable-row textarea { grid-column: 1 / -1; min-height: 78px; resize: vertical; }

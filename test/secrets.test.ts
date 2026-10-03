@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+
+const exec = promisify(execFile);
 
 /** Builds the schema `secrets.ts` expects, then re-imports it with a cache-busting query so it
     builds a fresh DatabaseSync handle against this test's temp dir. */
@@ -146,7 +150,117 @@ test("a GitHub token produces the whole git push contract, and no token produces
     assert.doesNotMatch(context, /ghp_test_alpha|access-key/);
 
     // The provider owns its variable name, so a typo cannot silently disable git push.
-    await assert.rejects(() => secrets.saveSecretAccount({ label: "Typo", provider: "github", variables: [{ name: "GH_TOKEEN", kind: "value", value: "ghp_test_beta" }] }), /exactly one GH_TOKEN/);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Typo", provider: "github", variables: [{ name: "GH_TOKEEN", kind: "value", value: "ghp_test_beta" }] }), /GitHub secret accounts hold only/);
+  });
+});
+
+async function sshKeyPair(passphrase = ""): Promise<{ privateKey: string; publicKey: string; fingerprint: string; cleanup: () => Promise<void> }> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "jb-test-ssh-"));
+  const file = path.join(directory, "key");
+  await exec("ssh-keygen", ["-q", "-t", "ed25519", "-N", passphrase, "-C", "test", "-f", file]);
+  const fingerprint = (await exec("ssh-keygen", ["-l", "-f", `${file}.pub`])).stdout.split(" ")[1];
+  return { privateKey: await readFile(file, "utf8"), publicKey: (await readFile(`${file}.pub`, "utf8")).trim(), fingerprint, cleanup: () => rm(directory, { recursive: true, force: true }) };
+}
+
+/** Runs git with only this test's config, so the developer's own credentials never answer. */
+async function isolatedGit(env: NodeJS.ProcessEnv, home: string, args: string[], input?: string): Promise<string> {
+  const child = execFile("git", args, { env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: "1", ...env } });
+  if (input !== undefined) child.stdin!.end(input);
+  let stdout = "";
+  child.stdout!.on("data", (chunk) => { stdout += chunk; });
+  const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
+  assert.equal(code, 0, `git ${args.join(" ")} failed`);
+  return stdout;
+}
+
+test("a GitHub account with an SSH key routes its alias and owners through a generated ssh config", async () => {
+  const pair = await sshKeyPair();
+  try {
+    await withSecrets("github-ssh", async (secrets) => {
+      const account = await secrets.saveSecretAccount({ label: "Work GitHub", provider: "github", variables: [
+        { name: "GH_TOKEN", kind: "value", value: "ghp_work" },
+        { name: "GITHUB_SSH_KEY", kind: "file", value: pair.privateKey.replace(/\n/g, "\r\n").trim() },
+        { name: "GITHUB_SSH_HOST", kind: "value", value: "work" },
+        { name: "GITHUB_OWNERS", kind: "value", value: "acme, widgets" },
+        { name: "GITHUB_GIT_PROTOCOL", kind: "value", value: "ssh" },
+      ] });
+      assert.deepEqual(account.github, { sshHost: "work", owners: ["acme", "widgets"], protocol: "ssh", hasToken: true, hasSshKey: true, publicKey: pair.publicKey, fingerprint: pair.fingerprint });
+      assert.doesNotMatch(JSON.stringify(await secrets.listSecretAccounts()), /PRIVATE KEY|ghp_work/);
+
+      await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+      const env = secrets.genericSecretEnvironment("project-a");
+      assert.equal(env.GH_TOKEN, "ghp_work");
+      assert.equal(env.GITHUB_SSH_KEY, undefined);
+      const config = env.GIT_SSH_COMMAND!.match(/^ssh -F '(.+)'$/)![1];
+      const resolved = (await exec("ssh", ["-G", "-F", config, "work"])).stdout;
+      assert.match(resolved, /^hostname github\.com$/m);
+      assert.match(resolved, /^identitiesonly yes$/m);
+      assert.match(resolved, /^stricthostkeychecking (yes|true)$/m);
+      const keyFile = resolved.match(/^identityfile (.+)$/m)![1];
+      assert.equal(await readFile(keyFile, "utf8"), pair.privateKey);
+      assert.equal((await stat(keyFile)).mode & 0o777, 0o600);
+      assert.match(await readFile(resolved.match(/^userknownhostsfile (\S+)/m)![1], "utf8"), /^github\.com ssh-ed25519 /);
+
+      const home = await mkdtemp(path.join(os.tmpdir(), "jb-test-home-"));
+      try {
+        await isolatedGit({}, home, ["init", "-q", home]);
+        for (const [name, url] of [["https", "https://github.com/acme/app.git"], ["scp", "git@github.com:widgets/lib.git"], ["other", "https://github.com/someone/else.git"]]) await isolatedGit({}, home, ["-C", home, "remote", "add", name, url]);
+        const url = async (name: string) => (await isolatedGit(env, home, ["-C", home, "remote", "get-url", name])).trim();
+        assert.equal(await url("https"), "git@work:acme/app.git");
+        assert.equal(await url("scp"), "git@work:widgets/lib.git");
+        assert.equal(await url("other"), "https://github.com/someone/else.git");
+      } finally { await rm(home, { recursive: true, force: true }); }
+
+      const context = secrets.agentCredentialContext("project-a");
+      assert.match(context, /SSH key SHA256:\S+ on host work/);
+      assert.match(context, /owned by acme, widgets/);
+      assert.doesNotMatch(context, /ghp_work|PRIVATE KEY/);
+
+      // An edit that omits the key value keeps the saved key.
+      const edited = await secrets.saveSecretAccount({ id: account.id, label: "Work GitHub", provider: "github", variables: [{ name: "GITHUB_SSH_KEY", kind: "file" }, { name: "GITHUB_GIT_PROTOCOL", kind: "value", value: "ssh" }] });
+      assert.deepEqual(edited.github, { sshHost: "github.com", owners: [], protocol: "ssh", hasToken: false, hasSshKey: true, publicKey: pair.publicKey, fingerprint: pair.fingerprint });
+    });
+  } finally { await pair.cleanup(); }
+});
+
+test("GitHub SSH keys must be complete, unencrypted, and match the chosen git protocol", async () => {
+  const locked = await sshKeyPair("hunter2-passphrase");
+  try {
+    await withSecrets("github-ssh-invalid", async (secrets) => {
+      const save = (variables: Array<{ name: string; kind: "value" | "file"; value?: string }>) => secrets.saveSecretAccount({ label: "GitHub", provider: "github", variables });
+      await assert.rejects(save([{ name: "GITHUB_SSH_KEY", kind: "file", value: locked.privateKey }]), /passphrase/);
+      await assert.rejects(save([{ name: "GITHUB_SSH_KEY", kind: "file", value: "ssh-ed25519 AAAA public-key-instead" }]), /whole private SSH key/);
+      await assert.rejects(save([{ name: "GH_TOKEN", kind: "value", value: "ghp_x" }, { name: "GITHUB_GIT_PROTOCOL", kind: "value", value: "ssh" }]), /needs an SSH key/);
+      await assert.rejects(save([{ name: "GH_TOKEN", kind: "value", value: "ghp_x" }, { name: "GITHUB_OWNERS", kind: "value", value: "bad/owner" }]), /owner "bad\/owner" is invalid/);
+      await assert.rejects(save([{ name: "GITHUB_SSH_HOST", kind: "value", value: "work" }]), /API token, an SSH key, or both/);
+    });
+  } finally { await locked.cleanup(); }
+});
+
+test("two GitHub token accounts each answer git for the owners they serve", async () => {
+  await withSecrets("github-two", async (secrets) => {
+    const alpha = await secrets.saveSecretAccount({ label: "Alpha", provider: "github", variables: [{ name: "GH_TOKEN", kind: "value", value: "ghp_alpha" }, { name: "GITHUB_OWNERS", kind: "value", value: "alpha-org" }] });
+    const beta = await secrets.saveSecretAccount({ label: "Beta", provider: "github", variables: [{ name: "GH_TOKEN", kind: "value", value: "ghp_beta" }, { name: "GITHUB_OWNERS", kind: "value", value: "Beta-Org" }, { name: "GITHUB_SSH_HOST", kind: "value", value: "beta" }] });
+    const clash = await secrets.saveSecretAccount({ label: "Clash", provider: "github", variables: [{ name: "GH_TOKEN", kind: "value", value: "ghp_clash" }, { name: "GITHUB_OWNERS", kind: "value", value: "alpha-org" }] });
+    await assert.rejects(secrets.setScopeSecretAccounts("project", "project-a", [alpha.id, clash.id]), /both serve owner alpha-org/);
+    await secrets.setScopeSecretAccounts("project", "project-a", [alpha.id, beta.id]);
+    const env = secrets.genericSecretEnvironment("project-a");
+    assert.equal(env.GIT_SSH_COMMAND, undefined);
+
+    const home = await mkdtemp(path.join(os.tmpdir(), "jb-test-home-"));
+    try {
+      // A credential store configured elsewhere must not answer for routed GitHub owners.
+      await writeFile(path.join(home, ".git-credentials"), "https://stale:ghp_stale@github.com\n", { mode: 0o600 });
+      await writeFile(path.join(home, ".gitconfig"), "[credential]\n\thelper = store\n");
+      const fill = async (repoPath: string) => (await isolatedGit(env, home, ["credential", "fill"], `protocol=https\nhost=github.com\npath=${repoPath}\n\n`)).match(/^password=(.+)$/m)?.[1];
+      assert.equal(await fill("beta-org/repo.git"), "ghp_beta");
+      assert.equal(await fill("alpha-org/repo.git"), "ghp_alpha");
+      assert.ok(["ghp_alpha", "ghp_beta"].includes((await fill("unlisted/repo.git"))!));
+
+      await isolatedGit({}, home, ["init", "-q", home]);
+      await isolatedGit({}, home, ["-C", home, "remote", "add", "origin", "git@beta:Beta-Org/app.git"]);
+      assert.equal((await isolatedGit(env, home, ["-C", home, "remote", "get-url", "origin"])).trim(), "https://github.com/Beta-Org/app.git");
+    } finally { await rm(home, { recursive: true, force: true }); }
   });
 });
 

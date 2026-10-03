@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- GitHub accounts now accept API tokens, SSH keys, or both, with automatic routing by repository owner and SSH host.
+
 ## 2.35.3 — 2026-10-03
 
 - Claude transcripts now display the version with the most recent activity when duplicates exist, and repair stale copies during synchronization.

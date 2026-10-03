@@ -20,7 +20,8 @@ import {
   type GitReviewSelection,
 } from "../../git-review-threads.js";
 import { getProject } from "../../store.js";
-import { genericSecretEnvironment } from "../../secrets.js";
+import { genericSecretEnvironment, githubAccountsForProject } from "../../secrets.js";
+import { githubAccountFor } from "../../github-credentials.js";
 import { createGitHubReview } from "../github-review.js";
 import { listTasks } from "../../tasks.js";
 import { sendError } from "../http-auth.js";
@@ -126,8 +127,12 @@ const githubAction = z.discriminatedUnion("action", [
 
 async function githubClient(projectId: string, taskId?: string) {
   const cwd = await reviewCwd(projectId, taskId);
-  const secrets = genericSecretEnvironment(projectId);
-  return createGitHubReview(cwd, secrets.GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN);
+  const accounts = githubAccountsForProject(projectId);
+  const fallback = genericSecretEnvironment(projectId).GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+  return createGitHubReview(cwd, {
+    tokenFor: (repository) => githubAccountFor(accounts, repository)?.token ?? fallback,
+    sshHosts: accounts.filter((account) => account.sshKey).map((account) => account.sshHost),
+  });
 }
 
 async function githubRead(projectId: string, taskId: string | undefined, query: Record<string, unknown>) {

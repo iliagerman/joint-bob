@@ -25,6 +25,36 @@ test("GitHub repository resolves SSH and HTTPS origins without treating hostile 
   await fixture("https://github.com.evil.test/acme/widget", async (dir) => await assert.rejects(githubRepository(dir), /GitHub remote/));
 });
 
+test("an unresolved SSH host alias is confirmed through the GitHub API with the token", async () => {
+  const requests: Array<{ url: string; auth: string | null }> = [];
+  const fakeFetch = (status: number): typeof fetch => async (input, init) => {
+    requests.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+    return Response.json({ full_name: "acme/widget" }, { status });
+  };
+  await fixture("git@jb-test-unconfigured-alias:acme/widget.git", async (dir) => {
+    assert.deepEqual(await githubRepository(dir, "test-token", fakeFetch(200)), { owner: "acme", repo: "widget", host: "jb-test-unconfigured-alias" });
+    assert.deepEqual(requests, [{ url: "https://api.github.com/repos/acme/widget", auth: "Bearer test-token" }]);
+    await assert.rejects(githubRepository(dir, "test-token", fakeFetch(404)), /not configured on this machine/);
+  });
+  requests.length = 0;
+  await fixture("git@gitlab.example.com:acme/widget.git", async (dir) => await assert.rejects(githubRepository(dir, "test-token", fakeFetch(200)), /GitHub remote origin is required/));
+  assert.equal(requests.length, 0);
+});
+
+test("an SSH alias owned by a GitHub account is trusted and selects that account's token", async () => {
+  await fixture("git@work:acme/widget.git", async (dir) => {
+    const requests: Array<{ url: string; auth: string | null }> = [];
+    const fakeFetch: typeof fetch = async (input, init) => {
+      requests.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+      return Response.json({ workflow_runs: [] });
+    };
+    const github = await createGitHubReview(dir, { tokenFor: ({ host }) => host === "work" ? "work-token" : "other-token", sshHosts: ["work"] }, fakeFetch);
+    assert.deepEqual(github.repository, { owner: "acme", repo: "widget" });
+    await github.runs(1);
+    assert.deepEqual(requests, [{ url: "https://api.github.com/repos/acme/widget/actions/runs?per_page=30&page=1", auth: "Bearer work-token" }]);
+  });
+});
+
 test("pull request mutations require token and send only scoped, validated requests", async () => {
   await fixture("git@github.com:acme/widget.git", async (dir) => {
     const requests: Array<{ url: string; method: string; body: string | undefined }> = [];

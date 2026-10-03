@@ -8,6 +8,10 @@ import { state } from "./state.js";
 // Render account metadata only; secret values never leave the form.
 export const secretAccounts = [];
 let editingSecretAccountId = null;
+let editingSecretAccount = null;
+let githubTokenRemoved = false;
+let githubKeyRemoved = false;
+let githubProtocolTouched = false;
 // Set while the account form was opened from a project's picker: the new account belongs to that project.
 let creatingForProjectId = null;
 // Set while the account form was opened from a picker that wants the new account ticked.
@@ -22,7 +26,7 @@ const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe:
 const providerHints = {
   aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
   google: "Paste the Google service account JSON. It is stored privately and GOOGLE_APPLICATION_CREDENTIALS points gcloud and the Google SDKs at it.",
-  github: "A personal access token. The gh CLI and the GitHub API read it, and GITHUB_TOKEN is filled in from GH_TOKEN. Git pushes keep using the GitHub group set under Projects.",
+  github: "An API token, an SSH key, or both. The token powers Pipelines, pull requests and the gh CLI; the SSH key lets git clone and push without it. List the owners this account serves so each repository uses the right account.",
   stripe: "A Stripe API key. STRIPE_API_KEY is exported to attached agent sessions for use with Stripe tools and SDKs. Use a restricted or test key when possible.",
   cloudflare: "A Cloudflare API key exported as CLOUDFLARE_API_KEY to attached agent sessions. Global API keys also require your account email; use a scoped API token instead when possible (as a Custom secret).",
   openai: "OPENAI_API_KEY for OpenAI tools and SDKs.",
@@ -127,6 +131,76 @@ function secretRow(variable = { name: "", kind: "value", configured: false }) {
   elements.secretVariableRows.append(row);
 }
 
+function githubSummary(github) {
+  return [
+    github.hasToken ? "API token" : "No API token",
+    github.hasSshKey ? `SSH key ${github.fingerprint ?? ""}`.trim() : "",
+    github.sshHost !== "github.com" ? `host ${github.sshHost}` : "",
+    github.owners.length ? `owners ${github.owners.join(", ")}` : "",
+    `git over ${github.protocol === "ssh" ? "SSH" : "HTTPS"}`,
+  ].filter(Boolean).join(" · ");
+}
+
+function githubProtocolInputs() {
+  return [...elements.secretAccountForm.querySelectorAll('input[name="secretGithubProtocol"]')];
+}
+
+function setGithubProtocol(value) {
+  for (const input of githubProtocolInputs()) input.checked = input.value === value;
+}
+
+function showGithubPublicKey(publicKey, fingerprint, pending) {
+  elements.secretGithubPublicKey.hidden = !publicKey;
+  elements.secretGithubPublicKeyText.textContent = publicKey ?? "";
+  elements.secretGithubFingerprint.textContent = publicKey ? `${pending ? "New key, stored when you save" : "Saved key"} · ${fingerprint ?? ""}` : "";
+}
+
+function resetGithubFields(account) {
+  const github = account?.github;
+  githubTokenRemoved = false;
+  githubKeyRemoved = false;
+  githubProtocolTouched = Boolean(github);
+  elements.secretGithubTokenInput.value = "";
+  elements.secretGithubTokenInput.placeholder = github?.hasToken ? "Leave blank to keep the saved token" : "ghp_… or github_pat_…";
+  elements.secretGithubTokenRemoveButton.hidden = !github?.hasToken;
+  elements.secretGithubSshKeyInput.value = "";
+  elements.secretGithubSshKeyInput.placeholder = github?.hasSshKey ? "Leave blank to keep the saved key" : "Paste a private key: -----BEGIN OPENSSH PRIVATE KEY----- …";
+  elements.secretGithubSshKeyRemoveButton.hidden = !github?.hasSshKey;
+  elements.secretGithubSshHostInput.value = github && github.sshHost !== "github.com" ? github.sshHost : "";
+  elements.secretGithubOwnersInput.value = github?.owners.join(", ") ?? "";
+  setGithubProtocol(github?.protocol ?? "https");
+  showGithubPublicKey(github?.publicKey, github?.fingerprint, false);
+}
+
+/** A new key switches git to SSH unless the user already picked a protocol. */
+function githubKeyEntered() {
+  if (!elements.secretGithubSshKeyInput.value.trim()) return;
+  githubKeyRemoved = false;
+  if (!githubProtocolTouched) setGithubProtocol("ssh");
+}
+
+/** Omitting a saved variable deletes it; naming it without a value keeps it. */
+function githubVariables() {
+  const saved = editingSecretAccount?.github;
+  const variables = [];
+  const token = elements.secretGithubTokenInput.value.trim();
+  if (token) variables.push({ name: "GH_TOKEN", kind: "value", value: token });
+  else if (saved?.hasToken && !githubTokenRemoved) variables.push({ name: "GH_TOKEN", kind: "value" });
+  const key = elements.secretGithubSshKeyInput.value;
+  if (key.trim()) variables.push({ name: "GITHUB_SSH_KEY", kind: "file", value: key });
+  else if (saved?.hasSshKey && !githubKeyRemoved) variables.push({ name: "GITHUB_SSH_KEY", kind: "file" });
+  if (!variables.length) throw new Error("Add an API token, an SSH key, or both");
+  const host = elements.secretGithubSshHostInput.value.trim();
+  if (host) variables.push({ name: "GITHUB_SSH_HOST", kind: "value", value: host });
+  const owners = elements.secretGithubOwnersInput.value.split(/[\s,]+/).filter(Boolean).join(",");
+  if (owners) variables.push({ name: "GITHUB_OWNERS", kind: "value", value: owners });
+  const protocol = githubProtocolInputs().find((input) => input.checked)?.value ?? "https";
+  if (protocol === "ssh" && !variables.some((item) => item.name === "GITHUB_SSH_KEY")) throw new Error("Git over SSH needs an SSH key. Add one or choose HTTPS");
+  if (protocol === "https" && !variables.some((item) => item.name === "GH_TOKEN")) throw new Error("Git over HTTPS needs an API token. Add one or choose SSH");
+  variables.push({ name: "GITHUB_GIT_PROTOCOL", kind: "value", value: protocol });
+  return variables;
+}
+
 function renderSecretAccounts() {
   elements.secretAccountList.replaceChildren();
   const visible = secretAccounts.filter((account) => secretTypeFilter === "all" || account.provider === secretTypeFilter);
@@ -140,7 +214,7 @@ function renderSecretAccounts() {
     const owner = account.projectId ? ` · ${state.projects.find((project) => project.id === account.projectId)?.name ?? account.projectId}` : "";
     const name = document.createElement("strong"); name.textContent = `${account.label} · ${providerLabels[account.provider] ?? account.provider}${owner}`;
     const variables = document.createElement("span"); variables.className = "secret-account-vars";
-    variables.textContent = account.variables.map((item) => `${item.name}${item.kind === "file" ? " (file)" : ""}`).join(", ");
+    variables.textContent = account.github ? githubSummary(account.github) : account.variables.map((item) => `${item.name}${item.kind === "file" ? " (file)" : ""}`).join(", ");
     meta.append(name);
     if (account.websiteOrigin) {
       const origin = document.createElement("span"); origin.className = "secret-account-vars"; origin.textContent = account.websiteOrigin; meta.append(origin);
@@ -253,6 +327,12 @@ function applySecretProviderPreset() {
   const provider = secretProviderPicker.value;
   elements.secretAccountProviderIcon.replaceChildren(providerIcon(provider));
   elements.secretAccountProviderHint.textContent = providerHints[provider];
+  const github = provider === "github";
+  elements.secretGithubFields.hidden = !github;
+  elements.secretVariableRows.hidden = github;
+  elements.secretVariableAddButton.hidden = github;
+  elements.secretAccountOriginInput.closest("label").hidden = github;
+  document.querySelector("#secretAccountOriginHint").hidden = github;
   const typed = [...elements.secretVariableRows.children].some((row) => row.querySelector("[data-secret-value]").value.trim());
   if (editingSecretAccountId || typed) return;
   elements.secretVariableRows.replaceChildren();
@@ -261,6 +341,7 @@ function applySecretProviderPreset() {
 
 function openSecretAccount(account = null, projectId = null, onSaved = null) {
   editingSecretAccountId = account?.id ?? null;
+  editingSecretAccount = account;
   creatingForProjectId = projectId;
   onAccountSaved = onSaved;
   elements.secretAccountTitle.textContent = account ? "Edit secret account" : projectId ? "Add project secret" : "Add secret account";
@@ -276,6 +357,7 @@ function openSecretAccount(account = null, projectId = null, onSaved = null) {
   elements.secretVariableRows.replaceChildren();
   // A new account has no rows yet, so the preset below fills them; an edited one keeps its own.
   account?.variables.forEach((item) => secretRow(item));
+  resetGithubFields(account);
   applySecretProviderPreset();
   elements.secretAccountDialog.showModal();
 }
@@ -339,15 +421,52 @@ elements.secretAccountDialog.addEventListener("close", () => {
   creatingForProjectId = null;
   onAccountSaved = null;
   for (const control of elements.secretVariableRows.querySelectorAll("[data-secret-value]")) control.value = "";
+  elements.secretGithubTokenInput.value = "";
+  elements.secretGithubSshKeyInput.value = "";
 });
+elements.secretGithubTokenRemoveButton.addEventListener("click", () => {
+  githubTokenRemoved = true;
+  elements.secretGithubTokenRemoveButton.hidden = true;
+  elements.secretGithubTokenInput.placeholder = "The saved token is removed when you save";
+});
+elements.secretGithubSshKeyRemoveButton.addEventListener("click", () => {
+  githubKeyRemoved = true;
+  elements.secretGithubSshKeyRemoveButton.hidden = true;
+  elements.secretGithubSshKeyInput.placeholder = "The saved key is removed when you save";
+  showGithubPublicKey(null);
+  setGithubProtocol("https");
+});
+elements.secretGithubSshKeyInput.addEventListener("input", () => {
+  showGithubPublicKey(null);
+  githubKeyEntered();
+});
+for (const input of githubProtocolInputs()) input.addEventListener("change", () => { githubProtocolTouched = true; });
+elements.secretGithubSshKeyUploadButton.addEventListener("click", () => elements.secretGithubSshKeyFileInput.click());
+elements.secretGithubSshKeyFileInput.addEventListener("change", () => void (async () => {
+  const [file] = elements.secretGithubSshKeyFileInput.files;
+  elements.secretGithubSshKeyFileInput.value = "";
+  if (!file) return;
+  if (file.size > 100000) throw new Error("That file is too large to be an SSH private key");
+  elements.secretGithubSshKeyInput.value = await file.text();
+  showGithubPublicKey(null);
+  githubKeyEntered();
+})().catch((error) => toast(error.message)));
+elements.secretGithubSshKeyGenerateButton.addEventListener("click", () => void (async () => {
+  const pair = await api("/api/secrets/github-ssh-key", { method: "POST", body: "{}" });
+  elements.secretGithubSshKeyInput.value = pair.privateKey;
+  showGithubPublicKey(pair.publicKey, pair.fingerprint, true);
+  githubKeyEntered();
+})().catch((error) => toast(error.message)));
+elements.secretGithubPublicKeyCopyButton.addEventListener("click", () => void navigator.clipboard.writeText(elements.secretGithubPublicKeyText.textContent)
+  .then(() => toast("Public key copied"), () => toast("Copy failed. Select the key and copy it manually")));
 elements.secretAccountOriginInput.addEventListener("input", () => {
   for (const row of elements.secretVariableRows.children) refreshSecretValueControl(row);
 });
 
 async function saveSecretAccount() {
   const provider = secretProviderPicker.value;
-  const websiteOrigin = elements.secretAccountOriginInput.value.trim();
-  const variables = [...elements.secretVariableRows.children].map((row) => {
+  const websiteOrigin = provider === "github" ? "" : elements.secretAccountOriginInput.value.trim();
+  const variables = provider === "github" ? githubVariables() : [...elements.secretVariableRows.children].map((row) => {
     const name = row.querySelector("[data-secret-name]").value.trim();
     const kind = row.querySelector("[data-secret-kind]").value;
     const value = row.querySelector("[data-secret-value]").value;
