@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.36.0 — 2026-10-03
 
-- GitHub accounts now accept API tokens, SSH keys, or both, with automatic routing by repository owner and SSH host.
+- GitHub accounts can now hold both an API token and SSH key; the app automatically routes git requests to the matching account by owner and protocol.
+- Generate new SSH keys or upload existing ones directly from the browser, with fingerprints displayed for GitHub verification.
+- SSH connections validate against GitHub's pinned host keys to prevent man-in-the-middle attacks; custom SSH aliases are trusted when configured through ssh -G.
+- SSH remote URLs automatically rewrite to your preferred git protocol (SSH or HTTPS) per account.
+- Pipeline and pull requests tabs automatically use the correct GitHub account's token per repository.
 
 ## 2.35.3 — 2026-10-03
 
