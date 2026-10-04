@@ -11,7 +11,19 @@ import { getClusterNode } from "../../cluster.js";
 import { ensureSecretSharingSchema, secretGrants, setSecretGrants } from "../scoped-credentials.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { mayShareProject } from "../sharing-files.js";
-import { generateSshKeyPair } from "../../github-credentials.js";
+import { listTwinRelationships } from "../../cluster-twins.js";
+import { enqueueSecretCredentialSync } from "../../secret-replication.js";
+
+/** Automatically sync replicating accounts to active twins. */
+async function syncToTwins(replicate: boolean): Promise<void> {
+  if (!replicate) return;
+  const db = await clusterV2Database();
+  const local = (await getClusterNode()).id;
+  const twins = listTwinRelationships(db, local).filter((t) => t.status === "active");
+  if (twins.length > 0) {
+    await enqueueSecretCredentialSync(twins.map((t) => t.peer.nodeId), undefined, true);
+  }
+}
 
 app.get("/api/secrets/destinations", async (_request, response, next) => {
   try {
@@ -55,12 +67,14 @@ app.get("/api/secrets", async (_request, response, next) => {
 app.post("/api/secrets/accounts", async (request, response, next) => {
   try {
     const account = await saveSecretAccount(secretAccountSchema.parse(request.body));
+    await syncToTwins(account.replicate);
     response.status(201).json({ accounts: await listSecretAccounts(), account });
   } catch (error) { next(error); }
 });
 app.put("/api/secrets/accounts/:accountId", async (request, response, next) => {
   try {
     const account = await saveSecretAccount({ ...secretAccountSchema.parse(request.body), id: z.string().uuid().parse(request.params.accountId) });
+    await syncToTwins(account.replicate);
     response.json({ accounts: await listSecretAccounts(), account });
   } catch (error) { if (error instanceof ClusterV2HttpError) { response.status(error.statusCode).json({ error: error.message }); return; } next(error); }
 });
@@ -105,8 +119,4 @@ app.delete("/api/workspaces/:workspaceId", async (request, response, next) => {
   } catch (error) {
     next(error);
   }
-});
-
-app.post("/api/secrets/github-ssh-key", (_request, response, next) => {
-  try { response.json(generateSshKeyPair("joint-bob")); } catch (error) { next(error); }
 });

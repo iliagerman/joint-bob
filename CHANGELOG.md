@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Replicating accounts now automatically sync to active cluster nodes when created or updated.
+
 ## 2.36.1 — 2026-10-04
 
 - When a turn ends on one machine, the other machine now shows the conversation as needing review straight away, instead of showing it as reviewed for up to 30 seconds while its copy of the transcript caught up.
