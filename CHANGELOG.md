@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.37.0 — 2026-10-04
 
-- Replicating accounts now automatically sync to active cluster nodes when created or updated.
+- Replicating secrets now automatically sync to active cluster nodes when created or updated.
 
 ## 2.36.1 — 2026-10-04
 
