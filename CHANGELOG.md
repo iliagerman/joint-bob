@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.36.1 — 2026-10-04
 
-- Twin nodes now immediately show when remote turns need review, instead of waiting up to 30 seconds for the next transcript pull.
+- When a turn ends on one machine, the other machine now shows the conversation as needing review straight away, instead of showing it as reviewed for up to 30 seconds while its copy of the transcript caught up.
+- An offline machine no longer delays how quickly the others see a conversation start or stop running (about 2 seconds instead of 6).
+- A review marked on a draft conversation now stays marked on that machine after the draft becomes a saved conversation, as it already did on other machines.
 
 ## 2.36.0 — 2026-10-03
 
