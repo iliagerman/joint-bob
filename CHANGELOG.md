@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.44.0 — 2026-10-05
 
 - Users can now log in to any node in a shared cluster. Cluster members automatically sync user credentials so sign-on works across the network.
+- Cross-cluster logins have restricted access: no terminal, settings, or secrets management (shared secrets work for agents).
+- Users on cluster peer nodes see only projects shared with their home node.
 
 ## 2.43.0 — 2026-10-05
 
