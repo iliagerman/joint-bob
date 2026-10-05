@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -14,7 +14,10 @@ const PUBLIC_KEY = "GITHUB_SSH_PUBLIC_KEY";
 const SSH_HOST = "GITHUB_SSH_HOST";
 const OWNERS = "GITHUB_OWNERS";
 const PROTOCOL = "GITHUB_GIT_PROTOCOL";
-const GITHUB_VARIABLES: Record<string, Kind> = { [GITHUB_TOKEN_VARIABLE]: "value", [SSH_KEY]: "file", [PUBLIC_KEY]: "value", [SSH_HOST]: "value", [OWNERS]: "value", [PROTOCOL]: "value" };
+const APP_ID = "GITHUB_APP_ID";
+const INSTALLATION_ID = "GITHUB_APP_INSTALLATION_ID";
+const APP_KEY = "GITHUB_APP_PRIVATE_KEY";
+const GITHUB_VARIABLES: Record<string, Kind> = { [GITHUB_TOKEN_VARIABLE]: "value", [SSH_KEY]: "file", [PUBLIC_KEY]: "value", [SSH_HOST]: "value", [OWNERS]: "value", [PROTOCOL]: "value", [APP_ID]: "value", [INSTALLATION_ID]: "value", [APP_KEY]: "file" };
 
 // Pinned from https://api.github.com/meta so a first connection never trusts an unknown host.
 const GITHUB_HOST_KEYS = [
@@ -25,8 +28,8 @@ const GITHUB_HOST_KEYS = [
 const HOST_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
 const OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 
-export interface GithubAccount { id: string; label: string; token?: string; sshKey?: string; publicKey?: string; sshHost: string; owners: string[]; protocol: GitProtocol }
-export interface GithubAccountSummary { sshHost: string; owners: string[]; protocol: GitProtocol; hasToken: boolean; hasSshKey: boolean; publicKey?: string; fingerprint?: string }
+export interface GithubAccount { id: string; label: string; token?: string; app?: { appId: string; installationId: string; privateKey: string }; sshKey?: string; publicKey?: string; sshHost: string; owners: string[]; protocol: GitProtocol }
+export interface GithubAccountSummary { sshHost: string; owners: string[]; protocol: GitProtocol; hasToken: boolean; hasApp: boolean; appId?: string; installationId?: string; hasSshKey: boolean; publicKey?: string; fingerprint?: string }
 
 export function assertGithubVariableNames(variables: Array<{ name: string; kind: Kind }>): void {
   for (const variable of variables) {
@@ -89,7 +92,17 @@ export function finalizeGithubVariables(variables: Variable[]): Variable[] {
   const values = new Map(variables.map((variable) => [variable.name, variable.value.trim()]));
   const token = values.get(GITHUB_TOKEN_VARIABLE);
   const rawKey = variables.find((variable) => variable.name === SSH_KEY)?.value;
-  if (!token && !rawKey?.trim()) throw new Error("GitHub accounts need an API token, an SSH key, or both");
+  const appId = values.get(APP_ID);
+  const installationId = values.get(INSTALLATION_ID);
+  const appKey = variables.find((variable) => variable.name === APP_KEY)?.value.trim();
+  if (appId || installationId || appKey) {
+    if (!appId || !installationId || !appKey) throw new Error("GitHub App needs an App ID, installation ID and private key");
+    if (!/^[1-9]\d*$/.test(appId) || !/^[1-9]\d*$/.test(installationId)) throw new Error("GitHub App and installation IDs must be positive integers");
+    try { if (createPrivateKey(appKey).asymmetricKeyType !== "rsa") throw new Error(); }
+    catch { throw new Error("GitHub App private key must be a valid RSA private key"); }
+    if (token) throw new Error("Choose either a GitHub App or an API token");
+  }
+  if (!token && !appKey && !rawKey?.trim()) throw new Error("GitHub accounts need an API token, a GitHub App, or an SSH key");
   const sshKey = rawKey?.trim() ? normalizePrivateKey(rawKey) : undefined;
   const sshHost = values.get(SSH_HOST);
   if (sshHost && !HOST_PATTERN.test(sshHost)) throw new Error("SSH host alias may contain only letters, digits, dots, dashes and underscores");
@@ -97,9 +110,10 @@ export function finalizeGithubVariables(variables: Variable[]): Variable[] {
   const protocol = values.get(PROTOCOL) || (sshKey ? "ssh" : "https");
   if (protocol !== "ssh" && protocol !== "https") throw new Error("Git access must be ssh or https");
   if (protocol === "ssh" && !sshKey) throw new Error("Git over SSH needs an SSH key");
-  if (protocol === "https" && !token) throw new Error("Git over HTTPS needs an API token");
+  if (protocol === "https" && !token && !appKey) throw new Error("Git over HTTPS needs an API token or GitHub App");
   const result: Variable[] = [];
   if (token) result.push({ name: GITHUB_TOKEN_VARIABLE, kind: "value", value: token });
+  if (appId && installationId && appKey) result.push({ name: APP_ID, kind: "value", value: appId }, { name: INSTALLATION_ID, kind: "value", value: installationId }, { name: APP_KEY, kind: "file", value: `${appKey}\n` });
   if (sshKey) result.push({ name: SSH_KEY, kind: "file", value: sshKey }, { name: PUBLIC_KEY, kind: "value", value: derivePublicKey(sshKey) });
   if (sshHost) result.push({ name: SSH_HOST, kind: "value", value: sshHost });
   if (owners.length) result.push({ name: OWNERS, kind: "value", value: owners.join(",") });
@@ -112,13 +126,17 @@ export function githubAccount(id: string, label: string, variables: Variable[]):
   const values = new Map(variables.map((variable) => [variable.name, variable.value]));
   const sshKey = values.get(SSH_KEY);
   const token = values.get(GITHUB_TOKEN_VARIABLE);
+  const appId = values.get(APP_ID);
+  const installationId = values.get(INSTALLATION_ID);
+  const privateKey = values.get(APP_KEY);
+  const app = appId && installationId && privateKey ? { appId, installationId, privateKey } : undefined;
   const stored = values.get(PROTOCOL);
-  const protocol: GitProtocol = stored === "ssh" && sshKey ? "ssh" : stored === "https" && token ? "https" : sshKey ? "ssh" : "https";
-  return { id, label, token, sshKey, publicKey: values.get(PUBLIC_KEY), sshHost: values.get(SSH_HOST) || "github.com", owners: parseOwners(values.get(OWNERS)), protocol };
+  const protocol: GitProtocol = stored === "ssh" && sshKey ? "ssh" : stored === "https" && (token || app) ? "https" : sshKey ? "ssh" : "https";
+  return { id, label, token, app, sshKey, publicKey: values.get(PUBLIC_KEY), sshHost: values.get(SSH_HOST) || "github.com", owners: parseOwners(values.get(OWNERS)), protocol };
 }
 
 export function githubAccountSummary(account: GithubAccount): GithubAccountSummary {
-  return { sshHost: account.sshHost, owners: account.owners, protocol: account.protocol, hasToken: Boolean(account.token), hasSshKey: Boolean(account.sshKey), ...(account.publicKey ? { publicKey: account.publicKey, fingerprint: sshFingerprint(account.publicKey) } : {}) };
+  return { sshHost: account.sshHost, owners: account.owners, protocol: account.protocol, hasToken: Boolean(account.token), hasApp: Boolean(account.app), ...(account.app ? { appId: account.app.appId, installationId: account.app.installationId } : {}), hasSshKey: Boolean(account.sshKey), ...(account.publicKey ? { publicKey: account.publicKey, fingerprint: sshFingerprint(account.publicKey) } : {}) };
 }
 
 /** Two attached accounts claiming the same SSH host or owner would make git's choice arbitrary. */
@@ -149,7 +167,7 @@ export function githubAccountFor(accounts: GithubAccount[], repository: { owner:
   const owner = repository.owner.toLowerCase();
   return (host && host !== "github.com" ? accounts.find((account) => account.sshHost.toLowerCase() === host) : undefined)
     ?? accounts.find((account) => account.owners.some((item) => item.toLowerCase() === owner))
-    ?? accounts.find((account) => account.token);
+    ?? accounts.find((account) => account.token || account.app);
 }
 
 function quote(value: string): string {
@@ -235,7 +253,7 @@ export function applyGithubAccounts(values: NodeJS.ProcessEnv, accounts: GithubA
 }
 
 export function githubAccountContext(account: GithubAccount): string {
-  const parts = [account.token ? "API token (GH_TOKEN)" : "no API token: Pipelines, pull requests and gh need one", account.sshKey ? `SSH key ${sshFingerprint(account.publicKey ?? "") ?? ""} on host ${account.sshHost}`.trim() : "", `git over ${account.protocol === "ssh" ? "SSH" : "HTTPS"}`];
+  const parts = [account.app ? `GitHub App installation ${account.app.installationId}` : account.token ? "API token (GH_TOKEN)" : "no API token: Pipelines, pull requests and gh need one", account.sshKey ? `SSH key ${sshFingerprint(account.publicKey ?? "") ?? ""} on host ${account.sshHost}`.trim() : "", `git over ${account.protocol === "ssh" ? "SSH" : "HTTPS"}`];
   const route = account.owners.length
     ? `repos owned by ${account.owners.join(", ")} use this account automatically; clone them as https://github.com/<owner>/<repo>.git and git routes them`
     : account.sshKey && account.sshHost !== "github.com" ? `remotes git@${account.sshHost}:<owner>/<repo>.git use this account` : "the default GitHub account for this project";

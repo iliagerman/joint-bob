@@ -1,7 +1,9 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { isHarnessId, type HarnessId } from "./types.js";
 import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
@@ -394,13 +396,35 @@ function applyGitHubEnvironment(values: NodeJS.ProcessEnv): void {
   values.GIT_TERMINAL_PROMPT = "0";
 }
 
+const appTokens = new Map<string, { token: string; expiresAt: number }>();
+
+function installationToken(account: GithubAccount): string {
+  const app = account.app!;
+  const cacheKey = createHash("sha256").update(JSON.stringify([account.id, app.appId, app.installationId, app.privateKey])).digest("hex");
+  const cached = appTokens.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() + 5 * 60_000) return cached.token;
+  const script = fileURLToPath(new URL("../scripts/github-app-token.mjs", import.meta.url));
+  let issued: { token: string; expiresAt: number };
+  try {
+    issued = JSON.parse(execFileSync(process.execPath, [script], {
+      input: JSON.stringify(app), encoding: "utf8", timeout: 20_000, stdio: ["pipe", "pipe", "ignore"],
+    }));
+  } catch { throw new Error(`Could not obtain GitHub App installation token for ${account.label}`); }
+  if (issued.expiresAt <= Date.now() + 5 * 60_000) throw new Error("GitHub App installation token expires too soon");
+  appTokens.set(cacheKey, issued);
+  return issued.token;
+}
+
 function rowGithubAccount(row: AccountRow): GithubAccount {
   return githubAccount(row.id, row.label, storedVariables(row));
 }
 
 /** Narrowest scope first, so the most specific account wins any tie. */
 function resolvedGithubAccounts(project: string, conversation?: SecretConversation): GithubAccount[] {
-  return resolved(project, conversation).filter(({ row }) => row.provider === "github").map(({ row }) => rowGithubAccount(row)).reverse();
+  return resolved(project, conversation).filter(({ row }) => row.provider === "github").map(({ row }) => {
+    const account = rowGithubAccount(row);
+    return account.app ? { ...account, token: installationToken(account) } : account;
+  }).reverse();
 }
 
 export function githubAccountsForProject(project: string, conversation?: SecretConversation): GithubAccount[] {

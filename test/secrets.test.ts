@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { generateKeyPairSync } from "node:crypto";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
@@ -154,6 +155,26 @@ test("a GitHub token produces the whole git push contract, and no token produces
   });
 });
 
+test("GitHub App accounts validate and redact installation credentials", async () => {
+  await withSecrets("github-app", async (secrets) => {
+    const privateKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const variables = [
+      { name: "GITHUB_APP_ID", kind: "value" as const, value: "123" },
+      { name: "GITHUB_APP_INSTALLATION_ID", kind: "value" as const, value: "456" },
+      { name: "GITHUB_APP_PRIVATE_KEY", kind: "file" as const, value: privateKey },
+    ];
+    const account = await secrets.saveSecretAccount({ label: "App", provider: "github", variables });
+    assert.deepEqual(account.github, { sshHost: "github.com", owners: [], protocol: "https", hasToken: false, hasApp: true, appId: "123", installationId: "456", hasSshKey: false });
+    assert.doesNotMatch(JSON.stringify(await secrets.listSecretAccounts()), /BEGIN PRIVATE KEY/);
+    const updated = await secrets.saveSecretAccount({ id: account.id, label: "App", provider: "github", variables: variables.map(({ name, kind }) => ({ name, kind })) });
+    assert.deepEqual(updated.github, account.github);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Missing", provider: "github", variables: variables.slice(0, 2) }), /private key/);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Bad ID", provider: "github", variables: [{ ...variables[0], value: "0" }, ...variables.slice(1)] }), /positive integers/);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Bad key", provider: "github", variables: [{ ...variables[0] }, variables[1], { ...variables[2], value: "not a key" }] }), /valid RSA private key/);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Conflict", provider: "github", variables: [...variables, { name: "GH_TOKEN", kind: "value", value: "test-token" }] }), /either a GitHub App or an API token/);
+  });
+});
+
 async function sshKeyPair(passphrase = ""): Promise<{ privateKey: string; publicKey: string; fingerprint: string; cleanup: () => Promise<void> }> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "jb-test-ssh-"));
   const file = path.join(directory, "key");
@@ -184,7 +205,7 @@ test("a GitHub account with an SSH key routes its alias and owners through a gen
         { name: "GITHUB_OWNERS", kind: "value", value: "acme, widgets" },
         { name: "GITHUB_GIT_PROTOCOL", kind: "value", value: "ssh" },
       ] });
-      assert.deepEqual(account.github, { sshHost: "work", owners: ["acme", "widgets"], protocol: "ssh", hasToken: true, hasSshKey: true, publicKey: pair.publicKey, fingerprint: pair.fingerprint });
+      assert.deepEqual(account.github, { sshHost: "work", owners: ["acme", "widgets"], protocol: "ssh", hasToken: true, hasApp: false, hasSshKey: true, publicKey: pair.publicKey, fingerprint: pair.fingerprint });
       assert.doesNotMatch(JSON.stringify(await secrets.listSecretAccounts()), /PRIVATE KEY|ghp_work/);
 
       await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
@@ -218,7 +239,7 @@ test("a GitHub account with an SSH key routes its alias and owners through a gen
 
       // An edit that omits the key value keeps the saved key.
       const edited = await secrets.saveSecretAccount({ id: account.id, label: "Work GitHub", provider: "github", variables: [{ name: "GITHUB_SSH_KEY", kind: "file" }, { name: "GITHUB_GIT_PROTOCOL", kind: "value", value: "ssh" }] });
-      assert.deepEqual(edited.github, { sshHost: "github.com", owners: [], protocol: "ssh", hasToken: false, hasSshKey: true, publicKey: pair.publicKey, fingerprint: pair.fingerprint });
+      assert.deepEqual(edited.github, { sshHost: "github.com", owners: [], protocol: "ssh", hasToken: false, hasApp: false, hasSshKey: true, publicKey: pair.publicKey, fingerprint: pair.fingerprint });
     });
   } finally { await pair.cleanup(); }
 });
@@ -232,7 +253,7 @@ test("GitHub SSH keys must be complete, unencrypted, and match the chosen git pr
       await assert.rejects(save([{ name: "GITHUB_SSH_KEY", kind: "file", value: "ssh-ed25519 AAAA public-key-instead" }]), /whole private SSH key/);
       await assert.rejects(save([{ name: "GH_TOKEN", kind: "value", value: "ghp_x" }, { name: "GITHUB_GIT_PROTOCOL", kind: "value", value: "ssh" }]), /needs an SSH key/);
       await assert.rejects(save([{ name: "GH_TOKEN", kind: "value", value: "ghp_x" }, { name: "GITHUB_OWNERS", kind: "value", value: "bad/owner" }]), /owner "bad\/owner" is invalid/);
-      await assert.rejects(save([{ name: "GITHUB_SSH_HOST", kind: "value", value: "work" }]), /API token, an SSH key, or both/);
+      await assert.rejects(save([{ name: "GITHUB_SSH_HOST", kind: "value", value: "work" }]), /API token, a GitHub App, or an SSH key/);
     });
   } finally { await locked.cleanup(); }
 });

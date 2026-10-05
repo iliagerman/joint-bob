@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- GitHub accounts now support authentication with GitHub App installations as an alternative to API tokens.
+
 ## 2.42.0 — 2026-10-05
 
 - Scheduled tasks can now repeat every 1 to 1,440 minutes.

@@ -10,6 +10,7 @@ export const secretAccounts = [];
 let editingSecretAccountId = null;
 let editingSecretAccount = null;
 let githubTokenRemoved = false;
+let githubAppRemoved = false;
 let githubKeyRemoved = false;
 let githubProtocolTouched = false;
 // Set while the account form was opened from a project's picker: the new account belongs to that project.
@@ -26,7 +27,7 @@ const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe:
 const providerHints = {
   aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
   google: "Paste the Google service account JSON. It is stored privately and GOOGLE_APPLICATION_CREDENTIALS points gcloud and the Google SDKs at it.",
-  github: "An API token, an SSH key, or both. The token powers Pipelines, pull requests and the gh CLI; the SSH key lets git clone and push without it. List the owners this account serves so each repository uses the right account.",
+  github: "Use an API token or a GitHub App installation (App ID, installation ID and private key). Either powers pull requests, the gh CLI and HTTPS git. An SSH key can also provide git access. List the owners this account serves.",
   stripe: "A Stripe API key. STRIPE_API_KEY is exported to attached agent sessions for use with Stripe tools and SDKs. Use a restricted or test key when possible.",
   cloudflare: "Cloudflare Stream credentials. Add whichever values you use; all fields are optional.",
   openai: "OPENAI_API_KEY for OpenAI tools and SDKs.",
@@ -133,7 +134,7 @@ function secretRow(variable = { name: "", kind: "value", configured: false }) {
 
 function githubSummary(github) {
   return [
-    github.hasToken ? "API token" : "No API token",
+    github.hasApp ? `GitHub App ${github.appId} / installation ${github.installationId}` : github.hasToken ? "API token" : "No API token",
     github.hasSshKey ? `SSH key ${github.fingerprint ?? ""}`.trim() : "",
     github.sshHost !== "github.com" ? `host ${github.sshHost}` : "",
     github.owners.length ? `owners ${github.owners.join(", ")}` : "",
@@ -158,11 +159,17 @@ function showGithubPublicKey(publicKey, fingerprint, pending) {
 function resetGithubFields(account) {
   const github = account?.github;
   githubTokenRemoved = false;
+  githubAppRemoved = false;
   githubKeyRemoved = false;
   githubProtocolTouched = Boolean(github);
   elements.secretGithubTokenInput.value = "";
   elements.secretGithubTokenInput.placeholder = github?.hasToken ? "Leave blank to keep the saved token" : "ghp_… or github_pat_…";
   elements.secretGithubTokenRemoveButton.hidden = !github?.hasToken;
+  elements.secretGithubAppIdInput.value = github?.appId ?? "";
+  elements.secretGithubInstallationIdInput.value = github?.installationId ?? "";
+  elements.secretGithubAppKeyInput.value = "";
+  elements.secretGithubAppKeyInput.placeholder = github?.hasApp ? "Leave blank to keep the saved key" : "Paste the GitHub App private key";
+  elements.secretGithubAppRemoveButton.hidden = !github?.hasApp;
   elements.secretGithubSshKeyInput.value = "";
   elements.secretGithubSshKeyInput.placeholder = github?.hasSshKey ? "Leave blank to keep the saved key" : "Paste a private key: -----BEGIN OPENSSH PRIVATE KEY----- …";
   elements.secretGithubSshKeyRemoveButton.hidden = !github?.hasSshKey;
@@ -186,17 +193,25 @@ function githubVariables() {
   const token = elements.secretGithubTokenInput.value.trim();
   if (token) variables.push({ name: "GH_TOKEN", kind: "value", value: token });
   else if (saved?.hasToken && !githubTokenRemoved) variables.push({ name: "GH_TOKEN", kind: "value" });
+  const appId = elements.secretGithubAppIdInput.value.trim();
+  const installationId = elements.secretGithubInstallationIdInput.value.trim();
+  const appKey = elements.secretGithubAppKeyInput.value.trim();
+  if (appId || installationId || appKey || saved?.hasApp && !githubAppRemoved) {
+    if (!appId || !installationId || !(appKey || saved?.hasApp && !githubAppRemoved)) throw new Error("GitHub App needs an App ID, installation ID and private key");
+    variables.push({ name: "GITHUB_APP_ID", kind: "value", value: appId }, { name: "GITHUB_APP_INSTALLATION_ID", kind: "value", value: installationId }, { name: "GITHUB_APP_PRIVATE_KEY", kind: "file", ...(appKey ? { value: appKey } : {}) });
+  }
+  if (variables.some((item) => item.name === "GH_TOKEN") && variables.some((item) => item.name === "GITHUB_APP_ID")) throw new Error("Choose either a GitHub App or an API token");
   const key = elements.secretGithubSshKeyInput.value;
   if (key.trim()) variables.push({ name: "GITHUB_SSH_KEY", kind: "file", value: key });
   else if (saved?.hasSshKey && !githubKeyRemoved) variables.push({ name: "GITHUB_SSH_KEY", kind: "file" });
-  if (!variables.length) throw new Error("Add an API token, an SSH key, or both");
+  if (!variables.length) throw new Error("Add an API token, a GitHub App, or an SSH key");
   const host = elements.secretGithubSshHostInput.value.trim();
   if (host) variables.push({ name: "GITHUB_SSH_HOST", kind: "value", value: host });
   const owners = elements.secretGithubOwnersInput.value.split(/[\s,]+/).filter(Boolean).join(",");
   if (owners) variables.push({ name: "GITHUB_OWNERS", kind: "value", value: owners });
   const protocol = githubProtocolInputs().find((input) => input.checked)?.value ?? "https";
   if (protocol === "ssh" && !variables.some((item) => item.name === "GITHUB_SSH_KEY")) throw new Error("Git over SSH needs an SSH key. Add one or choose HTTPS");
-  if (protocol === "https" && !variables.some((item) => item.name === "GH_TOKEN")) throw new Error("Git over HTTPS needs an API token. Add one or choose SSH");
+  if (protocol === "https" && !variables.some((item) => item.name === "GH_TOKEN" || item.name === "GITHUB_APP_ID")) throw new Error("Git over HTTPS needs an API token or GitHub App. Add one or choose SSH");
   variables.push({ name: "GITHUB_GIT_PROTOCOL", kind: "value", value: protocol });
   return variables;
 }
@@ -422,12 +437,20 @@ elements.secretAccountDialog.addEventListener("close", () => {
   onAccountSaved = null;
   for (const control of elements.secretVariableRows.querySelectorAll("[data-secret-value]")) control.value = "";
   elements.secretGithubTokenInput.value = "";
+  elements.secretGithubAppKeyInput.value = "";
   elements.secretGithubSshKeyInput.value = "";
 });
 elements.secretGithubTokenRemoveButton.addEventListener("click", () => {
   githubTokenRemoved = true;
   elements.secretGithubTokenRemoveButton.hidden = true;
   elements.secretGithubTokenInput.placeholder = "The saved token is removed when you save";
+});
+elements.secretGithubAppRemoveButton.addEventListener("click", () => {
+  githubAppRemoved = true;
+  elements.secretGithubAppIdInput.value = "";
+  elements.secretGithubInstallationIdInput.value = "";
+  elements.secretGithubAppKeyInput.value = "";
+  elements.secretGithubAppRemoveButton.hidden = true;
 });
 elements.secretGithubSshKeyRemoveButton.addEventListener("click", () => {
   githubKeyRemoved = true;

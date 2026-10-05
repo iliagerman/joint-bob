@@ -13,6 +13,7 @@ import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { mayShareProject } from "../sharing-files.js";
 import { listTwinRelationships } from "../../cluster-twins.js";
 import { enqueueSecretCredentialSync } from "../../secret-replication.js";
+import { generateSshKeyPair } from "../../github-credentials.js";
 
 /** Automatically sync replicating accounts to active twins. */
 async function syncToTwins(replicate: boolean): Promise<void> {
@@ -78,6 +79,9 @@ app.put("/api/secrets/accounts/:accountId/sharing", async (request, response, ne
     const input = z.object({ grants: z.array(z.object({ clusterId: z.string().uuid(), nodeId: z.string().min(1).nullable() }).strict()).max(1000) }).strict().parse(request.body);
     response.json({ grants: setSecretGrants(await clusterV2Database(), (await getClusterNode()).id, z.string().uuid().parse(request.params.accountId), input.grants) });
   } catch (error) { if (error instanceof ClusterV2HttpError) { response.status(error.statusCode).json({ error: error.message }); return; } next(error); }
+});
+app.post("/api/secrets/github-ssh-key", (_request, response, next) => {
+  try { response.json(generateSshKeyPair("joint-bob")); } catch (error) { next(error); }
 });
 app.get("/api/secrets", async (_request, response, next) => {
   try { response.json({ accounts: await listSecretAccounts() }); } catch (error) { next(error); }

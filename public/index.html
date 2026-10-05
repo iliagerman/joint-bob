@@ -1626,7 +1626,13 @@
         <label>Website origin <span class="muted">(optional)</span><input id="secretAccountOriginInput" data-testid="secret-account-origin-input" type="url" placeholder="https://mobile.com" autocomplete="off" spellcheck="false" aria-describedby="secretAccountOriginHint" /></label>
         <p class="secret-provider-hint" id="secretAccountOriginHint">Use the exact HTTPS scheme, host, and port; subdomains are separate. Assigned scopes authorize ordinary automatic sign-in; MFA and CAPTCHA remain human-only. Bound values are not exported to the shell. Sharing sends an encrypted-at-rest copy to selected nodes; authorized browser sign-in can also use them. Clear the origin to use ordinary environment secrets.</p>
         <div id="secretGithubFields" class="secret-github-fields" data-testid="secret-github-fields" hidden>
-          <label>API token <span class="muted">(Pipelines, pull requests, gh CLI and HTTPS git)</span><input id="secretGithubTokenInput" type="password" autocomplete="new-password" spellcheck="false" data-testid="secret-github-token-input" /></label>
+          <label>API token <span class="muted">(alternative to a GitHub App)</span><input id="secretGithubTokenInput" type="password" autocomplete="new-password" spellcheck="false" data-testid="secret-github-token-input" /></label>
+          <fieldset class="secret-github-protocol"><legend>GitHub App installation (alternative to an API token)</legend>
+            <label>App ID<input id="secretGithubAppIdInput" inputmode="numeric" autocomplete="off" data-testid="secret-github-app-id-input" /></label>
+            <label>Installation ID<input id="secretGithubInstallationIdInput" inputmode="numeric" autocomplete="off" data-testid="secret-github-installation-id-input" /></label>
+            <label>App private key (PEM)<textarea id="secretGithubAppKeyInput" autocomplete="off" spellcheck="false" data-testid="secret-github-app-key-input" placeholder="Paste the GitHub App private key"></textarea></label>
+            <button type="button" class="ghost compact danger" id="secretGithubAppRemoveButton" data-testid="secret-github-app-remove-button" hidden>Remove saved App</button>
+          </fieldset>
           <button type="button" class="ghost compact" id="secretGithubTokenRemoveButton" data-testid="secret-github-token-remove-button" hidden>Remove saved token</button>
           <div class="secret-github-key">
             <label for="secretGithubSshKeyInput">SSH key <span class="muted">(optional, used for git clone, fetch and push)</span></label>
@@ -1648,7 +1654,7 @@
           <fieldset class="secret-github-protocol">
             <legend>Git access</legend>
             <label class="checkbox-row"><input type="radio" name="secretGithubProtocol" value="ssh" data-testid="secret-github-protocol-ssh" /> SSH key</label>
-            <label class="checkbox-row"><input type="radio" name="secretGithubProtocol" value="https" data-testid="secret-github-protocol-https" /> HTTPS with the API token</label>
+            <label class="checkbox-row"><input type="radio" name="secretGithubProtocol" value="https" data-testid="secret-github-protocol-https" /> HTTPS with the API token or GitHub App</label>
           </fieldset>
         </div>
         <div id="secretVariableRows" data-testid="secret-variable-rows"></div>
