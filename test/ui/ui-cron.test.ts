@@ -137,6 +137,34 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   assert.equal(await page.getByTestId("cron-save").isVisible(), true, "Save action should remain reachable on a short mobile viewport");
 });
 
+test("minute interval schedules save and reopen with their cadence", { timeout: 180_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.locator('#loginDialog[open]').waitFor();
+  await page.locator("#loginUsernameInput").fill(environment.username);
+  await page.locator("#loginPasswordInput").fill(environment.password);
+  await page.locator("#loginSubmitButton").click();
+  await page.waitForFunction(() => document.querySelectorAll("#projectList .list-row").length === 3);
+  await page.locator('[aria-label="Actions for Internal Assistant"]').click();
+  await page.locator('[data-testid="project-cron-button"]').click();
+  await page.waitForFunction(() => document.querySelector("#cronDialog").open && document.querySelector("#cronForm").elements.ownerNodeId.options.length > 0);
+  await page.locator("#cronNew").click();
+  await page.getByTestId("cron-frequency").selectOption("minutely");
+  assert.equal(await page.getByTestId("cron-interval-minutes").isVisible(), true);
+  assert.equal(await page.getByTestId("cron-interval-hours").isVisible(), false);
+  await page.getByTestId("cron-name").fill("Quarter-hour report");
+  await page.getByTestId("cron-prompt").fill("Report progress");
+  await page.getByTestId("cron-interval-minutes").fill("15");
+  await page.getByTestId("cron-time").fill("08:05");
+  await page.getByTestId("cron-timezone").fill("UTC");
+  await page.getByTestId("cron-save").click();
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Every 15 minutes"));
+  await page.getByTestId("cron-edit").click();
+  assert.equal(await page.getByTestId("cron-frequency").inputValue(), "minutely");
+  assert.equal(await page.getByTestId("cron-interval-minutes").inputValue(), "15");
+  assert.equal(await page.getByTestId("cron-time").inputValue(), "08:05");
+});
+
 test("scheduled tasks dialog shows a loading spinner until tasks arrive", { timeout: 180_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await page.goto(node.url);

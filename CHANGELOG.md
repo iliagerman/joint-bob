@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Cron tasks can now be scheduled at minute intervals for finer-grained automation.
+
 ## 2.41.0 — 2026-10-05
 
 - The Story tab now lets you pick past commits or pushes and generate a story explaining them without creating a conversation, with picks persisting across Pushes and Commits tabs.

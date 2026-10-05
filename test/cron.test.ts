@@ -16,6 +16,29 @@ test("easy schedules use timezone, skip DST gaps and do not repeat a daily fall-
   assert.equal(nextCronRun({ ...schedule, frequency: "hourly", intervalHours: 3, minute: 15, timezone: "UTC" }, Date.parse("2026-03-03T10:20:00Z")), Date.parse("2026-03-03T12:15:00Z"));
 });
 
+test("minute intervals anchor to local start time and respect run days and quiet hours", async () => {
+  const { nextCronRun, cronInputSchema, CronStore } = await import("../src/cron.js");
+  const schedule = { ...input().schedule, frequency: "minutely" as const, intervalMinutes: 45, hour: 8, minute: 10,
+    days: [1, 2, 3, 4, 5], quietStart: "18:00", quietEnd: "08:00", timezone: "America/New_York" };
+  const friday = Date.parse("2026-03-06T22:55:00Z");
+  assert.equal(nextCronRun(schedule, friday), Date.parse("2026-03-09T12:10:00Z"));
+  assert.equal(nextCronRun(schedule, Date.parse("2026-03-09T12:10:00Z")), Date.parse("2026-03-09T12:55:00Z"));
+  assert.equal(nextCronRun({ ...schedule, intervalMinutes: 1 }, Date.parse("2026-03-09T12:10:00Z")), Date.parse("2026-03-09T12:11:00Z"));
+  assert.equal(nextCronRun({ ...schedule, intervalMinutes: 90, days: undefined, quietStart: undefined, quietEnd: undefined, timezone: "UTC", hour: 8, minute: 15 }, Date.parse("2026-03-09T09:00:00Z")), Date.parse("2026-03-09T09:45:00Z"));
+  const db = new DatabaseSync(":memory:");
+  try {
+    const store = new CronStore(db);
+    const task = store.create({ ...input(), schedule }, friday);
+    assert.equal(task.nextRun, Date.parse("2026-03-09T12:10:00Z"));
+    assert.equal(store.claim(task.id, task.ownerNodeId, task.nextRun)?.dueAt, task.nextRun);
+    assert.equal(store.get(task.id)?.nextRun, Date.parse("2026-03-09T12:55:00Z"));
+  } finally { db.close(); }
+  for (const intervalMinutes of [0, 1441, 1.5]) {
+    assert.equal(cronInputSchema.safeParse({ ...input(), schedule: { ...schedule, intervalMinutes } }).success, false);
+  }
+  assert.equal(cronInputSchema.safeParse({ ...input(), schedule }).success, true);
+});
+
 test("working days, quiet hours and local hourly start filter scheduled runs", async () => {
   const { nextCronRun, cronInputSchema, CronStore } = await import("../src/cron.js");
   const schedule = { ...input().schedule, frequency: "hourly" as const, intervalHours: 2, hour: 8, startHour: 8, minute: 0,

@@ -70,7 +70,7 @@ async function refreshTasks() {
     details.className = "cron-task-details";
     const harness = availableHarnesses.find(candidate => candidate.id === task.engine);
     const reasoning = task.reasoning ?? task.model?.reasoning;
-    const repeat = task.schedule.frequency === "hourly" && (task.schedule.intervalHours ?? 1) > 1 ? `Every ${task.schedule.intervalHours} hours` : task.schedule.frequency;
+    const repeat = task.schedule.frequency === "minutely" ? `Every ${task.schedule.intervalMinutes} minute${task.schedule.intervalMinutes === 1 ? "" : "s"}` : task.schedule.frequency === "hourly" && (task.schedule.intervalHours ?? 1) > 1 ? `Every ${task.schedule.intervalHours} hours` : task.schedule.frequency;
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const execution = [["Repeat", repeat], ["Start time", task.schedule.frequency === "hourly" && task.schedule.startHour === undefined ? `At minute ${task.schedule.minute} (legacy UTC interval)` : `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`],
       ["Run on days", task.schedule.days ? task.schedule.days.map(day => days[day]).join(", ") : "Every eligible day"],
@@ -195,6 +195,7 @@ function editTask(task) {
     field("frequency").value = task.schedule.frequency;
     field("weekday").value = task.schedule.weekday;
     field("intervalHours").value = task.schedule.intervalHours ?? 1;
+    field("intervalMinutes").value = task.schedule.intervalMinutes ?? 15;
     field("time").value = `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`;
     field("quietEnabled").checked = Boolean(task.schedule.quietStart);
     if (task.schedule.quietStart) field("quietStart").value = task.schedule.quietStart;
@@ -207,7 +208,11 @@ function editTask(task) {
 }
 function showScheduleFields() {
   const hourly = field("frequency").value === "hourly";
+  const minutely = field("frequency").value === "minutely";
   document.querySelector("#cronIntervalLabel").hidden = !hourly;
+  field("intervalHours").required = hourly;
+  document.querySelector("#cronMinuteIntervalLabel").hidden = !minutely;
+  field("intervalMinutes").required = minutely;
   document.querySelector("#cronWeekdayLabel").hidden = field("frequency").value !== "weekly";
   document.querySelector("#cronDays").hidden = field("frequency").value === "weekly";
   document.querySelector("#cronQuietTimes").hidden = !field("quietEnabled").checked;
@@ -230,7 +235,8 @@ form.addEventListener("submit", async event => {
       model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,
       sessionId: session?.engine === field("engine").value ? session.id : null, enabled: field("enabled").checked,
       pauseOnFailure: field("pauseOnFailure").checked,
-      schedule: { frequency: field("frequency").value, intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined,
+      schedule: { frequency: field("frequency").value, intervalMinutes: field("frequency").value === "minutely" ? Number(field("intervalMinutes").value) : undefined,
+        intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined,
         hour, minute, startHour: field("frequency").value === "hourly" ? hour : undefined,
         weekday: Number(field("weekday").value), timezone: field("timezone").value,
         days: field("frequency").value === "weekly" ? undefined : days,

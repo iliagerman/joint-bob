@@ -12,9 +12,10 @@ const timezoneSchema = z.string().min(1).max(100).refine(value => {
 }, "Unknown timezone");
 const reasoningSchema = z.enum(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const clockSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM");
-const scheduleSchema = z.object({ frequency: z.enum(["hourly", "daily", "weekly"]), intervalHours: z.number().int().min(1).max(168).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), weekday: z.number().int().min(0).max(6), timezone: timezoneSchema, startHour: z.number().int().min(0).max(23).optional(),
+const scheduleSchema = z.object({ frequency: z.enum(["minutely", "hourly", "daily", "weekly"]), intervalMinutes: z.number().int().min(1).max(1440).optional(), intervalHours: z.number().int().min(1).max(168).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), weekday: z.number().int().min(0).max(6), timezone: timezoneSchema, startHour: z.number().int().min(0).max(23).optional(),
   days: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(), quietStart: clockSchema.optional(), quietEnd: clockSchema.optional(),
 }).strict().superRefine((schedule, context) => {
+  if (schedule.frequency === "minutely" && schedule.intervalMinutes === undefined) context.addIssue({ code: "custom", path: ["intervalMinutes"], message: "Minute interval is required" });
   if (schedule.days && new Set(schedule.days).size !== schedule.days.length) context.addIssue({ code: "custom", path: ["days"], message: "Days must be unique" });
   if (schedule.frequency === "weekly" && schedule.days && !schedule.days.includes(schedule.weekday)) context.addIssue({ code: "custom", path: ["days"], message: "Include the weekly run day" });
   if (Boolean(schedule.quietStart) !== Boolean(schedule.quietEnd) || schedule.quietStart && schedule.quietStart === schedule.quietEnd) context.addIssue({ code: "custom", path: ["quietEnd"], message: "Quiet hours need two different times" });
@@ -66,6 +67,11 @@ export function nextCronRun(schedule: CronInput["schedule"], after: number): num
       const startMinute = Number(schedule.quietStart.slice(0, 2)) * 60 + Number(schedule.quietStart.slice(3));
       const endMinute = Number(schedule.quietEnd.slice(0, 2)) * 60 + Number(schedule.quietEnd.slice(3));
       if (startMinute < endMinute ? wallMinute >= startMinute && wallMinute < endMinute : wallMinute >= startMinute || wallMinute < endMinute) continue;
+    }
+    if (schedule.frequency === "minutely") {
+      const day = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day)) / 86400000;
+      if ((day * 1440 + wallMinute - schedule.hour * 60 - schedule.minute) % schedule.intervalMinutes! === 0) return time;
+      continue;
     }
     if (Number(p.minute) !== schedule.minute) continue;
     if (schedule.frequency === "hourly") {

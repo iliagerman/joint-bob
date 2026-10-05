@@ -2013,8 +2013,9 @@
           <label>Name<input name="name" required maxlength="120" autocomplete="off" data-testid="cron-name"></label>
           <label>Prompt<textarea name="prompt" required maxlength="100000" rows="4" data-testid="cron-prompt"></textarea></label>
           <div class="cron-schedule-grid">
-            <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+            <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="hourly">Hourly</option><option value="minutely">Minutes</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
             <label id="cronTimeLabel">Start time<input name="time" type="time" value="08:00" required data-testid="cron-time"></label>
+            <label id="cronMinuteIntervalLabel" hidden>Repeat every (minutes)<input name="intervalMinutes" type="number" inputmode="numeric" min="1" max="1440" value="15" data-testid="cron-interval-minutes"></label>
             <label id="cronIntervalLabel">Repeat every (hours)<input name="intervalHours" type="number" inputmode="numeric" min="1" max="168" value="1" required data-testid="cron-interval-hours"></label>
             <label id="cronWeekdayLabel">Day<select name="weekday" data-testid="cron-weekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
           </div>
