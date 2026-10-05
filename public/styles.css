@@ -2068,6 +2068,10 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .secret-provider-icon.website { color: #2f9e6c; }
 .secret-provider-icon.custom { color: var(--accent); }
 
+/* Fixed height so adding rows or switching provider never resizes the dialog; only the body scrolls. */
+.secret-account-card { height: min(760px, calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
+.secret-dialog-body { display: grid; align-content: start; gap: 14px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 -6px; padding: 2px 6px; }
+.secret-dialog-body > * { min-width: 0; }
 .secret-dialog-heading { display: flex; align-items: flex-start; gap: 12px; }
 .secret-dialog-icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); }
 .secret-dialog-icon .secret-provider-icon { width: 24px; height: 24px; }

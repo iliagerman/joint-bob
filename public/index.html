@@ -1596,11 +1596,12 @@
     </dialog>
 
     <dialog id="secretAccountDialog" data-testid="secret-account-dialog">
-      <form method="dialog" class="dialog-card" id="secretAccountForm">
+      <form method="dialog" class="dialog-card secret-account-card" id="secretAccountForm">
         <div class="secret-dialog-heading">
           <span class="secret-dialog-icon" id="secretAccountProviderIcon" data-testid="secret-account-provider-icon"></span>
           <div><span class="eyebrow">Secret credentials</span><h2 id="secretAccountTitle">Secret account</h2><p>File entries store their content privately; the environment receives the private file path.</p></div>
         </div>
+        <div class="secret-dialog-body" data-testid="secret-account-dialog-body">
         <label>Label<input id="secretAccountLabelInput" required autocomplete="off" placeholder="Work AWS" data-testid="secret-account-label-input" /></label>
         <div class="secret-provider-field"><span>Provider</span><div id="secretAccountProviderPicker"></div></div>
         <p class="secret-provider-hint" id="secretAccountProviderHint" data-testid="secret-account-provider-hint"></p>
@@ -1635,6 +1636,7 @@
         <div id="secretVariableRows" data-testid="secret-variable-rows"></div>
         <button type="button" class="ghost" id="secretVariableAddButton" data-testid="secret-variable-add-button">Add environment variable</button>
         <label class="checkbox-row"><input id="secretAccountReplicateInput" type="checkbox" data-testid="secret-account-replicate-toggle" /> Replicate this account to paired nodes</label>
+        </div>
         <div class="dialog-actions"><button type="button" class="ghost" id="secretAccountCancelButton" data-testid="secret-account-cancel-button">Cancel</button><button type="submit" class="primary" data-testid="secret-account-save-button">Save account</button></div>
       </form>
     </dialog>

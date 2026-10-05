@@ -60,6 +60,17 @@ test("searchable secret-type picker filters accounts and starts new accounts on 
     await row.getByTestId("secret-account-edit-button").click();
     assert.equal(await page.getByTestId("secret-variable-value-input").inputValue(), "");
     assert.equal(await page.getByTestId("secret-variable-name-input").inputValue(), "STRIPE_API_KEY");
+    const card = page.locator("#secretAccountForm");
+    const dialogBody = page.getByTestId("secret-account-dialog-body");
+    const heightBefore = (await card.boundingBox())!.height;
+    for (let index = 0; index < 8; index += 1) await page.getByTestId("secret-variable-add-button").click();
+    const heightAfter = (await card.boundingBox())!.height;
+    assert.equal(heightAfter, heightBefore, "adding variables does not resize the dialog");
+    assert.ok(heightAfter <= 900, "dialog fits the viewport");
+    const scroll = await dialogBody.evaluate((element) => ({ overflow: element.scrollHeight > element.clientHeight, cardScrolls: element.parentElement!.scrollHeight > element.parentElement!.clientHeight }));
+    assert.ok(scroll.overflow, "the dialog body scrolls once the rows overflow");
+    assert.equal(scroll.cardScrolls, false, "only the body scrolls; heading and actions stay put");
+    assert.ok(await page.getByTestId("secret-account-save-button").isVisible());
     await page.getByTestId("secret-account-cancel-button").click();
 
     await picker.click();

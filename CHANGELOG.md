@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Secret account dialogs now maintain a fixed height and scroll internally instead of resizing when adding variables.
+
 ## 2.37.0 — 2026-10-04
 
 - Replicating secrets now automatically sync to active cluster nodes when created or updated.
