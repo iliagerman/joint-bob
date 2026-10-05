@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Users can now log in to any node in a shared cluster. Cluster members automatically sync user credentials so sign-on works across the network.
+
 ## 2.43.0 — 2026-10-05
 
 - GitHub accounts can now authenticate with a GitHub App installation instead of an API token.

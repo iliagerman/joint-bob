@@ -212,6 +212,13 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   const lockedByPeer = heldLock && heldLock.nodeId !== local.id ? heldLock : undefined;
 
   if (url.searchParams.get("mode") === "terminal") {
+    // Replicated users (logged in from another node) cannot use the terminal.
+    if (session?.isRemoteLogin) {
+      const reason = "Terminal access is not available for replicated users";
+      socket.send(JSON.stringify({ type: "terminalError", error: reason }));
+      socket.close(4031, reason);
+      return;
+    }
     // A peer relaying a browser signed in elsewhere is decided by this node's settings, whoever owns the project.
     if (signedPeer && !await peerMayOpenTerminal(signedPeer)) {
       const reason = `Terminal access from other nodes is disabled on ${local.name}`;

@@ -9,7 +9,7 @@ import { appVersion } from "../../changelog.js";
 import { captureClusterRawBody, clusterBodyParserError, rejectEncodedClusterBody, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
 import { loginSchema, passwordChangeSchema } from "../schemas.js";
 import { app, clusterWorkAllowed, codemirrorDir, flags, publicDir } from "../state.js";
-import { redeemV2Membership } from "../cluster-v2.js";
+import { receiveUserReplication, redeemV2Membership } from "../cluster-v2.js";
 import { receiveManagerCertificate } from "../cluster-manager.js";
 import { confirmTwinHttp } from "../twins.js";
 
@@ -56,6 +56,7 @@ app.use(clusterBodyParserError);
 app.post("/api/cluster/v2/membership/redeem", redeemV2Membership);
 app.post("/api/cluster/v2/manager-transfer/certificate", receiveManagerCertificate);
 app.post("/api/cluster/v2/twins/confirm", confirmTwinHttp);
+app.post("/api/cluster/v2/user-replication", receiveUserReplication);
 
 app.get("/api/auth/status", (request, response) => {
   response.json(authenticationStatus(sessionForId(requestCookie(request, sessionCookieName))));

@@ -26,6 +26,8 @@ export interface AuthStatus {
   mustChangePassword?: boolean;
   csrfToken?: string;
   username?: string;
+  /** True when the user is logged into a node that is not their home node. */
+  isRemoteLogin?: boolean;
 }
 
 export interface AuthSession {
@@ -34,6 +36,10 @@ export interface AuthSession {
   username: string;
   csrfToken: string;
   mustChangePassword: boolean;
+  /** True when the user is logged into a node that is not their home node. */
+  isRemoteLogin: boolean;
+  /** The node ID where this user account originates. Null for the home user. */
+  homeNodeId: string | null;
 }
 
 export interface LoginSessionSummary {
@@ -48,6 +54,7 @@ interface UserRow {
   password_hash: Buffer;
   password_salt: Buffer;
   must_change_password: number;
+  home_node_id: string | null;
 }
 
 interface SessionRow {
@@ -56,6 +63,8 @@ interface SessionRow {
   username: string;
   csrf_token: string;
   must_change_password: number;
+  is_remote_login: number;
+  home_node_id: string | null;
 }
 
 const dataDir = resolveDataDirectory();
@@ -113,8 +122,20 @@ function authDatabase(): DatabaseSync {
       expires_at TEXT NOT NULL
     );
   `);
+  ensureReplicatedUserSchema(database);
   ensureAuditSchema(database);
   return database;
+}
+
+function ensureReplicatedUserSchema(db: DatabaseSync): void {
+  const userColumns = db.prepare("PRAGMA table_info(users)").all() as unknown as Array<{ name: string }>;
+  if (!userColumns.some((column) => column.name === "home_node_id")) {
+    db.exec("ALTER TABLE users ADD COLUMN home_node_id TEXT");
+  }
+  const sessionColumns = db.prepare("PRAGMA table_info(login_sessions)").all() as unknown as Array<{ name: string }>;
+  if (!sessionColumns.some((column) => column.name === "is_remote_login")) {
+    db.exec("ALTER TABLE login_sessions ADD COLUMN is_remote_login INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 function passwordDigest(password: string, salt: Buffer): Buffer {
@@ -187,6 +208,7 @@ export function authenticationStatus(session?: AuthSession): AuthStatus {
       mustChangePassword: session.mustChangePassword,
       csrfToken: session.csrfToken,
       username: session.username,
+      isRemoteLogin: session.isRemoteLogin,
     };
   }
   return { authenticated: false, setupRequired: userCount(authDatabase()) === 0 };
@@ -238,10 +260,11 @@ function createLoginSession(db: DatabaseSync, row: UserRow): AuthSession {
   const id = nanoid(32);
   const csrfToken = randomBytes(32).toString("hex");
   const now = new Date();
-  db.prepare("INSERT INTO login_sessions (id, user_id, csrf_token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)")
-    .run(id, row.id, csrfToken, new Date(now.getTime() + sessionLifetimeMs).toISOString(), now.toISOString());
-  appendAuditEvent(db, { eventType: "auth.login.succeeded", actorType: "user", actorId: row.id, entityType: "user", entityId: row.id });
-  return { id, userId: row.id, username: row.username, csrfToken, mustChangePassword: row.must_change_password === 1 };
+  const isRemoteLogin = row.home_node_id !== null;
+  db.prepare("INSERT INTO login_sessions (id, user_id, csrf_token, expires_at, created_at, is_remote_login) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(id, row.id, csrfToken, new Date(now.getTime() + sessionLifetimeMs).toISOString(), now.toISOString(), isRemoteLogin ? 1 : 0);
+  appendAuditEvent(db, { eventType: "auth.login.succeeded", actorType: "user", actorId: row.id, entityType: "user", entityId: row.id, details: { isRemoteLogin } });
+  return { id, userId: row.id, username: row.username, csrfToken, mustChangePassword: row.must_change_password === 1, isRemoteLogin, homeNodeId: row.home_node_id };
 }
 
 export function sessionForId(sessionId: string | undefined): AuthSession | undefined {
@@ -249,12 +272,21 @@ export function sessionForId(sessionId: string | undefined): AuthSession | undef
   const now = new Date().toISOString();
   authDatabase().prepare("DELETE FROM login_sessions WHERE expires_at <= ?").run(now);
   const row = authDatabase().prepare(`
-    SELECT login_sessions.id, login_sessions.user_id, users.username, login_sessions.csrf_token, users.must_change_password
+    SELECT login_sessions.id, login_sessions.user_id, users.username, login_sessions.csrf_token,
+      users.must_change_password, login_sessions.is_remote_login, users.home_node_id
     FROM login_sessions JOIN users ON users.id = login_sessions.user_id
     WHERE login_sessions.id = ? AND login_sessions.expires_at > ?
   `).get(sessionId, now) as SessionRow | undefined;
   if (!row) return undefined;
-  return { id: row.id, userId: row.user_id, username: row.username, csrfToken: row.csrf_token, mustChangePassword: row.must_change_password === 1 };
+  return {
+    id: row.id,
+    userId: row.user_id,
+    username: row.username,
+    csrfToken: row.csrf_token,
+    mustChangePassword: row.must_change_password === 1,
+    isRemoteLogin: row.is_remote_login === 1,
+    homeNodeId: row.home_node_id,
+  };
 }
 
 /** The cluster-stable reviewer identity: usernames match across nodes even though user ids do not. */
@@ -483,4 +515,151 @@ export function sessionCookieValue(session: AuthSession): string {
 
 export function clearSessionCookieValue(): string {
   return `${sessionCookieName}=; Path=/; HttpOnly;${secureAttribute} SameSite=Strict; Max-Age=0`;
+}
+
+// ============================================================================
+// Replicated User Management
+// ============================================================================
+
+export interface ReplicatedUserInput {
+  username: string;
+  passwordHash: Buffer;
+  passwordSalt: Buffer;
+  homeNodeId: string;
+  mfaSecretEncrypted?: string | null;
+  mfaLastUsedStep?: number;
+  mfaRecoveryCodes?: string[];
+}
+
+export interface ReplicatedUserRecord {
+  id: string;
+  username: string;
+  homeNodeId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Creates or updates a replicated user from another node. */
+export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUserRecord {
+  if (!validUsername(input.username)) throw new Error("Invalid username for replicated user");
+  const db = authDatabase();
+  const now = new Date().toISOString();
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const existing = db.prepare("SELECT id, home_node_id FROM users WHERE username = ? COLLATE NOCASE").get(input.username) as { id: string; home_node_id: string | null } | undefined;
+
+    if (existing) {
+      if (existing.home_node_id === null) {
+        throw new Error("Cannot overwrite the home user with a replicated user");
+      }
+      if (existing.home_node_id !== input.homeNodeId) {
+        throw new Error("Username conflict: replicated user from different home node");
+      }
+      db.prepare(`
+        UPDATE users SET password_hash = ?, password_salt = ?, updated_at = ?
+        WHERE id = ?
+      `).run(input.passwordHash, input.passwordSalt, now, existing.id);
+
+      if (input.mfaSecretEncrypted !== undefined) {
+        if (input.mfaSecretEncrypted === null) {
+          db.prepare("DELETE FROM user_mfa WHERE user_id = ?").run(existing.id);
+          db.prepare("DELETE FROM mfa_recovery_codes WHERE user_id = ?").run(existing.id);
+        } else {
+          db.prepare(`
+            INSERT INTO user_mfa (user_id, secret_encrypted, last_used_step) VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET secret_encrypted = excluded.secret_encrypted, last_used_step = excluded.last_used_step
+          `).run(existing.id, input.mfaSecretEncrypted, input.mfaLastUsedStep ?? 0);
+          if (input.mfaRecoveryCodes) {
+            db.prepare("DELETE FROM mfa_recovery_codes WHERE user_id = ?").run(existing.id);
+            const insertCode = db.prepare("INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (?, ?)");
+            for (const codeHash of input.mfaRecoveryCodes) {
+              insertCode.run(existing.id, codeHash);
+            }
+          }
+        }
+      }
+
+      db.exec("COMMIT");
+      appendAuditEvent(db, { eventType: "auth.replicated_user.updated", actorType: "system", entityType: "user", entityId: existing.id, details: { homeNodeId: input.homeNodeId } });
+      return { id: existing.id, username: input.username, homeNodeId: input.homeNodeId, createdAt: now, updatedAt: now };
+    }
+
+    const id = nanoid(18);
+    db.prepare(`
+      INSERT INTO users (id, username, password_hash, password_salt, must_change_password, home_node_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+    `).run(id, input.username, input.passwordHash, input.passwordSalt, input.homeNodeId, now, now);
+
+    if (input.mfaSecretEncrypted) {
+      db.prepare("INSERT INTO user_mfa (user_id, secret_encrypted, last_used_step) VALUES (?, ?, ?)").run(id, input.mfaSecretEncrypted, input.mfaLastUsedStep ?? 0);
+      if (input.mfaRecoveryCodes) {
+        const insertCode = db.prepare("INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (?, ?)");
+        for (const codeHash of input.mfaRecoveryCodes) {
+          insertCode.run(id, codeHash);
+        }
+      }
+    }
+
+    db.exec("COMMIT");
+    appendAuditEvent(db, { eventType: "auth.replicated_user.created", actorType: "system", entityType: "user", entityId: id, details: { homeNodeId: input.homeNodeId } });
+    return { id, username: input.username, homeNodeId: input.homeNodeId, createdAt: now, updatedAt: now };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/** Removes a replicated user and all their sessions. */
+export function deleteReplicatedUser(homeNodeId: string, username: string): boolean {
+  const db = authDatabase();
+  const user = db.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE AND home_node_id = ?").get(username, homeNodeId) as { id: string } | undefined;
+  if (!user) return false;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM login_sessions WHERE user_id = ?").run(user.id);
+    db.prepare("DELETE FROM users WHERE id = ?").run(user.id);
+    db.exec("COMMIT");
+    appendAuditEvent(db, { eventType: "auth.replicated_user.deleted", actorType: "system", entityType: "user", entityId: user.id, details: { homeNodeId } });
+    return true;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/** Lists all replicated users on this node. */
+export function listReplicatedUsers(): ReplicatedUserRecord[] {
+  const db = authDatabase();
+  const rows = db.prepare(`
+    SELECT id, username, home_node_id, created_at, updated_at
+    FROM users WHERE home_node_id IS NOT NULL ORDER BY username
+  `).all() as unknown as Array<{ id: string; username: string; home_node_id: string; created_at: string; updated_at: string }>;
+  return rows.map((row) => ({
+    id: row.id,
+    username: row.username,
+    homeNodeId: row.home_node_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+/** Gets the home user's credentials for replication to other nodes. */
+export function getHomeUserForReplication(): { username: string; passwordHash: Buffer; passwordSalt: Buffer; mfaSecretEncrypted: string | null; mfaLastUsedStep: number; mfaRecoveryCodes: string[] } | undefined {
+  const db = authDatabase();
+  const user = db.prepare("SELECT id, username, password_hash, password_salt FROM users WHERE home_node_id IS NULL").get() as { id: string; username: string; password_hash: Buffer; password_salt: Buffer } | undefined;
+  if (!user) return undefined;
+
+  const mfa = db.prepare("SELECT secret_encrypted, last_used_step FROM user_mfa WHERE user_id = ?").get(user.id) as { secret_encrypted: string; last_used_step: number } | undefined;
+  const recoveryCodes = mfa ? (db.prepare("SELECT code_hash FROM mfa_recovery_codes WHERE user_id = ?").all(user.id) as unknown as Array<{ code_hash: string }>).map((row) => row.code_hash) : [];
+
+  return {
+    username: user.username,
+    passwordHash: user.password_hash,
+    passwordSalt: user.password_salt,
+    mfaSecretEncrypted: mfa?.secret_encrypted ?? null,
+    mfaLastUsedStep: mfa?.last_used_step ?? 0,
+    mfaRecoveryCodes: recoveryCodes,
+  };
 }

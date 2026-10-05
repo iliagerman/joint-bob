@@ -14,6 +14,11 @@ import { mayShareProject } from "../sharing-files.js";
 import { listTwinRelationships } from "../../cluster-twins.js";
 import { enqueueSecretCredentialSync } from "../../secret-replication.js";
 import { generateSshKeyPair } from "../../github-credentials.js";
+import { Feature, requireFeature } from "../http-auth.js";
+
+// Block secrets management for replicated users
+app.use("/api/secrets", requireFeature(Feature.SECRETS_MANAGE));
+app.use("/api/clusters/:clusterId/secrets", requireFeature(Feature.SECRETS_MANAGE));
 
 /** Automatically sync replicating accounts to active twins. */
 async function syncToTwins(replicate: boolean): Promise<void> {

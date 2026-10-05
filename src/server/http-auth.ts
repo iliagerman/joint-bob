@@ -9,6 +9,7 @@ import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../cluster-iden
 import { ClusterProtocolError, verifyClusterRequest } from "../cluster-protocol.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
+import { Feature, hasFeature, type FeatureKey } from "../features.js";
 
 const clusterRawBodies = new WeakMap<IncomingMessage, Buffer>();
 
@@ -159,3 +160,25 @@ export function requireCsrf(request: Request, response: Response, next: NextFunc
   }
   sendError(response, 403, "Invalid CSRF token");
 }
+
+/** Middleware that blocks access if the user does not have the required feature. */
+export function requireFeature(feature: FeatureKey): (request: Request, response: Response, next: NextFunction) => void {
+  return (_request: Request, response: Response, next: NextFunction) => {
+    const session = response.locals.authSession as AuthSession | undefined;
+    if (response.locals.machineAuth) {
+      next();
+      return;
+    }
+    if (!session) {
+      sendError(response, 401, "Unauthorized");
+      return;
+    }
+    if (!hasFeature({ isRemoteLogin: session.isRemoteLogin }, feature)) {
+      sendError(response, 403, `Access to ${feature} is not available for replicated users`);
+      return;
+    }
+    next();
+  };
+}
+
+export { Feature } from "../features.js";

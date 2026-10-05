@@ -1,6 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
+import { clusterV2Database } from "../cluster-v2-store.js";
 import { managedProjectRelocationPath } from "../managed-home.js";
 import { projectNameOverrides } from "../names.js";
 import { ProjectDirectoryImportError, relocateProjectDirectory } from "../project-directory-import.js";
@@ -19,12 +20,33 @@ function unavailableProjectStatus(message = "No Syncthing folder is configured")
   return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
 }
 
-export async function projectsWithSharedNames(includeSyncStatus = true): Promise<ProjectView[]> {
+interface ProjectListOptions {
+  includeSyncStatus?: boolean;
+  /** When set, filter to projects shared with clusters this node belongs to. */
+  filterForHomeNodeId?: string | null;
+}
+
+/** Lists projects visible to the current user, optionally filtered for replicated users. */
+export async function projectsWithSharedNames(includeSyncStatusOrOptions?: boolean | ProjectListOptions): Promise<ProjectView[]> {
+  const options = typeof includeSyncStatusOrOptions === "boolean"
+    ? { includeSyncStatus: includeSyncStatusOrOptions }
+    : includeSyncStatusOrOptions ?? {};
+  const { includeSyncStatus = true, filterForHomeNodeId } = options;
   const [projects, overrides, locks, local] = await Promise.all([listProjects(), projectNameOverrides(), projectLocks(), getClusterNode()]);
   const statuses = includeSyncStatus
     ? await syncthingFolderStatuses(projects.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []))
     : {};
-  return projects.map((project) => {
+
+  let visibleProjects = projects;
+  if (filterForHomeNodeId) {
+    const homeNodeClusters = await getHomeNodeClusters(filterForHomeNodeId);
+    visibleProjects = projects.filter((project) => {
+      if (!project.clusterIds || project.clusterIds.length === 0) return false;
+      return project.clusterIds.some((clusterId) => homeNodeClusters.has(clusterId));
+    });
+  }
+
+  return visibleProjects.map((project) => {
     const lock = locks[project.id];
     return {
       ...project,
@@ -36,6 +58,13 @@ export async function projectsWithSharedNames(includeSyncStatus = true): Promise
       ...(lock ? { lock, lockedElsewhere: lock.nodeId !== local.id } : {}),
     };
   });
+}
+
+/** Gets the set of cluster IDs that a node is a member of. */
+async function getHomeNodeClusters(nodeId: string): Promise<Set<string>> {
+  const db = await clusterV2Database();
+  const rows = db.prepare("SELECT cluster_id FROM sharing_memberships WHERE node_id = ?").all(nodeId) as unknown as Array<{ cluster_id: string }>;
+  return new Set(rows.map((row) => row.cluster_id));
 }
 
 /** A project locked to a peer node must not be edited here. This prevents accidental parallel

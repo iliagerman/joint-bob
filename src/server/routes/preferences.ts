@@ -17,10 +17,13 @@ import { listTasks } from "../../tasks.js";
 import { isHarnessId } from "../../types.js";
 import { listUserPins, setUserPin } from "../../user-pins.js";
 import { assertManagedHomeChangeAllowed } from "../cluster-helpers.js";
-import { sendError } from "../http-auth.js";
+import { Feature, requireFeature, sendError } from "../http-auth.js";
 import { broadcastToAllClients, reloadSharedSkills } from "../realtime.js";
 import { auditQuerySchema, recentSessionIdentitySchema, recentSessionSchema, registeredHarnessIdSchema, resourcePathsSchema, runtimeCheckSchema, settingsSchema, userPinSchema, userPreferencesSchema } from "../schemas.js";
 import { app } from "../state.js";
+
+// Block settings access for replicated users
+app.use("/api/settings", requireFeature(Feature.SETTINGS));
 
 app.get("/api/preferences", (_request, response) => {
   const session = response.locals.authSession as AuthSession;

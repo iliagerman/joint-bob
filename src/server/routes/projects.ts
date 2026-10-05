@@ -1,5 +1,6 @@
 import path from "node:path";
 import { z } from 'zod';
+import type { AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
 import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { listHarnessCommands } from "../../commands.js";
@@ -25,7 +26,12 @@ import { projectHasMergeReservation } from "../task-runs.js";
 app.get("/api/projects", async (request, response, next) => {
   try {
     const query = projectListQuerySchema.parse(request.query);
-    response.json({ projects: await projectsWithSharedNames(query.syncStatus === "true") });
+    const session = response.locals.authSession as AuthSession | undefined;
+    const projects = await projectsWithSharedNames({
+      includeSyncStatus: query.syncStatus === "true",
+      filterForHomeNodeId: session?.isRemoteLogin ? session.homeNodeId : undefined,
+    });
+    response.json({ projects });
   } catch (error) {
     next(error);
   }

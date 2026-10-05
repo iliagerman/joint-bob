@@ -13,6 +13,7 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterRequestRawBody, isClusterOriginUrl, sendError } from "./http-auth.js";
 import { listDifficultyClassifiers } from "../classifiers/registry.js";
+import { applyUserReplication } from "../user-replication.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const origin = z.string().transform((value, context) => {
@@ -245,4 +246,14 @@ export async function publishNodeDescriptor(): Promise<void> {
     await signedPeerPost(twin, "/api/cluster/v2/twins/descriptor", { relationshipId: twin.relationshipId, ...descriptor });
   }
   await flushV2MembershipOutbox();
+}
+
+/** Receives replicated user credentials from a peer node. */
+export async function receiveUserReplication(request: Request, response: Response, next: NextFunction): Promise<void> {
+  try {
+    const senderNodeId = response.locals.machineNodeId as string | undefined;
+    if (!senderNodeId) throw new ClusterV2HttpError(401, "Unauthorized");
+    await applyUserReplication(request.body);
+    response.json({ received: true });
+  } catch (error) { mapV2Error(error, response, next); }
 }
