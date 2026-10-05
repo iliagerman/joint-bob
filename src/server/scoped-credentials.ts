@@ -64,14 +64,18 @@ function ensureSchema(db:DatabaseSync):void{
  const columns=db.prepare('PRAGMA table_info(cluster_v2_scoped_secret_copies)').all() as Array<{name:string}>;
  if(!columns.some(column=>column.name==='grants'))db.exec("ALTER TABLE cluster_v2_scoped_secret_copies ADD COLUMN grants TEXT NOT NULL DEFAULT '[]'");
 }
-function scopesForAccount(db:DatabaseSync,accountId:string,allowed:string[]):Account['scopes']{
+function scopesForAccount(db:DatabaseSync,local:string,accountId:string,allowed:string[]):Account['scopes']{
  const rows=db.prepare('SELECT scope_type,scope_id FROM secret_assignments WHERE account_id=?').all(accountId) as unknown as Array<{scope_type:'workspace'|'project'|'conversation';scope_id:string}>;
  return rows.flatMap(row=>{
   const projects=row.scope_type==='project'?[{id:row.scope_id}]:row.scope_type==='workspace'
    ?db.prepare('SELECT id FROM projects WHERE workspace_id=?').all(row.scope_id) as unknown as Array<{id:string}>
    :db.prepare("SELECT DISTINCT project_id id FROM conversation_records WHERE engine||':'||session_id=?").all(row.scope_id) as unknown as Array<{id:string}>;
   const projectIds=projects.map(project=>project.id).filter(id=>allowed.includes(id));
-  return projectIds.length?[{type:row.scope_type,id:row.scope_id,projectIds}]:[];
+  if(!projectIds.length)return [];
+  // A workspace mirrored from another node has a local-only id no recipient can map, so its projects travel individually.
+  const mirror=row.scope_type==='workspace'?db.prepare('SELECT owner_node_id FROM cluster_v2_shared_workspaces WHERE workspace_id=?').get(row.scope_id) as {owner_node_id:string}|undefined:undefined;
+  if(mirror&&mirror.owner_node_id!==local&&!isTrustedTwin(db,local,mirror.owner_node_id))return projectIds.map(id=>({type:'project' as const,id,projectIds:[id]}));
+  return [{type:row.scope_type,id:row.scope_id,projectIds}];
  });
 }
 function snapshot(db:DatabaseSync,local:string,peer:string):Account[]{
@@ -83,7 +87,7 @@ function snapshot(db:DatabaseSync,local:string,peer:string):Account[]{
  return rows.flatMap(row=>{
   const grants=activeGrants(db,local,peer,row.id).filter(grant=>!row.project_id||Boolean(db.prepare("SELECT 1 FROM sharing_resource_shares WHERE kind='project' AND resource_id=? AND cluster_id=?").get(row.project_id,grant.clusterId)));
   if(row.project_id&&(!grants.length||!allowed.includes(row.project_id)))return [];
-  const scopes=scopesForAccount(db,row.id,allowed).map(scope=>{
+  const scopes=scopesForAccount(db,local,row.id,allowed).map(scope=>{
    const clusterIds=(db.prepare(`SELECT DISTINCT sh.cluster_id id FROM sharing_resource_shares sh
     JOIN sharing_memberships owner ON owner.cluster_id=sh.cluster_id AND owner.node_id=?
     JOIN sharing_memberships target ON target.cluster_id=sh.cluster_id AND target.node_id=?
