@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.41.0 — 2026-10-05
 
-- The Story tab now lets you pick past commits or pushes and generate a story explaining them, without creating a conversation.
+- The Story tab now lets you pick past commits or pushes and generate a story explaining them without creating a conversation, with picks persisting across Pushes and Commits tabs.
 
 ## 2.40.0 — 2026-10-05
 
