@@ -4,7 +4,7 @@ import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { renderSideBySideDiff } from "./git-diff-view.js";
-import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyHasSaved, storyIsFresh } from "./git-story.js";
+import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyCommitsToExplain, storyHasSaved, storyHidesScope, storyIsFresh, storyPicking } from "./git-story.js";
 import { fillModelOptions, fillThinkingOptions } from "./git-reviewer-options.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -78,8 +78,9 @@ export async function openGitReview(conversationId = null) {
     conversationId,
     apiUrl: gitApiUrl,
     onChange: syncStoryChrome,
-    generate: () => { void generateStoryFromView(); },
+    generate: (options) => { void generateStoryFromView(options); },
     coverage: storyCoverage,
+    hasCoverage: storyCoverageReady,
     focusReviewer: () => elements.gitReviewHarness.focus(),
     closeDialog: () => elements.gitReviewDialog.close(),
   });
@@ -612,14 +613,26 @@ function syncStoryChrome() {
   const commits = storyCommitCount();
   elements.gitReviewStoryCommitsText.textContent = commits ? `Include this conversation's commits (${commits})` : "Include this conversation's commits (none found)";
   if (git.tab !== "story") {
+    elements.gitReviewDialog.querySelector(".git-review-card").classList.remove("is-story-bare");
     elements.gitReviewGenerate.textContent = "Generate review comments";
     elements.gitReviewGenerate.disabled = !git.harnesses.length;
     return;
   }
+  // Picked commits need neither the conversation scope toolbar nor its note.
+  const bare = storyHidesScope();
+  elements.gitReviewToolbar.hidden = bare;
+  elements.gitReviewDialog.querySelector(".git-review-card").classList.toggle("is-story-bare", bare);
+  if (bare) elements.gitReviewAmbiguity.hidden = true;
+  else renderAmbiguity();
   const chrome = storyChrome();
   elements.gitReviewGenerate.textContent = chrome.button;
-  elements.gitReviewGenerate.disabled = chrome.disabled || !git.harnesses.length;
+  const nothingToExplain = !storyHasSaved() && !storyPicking() && !storyCoverageReady();
+  elements.gitReviewGenerate.disabled = chrome.disabled || nothingToExplain || !git.harnesses.length;
   setStatus(chrome.status);
+}
+
+function storyCoverageReady() {
+  return Boolean((git.status && selectedPaths().length) || (git.conversationId && elements.gitReviewStoryCommits.checked && storyCommitCount()));
 }
 
 function storyCoverage() {
@@ -646,10 +659,18 @@ async function openStoryTab() {
   syncStoryChrome();
 }
 
-async function generateStoryFromView() {
+async function generateStoryFromView({ conversation = false } = {}) {
   if (!git.harnesses.length) { toast("Git review is still loading"); return; }
   const harness = selectedHarness();
   if (!harness?.ready) { toast("Selected reviewer is unavailable on this node"); return; }
+  const provider = elements.gitReviewModel.selectedOptions[0]?.dataset.provider || harness.configuration?.fixedProvider;
+  const reviewer = { harnessId: harness.id, ...(provider ? { provider } : {}), modelId: elements.gitReviewModel.value, thinkingLevel: elements.gitReviewThinking.value };
+  const picked = conversation ? null : storyCommitsToExplain();
+  if (picked) {
+    if (!picked.length) { toast("Pick at least one commit or push"); return; }
+    await generateStory({ conversationId: git.conversationId, source: "commits", commits: picked, scope: "all", paths: [], includeCommits: false, ...reviewer });
+    return;
+  }
   try {
     await ensureStatus();
     // The server only trusts a conversation file list it handed out in the last few minutes.
@@ -658,12 +679,10 @@ async function generateStoryFromView() {
   const includeCommits = Boolean(git.conversationId) && elements.gitReviewStoryCommits.checked;
   const paths = selectedPaths();
   if (!paths.length && !(includeCommits && storyCommitCount())) { toast("Nothing to explain: the selected scope has no pending files and no commits"); return; }
-  const provider = elements.gitReviewModel.selectedOptions[0]?.dataset.provider || harness.configuration?.fixedProvider;
   await generateStory({
     conversationId: git.conversationId,
     scope: git.conversationId && !elements.gitReviewAllChanges.checked ? "conversation" : "all",
-    paths, includeCommits, harnessId: harness.id, ...(provider ? { provider } : {}),
-    modelId: elements.gitReviewModel.value, thinkingLevel: elements.gitReviewThinking.value,
+    paths, includeCommits, ...reviewer,
   });
 }
 

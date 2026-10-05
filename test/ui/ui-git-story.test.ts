@@ -188,3 +188,88 @@ test("Story tab marks a saved story outdated and offers Regenerate", { timeout: 
   assert.match(await page.getByTestId("git-story-outdated").innerText(), /2 new turns and 1 changed file[\s\S]*app\.ts[\s\S]*Regenerate/);
   assert.equal(await page.getByTestId("git-review-generate").innerText(), "Regenerate story");
 });
+
+test("Story tab explains commits picked from past pushes or history, without the conversation", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const commit = (n: number, subject: string) => ({ hash: `${String(n).repeat(7)}${"0".repeat(33)}`, shortHash: String(n).repeat(7), author: "Ada", authorEmail: "ada@example.com", date: new Date(Date.now() - n * 3_600_000).toISOString(), subject, body: "" });
+  const history = [commit(1, "chore(release): 2.40.0"), commit(2, "feat(git): add Story tab"), commit(3, "fix(secrets): mirrored workspace"), commit(4, "docs: release notes")];
+  const pushes = [
+    { ref: "origin/main", at: new Date(Date.now() - 3_600_000).toISOString(), from: history[2].hash, to: history[0].hash, commits: [history[0], history[1]], more: false },
+    { ref: "origin/main", at: new Date(Date.now() - 7_200_000).toISOString(), from: null, to: history[2].hash, commits: [history[2]], more: false },
+  ];
+  const posts: Array<Record<string, unknown>> = [];
+  const picked = {
+    ...saved,
+    facts: { conversation: false, turns: [], commits: [{ hash: history[1].hash, shortHash: history[1].shortHash, subject: history[1].subject, turn: 0, date: history[1].date }, { hash: history[0].hash, shortHash: history[0].shortHash, subject: history[0].subject, turn: 0, date: history[0].date }], files: facts.files.map((file) => ({ ...file, where: [history[1].shortHash] })) },
+    story: { ...written, timeline: [], implementation: { ...written.implementation, decisions: [{ ...written.implementation.decisions[0], turn: null }] } },
+    sources: { kind: "commits", scope: "all", pendingPaths: [], includeCommits: false, commits: [history[0].hash, history[1].hash] },
+  };
+  await page.route("**/api/projects/*/git/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/status")) return route.fulfill({ json: { ...status, unstaged: [], untracked: [], clean: true } });
+    if (url.pathname.endsWith("/scope")) return route.fulfill({ json: { paths: [], lastHarness: "claude" } });
+    if (url.pathname.endsWith("/guide-latest")) return route.fulfill({ json: { latest: null } });
+    if (url.pathname.endsWith("/story-latest")) return route.fulfill({ json: { latest: null, commits: [] } });
+    if (url.pathname.endsWith("/pushes")) return route.fulfill({ json: { pushes } });
+    if (url.pathname.endsWith("/history")) return route.fulfill({ json: { commits: history } });
+    if (url.pathname.endsWith("/story")) {
+      posts.push(route.request().postDataJSON());
+      return route.fulfill({ json: { thread, saved: picked, freshness: { fresh: true, newTurns: 0, changedPaths: [] } } });
+    }
+    return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
+  });
+  await mockReviewers(page);
+  await openGit(page, environment, node.url);
+  await page.getByTestId("git-review-tab-story").click();
+  await page.getByTestId("git-story-empty").waitFor();
+  // Nothing in this conversation to explain: generating it is off, picking is the way forward.
+  await page.waitForFunction(() => (document.querySelector("[data-testid=git-story-generate]") as HTMLButtonElement | null)?.disabled === true);
+  assert.equal(await page.getByTestId("git-review-generate").isDisabled(), true, "the reviewer bar cannot start an empty story either");
+  await page.getByTestId("git-story-pick").click();
+  await page.getByTestId("git-story-push").first().waitFor();
+  assert.equal(await page.locator("#gitReviewToolbar").isVisible(), false, "the conversation scope toolbar is hidden while picking");
+  assert.equal(await page.getByTestId("git-story-push").count(), 2);
+  assert.match(await page.getByTestId("git-story-push").first().innerText(), /Pushed to origin\/main[\s\S]*2 commits[\s\S]*chore\(release\): 2\.40\.0 · feat\(git\): add Story tab/);
+  assert.equal(await page.getByTestId("git-review-generate").isDisabled(), true);
+
+  await page.getByTestId("git-story-push").first().getByTestId("git-story-pick-box").check();
+  assert.match(await page.getByTestId("git-story-pick-summary").innerText(), /2 of 20 commits picked: 1111111, 2222222/);
+  assert.equal(await page.getByTestId("git-review-generate").innerText(), "Generate story for 2 commits");
+
+  await page.getByTestId("git-story-pick-commits").click();
+  assert.equal(await page.getByTestId("git-story-pick-commit").count(), 4);
+  assert.equal(await page.getByTestId("git-story-pick-commit").nth(1).getByTestId("git-story-pick-box").isChecked(), true, "picks carry across tabs");
+  await page.getByTestId("git-story-pick-commit").nth(1).getByTestId("git-story-pick-box").uncheck();
+  await page.getByTestId("git-story-pick-commit").nth(3).getByTestId("git-story-pick-box").check();
+  assert.equal(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.pick), history[3].hash, "focus stays on the toggled box");
+  await page.getByTestId("git-story-pick-pushes").click();
+  assert.equal(await page.getByTestId("git-story-push").first().getByTestId("git-story-pick-box").evaluate((box: HTMLInputElement) => box.indeterminate), true);
+
+  const fit = await page.evaluate(() => document.scrollingElement!.scrollHeight <= innerHeight);
+  assert.equal(fit, true, "the picker never scrolls the page");
+
+  await page.getByTestId("git-story-pick-generate").click();
+  await page.getByTestId("git-story-title").waitFor();
+  const { conversationId, ...request } = posts.at(-1) as { conversationId: string };
+  assert.ok(conversationId);
+  assert.deepEqual(request, { source: "commits", commits: [history[0].hash, history[3].hash], scope: "all", paths: [], includeCommits: false, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "xhigh" });
+  assert.equal(await page.locator("#gitReviewToolbar").isVisible(), false, "conversation scope does not apply to a commits story");
+  assert.match(await page.getByTestId("git-story-section-conversation").innerText(), /Commits/);
+  await page.getByTestId("git-story-section-conversation").click();
+  assert.equal(await page.getByTestId("git-story-commit").count(), 2);
+  assert.match(await page.getByTestId("git-story-panel").innerText(), /2222222[\s\S]*feat\(git\): add Story tab[\s\S]*1111111/);
+
+  // Regenerating a commits story explains the same commits again, not the conversation.
+  await page.getByTestId("git-review-generate").click();
+  for (let wait = 0; wait < 50 && posts.length < 2; wait += 1) await page.waitForTimeout(100);
+  await page.getByTestId("git-story-title").waitFor();
+  assert.equal(posts.length, 2);
+  assert.deepEqual((posts[1] as { commits: string[] }).commits, [history[0].hash, history[1].hash]);
+  assert.equal(await page.getByTestId("git-story-explain-conversation").isVisible(), true);
+
+  // From a saved story, the picker opens again and Back returns to the story.
+  await page.getByTestId("git-story-pick").click();
+  await page.getByTestId("git-story-picker").waitFor();
+  await page.getByTestId("git-story-pick-cancel").click();
+  await page.getByTestId("git-story-title").waitFor();
+});

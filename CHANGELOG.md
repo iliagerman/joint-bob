@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- The Story tab now lets you pick past commits or pushes and generate a story explaining them, without creating a conversation.
+
 ## 2.40.0 — 2026-10-05
 
 - Git review now includes a Story tab with interactive flow diagrams, conversation context, step-by-step examples, and implementation details that explain code changes without reading diffs.

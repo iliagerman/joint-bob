@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import { gitPushHistory } from "../src/git-review.js";
 import { buildTurns, commitHashesIn } from "../src/server/conversation-turns.js";
 import { checkStory, fileArea, lineCounts, sourcesFromTurns, turnDigest, type ChangeStory } from "../src/server/git-change-story.js";
 
@@ -108,5 +109,67 @@ test("sources include conversation commits and pending files, and the fingerprin
     const edited = await sourcesFromTurns(root, buildTurns(messages), true, sources);
     assert.notEqual(edited.fingerprint, first.fingerprint, "an edit outdates the story");
     await assert.rejects(sourcesFromTurns(root, [], false, { scope: "all", pendingPaths: [], includeCommits: false }), /Nothing to explain/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("picked commits are explained oldest first without the conversation, and bad picks are refused", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-story-pick-"));
+  const run = (...args: string[]) => git("git", ["-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args]);
+  try {
+    await git("git", ["init", "-q", root]);
+    const hashes: string[] = [];
+    for (const [index, name] of ["one.ts", "two.ts", "three.ts"].entries()) {
+      await writeFile(path.join(root, name), `export const n = ${index};\n`);
+      await run("add", name);
+      await run("commit", "-q", "-m", `add ${name}`, "-m", `Because ${name} is needed.`, `--date=2026-10-0${index + 1}T10:00:00Z`);
+      hashes.push((await run("rev-parse", "HEAD")).stdout.trim());
+    }
+    const sources = { kind: "commits" as const, scope: "all" as const, pendingPaths: [], includeCommits: false, commits: [hashes[2], hashes[0]] };
+    const picked = await sourcesFromTurns(root, [], false, sources);
+    assert.deepEqual(picked.facts.commits.map((commit) => [commit.subject, commit.turn]), [["add one.ts", 0], ["add three.ts", 0]]);
+    assert.equal(picked.facts.commits[0].body, "Because one.ts is needed.");
+    assert.deepEqual(picked.facts.files.map((file) => file.path), ["one.ts", "three.ts"]);
+    assert.equal(picked.facts.conversation, false);
+    assert.deepEqual(picked.facts.turns, []);
+    await assert.rejects(sourcesFromTurns(root, [], false, { ...sources, commits: ["0000000"] }), /no longer in this repository/);
+    for (let index = 0; index < 18; index += 1) {
+      await run("commit", "-q", "--allow-empty", "-m", `empty ${index}`);
+      hashes.push((await run("rev-parse", "HEAD")).stdout.trim());
+    }
+    assert.equal(new Set(hashes).size, 21);
+    await assert.rejects(sourcesFromTurns(root, [], false, { ...sources, commits: hashes }), /at most 20 commits/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("push history lists each push with its own commits and skips fetches", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-pushes-"));
+  const work = path.join(root, "work");
+  const other = path.join(root, "other");
+  const remote = path.join(root, "remote.git");
+  const run = (cwd: string, ...args: string[]) => git("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args]);
+  const commit = async (cwd: string, name: string) => { await writeFile(path.join(cwd, name), `${name}\n`); await run(cwd, "add", name); await run(cwd, "commit", "-q", "-m", `add ${name}`); };
+  try {
+    await git("git", ["init", "-q", "--bare", "-b", "main", remote]);
+    await git("git", ["clone", "-q", remote, work]);
+    await run(work, "checkout", "-q", "-b", "main");
+    await commit(work, "a.txt");
+    await run(work, "push", "-q", "-u", "origin", "main");
+    await commit(work, "b.txt");
+    await commit(work, "c.txt");
+    await run(work, "push", "-q");
+    // Someone else pushes; our fetch must not count as our push.
+    await git("git", ["clone", "-q", remote, other]);
+    await commit(other, "d.txt");
+    await run(other, "push", "-q");
+    await run(work, "pull", "-q", "--ff-only");
+    await commit(work, "e.txt");
+    await run(work, "push", "-q");
+    const pushes = await gitPushHistory(work);
+    assert.deepEqual(pushes.map((push) => [push.ref, push.commits.map((item) => item.subject)]), [
+      ["origin/main", ["add e.txt"]],
+      ["origin/main", ["add c.txt", "add b.txt"]],
+      ["origin/main", ["add a.txt"]],
+    ]);
+    assert.equal(pushes[0].more, false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

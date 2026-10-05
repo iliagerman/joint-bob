@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { gitCommitDetail, gitCommitFileDiff, GitReviewError, type GitChangeKind } from "../git-review.js";
+import { gitCommitDetail, gitCommitFileDiff, GitReviewError, type GitChangeKind, type GitCommitDetail } from "../git-review.js";
 import type { HarnessId, ProjectRecord } from "../types.js";
 import { buildTurns, loadConversationMessages, type ConversationTurn } from "./conversation-turns.js";
 import { pendingReviewDiff } from "./git-review-guide.js";
@@ -66,10 +66,12 @@ export type ChangeStory = z.infer<typeof storySchema>;
 
 export interface StoryFile { path: string; kind: "added" | "modified" | "deleted" | "renamed"; add: number; del: number; where: string[]; area: string }
 export interface StoryTurn { n: number; at?: string; user: string; commits: string[]; paths: string[] }
-export interface StoryCommit { hash: string; shortHash: string; subject: string; turn: number }
+/** `turn` is 0 for a commit picked from history rather than made in the conversation. */
+export interface StoryCommit { hash: string; shortHash: string; subject: string; turn: number; date?: string; body?: string }
 export interface StoryPatch { path: string; source: string; patch: string }
 export interface StoryFacts { conversation: boolean; turns: StoryTurn[]; commits: StoryCommit[]; files: StoryFile[] }
-export interface StorySources { scope: "conversation" | "all"; pendingPaths: string[]; includeCommits: boolean }
+/** A "commits" story explains picked commits alone, without the conversation or pending files. */
+export interface StorySources { kind?: "conversation" | "commits"; scope: "conversation" | "all"; pendingPaths: string[]; includeCommits: boolean; commits?: string[] }
 export interface SavedChangeStory {
   story: ChangeStory;
   facts: StoryFacts;
@@ -149,12 +151,17 @@ export function checkStory(story: ChangeStory, facts: { paths: string[]; turns: 
   for (const decision of story.implementation.decisions) if (decision.turn !== null) knownTurn(decision.turn, `The decision "${decision.title}"`);
 }
 
+function commitFacts(detail: GitCommitDetail): Omit<StoryCommit, "turn"> {
+  return { hash: detail.hash, shortHash: detail.shortHash, subject: detail.subject, date: detail.date, ...(detail.body ? { body: detail.body.slice(0, 600) } : {}) };
+}
+
 interface CollectedSources { facts: StoryFacts; patches: StoryPatch[]; fingerprint: string; turns: ConversationTurn[]; lastHarness: string }
 
 /** Turns, commits and patches for a story, all read from the transcript and Git. */
 export async function collectStorySources(project: ProjectRecord, cwd: string, conversationId: string | null, sources: StorySources): Promise<CollectedSources> {
-  const loaded = conversationId ? await loadConversationMessages(project, conversationId) : { messages: [], lastHarness: "" };
-  return { ...await sourcesFromTurns(cwd, buildTurns(loaded.messages), Boolean(conversationId), sources), lastHarness: loaded.lastHarness };
+  const conversation = Boolean(conversationId) && sources.kind !== "commits";
+  const loaded = conversation ? await loadConversationMessages(project, conversationId!) : { messages: [], lastHarness: "" };
+  return { ...await sourcesFromTurns(cwd, buildTurns(loaded.messages), conversation, sources), lastHarness: loaded.lastHarness };
 }
 
 /** Commits the turns printed (and Git still has), plus the selected pending files. */
@@ -166,10 +173,19 @@ export async function sourcesFromTurns(cwd: string, turns: ConversationTurn[], c
         if (commits.length >= COMMIT_LIMIT) break;
         const detail = await gitCommitDetail(cwd, hash).catch(() => null);
         if (!detail || commits.some((commit) => commit.hash === detail.hash)) continue;
-        commits.push({ hash: detail.hash, shortHash: detail.shortHash, subject: detail.subject, turn: turn.n, files: detail.files });
+        commits.push({ ...commitFacts(detail), turn: turn.n, files: detail.files });
       }
     }
   }
+  const picked: typeof commits = [];
+  for (const hash of sources.commits ?? []) {
+    if (commits.length + picked.length >= COMMIT_LIMIT) throw new GitReviewError(413, `A story covers at most ${COMMIT_LIMIT} commits. Pick fewer commits.`);
+    const detail = await gitCommitDetail(cwd, hash).catch(() => null);
+    if (!detail) throw new GitReviewError(404, `Commit ${hash.slice(0, 8)} is no longer in this repository.`);
+    if (![...commits, ...picked].some((commit) => commit.hash === detail.hash)) picked.push({ ...commitFacts(detail), turn: 0, files: detail.files });
+  }
+  // Oldest first, so the story reads in the order the work happened.
+  commits.push(...picked.sort((left, right) => Date.parse(left.date ?? "") - Date.parse(right.date ?? "")));
   const patches: StoryPatch[] = [];
   const kinds = new Map<string, GitChangeKind[]>();
   const note = (path: string, kind: GitChangeKind) => kinds.set(path, [...kinds.get(path) ?? [], kind]);
@@ -177,7 +193,7 @@ export async function sourcesFromTurns(cwd: string, turns: ConversationTurn[], c
   for (const commit of commits) {
     for (const file of commit.files) {
       const diff = await gitCommitFileDiff(cwd, commit.hash, file.path);
-      if (diff.truncated) throw new GitReviewError(413, `The diff of ${file.path} in ${commit.shortHash} is too large for a story. Leave out this conversation's commits or pick fewer files.`);
+      if (diff.truncated) throw new GitReviewError(413, `The diff of ${file.path} in ${commit.shortHash} is too large for a story. Pick fewer commits or files.`);
       size += diff.patch.length;
       patches.push({ path: file.path, source: commit.shortHash, patch: diff.patch });
       note(file.path, file.kind);
@@ -191,7 +207,7 @@ export async function sourcesFromTurns(cwd: string, turns: ConversationTurn[], c
     note(change.path, change.kind);
   }
   if (!patches.length) throw new GitReviewError(400, "Nothing to explain. This scope has no commits and no pending files.");
-  if (size > STORY_DIFF_LIMIT) throw new GitReviewError(413, `These changes are too large for a story (${size.toLocaleString("en-US")} characters of diff, the limit is ${STORY_DIFF_LIMIT.toLocaleString("en-US")}). Leave out this conversation's commits or pick fewer files.`);
+  if (size > STORY_DIFF_LIMIT) throw new GitReviewError(413, `These changes are too large for a story (${size.toLocaleString("en-US")} characters of diff, the limit is ${STORY_DIFF_LIMIT.toLocaleString("en-US")}). Pick fewer commits or files.`);
   const files: StoryFile[] = [];
   for (const [path, history] of kinds) {
     const own = patches.filter((patch) => patch.path === path);
@@ -268,15 +284,17 @@ export async function generateChangeStory(input: GenerateChangeStoryInput): Prom
   const collected = await collectStorySources(project, cwd, conversationId, sources);
   const { facts, patches } = collected;
   const diff = patches.map((patch) => `# ${patch.source === "pending" ? "Pending, not committed" : `Commit ${patch.source}`}\n${patch.patch}`).join("\n");
-  const commits = facts.commits.map((commit) => `${commit.shortHash} (turn ${commit.turn}): ${commit.subject}`).join("\n");
+  const commits = facts.commits.map((commit) => `${commit.shortHash}${commit.turn ? ` (turn ${commit.turn})` : ""}${commit.date ? ` ${commit.date}` : ""}: ${commit.subject}${commit.body ? `\n  ${commit.body.replace(/\n/g, "\n  ")}` : ""}`).join("\n");
   const prompt = [
     `Allowed paths: ${JSON.stringify(facts.files.map((file) => file.path))}`,
     `Turns: ${facts.turns.length}`,
-    commits ? `Commits made in this conversation:\n${commits}` : "Commits made in this conversation: none included",
-    facts.conversation ? `Conversation digest:\n${turnDigest(collected.turns, facts)}` : "No conversation: explain the pending changes from the diff alone.",
+    commits ? `Commits, oldest first:\n${commits}` : "Commits: none included",
+    facts.conversation ? `Conversation digest:\n${turnDigest(collected.turns, facts)}`
+      : sources.kind === "commits" ? "No conversation: explain the picked commits from their messages and diff. The timeline must be empty."
+        : "No conversation: explain the pending changes from the diff alone.",
     `Diff:\n${diff}`,
   ].join("\n\n");
-  if (prompt.length > STORY_INPUT_LIMIT) throw new GitReviewError(413, "This conversation and its changes are too large for one story. Leave out this conversation's commits or pick fewer files.");
+  if (prompt.length > STORY_INPUT_LIMIT) throw new GitReviewError(413, "These changes are too large for one story. Pick fewer commits or files.");
   const result = await runGitReview({
     projectId: project.id, cwd, harnessId: input.harnessId, provider: input.provider, modelId: input.modelId, thinkingLevel: input.thinkingLevel,
     selection: { scope: "worktree" }, question: "", diff: prompt, instructions: STORY_INSTRUCTIONS,

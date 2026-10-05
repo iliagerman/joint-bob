@@ -21,7 +21,12 @@ const story = {
   implTab: "components",
   pages: {},
   jumpPhase: false,
+  // Picking commits from history instead of explaining the conversation.
+  picking: false,
+  pick: { tab: "pushes", pushes: null, history: null, error: "", selected: new Map() },
 };
+
+const PICK_LIMIT = 20;
 
 const SECTIONS = [
   { id: "overview", title: "Overview", sub: "What it is and how it flows" },
@@ -66,17 +71,31 @@ export function resetStory(ctx) {
   story.step = 0;
   story.implTab = "components";
   story.pages = {};
+  story.picking = false;
+  story.pick = { tab: "pushes", pushes: null, history: null, error: "", selected: new Map() };
 }
 
 export function storyCommitCount() { return story.commits.length; }
 export function storyIsFresh() { return Boolean(story.latest?.freshness.fresh); }
 export function storyHasSaved() { return Boolean(story.latest); }
+export function storyPicking() { return story.picking; }
+export function storyFromCommits() { return story.latest?.saved.sources.kind === "commits"; }
+/** The commits to explain on Generate: picked ones, or the shown commits story's own when regenerating it. */
+export function storyCommitsToExplain() {
+  if (story.picking) return [...story.pick.selected.keys()];
+  return storyFromCommits() && story.state !== "empty" ? story.latest.saved.sources.commits : null;
+}
+export function storyHidesScope() { return story.picking || storyFromCommits(); }
 
 /** Label and status text for the shared reviewer bar while the Story tab is open. */
 export function storyChrome() {
   const freshness = story.latest?.freshness;
   if (story.state === "writing") return { button: "Writing…", disabled: true, status: "Writing the story. The reviewer reads but never edits. This can take a few minutes." };
   if (story.state === "loading" || story.state === "idle") return { button: "Generate story", disabled: true, status: "Loading the saved story…" };
+  if (story.picking && story.state !== "rejected") {
+    const count = story.pick.selected.size;
+    return { button: count ? `Generate story for ${plural(count, "commit")}` : "Generate story", disabled: !count, status: "The story explains the picked commits from their messages and diffs, without this conversation. Nothing is posted to the chat." };
+  }
   if (story.state === "rejected") return { button: "Try again", disabled: false, status: story.latest ? "Nothing was saved. Your previous story is still available." : "Nothing was saved." };
   if (story.state === "empty" || story.state === "error") return { button: "Generate story", disabled: false, status: "Stories are written in a separate read-only reviewer session. Nothing is posted to this conversation." };
   if (freshness && !freshness.fresh) return { button: "Regenerate story", disabled: false, status: "This story is outdated. Regenerate to include the latest turns and changes." };
@@ -121,6 +140,7 @@ export async function generateStory(payload) {
     if (request !== story.request) return;
     story.latest = { thread: body.thread, saved: body.saved, freshness: body.freshness };
     story.state = "ready";
+    story.picking = false;
     story.section = "overview";
     story.phase = 0;
     story.example = 0;
@@ -235,9 +255,10 @@ export function renderStory() {
   container.replaceChildren();
   if (story.state === "idle" || story.state === "loading") { container.append(loadingPanel("Loading the saved story…")); return; }
   if (story.state === "writing") { container.append(writingPanel()); return; }
+  if (story.state === "rejected") { container.append(errorPanel("Story rejected", story.error, true)); return; }
+  if (story.picking) { renderPicker(container); return; }
   if (story.state === "empty") { container.append(emptyPanel()); return; }
   if (story.state === "error") { container.append(errorPanel("Could not load the story", story.error, false)); return; }
-  if (story.state === "rejected") { container.append(errorPanel("Story rejected", story.error, true)); return; }
   const { freshness } = story.latest;
   container.append(freshness.fresh ? h("div") : outdatedBanner(freshness), storyHead(), storyBody());
   renderSection();
@@ -252,7 +273,7 @@ function loadingPanel(message) {
 function writingPanel() {
   return h("div", { class: "gs-state" }, h("div", { class: "gs-state-card", "data-testid": "git-story-writing" },
     h("div", { class: "git-review-loading-head" }, h("span", { class: "git-review-spinner", "aria-hidden": "true" }), h("h3", {}, "Writing the story")),
-    h("p", {}, "The reviewer reads this conversation and its changes in a separate session with every tool turned off. Then the server checks every file, turn and diagram step the story mentions."),
+    h("p", {}, story.picking ? "The reviewer reads the picked commits in a separate session with every tool turned off. Then the server checks every file and diagram step the story mentions." : "The reviewer reads this conversation and its changes in a separate session with every tool turned off. Then the server checks every file, turn and diagram step the story mentions."),
     h("p", { class: "gs-state-note" }, "Nothing is posted to the chat while this runs. You can close the Git view; the story is saved when it finishes.")));
 }
 
@@ -267,8 +288,11 @@ function emptyPanel() {
       part(3, "Examples", "Step-by-step walkthroughs of how the app behaves."),
       part(4, "Implementation", "Files by area, key decisions, what to check, and tests.")),
     h("div", { class: "gs-state-actions" },
-      h("button", { class: "primary", type: "button", "data-testid": "git-story-generate", onclick: () => story.ctx.generate() }, "Generate story"),
+      h("button", { class: story.ctx.hasCoverage() ? "primary" : "ghost gs-boxed", type: "button", "data-testid": "git-story-generate", disabled: !story.ctx.hasCoverage(), onclick: () => story.ctx.generate() }, "Generate story"),
       h("span", { class: "gs-muted" }, story.ctx.coverage())),
+    h("div", { class: "gs-state-actions" },
+      h("button", { class: story.ctx.hasCoverage() ? "ghost gs-boxed" : "primary", type: "button", "data-testid": "git-story-pick", onclick: openPicker }, "Pick past commits or pushes"),
+      h("span", { class: "gs-muted" }, "Explain work that is already committed or pushed.")),
     h("p", { class: "gs-state-note" }, "Written in a separate read-only reviewer session with the reviewer picked below. Nothing is posted to this conversation.")));
 }
 
@@ -278,9 +302,10 @@ function errorPanel(title, message, offerRetry) {
     h("p", {}, message || "The story could not be written."),
     h("div", { class: "gs-state-actions" },
       h("button", { class: "primary", type: "button", onclick: () => offerRetry ? story.ctx.generate() : loadStory() }, "Try again"),
-      offerRetry ? h("button", { class: "ghost gs-boxed", type: "button", onclick: () => story.ctx.focusReviewer() }, "Use another reviewer") : null),
+      offerRetry ? h("button", { class: "ghost gs-boxed", type: "button", onclick: () => story.ctx.focusReviewer() }, "Use another reviewer") : null,
+      offerRetry && story.picking ? h("button", { class: "ghost gs-boxed", type: "button", onclick: () => { story.state = story.latest ? "ready" : "empty"; changed(); } }, "Change commits") : null),
     story.latest ? h("p", { class: "gs-state-note" }, `Your previous story from ${relativeTime(story.latest.thread.createdAt)} is still available. `,
-      h("button", { class: "gs-link", type: "button", onclick: () => { story.state = "ready"; changed(); } }, "Show it")) : null));
+      h("button", { class: "gs-link", type: "button", onclick: () => { story.state = "ready"; story.picking = false; changed(); } }, "Show it")) : null));
 }
 
 function outdatedBanner(freshness) {
@@ -303,19 +328,25 @@ function storyHead() {
     h("div", { class: "gs-title" }, h("span", { class: "gs-pill is-accent" }, saved.story.kind), h("h3", { "data-testid": "git-story-title" }, saved.story.title)),
     h("div", { class: "gs-actions" },
       h("span", { class: freshness.fresh ? "gs-pill is-accent" : "gs-pill is-amber" }, freshness.fresh ? "Fresh" : "Outdated"),
+      storyFromCommits() && story.ctx.conversationId ? h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-explain-conversation", onclick: () => story.ctx.generate({ conversation: true }) }, "Explain this conversation") : null,
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-pick", onclick: openPicker }, "Explain other commits"),
       h("button", { class: "ghost compact gs-boxed", type: "button", onclick: copyMarkdown }, "Copy as Markdown")),
     h("p", { class: "gs-facts" },
       h("b", {}, `${facts.files.length} file${facts.files.length === 1 ? "" : "s"}`), " · ",
       h("span", { class: "gs-add" }, `+${sum(facts.files.map((file) => file.add)).toLocaleString()}`), " ",
       h("span", { class: "gs-del" }, `−${sum(facts.files.map((file) => file.del)).toLocaleString()}`), " · ",
-      `${facts.commits.length} commit${facts.commits.length === 1 ? "" : "s"} + ${pending} pending file${pending === 1 ? "" : "s"}`,
+      storyFromCommits() ? `${plural(facts.commits.length, "picked commit")}` : `${plural(facts.commits.length, "commit")} + ${plural(pending, "pending file")}`,
       facts.conversation ? ` · ${facts.turns.length} turns` : "",
       ` · ${thread.harnessId} · ${thread.modelId} · ${thread.thinkingLevel} · written ${relativeTime(thread.createdAt)}`));
 }
 
+function storySections() {
+  return storyFromCommits() ? SECTIONS.map((section) => section.id === "conversation" ? { ...section, title: "Commits", sub: "What each commit did" } : section) : SECTIONS;
+}
+
 function storyBody() {
   const rail = h("nav", { class: "gs-rail", role: "tablist", "aria-label": "Story sections", "aria-orientation": "vertical" },
-    SECTIONS.map((section, index) => h("button", {
+    storySections().map((section, index, sections) => h("button", {
       class: "gs-rail-item", type: "button", role: "tab", id: `gitStoryRail-${section.id}`, "data-testid": `git-story-section-${section.id}`,
       "aria-selected": String(story.section === section.id), tabindex: story.section === section.id ? "0" : "-1",
       onclick: () => { story.section = section.id; renderStory(); document.getElementById(`gitStoryRail-${section.id}`)?.focus(); },
@@ -323,7 +354,7 @@ function storyBody() {
         const move = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
         if (!move) return;
         event.preventDefault();
-        story.section = SECTIONS[(index + move + SECTIONS.length) % SECTIONS.length].id;
+        story.section = sections[(index + move + sections.length) % sections.length].id;
         renderStory();
         document.getElementById(`gitStoryRail-${story.section}`)?.focus();
       },
@@ -340,7 +371,9 @@ function renderSection() {
 }
 
 export function refitStory() {
-  if (story.state === "ready" && story.ctx?.container && !story.ctx.container.hidden) renderSection();
+  if (!story.ctx?.container || story.ctx.container.hidden) return;
+  if (story.picking && story.state !== "writing" && story.state !== "rejected") renderStory();
+  else if (story.state === "ready") renderSection();
 }
 
 function sectionHead(title, hint) {
@@ -378,9 +411,20 @@ function selectPhase(index) {
   renderSection();
 }
 
+function renderCommitsSection(section) {
+  const { facts } = story.latest.saved;
+  const box = h("div", { class: "gs-paged gs-impl" });
+  section.append(sectionHead("Commits in this story", `${plural(facts.commits.length, "commit")}, oldest first. There is no conversation behind this story.`), box);
+  pagedList(box, "story-commits", facts.commits, () => 44, (commit) => h("div", { class: "gs-check-row gs-commit-row", "data-testid": "git-story-commit" },
+    h("span", { class: "gs-where" }, commit.shortHash),
+    h("span", { class: "gs-text", title: commit.body ? `${commit.subject}\n\n${commit.body}` : commit.subject }, commit.subject),
+    h("span", { class: "gs-muted gs-small" }, commit.date ? relativeTime(commit.date) : "")), "commits");
+}
+
 function renderConversation(section) {
   const { saved } = story.latest;
   const { facts, story: written } = saved;
+  if (saved.sources.kind === "commits") { renderCommitsSection(section); return; }
   if (!facts.conversation || !written.timeline.length) {
     section.append(sectionHead("How the change evolved"), h("p", { class: "gs-muted" }, facts.conversation ? "The reviewer did not describe the conversation's turns." : "No conversation is selected, so this story covers pending changes only. The why comes from the diff alone."));
     return;
@@ -626,6 +670,110 @@ function testRow(item) {
     h("span", { class: "gs-pill is-info" }, "test"),
     h("span", { class: "gs-text", title: item.name }, item.name),
     h("button", { class: "gs-link gs-ellipsis", type: "button", title: item.file, onclick: () => showDiff(item.file) }, item.file));
+}
+
+/* ---- Picking commits or pushes from history ---- */
+
+function openPicker() {
+  story.picking = true;
+  story.pages.pick = 0;
+  changed();
+  if (!story.pick.pushes || !story.pick.history) void loadPickSources();
+}
+
+function closePicker() {
+  story.picking = false;
+  changed();
+}
+
+async function loadPickSources() {
+  const request = story.request;
+  story.pick.error = "";
+  try {
+    const [pushes, history] = await Promise.all([api(story.ctx.apiUrl("pushes")), api(story.ctx.apiUrl("history", { limit: 200 }))]);
+    if (request !== story.request) return;
+    story.pick.pushes = pushes.pushes;
+    story.pick.history = history.commits;
+    if (!pushes.pushes.length) story.pick.tab = "commits";
+  } catch (error) {
+    if (request !== story.request) return;
+    story.pick.error = error.message;
+  }
+  changed();
+}
+
+function pickTab(tab) {
+  story.pick.tab = tab;
+  story.pages.pick = 0;
+  changed();
+}
+
+function setPicked(commits, on) {
+  for (const commit of commits) {
+    if (!on) story.pick.selected.delete(commit.hash);
+    else if (story.pick.selected.size < PICK_LIMIT) story.pick.selected.set(commit.hash, commit);
+  }
+  changed();
+  story.ctx.container.querySelector(`[data-pick="${CSS.escape(commits[0].hash)}"]`)?.focus();
+}
+
+function pickBox(commits, label) {
+  const picked = commits.filter((commit) => story.pick.selected.has(commit.hash)).length;
+  const box = h("input", {
+    type: "checkbox", "aria-label": label, "data-testid": "git-story-pick-box", "data-pick": commits[0].hash,
+    disabled: !picked && story.pick.selected.size + commits.length > PICK_LIMIT,
+  });
+  box.checked = picked === commits.length;
+  box.indeterminate = picked > 0 && picked < commits.length;
+  box.addEventListener("change", () => setPicked(commits, box.checked));
+  return box;
+}
+
+function pushRow(push) {
+  const count = `${push.commits.length}${push.more ? "+" : ""} commit${push.commits.length === 1 && !push.more ? "" : "s"}`;
+  return h("label", { class: "gs-pick-row is-push", "data-testid": "git-story-push", title: push.more ? `This push carried more than ${PICK_LIMIT} commits; only the newest ${PICK_LIMIT} can be picked.` : null },
+    pickBox(push.commits, `Push to ${push.ref}, ${relativeTime(push.at)}`),
+    h("span", { class: "gs-min" },
+      h("span", { class: "gs-pick-title" }, h("b", {}, `Pushed to ${push.ref}`), h("span", { class: "gs-muted" }, ` · ${relativeTime(push.at)} · ${count} · ${push.from ? `${push.from.slice(0, 7)}..` : ""}${push.to.slice(0, 7)}`)),
+      h("span", { class: "gs-pick-sub" }, push.commits.map((commit) => commit.subject).join(" · "))));
+}
+
+function commitRow(commit) {
+  return h("label", { class: "gs-pick-row", "data-testid": "git-story-pick-commit" },
+    pickBox([commit], `${commit.shortHash} ${commit.subject}`),
+    h("span", { class: "gs-where" }, commit.shortHash),
+    h("span", { class: "gs-text", title: commit.subject }, commit.subject),
+    h("span", { class: "gs-muted gs-small gs-ellipsis" }, `${commit.author} · ${relativeTime(commit.date)}`));
+}
+
+function renderPicker(container) {
+  const { pick } = story;
+  const list = h("div", { class: "gs-paged gs-pick-list" });
+  const picked = [...pick.selected.values()];
+  container.append(h("div", { class: "gs-picker", "data-testid": "git-story-picker" },
+    h("div", { class: "gs-section-head" },
+      h("div", {}, h("h4", {}, "Explain past commits"), h("p", { class: "gs-muted" }, "Pick a push, or any commits. The story explains them from their messages and diffs, without this conversation.")),
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-pick-cancel", onclick: closePicker }, story.latest ? "Back to the story" : "Cancel")),
+    h("div", { class: "gs-subtabs", role: "tablist", "aria-label": "Pick from" },
+      [["pushes", "Pushes", pick.pushes?.length], ["commits", "Commits", pick.history?.length]].map(([id, label, count]) => h("button", {
+        class: "gs-subtab", type: "button", role: "tab", "aria-selected": String(pick.tab === id), "data-testid": `git-story-pick-${id}`, onclick: () => pickTab(id),
+      }, label, count === undefined ? null : h("span", { class: "gs-count" }, String(count))))),
+    list,
+    h("div", { class: "gs-pick-foot" },
+      h("span", { class: "gs-min gs-ellipsis", "data-testid": "git-story-pick-summary", title: picked.map((commit) => `${commit.shortHash} ${commit.subject}`).join("\n") },
+        picked.length ? h("b", {}, `${picked.length} of ${PICK_LIMIT} commits picked: `) : h("span", { class: "gs-muted" }, `Pick up to ${PICK_LIMIT} commits.`),
+        picked.length ? picked.map((commit) => commit.shortHash).join(", ") : null),
+      picked.length ? h("button", { class: "ghost compact gs-boxed", type: "button", onclick: () => { pick.selected.clear(); changed(); } }, "Clear") : null,
+      h("button", { class: "primary compact", type: "button", "data-testid": "git-story-pick-generate", disabled: !picked.length, onclick: () => story.ctx.generate() }, picked.length ? `Generate story for ${plural(picked.length, "commit")}` : "Generate story"))));
+  if (pick.error) { list.append(h("p", { class: "gs-muted", role: "alert" }, pick.error)); return; }
+  const items = pick.tab === "pushes" ? pick.pushes : pick.history;
+  if (!items) { list.append(h("div", { class: "git-review-loading" }, [1, 2, 3, 4].map(() => h("span", { class: "git-review-skeleton", "aria-hidden": "true" })))); return; }
+  if (!items.length) {
+    list.append(h("p", { class: "gs-muted" }, pick.tab === "pushes" ? "No pushes recorded here. Git only remembers pushes made from this clone, so pick commits instead." : "This repository has no commits."));
+    return;
+  }
+  if (pick.tab === "pushes") pagedList(list, "pick", items, () => 58, pushRow, "pushes");
+  else pagedList(list, "pick", items, () => 42, commitRow, "commits");
 }
 
 /* ---- Copy as Markdown: the Mermaid block comes from the checked graph, not the model ---- */

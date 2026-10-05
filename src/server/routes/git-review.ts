@@ -7,6 +7,7 @@ import {
   gitCommitDetail,
   gitCommitFileDiff,
   gitCommitHistory,
+  gitPushHistory,
   gitFileDiff,
   GitReviewError,
   gitStatus,
@@ -20,7 +21,7 @@ import {
   type GitReviewSelection,
   type GitReviewThread,
 } from "../../git-review-threads.js";
-import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory } from "../git-change-story.js";
+import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StorySources } from "../git-change-story.js";
 import { getProject } from "../../store.js";
 import { genericSecretEnvironment, githubAccountsForProject } from "../../secrets.js";
 import { githubAccountFor } from "../../github-credentials.js";
@@ -449,6 +450,8 @@ app.get("/api/projects/:projectId/git/guide-latest", async (request, response, n
 
 const storyRequest = z.object({
   conversationId: z.string().min(1).max(240).nullable(),
+  source: z.enum(["conversation", "commits"]).default("conversation"),
+  commits: z.array(z.string().regex(/^[0-9a-f]{7,40}$/i)).max(20).default([]),
   scope: z.enum(["conversation", "all"]),
   paths: z.array(z.string().min(1).max(2000)).max(100),
   includeCommits: z.boolean(),
@@ -465,14 +468,20 @@ function storyThreadInfo(thread: GitReviewThread) {
 async function performStory(projectId: string, cwd: string, input: z.infer<typeof storyRequest>): Promise<unknown> {
   const project = await getProject(projectId);
   if (!project) throw new GitReviewError(404, "Project not found");
-  if (input.scope === "conversation" && !input.conversationId) throw new GitReviewError(400, "Conversation required");
-  if (input.scope === "conversation" && input.paths.length) checkedConversationFiles(projectId, cwd, input.conversationId!, input.paths);
-  const status = await gitStatus(cwd);
-  const pending = new Set([...status.staged, ...status.unstaged, ...status.untracked].map(({ path }) => path));
-  if (input.paths.some((file) => !pending.has(file))) throw new GitReviewError(409, "Selected files changed; refresh Git status");
+  let sources: StorySources;
+  if (input.source === "commits") {
+    if (!input.commits.length) throw new GitReviewError(400, "Pick at least one commit");
+    sources = { kind: "commits", scope: "all", pendingPaths: [], includeCommits: false, commits: input.commits };
+  } else {
+    if (input.scope === "conversation" && !input.conversationId) throw new GitReviewError(400, "Conversation required");
+    if (input.scope === "conversation" && input.paths.length) checkedConversationFiles(projectId, cwd, input.conversationId!, input.paths);
+    const status = await gitStatus(cwd);
+    const pending = new Set([...status.staged, ...status.unstaged, ...status.untracked].map(({ path }) => path));
+    if (input.paths.some((file) => !pending.has(file))) throw new GitReviewError(409, "Selected files changed; refresh Git status");
+    sources = { scope: input.scope, pendingPaths: input.paths, includeCommits: input.includeCommits && Boolean(input.conversationId) };
+  }
   const { diff, ...saved } = await generateChangeStory({
-    project, cwd, conversationId: input.conversationId,
-    sources: { scope: input.scope, pendingPaths: input.paths, includeCommits: input.includeCommits && Boolean(input.conversationId) },
+    project, cwd, conversationId: input.conversationId, sources,
     harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel,
   });
   const thread = createGitReviewThread({ projectId, conversationId: input.conversationId, harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel, selection: { scope: "worktree" }, snapshot: diff, question: CHANGE_STORY_MARKER, answer: JSON.stringify(saved) });
@@ -507,6 +516,20 @@ app.post("/api/projects/:projectId/git/story", async (request, response, next) =
   try {
     await withOwningNode(request, response, "/api/cluster/git/story", {}, async () =>
       performStory(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId")), storyRequest.parse(request.body)), request);
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.get("/api/cluster/git/pushes", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    response.json({ pushes: await gitPushHistory(await reviewCwd(queryString(request, "projectId"), queryOptional(request, "taskId"))) });
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.get("/api/projects/:projectId/git/pushes", async (request, response, next) => {
+  try {
+    await withOwningNode(request, response, "/api/cluster/git/pushes", {}, async () =>
+      ({ pushes: await gitPushHistory(await reviewCwd(request.params.projectId, queryOptional(request, "taskId"))) }));
   } catch (error) { handleGitError(response, error, next); }
 });
 

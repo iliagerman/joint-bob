@@ -212,27 +212,74 @@ export async function gitFileDiff(cwd: string, filePath: string, options: { stag
   return boundedPatch(await git(root, args));
 }
 
+const LOG_FIELD = "\u001f";
+const LOG_RECORD = "\u001e";
+const LOG_FORMAT = `--pretty=format:${["%H", "%h", "%an", "%ae", "%aI", "%s", "%b"].join(LOG_FIELD)}${LOG_RECORD}`;
+
+function parseLog(output: string): GitCommit[] {
+  return output
+    .split(LOG_RECORD)
+    .map((entry) => entry.replace(/^\n/, ""))
+    .filter((entry) => entry.trim())
+    .map((entry) => {
+      const [hash, shortHash, author, authorEmail, date, subject, body] = entry.split(LOG_FIELD);
+      return { hash, shortHash, author, authorEmail, date, subject, body: (body ?? "").trim() };
+    });
+}
+
 export async function gitCommitHistory(cwd: string, limit = 50, skip = 0): Promise<GitCommit[]> {
   const root = await gitRepositoryRoot(cwd);
   const boundedLimit = Math.min(Math.max(limit, 1), 200);
   const boundedSkip = Math.max(skip, 0);
-  const separator = "\u001e";
-  const fieldSep = "\u001f";
-  const format = ["%H", "%h", "%an", "%ae", "%aI", "%s", "%b"].join(fieldSep);
-  const output = await git(root, [
-    "log",
-    `--max-count=${boundedLimit}`,
-    `--skip=${boundedSkip}`,
-    `--pretty=format:${format}${separator}`,
-  ]);
-  return output
-    .split(separator)
-    .map((entry) => entry.replace(/^\n/, ""))
-    .filter((entry) => entry.trim())
-    .map((entry) => {
-      const [hash, shortHash, author, authorEmail, date, subject, body] = entry.split(fieldSep);
-      return { hash, shortHash, author, authorEmail, date, subject, body: (body ?? "").trim() };
+  return parseLog(await git(root, ["log", `--max-count=${boundedLimit}`, `--skip=${boundedSkip}`, LOG_FORMAT]));
+}
+
+export interface GitPush {
+  /** The remote-tracking branch the push updated, such as origin/main. */
+  ref: string;
+  at: string;
+  from: string | null;
+  to: string;
+  /** Newest first, at most PUSH_COMMIT_LIMIT. */
+  commits: GitCommit[];
+  /** True when the push carried more commits than are listed. */
+  more: boolean;
+}
+
+const PUSH_COMMIT_LIMIT = 20;
+
+/**
+ * Pushes made from this clone (and its worktrees), read from the remote-tracking reflogs.
+ * Git keeps no other local record of a push; fetches and pulls are skipped.
+ */
+export async function gitPushHistory(cwd: string, limit = 60): Promise<GitPush[]> {
+  const root = await gitRepositoryRoot(cwd);
+  const refs = (await git(root, ["for-each-ref", "--sort=-committerdate", "--count=20", "--format=%(refname)", "refs/remotes"]))
+    .split("\n").filter((ref) => ref && !ref.endsWith("/HEAD"));
+  const entries: Array<Omit<GitPush, "commits" | "more">> = [];
+  for (const ref of refs) {
+    const output = await git(root, ["log", "-g", "-n", "200", "--date=iso-strict", `--format=%H${LOG_FIELD}%gs${LOG_FIELD}%gd`, ref, "--"]).catch(() => "");
+    const lines = output.split("\n").filter(Boolean).map((line) => line.split(LOG_FIELD));
+    lines.forEach(([hash, subject, selector], index) => {
+      const at = /@\{(.+)\}$/.exec(selector ?? "")?.[1];
+      if (!subject?.startsWith("update by push") || !at) return;
+      const from = lines[index + 1]?.[0] ?? null;
+      if (from !== hash) entries.push({ ref: ref.replace(/^refs\/remotes\//, ""), at, from, to: hash });
     });
+  }
+  entries.sort((left, right) => Date.parse(right.at) - Date.parse(left.at));
+  const pushes: GitPush[] = [];
+  const shown = entries.slice(0, Math.min(Math.max(limit, 1), 100));
+  for (let start = 0; start < shown.length; start += 8) {
+    const batch = await Promise.all(shown.slice(start, start + 8).map(async (entry) => {
+      // A first push has no earlier entry; count what no other remote branch already has.
+      const range = entry.from ? [`${entry.from}..${entry.to}`] : [entry.to, "--not", `--exclude=${entry.ref}`, "--exclude=*/HEAD", "--remotes"];
+      const commits = parseLog(await git(root, ["log", `--max-count=${PUSH_COMMIT_LIMIT + 1}`, LOG_FORMAT, ...range, "--"]).catch(() => ""));
+      return { ...entry, commits: commits.slice(0, PUSH_COMMIT_LIMIT), more: commits.length > PUSH_COMMIT_LIMIT };
+    }));
+    pushes.push(...batch.filter((push) => push.commits.length));
+  }
+  return pushes;
 }
 
 export interface GitCommitDetail extends GitCommit {
