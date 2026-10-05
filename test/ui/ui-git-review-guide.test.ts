@@ -30,8 +30,10 @@ test("conversation Git review hides other files and orders guided comments with 
     { id: "claude", label: "Claude", runtimeConfigured: true, ready: true, defaults: { modelId: "opus", thinkingLevel: "medium" }, configuration: { fixedProvider: "claude", thinkingLevels: ["low", "xhigh"] } },
   ] } }));
   await page.route("**/api/models", (route) => route.fulfill({ json: { models: [
-    { harnessId: "pi", id: "gpt-6-sol", label: "GPT-6 Sol", provider: "openai-codex", thinkingLevels: ["low", "xhigh"] },
-    { harnessId: "claude", id: "opus", label: "Opus 5.5", provider: "claude", thinkingLevels: ["low", "xhigh"] },
+    { harnessId: "pi", id: "gpt-6-sol", label: "GPT-6 Sol", provider: "openai-codex", providerLabel: "GPT", thinkingLevels: ["low", "medium", "xhigh"] },
+    { harnessId: "pi", id: "gpt-6-sol", label: "GPT-6 Sol", provider: "openai", providerLabel: "GPT", thinkingLevels: ["low", "high"] },
+    { harnessId: "pi", id: "glm-6", label: "GLM-6", provider: "zai", providerLabel: "GLM", thinkingLevels: ["off", "medium"] },
+    { harnessId: "claude", id: "opus", label: "Opus 5.5", provider: "claude", thinkingLevels: ["low", "medium", "xhigh"] },
   ] } }));
   await page.goto(node.url);
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -45,23 +47,28 @@ test("conversation Git review hides other files and orders guided comments with 
   assert.match(await page.getByTestId("git-review-list").innerText(), /mine.ts/);
   assert.doesNotMatch(await page.getByTestId("git-review-list").innerText(), /other.ts/);
   assert.equal(await page.getByTestId("git-review-harness").inputValue(), "pi");
-  assert.equal(await page.getByTestId("git-review-model").inputValue(), "gpt-6-sol");
-  assert.equal(await page.getByTestId("git-review-thinking").inputValue(), "xhigh");
+  assert.equal(await page.getByTestId("git-review-model").inputValue(), "openai-codex|gpt-6-sol");
+  assert.equal(await page.getByTestId("git-review-thinking").inputValue(), "medium");
+  assert.deepEqual(await page.locator("#gitReviewModel optgroup").evaluateAll((groups) => groups.map((group) => `${(group as HTMLOptGroupElement).label}: ${group.children.length}`)), ["GPT (openai-codex): 1", "GPT (openai): 1", "GLM (zai): 1"]);
   lastHarness = "pi";
   await page.getByTestId("git-review-refresh-scope").click();
   await page.waitForFunction(() => document.querySelector<HTMLSelectElement>("#gitReviewHarness")?.value === "claude");
-  assert.equal(await page.getByTestId("git-review-model").inputValue(), "opus");
-  assert.equal(await page.getByTestId("git-review-thinking").inputValue(), "xhigh");
+  assert.equal(await page.getByTestId("git-review-model").inputValue(), "claude|opus");
+  assert.equal(await page.getByTestId("git-review-thinking").inputValue(), "medium");
+  assert.equal(await page.locator("#gitReviewModel optgroup").count(), 0, "a single provider needs no groups");
   lastHarness = "claude";
   await page.getByTestId("git-review-refresh-scope").click();
   await page.waitForFunction(() => document.querySelector<HTMLSelectElement>("#gitReviewHarness")?.value === "pi");
+  await page.getByTestId("git-review-model").selectOption("openai|gpt-6-sol");
+  assert.deepEqual(await page.locator("#gitReviewThinking option").allTextContents(), ["low", "high"]);
+  await page.getByTestId("git-review-thinking").selectOption("high");
   await page.getByTestId("git-review-generate").click();
   await page.getByTestId("git-review-guide").getByText("Important change", { exact: false }).waitFor();
   assert.deepEqual(await page.locator(".git-review-file-name").allTextContents(), ["important.ts", "mine.ts"]);
   assert.deepEqual(await page.locator(".git-review-priority").allTextContents(), ["HIGH", "LOW"]);
   const [{ conversationId, ...request }] = requests as Array<{ conversationId: string; scope: string; paths: string[]; harnessId: string; provider: string; modelId: string; thinkingLevel: string }>;
   assert.ok(conversationId, "review stays attached to the active conversation");
-  assert.deepEqual(request, { scope: "conversation", paths: ["mine.ts", "important.ts"], harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "xhigh" });
+  assert.deepEqual(request, { scope: "conversation", paths: ["mine.ts", "important.ts"], harnessId: "pi", provider: "openai", modelId: "gpt-6-sol", thinkingLevel: "high" });
   assert.match(await page.getByTestId("git-review-diff").innerText(), /new/);
   await page.getByTestId("git-review-all-changes").check();
   assert.equal(await page.getByTestId("git-review-file").count(), 3);

@@ -310,6 +310,7 @@ export interface UserPreferences {
 
 export interface GitReviewerPreference {
   harnessId: HarnessId;
+  provider?: string;
   modelId: string;
   thinkingLevel: string;
 }

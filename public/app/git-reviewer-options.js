@@ -6,23 +6,54 @@ import { toast } from "./shell.js";
 
 const DEFAULT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const PREFERRED_MODEL = { pi: "gpt-6-sol", claude: "opus" };
+const DEFAULT_LEVEL = "medium";
+
+/** The provider and model behind the picked option; values are provider-qualified so equal IDs stay apart. */
+export function selectedModel(modelSelect) {
+  const option = modelSelect.selectedOptions[0];
+  return { provider: option?.dataset.provider || "", modelId: option?.dataset.modelId || modelSelect.value };
+}
+
+/** Selects `modelId`, preferring the option from `provider` when one is given. Returns false when it is not offered. */
+export function selectModel(modelSelect, modelId, provider) {
+  const options = [...modelSelect.options].filter((option) => option.dataset.modelId === modelId);
+  const option = options.find((candidate) => provider && candidate.dataset.provider === provider) ?? options[0];
+  if (option) modelSelect.value = option.value;
+  return Boolean(option);
+}
+
+function modelOption(label, modelId, provider = "") {
+  const option = new Option(label, `${provider}|${modelId}`);
+  option.dataset.modelId = modelId;
+  if (provider) option.dataset.provider = provider;
+  return option;
+}
 
 /** Fills the effort picker for the chosen model, keeping `preferred` when that level exists. */
 export function fillThinkingOptions(harness, models, modelSelect, thinkingSelect, preferred) {
-  const model = models.find((item) => item.harnessId === harness.id && item.id === modelSelect.value);
+  const picked = selectedModel(modelSelect);
+  const model = models.find((item) => item.harnessId === harness.id && item.id === picked.modelId && (!picked.provider || item.provider === picked.provider));
   const levels = model?.thinkingLevels ?? harness.configuration?.thinkingLevels ?? DEFAULT_LEVELS;
   thinkingSelect.replaceChildren(...levels.map((level) => new Option(level, level)));
-  thinkingSelect.value = [preferred, "xhigh", harness.defaults.thinkingLevel].find((level) => level && levels.includes(level)) ?? levels[0];
+  thinkingSelect.value = [preferred, DEFAULT_LEVEL, harness.defaults.thinkingLevel].find((level) => level && levels.includes(level)) ?? levels[0];
 }
 
-/** Fills the model and effort pickers for a harness, keeping a saved choice when it is still offered. */
+/** Fills the model and effort pickers for a harness, grouped by provider, keeping a saved choice when it is still offered. */
 export function fillModelOptions(harness, models, modelSelect, thinkingSelect, preferred = {}) {
   const harnessModels = models.filter((model) => model.harnessId === harness.id);
-  modelSelect.replaceChildren(...(harnessModels.length
-    ? harnessModels.map((model) => { const option = new Option(model.label, model.id); option.dataset.provider = model.provider; return option; })
-    : [new Option(harness.defaults.modelId, harness.defaults.modelId)]));
-  const modelId = [preferred.modelId, PREFERRED_MODEL[harness.id] ?? harness.defaults.modelId].find((id) => [...modelSelect.options].some((option) => option.value === id));
-  if (modelId) modelSelect.value = modelId;
+  const providers = [...new Set(harnessModels.map((model) => model.provider))];
+  const optionsFor = (provider) => harnessModels.filter((model) => model.provider === provider).map((model) => modelOption(model.label, model.id, model.provider));
+  modelSelect.replaceChildren(...(!harnessModels.length
+    ? [modelOption(harness.defaults.modelId, harness.defaults.modelId)]
+    : providers.length === 1 ? optionsFor(providers[0])
+      : providers.map((provider) => {
+        const group = document.createElement("optgroup");
+        const label = harnessModels.find((model) => model.provider === provider)?.providerLabel;
+        group.label = label ? `${label} (${provider})` : provider;
+        group.append(...optionsFor(provider));
+        return group;
+      })));
+  if (!(preferred.modelId && selectModel(modelSelect, preferred.modelId, preferred.provider))) selectModel(modelSelect, PREFERRED_MODEL[harness.id] ?? harness.defaults.modelId);
   fillThinkingOptions(harness, models, modelSelect, thinkingSelect, preferred.thinkingLevel);
 }
 
@@ -39,7 +70,8 @@ function showSettingsModelPickers(visible) {
 
 function saveSettingsReviewer() {
   const harness = settingsHarness();
-  const gitReviewer = harness ? { harnessId: harness.id, modelId: elements.settingsGitReviewerModel.value, thinkingLevel: elements.settingsGitReviewerThinking.value } : null;
+  const { provider, modelId } = selectedModel(elements.settingsGitReviewerModel);
+  const gitReviewer = harness ? { harnessId: harness.id, ...(provider ? { provider } : {}), modelId, thinkingLevel: elements.settingsGitReviewerThinking.value } : null;
   state.gitReviewer = gitReviewer;
   savePreferences({ gitReviewer }).catch((error) => toast(error.message));
 }

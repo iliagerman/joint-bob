@@ -541,6 +541,7 @@ export const userPreferencesSchema = z.object({
     .refine((marks) => Object.keys(marks).length <= 400, "Too many conversation read marks").optional(),
   gitReviewer: z.object({
     harnessId: registeredHarnessIdSchema,
+    provider: z.string().trim().min(1).max(200).optional(),
     modelId: z.string().trim().min(1).max(300),
     thinkingLevel: z.string().trim().min(1).max(40),
   }).strict().nullable().optional(),

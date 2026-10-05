@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.45.0 — 2026-10-05
+
+- Git review now defaults to medium effort level instead of xhigh, with saved preferences taking priority.
+- Git review model picker now groups models by provider for easier selection and to keep models with the same ID from different providers distinct.
+
 ## 2.44.0 — 2026-10-05
 
 - Users can now log in to any node in a shared cluster. Cluster members automatically sync user credentials so sign-on works across the network.

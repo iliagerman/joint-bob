@@ -5,7 +5,7 @@ import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { renderSideBySideDiff } from "./git-diff-view.js";
 import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyCommitsToExplain, storyHasSaved, storyHidesScope, storyIsFresh, storyPicking } from "./git-story.js";
-import { fillModelOptions, fillThinkingOptions } from "./git-reviewer-options.js";
+import { fillModelOptions, fillThinkingOptions, selectedModel, selectModel } from "./git-reviewer-options.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 import { activeChatSession } from "./terminal.js";
@@ -453,8 +453,8 @@ async function openThread(threadId) {
     await ensurePickers();
     elements.gitReviewHarness.value = body.thread.harnessId;
     syncModelOptions();
-    elements.gitReviewModel.value = body.thread.modelId;
-    elements.gitReviewThinking.value = body.thread.thinkingLevel;
+    selectModel(elements.gitReviewModel, body.thread.modelId, body.thread.provider);
+    fillThinkingOptions(selectedHarness(), git.models, elements.gitReviewModel, elements.gitReviewThinking, body.thread.thinkingLevel);
     renderThread(body.thread.messages);
     renderDiff({ patch: body.thread.snapshot, binary: false, truncated: false });
     elements.gitReviewDiffPath.textContent = reviewTargetLabel(body.thread.selection);
@@ -487,10 +487,11 @@ async function submitAsk(event) {
       thread = body.thread;
     } else {
       const harness = selectedHarness();
-      const provider = elements.gitReviewModel.selectedOptions[0]?.dataset.provider || harness?.configuration?.fixedProvider;
+      const picked = selectedModel(elements.gitReviewModel);
+      const provider = picked.provider || harness?.configuration?.fixedProvider;
       const payload = {
         harnessId: elements.gitReviewHarness.value,
-        modelId: elements.gitReviewModel.value,
+        modelId: picked.modelId,
         thinkingLevel: elements.gitReviewThinking.value,
         selection: { scope: git.selection.scope, ...(git.selection.revision ? { revision: git.selection.revision } : {}), ...(git.selection.filePath ? { filePath: git.selection.filePath } : {}), ...(git.selection.staged !== undefined ? { staged: git.selection.staged } : {}) },
         question,
@@ -528,12 +529,13 @@ async function generateGuide() {
   elements.gitReviewGuide.hidden = false;
   showLoading(elements.gitReviewGuide, "The reviewer is reading the changes and ranking them…");
   try {
-    const provider = elements.gitReviewModel.selectedOptions[0]?.dataset.provider || harness.configuration?.fixedProvider;
+    const picked = selectedModel(elements.gitReviewModel);
+    const provider = picked.provider || harness.configuration?.fixedProvider;
     const response = await api(gitApiUrl("guide"), { method: "POST", body: JSON.stringify({
       conversationId: git.conversationId,
       scope: git.conversationId && !elements.gitReviewAllChanges.checked ? "conversation" : "all",
       paths, harnessId: harness.id, provider,
-      modelId: elements.gitReviewModel.value, thinkingLevel: elements.gitReviewThinking.value,
+      modelId: picked.modelId, thinkingLevel: elements.gitReviewThinking.value,
     }) });
     if (request !== git.scopeRequest || !elements.gitReviewDialog.open) return;
     git.guide = { guide: response.guide, paths, patches: response.patches, fingerprint: response.fingerprint, threadId: response.thread.id };
@@ -663,8 +665,9 @@ async function generateStoryFromView({ conversation = false } = {}) {
   if (!git.harnesses.length) { toast("Git review is still loading"); return; }
   const harness = selectedHarness();
   if (!harness?.ready) { toast("Selected reviewer is unavailable on this node"); return; }
-  const provider = elements.gitReviewModel.selectedOptions[0]?.dataset.provider || harness.configuration?.fixedProvider;
-  const reviewer = { harnessId: harness.id, ...(provider ? { provider } : {}), modelId: elements.gitReviewModel.value, thinkingLevel: elements.gitReviewThinking.value };
+  const model = selectedModel(elements.gitReviewModel);
+  const provider = model.provider || harness.configuration?.fixedProvider;
+  const reviewer = { harnessId: harness.id, ...(provider ? { provider } : {}), modelId: model.modelId, thinkingLevel: elements.gitReviewThinking.value };
   const picked = conversation ? null : storyCommitsToExplain();
   if (picked) {
     if (!picked.length) { toast("Pick at least one commit or push"); return; }

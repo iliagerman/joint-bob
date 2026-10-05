@@ -82,7 +82,7 @@ async function mockReviewers(page: Page) {
     { id: "claude", label: "Claude", runtimeConfigured: true, ready: true, defaults: { modelId: "opus", thinkingLevel: "xhigh" }, configuration: { fixedProvider: "claude", thinkingLevels: ["low", "xhigh"] } },
   ] } }));
   await page.route("**/api/models", (route) => route.fulfill({ json: { models: [
-    { harnessId: "pi", id: "gpt-6-sol", label: "GPT-6 Sol", provider: "openai-codex", thinkingLevels: ["low", "xhigh"] },
+    { harnessId: "pi", id: "gpt-6-sol", label: "GPT-6 Sol", provider: "openai-codex", thinkingLevels: ["low", "medium", "xhigh"] },
     { harnessId: "claude", id: "opus", label: "Opus 5.5", provider: "claude", thinkingLevels: ["low", "xhigh"] },
   ] } }));
 }
@@ -124,7 +124,7 @@ test("Story tab writes a story out of band, explains it in four sections, and op
   assert.equal(await page.getByTestId("git-story-title").innerText(), "Greeting with an empty-name error");
   const { conversationId, ...request } = posts.at(-1) as { conversationId: string };
   assert.ok(conversationId);
-  assert.deepEqual(request, { scope: "conversation", paths: ["app.ts", "app.test.ts"], includeCommits: true, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "xhigh" });
+  assert.deepEqual(request, { scope: "conversation", paths: ["app.ts", "app.test.ts"], includeCommits: true, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" });
   assert.equal(await page.getByTestId("git-review-story-dot").isVisible(), true);
 
   // The dialog never scrolls the page; the story fits inside it.
@@ -252,7 +252,7 @@ test("Story tab explains commits picked from past pushes or history, without the
   await page.getByTestId("git-story-title").waitFor();
   const { conversationId, ...request } = posts.at(-1) as { conversationId: string };
   assert.ok(conversationId);
-  assert.deepEqual(request, { source: "commits", commits: [history[0].hash, history[3].hash], scope: "all", paths: [], includeCommits: false, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "xhigh" });
+  assert.deepEqual(request, { source: "commits", commits: [history[0].hash, history[3].hash], scope: "all", paths: [], includeCommits: false, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" });
   assert.equal(await page.locator("#gitReviewToolbar").isVisible(), false, "conversation scope does not apply to a commits story");
   assert.match(await page.getByTestId("git-story-section-conversation").innerText(), /Commits/);
   await page.getByTestId("git-story-section-conversation").click();
