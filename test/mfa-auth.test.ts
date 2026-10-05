@@ -170,7 +170,7 @@ test("MFA belongs to the authenticated user; cancelling setup and password chang
     assert.equal((await authRequest(f.node, "/mfa/setup", undefined, f.session, "DELETE")).response.status, 204);
     assert.equal((await f.request("/mfa/confirm", { code: fixtureTotp(setup.body.secret) })).response.status, 400);
     const { codes } = await f.enroll();
-    f.db.prepare("INSERT INTO users SELECT 'other-user', 'other-user', password_hash, password_salt, 0, created_at, updated_at FROM users LIMIT 1").run();
+    f.db.prepare("INSERT INTO users SELECT 'other-user', 'other-user', password_hash, password_salt, 0, created_at, updated_at, NULL FROM users LIMIT 1").run();
     const otherLogin = await authRequest(f.node, "/login", { username: "other-user", password: f.environment.password });
     assert.equal(otherLogin.body.mfaRequired, undefined);
     const other = responseSession(otherLogin.response, otherLogin.body);

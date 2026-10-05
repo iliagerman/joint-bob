@@ -53,6 +53,7 @@ test("first startup lets the owner create credentials and signs them in", async 
       mustChangePassword: false,
       csrfToken: setupBody.csrfToken,
       username: "owner",
+      isRemoteLogin: false,
     });
     const projects = await fetch(`${baseUrl}/api/projects`, { headers: { Cookie: sessionCookie } });
     assert.equal(projects.status, 200);
