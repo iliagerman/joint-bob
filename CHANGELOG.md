@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.40.0 — 2026-10-05
 
-- Git review now explains code changes with interactive flow diagrams showing how the change flows through the system, the conversation that shaped it, step-by-step examples, and implementation details—all in the new Story tab.
+- Git review now includes a Story tab with interactive flow diagrams, conversation context, step-by-step examples, and implementation details that explain code changes without reading diffs.
 
 ## 2.39.0 — 2026-10-05
 
