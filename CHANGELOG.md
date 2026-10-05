@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.38.0 — 2026-10-05
 
 - Cloudflare secrets now support optional Stream API, account, customer, and signing credentials.
 
