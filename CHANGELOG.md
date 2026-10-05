@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Project type selector now wraps properly on smaller screens.
+
 ## 2.45.0 — 2026-10-05
 
 - Git review now defaults to medium effort level instead of xhigh, with saved preferences taking priority.
