@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Secrets shared with a cluster are now selectable in the cluster sharing dialog, letting you control which credentials every node receives.
+
 ## 2.38.0 — 2026-10-05
 
 - Cloudflare secrets now support optional Stream API, account, customer, and signing credentials.

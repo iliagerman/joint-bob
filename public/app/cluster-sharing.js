@@ -86,6 +86,11 @@ export async function renderClusterSharing(cluster, { localNodeId, onSaved }) {
   Object.assign(autoShareInput, { type: "checkbox", name: "autoShareProjects", checked: cluster.autoShareProjects });
   autoShareInput.dataset.testid = "cluster-auto-share-input";
   autoShare.append(autoShareInput, document.createTextNode("Also share projects I create later"));
+  let secretsList = null;
+  try {
+    const { shared, received, available } = await api(`/api/clusters/${cluster.id}/secrets`);
+    if (current === revision) secretsList = { available, shared, list: scopeList("secret", available, "label", shared.map((s) => s.id)) };
+  } catch { /* Projects remain editable if credential inventory is temporarily unavailable. */ }
   const save = text("button", "Save sharing", "primary compact"); save.type = "button"; save.dataset.testid = "sharing-save";
   save.addEventListener("click", async () => {
     save.disabled = true;
@@ -93,6 +98,7 @@ export async function renderClusterSharing(cluster, { localNodeId, onSaved }) {
       if (!await confirmAction({ eyebrow: "Sharing", title: `Save sharing with ${cluster.name}?`, message: `Every node in ${cluster.name} gets what you ticked. Secret accounts, including website credentials, travel only when marked to replicate. Browser profiles stay on this machine.`, confirmLabel: "Save sharing" })) return;
       const checked = (group) => [...group.querySelectorAll("input:checked")].map((control) => control.value);
       const result = await api(`/api/clusters/${cluster.id}/sharing`, { method: "PUT", body: JSON.stringify({ projectIds: checked(projects), workspaceIds: checked(workspaces), confirmOwnedData: true }) });
+      if (secretsList) await api(`/api/clusters/${cluster.id}/secrets`, { method: "PUT", body: JSON.stringify({ accountIds: checked(secretsList.list) }) });
       // Saving a selection resets automatic sharing, so apply the box afterwards.
       if (autoShareInput.checked) await api(`/api/clusters/${cluster.id}/membership`, { method: "PATCH", body: JSON.stringify({ autoShareProjects: true }) });
       if (current === revision) status.textContent = `Saved · ${result.pendingDeliveries} pending ${result.pendingDeliveries === 1 ? "delivery" : "deliveries"}`;
@@ -103,14 +109,12 @@ export async function renderClusterSharing(cluster, { localNodeId, onSaved }) {
     } finally { save.disabled = false; }
   });
   status.textContent = data.pendingDeliveries ? `${data.pendingDeliveries} ${data.pendingDeliveries === 1 ? "delivery" : "deliveries"} still on their way` : "";
-  container.append(note, projects, workspaces, autoShare, save);
-  try {
-    const { shared } = await api(`/api/clusters/${cluster.id}/secrets`);
-    if (current !== revision || !shared.length) return;
-    const section = text("div", "", "cluster-scope");
-    section.append(text("p", `Secrets I share · ${shared.length}`, "cluster-scope-title"));
-    const list = document.createElement("ul"); list.className = "cluster-chips";
-    for (const account of shared) list.append(text("li", account.label, "cluster-chip"));
-    section.append(list); container.append(section);
-  } catch { /* Projects remain editable if credential inventory is temporarily unavailable. */ }
+  container.append(note, projects, workspaces, autoShare);
+  if (secretsList) {
+    const secretNote = text("p", "", "cluster-callout");
+    secretNote.append(document.createTextNode("Secrets you tick here are shared with "), text("strong", "every node"),
+      document.createTextNode(` in ${cluster.name}${others.length ? ` (${others.join(", ")})` : ""}, and with nodes that join later. Recipients can use these accounts but cannot change their values.`));
+    container.append(secretNote, secretsList.list);
+  }
+  container.append(save);
 }

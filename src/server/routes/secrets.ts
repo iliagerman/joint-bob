@@ -38,6 +38,7 @@ app.get("/api/clusters/:clusterId/secrets", async (request, response, next) => {
     ensureSecretSharingSchema(db);
     if(!db.prepare('SELECT 1 FROM sharing_memberships WHERE cluster_id=? AND node_id=?').get(clusterId,local)) {response.status(403).json({error:'Not a member of this cluster'});return;}
     const accounts=await listSecretAccounts();
+    const available=accounts.filter(account=>!account.readOnly).map(account=>({id:account.id,label:account.label}));
     const shared=accounts.filter(account=>!account.readOnly && (db.prepare('SELECT 1 FROM cluster_v2_secret_grants WHERE account_id=? AND cluster_id=?').get(account.id,clusterId) || db.prepare(`SELECT 1 FROM secret_assignments s JOIN cluster_v2_share_selections sh ON sh.resource_id=s.scope_id AND sh.kind='workspace' WHERE s.account_id=? AND s.scope_type='workspace' AND sh.cluster_id=?`).get(account.id,clusterId) || account.replicate && db.prepare(`SELECT 1 FROM secret_assignments s JOIN sharing_resource_shares sh ON sh.resource_id=s.scope_id AND sh.kind='project' WHERE s.account_id=? AND s.scope_type='project' AND sh.cluster_id=?`).get(account.id,clusterId))).map(account=>({id:account.id,label:account.label}));
     const received=accounts.filter(account=>{
       if(!account.readOnly)return false;
@@ -49,7 +50,21 @@ app.get("/api/clusters/:clusterId/secrets", async (request, response, next) => {
         ? scope.clusterIds.includes(clusterId) && scope.projectIds.some(id=>mayShareProject(db,local,account.ownerNodeId!,id))
         : scope.projectIds.some(id=>mayShareProject(db,local,account.ownerNodeId!,id) && db.prepare("SELECT 1 FROM sharing_resource_shares WHERE kind='project' AND resource_id=? AND cluster_id=?").get(id,clusterId)));
     }).map(account=>({id:account.id,label:account.label,ownerNodeId:account.ownerNodeId}));
-    response.json({shared,received});
+    response.json({shared,received,available});
+  } catch(error){next(error);}
+});
+app.put("/api/clusters/:clusterId/secrets", async (request, response, next) => {
+  try {
+    const db=await clusterV2Database(),local=(await getClusterNode()).id,clusterId=z.string().uuid().parse(request.params.clusterId);
+    ensureSecretSharingSchema(db);
+    if(!db.prepare('SELECT 1 FROM sharing_memberships WHERE cluster_id=? AND node_id=?').get(clusterId,local)) {response.status(403).json({error:'Not a member of this cluster'});return;}
+    const input=z.object({accountIds:z.array(z.string().uuid()).max(1000)}).strict().parse(request.body);
+    const accounts=await listSecretAccounts();
+    for(const account of accounts.filter(a=>!a.readOnly)){
+      const grants=input.accountIds.includes(account.id)?[{clusterId,nodeId:null}]:[];
+      setSecretGrants(db,local,account.id,grants);
+    }
+    response.json({saved:true});
   } catch(error){next(error);}
 });
 app.get("/api/secrets/accounts/:accountId/sharing", async (request, response, next) => {
