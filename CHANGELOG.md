@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.39.0 — 2026-10-05
 
 - Secrets shared with a cluster are now selectable in the cluster sharing dialog, letting you control which credentials every node receives.
 - Secrets attached to mirrored workspaces now reach recipient nodes correctly through their projects.
