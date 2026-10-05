@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.43.0 — 2026-10-05
 
-- GitHub accounts now support authentication with GitHub App installations as an alternative to API tokens.
+- GitHub accounts can now authenticate with a GitHub App installation instead of an API token.
 
 ## 2.42.0 — 2026-10-05
 
