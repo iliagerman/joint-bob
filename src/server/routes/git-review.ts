@@ -18,7 +18,9 @@ import {
   getGitReviewThread,
   listGitReviewThreads,
   type GitReviewSelection,
+  type GitReviewThread,
 } from "../../git-review-threads.js";
+import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory } from "../git-change-story.js";
 import { getProject } from "../../store.js";
 import { genericSecretEnvironment, githubAccountsForProject } from "../../secrets.js";
 import { githubAccountFor } from "../../github-credentials.js";
@@ -440,6 +442,88 @@ app.get("/api/projects/:projectId/git/guide-latest", async (request, response, n
       if (!await getProject(request.params.projectId)) throw new GitReviewError(404, "Project not found");
       return latestFreshGuide(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId")), conversationId ?? null);
     });
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+// ---- Change story ----
+
+const storyRequest = z.object({
+  conversationId: z.string().min(1).max(240).nullable(),
+  scope: z.enum(["conversation", "all"]),
+  paths: z.array(z.string().min(1).max(2000)).max(100),
+  includeCommits: z.boolean(),
+  harnessId: gitReviewAskSchema.shape.harnessId,
+  provider: z.string().max(200).optional(),
+  modelId: z.string().min(1).max(300),
+  thinkingLevel: gitReviewAskSchema.shape.thinkingLevel,
+}).strict();
+
+function storyThreadInfo(thread: GitReviewThread) {
+  return { id: thread.id, harnessId: thread.harnessId, provider: thread.provider, modelId: thread.modelId, thinkingLevel: thread.thinkingLevel, createdAt: thread.createdAt, expiresAt: thread.expiresAt };
+}
+
+async function performStory(projectId: string, cwd: string, input: z.infer<typeof storyRequest>): Promise<unknown> {
+  const project = await getProject(projectId);
+  if (!project) throw new GitReviewError(404, "Project not found");
+  if (input.scope === "conversation" && !input.conversationId) throw new GitReviewError(400, "Conversation required");
+  if (input.scope === "conversation" && input.paths.length) checkedConversationFiles(projectId, cwd, input.conversationId!, input.paths);
+  const status = await gitStatus(cwd);
+  const pending = new Set([...status.staged, ...status.unstaged, ...status.untracked].map(({ path }) => path));
+  if (input.paths.some((file) => !pending.has(file))) throw new GitReviewError(409, "Selected files changed; refresh Git status");
+  const { diff, ...saved } = await generateChangeStory({
+    project, cwd, conversationId: input.conversationId,
+    sources: { scope: input.scope, pendingPaths: input.paths, includeCommits: input.includeCommits && Boolean(input.conversationId) },
+    harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel,
+  });
+  const thread = createGitReviewThread({ projectId, conversationId: input.conversationId, harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel, selection: { scope: "worktree" }, snapshot: diff, question: CHANGE_STORY_MARKER, answer: JSON.stringify(saved) });
+  return { thread: storyThreadInfo(thread), saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } };
+}
+
+// The newest saved story for a conversation (or a chosen one), with its freshness and the
+// commits the conversation has made so far.
+async function latestStory(projectId: string, cwd: string, conversationId: string | null, threadId?: string): Promise<unknown> {
+  const project = await getProject(projectId);
+  if (!project) throw new GitReviewError(404, "Project not found");
+  const commits = conversationId ? await conversationCommits(project, cwd, conversationId).catch(() => []) : [];
+  const id = threadId ?? listGitReviewThreads(projectId, conversationId).find((thread) => thread.question === CHANGE_STORY_MARKER)?.id;
+  const thread = id ? getGitReviewThread(id) : undefined;
+  if (!thread || thread.projectId !== projectId || thread.messages[0]?.text !== CHANGE_STORY_MARKER) {
+    if (threadId) throw new GitReviewError(404, "Story not found");
+    return { latest: null, commits };
+  }
+  const saved = JSON.parse(thread.messages[1].text) as SavedChangeStory;
+  return { latest: { thread: storyThreadInfo(thread), saved, freshness: await storyFreshness(project, cwd, thread.conversationId, saved) }, commits };
+}
+
+app.post("/api/cluster/git/story", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const projectId = queryString(request, "projectId");
+    response.json(await performStory(projectId, await reviewCwd(projectId, queryOptional(request, "taskId")), storyRequest.parse(request.body)));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.post("/api/projects/:projectId/git/story", async (request, response, next) => {
+  try {
+    await withOwningNode(request, response, "/api/cluster/git/story", {}, async () =>
+      performStory(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId")), storyRequest.parse(request.body)), request);
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.get("/api/cluster/git/story-latest", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const projectId = queryString(request, "projectId");
+    response.json(await latestStory(projectId, await reviewCwd(projectId, queryOptional(request, "taskId")), queryOptional(request, "conversationId") ?? null, queryOptional(request, "threadId")));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.get("/api/projects/:projectId/git/story-latest", async (request, response, next) => {
+  try {
+    const conversationId = queryOptional(request, "conversationId");
+    const threadId = queryOptional(request, "threadId");
+    await withOwningNode(request, response, "/api/cluster/git/story-latest", { conversationId, threadId }, async () =>
+      latestStory(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId")), conversationId ?? null, threadId));
   } catch (error) { handleGitError(response, error, next); }
 });
 

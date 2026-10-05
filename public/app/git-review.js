@@ -3,6 +3,8 @@ import { loadGitHosting, resetGitHosting } from "./git-hosting.js";
 import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { renderSideBySideDiff } from "./git-diff-view.js";
+import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyHasSaved, storyIsFresh } from "./git-story.js";
 import { fillModelOptions, fillThinkingOptions } from "./git-reviewer-options.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -71,33 +73,55 @@ export async function openGitReview(conversationId = null) {
   elements.gitReviewAskButton.hidden = true;
   elements.gitReviewAskForm.hidden = true;
   elements.gitReviewList.textContent = "";
+  resetStory({
+    container: elements.gitStory,
+    conversationId,
+    apiUrl: gitApiUrl,
+    onChange: syncStoryChrome,
+    generate: () => { void generateStoryFromView(); },
+    coverage: storyCoverage,
+    focusReviewer: () => elements.gitReviewHarness.focus(),
+    closeDialog: () => elements.gitReviewDialog.close(),
+  });
   applyTab("changes");
   elements.gitReviewDialog.showModal();
+  void loadStory();
   await loadCurrentTab();
-  try { await ensurePickers(); elements.gitReviewGenerate.disabled = false; } catch (error) { toast(error.message, 8000); }
+  try { await ensurePickers(); elements.gitReviewGenerate.disabled = false; syncStoryChrome(); } catch (error) { toast(error.message, 8000); }
 }
 
 function applyTab(tab) {
   git.tab = tab;
-  for (const [name, button] of [["changes", elements.gitReviewTabChanges], ["history", elements.gitReviewTabHistory], ["reviews", elements.gitReviewTabReviews], ["pulls", elements.gitReviewTabPulls], ["pipelines", elements.gitReviewTabPipelines]]) {
+  for (const [name, button] of [["changes", elements.gitReviewTabChanges], ["story", elements.gitReviewTabStory], ["history", elements.gitReviewTabHistory], ["reviews", elements.gitReviewTabReviews], ["pulls", elements.gitReviewTabPulls], ["pipelines", elements.gitReviewTabPipelines]]) {
     const active = name === tab;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-selected", String(active));
   }
   const hosting = tab === "pulls" || tab === "pipelines";
   if (!hosting) resetGitHosting();
+  const storyTab = tab === "story";
   elements.gitReviewToolbar.hidden = hosting;
-  elements.gitReviewBody.hidden = hosting;
+  elements.gitReviewBody.hidden = hosting || storyTab;
+  elements.gitStory.hidden = !storyTab;
+  elements.gitReviewFocusLabel.hidden = storyTab;
+  elements.gitReviewStoryCommitsLabel.hidden = !storyTab || !git.conversationId;
   elements.gitReviewHosting.hidden = !hosting;
   elements.gitReviewDialog.querySelector(".git-review-card").classList.toggle("is-hosting", hosting);
   renderAmbiguity();
+  syncStoryChrome();
 }
 
 // Agent-declared file lists are useful scope, not proof of file ownership.
 function renderAmbiguity() {
-  const show = Boolean(git.conversationId) && git.tab === "changes";
+  const show = (Boolean(git.conversationId) && git.tab === "changes") || git.tab === "story";
   elements.gitReviewAmbiguity.hidden = !show;
   if (!show) return;
+  if (git.tab === "story") {
+    elements.gitReviewAmbiguity.textContent = git.conversationId
+      ? "Commits come from this conversation's own git output and are checked in Git. Pending files are claimed by the coding agent, not proven by Git."
+      : "No conversation is selected, so a story covers the project's pending changes only.";
+    return;
+  }
   elements.gitReviewAmbiguity.textContent = git.scopePaths?.length === 0 && elements.gitReviewAllChanges.checked
     ? "The coding agent claimed none of the pending files for this conversation, so all pending changes are shown."
     : "File list is claimed by the coding agent, not proven by Git. Other conversations may have edited the same files.";
@@ -106,6 +130,7 @@ function renderAmbiguity() {
 async function loadCurrentTab() {
   if (git.tab === "changes") return loadChanges();
   if (git.tab === "history") return loadHistory();
+  if (git.tab === "story") return openStoryTab();
   if (git.tab === "pulls" || git.tab === "pipelines") return loadGitHosting(git.tab, gitApiUrl);
   return loadReviews();
 }
@@ -272,71 +297,8 @@ function markActiveRow() {
   for (const row of elements.gitReviewList.querySelectorAll(".git-review-file, .git-review-commit")) row.classList.remove("is-active");
 }
 
-function diffCell(className, text) {
-  const cell = document.createElement("span");
-  cell.className = `git-diff-cell ${className}`;
-  cell.textContent = text;
-  return cell;
-}
-
-function diffRow(left, right) {
-  const row = document.createElement("div");
-  row.className = "git-diff-row";
-  row.dataset.testid = "git-diff-row";
-  const leftKind = left ? (left.kind === "del" ? " is-del" : "") : " is-empty";
-  const rightKind = right ? (right.kind === "add" ? " is-add" : "") : " is-empty";
-  row.append(
-    diffCell(`is-number${leftKind}`, left ? String(left.number) : ""),
-    diffCell(`is-code${leftKind}`, left?.text ?? ""),
-    diffCell(`is-number${rightKind}`, right ? String(right.number) : ""),
-    diffCell(`is-code${rightKind}`, right?.text ?? ""),
-  );
-  return row;
-}
-
-function diffNote(className, text) {
-  const note = document.createElement("div");
-  note.className = `git-diff-note ${className}`;
-  note.textContent = text;
-  return note;
-}
-
-// Unified patch → side-by-side rows. Removed and added runs pair up line by line;
-// the longer run leaves blank cells on the other side.
 function renderDiff(diff) {
-  elements.gitReviewDiff.textContent = "";
-  if (diff.binary) { elements.gitReviewDiff.append(diffNote("is-meta", "Binary file — no textual diff.")); return; }
-  if (!diff.patch) { elements.gitReviewDiff.append(diffNote("is-meta", "No changes.")); return; }
-  let oldLine = 0;
-  let newLine = 0;
-  let removed = [];
-  let added = [];
-  const flush = () => {
-    for (let index = 0; index < Math.max(removed.length, added.length); index += 1) elements.gitReviewDiff.append(diffRow(removed[index], added[index]));
-    removed = [];
-    added = [];
-  };
-  for (const line of diff.patch.split("\n")) {
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-    if (hunk) {
-      flush();
-      oldLine = Number(hunk[1]);
-      newLine = Number(hunk[2]);
-      elements.gitReviewDiff.append(diffNote("is-hunk", line));
-    } else if (!oldLine && !newLine) {
-      if (line) elements.gitReviewDiff.append(diffNote("is-meta", line));
-    } else if (line.startsWith("-")) removed.push({ kind: "del", number: oldLine++, text: line.slice(1) });
-    else if (line.startsWith("+")) added.push({ kind: "add", number: newLine++, text: line.slice(1) });
-    else if (!line || line.startsWith("\\")) continue;
-    else {
-      flush();
-      if (line.startsWith("diff --git")) { oldLine = 0; newLine = 0; elements.gitReviewDiff.append(diffNote("is-meta", line)); continue; }
-      const text = line.slice(1);
-      elements.gitReviewDiff.append(diffRow({ kind: "context", number: oldLine++, text }, { kind: "context", number: newLine++, text }));
-    }
-  }
-  flush();
-  if (diff.truncated) elements.gitReviewDiff.append(diffNote("is-hunk", "… diff truncated"));
+  renderSideBySideDiff(elements.gitReviewDiff, diff);
 }
 
 async function loadHistory() {
@@ -469,6 +431,11 @@ async function openThread(threadId) {
   applyTab("reviews");
   try {
     const body = await api(gitApiUrl(`reviews/${encodeURIComponent(threadId)}`));
+    if (body.thread.messages[0]?.text === "Generated change story") {
+      applyTab("story");
+      await loadStory(threadId);
+      return;
+    }
     if (body.thread.messages[0]?.text === "Generated review comments") {
       const saved = JSON.parse(body.thread.messages[1].text);
       git.guide = { ...saved, threadId };
@@ -636,6 +603,72 @@ function renderGuide() {
   renderDiff({ patch: git.guide.patches[item.path], binary: false, truncated: false });
 }
 
+// ---- Change story ----
+
+// The Story tab shares the reviewer bar with review comments; its label and status follow the story.
+function syncStoryChrome() {
+  elements.gitReviewStoryDot.hidden = !storyHasSaved();
+  elements.gitReviewStoryDot.classList.toggle("is-outdated", storyHasSaved() && !storyIsFresh());
+  const commits = storyCommitCount();
+  elements.gitReviewStoryCommitsText.textContent = commits ? `Include this conversation's commits (${commits})` : "Include this conversation's commits (none found)";
+  if (git.tab !== "story") {
+    elements.gitReviewGenerate.textContent = "Generate review comments";
+    elements.gitReviewGenerate.disabled = !git.harnesses.length;
+    return;
+  }
+  const chrome = storyChrome();
+  elements.gitReviewGenerate.textContent = chrome.button;
+  elements.gitReviewGenerate.disabled = chrome.disabled || !git.harnesses.length;
+  setStatus(chrome.status);
+}
+
+function storyCoverage() {
+  const commits = git.conversationId && elements.gitReviewStoryCommits.checked ? storyCommitCount() : 0;
+  const files = git.status ? selectedPaths().length : 0;
+  return `Covers ${commits} commit${commits === 1 ? "" : "s"} and ${files} pending file${files === 1 ? "" : "s"}${git.conversationId ? " from this conversation" : ""}.`;
+}
+
+async function ensureStatus() {
+  if (!git.status) {
+    const status = await api(gitApiUrl("status"));
+    git.status = status;
+    elements.gitReviewBranch.textContent = `${status.branch}${status.upstream ? ` → ${status.upstream}` : ""}${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}`;
+  }
+  if (git.conversationId && git.scopePaths === null) await loadConversationScope();
+}
+
+async function openStoryTab() {
+  renderStory();
+  syncStoryChrome();
+  try { await ensureStatus(); } catch (error) { setStatus(error.message); return; }
+  if (git.tab !== "story") return;
+  renderStory();
+  syncStoryChrome();
+}
+
+async function generateStoryFromView() {
+  if (!git.harnesses.length) { toast("Git review is still loading"); return; }
+  const harness = selectedHarness();
+  if (!harness?.ready) { toast("Selected reviewer is unavailable on this node"); return; }
+  try {
+    await ensureStatus();
+    // The server only trusts a conversation file list it handed out in the last few minutes.
+    if (git.conversationId && !elements.gitReviewAllChanges.checked) await loadConversationScope();
+  } catch (error) { toast(error.message, 8000); return; }
+  const includeCommits = Boolean(git.conversationId) && elements.gitReviewStoryCommits.checked;
+  const paths = selectedPaths();
+  if (!paths.length && !(includeCommits && storyCommitCount())) { toast("Nothing to explain: the selected scope has no pending files and no commits"); return; }
+  const provider = elements.gitReviewModel.selectedOptions[0]?.dataset.provider || harness.configuration?.fixedProvider;
+  await generateStory({
+    conversationId: git.conversationId,
+    scope: git.conversationId && !elements.gitReviewAllChanges.checked ? "conversation" : "all",
+    paths, includeCommits, harnessId: harness.id, ...(provider ? { provider } : {}),
+    modelId: elements.gitReviewModel.value, thinkingLevel: elements.gitReviewThinking.value,
+  });
+}
+
+new ResizeObserver(() => refitStory()).observe(elements.gitStory);
+
 // ---- Wiring ----
 
 elements.chatGitButton.addEventListener("click", () => {
@@ -644,7 +677,7 @@ elements.chatGitButton.addEventListener("click", () => {
 });
 elements.gitReviewCloseButton.addEventListener("click", () => elements.gitReviewDialog.close());
 elements.gitReviewDialog.addEventListener("close", () => { git.scopeRequest += 1; git.selection = null; git.thread = null; });
-for (const button of [elements.gitReviewTabChanges, elements.gitReviewTabHistory, elements.gitReviewTabReviews, elements.gitReviewTabPulls, elements.gitReviewTabPipelines]) {
+for (const button of [elements.gitReviewTabChanges, elements.gitReviewTabStory, elements.gitReviewTabHistory, elements.gitReviewTabReviews, elements.gitReviewTabPulls, elements.gitReviewTabPipelines]) {
   button.addEventListener("click", () => { applyTab(button.dataset.gitTab); elements.gitReviewAskForm.hidden = true; void loadCurrentTab(); });
 }
 elements.gitReviewAskButton.addEventListener("click", () => { void openAsk(); });
@@ -665,9 +698,11 @@ elements.gitReviewAllChanges.addEventListener("change", () => {
   renderGuide();
   renderAmbiguity();
   if (git.status) renderChangeList(git.status);
+  if (git.tab === "story") renderStory();
 });
 elements.gitReviewThinking.addEventListener("change", () => { git.reviewerTouched = true; });
 elements.gitReviewFocus.addEventListener("change", renderGuide);
 elements.gitReviewRefreshScope.addEventListener("click", async () => { if (!git.conversationId) return; await loadConversationScope(true); git.guide = null; renderGuide(); if (git.status) renderChangeList(git.status); });
-elements.gitReviewGenerate.addEventListener("click", () => { void generateGuide(); });
+elements.gitReviewGenerate.addEventListener("click", () => { if (git.tab === "story") void generateStoryFromView(); else void generateGuide(); });
+elements.gitReviewStoryCommits.addEventListener("change", () => renderStory());
 elements.gitReviewAskForm.addEventListener("submit", submitAsk);

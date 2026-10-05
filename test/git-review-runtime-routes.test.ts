@@ -16,7 +16,7 @@ test("Git review reads reach a paired node through signed runtime routes", { tim
     const [local, peer] = environment.nodes;
     const session = await signIn(environment, local);
     const projectId = local.projects[0].id;
-    for (const route of ["reviews", "guide-latest"]) {
+    for (const route of ["reviews", "guide-latest", "story-latest"]) {
       const response = await api(local, session, "GET", `/projects/${projectId}/git/${route}?nodeId=${peer.nodeId}`);
       assert.equal(response.status, 200, `${route}: ${JSON.stringify(response.body)}`);
     }

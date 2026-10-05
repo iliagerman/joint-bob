@@ -1341,6 +1341,7 @@
         </header>
         <div class="git-review-tabs" role="tablist" aria-label="Git views">
           <button class="git-review-tab is-active" id="gitReviewTabChanges" type="button" role="tab" aria-selected="true" data-git-tab="changes" data-testid="git-review-tab-changes">Changes</button>
+          <button class="git-review-tab" id="gitReviewTabStory" type="button" role="tab" aria-selected="false" data-git-tab="story" data-testid="git-review-tab-story">Story<span class="gs-tab-dot" id="gitReviewStoryDot" hidden data-testid="git-review-story-dot"></span></button>
           <button class="git-review-tab" id="gitReviewTabHistory" type="button" role="tab" aria-selected="false" data-git-tab="history" data-testid="git-review-tab-history">History</button>
           <button class="git-review-tab" id="gitReviewTabReviews" type="button" role="tab" aria-selected="false" data-git-tab="reviews" data-testid="git-review-tab-reviews">Reviews</button>
           <button class="git-review-tab" id="gitReviewTabPulls" type="button" role="tab" aria-selected="false" data-git-tab="pulls" data-testid="git-review-tab-pulls">Pull requests</button>
@@ -1350,7 +1351,8 @@
         <div class="git-review-toolbar" id="gitReviewToolbar">
           <div class="git-review-toolbar-row">
             <label><input id="gitReviewAllChanges" type="checkbox" data-testid="git-review-all-changes"> Include other pending changes</label>
-            <label><input id="gitReviewFocus" type="checkbox" data-testid="git-review-focus"> Focus mode</label>
+            <label id="gitReviewFocusLabel"><input id="gitReviewFocus" type="checkbox" data-testid="git-review-focus"> Focus mode</label>
+            <label id="gitReviewStoryCommitsLabel" hidden><input id="gitReviewStoryCommits" type="checkbox" checked data-testid="git-review-story-commits"> <span id="gitReviewStoryCommitsText">Include this conversation's commits</span></label>
             <button class="ghost compact" id="gitReviewRefreshScope" type="button" data-testid="git-review-refresh-scope">Refresh conversation files</button>
           </div>
         </div>
@@ -1367,6 +1369,7 @@
             </div>
           </section>
         </div>
+        <section class="git-story" id="gitStory" aria-label="Change story" hidden data-testid="git-story"></section>
         <section class="git-hosting" id="gitReviewHosting" aria-label="GitHub pull requests and pipelines" hidden></section>
         <p class="git-review-status" id="gitReviewStatus" role="status" aria-live="polite"></p>
         <div class="git-review-reviewer git-review-toolbar-row" id="gitReviewReviewer">
@@ -1390,6 +1393,21 @@
             <button class="primary" id="gitReviewAskSubmit" type="submit" data-testid="git-review-ask-submit">Ask</button>
           </div>
         </form>
+      </div>
+    </dialog>
+
+    <dialog id="gitDiffDialog" class="git-diff-dialog" data-testid="git-diff-dialog">
+      <div class="dialog-card git-diff-card">
+        <header class="git-review-header">
+          <div class="git-diff-heading">
+            <span class="eyebrow">Side-by-side diff</span>
+            <h2 id="gitDiffTitle" data-testid="git-diff-title"></h2>
+            <p class="git-review-branch" id="gitDiffMeta"></p>
+          </div>
+          <button class="ghost icon-button" id="gitDiffCloseButton" type="button" aria-label="Close diff" title="Close" data-testid="git-diff-close-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </header>
+        <div class="git-diff-columns" aria-hidden="true"><span>Before</span><span>After</span></div>
+        <div class="git-diff-body" id="gitDiffBody" data-testid="git-diff-body" tabindex="0"></div>
       </div>
     </dialog>
 

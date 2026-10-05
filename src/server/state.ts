@@ -57,6 +57,8 @@ export const machineRoutes = new Set([
   "POST /cluster/git/guide",
   "GET /cluster/git/guide-fresh",
   "GET /cluster/git/guide-latest",
+  "POST /cluster/git/story",
+  "GET /cluster/git/story-latest",
   "POST /cluster/git/ask",
   "POST /cluster/git/reviews/ask",
   "GET /cluster/git/github",

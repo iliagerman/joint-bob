@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Git review now explains code changes with interactive flow diagrams showing how the change flows through the system, the conversation that shaped it, step-by-step examples, and implementation details—all in the new Story tab.
+
 ## 2.39.0 — 2026-10-05
 
 - Secrets shared with a cluster are now selectable in the cluster sharing dialog, letting you control which credentials every node receives.
