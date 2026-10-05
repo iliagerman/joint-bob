@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Cloudflare secrets now support optional Stream API, account, customer, and signing credentials.
+
 ## 2.37.1 — 2026-10-05
 
 - Secret account dialogs now maintain a fixed height and scroll internally instead of resizing when adding variables.

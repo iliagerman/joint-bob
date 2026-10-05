@@ -28,7 +28,7 @@ const providerHints = {
   google: "Paste the Google service account JSON. It is stored privately and GOOGLE_APPLICATION_CREDENTIALS points gcloud and the Google SDKs at it.",
   github: "An API token, an SSH key, or both. The token powers Pipelines, pull requests and the gh CLI; the SSH key lets git clone and push without it. List the owners this account serves so each repository uses the right account.",
   stripe: "A Stripe API key. STRIPE_API_KEY is exported to attached agent sessions for use with Stripe tools and SDKs. Use a restricted or test key when possible.",
-  cloudflare: "A Cloudflare API key exported as CLOUDFLARE_API_KEY to attached agent sessions. Global API keys also require your account email; use a scoped API token instead when possible (as a Custom secret).",
+  cloudflare: "Cloudflare Stream credentials. Add whichever values you use; all fields are optional.",
   openai: "OPENAI_API_KEY for OpenAI tools and SDKs.",
   zai: "ZAI_API_KEY for Z.AI tools and SDKs.",
   grafana: "GRAFANA_API_KEY for Grafana APIs. Use a scoped service account token where possible.",
@@ -58,7 +58,7 @@ function secretProviderPresets(provider) {
   if (provider === "google") return [{ name: "GOOGLE_APPLICATION_CREDENTIALS", kind: "file" }];
   if (provider === "github") return [{ name: "GH_TOKEN", kind: "value" }];
   if (provider === "stripe") return [{ name: "STRIPE_API_KEY", kind: "value" }];
-  if (provider === "cloudflare") return [{ name: "CLOUDFLARE_API_KEY", kind: "value" }];
+  if (provider === "cloudflare") return ["CLOUDFLARE_STREAM_API_TOKEN", "CLOUDFLARE_STREAM_ACCOUNT_ID", "CLOUDFLARE_STREAM_CUSTOMER_CODE", "CLOUDFLARE_STREAM_SIGNING_KEY_ID", "CLOUDFLARE_STREAM_SIGNING_PRIVATE_KEY", "CLOUDFLARE_API_KEY"].map((name) => ({ name, kind: "value" }));
   const single = { openai: "OPENAI_API_KEY", zai: "ZAI_API_KEY", grafana: "GRAFANA_API_KEY", datadog: "DD_API_KEY", postgres: "DATABASE_URL", mssql: "MSSQL_CONNECTION_STRING", mongodb: "MONGODB_URI" }[provider];
   if (single) return [{ name: single, kind: "value" }];
   if (provider === "website") return [{ name: "LOGIN_USERNAME", kind: "value" }, { name: "LOGIN_PASSWORD", kind: "value" }];
@@ -466,13 +466,14 @@ elements.secretAccountOriginInput.addEventListener("input", () => {
 async function saveSecretAccount() {
   const provider = secretProviderPicker.value;
   const websiteOrigin = provider === "github" ? "" : elements.secretAccountOriginInput.value.trim();
-  const variables = provider === "github" ? githubVariables() : [...elements.secretVariableRows.children].map((row) => {
+  let variables = provider === "github" ? githubVariables() : [...elements.secretVariableRows.children].map((row) => {
     const name = row.querySelector("[data-secret-name]").value.trim();
     const kind = row.querySelector("[data-secret-kind]").value;
     const value = row.querySelector("[data-secret-value]").value;
     return { name, kind, ...(value === "" ? {} : { value }) };
   });
-  if (!variables.every((item) => item.name) || new Set(variables.map((item) => item.name)).size !== variables.length || (!editingSecretAccountId && variables.some((item) => item.value === undefined))) throw new Error("Enter unique variable names and values");
+  if (provider === "cloudflare") variables = variables.filter((item) => item.value !== undefined || (editingSecretAccountId && editingSecretAccount?.variables?.some((saved) => saved.name === item.name)));
+  if (!variables.length || !variables.every((item) => item.name) || new Set(variables.map((item) => item.name)).size !== variables.length || (!editingSecretAccountId && variables.some((item) => item.value === undefined))) throw new Error("Enter at least one variable with a value, using unique names");
   if (provider === "website" && !websiteOrigin) throw new Error("Website accounts need a website origin. Enter the exact HTTPS origin the login lives at.");
   if (websiteOrigin && variables.some((item) => item.kind === "file")) throw new Error("Website credentials cannot contain file values. Choose Value or clear the website origin.");
   if (provider === "google") for (const item of variables) {

@@ -131,8 +131,8 @@ function assertInput(input: SecretAccountInput): void {
   if (input.provider === "stripe" && (input.variables.length !== 1 || input.variables[0].name !== "STRIPE_API_KEY" || input.variables[0].kind !== "value")) {
     throw new Error("Stripe secret accounts hold exactly one STRIPE_API_KEY value");
   }
-  if (input.provider === "cloudflare" && (input.variables.length !== 1 || input.variables[0].name !== "CLOUDFLARE_API_KEY" || input.variables[0].kind !== "value")) {
-    throw new Error("Cloudflare secret accounts hold exactly one CLOUDFLARE_API_KEY value");
+  if (input.provider === "cloudflare" && input.variables.some((variable) => !["CLOUDFLARE_API_KEY", "CLOUDFLARE_STREAM_API_TOKEN", "CLOUDFLARE_STREAM_ACCOUNT_ID", "CLOUDFLARE_STREAM_CUSTOMER_CODE", "CLOUDFLARE_STREAM_SIGNING_KEY_ID", "CLOUDFLARE_STREAM_SIGNING_PRIVATE_KEY"].includes(variable.name) || variable.kind !== "value")) {
+    throw new Error("Cloudflare accounts accept only supported Cloudflare environment variables as values");
   }
 }
 
@@ -464,7 +464,7 @@ const providerHints: Record<SecretProvider, string> = {
   google: "gcloud and the Google SDKs read GOOGLE_APPLICATION_CREDENTIALS automatically",
   github: "the gh CLI, the GitHub API and git push all read these automatically",
   stripe: "use STRIPE_API_KEY to configure the Stripe CLI or SDK",
-  cloudflare: "use CLOUDFLARE_API_KEY to authenticate with the Cloudflare API (global keys also require an account email)",
+  cloudflare: "use configured Cloudflare API or Stream credentials (CLOUDFLARE_STREAM_*)",
   openai: "use OPENAI_API_KEY with OpenAI tools and SDKs",
   zai: "use ZAI_API_KEY with Z.AI tools and SDKs",
   grafana: "use GRAFANA_API_KEY with Grafana APIs",

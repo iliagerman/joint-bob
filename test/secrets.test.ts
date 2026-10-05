@@ -289,8 +289,9 @@ test("Cloudflare API keys are redacted and exported only for attached projects",
     const context = secrets.agentCredentialContext("project-a");
     assert.match(context, /cloudflare.*CLOUDFLARE_API_KEY.*Cloudflare API/);
     assert.doesNotMatch(context, /synthetic-cf-key/);
-    await assert.rejects(() => secrets.saveSecretAccount({ label: "Typo", provider: "cloudflare", variables: [{ name: "CF_KEY", kind: "value", value: "other" }] }), /exactly one CLOUDFLARE_API_KEY/);
-    await assert.rejects(() => secrets.saveSecretAccount({ label: "File", provider: "cloudflare", variables: [{ name: "CLOUDFLARE_API_KEY", kind: "file", value: "other" }] }), /exactly one CLOUDFLARE_API_KEY/);
+    await secrets.saveSecretAccount({ label: "Cloudflare Stream", provider: "cloudflare", variables: [{ name: "CLOUDFLARE_STREAM_ACCOUNT_ID", kind: "value", value: "synthetic-account" }] });
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Typo", provider: "cloudflare", variables: [{ name: "CF_KEY", kind: "value", value: "other" }] }), /supported Cloudflare environment variables/);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "File", provider: "cloudflare", variables: [{ name: "CLOUDFLARE_STREAM_ACCOUNT_ID", kind: "file", value: "other" }] }), /supported Cloudflare environment variables/);
   });
 });
 
