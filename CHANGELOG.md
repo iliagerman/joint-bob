@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Project reconciliation now skips folders that haven't been created in Syncthing, preventing startup failures.
+
 ## 2.47.1 — 2026-10-06
 
 - Fixed ntfy share dialog layout so labels remain readable and visible inside the dialog.

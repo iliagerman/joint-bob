@@ -262,7 +262,11 @@ async function setProjectIgnores(folderId: string): Promise<void> {
 
 export async function reconcileSyncthingProjectFolders(projects: Array<{ syncFolderId?: string }>): Promise<void> {
   const folderIds = [...new Set(projects.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []))];
-  await Promise.all(folderIds.map(setProjectIgnores));
+  if (!folderIds.length) return;
+  // Syncthing rejects ignores for an unknown folder, and one project whose folder was never
+  // created must not hold startup readiness; the sync check reports the missing folder.
+  const configured = new Set((await request<SyncthingFolder[]>("/rest/config/folders")).map((folder) => folder.id));
+  await Promise.all(folderIds.filter((folderId) => configured.has(folderId)).map(setProjectIgnores));
 }
 
 function remaining(value: unknown): number {

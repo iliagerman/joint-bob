@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
+import { createServer, type RequestListener } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -181,7 +181,7 @@ test("an existing Syncthing folder updates when its requested path changes", asy
 
 test("Syncthing ignores AI-DLC machine-local runtime state", async () => {
   let postedIgnore: string[] | undefined;
-  await withSyncthingApi((request, response) => {
+  await withSyncthingApi(withConfiguredFolders(["demo"], (request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
@@ -198,7 +198,7 @@ test("Syncthing ignores AI-DLC machine-local runtime state", async () => {
       response.statusCode = 404;
       response.end();
     });
-  }, async (syncthing) => {
+  }), async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "demo" }]);
   });
   assert.ok(postedIgnore?.includes("(?d)aidlc/.aidlc-*"), "AI-DLC state must not block a remote folder deletion");
@@ -208,7 +208,7 @@ test("Syncthing ignores AI-DLC machine-local runtime state", async () => {
 
 test("Syncthing ignores the local dev-cluster scratch directory as deletable", async () => {
   let postedIgnore: string[] | undefined;
-  await withSyncthingApi((request, response) => {
+  await withSyncthingApi(withConfiguredFolders(["demo"], (request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
@@ -225,7 +225,7 @@ test("Syncthing ignores the local dev-cluster scratch directory as deletable", a
       response.statusCode = 404;
       response.end();
     });
-  }, async (syncthing) => {
+  }), async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "demo" }]);
   });
   assert.ok(postedIgnore?.includes("(?d).dev-env/"));
@@ -234,7 +234,7 @@ test("Syncthing ignores the local dev-cluster scratch directory as deletable", a
 
 test("Syncthing treats a null ignore list as empty", async () => {
   let postedIgnore: string[] | undefined;
-  await withSyncthingApi((request, response) => {
+  await withSyncthingApi(withConfiguredFolders(["demo"], (request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
@@ -251,7 +251,7 @@ test("Syncthing treats a null ignore list as empty", async () => {
       response.statusCode = 404;
       response.end();
     });
-  }, async (syncthing) => {
+  }), async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "demo" }]);
   });
   assert.deepEqual(postedIgnore, managedIgnorePatterns);
@@ -260,7 +260,7 @@ test("Syncthing treats a null ignore list as empty", async () => {
 test("Syncthing reconciliation puts managed ignores before user negations", async () => {
   let ignore = ["!.env", "!**", ...managedIgnorePatterns.slice().reverse()];
   const posts: string[][] = [];
-  await withSyncthingApi((request, response) => {
+  await withSyncthingApi(withConfiguredFolders(["demo"], (request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
@@ -278,12 +278,24 @@ test("Syncthing reconciliation puts managed ignores before user negations", asyn
       response.statusCode = 404;
       response.end();
     });
-  }, async (syncthing) => {
+  }), async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "demo" }]);
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "demo" }]);
   });
   assert.deepEqual(posts, [[...managedIgnorePatterns, "!.env", "!**"]]);
 });
+
+/** Lists `folderIds` as configured Syncthing folders, so project reconciliation updates their ignores. */
+function withConfiguredFolders(folderIds: string[], handler: RequestListener): RequestListener {
+  return (request, response) => {
+    if (request.method === "GET" && request.url === "/rest/config/folders") {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(folderIds.map((id) => ({ id, label: id, path: `/tmp/${id}`, type: "sendreceive", devices: [] }))));
+      return;
+    }
+    handler(request, response);
+  };
+}
 
 async function withSyncthingApi(handler: Parameters<typeof createServer>[0], run: (syncthing: typeof import("../src/syncthing.js")) => Promise<void>): Promise<void> {
   const server = createServer(handler);
@@ -528,7 +540,7 @@ test("existing engine folders are paused without creating or sharing them", asyn
 
 test("reconciliation updates ignores for existing synced folders without recreating them", async () => {
   const requests: Array<{ method: string; url: string }> = [];
-  await withSyncthingApi((request, response) => {
+  await withSyncthingApi(withConfiguredFolders(["folder-a", "folder-b"], (request, response) => {
     requests.push({ method: request.method ?? "", url: request.url ?? "" });
     response.setHeader("Content-Type", "application/json");
     if (request.method === "GET" && request.url?.startsWith("/rest/db/ignores?folder=")) {
@@ -541,7 +553,7 @@ test("reconciliation updates ignores for existing synced folders without recreat
     }
     response.statusCode = 404;
     response.end();
-  }, async (syncthing) => {
+  }), async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([
       { syncFolderId: "folder-a" },
       { syncFolderId: "folder-b" },
@@ -555,6 +567,25 @@ test("reconciliation updates ignores for existing synced folders without recreat
     { method: "GET", url: "/rest/db/ignores?folder=folder-b" },
     { method: "POST", url: "/rest/db/ignores?folder=folder-b" },
   ]);
+});
+
+test("reconciliation skips a project folder Syncthing does not have instead of failing", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  await withSyncthingApi(withConfiguredFolders(["folder-a"], (request, response) => {
+    requests.push({ method: request.method ?? "", url: request.url ?? "" });
+    response.setHeader("Content-Type", "application/json");
+    if (request.url === "/rest/db/ignores?folder=folder-a") {
+      response.end(request.method === "GET" ? JSON.stringify({ ignore: [] }) : "{}");
+      return;
+    }
+    // Syncthing answers 500 when ignores are posted for an unknown folder.
+    response.statusCode = 500;
+    response.end("folder does not exist");
+  }), async (syncthing) => {
+    await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "folder-a" }, { syncFolderId: "never-created" }]);
+  });
+  assert.deepEqual(requests.map((request) => request.url).filter((url) => url.includes("never-created")), [], "a missing folder is left to the sync check");
+  assert.ok(requests.some((request) => request.method === "POST" && request.url === "/rest/db/ignores?folder=folder-a"), "configured folders still get their ignores");
 });
 
 test("agent resources folder is shared unpaused with resource ignores", async () => {
@@ -603,7 +634,7 @@ test("agent resources folder is shared unpaused with resource ignores", async ()
 test("worktree folders get deletable ignore rules that keep heavy trees and binaries out", async () => {
   const posted: string[][] = [];
   const folder = "joint-bob-worktrees-0123";
-  await withSyncthingApi((request, response) => {
+  await withSyncthingApi(withConfiguredFolders([folder], (request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
@@ -620,7 +651,7 @@ test("worktree folders get deletable ignore rules that keep heavy trees and bina
       response.statusCode = 404;
       response.end();
     });
-  }, async (syncthing) => {
+  }), async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: folder }]);
   });
   const ignore = posted[0];
