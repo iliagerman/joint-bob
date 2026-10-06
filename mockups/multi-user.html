@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multiple users per node · mockups</title>
+<style>
+  :root { color-scheme: dark; --bg:#101315; --panel:#1b2023; --raised:#242b2e; --line:#343d41; --text:#ecf0ed; --muted:#9ba8a7; --mint:#a3dfbd; --amber:#f3bd72; --red:#ed948d; --blue:#9cc3f0; font-family: "Avenir Next", "Segoe UI", sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--text); background: radial-gradient(circle at 10% 0%, #23372f 0, transparent 35%), var(--bg); }
+  button, input { font:inherit; color:inherit; }
+  button { cursor:pointer; }
+  button:focus-visible, input:focus-visible { outline:2px solid var(--mint); outline-offset:2px; }
+  .page { max-width:1280px; margin:auto; padding:32px clamp(16px,4vw,56px) 60px; }
+  .eyebrow { margin:0 0 9px; color:var(--mint); font:700 11px/1.2 ui-monospace, monospace; letter-spacing:.16em; text-transform:uppercase; }
+  h1 { font-size:clamp(28px,4vw,42px); line-height:1.05; letter-spacing:-.04em; margin:0 0 8px; font-weight:650; }
+  .sub { color:var(--muted); margin:0 0 22px; font-size:14px; line-height:1.5; max-width:860px; }
+  .bar { display:flex; gap:16px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .seg { display:flex; gap:4px; background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:4px; flex-wrap:wrap; }
+  .seg button { border:0; background:transparent; padding:8px 13px; border-radius:6px; font-size:13px; color:var(--muted); }
+  .seg button[aria-pressed="true"] { background:#2c4437; color:#ddf8e5; }
+  .viewas { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+  .chrome-note { font:11px ui-monospace, monospace; color:var(--amber); margin:0 0 16px; min-height:14px; }
+  .frame { background:var(--panel); border:1px solid #45504e; box-shadow:0 30px 90px #0008; border-radius:14px; overflow:hidden; min-height:560px; display:grid; grid-template-columns:230px 1fr; }
+  .side { border-right:1px solid var(--line); padding:18px 12px; background:#171b1d; }
+  .side h3 { font:700 10px ui-monospace, monospace; letter-spacing:.14em; color:var(--muted); text-transform:uppercase; margin:16px 8px 8px; }
+  .side a { display:block; padding:8px 10px; border-radius:6px; color:var(--text); text-decoration:none; font-size:13px; }
+  .side a.on { background:var(--raised); }
+  .who { display:flex; gap:10px; align-items:center; padding:6px 8px 14px; border-bottom:1px solid var(--line); }
+  .avatar { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-weight:700; font-size:13px; color:#0d1512; flex:none; }
+  .who b { display:block; font-size:13px; } .who small { display:block; color:var(--muted); font-size:11px; line-height:1.4; }
+  .main { padding:24px 28px; overflow:auto; }
+  .main h2 { margin:0 0 4px; font-size:20px; letter-spacing:-.02em; }
+  .main .hint { color:var(--muted); font-size:13px; margin:0 0 18px; }
+  .card { background:var(--raised); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
+  .card h4 { margin:0 0 4px; font-size:14px; } .card p { margin:0; color:var(--muted); font-size:12.5px; line-height:1.5; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
+  .pill { font:600 11px ui-monospace, monospace; padding:3px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+  .pill.mint { color:var(--mint); border-color:#3f6650; } .pill.amber { color:var(--amber); border-color:#6d6149; } .pill.blue { color:var(--blue); border-color:#3e5470; }
+  .btn { border:1px solid var(--line); background:var(--panel); padding:8px 13px; border-radius:7px; font-size:13px; }
+  .btn.primary { background:#2f5a43; border-color:#4b8463; color:#e5fbec; }
+  .btn.ghost { background:transparent; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:var(--muted); font-weight:600; font-size:11px; letter-spacing:.06em; text-transform:uppercase; padding:8px 10px; border-bottom:1px solid var(--line); }
+  td { padding:11px 10px; border-bottom:1px solid #2b3236; vertical-align:middle; }
+  .mono, td code { font:12px ui-monospace, monospace; color:var(--muted); }
+  .radio { display:grid; gap:8px; margin-top:10px; }
+  .radio label { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; }
+  .radio label.on { border-color:#4b8463; background:#1f2e27; }
+  .radio small { display:block; color:var(--muted); font-size:12px; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+  .kv { display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:7px 0; border-bottom:1px dashed #2f373b; } .kv:last-child { border:0; } .kv span:last-child { color:var(--muted); text-align:right; }
+  .chat { display:flex; flex-direction:column; gap:14px; max-width:760px; }
+  .msg { padding:12px 14px; border-radius:10px; font-size:13.5px; line-height:1.5; }
+  .msg.user { background:#22352c; border:1px solid #35523f; align-self:flex-end; max-width:78%; }
+  .msg.agent { background:var(--raised); border:1px solid var(--line); max-width:88%; }
+  .meta { display:flex; gap:8px; align-items:center; font-size:11.5px; color:var(--muted); margin-bottom:5px; }
+  .meta b { color:var(--text); font-weight:650; }
+  .note { font-size:12px; color:var(--muted); border-left:2px solid var(--amber); padding:4px 10px; margin:6px 0 16px; line-height:1.5; }
+  .note::before { content:"Mockup note · "; color:var(--amber); font:600 11px ui-monospace, monospace; }
+  .toolbar { display:flex; gap:6px; flex-wrap:wrap; padding:10px; border:1px solid var(--line); border-radius:10px; background:#15191b; margin-bottom:16px; }
+  .toolbar .btn { font-size:12px; padding:6px 11px; }
+  .toolbar .off { color:var(--muted); border-style:dashed; }
+  .term { background:#0b0e0f; border:1px solid var(--line); border-radius:10px; padding:26px; text-align:center; }
+  .term .icon { font:26px ui-monospace, monospace; color:var(--amber); }
+  .term h4 { margin:10px 0 6px; } .term p { color:var(--muted); font-size:13px; margin:0 auto 14px; max-width:480px; line-height:1.5; }
+  .setup { max-width:440px; margin:20px auto; }
+  .field { display:grid; gap:6px; margin-bottom:12px; font-size:13px; }
+  .field input { background:#121618; border:1px solid var(--line); border-radius:7px; padding:9px 11px; }
+  .callout { background:#1f2e27; border:1px solid #3f6650; border-radius:9px; padding:12px 14px; font-size:12.5px; color:#cdeedb; line-height:1.5; margin-bottom:14px; }
+  .callout.blue { background:#1a2533; border-color:#3e5470; color:#d4e5f8; }
+  .switch { width:34px; height:19px; border-radius:999px; background:#3a4447; position:relative; display:inline-block; vertical-align:middle; }
+  .switch.on { background:#4b8463; } .switch::after { content:""; position:absolute; width:15px; height:15px; border-radius:50%; background:#e9efec; top:2px; left:2px; } .switch.on::after { left:17px; }
+  .screen { display:none; } .screen.on { display:block; }
+  /* a = admin only · m = noam at home · r = noam on another node · n = noam either way */
+  body.as-admin .m, body.as-admin .r, body.as-admin .n { display:none !important; }
+  body.as-member .a, body.as-member .r { display:none !important; }
+  body.as-roaming .a, body.as-roaming .m { display:none !important; }
+  @media (max-width: 760px) { .frame { grid-template-columns:1fr; } .side { display:none; } }
+</style>
+</head>
+<body class="as-admin">
+<div class="page">
+  <p class="eyebrow">Joint Bob · draft mockups</p>
+  <h1>Multiple users per node</h1>
+  <p class="sub">Sample node <b>studio-mac</b>. <b>maya</b> set it up and is its admin. <b>noam</b> is a member. <b>dana</b> lives on <b>homeserver</b> and works in a project maya shared. The third view shows noam signed in on homeserver: his own settings follow him there. Every name and value here is made up.</p>
+
+  <div class="bar">
+    <div class="seg" id="screens" role="group" aria-label="Screen">
+      <button data-screen="setup">First run</button>
+      <button data-screen="users" class="a" aria-pressed="true">Users</button>
+      <button data-screen="node" class="a">Node settings</button>
+      <button data-screen="personal">My settings</button>
+      <button data-screen="clusters">My clusters</button>
+      <button data-screen="chat">Chat</button>
+      <button data-screen="terminal">Terminal</button>
+    </div>
+    <div class="viewas">View as
+      <div class="seg" id="viewas" role="group" aria-label="View as">
+        <button data-as="admin" aria-pressed="true">maya · admin</button>
+        <button data-as="member">noam · member</button>
+        <button data-as="roaming">noam on homeserver</button>
+      </div>
+    </div>
+  </div>
+  <p class="chrome-note" id="chromeNote"></p>
+
+  <div class="frame">
+    <aside class="side">
+      <div class="who">
+        <div class="avatar a" style="background:var(--mint)">M</div>
+        <div class="avatar n" style="background:var(--blue)">N</div>
+        <div>
+          <b class="a">maya</b><b class="n">noam</b>
+          <small class="a">Admin · studio-mac</small>
+          <small class="m">studio-mac</small>
+          <small class="r">on homeserver · home studio-mac</small>
+        </div>
+      </div>
+      <h3>Settings</h3>
+      <a href="#" data-go="personal">My settings</a>
+      <a href="#" data-go="clusters">My clusters</a>
+      <a href="#">My secrets</a>
+      <a href="#">Commands &amp; skills</a>
+      <a href="#">Shortcuts</a>
+      <div class="a">
+        <h3>Node</h3>
+        <a href="#" data-go="users">Users</a>
+        <a href="#" data-go="node">Node settings</a>
+        <a href="#">Updates</a>
+        <a href="#">Audit log</a>
+      </div>
+    </aside>
+
+    <main class="main">
+
+      <section class="screen" data-screen="setup">
+        <div class="setup">
+          <h2>Set up studio-mac</h2>
+          <p class="hint">No one has signed in to this node yet. The account you create becomes the node's admin.</p>
+          <div class="field"><label for="u">Username</label><input id="u" value="maya"></div>
+          <div class="field"><label for="e">Email</label><input id="e" value="maya@example.com"></div>
+          <div class="field"><label for="p">Password</label><input id="p" type="password" value="••••••••••••••••••"></div>
+          <div class="callout">As the admin you manage users, the terminal, updates and runtime settings. Everyone, you included, gets a private space: no one can see anyone else's projects, conversations, settings or secrets.</div>
+          <button class="btn primary">Create admin account</button>
+        </div>
+      </section>
+
+      <section class="screen on" data-screen="users">
+        <div class="row"><div><h2>Users</h2><p class="hint">People who can sign in to studio-mac. You see their accounts, never their work.</p></div>
+          <button class="btn primary">Add user</button></div>
+        <div class="card"><div class="row"><div><h4>Multi-user mode</h4><p>On · self-test passed 2026-10-06 09:14. Two test accounts couldn't read each other's files, the node's data, each other's processes or local ports.</p></div><span class="pill mint">walled</span></div></div>
+        <table>
+          <thead><tr><th>User</th><th>Email</th><th>Role</th><th>OS account</th><th>Terminal</th><th>Status</th><th>Created</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><b>maya</b> <span class="mono">(you)</span></td><td>maya@example.com</td><td><span class="pill mint">admin</span></td><td><code>jb-maya</code></td><td><span class="switch on"></span></td><td>active</td><td>2026-03-02</td><td><button class="btn">Transfer admin…</button></td></tr>
+            <tr><td><b>noam</b></td><td>noam@example.com</td><td><span class="pill">member</span></td><td><code>jb-noam</code></td><td><span class="switch"></span></td><td>active</td><td>2026-10-01</td><td><button class="btn">Manage</button></td></tr>
+            <tr><td><b>lior</b></td><td>lior@example.com</td><td><span class="pill">member</span></td><td><code>jb-lior</code></td><td><span class="switch"></span></td><td><span class="pill amber">must change password</span></td><td>2026-10-06</td><td><button class="btn">Manage</button></td></tr>
+          </tbody>
+        </table>
+        <p class="note">No projects, conversations, usage, running turns or sign-in history for other users appear here. People signed in from other nodes aren't listed: they only reach projects shared into their clusters.</p>
+        <div class="grid2">
+          <div class="card"><h4>Add user (dialog)</h4>
+            <div class="grid2" style="margin-top:10px"><div class="field"><label>Username</label><input value="lior"></div><div class="field"><label>Email (unique)</label><input value="lior@example.com"></div></div>
+            <p>Creates the OS account <code class="mono">jb-lior</code> with a private home folder and shows a one-time password once. lior changes it at first sign-in and signs in to their own Claude, Kiro or Codex account.</p></div>
+          <div class="card"><h4>Manage noam (dialog)</h4>
+            <div class="kv"><span>Terminal</span><span>follows node policy</span></div>
+            <div class="kv"><span>Disable sign-in</span><span><span class="switch"></span></span></div>
+            <div class="kv"><span>Delete account and all data</span><span><button class="btn ghost" style="color:var(--red)">Delete…</button></span></div>
+            <p style="margin-top:8px">Deleting removes the OS account, files and replicated copies. Data can't be transferred to you.</p></div>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="node">
+        <h2>Node settings</h2>
+        <p class="hint">Apply to everyone on studio-mac. Members never see this page.</p>
+        <div class="card"><h4>Terminal access</h4><p>Agents still run commands in conversations; this controls the interactive terminal.</p>
+          <div class="radio">
+            <label class="on"><input type="radio" name="t" checked> <span>Off <small>Default. No one can open a terminal, and members don't see the button.</small></span></label>
+            <label><input type="radio" name="t"> <span>Admin only</span></label>
+            <label><input type="radio" name="t"> <span>Selected users <small>noam ☐ &nbsp; lior ☐</small></span></label>
+            <label><input type="radio" name="t"> <span>Everyone on this node <small>Each terminal runs as its user's own OS account, inside their own projects.</small></span></label>
+          </div>
+          <div class="grid2" style="margin-top:12px">
+            <div class="kv"><span>Max open terminals per user</span><span>2</span></div>
+            <div class="kv"><span>Close idle terminals after</span><span>30 min</span></div>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="card"><h4>Limits per user</h4>
+            <div class="kv"><span>Concurrent agent turns</span><span>3</span></div>
+            <div class="kv"><span>Shell command timeout</span><span>600 s</span></div>
+            <div class="kv"><span>Subprocess max lifetime</span><span>240 min</span></div></div>
+          <div class="card"><h4>Runtimes &amp; paths</h4>
+            <div class="kv"><span>Claude executable</span><span class="mono">/opt/homebrew/bin/claude</span></div>
+            <div class="kv"><span>Projects home</span><span class="mono">~/JointBob in each user's home</span></div>
+            <div class="kv"><span>Syncthing</span><span>connected</span></div></div>
+          <div class="card"><h4>Peers</h4>
+            <div class="kv"><span>Terminal from twins</span><span>on</span></div>
+            <div class="kv"><span>Terminal from other nodes</span><span>off</span></div>
+            <div class="kv"><span>Twins</span><span>homeserver</span></div></div>
+          <div class="card"><h4>Blocked nodes</h4>
+            <div class="kv"><span>old-laptop <span class="mono">· cluster lab</span></span><span><button class="btn ghost">Unblock</button></span></div>
+            <p style="margin:8px 0">Blocked nodes can't connect here, and their users can't sign in here. Nothing syncs either way. The cluster keeps working for everyone else.</p>
+            <button class="btn">Block a node…</button></div>
+          <div class="card"><h4>Retention &amp; updates</h4>
+            <div class="kv"><span>Delete idle conversations after</span><span>40 days</span></div>
+            <div class="kv"><span>Auto-update</span><span>on</span></div></div>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="personal">
+        <h2>My settings</h2>
+        <p class="hint">Only you see these. They follow you to every node you sign in to.</p>
+        <div class="callout blue r">You're signed in on <b>homeserver</b>. These are your settings from your home node, <b>studio-mac</b>. Changes you make here are saved there and follow you everywhere.</div>
+        <div class="grid2">
+          <div class="card"><h4>Conversations</h4>
+            <div class="kv"><span>Default Claude model</span><span>Opus 5.5</span></div>
+            <div class="kv"><span>Auto-compact at</span><span><span class="a">80%</span><span class="n">70%</span></span></div>
+            <div class="kv"><span>Labels</span><span><span class="a">bug · idea · infra</span><span class="n">parser · docs · release</span></span></div>
+            <div class="kv"><span>Start / end prompts</span><span>2 configured</span></div></div>
+          <div class="card"><h4>Commands &amp; skills</h4>
+            <div class="kv"><span>My commands</span><span><span class="a">7</span><span class="n">4</span></span></div>
+            <div class="kv"><span>My skills</span><span><span class="a">12</span><span class="n">9</span></span></div>
+            <div class="kv"><span>MCP servers</span><span><span class="a">3</span><span class="n">1</span></span></div>
+            <p class="r" style="margin-top:8px">Used by agents in your own projects, which run at home on studio-mac.</p></div>
+          <div class="card"><h4>Secrets</h4>
+            <div class="kv"><span>github · <span class="mono a">work</span><span class="mono n">oss</span></span><span>workspace "Main"</span></div>
+            <div class="kv"><span>Labels</span><span><span class="a">work · personal</span><span class="n">oss</span></span></div>
+            <p class="r" style="margin-top:8px">Values stay on studio-mac; only labels are shown here.</p></div>
+          <div class="card"><h4>Shortcuts &amp; notifications</h4>
+            <div class="kv"><span>Canvas shortcuts</span><span><span class="a">5</span><span class="n">3</span></span></div>
+            <div class="kv"><span>Keymap</span><span>default + 2 changes</span></div>
+            <div class="kv"><span>ntfy servers</span><span>ntfy.sh</span></div></div>
+          <div class="card"><h4>Model sign-ins</h4>
+            <div class="kv"><span>Claude</span><span>node subscription · Max</span></div>
+            <div class="kv"><span>Kiro</span><span>not signed in</span></div>
+            <p style="margin-top:8px">Shared by everyone on studio-mac. Signing in with your own account comes later.</p></div>
+          <div class="card"><h4>Appearance</h4>
+            <div class="kv"><span>Theme</span><span><span class="a">dark</span><span class="n">dim</span></span></div>
+            <div class="kv"><span>Sounds</span><span>on</span></div></div>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="clusters">
+        <div class="row"><div><h2>My clusters</h2><p class="hint">Clusters you joined. You choose which of your own projects to share. Joining lets you sign in on the other nodes, with your settings.</p></div>
+          <div style="display:flex;gap:8px"><button class="btn">Join with invite</button><button class="btn primary">Create cluster</button></div></div>
+        <table>
+          <thead><tr><th>Cluster</th><th>Members</th><th>I share</th><th>Shared with me</th><th></th></tr></thead>
+          <tbody class="a">
+            <tr><td><b>family</b></td><td>maya@example.com · studio-mac, dana@example.com · homeserver</td><td>recipes-app</td><td>home-automation</td><td><button class="btn">Leave</button></td></tr>
+            <tr><td><b>work</b></td><td>maya@example.com · studio-mac, ci@example.com · build-01</td><td>api, web</td><td>–</td><td><button class="btn">Leave</button></td></tr>
+          </tbody>
+          <tbody class="n">
+            <tr><td><b>oss-club</b></td><td>noam@example.com · studio-mac, ro@example.com · laptop-ro</td><td>parser-lib</td><td>docs-site</td><td><button class="btn">Leave</button></td></tr>
+            <tr><td><b>lab</b></td><td>noam@example.com · studio-mac, dana@example.com · homeserver</td><td>parser-lib</td><td>sensor-dash</td><td><button class="btn">Leave</button></td></tr>
+          </tbody>
+        </table>
+        <p class="note">Members are listed as person · node. noam's and maya's clusters are separate: neither sees the other's clusters, and nothing shows they share a machine.</p>
+        <p class="note r">On homeserver, this page shows your memberships from studio-mac. Joining or leaving is sent to studio-mac.</p>
+
+        <h2 style="margin-top:26px">My nodes</h2>
+        <p class="hint">Every node in your clusters. You can sign in on any of them; your settings are copied only to the ones you've signed in to.</p>
+        <table>
+          <thead><tr><th>Node</th><th>Via</th><th>Status</th><th>Your settings there</th><th></th></tr></thead>
+          <tbody class="a">
+            <tr><td><b>studio-mac</b></td><td>–</td><td><span class="pill mint">home</span></td><td>source</td><td></td></tr>
+            <tr><td><b>homeserver</b></td><td>family</td><td><span class="pill blue">signed in</span></td><td>synced 2 min ago</td><td><button class="btn">Forget this node</button></td></tr>
+            <tr><td><b>build-01</b></td><td>work</td><td><span class="pill">can sign in</span></td><td>none</td><td></td></tr>
+          </tbody>
+          <tbody class="n">
+            <tr><td><b>studio-mac</b></td><td>–</td><td><span class="pill mint">home</span></td><td>source</td><td></td></tr>
+            <tr><td><b>homeserver</b></td><td>lab</td><td><span class="pill blue">signed in</span><span class="r"> · you are here</span></td><td>synced just now</td><td><button class="btn">Forget this node</button></td></tr>
+            <tr><td><b>laptop-ro</b></td><td>oss-club</td><td><span class="pill">can sign in</span></td><td>none</td><td></td></tr>
+            <tr><td><b>old-laptop</b></td><td>lab</td><td><span class="pill">not available</span></td><td>none</td><td></td></tr>
+          </tbody>
+        </table>
+        <p class="note">"Not available" covers both offline and blocked, and says no more. old-laptop is blocked by studio-mac's admin. Forget this node deletes your copy there and stops syncing to it; you can still sign in again later.</p>
+      </section>
+
+      <section class="screen" data-screen="chat">
+        <div class="a">
+          <h2>recipes-app · Fix ingredient parser</h2>
+          <p class="hint">maya's project, shared with "family". dana works in it from homeserver.</p>
+          <div class="chat">
+            <div class="msg user"><div class="meta"><b>maya@example.com</b><span>10:02</span></div>Quantities like "1½ cups" parse as 1. Can you fix the parser and add tests?</div>
+            <div class="msg agent"><div class="meta"><b>Claude</b><span>Opus 5.5 · 10:03</span></div>Found it: the tokenizer drops Unicode fractions. I'll normalize them before parsing and add cases for ½, ¼ and ⅓.</div>
+            <div class="msg user"><div class="meta"><b>dana@example.com</b><span class="pill blue">homeserver</span><span>10:09</span></div>Also handle "1 1/2" with a space, my imported recipes use that.</div>
+            <div class="msg agent"><div class="meta"><b>Claude</b><span>Opus 5.5 · 10:10</span></div>Added mixed numbers. 14 tests pass.</div>
+          </div>
+        </div>
+        <div class="n">
+          <h2>parser-lib · Streaming tokenizer</h2>
+          <p class="hint">noam's project, shared with "oss-club". ro works in it from laptop-ro.</p>
+          <div class="chat">
+            <div class="msg user"><div class="meta"><b>noam@example.com</b><span>14:20</span></div>The tokenizer loads the whole file. Make it stream in 64 KB chunks.</div>
+            <div class="msg agent"><div class="meta"><b>Claude</b><span>Opus 5.5 · 14:21</span></div>Switched to a chunked reader and carried partial tokens across chunk boundaries. Memory stays flat on the 2 GB fixture.</div>
+            <div class="msg user"><div class="meta"><b>ro@example.com</b><span class="pill blue">laptop-ro</span><span>14:33</span></div>Keep the old sync API as a wrapper, the CLI still uses it.</div>
+            <div class="msg agent"><div class="meta"><b>Claude</b><span>Opus 5.5 · 14:34</span></div>Added <code class="mono">tokenizeSync()</code> on top of the stream. All 41 tests pass.</div>
+          </div>
+          <p class="note r" style="margin-top:18px">Visible on homeserver because noam shared parser-lib with "lab". It still runs at home on studio-mac, under jb-noam, with his own skills, secrets and Claude sign-in. Phase 7: noam's unshared projects also appear here, through a live link to studio-mac, and are never stored on homeserver.</p>
+        </div>
+        <p class="note" style="margin-top:18px">Every user message shows who wrote it. Once more than one person has written, the agent sees the name too, e.g. <code class="mono">[ro] Keep the old…</code>. Neither view shows anything from the other user on studio-mac.</p>
+      </section>
+
+      <section class="screen" data-screen="terminal">
+        <h2>Conversation toolbar</h2>
+        <p class="note">Shown with the node's terminal policy set to "Off".</p>
+        <div class="toolbar">
+          <button class="btn">Files</button><button class="btn">Git</button><button class="btn">Browser</button><button class="btn">Tasks</button>
+          <button class="btn off a">Terminal · off</button>
+        </div>
+        <div class="a">
+          <div class="term">
+            <div class="icon">&gt;_</div>
+            <h4>The terminal is off on studio-mac</h4>
+            <p>Allow it for yourself, selected users or everyone.</p>
+            <button class="btn" data-go="node">Open terminal settings</button>
+          </div>
+        </div>
+        <p class="note n">No terminal button for noam: it appears only once the admin enables it for him. No message, no hint about who decides. A hand-made socket request gets a generic "Not available".</p>
+        <p class="note r">On another node, replicated users never get a terminal, exactly as today.</p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script>
+  const adminScreens = new Set(['users', 'node']);
+  const notes = { admin: '', member: 'Hidden for members: Users, Node settings, Updates, Audit log. They are not in the menu and the server answers 404.', roaming: 'Signed in on homeserver as a replicated user: homeserver\'s admin pages and terminal are hidden; noam\'s own settings are shown.' };
+  let role = 'admin';
+  function show(name) {
+    if (role !== 'admin' && adminScreens.has(name)) name = 'personal';
+    document.querySelectorAll('.screen').forEach((s) => s.classList.toggle('on', s.dataset.screen === name));
+    document.querySelectorAll('#screens button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.screen === name)));
+    document.querySelectorAll('.side a[data-go]').forEach((a) => a.classList.toggle('on', a.dataset.go === name));
+  }
+  document.querySelectorAll('#screens button').forEach((b) => b.addEventListener('click', () => show(b.dataset.screen)));
+  document.querySelectorAll('[data-go]').forEach((el) => el.addEventListener('click', (e) => { e.preventDefault(); show(el.dataset.go); }));
+  document.querySelectorAll('#viewas button').forEach((b) => b.addEventListener('click', () => {
+    role = b.dataset.as;
+    document.body.className = `as-${role}`;
+    document.querySelectorAll('#viewas button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    document.getElementById('chromeNote').textContent = notes[role];
+    const current = document.querySelector('#screens button[aria-pressed="true"]');
+    show(current ? current.dataset.screen : 'personal');
+  }));
+  document.querySelectorAll('.radio input').forEach((input) => input.addEventListener('change', () => {
+    document.querySelectorAll('.radio label').forEach((l) => l.classList.toggle('on', l.querySelector('input').checked));
+  }));
+  show('users');
+</script>
+</body>
+</html>
