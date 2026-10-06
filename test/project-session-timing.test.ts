@@ -23,13 +23,14 @@ test("project session stages use only static, code-owned timing labels", async (
   assert.deepEqual([...stages.keys()], [
     "sessions.review_scope", "sessions.transcript_catalog", "sessions.agent_dashboards",
     "sessions.supervisor_tasks", "sessions.external_runtime", "sessions.decoration_review",
-    "sessions.ownership", "sessions.notifications",
+    "sessions.ownership", "sessions.notifications", "sessions.worktrees",
   ]);
   for (const [stage, calls] of Object.entries({
     "sessions.external_runtime": ["Promise.all", "getHarnessRuntime", "runtime.externalRunning"],
     "sessions.decoration_review": ["applyConversationWork", "syncConversationReviewDetails"],
     "sessions.ownership": ["Promise.all", "getConversationOwnership"],
     "sessions.notifications": ["migratePortableNotifications", "ntfySubscribedSessionPaths"],
+    "sessions.worktrees": ["worktreeConversationIndex"],
   })) {
     for (const call of calls) assert.ok(stages.get(stage)?.includes(`${call}(`), `${stage} covers ${call}`);
   }

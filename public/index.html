@@ -157,6 +157,7 @@
           <button type="button" data-filter="done" data-testid="chats-filter-done-button" title="Reviewed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.7 2.7L16.5 9"/></svg><span class="sr-only">Reviewed</span><span data-filter-count="done">0</span></button>
         </div>
         <div class="classification-filter list-filter-row" id="conversationFilterRow" role="group" aria-label="Filter conversations by label and cluster"></div>
+        <div class="worktree-strip" id="worktreeStrip" role="group" aria-label="Worktrees" data-testid="worktree-strip"></div>
         <label class="done-filter" for="showDoneConversations">
           <input type="checkbox" id="showDoneConversations" data-testid="show-done-conversations-toggle" />
           Show done
@@ -1519,6 +1520,10 @@
             Runs on
             <select id="newSessionNodeSelect" data-testid="new-session-node-select"></select>
           </label>
+          <label id="newSessionWorktreeLabel" hidden>
+            Runs in
+            <select id="newSessionWorktreeSelect" data-testid="new-session-worktree-select"></select>
+          </label>
           <div class="field-group">
             <span class="field-label">Secret accounts</span>
             <p class="muted compact-copy">These override the project's and the workspace's accounts for this conversation only. They apply from its first turn.</p>
@@ -1591,6 +1596,28 @@
           <button class="ghost" type="button" id="convertQuickNoteButton" data-testid="quick-note-convert-button" hidden>Start conversation</button>
           <button class="ghost" type="button" id="cancelQuickNoteButton" data-testid="quick-note-cancel-button">Cancel</button>
           <button class="primary" type="submit" data-testid="quick-note-save-button">Save note</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="worktreeDialog" data-testid="worktree-dialog">
+      <form method="dialog" class="dialog-card" id="worktreeForm">
+        <div>
+          <span class="eyebrow">Worktree</span>
+          <h2 id="worktreeDialogTitle">New worktree</h2>
+          <p id="worktreeDialogHint">A worktree is a copy of this project's code and text that every node sharing the project receives. Conversations started in it work there, and Merge to project brings the changes back.</p>
+        </div>
+        <label>
+          Name
+          <input id="worktreeNameInput" name="name" autocomplete="off" maxlength="80" placeholder="Slice 4" required data-testid="worktree-name-input" />
+        </label>
+        <div class="field-group">
+          <span class="field-label">Colour</span>
+          <div class="color-swatches" id="worktreeColorSwatches" role="radiogroup" aria-label="Worktree colour" data-testid="worktree-color-swatches"></div>
+        </div>
+        <div class="dialog-actions">
+          <button class="ghost" value="cancel" type="button" id="cancelWorktreeButton" data-testid="worktree-cancel-button">Cancel</button>
+          <button class="primary" value="default" type="submit" id="saveWorktreeButton" data-testid="worktree-save-button">Create worktree</button>
         </div>
       </form>
     </dialog>

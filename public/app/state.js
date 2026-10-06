@@ -60,6 +60,10 @@ export const state = {
   renameSessionEngine: "pi",
   newSessionDraft: null,
   spinOffSourceTaskId: null,
+  // The Joint Bob worktree a new conversation should run in; null runs it in the project folder.
+  newSessionWorktreeId: null,
+  worktrees: [],
+  worktreeFilter: null,
   // Accounts picked in the new-conversation dialog; the server persists them once the engine reports an id.
   newSessionSecretAccountIds: [],
   pendingSessionTitle: null,

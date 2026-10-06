@@ -16,6 +16,9 @@ const heavyDirectories = new Set<string>([...worktreeHeavyDirectories, WORKTREE_
 const heavyFiles = new Set<string>(worktreeHeavyFiles);
 
 const MAX_FILE_BYTES = 1024 * 1024;
+const WORKTREE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// Vivid hues first: a worktree must stand out in the list, and slate reads as no colour.
+const DEFAULT_COLOR_ORDER: ProjectColor[] = ["teal", "violet", "amber", "blue", "magenta", "green", "red", "slate"];
 const BINARY_SNIFF_BYTES = 8192;
 
 export interface ProjectWorktree {
@@ -116,7 +119,7 @@ async function readMetadata(worktree: string): Promise<WorktreeMetadata | undefi
     const color = PROJECT_COLORS.includes(value.color as ProjectColor) ? value.color as ProjectColor : "teal";
     return { ...value, color, lastMergedAt: typeof value.lastMergedAt === "string" ? value.lastMergedAt : null } as WorktreeMetadata;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return undefined;
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "") || error instanceof SyntaxError) return undefined;
     throw error;
   }
 }
@@ -157,7 +160,8 @@ export async function listProjectWorktrees(projectId: string, root = worktreeRoo
   const node = await getClusterNode();
   const worktrees: ProjectWorktree[] = [];
   for (const entry of entries.sort()) {
-    if (!/^[A-Za-z0-9._-]+$/.test(entry)) continue;
+    // Syncthing keeps .stfolder/.stignore here and a worktree being created is a hidden staging folder.
+    if (!WORKTREE_ID.test(entry)) continue;
     const worktree = path.join(directory, entry);
     const metadata = await readMetadata(worktree);
     if (!metadata) continue;
@@ -179,7 +183,8 @@ export async function createProjectWorktree(project: ProjectRecord, input: { nam
   const name = normalizeName(input.name);
   const existing = await listProjectWorktrees(project.id, root);
   if (existing.some((worktree) => worktree.name.toLowerCase() === name.toLowerCase())) throw new ProjectWorktreeError(409, "A worktree with this name already exists");
-  const color = normalizeColor(input.color, PROJECT_COLORS[(existing.length + 1) % PROJECT_COLORS.length]);
+  const used = new Set(existing.map((worktree) => worktree.color));
+  const color = normalizeColor(input.color, DEFAULT_COLOR_ORDER.find((candidate) => !used.has(candidate)) ?? DEFAULT_COLOR_ORDER[existing.length % DEFAULT_COLOR_ORDER.length]);
   const source = path.resolve(project.path);
   if (!(await fs.stat(source).catch(() => null))?.isDirectory()) throw new ProjectWorktreeError(409, "Project folder is not available on this node");
   const id = randomUUID();

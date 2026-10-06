@@ -151,6 +151,22 @@ test("a conflicting worktree merge changes nothing and names the conflicts", asy
   }
 });
 
+test("Syncthing's own files in the worktree folder are never mistaken for worktrees", async () => {
+  const { root, worktrees, project } = await fixture();
+  try {
+    const worktree = await createProjectWorktree(project, { name: "Real" }, worktrees);
+    const folder = path.dirname(worktree.path);
+    await writeFile(path.join(folder, ".stignore"), "(?d)node_modules\n");
+    await mkdir(path.join(folder, ".stfolder"), { recursive: true });
+    await mkdir(path.join(folder, ".creating-half-made"), { recursive: true });
+    await writeFile(path.join(folder, "stray-file"), "x");
+    assert.deepEqual((await listProjectWorktrees(project.id, worktrees)).map((entry) => entry.name), ["Real"]);
+    assert.equal((await worktreeConversationIndex(project.id, worktrees)).size, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("deleting a worktree removes its folder, so Syncthing removes it from every node", async () => {
   const { root, worktrees, project } = await fixture();
   try {

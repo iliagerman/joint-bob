@@ -153,6 +153,7 @@ export function filteredSessions() {
   const query = normalizedQuery(elements.sessionSearchInput.value || "");
   return state.sessions.filter((session) => {
     if (!matchesClassification(session) || !sessionMatchesClusters(session) || !isVisible(session)) return false;
+    if (state.worktreeFilter && session.worktree?.id !== state.worktreeFilter) return false;
     const searchableText = `${shortSessionTitle(session)}\n${session.firstMessage || ""}\n${session.path || ""}`.toLowerCase();
     if (query && !searchableText.includes(query)) return false;
     return matchesChatFilters(session);

@@ -372,7 +372,10 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   // A conversation started in a worktree runs there on every node; its marker travels with the worktree.
   let worktree: ProjectWorktree | undefined;
   if (!requestedTask && !task) {
-    const known = (await worktreeConversationIndex(project.id)).get(`${sessionRequest.engine}:${ownershipSessionId}`);
+    const known = (await worktreeConversationIndex(project.id).catch((error) => {
+      console.warn("Worktree conversation index unavailable", error);
+      return new Map<string, ProjectWorktree>();
+    })).get(`${sessionRequest.engine}:${ownershipSessionId}`);
     const requested = refreshSessionsAfterReady && worktreeIdParam ? await getProjectWorktree(project.id, worktreeIdParam) : undefined;
     if (refreshSessionsAfterReady && worktreeIdParam && !requested && !known) {
       socket.close(1008, "Worktree is not synchronized on this node");

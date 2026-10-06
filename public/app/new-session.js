@@ -20,6 +20,16 @@ const projectPicker = createSearchableSelect({ id: "newSessionProjectSelect", te
 document.querySelector("#newSessionProjectPicker").replaceWith(projectPicker.root);
 const harnessSelect = document.querySelector("#newSessionHarnessSelect");
 let newSessionNodes = [];
+let preselectedWorktreeId = null;
+
+/** Worktrees are known for the open project only; another project's conversation runs in its folder. */
+function renderNewSessionWorktrees(selected = null) {
+  const draft = state.newSessionDraft;
+  const worktrees = draft && draft.projectId === state.activeProjectId && !draft.sourceTaskId ? state.worktrees : [];
+  elements.newSessionWorktreeLabel.hidden = !worktrees.length;
+  elements.newSessionWorktreeSelect.replaceChildren(new Option("Project folder", ""), ...worktrees.map((worktree) => new Option(`Worktree: ${worktree.name}`, worktree.id)));
+  elements.newSessionWorktreeSelect.value = worktrees.some((worktree) => worktree.id === selected) ? selected : "";
+}
 
 function checkedNewSessionSecretIds() {
   return [...elements.newSessionSecretList.querySelectorAll("input:checked")].map((input) => input.value);
@@ -98,7 +108,7 @@ function showWizardStep(step) {
   current.focus()?.focus();
 }
 
-export function addOptimisticSession(sessionId, sessionPath, title, color, classification = null) {
+export function addOptimisticSession(sessionId, sessionPath, title, color, classification = null, worktree = undefined) {
   const newSessionPath = sessionPath || "new";
   const harness = state.harnesses.find((candidate) => candidate.newSessionPath === newSessionPath);
   if (!harness) throw new Error(`No harness owns new-session path: ${newSessionPath}`);
@@ -112,6 +122,7 @@ export function addOptimisticSession(sessionId, sessionPath, title, color, class
     title,
     color,
     classification,
+    ...(worktree ? { worktree: { id: worktree.id, name: worktree.name, color: worktree.color } } : {}),
     createdAt: now,
     updatedAt: now,
     draft: true,
@@ -141,6 +152,8 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
   newSessionNodes = [];
   elements.newSessionNodeSelect.replaceChildren();
   renderSessionColorSwatches(null, elements.newSessionColorSwatches);
+  renderNewSessionWorktrees(preselectedWorktreeId ?? state.worktreeFilter);
+  preselectedWorktreeId = null;
   elements.newSessionSecretList.replaceChildren();
   const draft = state.newSessionDraft;
   loadSecretAccounts().then(() => {
@@ -182,6 +195,7 @@ export async function startGlobalConversation() {
 projectPicker.onChange((projectId) => {
   if (!state.newSessionDraft || state.newSessionDraft.projectId === projectId) return;
   state.newSessionDraft.projectId = projectId;
+  renderNewSessionWorktrees(elements.newSessionWorktreeSelect.value);
   loadNewSessionNodes().catch(error => toast(error.message));
 });
 harnessSelect.addEventListener("change", () => {
@@ -217,6 +231,13 @@ export function renderNewSessionHarnesses() {
     return button;
   }));
   window.dispatchEvent(new CustomEvent("shortcut-targets-changed"));
+}
+
+/** Opens the new-conversation dialog with a worktree already chosen as where it runs. */
+export async function startNewConversationIn(worktreeId) {
+  preselectedWorktreeId = worktreeId;
+  try { await chooseNewSessionHarness(); }
+  finally { preselectedWorktreeId = null; }
 }
 
 async function chooseNewSessionHarness() {
@@ -269,6 +290,7 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
   const node = newSessionNodes.find((candidate) => candidate.id === elements.newSessionNodeSelect.value);
   if (!node || !node.online || !node.mapped) { showWizardStep(3); toast("Choose an online node with this project mapped"); return; }
   const secretIds = [...elements.newSessionSecretList.querySelectorAll("input:checked:not(:disabled)")].map(input => input.value);
+  const worktreeId = elements.newSessionWorktreeLabel.hidden ? null : elements.newSessionWorktreeSelect.value || null;
   const submit = elements.newSessionNameForm.querySelector('[type="submit"]');
   if (submit.disabled) return;
   submit.disabled = true;
@@ -291,12 +313,13 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
     }
     state.newSessionSecretAccountIds = secretIds;
     state.spinOffSourceTaskId = draft.sourceTaskId;
+    state.newSessionWorktreeId = worktreeId;
     state.activeNodeId = node.id;
     if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: node.id });
     elements.newSessionNameDialog.close();
     state.newSessionDraft = null;
     state.activeSessionId = sessionId;
-    addOptimisticSession(sessionId, draft.sessionPath, title || draft.defaultTitle, color, label);
+    addOptimisticSession(sessionId, draft.sessionPath, title || draft.defaultTitle, color, label, state.worktrees.find((worktree) => worktree.id === worktreeId));
     openSession(draft.sessionPath, title || draft.defaultTitle);
     state.pendingSessionTitle = title || null;
     state.pendingSessionColor = color;

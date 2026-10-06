@@ -1,3 +1,4 @@
+import { loadWorktrees } from "./worktrees.js";
 import { harnessIdFromPath, harnessLabel } from "../harness-metadata.js";
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
@@ -122,6 +123,7 @@ function websocketUrl(sessionPath) {
   if (state.activeNodeId && !state.activeTaskId) url.searchParams.set("nodeId", state.activeNodeId);
   if (state.activeTaskId) url.searchParams.set("taskId", state.activeTaskId);
   if (state.spinOffSourceTaskId) url.searchParams.set("sourceTaskId", state.spinOffSourceTaskId);
+  if (state.newSessionWorktreeId && !state.activeTaskId) url.searchParams.set("worktreeId", state.newSessionWorktreeId);
   if (state.newSessionSecretAccountIds.length) url.searchParams.set("secretAccountIds", state.newSessionSecretAccountIds.join(","));
   return url.toString();
 }
@@ -132,6 +134,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   if (sessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === sessionPath)) {
     state.newSessionSecretAccountIds = [];
     state.spinOffSourceTaskId = null;
+    state.newSessionWorktreeId = null;
   }
   // Timers belong to the conversation being left. The ready payload restores
   // persisted totals and any turn still running in the conversation being opened.
@@ -575,6 +578,8 @@ function scheduleAgentRunPoll() {
 const INVALIDATION_HANDLERS = {
   sessionsChanged: () => {
     refreshSessionsQuietly();
+    // A worktree that arrived by sync has no notice of its own; the list refresh picks it up.
+    loadWorktrees().catch((error) => console.warn(error));
     schedulePendingReviewsRefresh();
     scheduleRunningRefresh();
   },
@@ -584,6 +589,7 @@ const INVALIDATION_HANDLERS = {
   recentsChanged: () => loadRecentSessions().catch((error) => console.warn(error)),
   shortcutsChanged: () => state.canvasController?.reloadShortcuts(),
   tasksChanged: () => loadTasks().catch((error) => console.warn(error)),
+  worktreesChanged: () => loadWorktrees().catch((error) => console.warn(error)),
 };
 
 /** Runs the loader for an invalidation notice; false when the payload is not one. */

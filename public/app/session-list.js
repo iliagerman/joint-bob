@@ -15,6 +15,7 @@ import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { openSecretScope } from "./secrets.js";
 import { openConversationClassificationDialog, openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
 import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
+import { renderWorktreeStrip, worktreeBadge } from "./worktrees.js";
 import { confirmAction, enableNotifications, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
@@ -48,6 +49,7 @@ function syncChatFilterChips() {
 
 export function renderSessions() {
   syncRecentSessionActivity();
+  renderWorktreeStrip();
   keepListScroll(elements.sessionList);
   // A background refresh must not leave a menu floating over rows that just moved.
   queueMicrotask(refreshRowMenuAnchor);
@@ -96,7 +98,7 @@ export function renderSessions() {
     const ticketTask = sessionTicketTask(session);
     const row = document.createElement("div");
     const sessionActive = sessionIsActive(session);
-    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}${session.doneAt ? " done" : ""}${ticketTask ? " has-ticket" : ""}${childCount ? " has-children" : ""}`;
+    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}${session.doneAt ? " done" : ""}${ticketTask ? " has-ticket" : ""}${session.worktree ? " has-worktree" : ""}${childCount ? " has-children" : ""}`;
     row.dataset.sessionDepth = String(depth);
     // The row menu is re-pointed at this row after a refresh replaces it.
     row.dataset.sessionPath = session.path;
@@ -106,6 +108,7 @@ export function renderSessions() {
     button.className = `session-card${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}`;
     if (sessionActive) button.setAttribute("aria-current", "true");
     if (session.color) button.dataset.color = session.color;
+    if (session.worktree) button.dataset.worktreeColor = session.worktree.color;
     const sessionName = document.createElement("strong");
     sessionName.textContent = shortSessionTitle(session);
     const meta = document.createElement("span");
@@ -146,6 +149,7 @@ export function renderSessions() {
       meta.append(" ", doneBadge);
     }
     if (ticketTask) meta.append(" ", ticketBadge(ticketTask));
+    if (session.worktree) meta.append(" ", worktreeBadge(session.worktree));
     button.addEventListener("click", () => openListedSession(session));
 
     const menuButton = document.createElement("button");

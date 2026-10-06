@@ -150,7 +150,7 @@ test("worktree API creates, tags conversations, renames, merges and deletes work
     await writeFile(path.join(worktree.path, "src", "inbox.ts"), "export const inbox = 'worktree';\n");
     await writeFile(path.join(project.path, "src", "inbox.ts"), "export const inbox = 'project';\n");
     const conflicted = await fetch(`${base}/${worktree.id}/merge`, { method: "POST", headers, body: "{}" });
-    assert.equal(conflicted.status, 409);
+    assert.equal(conflicted.status, 200);
     assert.deepEqual((await conflicted.json() as { conflicts: Array<{ path: string }> }).conflicts.map((conflict) => conflict.path), ["src/inbox.ts"]);
     assert.equal(await readFile(path.join(project.path, "src", "inbox.ts"), "utf8"), "export const inbox = 'project';\n");
 

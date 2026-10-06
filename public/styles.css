@@ -4032,3 +4032,31 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
   .git-story .gs-steps { grid-auto-flow: row; }
   .git-diff-card { width: calc(100vw - 16px); height: calc(100dvh - 16px); }
 }
+
+/* ---- Worktrees ---- */
+[data-worktree-color="slate"] { --worktree-hue: #7b8794; }
+[data-worktree-color="teal"] { --worktree-hue: #2bb8a3; }
+[data-worktree-color="blue"] { --worktree-hue: #4a86e8; }
+[data-worktree-color="violet"] { --worktree-hue: #8a6ef0; }
+[data-worktree-color="magenta"] { --worktree-hue: #d264b6; }
+[data-worktree-color="amber"] { --worktree-hue: #e0a33a; }
+[data-worktree-color="green"] { --worktree-hue: #46b35e; }
+[data-worktree-color="red"] { --worktree-hue: #e05c4b; }
+.worktree-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 6px 12px 2px; font-size: 12px; }
+.worktree-strip[hidden] { display: none; }
+.worktree-strip-label { color: var(--muted); font-weight: 600; margin-right: 2px; }
+.worktree-chip { display: inline-flex; align-items: center; max-width: 180px; border: 1px solid color-mix(in srgb, var(--worktree-hue) 45%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--worktree-hue) 12%, transparent); }
+.worktree-chip.selected { border-color: var(--worktree-hue); background: color-mix(in srgb, var(--worktree-hue) 30%, var(--surface)); }
+.worktree-chip-filter { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 2px 4px 2px 8px; border: 0; background: none; color: var(--heading); font: inherit; cursor: pointer; }
+.worktree-chip-filter { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-chip-menu { padding: 0 6px; min-height: 0; height: 20px; line-height: 1; }
+.worktree-add-button { padding: 2px 8px; min-height: 0; font-size: 12px; }
+.worktree-glyph { width: 11px; height: 11px; flex: none; color: var(--worktree-hue); }
+/* A worktree conversation carries its worktree's hue on the right edge, so it stays
+   distinguishable from the conversation's own colour bar on the left. */
+.session-card[data-worktree-color] { box-shadow: inset -3px 0 0 var(--worktree-hue); background: color-mix(in srgb, var(--worktree-hue) 8%, transparent); }
+.session-card[data-worktree-color]:hover { background: color-mix(in srgb, var(--worktree-hue) 18%, var(--field)); }
+.session-card[data-worktree-color].active { box-shadow: inset -4px 0 0 var(--worktree-hue), var(--raise); background: color-mix(in srgb, var(--worktree-hue) 22%, var(--surface)); }
+.session-card[data-color][data-worktree-color] { box-shadow: inset 3px 0 0 var(--project-hue), inset -3px 0 0 var(--worktree-hue); }
+.session-card[data-color][data-worktree-color].active { box-shadow: inset 4px 0 0 var(--project-hue), inset -4px 0 0 var(--worktree-hue), var(--raise); }
+.session-worktree-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 9.5px; border-radius: 4px; padding: 2px 6px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; color: var(--heading); background: color-mix(in srgb, var(--worktree-hue) 22%, transparent); }

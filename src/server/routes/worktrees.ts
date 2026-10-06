@@ -68,6 +68,6 @@ app.post("/api/projects/:projectId/worktrees/:worktreeId/merge", async (request,
     await assertProjectEditable(project);
     const result = await mergeProjectWorktree(project, worktreeId.parse(request.params.worktreeId));
     if (result.merged) broadcastToProject(project.id, { type: "worktreesChanged" });
-    response.status(result.merged ? 200 : 409).json(result);
+    response.json(result);
   } catch (error) { fail(response, next, error); }
 });

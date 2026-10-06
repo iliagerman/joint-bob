@@ -1,3 +1,4 @@
+import { loadWorktrees } from "./worktrees.js";
 import { api, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { loadHarnesses, loadSessionNodes, setComposerEnabled } from "./chat-controls.js";
@@ -138,7 +139,11 @@ async function startCanvasPaneConversation() {
 
 export async function selectProject(projectId, shouldRender = true, preserveSession = false) {
   const started = performance.now();
-  if (state.activeProjectId !== projectId) state.classificationFilters.clear();
+  if (state.activeProjectId !== projectId) {
+    state.classificationFilters.clear();
+    state.worktreeFilter = null;
+    state.worktrees = [];
+  }
   showConversations();
   state.activeProjectId = projectId;
   state.skills = [];
@@ -199,5 +204,6 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
     ensureWatchSocket();
     subscribeToPush().catch((error) => console.warn("Push subscription failed", error));
     loadTasks().catch((error) => console.warn(error));
+    loadWorktrees().catch((error) => console.warn(error));
   }
 }
