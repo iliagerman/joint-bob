@@ -16,6 +16,7 @@ import { flushSuccessionNotices } from "./server/succession.js";
 import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, sweepRuntimeLeases, sweepStaleConversations } from "./server/maintenance.js";
 import { runSyncCheck } from "./server/sync-check.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
+import { flushNtfyServiceShares } from "./server/ntfy-share.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { activateManagedHarnesses, startHarnessUpdateScheduler } from "./harness-updater.js";
@@ -130,6 +131,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
       flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
       flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
+      flushNtfyServiceShares().catch((error) => console.warn("ntfy service share flush failed", error));
       reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     };
     let clusterStarted = false;

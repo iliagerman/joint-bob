@@ -12,7 +12,7 @@ import { app } from "../state.js";
 import { getClusterNode } from "../../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { replicationPeers, signedPeerPost } from "../replication-v2.js";
+import { forgetNtfyServiceSharing, ntfyServiceSharing, setNtfyServiceSharing, shareNtfyServiceNow } from "../ntfy-share.js";
 import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
 import { z } from "zod";
 import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema, savedNtfyServer } from "../../ntfy-publish.js";
@@ -60,7 +60,7 @@ app.post("/api/ntfy/agent", async (request, response, next) => {
 });
 
 app.get("/api/ntfy/services", (_request, response) => {
-  response.json({ services: listNtfyServices() });
+  response.json({ services: listNtfyServices().map((service) => ({ ...service, sharing: ntfyServiceSharing(service.id) })) });
 });
 
 app.post("/api/ntfy/services", (request, response, next) => {
@@ -121,30 +121,17 @@ app.put("/api/ntfy/services/:id/default", (request, response) => {
   response.json({ ok: true });
 });
 
-/** Shares ntfy credentials only to explicitly selected twins or cluster members. */
+/** Records who should hold the service, then delivers; peers that are offline get it from the retry loop. */
 app.post("/api/ntfy/services/:id/share", async (request, response, next) => {
   try {
-    const service = getNtfyService(request.params.id);
-    if (!service) { sendError(response, 404, "ntfy service not found"); return; }
+    if (!getNtfyService(request.params.id)) { sendError(response, 404, "ntfy service not found"); return; }
     const payload = z.object({ includeTwins: z.boolean().default(true), clusterIds: z.array(z.string().uuid()).max(50).default([]) }).strict().parse(request.body ?? {});
     const db = await clusterV2Database(), local = await getClusterNode();
-    const peers = replicationPeers(db, local.id);
-    const targets = new Set(peers.filter((peer) => payload.includeTwins && isTrustedTwin(db, local.id, peer.nodeId)).map((peer) => peer.nodeId));
     for (const clusterId of payload.clusterIds) {
-      const members = listSharingClusterMembers(db, clusterId);
-      if (!members.some((member) => member.nodeId === local.id)) { sendError(response, 403, "You are not a member of a selected cluster"); return; }
-      for (const member of members) if (member.nodeId !== local.id && peers.some((peer) => peer.nodeId === member.nodeId)) targets.add(member.nodeId);
+      if (!listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === local.id)) { sendError(response, 403, "You are not a member of a selected cluster"); return; }
     }
-    const results = await Promise.all([...targets].map(async (peerId) => {
-      const peer = peers.find(({ nodeId }) => nodeId === peerId)!;
-      try {
-        await signedPeerPost(peer, "/api/cluster/v2/ntfy/services", service);
-        return { peerId, ok: true };
-      } catch (error) {
-        return { peerId, ok: false, error: error instanceof Error ? error.message : "Share failed" };
-      }
-    }));
-    response.json({ results });
+    setNtfyServiceSharing(request.params.id, payload);
+    response.json({ sharing: ntfyServiceSharing(request.params.id), results: await shareNtfyServiceNow(request.params.id) });
   } catch (error) { next(error); }
 });
 
@@ -162,6 +149,7 @@ app.post("/api/cluster/v2/ntfy/services", async (request, response, next) => {
 
 app.delete("/api/ntfy/services/:id", (request, response) => {
   if (!deleteNtfyService(request.params.id)) { sendError(response, 404, "ntfy service not found"); return; }
+  forgetNtfyServiceSharing(request.params.id);
   response.status(204).send();
 });
 

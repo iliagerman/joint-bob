@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Settings → Notifications now includes inline management for ntfy services: control topic access, view cached messages, and manage users.
+- Shared ntfy services are automatically delivered to selected cluster members and trusted twins, including when nodes reconnect.
 
 ## 2.48.0 — 2026-10-07
 
