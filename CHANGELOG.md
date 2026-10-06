@@ -5,6 +5,10 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+## 2.47.5 — 2026-10-06
+
+- Fixed project reconciliation failing when Syncthing folders don't exist.
+
 ## 2.47.4 — 2026-10-06
 
 - Fixed project reconciliation when sync folders haven't been created in Syncthing.
