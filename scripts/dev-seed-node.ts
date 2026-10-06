@@ -33,7 +33,7 @@ process.env.JOINT_BOB_DATA_DIR = job.dataDir;
 process.env.HOME = job.home;
 await mkdir(job.dataDir, { recursive: true });
 
-const { updateSettings } = await import("../src/settings.js");
+const { updateSettings, updateTerminalAccessSettings } = await import("../src/settings.js");
 const { authenticationStatus, createAdministrator } = await import("../src/auth.js");
 const { addProject, importProject, saveWorkspace } = await import("../src/store.js");
 const { updateClusterNode } = await import("../src/cluster.js");
@@ -48,6 +48,8 @@ updateSettings({
 });
 
 if (authenticationStatus().setupRequired) createAdministrator(job.admin.username, job.admin.password, false, job.admin.email);
+// Dev nodes let their admin open terminals; a real node starts with them off.
+updateTerminalAccessSettings({ mode: "admin" });
 
 const node = await updateClusterNode(job.node.name, job.node.url);
 // Nodes start without workspaces; the demo projects live in these two.

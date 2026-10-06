@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { isNodeAdmin } from "./node-admin.js";
 import { confirmAction, toast } from "./shell.js";
 
 /**
@@ -49,6 +50,8 @@ export function syncLabel(data) {
 
 /** Loads relationships, requests and each twin's sync state. Returns a signature that changes when any of them does. */
 export async function refreshTwins() {
+  // Twins are the node's own machines; only its admin manages or even sees them.
+  if (!isNodeAdmin()) { twins.relationships = []; twins.requests = []; twins.status.clear(); return "[]"; }
   const [{ relationships }, { requests }] = await Promise.all([api("/api/twins"), api("/api/twins/requests")]);
   twins.relationships = relationships; twins.requests = requests;
   await Promise.all(relationships.filter((item) => item.status === "active").map(async (item) => {
@@ -62,6 +65,7 @@ export async function refreshTwins() {
 
 /** Reachability and names of the twins; slow when a twin is down, so it never blocks the page. */
 export async function refreshTwinInventory() {
+  if (!isNodeAdmin()) { twins.inventory = null; return; }
   twins.inventory = await api("/api/cluster/inventory");
 }
 
@@ -108,7 +112,7 @@ export async function declareLost(relationship, name, onChange) {
 export function memberTwinControls(cluster, member, onChange) {
   const badges = document.createElement("span"); badges.className = "cluster-badges";
   const actions = document.createElement("div"); actions.className = "cluster-node-actions";
-  if (member.nodeId === twins.localNodeId) return { badges, actions };
+  if (member.nodeId === twins.localNodeId || !isNodeAdmin()) return { badges, actions };
   const relationship = activeTwin(member.nodeId);
   if (relationship) {
     const status = twins.status.get(relationship.relationshipId);
@@ -213,7 +217,7 @@ function nodeRow({ name, url, status, state }) {
 
 /** Pairing by link, for a twin that shares no cluster with this node. Built once so a pasted link survives refreshes. */
 export function renderTwinLink(container, onChange) {
-  if (container.childElementCount) return;
+  if (container.childElementCount || !isNodeAdmin()) return;
   const details = document.createElement("details"); details.className = "cluster-twin-link";
   details.append(text("summary", "Pair by link instead"));
   const outgoing = document.createElement("input");

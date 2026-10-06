@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { adminGate } from "../admin.js";
 import { createHash } from "node:crypto";
 import { dispatchSignedRuntime, twinRuntimeGuard } from "../runtime-peers.js";
 import path from "node:path";
@@ -139,7 +140,7 @@ app.post("/api/auth/login/mfa", (request, response, next) => {
   } catch (error) { authError(error, request, response, next); }
 });
 
-app.use("/api", requireHttpAuth, requireCsrf);
+app.use("/api", requireHttpAuth, requireCsrf, adminGate);
 app.use("/api/cluster/v2/runtime", twinRuntimeGuard);
 app.use(dispatchSignedRuntime);
 app.use("/api", (request, response, next) => {

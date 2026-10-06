@@ -331,7 +331,8 @@ test("the updates settings tab is wired into the settings dialog and the service
   assert.match(html, /data-testid="updates-auto-input"/);
   assert.match(html, /data-testid="updates-install-all-button"/);
   assert.match(elements, /updatesInstallAllButton/);
-  assert.match(settingsModule, /for \(const load of \[[^\]]*loadClusterPanel, loadUpdatesPanel[^\]]*\]\)/);
+  // Only the admin loads the updates panel; members never hear about updates.
+  assert.match(settingsModule, /for \(const load of \[[^\]]*loadClusterPanel, \.\.\.\(isNodeAdmin\(\) \? \[loadUpdatesPanel\] : \[\]\)/);
   assert.match(settingsModule, /void load\(\)\.catch/);
   assert.doesNotMatch(settingsModule, /await load(?:Cluster|Updates)Panel\(\)/, "optional panels must not block opening Settings");
   assert.doesNotMatch(settingsModule, /clusterInventory/);

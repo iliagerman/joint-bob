@@ -1,5 +1,5 @@
 import { DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, normalizeCanvasKeymap } from "../canvas-layout.js";
-import { applyAdminVisibility } from "./node-admin.js";
+import { applyAdminVisibility, showTerminalNoticeOnce } from "./node-admin.js";
 import { api, savePreferences, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { setComposerEnabled } from "./chat-controls.js";
@@ -214,6 +214,7 @@ export async function initializeApplication() {
     savePreferencesInBackground({ activeProjectId: state.activeProjectId, activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
   }
   if (state.authenticated && !state.canvasPaneMode) startProjectSyncPolling();
+  if (state.authenticated && !state.canvasPaneMode) void showTerminalNoticeOnce();
 }
 
 async function submitLogin(event) {

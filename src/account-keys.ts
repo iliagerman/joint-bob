@@ -21,6 +21,7 @@ const ACCOUNT_KEY_COLUMNS: Array<[table: string, column: string]> = [
   ["conversation_notification_deliveries", "username"],
   ["push_session_subscriptions", "username"],
   ["subscription_plans", "owner"],
+  ["account_settings", "account_id"],
 ];
 
 export const ACCOUNT_KEYED_EVENTS = new Set(["user.pin", "user.recent", "canvas.shortcut", "conversation.review", "conversation.notification", "conversation.notification.delivered"]);

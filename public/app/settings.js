@@ -1,5 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
-import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks } from "./node-admin.js";
+import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks, loadTerminalPolicy } from "./node-admin.js";
 import { loadBrowserStatus } from "./browser.js";
 import { loadBrowserProfileDirectory } from "./browser-profiles-settings.js";
 import { fillShortcutSettings } from "./shortcut-settings.js";
@@ -91,8 +91,9 @@ function renderClientLogs() {
 const ownLoading = (panel) => panel.id === "settingsPanel-cluster" || panel.id === "settingsPanel-browser" || panel.id === "settingsPanel-node";
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
+const ADMIN_TABS = new Set(["node", "updates", "resources"]);
 function selectSettingsTab(name) {
-  if (name === "node" && !isNodeAdmin()) name = "account";
+  if (ADMIN_TABS.has(name) && !isNodeAdmin()) name = "account";
   elements.settingsForm.dataset.tab = name;
   for (const tab of elements.settingsTabs) {
     const selected = tab.dataset.settingsTab === name;
@@ -108,7 +109,10 @@ function selectSettingsTab(name) {
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
-  if (name === "node") void loadNodeBlocks().catch((error) => toast(error.message));
+  if (name === "node") {
+    void loadNodeBlocks().catch((error) => toast(error.message));
+    void loadTerminalPolicy().catch((error) => toast(error.message));
+  }
 }
 
 let runtimeDefaults;
@@ -204,6 +208,12 @@ function createHarnessPanel(descriptor, settings, defaults) {
   const prefix = controlPrefix(descriptor.id);
   const panel = document.createElement("div"); panel.id = `harnessPanel-${descriptor.id}`; panel.dataset.harnessPanel = descriptor.id;
   panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", `harnessTab-${descriptor.id}`);
+  // Everyone picks their own models for new conversations; only the admin sees the node's paths.
+  if (!defaults) {
+    const conversation = createConversationControls(descriptor, settings, prefix);
+    conversationFields[descriptor.id] = conversation.fields;
+    panel.append(...conversation.controls); return panel;
+  }
   const output = document.createElement("output"); output.className = "engine-defaults"; output.id = `settings${prefix}Defaults`; output.dataset.testid = `settings-${descriptor.id}-defaults`;
   output.textContent = `Node defaults — executable: ${defaults[descriptor.id].executable}; config: ${defaults[descriptor.id].configPath}; sessions: ${defaults[descriptor.id].sessionPath}.`;
   const conversation = createConversationControls(descriptor, settings, prefix);
@@ -315,7 +325,7 @@ export async function openSettings(tab = "account") {
   // Navigation stays usable. Cluster actions have their own loading guard and
   // do not depend on local harness/model discovery or Save settings.
   for (const panel of elements.settingsPanels) panel.inert = !ownLoading(panel);
-  for (const load of [loadSecretAccounts, loadChangelogPanel, loadMfaSettings, loadClusterPanel, loadUpdatesPanel, loadWorkspaces]) {
+  for (const load of [loadSecretAccounts, loadChangelogPanel, loadMfaSettings, loadClusterPanel, ...(isNodeAdmin() ? [loadUpdatesPanel] : []), loadWorkspaces]) {
     void load().catch((error) => toast(error.message));
   }
   try {
@@ -332,7 +342,8 @@ export async function openSettings(tab = "account") {
 }
 
 async function loadSettings() {
-  const [settings, defaults, harnessBody] = await Promise.all([api("/api/settings"), api("/api/settings/runtime-defaults"), api("/api/harnesses")]);
+  const admin = isNodeAdmin();
+  const [settings, defaults, harnessBody] = await Promise.all([api("/api/settings"), admin ? api("/api/settings/runtime-defaults") : null, api("/api/harnesses")]);
   runtimeDefaults = defaults;
   harnessDescriptors = harnessBody.harnesses.filter(({ configuration }) => configuration);
   clearedHarnessesOnSave.clear();
@@ -342,31 +353,56 @@ async function loadSettings() {
   void fillShortcutSettings();
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";
-  elements.settingsProjectHome.value = settings.projects.homePath;
   document.querySelector("#settingsConversationLabels").value = settings.conversationLabels.join("\n");
   document.querySelector("#settingsConversationHistoryDays").value = settings.conversationHistoryDays;
-  document.querySelector("#settingsConversationRetentionDays").value = settings.conversationRetentionDays;
   elements.settingsAutoCompactEnabled.checked = settings.autoCompactThreshold !== null;
   elements.settingsAutoCompactThreshold.value = settings.autoCompactThreshold ?? 70;
   elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked;
-  elements.settingsShellTimeoutEnabled.checked = settings.shellCommandTimeoutSeconds !== null;
-  elements.settingsShellTimeoutSeconds.value = settings.shellCommandTimeoutSeconds ?? 600;
-  elements.settingsSubprocessMaxLifetimeMinutes.value = settings.subprocessMaxLifetimeMinutes ?? 360;
-  elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
   elements.settingsDigestAttachments.checked = settings.digestAttachments;
-  renderSyncCheckSettings(settings);
-  elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
-  elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
   elements.settingsStartConversationEnabled.checked = settings.conversationCommands.start.enabled;
   elements.settingsStartConversationPrompt.value = settings.conversationCommands.start.prompt;
   elements.settingsEndConversationEnabled.checked = settings.conversationCommands.end.enabled;
   elements.settingsEndConversationPrompt.value = settings.conversationCommands.end.prompt;
+  elements.completionSoundSelect.value = state.completionSound;
+  syncNotifyButton();
+  if (!admin) return;
+  elements.settingsProjectHome.value = settings.projects.homePath;
+  document.querySelector("#settingsConversationRetentionDays").value = settings.conversationRetentionDays;
+  elements.settingsShellTimeoutEnabled.checked = settings.shellCommandTimeoutSeconds !== null;
+  elements.settingsShellTimeoutSeconds.value = settings.shellCommandTimeoutSeconds ?? 600;
+  elements.settingsSubprocessMaxLifetimeMinutes.value = settings.subprocessMaxLifetimeMinutes ?? 360;
+  elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
+  renderSyncCheckSettings(settings);
+  elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
+  elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
   elements.settingsRuntimeStatus.textContent = "";
   elements.settingsSkillsStatus.textContent = "";
   fillResourceFields(globalResourceFields, settings.resources);
   state.syncthingEndpoint = settings.syncthing.endpoint;
-  elements.completionSoundSelect.value = state.completionSound;
-  syncNotifyButton();
+}
+
+function personalSettingsValue() {
+  return {
+    conversationDefaults: conversationDefaultsValue(),
+    conversationLabels: document.querySelector("#settingsConversationLabels").value.split("\n").map((label) => label.trim()).filter(Boolean),
+    conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
+    autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
+    digestAttachments: elements.settingsDigestAttachments.checked,
+    conversationCommands: {
+      start: { enabled: elements.settingsStartConversationEnabled.checked, prompt: elements.settingsStartConversationPrompt.value.trim() },
+      end: { enabled: elements.settingsEndConversationEnabled.checked, prompt: elements.settingsEndConversationPrompt.value.trim() },
+    },
+  };
+}
+
+/** A member saves only their own settings; nothing they send can change the node's. */
+async function savePersonalSettings() {
+  const saved = await api("/api/settings/personal", { method: "PUT", body: JSON.stringify(personalSettingsValue()) });
+  state.conversationLabels = saved.conversationLabels;
+  if (state.activeProjectId) await refreshSessionsQuietly();
+  else renderSessions();
+  elements.settingsDialog.close();
+  toast("Settings saved");
 }
 
 async function saveSettings(event) {
@@ -377,6 +413,7 @@ async function saveSettings(event) {
     if (provider && !provider.value) throw new Error(`Choose a ${descriptor.label} provider for new conversations`);
     if (!model.value) throw new Error(`Choose a ${descriptor.label} model for new conversations`);
   }
+  if (!isNodeAdmin()) { await savePersonalSettings(); return; }
   const syncCheck = syncCheckValue();
   if (syncCheck && (!syncCheck.provider || !syncCheck.modelId)) throw new Error("Choose a model for the sync check");
   const runtime = runtimeFieldsValue();
@@ -459,8 +496,10 @@ for (const tab of elements.settingsTabs) {
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
     if (!step) return;
     event.preventDefault();
-    const index = elements.settingsTabs.indexOf(tab);
-    const next = elements.settingsTabs[(index + step + elements.settingsTabs.length) % elements.settingsTabs.length];
+    // A member's tab list has no admin tabs to walk into.
+    const tabs = elements.settingsTabs.filter((candidate) => isNodeAdmin() || !candidate.hasAttribute("data-admin-only"));
+    const index = tabs.indexOf(tab);
+    const next = tabs[(index + step + tabs.length) % tabs.length];
     selectSettingsTab(next.dataset.settingsTab);
     next.focus();
   });

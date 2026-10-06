@@ -14,6 +14,7 @@ import { decrypt, save, setting, settingsDatabase, value } from "./settings-stor
 import { defaultManagedHome } from "./managed-home.js";
 import { scopedSkillRoots } from "./scoped-skills.js";
 import { DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES, validSubprocessLifetime } from "../scripts/subprocess-lifetime.mjs";
+import { actingAccount, type ActingAccount } from "./account-context.js";
 
 export interface RuntimeSettings {
   executable: string;
@@ -85,6 +86,62 @@ export function remoteTerminalSettings(): RemoteTerminalSettings {
     twins: value("remoteTerminal.twins", "true") === "true",
     otherNodes: value("remoteTerminal.otherNodes", "false") === "true",
   };
+}
+
+export type TerminalAccessMode = "off" | "admin" | "everyone" | "selected";
+export interface TerminalAccessSettings { mode: TerminalAccessMode; accounts: string[]; maxPerUser: number; idleMinutes: number; noticePending: boolean }
+export const DEFAULT_TERMINAL_LIMITS = { maxPerUser: 2, idleMinutes: 30 } as const;
+
+/** Off unless the admin turns it on. A node from before this setting also starts off, and
+    its admin is told once (`noticePending`). */
+export function terminalAccessSettings(): TerminalAccessSettings {
+  const mode = value("terminalAccess.mode", "off");
+  let accounts: string[] = [];
+  try { const parsed: unknown = JSON.parse(value("terminalAccess.accounts", "[]")); if (Array.isArray(parsed)) accounts = parsed.filter((item): item is string => typeof item === "string"); } catch { accounts = []; }
+  return {
+    mode: (["off", "admin", "everyone", "selected"].includes(mode) ? mode : "off") as TerminalAccessMode,
+    accounts,
+    maxPerUser: Number(value("terminalAccess.maxPerUser", String(DEFAULT_TERMINAL_LIMITS.maxPerUser))),
+    idleMinutes: Number(value("terminalAccess.idleMinutes", String(DEFAULT_TERMINAL_LIMITS.idleMinutes))),
+    noticePending: value("terminalAccess.noticeDismissed", "false") !== "true" && !setting("terminalAccess.mode"),
+  };
+}
+
+export function updateTerminalAccessSettings(input: Partial<Omit<TerminalAccessSettings, "noticePending">> & { dismissNotice?: boolean }, actorId?: string): TerminalAccessSettings {
+  const previous = terminalAccessSettings();
+  const mode = input.mode ?? previous.mode;
+  const accounts = [...new Set(input.accounts ?? previous.accounts)];
+  const maxPerUser = input.maxPerUser ?? previous.maxPerUser;
+  const idleMinutes = input.idleMinutes ?? previous.idleMinutes;
+  if (!["off", "admin", "everyone", "selected"].includes(mode)) throw new Error("Terminal access mode is invalid");
+  if (!Number.isInteger(maxPerUser) || maxPerUser < 1 || maxPerUser > 20) throw new Error("Open terminals per user must be from 1 to 20");
+  if (!Number.isInteger(idleMinutes) || idleMinutes < 1 || idleMinutes > 1440) throw new Error("Idle timeout must be from 1 to 1440 minutes");
+  const db = settingsDatabase();
+  db.exec("BEGIN");
+  try {
+    if (input.mode !== undefined || input.accounts !== undefined || input.maxPerUser !== undefined || input.idleMinutes !== undefined) {
+      save(db, "terminalAccess.mode", mode);
+      save(db, "terminalAccess.accounts", JSON.stringify(accounts));
+      save(db, "terminalAccess.maxPerUser", String(maxPerUser));
+      save(db, "terminalAccess.idleMinutes", String(idleMinutes));
+    }
+    if (input.dismissNotice) save(db, "terminalAccess.noticeDismissed", "true");
+    appendAuditEvent(db, { eventType: "settings.terminal_access.updated", actorType: actorId ? "user" : "system", actorId, entityType: "settings", details: { mode, selected: accounts.length, maxPerUser, idleMinutes } });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return terminalAccessSettings();
+}
+
+/** Whether this account may open a terminal on this node. Visitors from other nodes never may. */
+export function terminalAllowedFor(account: Pick<ActingAccount, "accountId" | "role" | "isRemoteLogin"> | undefined, settings = terminalAccessSettings()): boolean {
+  if (!account || account.isRemoteLogin) return false;
+  if (settings.mode === "everyone") return true;
+  if (settings.mode === "admin") return account.role === "admin";
+  if (settings.mode === "selected") return settings.accounts.includes(account.accountId);
+  return false;
 }
 
 /** A browser signed in to this node always gets its terminal; a peer node is decided by this node's settings. */
@@ -240,6 +297,104 @@ export function getScopedResourcePaths(projectId?: string, conversationId?: stri
 }
 
 export function getSettings(): SettingsResponse {
+  const node = nodeSettings();
+  const account = personalAccount();
+  return account ? { ...node, ...personalOverlay(node, account) } : node;
+}
+
+/** Settings each person keeps for themselves. The admin's are the node's, so a node with
+    one user behaves as before; members and visitors keep their own copy. */
+export const PERSONAL_SETTING_KEYS = ["conversationLabels", "conversationHistoryDays", "autoCompactThreshold", "digestAttachments", "conversationCommands", "conversationDefaults"] as const;
+export type PersonalSettings = Pick<SettingsResponse, (typeof PERSONAL_SETTING_KEYS)[number]>;
+
+const personalSchemas = {
+  conversationLabels: conversationLabelsSchema,
+  conversationHistoryDays: z.number().int().min(1).max(3650),
+  autoCompactThreshold: z.number().int().min(1).max(100).nullable(),
+  digestAttachments: z.boolean(),
+  conversationCommands: z.object({ start: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict(), end: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict() }).strict(),
+  conversationDefaults: conversationDefaultsSchema,
+} satisfies Record<(typeof PERSONAL_SETTING_KEYS)[number], z.ZodTypeAny>;
+
+function ensureAccountSettingsSchema(db: ReturnType<typeof settingsDatabase>): void {
+  db.exec("CREATE TABLE IF NOT EXISTS account_settings (account_id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)");
+}
+
+function personalAccount(account: ActingAccount | undefined = actingAccount()): string | undefined {
+  if (!account || (account.role === "admin" && !account.isRemoteLogin)) return undefined;
+  return account.accountId;
+}
+
+function storedPersonal(accountId: string): Record<string, unknown> {
+  const db = settingsDatabase();
+  ensureAccountSettingsSchema(db);
+  const row = db.prepare("SELECT payload FROM account_settings WHERE account_id = ?").get(accountId) as { payload: string } | undefined;
+  try { return row ? JSON.parse(row.payload) as Record<string, unknown> : {}; } catch { return {}; }
+}
+
+function personalOverlay(node: SettingsResponse, accountId: string): PersonalSettings {
+  const stored = storedPersonal(accountId);
+  const result = Object.fromEntries(PERSONAL_SETTING_KEYS.map((key) => [key, node[key]])) as unknown as PersonalSettings;
+  for (const key of PERSONAL_SETTING_KEYS) {
+    if (!(key in stored)) continue;
+    const parsed = personalSchemas[key].safeParse(stored[key]);
+    if (parsed.success) (result as Record<string, unknown>)[key] = parsed.data;
+  }
+  return result;
+}
+
+export function personalSettings(account: ActingAccount | undefined = actingAccount()): PersonalSettings {
+  const settings = account ? (personalAccount(account) ? { ...nodeSettings(), ...personalOverlay(nodeSettings(), account.accountId) } : nodeSettings()) : nodeSettings();
+  return Object.fromEntries(PERSONAL_SETTING_KEYS.map((key) => [key, settings[key]])) as unknown as PersonalSettings;
+}
+
+/** Saves the acting person's own settings. The admin's are the node's settings. */
+export function updatePersonalSettings(input: Partial<PersonalSettings>, account: ActingAccount | undefined = actingAccount(), actorId?: string): PersonalSettings {
+  const changes: Record<string, unknown> = {};
+  for (const key of PERSONAL_SETTING_KEYS) if (input[key] !== undefined) changes[key] = personalSchemas[key].parse(input[key]);
+  const db = settingsDatabase();
+  ensureAccountSettingsSchema(db);
+  const target = personalAccount(account);
+  db.exec("BEGIN");
+  try {
+    if (target) {
+      const merged = { ...storedPersonal(target), ...changes };
+      db.prepare("INSERT INTO account_settings (account_id, payload, updated_at) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at")
+        .run(target, JSON.stringify(merged), new Date().toISOString());
+    } else {
+      if ("conversationLabels" in changes) save(db, "conversationLabels", JSON.stringify(changes.conversationLabels));
+      if ("conversationHistoryDays" in changes) save(db, "conversationHistoryDays", String(changes.conversationHistoryDays));
+      if ("autoCompactThreshold" in changes) save(db, "autoCompactThreshold", changes.autoCompactThreshold === null ? "disabled" : String(changes.autoCompactThreshold));
+      if ("digestAttachments" in changes) save(db, "digestAttachments", String(changes.digestAttachments));
+      if ("conversationCommands" in changes) save(db, "conversationCommands", JSON.stringify(changes.conversationCommands));
+      if ("conversationDefaults" in changes) save(db, "conversationDefaults", JSON.stringify(changes.conversationDefaults));
+    }
+    appendAuditEvent(db, { eventType: "settings.personal.updated", actorType: actorId ? "user" : "system", actorId, entityType: "settings", details: { fields: Object.keys(changes).join(",") } });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return personalSettings(account);
+}
+
+/** A new member starts from a copy of the node's current values, and is independent of them after. */
+export function seedPersonalSettings(accountId: string): void {
+  const db = settingsDatabase();
+  ensureAccountSettingsSchema(db);
+  const node = nodeSettings();
+  const payload = Object.fromEntries(PERSONAL_SETTING_KEYS.map((key) => [key, node[key]]));
+  db.prepare("INSERT OR IGNORE INTO account_settings (account_id, payload, updated_at) VALUES (?, ?, ?)").run(accountId, JSON.stringify(payload), new Date().toISOString());
+}
+
+export function deletePersonalSettings(accountId: string): void {
+  const db = settingsDatabase();
+  ensureAccountSettingsSchema(db);
+  db.prepare("DELETE FROM account_settings WHERE account_id = ?").run(accountId);
+}
+
+/** The node's own settings, without anyone's personal values. */
+export function nodeSettings(): SettingsResponse {
   const runtimes = runtimeRecord((adapter) => configuredRuntime(adapter.id, adapter.configuration.defaults(os.homedir())));
   const defaults = Object.fromEntries(listDiscoveredHarnesses().map((adapter) => [adapter.id, adapter.defaults]));
   const conversationDefaults = conversationDefaultsSchema.parse(JSON.parse(value("conversationDefaults", JSON.stringify(defaults))));

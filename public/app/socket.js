@@ -210,7 +210,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
 
 export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "updatePreparing") {
-    const message = payload.message || "Updating... Work will resume automatically.";
+    const message = payload.message || "Joint Bob is restarting. Work will resume automatically.";
     setConnecting(true, message);
     setComposerEnabled(false);
     return;

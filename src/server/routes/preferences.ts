@@ -1,4 +1,6 @@
 import { projectAdditionalPaths } from "../session-scope.js";
+import { isNodeAdmin } from "../admin.js";
+import { personalSettings, terminalAccessSettings, updatePersonalSettings, updateTerminalAccessSettings } from "../../settings.js";
 import path from "node:path";
 import { runSyncCheck, syncCheckStatus } from "../sync-check.js";
 import { z } from "zod";
@@ -24,7 +26,7 @@ import { auditQuerySchema, recentSessionIdentitySchema, recentSessionSchema, reg
 import { app } from "../state.js";
 
 // Block settings access for replicated users
-app.use("/api/settings", requireFeature(Feature.SETTINGS));
+// Settings are shaped by role: the admin sees the node's, everyone else only their own.
 
 app.get("/api/preferences", (_request, response) => {
   const session = response.locals.authSession as AuthSession;
@@ -242,7 +244,8 @@ app.put("/api/preferences", (request, response, next) => {
 app.get("/api/audit", async (request, response, next) => {
   try {
     const { limit } = auditQuerySchema.parse(request.query);
-    response.json({ events: await listAuditEvents(limit) });
+    // Even the admin sees node events and their own, not other people's activity.
+    response.json({ events: await listAuditEvents(limit, (response.locals.authSession as AuthSession).userId) });
   } catch (error) {
     if (error instanceof z.ZodError) {
       sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
@@ -276,7 +279,55 @@ app.post("/api/settings/skills/reload", async (_request, response, next) => {
 });
 
 app.get("/api/settings", (_request, response) => {
-  response.json(getSettings());
+  if (isNodeAdmin(response.locals.authSession as AuthSession)) { response.json(getSettings()); return; }
+  response.json(personalSettingsView());
+});
+
+/** What a member or visitor sees of settings: their own values, and where their projects go. */
+function personalSettingsView(): Record<string, unknown> {
+  return { ...personalSettings(), projects: { homePath: getSettings().projects.homePath } };
+}
+
+const personalSettingsSchema = z.object({
+  conversationLabels: z.array(z.string()).optional(),
+  conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
+  autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
+  digestAttachments: z.boolean().optional(),
+  conversationCommands: z.unknown().optional(),
+  conversationDefaults: z.unknown().optional(),
+}).strict();
+
+app.put("/api/settings/personal", (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    updatePersonalSettings(personalSettingsSchema.parse(request.body) as Parameters<typeof updatePersonalSettings>[0], undefined, session.userId);
+    response.json(isNodeAdmin(session) ? getSettings() : personalSettingsView());
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
+    next(error);
+  }
+});
+
+const terminalPolicySchema = z.object({
+  mode: z.enum(["off", "admin", "everyone", "selected"]).optional(),
+  accounts: z.array(z.string().regex(/^[0-9a-f]{32}$/)).max(1000).optional(),
+  maxPerUser: z.number().int().min(1).max(20).optional(),
+  idleMinutes: z.number().int().min(1).max(1440).optional(),
+  dismissNotice: z.boolean().optional(),
+}).strict();
+
+app.get("/api/terminal-policy", (_request, response) => {
+  response.json(terminalAccessSettings());
+});
+
+app.put("/api/terminal-policy", (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    response.json(updateTerminalAccessSettings(terminalPolicySchema.parse(request.body), session.userId));
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
+    next(error);
+  }
 });
 
 app.get("/api/settings/sync-check", (_request, response) => {

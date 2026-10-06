@@ -1,4 +1,6 @@
 import path from "node:path";
+import { actingAccount } from "../../account-context.js";
+import { terminalAccessSettings, terminalAllowedFor } from "../../settings.js";
 import { z } from 'zod';
 import type { AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
@@ -290,7 +292,7 @@ app.get('/api/cluster/projects/presence',async(request,response,next)=>{
     if(!response.locals.machineAuth){sendError(response,401,'Unauthorized');return;}
     const projectId=z.string().min(1).parse(request.query.projectId);
     if(!await clusterPeerMayAccessProject(response.locals.machineNodeId,projectId)){sendError(response,403,'Project is not shared with this node');return;}
-    response.json({mapped:Boolean(await getProject(projectId)),terminal:await peerMayOpenTerminal(response.locals.machineNodeId)});
+    response.json({mapped:Boolean(await getProject(projectId)),terminal:terminalAccessSettings().mode!=="off"&&await peerMayOpenTerminal(response.locals.machineNodeId)});
   }catch(error){next(error);}
 });
 
@@ -318,7 +320,8 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
         return { id: peer.id, name: peer.name, local: false, online: false, mapped: false, terminal: false };
       }
     }));
-    response.json({ nodes: [{ id: local.id, name: local.name, local: true, online: true, mapped: true, terminal: true }, ...peerNodes] });
+    // The local terminal follows the admin's policy for the signed-in person.
+    response.json({ nodes: [{ id: local.id, name: local.name, local: true, online: true, mapped: true, terminal: terminalAllowedFor(actingAccount()) }, ...peerNodes] });
   } catch (error) {
     next(error);
   }

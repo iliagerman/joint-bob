@@ -22,7 +22,7 @@ function send(socket: WebSocket, payload: unknown): void {
 
 // A real pseudo-terminal, so interactive programs, colours, job control, and
 // xterm resize all behave exactly like a local terminal in the project folder.
-export function attachTerminalSession(socket: WebSocket, cwd: string, nodeId: string, lifetimeOptions?: Parameters<typeof watchSubprocess>[1]): void {
+export function attachTerminalSession(socket: WebSocket, cwd: string, nodeId: string, lifetimeOptions?: Parameters<typeof watchSubprocess>[1], idleMinutes?: number): void {
   const shell = process.env.SHELL || (process.platform === "win32" ? "cmd.exe" : "/bin/sh");
   const terminal: IPty = spawnPty(shell, [], {
     name: "xterm-256color",
@@ -38,6 +38,20 @@ export function attachTerminalSession(socket: WebSocket, cwd: string, nodeId: st
     return true;
   } }, { dataDirectory: resolveDataDirectory(), ...lifetimeOptions });
 
+  // A terminal nobody types into closes itself, so an idle shell doesn't stay open for good.
+  let idleTimer: NodeJS.Timeout | undefined;
+  const idleMs = idleMinutes ? idleMinutes * 60_000 : 0;
+  const touch = (): void => {
+    if (!idleMs) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      send(socket, { type: "terminalError", error: `Closed after ${idleMinutes} minutes without input` });
+      socket.close(1000, "Terminal idle");
+    }, idleMs);
+    idleTimer.unref?.();
+  };
+  touch();
+  socket.once("close", () => clearTimeout(idleTimer));
   terminal.onData((data) => send(socket, { type: "terminalOutput", data }));
   terminal.onExit(({ exitCode, signal }) => {
     exited = true;
@@ -59,7 +73,7 @@ export function attachTerminalSession(socket: WebSocket, cwd: string, nodeId: st
       return;
     }
     if (exited) return;
-    if (parsed.data.type === "terminalInput") terminal.write(parsed.data.data);
+    if (parsed.data.type === "terminalInput") { touch(); terminal.write(parsed.data.data); }
     else terminal.resize(parsed.data.cols, parsed.data.rows);
   });
   socket.once("close", () => {

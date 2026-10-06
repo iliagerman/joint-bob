@@ -145,7 +145,7 @@ function activeUpdateRecoveries(): Array<{ record: UpdateRecoveryRecord; shared:
 }
 
 function broadcastUpdatePreparing(): void {
-  for (const client of webSocketServer.clients) send(client, { type: "updatePreparing", message: "Updating... Work will resume automatically." });
+  for (const client of webSocketServer.clients) send(client, { type: "updatePreparing", message: "Joint Bob is restarting. Work will resume automatically." });
 }
 export function prepareForUpdate(): Promise<number> {
   if (!flags.updatePreparation) flags.updatePreparation = performUpdatePreparation();

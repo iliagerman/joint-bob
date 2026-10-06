@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { actingAccountFromSession, type ActingAccount } from "../account-context.js";
+import { claimTerminal } from "./terminal-policy.js";
+import { terminalAccessSettings } from "../settings.js";
 import type { IncomingMessage } from "node:http";
 import WebSocket from "ws";
 import { authSessionEvents, sessionCookieName, sessionForId } from "../auth.js";
@@ -53,6 +56,12 @@ async function directSessionForOpen(project: ProjectRecord, sessionPath: string,
 }
 
 const authenticatedSockets = new Map<WebSocket, string>();
+
+/** A terminal relayed by a peer counts against that peer while the node allows terminals at all. */
+function peerTerminalAccount(peerId: string): ActingAccount | undefined {
+  if (terminalAccessSettings().mode === "off") return undefined;
+  return { accountId: `peer:${peerId}`, username: "", role: "admin", isRemoteLogin: false, homeNodeId: peerId };
+}
 authSessionEvents.on("revoked", (sessionIds: string[]) => {
   const revoked = new Set(sessionIds);
   for (const [socket, sessionId] of authenticatedSockets) {
@@ -256,7 +265,15 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       socket.close(1008, "Worktree is not synchronized on this node");
       return;
     }
-    attachTerminalSession(socket, task ? taskCwd(project, task) : terminalWorktree?.path ?? project.path, local.id);
+    // The admin decides who may open a terminal here; a peer relays only while it's on at all.
+    const terminalAccount = session ? actingAccountFromSession(session) : signedPeer ? peerTerminalAccount(signedPeer) : undefined;
+    const claim = claimTerminal(terminalAccount, socket, project.id);
+    if (!claim.ok) {
+      socket.send(JSON.stringify({ type: "terminalError", error: claim.reason }));
+      socket.close(4031, claim.reason);
+      return;
+    }
+    attachTerminalSession(socket, task ? taskCwd(project, task) : terminalWorktree?.path ?? project.path, local.id, undefined, claim.idleMinutes);
     return;
   }
 

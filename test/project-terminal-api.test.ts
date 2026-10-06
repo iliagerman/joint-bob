@@ -164,6 +164,19 @@ test("embedded terminal runs in the project directory or the ticket workspace", 
     const local = await getClusterNode();
     const terminalUrl = new URL(`/ws?mode=terminal&projectId=${project.id}&nodeId=${local.id}`, baseUrl);
     terminalUrl.protocol = "ws:";
+
+    // A new node starts with the terminal off, even for its admin.
+    const nodesOff = await (await fetch(`${baseUrl}/api/projects/${project.id}/session-nodes`, { headers })).json() as { nodes: Array<{ local: boolean; terminal: boolean }> };
+    assert.equal(nodesOff.nodes.find((node) => node.local)?.terminal, false, "the terminal starts off");
+    const refused = new WebSocket(terminalUrl, { origin: baseUrl, headers: { Cookie: cookie } });
+    assert.deepEqual(await nextMessage(refused), { type: "terminalError", error: "Not available" });
+    refused.close();
+    const policy = await fetch(`${baseUrl}/api/terminal-policy`, { headers });
+    assert.equal((await policy.json() as { mode: string; noticePending: boolean }).noticePending, false, "a new node has nothing to tell its admin");
+    const enabled = await fetch(`${baseUrl}/api/terminal-policy`, { method: "PUT", headers, body: JSON.stringify({ mode: "admin" }) });
+    assert.equal(enabled.status, 200);
+    assert.equal((await enabled.json() as { noticePending: boolean }).noticePending, false, "turning it on answers the notice");
+
     socket = new WebSocket(terminalUrl, { origin: baseUrl, headers: { Cookie: cookie } });
 
     assert.deepEqual(await nextMessage(socket), { type: "terminalReady", cwd: projectPath, nodeId: local.id });

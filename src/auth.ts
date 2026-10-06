@@ -10,6 +10,7 @@ import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
 import { decryptSecretValue, encryptSecretValue } from "./secrets.js";
 import { generateTotpSecret, verifyTotp } from "./totp.js";
 import { accountIdFor, canonicalLocalHome, normalizeEmail, validEmail, type AccountRole } from "./accounts.js";
+import { save, settingsDatabase } from "./settings-store.js";
 
 export class AuthError extends Error {
   constructor(public readonly statusCode: number, message: string) { super(message); }
@@ -70,6 +71,7 @@ interface UserRow {
   role: AccountRole | null;
   remote_mfa: number;
   account_id: string | null;
+  disabled: number;
 }
 
 interface SessionRow {
@@ -158,6 +160,7 @@ function ensureReplicatedUserSchema(db: DatabaseSync): void {
   if (!userColumns.some((column) => column.name === "role")) db.exec("ALTER TABLE users ADD COLUMN role TEXT");
   if (!userColumns.some((column) => column.name === "remote_mfa")) db.exec("ALTER TABLE users ADD COLUMN remote_mfa INTEGER NOT NULL DEFAULT 0");
   if (!userColumns.some((column) => column.name === "account_id")) db.exec("ALTER TABLE users ADD COLUMN account_id TEXT");
+  if (!userColumns.some((column) => column.name === "disabled")) db.exec("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email COLLATE NOCASE) WHERE email IS NOT NULL");
   // Before roles existed a node had one local user, so whoever is local and unroled is its admin.
   db.exec("UPDATE users SET role = 'admin' WHERE home_node_id IS NULL AND role IS NULL AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
@@ -245,6 +248,53 @@ export function createAdministrator(username: string, password: string, mustChan
   const db = authDatabase();
   if (userCount(db) !== 0) throw new Error("An administrator already exists");
   insertLocalUser(db, username, password, mustChangePassword, email === undefined ? null : checkedEmail(email), "admin");
+  // A node that starts with the terminal off has nothing to be told about it.
+  save(settingsDatabase(), "terminalAccess.noticeDismissed", "true");
+}
+
+export interface LocalUserRecord {
+  userId: string;
+  accountId: string;
+  username: string;
+  email: string | null;
+  role: AccountRole;
+  disabled: boolean;
+  createdAt: string;
+}
+
+/** Member usernames also name the member's OS account, so they are lowercase and short. */
+export function validMemberUsername(username: string): boolean {
+  return /^[a-z][a-z0-9_-]{2,27}$/.test(username);
+}
+
+/** The admin adds a member. The member signs in once with the returned one-time password
+    and must replace it; nobody, the admin included, can read or reset it afterwards. */
+export function createLocalUser(input: { username: string; email: string }, actorId?: string): { user: LocalUserRecord; oneTimePassword: string } {
+  if (!validMemberUsername(input.username)) throw new AuthError(400, "Username must be 3-28 lowercase letters, numbers, underscores or hyphens, starting with a letter");
+  const db = authDatabase();
+  const email = checkedEmail(input.email);
+  const oneTimePassword = randomBytes(18).toString("base64url");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const userId = insertLocalUser(db, input.username, oneTimePassword, true, email, "member");
+    appendAuditEvent(db, { eventType: "auth.user.created", actorType: actorId ? "user" : "system", actorId, entityType: "user", entityId: userId });
+    db.exec("COMMIT");
+    return { user: localUser(userId)!, oneTimePassword };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function localUser(userId: string): LocalUserRecord | undefined {
+  return listLocalUsers().find((user) => user.userId === userId);
+}
+
+/** Accounts only: no sign-in history, sessions or activity of anyone. */
+export function listLocalUsers(): LocalUserRecord[] {
+  const db = authDatabase();
+  const rows = db.prepare("SELECT id, username, home_node_id, account_id, email, role, disabled, created_at FROM users WHERE home_node_id IS NULL ORDER BY created_at, username").all() as unknown as Array<{ id: string; username: string; home_node_id: null; account_id: string | null; email: string | null; role: AccountRole | null; disabled: number; created_at: string }>;
+  return rows.map((row) => ({ userId: row.id, accountId: accountIdForRow(db, row), username: row.username, email: row.email, role: row.role ?? "member", disabled: row.disabled === 1, createdAt: row.created_at }));
 }
 
 function insertLocalUser(db: DatabaseSync, username: string, password: string, mustChangePassword: boolean, email: string | null, role: AccountRole): string {
@@ -324,6 +374,7 @@ export function authenticate(username: string, password: string): AuthSession | 
     }
     throw new Error("Invalid username or password");
   }
+  if (row.disabled === 1) throw new AuthError(403, "This account is disabled");
   if (row.home_node_id !== null && row.remote_mfa === 1) {
     throw new AuthError(403, "This account uses two-factor sign-in, which works only on its home node for now");
   }
@@ -367,7 +418,7 @@ export function sessionForId(sessionId: string | undefined): AuthSession | undef
     SELECT login_sessions.id, login_sessions.user_id, users.username, login_sessions.csrf_token,
       users.must_change_password, login_sessions.is_remote_login, users.home_node_id, users.email, users.role, users.account_id
     FROM login_sessions JOIN users ON users.id = login_sessions.user_id
-    WHERE login_sessions.id = ? AND login_sessions.expires_at > ?
+    WHERE login_sessions.id = ? AND login_sessions.expires_at > ? AND users.disabled = 0
   `).get(sessionId, now) as SessionRow | undefined;
   if (!row) return undefined;
   return {

@@ -11,6 +11,7 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { Feature, hasFeature, type FeatureKey } from "../features.js";
 import { isAdministrationPath, isNodeBlocked } from "../node-blocks.js";
+import { actingAccountFromSession, runAsAccount } from "../account-context.js";
 
 const clusterRawBodies = new WeakMap<IncomingMessage, Buffer>();
 
@@ -150,7 +151,8 @@ export async function requireHttpAuth(request: Request, response: Response, next
     sendError(response, 403, "Change the initial password before using the application");
     return;
   }
-  next();
+  // Everything downstream of this request acts for the signed-in person.
+  runAsAccount(actingAccountFromSession(session), next);
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {

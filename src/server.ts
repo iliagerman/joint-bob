@@ -64,6 +64,7 @@ import "./server/routes/git-review.js";
 import "./server/routes/search.js";
 import "./server/routes/usage.js";
 import "./server/routes/updates.js";
+import "./server/routes/not-found.js";
 export { app, createApp, server } from "./server/state.js";
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
