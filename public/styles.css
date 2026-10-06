@@ -1912,6 +1912,30 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 #ntfyServiceList { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 #ntfyServiceList li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ntfy-service-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+/* Inline ntfy server management. Every list is paginated, so the section never needs its own scrollbar. */
+fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
+.ntfy-manage { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); }
+.ntfy-manage[hidden] { display: none; }
+.ntfy-manage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ntfy-manage-heading, .ntfy-manage-subheading { margin: 0; color: var(--text); font-size: 13px; }
+.ntfy-manage-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ntfy-manage-tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.ntfy-manage-body { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.ntfy-manage-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); align-items: end; gap: 8px; }
+.ntfy-manage-form > button { justify-self: start; }
+.ntfy-manage-form[data-testid="ntfy-manage-read-form"] { grid-template-columns: minmax(0, 320px) auto auto; justify-content: start; }
+.ntfy-manage .settings-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ntfy-manage-topic { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--surface); list-style: none; }
+.ntfy-manage-topic-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.ntfy-manage-topic-name { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.ntfy-manage-grants li { display: grid; grid-template-columns: minmax(64px, 1fr) minmax(96px, 180px) auto; align-items: center; gap: 8px; }
+.ntfy-manage-grants select { min-width: 0; padding-top: 6px; padding-bottom: 6px; }
+.ntfy-manage-form label, .ntfy-manage-form input, .ntfy-manage-form select { min-width: 0; }
+.ntfy-manage-grant-user { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.ntfy-manage-user { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ntfy-manage-message { display: grid; gap: 2px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--surface); }
+.ntfy-manage-message-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.ntfy-manage-pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .settings-session-list { display: grid; gap: 6px; }
 /* The theme button sits in a grid fieldset; keep it at its own width instead of stretching. */
 #themeToggleButton { justify-self: start; }

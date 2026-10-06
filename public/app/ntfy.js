@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { openNtfyManager, syncNtfyManager } from "./ntfy-manage.js";
 import { toast } from "./shell.js";
 import { refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
@@ -80,6 +81,8 @@ function renderNtfyService(service) {
       toast(`${service.name} is the default ntfy service`);
     } catch (error) { toast(error.message, 8000); }
   }));
+  actions.append(serviceButton("Manage", "ntfy-service-manage-button", "ghost compact", () => openNtfyManager(service, loadNtfyServicesPanel)));
+  actions.lastChild.setAttribute("aria-label", `Manage ntfy service ${service.name}`);
   actions.append(serviceButton("Share", "ntfy-service-share-button", "ghost compact", async () => {
     try { await shareNtfyService(service); } catch (error) { toast(error.message, 8000); }
   }));
@@ -101,6 +104,7 @@ export async function loadNtfyServicesPanel() {
   try {
     const { services } = await api("/api/ntfy/services");
     elements.ntfyServiceList.replaceChildren(...services.map(renderNtfyService));
+    syncNtfyManager(services);
   } catch (error) { toast(error.message, 8000); }
 }
 

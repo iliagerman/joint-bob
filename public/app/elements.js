@@ -293,6 +293,7 @@ export const elements = {
   cancelNtfyButton: document.querySelector("#cancelNtfyButton"),
   saveNtfyButton: document.querySelector("#saveNtfyButton"),
   ntfyServiceList: document.querySelector("#ntfyServiceList"),
+  ntfyManagePanel: document.querySelector("#ntfyManagePanel"),
   ntfyServiceNameInput: document.querySelector("#ntfyServiceNameInput"),
   ntfyServiceUrlInput: document.querySelector("#ntfyServiceUrlInput"),
   ntfyServiceTokenInput: document.querySelector("#ntfyServiceTokenInput"),

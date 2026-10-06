@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Settings → Notifications now includes inline management for ntfy services: control topic access, view cached messages, and manage users.
+
 ## 2.48.0 — 2026-10-07
 
-- Cluster administrators can now view and manage which ntfy services are shared with each node through new admin API endpoints.
+- Agents can now read ntfy topic messages and, with an admin token, list, create, update and delete topics (access grants) and users through the ntfy CLI.
 - Project reconciliation now skips folders that haven't been created in Syncthing, allowing automatic recovery when sync folders are missing.
 
 ## 2.47.6 — 2026-10-07

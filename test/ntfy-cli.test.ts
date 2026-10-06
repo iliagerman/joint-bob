@@ -81,3 +81,40 @@ test("ntfy CLI rejects malformed success and warns uncertain sends", async () =>
   await new Promise<void>(resolve => probe.close(() => resolve()));
   assert.match(await cliFailure(["send", "--message", "done"], `http://127.0.0.1:${address.port}`), /uncertain/i);
 });
+
+test("ntfy CLI maps admin and read commands to bridge operations", async () => {
+  const bodies: unknown[] = [];
+  const server = createServer((request, response) => { let body = ""; request.on("data", (part) => body += part); request.on("end", () => { bodies.push(JSON.parse(body)); response.setHeader("content-type", "application/json"); response.end('{"topics":[]}'); }); });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); if (!address || typeof address === "string") throw new Error("fixture address missing");
+  const env = { ...process.env, JOINT_BOB_NTFY_URL: `http://127.0.0.1:${address.port}`, JOINT_BOB_NTFY_TOKEN: "token" };
+  const service = "00000000-0000-4000-8000-000000000001";
+  try {
+    for (const args of [
+      ["topics", "--service", service],
+      ["topic-create", "--topic", "alerts", "--user", "everyone", "--permission", "read-only"],
+      ["topic-update", "--topic", "alerts", "--user", "phone", "--permission", "read-write"],
+      ["topic-delete", "--topic", "alerts"],
+      ["read", "--topic", "alerts", "--since", "10m", "--limit", "5"],
+      ["users"],
+      ["user-delete", "--username", "phone"],
+    ]) assert.deepEqual(JSON.parse((await execute(process.execPath, [cli, ...args], { env })).stdout), { topics: [] });
+    const child = execFile(process.execPath, [cli, "user-create", "--username", "laptop", "--password-stdin"], { env });
+    child.stdin!.end("s3cret\n");
+    await new Promise<void>((resolve, reject) => child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
+    assert.deepEqual(bodies, [
+      { operation: "topics", serviceId: service },
+      { operation: "topic-create", topic: "alerts", username: "*", permission: "read-only" },
+      { operation: "topic-update", topic: "alerts", username: "phone", permission: "read-write" },
+      { operation: "topic-delete", topic: "alerts" },
+      { operation: "read", topic: "alerts", since: "10m", limit: 5 },
+      { operation: "users" },
+      { operation: "user-delete", username: "phone" },
+      { operation: "user-create", username: "laptop", password: "s3cret" },
+    ]);
+    await cliFailure(["topic-create", "--topic", "alerts", "--user", "phone"], env.JOINT_BOB_NTFY_URL);
+    await cliFailure(["user-create", "--username", "laptop", "--password", "inline"], env.JOINT_BOB_NTFY_URL);
+    await cliFailure(["read", "--limit", "many"], env.JOINT_BOB_NTFY_URL);
+    assert.equal(bodies.length, 8);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
