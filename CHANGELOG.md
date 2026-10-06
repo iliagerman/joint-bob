@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Agents are now prevented from creating git branches or worktrees; isolated work uses Joint Bob worktrees instead.
+
 ## 2.46.0 — 2026-10-06
 
 - Story tab now lets you manually add commits by typing their hashes.

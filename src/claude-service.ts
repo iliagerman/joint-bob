@@ -538,6 +538,9 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     "--include-partial-messages",
     "--permission-mode",
     "bypassPermissions",
+    // Claude's own worktree tool bypasses the git guard; isolation uses Joint Bob worktrees.
+    "--disallowed-tools",
+    "EnterWorktree",
   ];
   if (options.resumeSessionId) args.push("--resume", options.resumeSessionId);
   else if (options.sessionId) args.push("--session-id", options.sessionId);

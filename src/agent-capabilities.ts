@@ -6,6 +6,7 @@ import { websiteCredentialSnapshot, type SecretConversation } from "./secrets.js
 import { ntfyAgentEnvironment, ntfyAgentInstructions } from "./ntfy-agent.js";
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 import { getSettings } from "./settings.js";
+import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-git-policy.js";
 
 export interface AgentCapabilityIdentity {
   projectId: string;
@@ -108,6 +109,11 @@ export const agentCapabilities: AgentCapability[] = [
     id: "ntfy",
     instructions: { path: "/virtual/JOINT_BOB_NTFY.md", content: ntfyAgentInstructions },
     environment: ({ projectId, engine, conversationId }) => ntfyAgentEnvironment(projectId, engine, conversationId),
+  },
+  {
+    id: "git-policy",
+    instructions: { path: "/virtual/JOINT_BOB_GIT.md", content: agentGitPolicyInstructions },
+    environment: () => agentGitPolicyEnvironment(),
   },
   {
     id: "background-tasks",
