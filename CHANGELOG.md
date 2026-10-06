@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed ntfy share dialog layout so labels remain readable and visible inside the dialog.
+
 ## 2.47.0 — 2026-10-06
 
 - npm harness updates now install atomically and leave the live harness unchanged if an update fails.
