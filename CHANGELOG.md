@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- npm harness updates now install atomically and leave the live harness unchanged if an update fails.
 - Agents are now prevented from creating git branches or worktrees; isolated work uses Joint Bob worktrees instead.
 - Projects can have worktrees: synced copies of the project's code and text, without packages, builds or binaries, that reach every node sharing the project. Deleting a worktree removes it on every node.
 - Worktrees appear as coloured chips above the conversation list. A conversation started in a worktree runs there on any node and shows the worktree's colour and name. Merge to project brings the changes back and lists conflicting files instead of overwriting them.

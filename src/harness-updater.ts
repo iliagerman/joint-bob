@@ -1,5 +1,5 @@
 import { execFile } from "./subprocess.js";
-import { existsSync, mkdirSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
@@ -93,14 +93,33 @@ export async function runHarnessUpdates(adapters = listDiscoveredHarnesses()): P
     const runtime = configuredRuntime(adapter.id, configuration.defaults(os.homedir()));
     try {
       const command = harnessUpdateCommand(adapter.id, runtime.executable, configuration.update);
-      if (configuration.update.type === "npm") mkdirSync(command.cwd, { recursive: true });
-      await execute(command.executable, command.args, {
-        cwd: command.cwd,
-        env: process.env,
-        timeout: UPDATE_TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-      });
-      if (configuration.update.type === "npm") activateManagedHarness(adapter.id, configuration.update.binaryName);
+      if (configuration.update.type === "npm") {
+        // npm removes the old .bin link before downloading the replacement. Install away
+        // from the live harness so a slow or failed update cannot disable the agent.
+        const root = command.cwd;
+        mkdirSync(path.dirname(root), { recursive: true });
+        const staging = mkdtempSync(`${root}-staging-`);
+        const backup = `${staging}-previous`;
+        try {
+          const args = command.args.map((arg) => arg === root ? staging : arg);
+          await execute(command.executable, args, {
+            cwd: staging, env: process.env, timeout: UPDATE_TIMEOUT_MS, maxBuffer: 1024 * 1024,
+          });
+          accessSync(path.join(staging, "node_modules", ".bin", `${configuration.update.binaryName}${process.platform === "win32" ? ".cmd" : ""}`), constants.X_OK);
+          const hadPrevious = existsSync(root);
+          if (hadPrevious) renameSync(root, backup);
+          try { renameSync(staging, root); }
+          catch (error) { if (hadPrevious) renameSync(backup, root); throw error; }
+          if (hadPrevious) rmSync(backup, { recursive: true, force: true });
+        } finally {
+          rmSync(staging, { recursive: true, force: true });
+        }
+        activateManagedHarness(adapter.id, configuration.update.binaryName);
+      } else {
+        await execute(command.executable, command.args, {
+          cwd: command.cwd, env: process.env, timeout: UPDATE_TIMEOUT_MS, maxBuffer: 1024 * 1024,
+        });
+      }
       results.push(status(adapter, "succeeded"));
     } catch (error) {
       results.push(status(adapter, "failed", updateError(error)));

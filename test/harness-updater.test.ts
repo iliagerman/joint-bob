@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -70,6 +70,43 @@ test("npm harness updates install into persistent Joint Bob-owned assets", () =>
     "install", "--prefix", command.cwd, "--no-save", "--package-lock=false", "--omit=dev",
     "--registry=https://registry.npmjs.org", "@earendil-works/pi-coding-agent@latest",
   ]);
+});
+
+test("failed npm update leaves the live harness intact and a successful update replaces it", async () => {
+  const id = "staged-update-test";
+  const root = await mkdtemp(path.join(os.tmpdir(), "harness-staging-"));
+  const npm = path.join(root, "npm");
+  const command = harnessUpdateCommand(id, "example", { type: "npm", packageName: "example-package", binaryName: "example" });
+  const executable = path.join(command.cwd, "node_modules", ".bin", "example");
+  await mkdir(path.dirname(executable), { recursive: true });
+  await writeFile(executable, "previous");
+  await writeFile(npm, `#!/bin/sh
+while [ "$1" != "--prefix" ]; do shift; done
+shift
+mkdir -p "$1/node_modules/.bin"
+printf 'replacement' > "$1/node_modules/.bin/example"
+chmod +x "$1/node_modules/.bin/example"
+[ "$MOCK_NPM_FAIL" = 1 ] && exit 7
+exit 0
+`);
+  await chmod(npm, 0o755);
+  const previousPath = process.env.PATH;
+  try {
+    process.env.PATH = `${root}${path.delimiter}${previousPath ?? ""}`;
+    process.env.MOCK_NPM_FAIL = "1";
+    const [failure] = await runHarnessUpdates([adapter(id, "example", { type: "npm", packageName: "example-package", binaryName: "example" })]);
+    assert.equal(failure.state, "failed");
+    assert.equal(await readFile(executable, "utf8"), "previous");
+    delete process.env.MOCK_NPM_FAIL;
+    const [success] = await runHarnessUpdates([adapter(id, "example", { type: "npm", packageName: "example-package", binaryName: "example" })]);
+    assert.equal(success.state, "succeeded", success.error ?? undefined);
+    assert.equal(await readFile(executable, "utf8"), "replacement");
+    assert.equal((await readdir(path.dirname(command.cwd))).filter((name) => name.startsWith(`${id}-staging-`)).length, 0);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    delete process.env.MOCK_NPM_FAIL;
+  }
 });
 
 test("managed harness activation replaces a bundled executable setting", async () => {
