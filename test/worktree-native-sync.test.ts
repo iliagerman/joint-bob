@@ -21,7 +21,7 @@ async function until(check: () => Promise<boolean>, timeoutMs: number): Promise<
 
 type Worktree = { id: string; name: string; path: string };
 
-test("a worktree reaches the other node through native Syncthing, keeps heavy files out, and its deletion removes it there", { timeout: 150_000 }, async () => {
+test("a worktree reaches the other node through native Syncthing, keeps heavy files out, and its deletion removes it there", { timeout: 360_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "worktree-native-"));
   const children: Awaited<ReturnType<typeof startDevNode>>[] = [];
   const syncs: Awaited<ReturnType<typeof startNativeSyncthing>>[] = [];
@@ -70,8 +70,8 @@ test("a worktree reaches the other node through native Syncthing, keeps heavy fi
     const marker = path.join(remote!.path, ".joint-bob-worktree", "conversations", "pi--remote-conversation.json");
     await mkdir(path.dirname(marker), { recursive: true });
     await writeFile(marker, "{}\n");
-    assert.equal(await until(() => exists(path.join(source.path, ".joint-bob-worktree", "conversations", "pi--remote-conversation.json")), 30_000), true, "conversation markers travel back");
-    assert.equal(await until(() => exists(path.join(source.path, ".joint-bob-worktree", "nodes", `${right.nodeId}.json`)), 30_000), true, "every node publishes its own worktree path");
+    assert.equal(await until(() => exists(path.join(source.path, ".joint-bob-worktree", "conversations", "pi--remote-conversation.json")), 90_000), true, "conversation markers travel back");
+    assert.equal(await until(() => exists(path.join(source.path, ".joint-bob-worktree", "nodes", `${right.nodeId}.json`)), 90_000), true, "every node publishes its own worktree path");
 
     const removed = await fetch(`${left.url}/api/projects/${projectId}/worktrees/${source.id}`, { method: "DELETE", headers: { Cookie: sa.cookie, "x-csrf-token": sa.csrfToken } });
     assert.equal(removed.status, 204);

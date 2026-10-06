@@ -5,6 +5,7 @@ import { getClusterNode } from "./cluster.js";
 import { managedHomePaths } from "./managed-home.js";
 import { applyMergeTransaction, recordMergeTransaction, rollbackMergeTransaction, type MergeOp } from "./merge-journal.js";
 import { getSettings } from "./settings.js";
+import { listSyncthingFolders, rescanSyncthingFolder } from "./syncthing.js";
 import { captureBaseline, copyAllowed, TICKET_MERGE_DIR } from "./task-workspaces.js";
 import { prepareTicketMerge } from "./ticket-merge-ops.js";
 import { PROJECT_COLORS, type ProjectColor, type ProjectRecord } from "./types.js";
@@ -102,6 +103,14 @@ export function projectWorktreeSyncFolderId(projectId: string): string {
   return `${WORKTREE_FOLDER_PREFIX}${createHash("sha256").update(projectId).digest("hex")}`;
 }
 
+/** Syncthing's watcher waits before it notices a change; a worktree write asks for an immediate scan. */
+function announce(projectId: string): void {
+  const folderId = projectWorktreeSyncFolderId(projectId);
+  void listSyncthingFolders()
+    .then((folders) => folders.some((folder) => folder.id === folderId) ? rescanSyncthingFolder(folderId) : undefined)
+    .catch((error) => console.warn("Worktree folder rescan failed", error));
+}
+
 function metadataFile(worktree: string): string { return path.join(worktree, WORKTREE_META_DIR, "worktree.json"); }
 
 async function writeAtomic(file: string, content: string): Promise<void> {
@@ -147,6 +156,7 @@ async function registerLocalPath(worktree: string, nodeId: string): Promise<void
   try { if (await fs.readFile(file, "utf8") === content) return; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   await writeAtomic(file, content);
+  announce(path.basename(path.dirname(worktree)));
 }
 
 export async function listProjectWorktrees(projectId: string, root = worktreeRoot()): Promise<ProjectWorktree[]> {
@@ -200,6 +210,7 @@ export async function createProjectWorktree(project: ProjectRecord, input: { nam
     await writeAtomic(metadataFile(staging), `${JSON.stringify(metadata, null, 2)}\n`);
     await fs.rename(staging, worktree);
     await registerLocalPath(worktree, node.id);
+    announce(project.id);
     return view(project.id, worktree, metadata);
   } catch (error) {
     await fs.rm(staging, { recursive: true, force: true });
@@ -218,6 +229,7 @@ export async function updateProjectWorktree(projectId: string, worktreeId: strin
   }
   const next = { ...metadata, name, color: normalizeColor(input.color, metadata.color) };
   await writeAtomic(metadataFile(worktree), `${JSON.stringify(next, null, 2)}\n`);
+  announce(projectId);
   return view(projectId, worktree, next);
 }
 
@@ -227,6 +239,7 @@ export async function deleteProjectWorktree(projectId: string, worktreeId: strin
   if (!await readMetadata(worktree)) throw new ProjectWorktreeError(404, "Worktree not found");
   await fs.rm(metadataFile(worktree), { force: true });
   await fs.rm(worktree, { recursive: true, force: true });
+  announce(projectId);
 }
 
 function conversationMarker(worktree: string, engine: string, sessionId: string): string {
@@ -240,6 +253,7 @@ export async function markWorktreeConversation(projectId: string, worktreeId: st
   try { await fs.access(file); return; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   await writeAtomic(file, `${JSON.stringify({ engine, sessionId, createdAt: new Date().toISOString() })}\n`);
+  announce(projectId);
 }
 
 /** `engine:sessionId` → worktree, for every conversation started inside a worktree of the project. */
@@ -344,6 +358,7 @@ async function mergeLocked(project: ProjectRecord, worktreeId: string, root: str
     // The merged worktree is the new common ancestor, so the next merge only carries later edits.
     const baselineDigest = await captureBaseline(workspace, worktreePathAllowed, [WORKTREE_META_DIR, TICKET_MERGE_DIR]);
     await writeAtomic(metadataFile(workspace), `${JSON.stringify({ ...metadata, baselineDigest, lastMergedAt: new Date().toISOString() }, null, 2)}\n`);
+    announce(project.id);
     return { merged: true, applied: ops.filter((op) => op.op === "write").length, deleted: ops.filter((op) => op.op === "delete").length, conflicts: [] };
   } finally {
     await fs.rm(path.join(workspace, TICKET_MERGE_DIR), { recursive: true, force: true });
