@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Accounts now require email addresses and support signing in by email; node admins can block specific nodes from connecting.
 - Node administrators can invite members to sign in with their own accounts; terminal access and settings are managed separately by role.
+- User messages now show who wrote them by email; multi-user conversations attribute each message to its author and persist the attribution across reloads.
 
 ## 2.48.0 — 2026-10-07
 

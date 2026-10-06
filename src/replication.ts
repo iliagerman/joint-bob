@@ -17,6 +17,7 @@ import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { applyClusterRoutingEvent, ensureRoutingPolicySchema } from "./routing-policy.js";
 import { applyUsageDifficultyEvent, applyUsageEvent, ensureUsageSchema } from "./usage-ledger.js";
 import { isTwinOrigin, translateLegacyAccountEvent } from "./account-keys.js";
+import { applyMessageAuthorEvent } from "./message-authors.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -96,7 +97,7 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   const payload = event.payload as Record<string, unknown> | null | undefined;
   if (!payload || typeof payload !== "object") return undefined;
   if (event.entityType === "name.override") return payload.scope === "projects" && typeof payload.key === "string" ? payload.key : undefined;
-  if (!["task", "project.lock", "conversation.record", "conversation.queue", "conversation.goal", "conversation.routing", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered", "model.usage", "usage.difficulty"].includes(event.entityType)) return undefined;
+  if (!["task", "project.lock", "conversation.record", "conversation.author", "conversation.queue", "conversation.goal", "conversation.routing", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered", "model.usage", "usage.difficulty"].includes(event.entityType)) return undefined;
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
@@ -301,6 +302,7 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "conversation.notification": applyConversationNotificationEvent,
   "conversation.notification.delivered": applyConversationNotificationDeliveredEvent,
   "conversation.goal": applyConversationGoalEvent,
+  "conversation.author": applyMessageAuthorEvent,
   "canvas.shortcut": applyCanvasShortcutEvent,
   "user.pin": applyUserPinEvent,
   "user.recent": applyUserRecentSessionEvent,

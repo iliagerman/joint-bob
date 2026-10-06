@@ -374,7 +374,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     if (payload.scheduled) return;
     state.spinOffSourceTaskId = null;
     const sentAt = payload.timestamp ? new Date(payload.timestamp) : true;
-    const bubble = appendMessage("user", payload.text, sentAt, payload.attachments);
+    const bubble = appendMessage("user", payload.text, sentAt, payload.attachments, false, undefined, payload.author);
     if (payload.queued) markMessageQueued(bubble, payload.queueId, payload.editableText, payload.settings, payload.revision);
     state.thinkingBubble = null;
     return;
@@ -394,7 +394,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
         continue;
       }
       const sentAt = prompt.timestamp ? new Date(prompt.timestamp) : true;
-      markMessageQueued(appendMessage("user", prompt.text, sentAt, prompt.attachments), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
+      markMessageQueued(appendMessage("user", prompt.text, sentAt, prompt.attachments, false, undefined, prompt.author), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
     }
     syncQueuedMessageOrder(prompts.map((prompt) => prompt.id));
     return;

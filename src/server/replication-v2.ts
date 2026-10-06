@@ -47,6 +47,7 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
   "conversation.queue": "project",
   "conversation.routing": "project",
   "conversation.goal": "project",
+  "conversation.author": "project",
   "model.usage": "project",
   "usage.difficulty": "project",
   // One person's data, keyed by account: twins, and project nodes for project items.

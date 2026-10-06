@@ -87,3 +87,24 @@ test("a member sees no admin entries, never calls an admin route, and saves only
   assert.deepEqual(missing, [], "a member's client never asks for an admin route");
   assert.deepEqual(errors, []);
 });
+
+test("a user message shows who wrote it, live and after a reload", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t, (root) => ({ JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log") }));
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator("#loginDialog[open]").waitFor({ timeout: 30_000 });
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.getByText("Internal Assistant", { exact: true }).click();
+  await page.getByText("Short one", { exact: true }).click();
+  await page.getByTestId("chat-message-input").fill("who wrote this");
+  await page.locator("#composer").evaluate((form: HTMLFormElement) => form.requestSubmit());
+  await page.locator("#messages").getByText("stubbed response", { exact: true }).last().waitFor();
+  const bubble = page.locator("#messages .message.user").filter({ hasText: "who wrote this" }).last();
+  assert.equal(await bubble.getByTestId("message-author").textContent(), `${environment.username}@example.test`, "the live bubble names its author");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  const reloaded = page.locator("#messages .message.user").filter({ hasText: "who wrote this" }).last();
+  await reloaded.waitFor();
+  assert.equal(await reloaded.getByTestId("message-author").textContent(), `${environment.username}@example.test`, "the reloaded bubble keeps its author");
+  assert.equal(await page.locator("#messages .message.user").filter({ hasText: "Single short line" }).getByTestId("message-author").count(), 0, "messages from before authors existed show no name");
+});

@@ -4071,3 +4071,4 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .terminal-policy-people { display: grid; gap: 4px; padding-left: 4px; }
 .terminal-policy-limits { display: flex; gap: 16px; flex-wrap: wrap; }
 .toast [data-testid="terminal-notice-enable"] { margin-left: 8px; }
+.message-author { font-weight: 600; color: var(--heading); margin-right: 6px; }

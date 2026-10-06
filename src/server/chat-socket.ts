@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { decodeAuthor, encodeAuthor, type MessageAuthor } from "../message-authors.js";
 import { actingAccountFromSession, type ActingAccount } from "../account-context.js";
 import { claimTerminal } from "./terminal-policy.js";
 import { terminalAccessSettings } from "../settings.js";
@@ -104,6 +105,10 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
     return;
   }
 
+  // Who is writing: the signed-in person, or the person a peer relays, named in the signed URL.
+  const author: MessageAuthor | undefined = session && !session.mustChangePassword
+    ? { accountId: session.accountId, email: session.email, username: session.username, homeNodeId: session.homeNodeId }
+    : signedPeer ? decodeAuthor(url.searchParams.get("author")) : undefined;
   if (!machineAuthenticated && session) {
     authenticatedSockets.set(socket, session.id);
     socket.once("close", () => authenticatedSockets.delete(socket));
@@ -184,6 +189,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
     if (requestedSessionId) ownerUrl.searchParams.set("sessionId", requestedSessionId);
     // A terminal socket must stay a terminal socket on the owner, not become a session.
     if (url.searchParams.get("mode") === "terminal") ownerUrl.searchParams.set("mode", "terminal");
+    if (author) ownerUrl.searchParams.set("author", encodeAuthor(author));
     proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }));
     return;
   }
@@ -211,6 +217,8 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       }
       ownerUrl.searchParams.delete("nodeId");
       ownerUrl.searchParams.set("nodeSession", "1");
+      if (author) ownerUrl.searchParams.set("author", encodeAuthor(author));
+      else ownerUrl.searchParams.delete("author");
       proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }));
       return;
     }
@@ -424,7 +432,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       socket, project, taskId: task?.id ?? null, cwd, engine: sessionRequest.engine,
       sessionId: ownershipSessionId, sessionPath: sessionRequest.sessionPath,
       accountIds: secretAccountIds, readOnly: conversationReadOnly, ownership: foreignOwner,
-      listedSessions, handoffContext: spinOffContext,
+      listedSessions, handoffContext: spinOffContext, author,
       autoStartPrompt: refreshSessionsAfterReady && !sessionRequest.draft && startCommand.enabled ? startCommand.prompt : null,
     });
     if (refreshSessionsAfterReady) broadcastToProject(project.id, { type: "sessionsChanged" });

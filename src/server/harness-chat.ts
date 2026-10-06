@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { attachMessageAuthors, authoredPromptText, recordMessageAuthor, type MessageAuthor } from "../message-authors.js";
 import { internalTaskPrompt } from "../background-task-messages.js";
 import { stat, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -41,12 +42,15 @@ import { attachHarnessClient, compactHarnessSession, detachHarnessClient, dispos
 export interface HarnessChatConnection {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
   shared: SharedHarnessSession; handoffContext: string | null; accountIds: string[]; readOnly: boolean; conversationId: string;
+  /** Who writes on this socket; prompts queued here carry it. */
+  author?: MessageAuthor;
 }
 
 export interface AttachOptions {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId; sessionId: string;
   sessionPath?: string; accountIds: string[]; readOnly: boolean; ownership: ForeignConversationOwner | null;
   listedSessions?: SessionSummary[]; handoffContext: string | null; autoStartPrompt: string | null;
+  author?: MessageAuthor;
 }
 
 export const harnessChatConnections = new Set<HarnessChatConnection>();
@@ -133,7 +137,7 @@ export function refreshHarnessPromptQueue(connection: HarnessChatConnection): vo
   const prompts = listQueuedPrompts(queueKey(connection)).filter((prompt) => !prompt.systemEventId && !startingIds.has(prompt.id));
   publish(connection, { type: "queuedPrompts", prompts: prompts.map((prompt) => {
     const images = new Set(prompt.images.map(({ path: imagePath }) => imagePath));
-    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, timestamp: prompt.createdAt, scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
+    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, timestamp: prompt.createdAt, ...(prompt.author ? { author: prompt.author } : {}), scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
   }) });
   publish(connection, { type: "queueUpdate", pending: prompts.length });
 }
@@ -186,9 +190,9 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   const promptText = promptTextWithAttachments(message, imageAttachments, fileAttachments);
   const suffix = absolute.length ? `Attached: ${absolute.map(({ name }) => name).join(", ")}` : "";
   const displayText = [message.trim(), suffix].filter(Boolean).join("\n\n");
-  const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { requestId, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
+  const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { requestId, author: connection.author, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
   markHarnessInput(connection.shared);
-  publish(connection, { type: "userMessage", text: displayText, timestamp: queued.createdAt, scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
+  publish(connection, { type: "userMessage", text: displayText, timestamp: queued.createdAt, ...(queued.author ? { author: queued.author } : {}), scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
   refreshHarnessPromptQueue(connection);
   void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
 }
@@ -341,12 +345,15 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       const startedAt = new Date().toISOString();
       activeDifficulty = { ...difficulty, occurredAt: startedAt, startedAt };
       saveDifficulty(activeDifficulty, origin);
-      const text = `${connection.handoffContext ?? ""}${attachments.text}`;
+      // Once a second person writes, the agent sees who wrote each prompt.
+      const authored = queued.systemEventId ? attachments.text : authoredPromptText(connection.project.id, connection.conversationId, attachments.text, queued.author);
+      const text = `${connection.handoffContext ?? ""}${authored}`;
       await connection.shared.session.prompt({ text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
         armAutoCompactAfterPrompt(connection.shared.session);
         if (claimed) return;
         claimed = claimQueuedPrompt(queued.id, currentSettings(connection));
         if (!claimed) throw new Error("Queued prompt was changed before start");
+        if (queued.author && !queued.systemEventId) recordMessageAuthor(connection.project.id, connection.conversationId, authored, queued.author, origin!);
         connection.handoffContext = null;
         connection.shared.scheduledTurn = isScheduledPromptText(queued.promptText);
         if (!queued.systemEventId) publish(connection, { type: "promptStarted", queueId: queued.id, scheduled: connection.shared.scheduledTurn });
@@ -720,7 +727,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   let record = await getConversationRecord(options.project.id, options.engine, options.sessionId);
   const conversationId = record?.conversationId ?? options.sessionId;
   const shared = await measureOperation("chat.open.runtime", () => openHarnessSession(options.engine, { projectId: options.project.id, cwd: options.cwd, sessionId: options.sessionId, sessionPath: options.sessionPath, conversationId, accountIds: options.accountIds }));
-  const connection: HarnessChatConnection = { socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId };
+  const connection: HarnessChatConnection = { socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId, author: options.author };
   const local = await getClusterNode();
   if (!record && !options.readOnly) record = await ensureConversationRecord(options.project.id, options.engine, options.sessionId, local.id, options.taskId ?? undefined, { conversationId, segmentIndex: 0 });
   const saved = readQueueSettings(queueKey(connection));
@@ -729,7 +736,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const transcript = await measureOperation("chat.open.history", () => conversationTranscriptPayload(options.project.id, options.engine, shared.session.id, options.listedSessions, shared.session.messages));
   if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
   const scheduled = Boolean(record?.cronTaskId);
-  const history = withTurnFailures(transcript.messages, listTurnFailures(options.engine, shared.session.id));
+  const history = withTurnFailures(attachMessageAuthors(options.project.id, conversationId, transcript.messages), listTurnFailures(options.engine, shared.session.id));
   const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
   const goal = await getConversationGoal(options.project.id, conversationId);
   const routing = await routingClientState(connection, local.id);
