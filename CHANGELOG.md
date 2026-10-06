@@ -6,9 +6,8 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Agents are now prevented from creating git branches or worktrees; isolated work uses Joint Bob worktrees instead.
-- Project worktrees let you create lightweight copies for parallel work that merge back seamlessly with conflict detection.
-- Worktrees appear in the conversation list with color-coded chips for filtering, and conversations show which worktree they run in.
-- Worktree operations now sync faster by immediately notifying Syncthing to scan for changes.
+- Projects can have worktrees: synced copies of the project's code and text, without packages, builds or binaries, that reach every node sharing the project. Deleting a worktree removes it on every node.
+- Worktrees appear as coloured chips above the conversation list. A conversation started in a worktree runs there on any node and shows the worktree's colour and name. Merge to project brings the changes back and lists conflicting files instead of overwriting them.
 
 ## 2.46.0 — 2026-10-06
 
