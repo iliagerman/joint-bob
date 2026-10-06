@@ -2,11 +2,14 @@
 
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
+
 ## Unreleased
 
-## 2.47.6 — 2026-10-06
+- Added admin commands and REST API endpoints for managing ntfy topics, users, and message history.
 
-- Fixed project reconciliation failing when Syncthing folders don't exist.
+## 2.47.6 — 2026-10-07
+
+- Fixed project reconciliation failing when Syncthing folders that don't exist are excluded from the update.
 ## 2.47.2 — 2026-10-06
 
 - Fixed project reconciliation failing when sync folders haven't been created in Syncthing.

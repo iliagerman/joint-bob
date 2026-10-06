@@ -1,6 +1,8 @@
+import type { NextFunction, Request, Response } from "express";
 import type { AuthSession } from "../../auth.js";
 import { getHarnessRuntime, listHarnesses, listHarnessModels } from "../../harnesses.js";
-import { addNtfyService, deleteNtfyService, getNtfyService, importNtfyService, listNtfyServices, setDefaultNtfyService } from "../../ntfy.js";
+import { addNtfyService, deleteNtfyService, getNtfyService, importNtfyService, listNtfyServices, setDefaultNtfyService, updateNtfyService } from "../../ntfy.js";
+import { createNtfyUser, deleteNtfyTopicAccess, deleteNtfyUser, listNtfyTopics, listNtfyUsers, ntfyPermission, ntfySince, ntfyTopicName, ntfyTopicPattern, ntfyUsername, readNtfyMessages, setNtfyTopicAccess } from "../../ntfy-admin.js";
 import { isHarnessId, type HarnessId } from "../../types.js";
 import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "../../push.js";
 import { sendError } from "../http-auth.js";
@@ -13,7 +15,7 @@ import { clusterV2Database } from "../../cluster-v2-store.js";
 import { replicationPeers, signedPeerPost } from "../replication-v2.js";
 import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
 import { z } from "zod";
-import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema } from "../../ntfy-publish.js";
+import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema, savedNtfyServer } from "../../ntfy-publish.js";
 
 app.get("/api/push/vapid-public-key", async (_request, response, next) => {
   try {
@@ -69,6 +71,50 @@ app.post("/api/ntfy/services", (request, response, next) => {
     next(error);
   }
 });
+
+app.put("/api/ntfy/services/:id", (request, response, next) => {
+  try {
+    const payload = ntfyServiceSchema.partial().parse(request.body);
+    const service = updateNtfyService(request.params.id, payload);
+    if (!service) { sendError(response, 404, "ntfy service not found"); return; }
+    response.json({ service });
+  } catch (error) { next(error); }
+});
+
+/** Runs an admin call against a saved service, reporting ntfy's own refusal instead of a 500. */
+function ntfyAdminRoute(handler: (request: Request, server: ReturnType<typeof savedNtfyServer>) => Promise<unknown>) {
+  return async (request: Request, response: Response, next: NextFunction) => {
+    try { response.json(await handler(request, savedNtfyServer(String(request.params.id)))); }
+    catch (error) {
+      if (error instanceof NtfyRequestError) { sendError(response, error.status, error.message); return; }
+      next(error);
+    }
+  };
+}
+const ntfyAccessSchema = z.object({ topic: ntfyTopicPattern, username: ntfyUsername, permission: ntfyPermission }).strict();
+const ntfyRevokeSchema = z.object({ topic: ntfyTopicPattern, username: ntfyUsername.optional() }).strict();
+const ntfyMessagesQuery = z.object({ topic: ntfyTopicName, since: ntfySince.optional(), limit: z.coerce.number().int().min(1).max(500).optional() }).strict();
+const ntfyUserSchema = z.object({ username: ntfyUsername.refine((value) => value !== "*"), password: z.string().min(1).max(200), tier: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional() }).strict();
+
+app.get("/api/ntfy/services/:id/topics", ntfyAdminRoute(async (_request, server) => ({ topics: await listNtfyTopics(server) })));
+app.put("/api/ntfy/services/:id/topics", ntfyAdminRoute(async (request, server) => {
+  const payload = ntfyAccessSchema.parse(request.body);
+  return { topic: await setNtfyTopicAccess(server, payload.topic, payload.username, payload.permission) };
+}));
+app.delete("/api/ntfy/services/:id/topics", ntfyAdminRoute(async (request, server) => {
+  const payload = ntfyRevokeSchema.parse(request.body);
+  return deleteNtfyTopicAccess(server, payload.topic, payload.username);
+}));
+app.get("/api/ntfy/services/:id/messages", ntfyAdminRoute(async (request, server) => {
+  const query = ntfyMessagesQuery.parse(request.query);
+  return { topic: query.topic, messages: await readNtfyMessages(server, query.topic, query.since, query.limit) };
+}));
+app.get("/api/ntfy/services/:id/users", ntfyAdminRoute(async (_request, server) => ({ users: await listNtfyUsers(server) })));
+app.post("/api/ntfy/services/:id/users", ntfyAdminRoute(async (request, server) => {
+  const payload = ntfyUserSchema.parse(request.body);
+  return createNtfyUser(server, payload.username, payload.password, payload.tier);
+}));
+app.delete("/api/ntfy/services/:id/users/:username", ntfyAdminRoute(async (request, server) => deleteNtfyUser(server, ntfyUsername.refine((value) => value !== "*").parse(request.params.username))));
 
 app.put("/api/ntfy/services/:id/default", (request, response) => {
   if (!setDefaultNtfyService(request.params.id)) { sendError(response, 404, "ntfy service not found"); return; }

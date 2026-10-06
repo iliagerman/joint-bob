@@ -1,19 +1,28 @@
 import { z } from "zod";
 import type { AgentCapabilityIdentity } from "./agent-capabilities.js";
+import { createNtfyUser, deleteNtfyTopicAccess, deleteNtfyUser, listNtfyTopics, listNtfyUsers, NtfyRequestError, ntfyPermission, ntfySince, ntfyTopicName, ntfyTopicPattern, ntfyUsername, readNtfyMessages, setNtfyTopicAccess, type NtfyServer } from "./ntfy-admin.js";
 import { getNtfyService, listNtfyServices, type NtfyService } from "./ntfy.js";
 import { ntfyConversationTargets, type NtfyConversationTarget } from "./push.js";
 
-const topic = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+export { NtfyRequestError };
+const topic = ntfyTopicName;
+const serviceId = z.string().uuid().optional();
+const namedUser = ntfyUsername.refine((value) => value !== "*", "The anonymous user cannot be created or deleted");
+const access = { serviceId, topic: ntfyTopicPattern, username: ntfyUsername, permission: ntfyPermission };
 export const ntfyAgentRequestSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("status") }).strict(),
-  z.object({ operation: z.literal("send"), serviceId: z.string().uuid().optional(), topic: topic.optional(), message: z.string().min(1).max(4096), title: z.string().max(200).optional() }).strict(),
+  z.object({ operation: z.literal("send"), serviceId, topic: topic.optional(), message: z.string().min(1).max(4096), title: z.string().max(200).optional() }).strict(),
+  z.object({ operation: z.literal("read"), serviceId, topic: topic.optional(), since: ntfySince.optional(), limit: z.number().int().min(1).max(500).optional() }).strict(),
+  z.object({ operation: z.literal("topics"), serviceId }).strict(),
+  z.object({ operation: z.literal("topic-create"), ...access }).strict(),
+  z.object({ operation: z.literal("topic-update"), ...access }).strict(),
+  z.object({ operation: z.literal("topic-delete"), serviceId, topic: ntfyTopicPattern, username: ntfyUsername.optional() }).strict(),
+  z.object({ operation: z.literal("users"), serviceId }).strict(),
+  z.object({ operation: z.literal("user-create"), serviceId, username: namedUser, password: z.string().min(1).max(200), tier: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional() }).strict(),
+  z.object({ operation: z.literal("user-delete"), serviceId, username: namedUser }).strict(),
 ]);
 type Request = z.infer<typeof ntfyAgentRequestSchema>;
-export type NtfyAgentResult = { services: Array<{ id: string; name: string }>; defaultTopic: string | null; hasConversationTarget: boolean } | { ok: true; topic: string };
-
-export class NtfyRequestError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
-}
+export type NtfyAgentResult = { services: Array<{ id: string; name: string }>; defaultTopic: string | null; hasConversationTarget: boolean } | { ok: true; topic: string } | Record<string, unknown>;
 
 function normalizedUrl(value: string): string {
   let url: URL;
@@ -38,6 +47,11 @@ function selectFromTarget(targets: NtfyConversationTarget[]): { url: string; tok
   return { url: urls[0], token: tokens[0] };
 }
 
+/** Admin operations use only saved services, never a conversation's replicated credential snapshot. */
+export function savedNtfyServer(serviceId: string | undefined): NtfyServer {
+  return selectServer(serviceId, []);
+}
+
 function selectServer(serviceId: string | undefined, targets: NtfyConversationTarget[]): { url: string; token: string } {
   if (serviceId) {
     const service = getNtfyService(serviceId);
@@ -51,6 +65,15 @@ function selectServer(serviceId: string | undefined, targets: NtfyConversationTa
   if (!selected) throw new NtfyRequestError(409, "Choose a default ntfy service in Settings or use --service ID");
   const service = getNtfyService(selected.id)!;
   return { url: normalizedUrl(service.url), token: service.token };
+}
+
+function conversationTopic(server: NtfyServer, targets: NtfyConversationTarget[], requested: string | undefined): string {
+  const matchingTopics = [...new Set(targets.filter((target) => normalizedUrl(target.url) === server.url).map((target) => target.topic))];
+  if (!requested && !matchingTopics.length) throw new NtfyRequestError(400, "A topic is required; use --topic");
+  if (!requested && matchingTopics.length > 1) throw new NtfyRequestError(409, "Multiple topics are configured; use --topic");
+  const selected = requested ?? matchingTopics[0];
+  if (!topic.safeParse(selected).success) throw new NtfyRequestError(400, "Configured ntfy topic is invalid");
+  return selected;
 }
 
 async function publish(server: { url: string; token: string }, request: Extract<Request, { operation: "send" }>, selectedTopic: string): Promise<void> {
@@ -72,12 +95,21 @@ export async function ntfyAgentRequest(identity: AgentCapabilityIdentity, reques
     const pairs = [...new Set(targets.map((target) => `${normalizedUrl(target.url)}\0${target.topic}`))];
     return { services: listNtfyServices().map(({ id, name }) => ({ id, name })), defaultTopic: pairs.length === 1 ? targets[0].topic : null, hasConversationTarget: targets.length > 0 };
   }
-  const server = selectServer(request.serviceId, targets);
-  const matchingTopics = [...new Set(targets.filter((target) => normalizedUrl(target.url) === server.url).map((target) => target.topic))];
-  if (!request.topic && !matchingTopics.length) throw new NtfyRequestError(400, "A topic is required; use --topic");
-  if (!request.topic && matchingTopics.length > 1) throw new NtfyRequestError(409, "Multiple topics are configured; use --topic");
-  const selectedTopic = request.topic ?? matchingTopics[0];
-  if (!topic.safeParse(selectedTopic).success) throw new NtfyRequestError(400, "Configured ntfy topic is invalid");
-  await publish(server, request, selectedTopic);
-  return { ok: true, topic: selectedTopic };
+  if (request.operation === "send" || request.operation === "read") {
+    const server = selectServer(request.serviceId, targets);
+    const selectedTopic = conversationTopic(server, targets, request.topic);
+    if (request.operation === "read") return { topic: selectedTopic, messages: await readNtfyMessages(server, selectedTopic, request.since, request.limit) };
+    await publish(server, request, selectedTopic);
+    return { ok: true, topic: selectedTopic };
+  }
+  const server = savedNtfyServer(request.serviceId);
+  switch (request.operation) {
+    case "topics": return { topics: await listNtfyTopics(server) };
+    case "topic-create": return { topic: await setNtfyTopicAccess(server, request.topic, request.username, request.permission, "create") };
+    case "topic-update": return { topic: await setNtfyTopicAccess(server, request.topic, request.username, request.permission, "update") };
+    case "topic-delete": return await deleteNtfyTopicAccess(server, request.topic, request.username);
+    case "users": return { users: await listNtfyUsers(server) };
+    case "user-create": return await createNtfyUser(server, request.username, request.password, request.tier);
+    case "user-delete": return await deleteNtfyUser(server, request.username);
+  }
 }

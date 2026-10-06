@@ -69,6 +69,16 @@ export function importNtfyService(service: NtfyService): NtfyServiceView {
   return view(imported, defaultServiceId);
 }
 
+/** An omitted token keeps the stored one; an empty string clears it. */
+export function updateNtfyService(id: string, changes: { name?: string; url?: string; token?: string }): NtfyServiceView | undefined {
+  const config = readConfig();
+  const current = config.services.find((service) => service.id === id);
+  if (!current) return undefined;
+  const updated: NtfyService = { ...current, ...(changes.name === undefined ? {} : { name: changes.name }), ...(changes.url === undefined ? {} : { url: changes.url.replace(/\/+$/, "") }), ...(changes.token === undefined ? {} : { token: changes.token }) };
+  writeConfig({ ...config, services: config.services.map((service) => service.id === id ? updated : service) });
+  return view(updated, config.defaultServiceId);
+}
+
 export function setDefaultNtfyService(id: string): boolean {
   const config = readConfig();
   if (!config.services.some((service) => service.id === id)) return false;
