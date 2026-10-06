@@ -23,7 +23,7 @@ const story = {
   jumpPhase: false,
   // Picking commits from history instead of explaining the conversation.
   picking: false,
-  pick: { tab: "pushes", pushes: null, history: null, error: "", selected: new Map() },
+  pick: { tab: "pushes", pushes: null, history: null, error: "", selected: new Map(), typed: "", typedError: "", adding: false },
 };
 
 const PICK_LIMIT = 20;
@@ -72,7 +72,7 @@ export function resetStory(ctx) {
   story.implTab = "components";
   story.pages = {};
   story.picking = false;
-  story.pick = { tab: "pushes", pushes: null, history: null, error: "", selected: new Map() };
+  story.pick = { tab: "pushes", pushes: null, history: null, error: "", selected: new Map(), typed: "", typedError: "", adding: false };
 }
 
 export function storyCommitCount() { return story.commits.length; }
@@ -709,6 +709,49 @@ function pickTab(tab) {
   changed();
 }
 
+/** Adds commits typed by hash; each is checked in Git, and the ones that fail stay in the box. */
+async function addTyped(event) {
+  event.preventDefault();
+  const { pick } = story;
+  const tokens = [...new Set(pick.typed.split(/[\s,]+/).filter(Boolean))];
+  if (!tokens.length || pick.adding) return;
+  const request = story.request;
+  pick.adding = true;
+  pick.typedError = "";
+  changed();
+  const failed = [];
+  const reasons = [];
+  for (const token of tokens) {
+    if (!/^[0-9a-f]{4,40}$/i.test(token)) { failed.push(token); reasons.push(`${token} is not a commit hash`); continue; }
+    if (pick.selected.size >= PICK_LIMIT) { failed.push(token); reasons.push(`a story covers at most ${PICK_LIMIT} commits`); continue; }
+    try {
+      const commit = await api(story.ctx.apiUrl("commit", { revision: token }));
+      if (request !== story.request) return;
+      pick.selected.set(commit.hash, { hash: commit.hash, shortHash: commit.shortHash, subject: commit.subject, author: commit.author, date: commit.date });
+    } catch (error) {
+      if (request !== story.request) return;
+      failed.push(token);
+      reasons.push(`${token}: ${error.message}`);
+    }
+  }
+  pick.adding = false;
+  pick.typed = failed.join(" ");
+  pick.typedError = [...new Set(reasons)].join(". ");
+  changed();
+  story.ctx.container.querySelector("[data-testid='git-story-pick-hash']")?.focus();
+}
+
+function typedRow() {
+  const { pick } = story;
+  return h("form", { class: "gs-pick-type", "data-testid": "git-story-pick-type", onsubmit: addTyped },
+    h("input", {
+      type: "text", value: pick.typed, "data-testid": "git-story-pick-hash", "aria-label": "Commit hashes", spellcheck: "false", autocomplete: "off",
+      placeholder: "Or type commit hashes, separated by spaces or commas", oninput: (event) => { pick.typed = event.target.value; },
+    }),
+    h("button", { class: "ghost compact gs-boxed", type: "submit", "data-testid": "git-story-pick-add", disabled: pick.adding }, pick.adding ? "Checking…" : "Add"),
+    pick.typedError ? h("p", { class: "gs-del gs-small", role: "alert", "data-testid": "git-story-pick-type-error" }, pick.typedError) : null);
+}
+
 function setPicked(commits, on) {
   for (const commit of commits) {
     if (!on) story.pick.selected.delete(commit.hash);
@@ -759,6 +802,7 @@ function renderPicker(container) {
       [["pushes", "Pushes", pick.pushes?.length], ["commits", "Commits", pick.history?.length]].map(([id, label, count]) => h("button", {
         class: "gs-subtab", type: "button", role: "tab", "aria-selected": String(pick.tab === id), "data-testid": `git-story-pick-${id}`, onclick: () => pickTab(id),
       }, label, count === undefined ? null : h("span", { class: "gs-count" }, String(count))))),
+    typedRow(),
     list,
     h("div", { class: "gs-pick-foot" },
       h("span", { class: "gs-min gs-ellipsis", "data-testid": "git-story-pick-summary", title: picked.map((commit) => `${commit.shortHash} ${commit.subject}`).join("\n") },

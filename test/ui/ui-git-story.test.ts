@@ -194,6 +194,7 @@ test("Story tab explains commits picked from past pushes or history, without the
   const { page, environment, node } = await nativeUiFixture(t);
   const commit = (n: number, subject: string) => ({ hash: `${String(n).repeat(7)}${"0".repeat(33)}`, shortHash: String(n).repeat(7), author: "Ada", authorEmail: "ada@example.com", date: new Date(Date.now() - n * 3_600_000).toISOString(), subject, body: "" });
   const history = [commit(1, "chore(release): 2.40.0"), commit(2, "feat(git): add Story tab"), commit(3, "fix(secrets): mirrored workspace"), commit(4, "docs: release notes")];
+  const older = commit(9, "feat: an old change beyond the loaded history");
   const pushes = [
     { ref: "origin/main", at: new Date(Date.now() - 3_600_000).toISOString(), from: history[2].hash, to: history[0].hash, commits: [history[0], history[1]], more: false },
     { ref: "origin/main", at: new Date(Date.now() - 7_200_000).toISOString(), from: null, to: history[2].hash, commits: [history[2]], more: false },
@@ -213,6 +214,10 @@ test("Story tab explains commits picked from past pushes or history, without the
     if (url.pathname.endsWith("/story-latest")) return route.fulfill({ json: { latest: null, commits: [] } });
     if (url.pathname.endsWith("/pushes")) return route.fulfill({ json: { pushes } });
     if (url.pathname.endsWith("/history")) return route.fulfill({ json: { commits: history } });
+    if (url.pathname.endsWith("/commit")) {
+      const revision = url.searchParams.get("revision");
+      return revision === older.shortHash ? route.fulfill({ json: { ...older, files: [], diff: { patch: "", binary: false, truncated: false } } }) : route.fulfill({ status: 404, json: { error: "Commit not found" } });
+    }
     if (url.pathname.endsWith("/story")) {
       posts.push(route.request().postDataJSON());
       return route.fulfill({ json: { thread, saved: picked, freshness: { fresh: true, newTurns: 0, changedPaths: [] } } });
@@ -246,6 +251,13 @@ test("Story tab explains commits picked from past pushes or history, without the
   await page.getByTestId("git-story-pick-pushes").click();
   assert.equal(await page.getByTestId("git-story-push").first().getByTestId("git-story-pick-box").evaluate((box: HTMLInputElement) => box.indeterminate), true);
 
+  await page.getByTestId("git-story-pick-hash").fill("9999999, not-a-hash 8888888");
+  await page.getByTestId("git-story-pick-hash").press("Enter");
+  await page.getByTestId("git-story-pick-type-error").waitFor();
+  assert.match(await page.getByTestId("git-story-pick-summary").innerText(), /3 of 20 commits picked: .*9999999/);
+  assert.match(await page.getByTestId("git-story-pick-type-error").innerText(), /not-a-hash is not a commit hash\. 8888888: Commit not found/);
+  assert.equal(await page.getByTestId("git-story-pick-hash").inputValue(), "not-a-hash 8888888", "only the failed entries stay in the box");
+
   const fit = await page.evaluate(() => document.scrollingElement!.scrollHeight <= innerHeight);
   assert.equal(fit, true, "the picker never scrolls the page");
 
@@ -255,7 +267,7 @@ test("Story tab explains commits picked from past pushes or history, without the
   assert.match(await page.getByTestId("git-story-omitted").getAttribute("title") ?? "", /app\.ts/);
   const { conversationId, ...request } = posts.at(-1) as { conversationId: string };
   assert.ok(conversationId);
-  assert.deepEqual(request, { source: "commits", commits: [history[0].hash, history[3].hash], scope: "all", paths: [], includeCommits: false, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" });
+  assert.deepEqual(request, { source: "commits", commits: [history[0].hash, history[3].hash, older.hash], scope: "all", paths: [], includeCommits: false, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" });
   assert.equal(await page.locator("#gitReviewToolbar").isVisible(), false, "conversation scope does not apply to a commits story");
   assert.match(await page.getByTestId("git-story-section-conversation").innerText(), /Commits/);
   await page.getByTestId("git-story-section-conversation").click();

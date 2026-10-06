@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.46.0 — 2026-10-06
+
+- Story tab now lets you manually add commits by typing their hashes.
+
 ## 2.45.2 — 2026-10-06
 
 - Story tab now shows line counts for oversized diffs instead of refusing to generate the explanation.
