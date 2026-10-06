@@ -3,11 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.49.0 — 2026-10-07
 
-- Settings → Notifications now includes inline management for ntfy services: control topic access, view cached messages, and manage users.
-- Shared ntfy services are automatically delivered to selected cluster members and trusted twins, including when nodes reconnect.
-- Ntfy service shares now show delivery progress and a pending badge for offline nodes that are still receiving the service.
+- Share dialog now shows a progress spinner while services are being delivered to cluster members.
+- Service rows display the count of nodes still waiting to receive the service, updating in real-time until all nodes have it.
+- Service sharing is now persistent—selections are stored and delivery automatically retries when offline nodes reconnect.
+- Nodes joining a cluster after services have been shared now receive previously shared services.
+- Changed services are automatically re-sent to all nodes in the cluster.
+- Settings now includes an ntfy manager for administering topics (access grants), viewing messages (paginated reader), managing users, and rotating admin tokens.
+- New agent CLI commands support ntfy management and administration.
 
 ## 2.48.0 — 2026-10-07
 
