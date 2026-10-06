@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Settings → Notifications now includes inline management for ntfy services: control topic access, view cached messages, and manage users.
 - Shared ntfy services are automatically delivered to selected cluster members and trusted twins, including when nodes reconnect.
+- Ntfy service shares now show delivery progress and a pending badge for offline nodes that are still receiving the service.
 
 ## 2.48.0 — 2026-10-07
 

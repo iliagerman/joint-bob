@@ -299,3 +299,39 @@ test("ntfy settings manage topics, messages, users and the admin token inline", 
   await click("ntfy-manage-close-button");
   assert.equal(await sub("ntfy-manage-panel").evaluate((node: HTMLElement) => node.hidden), true);
 });
+
+test("sharing shows progress while delivering and a pending badge for offline nodes", { timeout: 90_000 }, async (t) => {
+  const { page, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.evaluate(`(async () => {
+    const nativeFetch = window.fetch;
+    let shared = false;
+    window.releaseShare = null;
+    const service = (pendingNodes) => ({ id: "00000000-0000-4000-8000-000000000001", name: "Contigos", url: "https://ntfy.contigos", hasToken: true, isDefault: true,
+      sharing: shared ? { includeTwins: true, clusterIds: ["cluster-id"], pendingNodes } : { includeTwins: false, clusterIds: [], pendingNodes: 0 } });
+    window.fetch = (url, options = {}) => {
+      const path = String(url);
+      if (path === "/api/clusters") return Promise.resolve(Response.json({ clusters: [{ id: "cluster-id", name: "Contigos", members: [{ name: "Homeserver" }, { name: "Contigos EC2" }] }] }));
+      if (path === "/api/ntfy/services") return Promise.resolve(Response.json({ services: [service(1)] }));
+      if (path.endsWith("/share")) return new Promise((resolve) => { window.releaseShare = () => { shared = true; resolve(Response.json({ sharing: service(1).sharing, results: [{ peerId: "a", ok: true }, { peerId: "b", ok: false, error: "down" }] })); }; });
+      return nativeFetch(url, options);
+    };
+    await (await import("/app/ntfy.js")).loadNtfyServicesPanel();
+  })()`);
+  await page.getByTestId("ntfy-service-share-button").evaluate((button: HTMLButtonElement) => button.click());
+  await page.getByTestId("ntfy-share-cluster-cluster-id").check();
+  await page.getByTestId("ntfy-share-confirm").evaluate((button: HTMLButtonElement) => button.click());
+  await page.waitForFunction("typeof window.releaseShare === 'function'");
+  const confirm = page.getByTestId("ntfy-share-confirm");
+  assert.equal(await confirm.textContent(), "Sharing…");
+  assert.equal(await confirm.getAttribute("aria-busy"), "true");
+  assert.equal(await confirm.isDisabled(), true);
+  assert.equal(await page.getByTestId("ntfy-share-progress").isVisible(), true);
+  assert.equal(await page.getByTestId("ntfy-share-twins").isDisabled(), true);
+  await page.evaluate("window.releaseShare()");
+  await page.locator(".ntfy-share-dialog").waitFor({ state: "detached" });
+  const badge = page.getByTestId("ntfy-share-pending");
+  await badge.waitFor({ state: "attached" });
+  assert.match((await badge.textContent()) ?? "", /Delivering to 1 node/);
+  assert.match((await page.getByTestId("ntfy-service-list").textContent()) ?? "", /Shared with twins, Contigos/);
+});

@@ -24,7 +24,7 @@ test("an ntfy service can be shared to a selected cluster", { timeout: 120_000 }
     assert.equal(shared.status, 200, JSON.stringify(shared.body));
     assert.deepEqual(shared.body.results, [{ peerId: nodeB.nodeId, ok: true }]);
     const remote = await api<{ services: ServiceView[] }>(nodeB, sessionB, "GET", "/ntfy/services");
-    assert.deepEqual(remote.body.services, [{ ...service.body.service, isDefault: true, sharing: { includeTwins: false, clusterIds: [] } }]);
+    assert.deepEqual(remote.body.services, [{ ...service.body.service, isDefault: true, sharing: { includeTwins: false, clusterIds: [], pendingNodes: 0 } }]);
   } finally {
     await Promise.all(servers.map((server) => stopDevNode(server)));
     await rm(root, { recursive: true, force: true });
@@ -53,7 +53,7 @@ test("an ntfy service can be shared to paired nodes and a default can be selecte
     assert.equal(shared.status, 200, JSON.stringify(shared.body));
     assert.deepEqual(shared.body.results, [{ peerId: nodeB.nodeId, ok: true }]);
     const remote = await api<{ services: ServiceView[] }>(nodeB, sessionB, "GET", "/ntfy/services");
-    assert.deepEqual(remote.body.services, [{ ...second.body.service, isDefault: true, sharing: { includeTwins: false, clusterIds: [] } }]);
+    assert.deepEqual(remote.body.services, [{ ...second.body.service, isDefault: true, sharing: { includeTwins: false, clusterIds: [], pendingNodes: 0 } }]);
 
     const bytes = await Promise.all(["node.db", "node.db-wal"].map(async (file) => {
       try { return await readFile(path.join(nodeB.dataDir, file)); } catch { return Buffer.alloc(0); }
@@ -81,10 +81,10 @@ test("a cluster share stays on while a member is offline and reaches it when it 
     const service = await api<{ service: ServiceView }>(nodeA, sessionA, "POST", "/ntfy/services", { name: "Later", url: "https://ntfy.later.example", token: "later-secret" });
     const shared = await api<{ sharing: unknown; results: Array<{ peerId: string; ok: boolean }> }>(nodeA, sessionA, "POST", `/ntfy/services/${service.body.service.id}/share`, { includeTwins: false, clusterIds: [clusterId] });
     assert.equal(shared.status, 200, JSON.stringify(shared.body));
-    assert.deepEqual(shared.body.sharing, { includeTwins: false, clusterIds: [clusterId] });
+    assert.deepEqual(shared.body.sharing, { includeTwins: false, clusterIds: [clusterId], pendingNodes: 1 });
     assert.deepEqual(shared.body.results.map(({ peerId, ok }) => ({ peerId, ok })), [{ peerId: nodeB.nodeId, ok: false }]);
     const local = await api<{ services: ServiceView[] }>(nodeA, sessionA, "GET", "/ntfy/services");
-    assert.deepEqual(local.body.services[0].sharing, { includeTwins: false, clusterIds: [clusterId] }, "the share is on even though delivery failed");
+    assert.deepEqual(local.body.services[0].sharing, { includeTwins: false, clusterIds: [clusterId], pendingNodes: 1 }, "the share is on even though delivery failed");
 
     servers[1] = await startDevNode(environment, nodeB);
     const sessionB2 = await signIn(environment, nodeB);

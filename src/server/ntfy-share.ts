@@ -11,6 +11,7 @@ const TWINS = "twins";
 const RETRY_MS = 15_000;
 
 export interface NtfySharing { includeTwins: boolean; clusterIds: string[] }
+export interface NtfySharingView extends NtfySharing { pendingNodes: number }
 export interface NtfyShareResult { peerId: string; ok: boolean; error?: string }
 
 function database(): DatabaseSync {
@@ -27,6 +28,15 @@ function database(): DatabaseSync {
 export function ntfyServiceSharing(serviceId: string): NtfySharing {
   const targets = (database().prepare("SELECT target FROM ntfy_service_shares WHERE service_id=? ORDER BY target").all(serviceId) as Array<{ target: string }>).map((row) => row.target);
   return { includeTwins: targets.includes(TWINS), clusterIds: targets.filter((target) => target !== TWINS) };
+}
+
+/** The selection plus how many nodes still lack the current version of the service. */
+export function ntfyServiceSharingView(serviceId: string): NtfySharingView {
+  const sharing = ntfyServiceSharing(serviceId);
+  const service = getNtfyService(serviceId);
+  if (!service || (!sharing.includeTwins && !sharing.clusterIds.length)) return { ...sharing, pendingNodes: 0 };
+  const row = database().prepare("SELECT COUNT(*) AS count FROM ntfy_service_deliveries WHERE service_id=? AND (delivered_hash IS NULL OR delivered_hash<>?)").get(serviceId, fingerprint(service)) as { count: number };
+  return { ...sharing, pendingNodes: Number(row.count) };
 }
 
 /** The selection replaces the previous one; peers already holding the service keep their copy. */
@@ -66,26 +76,27 @@ async function deliverService(serviceId: string, force: boolean): Promise<NtfySh
   const state = db.prepare("SELECT delivered_hash AS deliveredHash, attempted_at AS attemptedAt FROM ntfy_service_deliveries WHERE service_id=? AND peer_id=?");
   const record = db.prepare(`INSERT INTO ntfy_service_deliveries VALUES (?, ?, ?, ?, ?) ON CONFLICT(service_id, peer_id) DO UPDATE SET
     delivered_hash=COALESCE(excluded.delivered_hash, delivered_hash), attempted_at=excluded.attempted_at, last_error=excluded.last_error`);
-  const results: NtfyShareResult[] = [];
-  for (const peerId of targets) {
+  const due = [...targets].filter((peerId) => {
     const row = state.get(serviceId, peerId) as { deliveredHash: string | null; attemptedAt: number } | undefined;
-    if (row?.deliveredHash === hash || (!force && row && now - row.attemptedAt < RETRY_MS)) continue;
+    return row?.deliveredHash !== hash && (force || !row || now - row.attemptedAt >= RETRY_MS);
+  });
+  // Parallel, so one offline node's timeout does not hold up the others.
+  const results = await Promise.all(due.map(async (peerId): Promise<NtfyShareResult> => {
     const peer = peers.find((candidate) => candidate.nodeId === peerId);
     if (!peer) {
       record.run(serviceId, peerId, null, now, "Node is not reachable yet");
-      results.push({ peerId, ok: false, error: "Node is not reachable yet" });
-      continue;
+      return { peerId, ok: false, error: "Node is not reachable yet" };
     }
     try {
       await signedPeerPost(peer, "/api/cluster/v2/ntfy/services", service);
-      record.run(serviceId, peerId, hash, now, null);
-      results.push({ peerId, ok: true });
+      record.run(serviceId, peerId, hash, Date.now(), null);
+      return { peerId, ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Share failed";
-      record.run(serviceId, peerId, null, now, message);
-      results.push({ peerId, ok: false, error: message });
+      record.run(serviceId, peerId, null, Date.now(), message);
+      return { peerId, ok: false, error: message };
     }
-  }
+  }));
   return results;
 }
 

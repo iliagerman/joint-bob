@@ -1912,6 +1912,12 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 #ntfyServiceList { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 #ntfyServiceList li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ntfy-service-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.ntfy-share-progress { margin: 0; color: var(--muted); font-size: 12.5px; }
+.ntfy-share-progress::before, .ntfy-share-dialog button[aria-busy="true"]::before, .ntfy-share-pending::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color: var(--accent); border-radius: 50%; vertical-align: -1px; animation: queued-force-spin 0.7s linear infinite; }
+.ntfy-share-dialog button[aria-busy="true"]::before { border-color: color-mix(in srgb, currentColor 35%, transparent); border-top-color: currentColor; }
+.ntfy-share-progress[hidden] { display: none; }
+.ntfy-share-pending { margin-left: 6px; color: var(--accent); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .ntfy-share-progress::before, .ntfy-share-dialog button[aria-busy="true"]::before, .ntfy-share-pending::before { animation-duration: 2.4s; } }
 /* Inline ntfy server management. Every list is paginated, so the section never needs its own scrollbar. */
 fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 .ntfy-manage { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); }

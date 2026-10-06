@@ -12,7 +12,7 @@ import { app } from "../state.js";
 import { getClusterNode } from "../../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { forgetNtfyServiceSharing, ntfyServiceSharing, setNtfyServiceSharing, shareNtfyServiceNow } from "../ntfy-share.js";
+import { forgetNtfyServiceSharing, ntfyServiceSharingView, setNtfyServiceSharing, shareNtfyServiceNow } from "../ntfy-share.js";
 import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
 import { z } from "zod";
 import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema, savedNtfyServer } from "../../ntfy-publish.js";
@@ -60,7 +60,7 @@ app.post("/api/ntfy/agent", async (request, response, next) => {
 });
 
 app.get("/api/ntfy/services", (_request, response) => {
-  response.json({ services: listNtfyServices().map((service) => ({ ...service, sharing: ntfyServiceSharing(service.id) })) });
+  response.json({ services: listNtfyServices().map((service) => ({ ...service, sharing: ntfyServiceSharingView(service.id) })) });
 });
 
 app.post("/api/ntfy/services", (request, response, next) => {
@@ -131,7 +131,8 @@ app.post("/api/ntfy/services/:id/share", async (request, response, next) => {
       if (!listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === local.id)) { sendError(response, 403, "You are not a member of a selected cluster"); return; }
     }
     setNtfyServiceSharing(request.params.id, payload);
-    response.json({ sharing: ntfyServiceSharing(request.params.id), results: await shareNtfyServiceNow(request.params.id) });
+    const results = await shareNtfyServiceNow(request.params.id);
+    response.json({ sharing: ntfyServiceSharingView(request.params.id), results });
   } catch (error) { next(error); }
 });
 

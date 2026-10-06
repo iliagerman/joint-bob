@@ -8,6 +8,7 @@ import { state } from "./state.js";
 /** The dialog is shared, so it remembers which conversation it was opened for. */
 let pendingNtfySession = null;
 const ntfyClusterNames = new Map();
+let pendingShareRefresh;
 
 function serviceButton(text, testid, className, action) {
   const button = document.createElement("button");
@@ -47,13 +48,22 @@ async function shareNtfyService(service) {
   const actions = document.createElement("div"); actions.className = "dialog-actions";
   const cancel = serviceButton("Cancel", "ntfy-share-cancel", "ghost", () => dialog.close());
   const submit = serviceButton("Share", "ntfy-share-confirm", "primary", () => {}); submit.type = "submit";
+  const progress = document.createElement("p");
+  progress.className = "ntfy-share-progress"; progress.setAttribute("role", "status"); progress.dataset.testid = "ntfy-share-progress"; progress.hidden = true;
+  progress.textContent = "Sharing… offline nodes can take up to 10 seconds to answer.";
   actions.append(cancel, submit);
-  card.append(heading, note, twinsLabel, clusterTitle, clusterList, actions);
+  card.append(heading, note, twinsLabel, clusterTitle, clusterList, progress, actions);
   card.addEventListener("submit", async (event) => {
     event.preventDefault();
     const clusterIds = clusterInputs.filter((input) => input.checked).map((input) => input.value);
     if (!twins.checked && !clusterIds.length) { toast("Choose twins or at least one cluster"); return; }
-    submit.disabled = true;
+    const inputs = [twins, ...clusterInputs];
+    const busy = (on) => {
+      submit.disabled = on; submit.textContent = on ? "Sharing…" : "Share";
+      submit.setAttribute("aria-busy", String(on)); progress.hidden = !on;
+      for (const input of inputs) input.disabled = on;
+    };
+    busy(true);
     try {
       const { results } = await api(`/api/ntfy/services/${encodeURIComponent(service.id)}/share`, {
         method: "POST", body: JSON.stringify({ includeTwins: twins.checked, clusterIds }),
@@ -66,7 +76,7 @@ async function shareNtfyService(service) {
         : `Sharing is on${results.length ? `; delivered to ${results.length} node${results.length === 1 ? "" : "s"}` : ""}`, pending ? 8000 : 3000);
       await loadNtfyServicesPanel();
     } catch (error) { toast(error.message, 8000); }
-    finally { submit.disabled = false; }
+    finally { busy(false); }
   });
   dialog.append(card); document.body.append(dialog);
   dialog.addEventListener("close", () => dialog.remove(), { once: true });
@@ -80,6 +90,14 @@ function renderNtfyService(service) {
     ? ` · Shared with ${[service.sharing.includeTwins ? "twins" : null, ...service.sharing.clusterIds.map((id) => ntfyClusterNames.get(id) ?? "a cluster")].filter(Boolean).join(", ")}`
     : "";
   label.textContent = `${service.name} — ${service.url}${service.hasToken ? " · token" : ""}${service.isDefault ? " · Default" : ""}${sharing}`;
+  const pending = service.sharing?.pendingNodes ?? 0;
+  if (pending) {
+    const badge = document.createElement("span");
+    badge.className = "ntfy-share-pending"; badge.setAttribute("role", "status"); badge.dataset.testid = "ntfy-share-pending";
+    badge.title = "Offline nodes receive the service automatically when they are reachable";
+    badge.textContent = ` Delivering to ${pending} node${pending === 1 ? "" : "s"}…`;
+    label.append(badge);
+  }
   const actions = document.createElement("span");
   actions.className = "ntfy-service-actions";
   if (!service.isDefault) actions.append(serviceButton("Make default", "ntfy-service-default-button", "ghost compact", async () => {
@@ -116,6 +134,11 @@ export async function loadNtfyServicesPanel() {
     }
     elements.ntfyServiceList.replaceChildren(...services.map(renderNtfyService));
     syncNtfyManager(services);
+    clearTimeout(pendingShareRefresh);
+    // Keep the pending badge live while the list is on screen; the server retries delivery itself.
+    if (services.some((service) => service.sharing?.pendingNodes)) {
+      pendingShareRefresh = setTimeout(() => { if (elements.ntfyServiceList.checkVisibility?.() ?? elements.ntfyServiceList.isConnected) void loadNtfyServicesPanel(); }, 15_000);
+    }
   } catch (error) { toast(error.message, 8000); }
 }
 
