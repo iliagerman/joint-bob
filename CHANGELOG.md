@@ -2,21 +2,11 @@
 
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
-
 ## Unreleased
 
-## 2.47.5 — 2026-10-06
+## 2.47.6 — 2026-10-06
 
 - Fixed project reconciliation failing when Syncthing folders don't exist.
-
-## 2.47.4 — 2026-10-06
-
-- Fixed project reconciliation when sync folders haven't been created in Syncthing.
-
-## 2.47.3 — 2026-10-06
-
-- Fixed project reconciliation when sync folders haven't been created in Syncthing.
-
 ## 2.47.2 — 2026-10-06
 
 - Fixed project reconciliation failing when sync folders haven't been created in Syncthing.
