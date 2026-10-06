@@ -1354,13 +1354,14 @@ test("chat ntfy sends use the replicated conversation destination on another nod
     assert.equal(click.searchParams.get("sessionId"), id);
     assert.equal(click.searchParams.has("sessionPath"), false);
     const deliveryDeadline = Date.now() + 30_000;
+    const account = (await api<{ accountId: string }>(nodeA, sessionA, "GET", "/auth/status")).body.accountId;
     let delivered = false;
     while (!delivered && Date.now() < deliveryDeadline) {
       const db = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
       try {
         const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'conversation_notification_deliveries'").get();
         assert.ok(exists, "conversation_notification_deliveries table is missing");
-        delivered = Boolean(db.prepare("SELECT 1 FROM conversation_notification_deliveries WHERE username = ? COLLATE NOCASE AND conversation_id = ? AND delivered_at >= ?").get(environment.username, id, activity));
+        delivered = Boolean(db.prepare("SELECT 1 FROM conversation_notification_deliveries WHERE username = ? COLLATE NOCASE AND conversation_id = ? AND delivered_at >= ?").get(account, id, activity));
       } finally { db.close(); }
       if (!delivered) await new Promise((resolve) => setTimeout(resolve, 100));
     }

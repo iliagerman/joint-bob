@@ -5,6 +5,9 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+/** People are keyed by account id; legacy usernames are translated on receipt. */
+const ILIA = "0123456789abcdef0123456789abcdef";
+
 async function freshPins(dataDir: string) {
   process.env.PI_WEB_DATA_DIR = dataDir;
   try {
@@ -28,11 +31,11 @@ test("project and conversation pin changes enqueue separate stable replication e
   try {
     createNode(dataDir);
     const pins = await freshPins(dataDir);
-    pins.setUserPin("ilia", { kind: "project", projectId: "project-1" }, true, "node-a");
-    pins.setUserPin("ilia", { kind: "conversation", projectId: "project-1", engine: "claude", sessionId: "session-1" }, true, "node-a");
-    pins.setUserPin("ilia", { kind: "conversation", projectId: "project-1", engine: "claude", sessionId: "session-1" }, false, "node-a");
+    pins.setUserPin(ILIA, { kind: "project", projectId: "project-1" }, true, "node-a");
+    pins.setUserPin(ILIA, { kind: "conversation", projectId: "project-1", engine: "claude", sessionId: "session-1" }, true, "node-a");
+    pins.setUserPin(ILIA, { kind: "conversation", projectId: "project-1", engine: "claude", sessionId: "session-1" }, false, "node-a");
 
-    assert.deepEqual(pins.listUserPins("ilia"), {
+    assert.deepEqual(pins.listUserPins(ILIA), {
       projectIds: ["project-1"],
       conversations: [],
     });
@@ -44,7 +47,7 @@ test("project and conversation pin changes enqueue separate stable replication e
     assert.deepEqual(events.map((event) => event.operation), ["upsert", "upsert", "delete"]);
     const conversation = JSON.parse(events[1].payload) as Record<string, unknown>;
     assert.deepEqual({ username: conversation.username, projectId: conversation.projectId, engine: conversation.engine, sessionId: conversation.sessionId }, {
-      username: "ilia", projectId: "project-1", engine: "claude", sessionId: "session-1",
+      username: ILIA, projectId: "project-1", engine: "claude", sessionId: "session-1",
     });
   } finally {
     await rm(dataDir, { recursive: true, force: true });
@@ -62,18 +65,18 @@ test("pin replication is last-write-wins per item and resolves project aliases",
     db.close();
     const { receiveReplicationBatch } = await import(`../src/replication.ts?pins-merge=${Date.now()}`);
     const event = (id: string, operation: "upsert" | "delete", updatedAt: string) => ({
-      id, originNodeId: "node-b", entityType: "user.pin", entityKey: "ilia:conversation:remote-project:pi:session-2", operation,
-      payload: { username: "ilia", kind: "conversation", projectId: "remote-project", engine: "pi", sessionId: "session-2", pinned: operation === "upsert", updatedAt, originNodeId: "node-b" },
+      id, originNodeId: "node-b", entityType: "user.pin", entityKey: `${ILIA}:conversation:remote-project:pi:session-2`, operation,
+      payload: { username: ILIA, kind: "conversation", projectId: "remote-project", engine: "pi", sessionId: "session-2", pinned: operation === "upsert", updatedAt, originNodeId: "node-b" },
       createdAt: updatedAt,
     });
     await receiveReplicationBatch({ events: [event("00000000-0000-4000-8000-000000000001", "delete", "2026-09-02T12:00:00.000Z")] });
     await receiveReplicationBatch({ events: [event("00000000-0000-4000-8000-000000000002", "upsert", "2026-09-02T11:00:00.000Z")] });
 
     const pins = await freshPins(dataDir);
-    assert.deepEqual(pins.listUserPins("ilia"), { projectIds: [], conversations: [] });
+    assert.deepEqual(pins.listUserPins(ILIA), { projectIds: [], conversations: [] });
 
     await receiveReplicationBatch({ events: [event("00000000-0000-4000-8000-000000000003", "upsert", "2026-09-02T13:00:00.000Z")] });
-    assert.deepEqual(pins.listUserPins("ilia"), {
+    assert.deepEqual(pins.listUserPins(ILIA), {
       projectIds: [],
       conversations: [{ projectId: "local-project", engine: "pi", sessionId: "session-2" }],
     });

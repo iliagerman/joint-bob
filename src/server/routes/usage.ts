@@ -98,7 +98,7 @@ app.get(["/api/usage", "/api/usage/summary"], async (request, response, next) =>
     // Queue only after every saved-data read. request() marks pending synchronously,
     // while its setImmediate guarantees discovery cannot race this snapshot.
     if (query.refresh === "true") requestUsageRefresh();
-    response.json({ ...result, coverage: { scope: "observed transcripts and replicated usage", ...savedCoverage, ...usageRefreshStatus() }, subscriptions: listSubscriptionPlans((response.locals.authSession as AuthSession).username) });
+    response.json({ ...result, coverage: { scope: "observed transcripts and replicated usage", ...savedCoverage, ...usageRefreshStatus() }, subscriptions: listSubscriptionPlans((response.locals.authSession as AuthSession).accountId) });
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
     if ((error as { statusCode?: number }).statusCode === 404) { sendError(response, 404, (error as Error).message); return; }
@@ -107,13 +107,13 @@ app.get(["/api/usage", "/api/usage/summary"], async (request, response, next) =>
 });
 app.post("/api/usage/refresh", (_request, response) => { requestUsageRefresh(true); response.status(202).json({ ...usageRefreshStatus(), accepted: true }); });
 app.get("/api/subscription-usage/detected", async (_request, response, next) => { try { response.json({ detections: await collectSubscriptionDetections() }); } catch (error) { next(error); } });
-app.get("/api/subscription-usage", (_request, response) => response.json({ plans: listSubscriptionPlans((response.locals.authSession as AuthSession).username), automaticQuotaReporting: "unavailable" }));
+app.get("/api/subscription-usage", (_request, response) => response.json({ plans: listSubscriptionPlans((response.locals.authSession as AuthSession).accountId), automaticQuotaReporting: "unavailable" }));
 app.put("/api/subscription-usage", (request, response, next) => {
-  try { response.json(saveSubscriptionPlan((response.locals.authSession as AuthSession).username, subscriptionPlanInputSchema.parse(request.body))); }
+  try { response.json(saveSubscriptionPlan((response.locals.authSession as AuthSession).accountId, subscriptionPlanInputSchema.parse(request.body))); }
   catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
     if ((error as { statusCode?: number }).statusCode === 409) { sendError(response, 409, "Subscription plan belongs to another account"); return; }
     next(error);
   }
 });
-app.delete("/api/subscription-usage/:id", (request, response) => { const removed = deleteSubscriptionPlan((response.locals.authSession as AuthSession).username, request.params.id); response.status(removed ? 204 : 404).send(); });
+app.delete("/api/subscription-usage/:id", (request, response) => { const removed = deleteSubscriptionPlan((response.locals.authSession as AuthSession).accountId, request.params.id); response.status(removed ? 204 : 404).send(); });

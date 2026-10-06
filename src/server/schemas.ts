@@ -342,9 +342,11 @@ export const sessionNtfySchema = z.object({
   topic: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
 }).strict();
 export const loginSchema = z.object({
-  username: z.string().trim().min(1).max(80),
+  username: z.string().trim().min(1).max(254),
   password: z.string().min(1).max(200),
 });
+export const setupSchema = loginSchema.extend({ email: z.string().trim().min(1, "Email is required").max(254) });
+export const emailSchema = z.object({ email: z.string().trim().min(1).max(254) }).strict();
 export const passwordChangeSchema = z.object({
   currentPassword: z.string().min(1).max(200),
   newPassword: z.string().min(1).max(200),

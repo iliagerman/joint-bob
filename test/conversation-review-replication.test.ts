@@ -5,6 +5,9 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+/** People are keyed by account id; legacy usernames are translated on receipt. */
+const ILIA = "0123456789abcdef0123456789abcdef";
+
 /**
  * Review watermarks replicate by cluster-stable identity (username, project,
  * engine, session id) and merge by highest watermark, so duplicates, reordering,
@@ -32,17 +35,17 @@ test("marking a conversation reviewed enqueues a replication event keyed by stab
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-review-outbox-"));
   try {
     const reviews = await freshModule(dataDir, `${Date.now()}-1`);
-    reviews.markConversationsReviewed("user-1", "ilia", "project-1", [
+    reviews.markConversationsReviewed("user-1", ILIA, "project-1", [
       { path: "/Users/me/.claude/projects/x/session-a.jsonl", engine: "claude", sessionId: "session-a", updatedAt: "2026-09-01T10:00:00.000Z" },
     ], "node-a");
 
     const db = new DatabaseSync(path.join(dataDir, "node.db"), { readOnly: true });
     const events = db.prepare("SELECT origin_node_id, entity_type, entity_key, operation, payload FROM replication_outbox WHERE entity_type = 'conversation.review'").all() as Array<{ origin_node_id: string; entity_type: string; entity_key: string; operation: string; payload: string }>;
     assert.equal(events.length, 1);
-    assert.equal(events[0].entity_key, "ilia:project-1:claude:session-a");
+    assert.equal(events[0].entity_key, `${ILIA}:project-1:claude:session-a`);
     assert.equal(events[0].operation, "upsert");
     assert.deepEqual(JSON.parse(events[0].payload), {
-      username: "ilia", projectId: "project-1", engine: "claude", sessionId: "session-a",
+      username: ILIA, projectId: "project-1", engine: "claude", sessionId: "session-a",
       reviewedAt: "2026-09-01T10:00:00.000Z", originNodeId: "node-a",
     });
   } finally {
@@ -55,13 +58,13 @@ test("a local review follows its conversation from draft to transcript, like a p
   try {
     const reviews = await freshModule(dataDir, `${Date.now()}-path`);
     const draft = { path: "draft:pi:session-a", engine: "pi" as const, sessionId: "session-a", updatedAt: "2026-09-01T10:00:00.000Z", running: false };
-    reviews.syncConversationReviewStates("user-1", "ilia", "project-1", [draft]);
+    reviews.syncConversationReviewStates("user-1", ILIA, "project-1", [draft]);
     const db = new DatabaseSync(path.join(dataDir, "node.db"));
     db.prepare("UPDATE conversation_review_tracking SET initialized_at = '2026-01-01T00:00:00.000Z'").run();
-    reviews.markConversationReviewed("user-1", "ilia", "project-1", draft, "node-a");
+    reviews.markConversationReviewed("user-1", ILIA, "project-1", draft, "node-a");
     const transcript = { ...draft, path: "/home/user/.pi/agent/sessions/session-a.jsonl" };
-    assert.equal(reviews.syncConversationReviewStates("user-1", "ilia", "project-1", [transcript]).get(transcript.path), "reviewed");
-    const rows = db.prepare("SELECT reviewed_at FROM replicated_review_watermarks WHERE username = 'ilia' AND session_id = 'session-a'").all() as Array<{ reviewed_at: string }>;
+    assert.equal(reviews.syncConversationReviewStates("user-1", ILIA, "project-1", [transcript]).get(transcript.path), "reviewed");
+    const rows = db.prepare("SELECT reviewed_at FROM replicated_review_watermarks WHERE username = '0123456789abcdef0123456789abcdef' AND session_id = 'session-a'").all() as Array<{ reviewed_at: string }>;
     assert.deepEqual(rows.map((row) => row.reviewed_at), [draft.updatedAt]);
     db.close();
   } finally {
@@ -79,8 +82,8 @@ test("replicated watermarks keep the highest value through duplicates and reorde
     const { receiveReplicationBatch } = await import("../src/replication.js?review-merge=" + Date.now());
     const event = (reviewedAt: string, id = randomUUID()) => ({
       id, originNodeId: "node-b", entityType: "conversation.review",
-      entityKey: `ilia:project-1:pi:session-b`, operation: "upsert",
-      payload: { username: "ilia", projectId: "project-1", engine: "pi", sessionId: "session-b", reviewedAt, originNodeId: "node-b" },
+      entityKey: `${ILIA}:project-1:pi:session-b`, operation: "upsert",
+      payload: { username: ILIA, projectId: "project-1", engine: "pi", sessionId: "session-b", reviewedAt, originNodeId: "node-b" },
       createdAt: reviewedAt,
     });
 
@@ -90,7 +93,7 @@ test("replicated watermarks keep the highest value through duplicates and reorde
     const duplicate = await receiveReplicationBatch({ events: [event("2026-09-01T13:00:00.000Z", "fixed-id-1")] });
 
     const db = new DatabaseSync(path.join(dataDir, "node.db"), { readOnly: true });
-    const rows = db.prepare("SELECT reviewed_at FROM replicated_review_watermarks WHERE username = 'ilia' AND project_id = 'project-1'").all() as Array<{ reviewed_at: string }>;
+    const rows = db.prepare("SELECT reviewed_at FROM replicated_review_watermarks WHERE username = '0123456789abcdef0123456789abcdef' AND project_id = 'project-1'").all() as Array<{ reviewed_at: string }>;
     assert.equal(rows.length, 1);
     assert.equal(rows[0].reviewed_at, "2026-09-01T12:00:00.000Z");
     // A redelivered event id is acknowledged without reapplying its older payload.
@@ -117,8 +120,8 @@ test("a remote watermark outranks the local row and another account's watermark 
     const at = (offsetMs: number): string => new Date(now + offsetMs).toISOString();
     await receiveReplicationBatch({ events: [{
       id: randomUUID(), originNodeId: "node-b", entityType: "conversation.review", operation: "upsert",
-      entityKey: "ilia:project-1:pi:session-c",
-      payload: { username: "ilia", projectId: "project-1", engine: "pi", sessionId: "session-c", reviewedAt: at(-3_600_000), originNodeId: "node-b" },
+      entityKey: `${ILIA}:project-1:pi:session-c`,
+      payload: { username: ILIA, projectId: "project-1", engine: "pi", sessionId: "session-c", reviewedAt: at(-3_600_000), originNodeId: "node-b" },
       createdAt: at(-3_600_000),
     }, {
       id: randomUUID(), originNodeId: "node-b", entityType: "conversation.review", operation: "upsert",
@@ -128,24 +131,24 @@ test("a remote watermark outranks the local row and another account's watermark 
     }] });
 
     // Local activity is older than ilia's remote watermark.
-    const states = reviews.syncConversationReviewStates("user-9", "ilia", "project-1", [
+    const states = reviews.syncConversationReviewStates("user-9", ILIA, "project-1", [
       { path: "/home/user/.pi/agent/sessions/session-c.jsonl", engine: "pi", sessionId: "session-c", updatedAt: at(-7_200_000), running: false },
     ]);
     assert.equal(states.get("/home/user/.pi/agent/sessions/session-c.jsonl"), "reviewed");
 
-    const afterActivity = reviews.syncConversationReviewStates("user-9", "ilia", "project-1", [
+    const afterActivity = reviews.syncConversationReviewStates("user-9", ILIA, "project-1", [
       { path: "/home/user/.pi/agent/sessions/session-c.jsonl", engine: "pi", sessionId: "session-c", updatedAt: at(-1_800_000), running: false },
     ]);
     assert.equal(afterActivity.get("/home/user/.pi/agent/sessions/session-c.jsonl"), "needs_review");
 
     // The same conversation under a different absolute path still resolves by session id.
-    const moved = reviews.syncConversationReviewStates("user-9", "ilia", "project-1", [
+    const moved = reviews.syncConversationReviewStates("user-9", ILIA, "project-1", [
       { path: "/Users/me/.pi/agent/sessions/session-c.jsonl", engine: "pi", sessionId: "session-c", updatedAt: at(-5_400_000), running: false },
     ]);
     assert.equal(moved.get("/Users/me/.pi/agent/sessions/session-c.jsonl"), "reviewed");
 
     // Another account's watermark did not leak into ilia's row.
-    const otherViewed = reviews.syncConversationReviewStates("user-9", "ilia", "project-1", [
+    const otherViewed = reviews.syncConversationReviewStates("user-9", ILIA, "project-1", [
       { path: "/Users/me/.pi/agent/sessions/session-c.jsonl", engine: "pi", sessionId: "session-c", updatedAt: at(60_000), running: false },
     ]);
     assert.equal(otherViewed.get("/Users/me/.pi/agent/sessions/session-c.jsonl"), "needs_review");
@@ -167,8 +170,8 @@ test("a review watermark too far in the future is rejected", async () => {
     const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     await assert.rejects(receiveReplicationBatch({ events: [{
       id: randomUUID(), originNodeId: "node-b", entityType: "conversation.review", operation: "upsert",
-      entityKey: `ilia:project-1:pi:session-f`,
-      payload: { username: "ilia", projectId: "project-1", engine: "pi", sessionId: "session-f", reviewedAt: future, originNodeId: "node-b" },
+      entityKey: `${ILIA}:project-1:pi:session-f`,
+      payload: { username: ILIA, projectId: "project-1", engine: "pi", sessionId: "session-f", reviewedAt: future, originNodeId: "node-b" },
       createdAt: future,
     }] }), /too far in the future/);
   } finally {
@@ -193,21 +196,21 @@ test("a remote review re-arms the account's next notification", async () => {
     const at = (offsetMs: number): string => new Date(now + offsetMs).toISOString();
 
     // A pending review is claimed and notified once.
-    reviews.syncConversationReviewStates("user-1", "ilia", "project-1", [{ ...session, updatedAt: at(-60_000) }]);
-    reviews.syncConversationReviewStates("user-1", "ilia", "project-1", [{ ...session, updatedAt: at(-30_000) }]);
+    reviews.syncConversationReviewStates("user-1", ILIA, "project-1", [{ ...session, updatedAt: at(-60_000) }]);
+    reviews.syncConversationReviewStates("user-1", ILIA, "project-1", [{ ...session, updatedAt: at(-30_000) }]);
     assert.deepEqual(reviews.claimReviewNotifications("user-1", "project-1", [session.path]), [session.path]);
 
     // Another node reviews the conversation; the replicated watermark advances past the claim.
     await receiveReplicationBatch({ events: [{
       id: randomUUID(), originNodeId: "node-b", entityType: "conversation.review", operation: "upsert",
-      entityKey: "ilia:project-1:pi:session-g",
-      payload: { username: "ilia", projectId: "project-1", engine: "pi", sessionId: "session-g", reviewedAt: at(-20_000), originNodeId: "node-b" },
+      entityKey: `${ILIA}:project-1:pi:session-g`,
+      payload: { username: ILIA, projectId: "project-1", engine: "pi", sessionId: "session-g", reviewedAt: at(-20_000), originNodeId: "node-b" },
       createdAt: at(-20_000),
     }] });
-    reviews.syncConversationReviewStates("user-1", "ilia", "project-1", [{ ...session, updatedAt: at(-30_000) }]);
+    reviews.syncConversationReviewStates("user-1", ILIA, "project-1", [{ ...session, updatedAt: at(-30_000) }]);
 
     // A later run whose running lease this node never observed must notify again.
-    reviews.syncConversationReviewStates("user-1", "ilia", "project-1", [{ ...session, updatedAt: at(-5_000) }]);
+    reviews.syncConversationReviewStates("user-1", ILIA, "project-1", [{ ...session, updatedAt: at(-5_000) }]);
     assert.deepEqual(reviews.claimReviewNotifications("user-1", "project-1", [session.path]), [session.path]);
   } finally {
     if (previous === undefined) delete process.env.PI_WEB_DATA_DIR;
@@ -226,8 +229,8 @@ test("malformed review events are rejected", async () => {
     const { receiveReplicationBatch } = await import("../src/replication.js?review-invalid=" + Date.now());
     await assert.rejects(receiveReplicationBatch({ events: [{
       id: randomUUID(), originNodeId: "node-b", entityType: "conversation.review", operation: "upsert",
-      entityKey: "ilia:project-1:pi:session-d",
-      payload: { username: "ilia", projectId: "project-1", engine: "pi", sessionId: "WRONG", reviewedAt: "2026-09-01T09:00:00.000Z", originNodeId: "node-b" },
+      entityKey: `${ILIA}:project-1:pi:session-d`,
+      payload: { username: ILIA, projectId: "project-1", engine: "pi", sessionId: "WRONG", reviewedAt: "2026-09-01T09:00:00.000Z", originNodeId: "node-b" },
       createdAt: "2026-09-01T09:00:00.000Z",
     }] }), /Malformed conversation review replication payload/);
   } finally {

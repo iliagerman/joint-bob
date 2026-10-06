@@ -31,14 +31,18 @@ function event(entityType: string, payload: Record<string, unknown>, originNodeI
 
 test("legacy push rows migrate to stable IDs without replacing credentials or unresolved rows", async (context) => {
   await isolated(async (dataDir, tag) => {
+    const node = new DatabaseSync(path.join(dataDir, "node.db"));
+    node.exec("CREATE TABLE cluster_node (singleton INTEGER PRIMARY KEY, id TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); INSERT INTO cluster_node VALUES (1, 'node-portable', 'P', '', '', '')");
+    node.close();
     const auth = await import(`../src/auth.ts?portable-auth-${tag}`);
     auth.createAdministrator("portable-admin", "portable-test-password", false);
     const user = auth.authenticate("portable-admin", "portable-test-password");
+    const account = user.accountId as string;
     const push = await import(`../src/push.ts?portable-push-${tag}`) as typeof import("../src/push.js");
     assert.equal(typeof push.migratePushConversationSubscriptions, "function", "migration API must exist");
     const browser = { endpoint: "https://push.example.test/legacy", keys: { p256dh: "p256", auth: "auth" } };
     const ntfy = push.ntfySubscription("http://127.0.0.1:9", "topic", "", "project", "/old/node/session.jsonl");
-    await push.savePushSubscription(browser, "foreign-user-id", "*", "*", "All", "portable-admin");
+    await push.savePushSubscription(browser, "foreign-user-id", "*", "*", "All", account);
     await push.savePushSubscription({ ...browser, endpoint: "https://push.example.test/wrong-account" }, user.userId, "project", "logical-id", "Wrong", "unknown-admin");
     await push.savePushSubscription(ntfy, user.userId, "project", "/old/node/session.jsonl", "Legacy");
     await push.savePushSubscription({ ...browser, endpoint: "https://push.example.test/unresolved" }, user.userId, "project", "/unknown.jsonl", "Unknown");
@@ -46,20 +50,20 @@ test("legacy push rows migrate to stable IDs without replacing credentials or un
     const oldNtfy = before.find((candidate) => candidate.operation === "upsert" && (candidate.value as { sessionPath?: string }).sessionPath === "/old/node/session.jsonl")!;
     const oldValue = oldNtfy.value as import("../src/push.js").PushSubscriptionUpsertValue;
     const session = { id: "local-id", conversationId: "logical-id", path: "/old/node/session.jsonl", harnessId: "pi", segments: [] } as unknown as SessionSummary;
-    await push.migratePushConversationSubscriptions(user.userId, "portable-admin", "project", [session]);
+    await push.migratePushConversationSubscriptions(user.userId, account, "project", [session]);
     const migrated = (await push.pushSubscriptionEventsForPeer("new-peer")).filter((candidate) => candidate.operation === "upsert");
     const stable = migrated.find((candidate) => (candidate.value as import("../src/push.js").PushSubscriptionUpsertValue).sessionPath === "logical-id" && (candidate.value as import("../src/push.js").PushSubscriptionUpsertValue).subscription.endpoint.startsWith("ntfy+"))!;
     const value = stable.value as import("../src/push.js").PushSubscriptionUpsertValue;
-    assert.equal(value.username, "portable-admin");
+    assert.equal(value.username, account);
     assert.equal(value.subscription.endpoint, oldValue.subscription.endpoint);
     assert.equal(value.vapidPublicKey, oldValue.vapidPublicKey);
     assert.equal(value.vapidPrivateKey, oldValue.vapidPrivateKey);
     assert.ok(migrated.some((candidate) => (candidate.value as { sessionPath?: string }).sessionPath === "/unknown.jsonl"));
     const count = migrated.length;
-    await push.migratePushConversationSubscriptions(user.userId, "portable-admin", "project", [session]);
+    await push.migratePushConversationSubscriptions(user.userId, account, "project", [session]);
     assert.equal((await push.pushSubscriptionEventsForPeer("another-peer")).filter((candidate) => candidate.operation === "upsert").length, count);
     const db = new DatabaseSync(path.join(dataDir, "node.db"));
-    assert.equal((db.prepare("SELECT username FROM push_session_subscriptions WHERE title='All'").get() as { username: string }).username, "portable-admin");
+    assert.equal((db.prepare("SELECT username FROM push_session_subscriptions WHERE title='All'").get() as { username: string }).username, account);
     db.close();
     await push.deleteNtfySubscriptions(user.userId, "project", "logical-id");
     const sent: string[] = [];

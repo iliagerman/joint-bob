@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { DatabaseSync } from "node:sqlite";
+import { isAdministrationPath, isNodeBlocked } from "../node-blocks.js";
 
 /**
  * An offline peer (a sleeping laptop, a Tailscale host that drops packets) makes every
@@ -24,6 +25,16 @@ export function whilePeerOptional<T>(read: () => Promise<T>): Promise<T> { retur
 
 export class PeerUnreachableError extends Error {
   constructor(readonly peerId: string, message = "Cluster peer is unreachable") { super(message); }
+}
+
+/** Reported to callers like an offline peer: a blocked node is simply "not available". */
+export class PeerBlockedError extends PeerUnreachableError {
+  constructor(peerId: string) { super(peerId, "Cluster peer is not available"); }
+}
+
+function localNodeId(db: DatabaseSync): string | undefined {
+  try { return (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id; }
+  catch { return undefined; }
 }
 
 export function peerReachable(peerId: string, lastSeenAt?: string | null, now = Date.now()): boolean {
@@ -58,6 +69,10 @@ function lastSeenAt(db: DatabaseSync, peerId: string): string | null {
 
 /** fetch for a request to one peer, recording whether it answered. */
 export async function fetchPeer(db: DatabaseSync, peerId: string, input: string | URL, init: RequestInit): Promise<Response> {
+  const local = localNodeId(db);
+  let target = "";
+  try { target = typeof input === "string" ? new URL(input).pathname : input.pathname; } catch { target = String(input); }
+  if (local && isNodeBlocked(db, local, peerId) && !isAdministrationPath(target)) throw new PeerBlockedError(peerId);
   if (optionalReads.getStore() && !peerReachable(peerId, lastSeenAt(db, peerId))) throw new PeerUnreachableError(peerId);
   try {
     const response = await fetch(input, init);

@@ -285,7 +285,7 @@ for (const spec of nodeSpecs) {
     dataDir: spec.dataDir,
     home,
     node: { name: spec.name, url: spec.url },
-    admin: { username, password },
+    admin: { username, password, email: `${username}@example.test` },
     paths: { piSessions: piSessionRoot, claudeConfig: claudeConfigRoot, claudeProjects: claudeProjectsRoot, standIns: standInRoot, projectsHome: path.join(home, "JointBob") },
     projects: demoProjects.map((demo) => ({ name: demo.name, path: path.join(projectsRoot, demo.directory) })),
     ...(seeded.length ? { mirrorProjects: seeded[0].projects } : {}),

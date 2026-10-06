@@ -1,4 +1,5 @@
 import { DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, normalizeCanvasKeymap } from "../canvas-layout.js";
+import { applyAdminVisibility } from "./node-admin.js";
 import { api, savePreferences, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { setComposerEnabled } from "./chat-controls.js";
@@ -117,6 +118,10 @@ function applyAuthStatus(status) {
   elements.loginUsernameInput.required = true;
   state.authenticated = status.authenticated;
   state.username = status.username || "";
+  state.email = status.email || "";
+  state.role = status.role || null;
+  state.needsEmail = status.authenticated === true && status.needsEmail === true;
+  applyAdminVisibility();
   state.setupRequired = status.setupRequired === true;
   state.mustChangePassword = status.mustChangePassword === true;
   state.csrfToken = status.csrfToken || "";
@@ -125,7 +130,19 @@ function applyAuthStatus(status) {
   elements.newPasswordLabel.hidden = !(state.mustChangePassword || state.setupRequired);
   elements.newPasswordInput.required = state.mustChangePassword || state.setupRequired;
   elements.loginSubmitButton.textContent = state.setupRequired ? "Create administrator" : state.mustChangePassword ? "Change password" : "Sign in";
-  elements.loginMessage.textContent = state.setupRequired ? "Create this node's administrator." : state.mustChangePassword ? "Change the generated initial password before using this node." : "Sign in to this node.";
+  elements.loginMessage.textContent = state.setupRequired ? "Create this node's administrator. You'll be its admin." : state.mustChangePassword ? "Change the generated initial password before using this node." : "Sign in to this node.";
+  elements.loginUsernameText.textContent = state.setupRequired ? "Username" : "Username or email";
+  const askEmail = state.setupRequired || (state.needsEmail && !state.mustChangePassword);
+  elements.loginEmailLabel.hidden = !askEmail;
+  elements.loginEmailInput.required = askEmail;
+  if (state.needsEmail && !state.mustChangePassword) {
+    elements.loginUsernameLabel.hidden = true;
+    elements.loginUsernameInput.required = false;
+    elements.loginPasswordLabel.hidden = true;
+    elements.loginPasswordInput.required = false;
+    elements.loginSubmitButton.textContent = "Save email";
+    elements.loginMessage.textContent = "Add your email. It's how people see you on every node.";
+  }
 }
 
 export async function initializeApplication() {
@@ -136,7 +153,7 @@ export async function initializeApplication() {
     showLogin();
     return;
   }
-  if (status.mustChangePassword) {
+  if (status.mustChangePassword || state.needsEmail) {
     revealApplication();
     showLogin();
     return;
@@ -208,10 +225,18 @@ async function submitLogin(event) {
     if (state.setupRequired) {
       const response = await api("/api/auth/setup", {
         method: "POST",
-        body: JSON.stringify({ username: elements.loginUsernameInput.value.trim(), password: elements.newPasswordInput.value }),
+        body: JSON.stringify({ username: elements.loginUsernameInput.value.trim(), email: elements.loginEmailInput.value.trim(), password: elements.newPasswordInput.value }),
       });
       applyAuthStatus({ authenticated: true, setupRequired: false, ...response });
       elements.newPasswordInput.value = "";
+      elements.loginDialog.close();
+      await initializeApplication();
+      return;
+    }
+    if (state.needsEmail && !state.mustChangePassword) {
+      await api("/api/auth/email", { method: "PUT", body: JSON.stringify({ email: elements.loginEmailInput.value.trim() }) });
+      state.needsEmail = false;
+      elements.loginEmailInput.value = "";
       elements.loginDialog.close();
       await initializeApplication();
       return;

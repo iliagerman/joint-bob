@@ -3,10 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Accounts now require email addresses and support signing in by email; node admins can block specific nodes from connecting.
+
 ## 2.48.0 — 2026-10-07
 
 - Cluster administrators can now view and manage which ntfy services are shared with each node through new admin API endpoints.
 - Project reconciliation now skips folders that haven't been created in Syncthing, allowing automatic recovery when sync folders are missing.
+
 
 ## 2.47.6 — 2026-10-07
 

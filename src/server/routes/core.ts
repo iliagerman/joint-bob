@@ -4,12 +4,12 @@ import { dispatchSignedRuntime, twinRuntimeGuard } from "../runtime-peers.js";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { authenticate, authenticationStatus, AuthError, type AuthSession, type MfaLoginChallenge, beginMfaSetup, cancelMfaSetup, changePassword, clearSessionCookieValue, completeMfaLogin, confirmMfaSetup, createAdministrator, listLoginSessions, manageMfa, mfaStatus, revokeSession, revokeUserSession, sessionCookieName, sessionCookieValue, sessionForId } from "../../auth.js";
+import { authenticate, authenticationStatus, AuthError, type AuthSession, type MfaLoginChallenge, beginMfaSetup, cancelMfaSetup, changePassword, setOwnEmail, clearSessionCookieValue, completeMfaLogin, confirmMfaSetup, createAdministrator, listLoginSessions, manageMfa, mfaStatus, revokeSession, revokeUserSession, sessionCookieName, sessionCookieValue, sessionForId } from "../../auth.js";
 import { appVersion } from "../../changelog.js";
 import { captureClusterRawBody, clusterBodyParserError, rejectEncodedClusterBody, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
-import { loginSchema, passwordChangeSchema } from "../schemas.js";
+import { emailSchema, loginSchema, passwordChangeSchema, setupSchema } from "../schemas.js";
 import { app, clusterWorkAllowed, codemirrorDir, flags, publicDir } from "../state.js";
-import { receiveUserReplication, redeemV2Membership } from "../cluster-v2.js";
+import { redeemV2Membership } from "../cluster-v2.js";
 import { receiveManagerCertificate } from "../cluster-manager.js";
 import { confirmTwinHttp } from "../twins.js";
 
@@ -56,7 +56,6 @@ app.use(clusterBodyParserError);
 app.post("/api/cluster/v2/membership/redeem", redeemV2Membership);
 app.post("/api/cluster/v2/manager-transfer/certificate", receiveManagerCertificate);
 app.post("/api/cluster/v2/twins/confirm", confirmTwinHttp);
-app.post("/api/cluster/v2/user-replication", receiveUserReplication);
 
 app.get("/api/auth/status", (request, response) => {
   response.json(authenticationStatus(sessionForId(requestCookie(request, sessionCookieName))));
@@ -80,7 +79,7 @@ app.get("/api/health", (_request, response) => {
 function sendLogin(response: Response, result: AuthSession | MfaLoginChallenge): void {
   if ("mfaRequired" in result) { response.json(result); return; }
   response.setHeader("Set-Cookie", sessionCookieValue(result));
-  response.json({ mustChangePassword: result.mustChangePassword, csrfToken: result.csrfToken, username: result.username });
+  response.json({ mustChangePassword: result.mustChangePassword, csrfToken: result.csrfToken, username: result.username, email: result.email, accountId: result.accountId, role: result.role, needsEmail: !result.isRemoteLogin && !result.email, isRemoteLogin: result.isRemoteLogin });
 }
 
 function authError(error: unknown, _request: Request, response: Response, next: NextFunction): void {
@@ -96,12 +95,12 @@ const mfaManagementSchema = mfaPasswordSchema.extend({ code: mfaCodeSchema.shape
 
 app.post("/api/auth/setup", (request, response, next) => {
   try {
-    const payload = loginSchema.parse(request.body);
+    const payload = setupSchema.parse(request.body);
     if (!authenticationStatus().setupRequired) {
       sendError(response, 409, "Administrator already exists");
       return;
     }
-    createAdministrator(payload.username, payload.password, false);
+    createAdministrator(payload.username, payload.password, false, payload.email);
     const session = authenticate(payload.username, payload.password);
     sendLogin(response.status(201), session);
   } catch (error) {
@@ -109,6 +108,7 @@ app.post("/api/auth/setup", (request, response, next) => {
       sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
       return;
     }
+    if (error instanceof AuthError) { sendError(response, error.statusCode, error.message); return; }
     next(error);
   }
 });
@@ -184,6 +184,13 @@ app.post("/api/auth/change-password", (request, response, next) => {
     }
     next(error);
   }
+});
+
+app.put("/api/auth/email", (request, response, next) => {
+  try {
+    const payload = emailSchema.parse(request.body);
+    response.json({ email: setOwnEmail(response.locals.authSession as AuthSession, payload.email) });
+  } catch (error) { authError(error, request, response, next); }
 });
 
 app.post("/api/auth/logout", (_request, response) => {

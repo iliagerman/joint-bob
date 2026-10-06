@@ -14,7 +14,7 @@ interface SeedJob {
   dataDir: string;
   home: string;
   node: { name: string; url: string };
-  admin: { username: string; password: string };
+  admin: { username: string; password: string; email?: string };
   paths: { piSessions: string; claudeConfig: string; claudeProjects: string; standIns: string; projectsHome: string };
   projects: Array<{ name: string; path: string }>;
   /** A twin's projects, recorded here under the same IDs so twin pairing mirrors them. */
@@ -47,7 +47,7 @@ updateSettings({
   projects: { homePath: job.paths.projectsHome },
 });
 
-if (authenticationStatus().setupRequired) createAdministrator(job.admin.username, job.admin.password, false);
+if (authenticationStatus().setupRequired) createAdministrator(job.admin.username, job.admin.password, false, job.admin.email);
 
 const node = await updateClusterNode(job.node.name, job.node.url);
 // Nodes start without workspaces; the demo projects live in these two.

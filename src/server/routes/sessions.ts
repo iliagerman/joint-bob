@@ -48,7 +48,7 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
     const authSession = response.locals.authSession as AuthSession;
     const token = typeof request.query.byTheWayToken === "string" ? request.query.byTheWayToken : undefined;
     const temporary = token ? await getByTheWayLeaseByToken(project.id, token) : undefined;
-    response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username, undefined, temporary?.sessionId) });
+    response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId, authSession.accountId, undefined, temporary?.sessionId) });
   } catch (error) {
     next(error);
   }
@@ -60,14 +60,14 @@ app.put("/api/projects/:projectId/sessions/review-notifications", async (request
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const payload = sessionReviewNotificationsSchema.parse(request.body);
     const authSession = response.locals.authSession as AuthSession;
-    const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
+    const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.accountId);
     const session = sessions.find((candidate) => (candidate.path === payload.sessionPath || candidate.segments?.some((segment) => segment.path === payload.sessionPath)) && !candidate.readOnly);
     if (!session) {
       sendError(response, 404, "Conversation not found");
       return;
     }
     const local = await getClusterNode();
-    setConversationNotification(authSession.username, project.id, notificationConversationId(session), payload.enabled, local.id);
+    setConversationNotification(authSession.accountId, project.id, notificationConversationId(session), payload.enabled, local.id);
     flushReplicationOutbox().catch((error) => console.warn("Notification preference flush failed", error));
     broadcastToProject(project.id, { type: "sessionsChanged" });
     if (payload.enabled) scheduleReviewNotifications(project.id);
@@ -83,7 +83,7 @@ app.put("/api/projects/:projectId/sessions/ntfy", async (request, response, next
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const payload = sessionNtfySchema.parse(request.body);
     const authSession = response.locals.authSession as AuthSession;
-    const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
+    const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.accountId);
     const session = sessions.find((candidate) => candidate.path === payload.sessionPath && !candidate.readOnly);
     if (!session) { sendError(response, 404, "Conversation not found"); return; }
     if (payload.enabled) {
@@ -92,10 +92,10 @@ app.put("/api/projects/:projectId/sessions/ntfy", async (request, response, next
       if (!service) { sendError(response, 404, "ntfy service not found"); return; }
       const conversationId = notificationConversationId(session);
       await deleteNtfySubscriptions(authSession.userId, project.id, conversationId);
-      await savePushSubscription(ntfySubscription(service.url, payload.topic, service.token, project.id, conversationId), authSession.userId, project.id, conversationId, session.title || project.name, authSession.username.toLowerCase());
+      await savePushSubscription(ntfySubscription(service.url, payload.topic, service.token, project.id, conversationId), authSession.userId, project.id, conversationId, session.title || project.name, authSession.accountId);
       // Publishing reviews is a review notification, so opting in implies the review preference.
       const local = await getClusterNode();
-      setConversationNotification(authSession.username, project.id, conversationId, true, local.id);
+      setConversationNotification(authSession.accountId, project.id, conversationId, true, local.id);
       flushReplicationOutbox().catch((error) => console.warn("Notification preference flush failed", error));
       scheduleReviewNotifications(project.id);
     } else {
@@ -133,7 +133,7 @@ app.post("/api/projects/:projectId/sessions/fork", async (request, response, nex
       return;
     }
     const authSession = response.locals.authSession as AuthSession;
-    const session = await forkLocalConversation(project, payload.engine, payload.sessionId, "[F]", { userId: authSession.userId, username: authSession.username });
+    const session = await forkLocalConversation(project, payload.engine, payload.sessionId, "[F]", { userId: authSession.userId, username: authSession.accountId });
     broadcastToProject(project.id, { type: "sessionsChanged" });
     response.status(201).json({ session });
   } catch (error) {
@@ -238,7 +238,7 @@ app.post("/api/projects/:projectId/sessions/by-the-way", async (request, respons
       return;
     }
     const authSession = response.locals.authSession as AuthSession;
-    response.status(201).json(await createLocalByTheWay(project, payload.engine, payload.sessionId, { userId: authSession.userId, username: authSession.username }));
+    response.status(201).json(await createLocalByTheWay(project, payload.engine, payload.sessionId, { userId: authSession.userId, username: authSession.accountId }));
   } catch (error) {
     if (error instanceof ConversationForkError || error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
     next(error);
@@ -522,12 +522,12 @@ app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, 
     }
     const submitted = sessionReviewedSchema.parse(request.body);
     const authSession = response.locals.authSession as AuthSession;
-    const sessions = await listReviewScopeSessions(project, authSession.userId, authSession.username);
+    const sessions = await listReviewScopeSessions(project, authSession.userId, authSession.accountId);
     const session = sessions.find((candidate) => candidate.path === submitted.sessionPath);
     if (!session) { sendError(response, 404, "Conversation not found"); return; }
     if (!session.updatedAt || submitted.updatedAt > session.updatedAt) { sendError(response, 409, "Conversation review watermark is newer than current activity"); return; }
     const local = await getClusterNode();
-    markConversationReviewed(authSession.userId, authSession.username, project.id, { path: session.path, engine: session.harnessId, sessionId: session.id, updatedAt: submitted.updatedAt }, local.id);
+    markConversationReviewed(authSession.userId, authSession.accountId, project.id, { path: session.path, engine: session.harnessId, sessionId: session.id, updatedAt: submitted.updatedAt }, local.id);
     broadcastSessionsChangedToAllProjects();
     flushReplicationOutbox().catch((error) => console.warn("Review watermark flush failed", error));
     response.status(204).send();
@@ -545,7 +545,7 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
     }
     const { sessions: submitted } = sessionsReviewedSchema.parse(request.body);
     const authSession = response.locals.authSession as AuthSession;
-    const sessions = await listReviewScopeSessions(project, authSession.userId, authSession.username);
+    const sessions = await listReviewScopeSessions(project, authSession.userId, authSession.accountId);
     const currentByPath = new Map(sessions.map((session) => [session.path, session]));
     const invalid = submitted.find((watermark) => {
       const current = currentByPath.get(watermark.sessionPath);
@@ -553,7 +553,7 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
     });
     if (invalid) { sendError(response, 409, `Conversation review watermark is stale or missing: ${invalid.sessionPath}`); return; }
     const local = await getClusterNode();
-    markConversationsReviewed(authSession.userId, authSession.username, project.id, submitted.flatMap((watermark) => {
+    markConversationsReviewed(authSession.userId, authSession.accountId, project.id, submitted.flatMap((watermark) => {
       const current = currentByPath.get(watermark.sessionPath)!;
       return [{ path: watermark.sessionPath, engine: current.harnessId, sessionId: current.id, updatedAt: watermark.updatedAt }];
     }), local.id);
@@ -574,7 +574,7 @@ app.get("/api/reviews/pending", async (_request, response, next) => {
     const authSession = response.locals.authSession as AuthSession;
     const projects = await projectsWithSharedNames(false);
     const groups = await Promise.all(projects.map(async (project) => {
-      const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
+      const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.accountId);
       return {
         projectId: project.id,
         projectName: project.name,
@@ -601,7 +601,7 @@ app.get("/api/running", async (_request, response, next) => {
     const authSession = response.locals.authSession as AuthSession;
     const projects = await projectsWithSharedNames(false);
     const groups = await Promise.all(projects.map(async (project) => {
-      const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
+      const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.accountId);
       return {
         projectId: project.id,
         projectName: project.name,

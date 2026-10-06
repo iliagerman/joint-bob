@@ -10,6 +10,7 @@ import { ClusterProtocolError, verifyClusterRequest } from "../cluster-protocol.
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { Feature, hasFeature, type FeatureKey } from "../features.js";
+import { isAdministrationPath, isNodeBlocked } from "../node-blocks.js";
 
 const clusterRawBodies = new WeakMap<IncomingMessage, Buffer>();
 
@@ -106,6 +107,10 @@ async function requireClusterV2Auth(request: Request, response: Response, next: 
     const identity = getOrCreateClusterIdentity(database, node.id);
     pinClusterPublicKey(database, node.id, identity.publicKey);
     const sender = verifyClusterRequest(database, node.id, request.method, request.originalUrl, captured, request.header("authorization"));
+    if (isNodeBlocked(database, node.id, sender) && !isAdministrationPath(request.originalUrl)) {
+      sendError(response, 403, "This node doesn't accept connections from yours");
+      return;
+    }
     response.locals.machineAuth = true;
     response.locals.machineNodeId = sender;
     response.locals.machineProtocol = 2;

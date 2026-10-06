@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks } from "./node-admin.js";
 import { loadBrowserStatus } from "./browser.js";
 import { loadBrowserProfileDirectory } from "./browser-profiles-settings.js";
 import { fillShortcutSettings } from "./shortcut-settings.js";
@@ -87,10 +88,11 @@ function renderClientLogs() {
 }
 
 // These panels guard their own loading and do not depend on Save settings.
-const ownLoading = (panel) => panel.id === "settingsPanel-cluster" || panel.id === "settingsPanel-browser";
+const ownLoading = (panel) => panel.id === "settingsPanel-cluster" || panel.id === "settingsPanel-browser" || panel.id === "settingsPanel-node";
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(name) {
+  if (name === "node" && !isNodeAdmin()) name = "account";
   elements.settingsForm.dataset.tab = name;
   for (const tab of elements.settingsTabs) {
     const selected = tab.dataset.settingsTab === name;
@@ -106,6 +108,7 @@ function selectSettingsTab(name) {
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
+  if (name === "node") void loadNodeBlocks().catch((error) => toast(error.message));
 }
 
 let runtimeDefaults;
@@ -296,6 +299,7 @@ let settingsLoading = false;
 let settingsReady = false;
 
 export async function openSettings(tab = "account") {
+  applyAdminVisibility();
   // Reopening a closed dialog must not wait for its previous request to finish.
   if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
   selectSettingsTab(tab);

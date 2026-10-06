@@ -37,7 +37,7 @@ test("first startup lets the owner create credentials and signs them in", async 
     const setup = await fetch(`${baseUrl}/api/auth/setup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "owner", password: "owner-selected-password" }),
+      body: JSON.stringify({ username: "owner", email: "Owner@Example.test", password: "owner-selected-password" }),
     });
     assert.equal(setup.status, 201);
     const setupBody = await setup.json() as { mustChangePassword: boolean; csrfToken: string; username: string };
@@ -47,12 +47,17 @@ test("first startup lets the owner create credentials and signs them in", async 
     const sessionCookie = cookie(setup);
 
     const authenticatedStatus = await fetch(`${baseUrl}/api/auth/status`, { headers: { Cookie: sessionCookie } });
-    assert.deepEqual(await authenticatedStatus.json(), {
+    const { accountId, ...statusBody } = await authenticatedStatus.json() as { accountId: string };
+    assert.match(accountId, /^([0-9a-f]{32})?$/);
+    assert.deepEqual(statusBody, {
       authenticated: true,
       setupRequired: false,
       mustChangePassword: false,
       csrfToken: setupBody.csrfToken,
       username: "owner",
+      email: "owner@example.test",
+      role: "admin",
+      needsEmail: false,
       isRemoteLogin: false,
     });
     const projects = await fetch(`${baseUrl}/api/projects`, { headers: { Cookie: sessionCookie } });
@@ -62,7 +67,7 @@ test("first startup lets the owner create credentials and signs them in", async 
     const duplicateSetup = await fetch(`${baseUrl}/api/auth/setup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "other", password: "another-owner-password" }),
+      body: JSON.stringify({ username: "other", email: "other@example.test", password: "another-owner-password" }),
     });
     assert.equal(duplicateSetup.status, 409);
   } finally {

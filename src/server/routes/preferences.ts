@@ -50,8 +50,8 @@ app.get("/api/recents", async (_request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
     const local = await getClusterNode();
-    migrateLegacyRecentSessions(session.username, stableLegacyRecents(readLegacyRecentSessions(session.userId)), local.id);
-    response.json({ recentSessions: listUserRecentSessions(session.username) });
+    migrateLegacyRecentSessions(session.accountId, stableLegacyRecents(readLegacyRecentSessions(session.userId)), local.id);
+    response.json({ recentSessions: listUserRecentSessions(session.accountId) });
   } catch (error) { next(error); }
 });
 
@@ -62,7 +62,7 @@ app.put("/api/recents", async (request, response, next) => {
     const project = await getProject(entry.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const local = await getClusterNode();
-    const { recentSessions, changed } = setUserRecentSession(session.username, { ...entry, projectId: project.id }, local.id);
+    const { recentSessions, changed } = setUserRecentSession(session.accountId, { ...entry, projectId: project.id }, local.id);
     response.json({ recentSessions });
     if (changed) broadcastToAllClients({ type: "recentsChanged" });
   } catch (error) { next(error); }
@@ -74,14 +74,14 @@ app.delete("/api/recents", async (request, response, next) => {
     const target = recentSessionIdentitySchema.parse(request.body);
     const project = await getProject(target.projectId);
     const local = await getClusterNode();
-    response.json({ recentSessions: removeUserRecentSession(session.username, { ...target, projectId: project?.id ?? target.projectId }, local.id) });
+    response.json({ recentSessions: removeUserRecentSession(session.accountId, { ...target, projectId: project?.id ?? target.projectId }, local.id) });
     broadcastToAllClients({ type: "recentsChanged" });
   } catch (error) { next(error); }
 });
 
 app.get("/api/pins", (_request, response) => {
   const session = response.locals.authSession as AuthSession;
-  response.json(listUserPins(session.username));
+  response.json(listUserPins(session.accountId));
 });
 
 app.put("/api/pins", async (request, response, next) => {
@@ -104,7 +104,7 @@ app.put("/api/pins", async (request, response, next) => {
     const target = payload.kind === "project"
       ? { kind: payload.kind, projectId } as const
       : { kind: payload.kind, projectId, engine: payload.engine, sessionId: payload.sessionId } as const;
-    const pins = setUserPin(session.username, target, payload.pinned, local.id);
+    const pins = setUserPin(session.accountId, target, payload.pinned, local.id);
     broadcastToAllClients({ type: "pinsChanged" });
     response.json(pins);
   } catch (error) {
@@ -122,7 +122,7 @@ const canvasShortcutTargetSchema = z.object({
 
 app.get("/api/canvas/shortcuts", (_request, response) => {
   const session = response.locals.authSession as AuthSession;
-  response.json({ shortcuts: listCanvasShortcuts(session.username) });
+  response.json({ shortcuts: listCanvasShortcuts(session.accountId) });
 });
 
 app.put("/api/canvas/shortcuts/:binding", async (request, response, next) => {
@@ -130,7 +130,7 @@ app.put("/api/canvas/shortcuts/:binding", async (request, response, next) => {
     const session = response.locals.authSession as AuthSession;
     const target = canvasShortcutTargetSchema.parse(request.body);
     const local = await getClusterNode();
-    const shortcuts = setCanvasShortcut(session.username, request.params.binding, target, local.id);
+    const shortcuts = setCanvasShortcut(session.accountId, request.params.binding, target, local.id);
     broadcastToAllClients({ type: "shortcutsChanged" });
     response.json({ shortcuts });
   } catch (error) {
@@ -149,7 +149,7 @@ app.post("/api/canvas/shortcuts/release", async (request, response, next) => {
     const session = response.locals.authSession as AuthSession;
     const target = canvasShortcutTargetSchema.parse(request.body);
     const local = await getClusterNode();
-    const shortcuts = releaseCanvasShortcuts(session.username, [target], local.id);
+    const shortcuts = releaseCanvasShortcuts(session.accountId, [target], local.id);
     broadcastToAllClients({ type: "shortcutsChanged" });
     response.json({ shortcuts });
   } catch (error) {
@@ -161,7 +161,7 @@ app.delete("/api/canvas/shortcuts/:binding", async (request, response, next) => 
   try {
     const session = response.locals.authSession as AuthSession;
     const local = await getClusterNode();
-    const shortcuts = clearCanvasShortcut(session.username, request.params.binding, local.id);
+    const shortcuts = clearCanvasShortcut(session.accountId, request.params.binding, local.id);
     broadcastToAllClients({ type: "shortcutsChanged" });
     response.json({ shortcuts });
   } catch (error) {

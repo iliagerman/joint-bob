@@ -9,6 +9,7 @@ import { ClusterV2HttpError } from '../cluster-v2-errors.js';
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { replicationEventProjectId, type ReplicationEvent } from "../replication.js";
 import { fetchPeer } from "./peer-availability.js";
+import { nodesBlockedBetween } from "../node-blocks.js";
 
 export function replicationPeers(db: DatabaseSync, local: string): PeerEndpoint[] {
   ensureResourceSharingSchema(db);
@@ -21,7 +22,7 @@ export function replicationPeers(db: DatabaseSync, local: string): PeerEndpoint[
         JOIN sharing_memberships b ON a.cluster_id=b.cluster_id
         WHERE a.cluster_id=e.context_id AND a.node_id=? AND b.node_id=e.node_id)))
     ORDER BY e.context_kind,e.context_id`).all(local, local) as unknown as PeerEndpoint[];
-  return [...new Map(rows.map((row) => [row.nodeId, row])).values()];
+  return [...new Map(rows.filter((row) => !nodesBlockedBetween(db, local, row.nodeId)).map((row) => [row.nodeId, row])).values()];
 }
 
 /** The project an event belongs to, resolving conversation events through their record. */
@@ -34,11 +35,38 @@ export function replicationEventProject(db: DatabaseSync, event: ReplicationEven
   return rows.length === 1 ? rows[0].project_id : undefined;
 }
 
-export function mayReplicateEvent(db: DatabaseSync, local: string, peer: string, event: ReplicationEvent): boolean {
+/** Where each event type may go. A type without a scope goes nowhere, so a new event
+    type has to be placed here before it can leave the node. */
+export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twins" | "separate">> = {
+  // Shared project state: nodes the project is shared with.
+  "name.override": "project",
+  "project.lock": "project",
+  task: "project",
+  "conversation.ownership": "project",
+  "conversation.record": "project",
+  "conversation.queue": "project",
+  "conversation.routing": "project",
+  "conversation.goal": "project",
+  "model.usage": "project",
+  "usage.difficulty": "project",
+  // One person's data, keyed by account: twins, and project nodes for project items.
+  "conversation.review": "account",
+  "conversation.notification": "account",
+  "conversation.notification.delivered": "account",
+  "user.pin": "account",
+  "user.recent": "account",
+  // A person's bindings, not tied to a project: their own machines only.
+  "canvas.shortcut": "twins",
   // Routing configurations have their own distribution (routing-configs.ts).
-  if (event.entityType === "cluster.routing") return false;
-  // Canvas shortcuts belong to the user, not a project: only the user's twins get them.
-  if (event.entityType === "canvas.shortcut") return isTrustedTwin(db, local, peer);
+  "cluster.routing": "separate",
+};
+
+export function mayReplicateEvent(db: DatabaseSync, local: string, peer: string, event: ReplicationEvent): boolean {
+  const scope = EVENT_SCOPES[event.entityType];
+  if (!scope || scope === "separate") return false;
+  // A block between any two of the three nodes involved stops the event, relays included.
+  if (nodesBlockedBetween(db, local, peer) || nodesBlockedBetween(db, local, event.originNodeId, peer)) return false;
+  if (scope === "twins") return isTrustedTwin(db, local, peer);
   const project = replicationEventProject(db, event);
   // Data outside any project stays on the user's own machines: twins only.
   if (!project) return isTrustedTwin(db, local, peer);

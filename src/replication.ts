@@ -16,6 +16,7 @@ import { isHarnessId, PROJECT_COLORS, type TaskRecord } from "./types.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { applyClusterRoutingEvent, ensureRoutingPolicySchema } from "./routing-policy.js";
 import { applyUsageDifficultyEvent, applyUsageEvent, ensureUsageSchema } from "./usage-ledger.js";
+import { isTwinOrigin, translateLegacyAccountEvent } from "./account-keys.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -307,6 +308,9 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "usage.difficulty": applyUsageDifficultyEvent,
 };
 
+/** Every event type this node can apply. Each one needs a scope in replication-v2.ts. */
+export function replicatedEntityTypes(): string[] { return Object.keys(REPLICATION_APPLIERS); }
+
 export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<string[]> {
   const db = await replicationDatabase();
   const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string }).id;
@@ -324,7 +328,9 @@ export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<
     const insert = db.prepare("INSERT OR IGNORE INTO replication_inbox (event_id, origin_node_id, received_at) VALUES (?, ?, ?)");
     const remove = db.prepare("DELETE FROM replication_inbox WHERE event_id = ?");
     const received: string[] = [];
-    for (const event of batch.events) {
+    for (const original of batch.events) {
+      // Older peers name people by username; this node keys them by account.
+      const event = translateLegacyAccountEvent(db, original, isTwinOrigin(db, original.originNodeId));
       if (!insert.run(event.id, event.originNodeId, new Date().toISOString()).changes) {
         received.push(event.id);
         continue;

@@ -480,8 +480,12 @@
           <p id="loginMessage">Sign in to this node.</p>
         </div>
         <label id="loginUsernameLabel">
-          Username
+          <span id="loginUsernameText">Username or email</span>
           <input id="loginUsernameInput" name="username" autocomplete="username" required data-testid="login-username-input" />
+        </label>
+        <label id="loginEmailLabel" hidden>
+          Email
+          <input id="loginEmailInput" name="email" type="email" autocomplete="email" maxlength="254" data-testid="login-email-input" />
         </label>
         <label id="loginPasswordLabel">
           Password
@@ -605,6 +609,7 @@
           <option value="updates">Updates</option>
           <option value="logs">Client logs</option>
           <option value="changelog">Changelog</option>
+          <option value="node" data-admin-only>Node</option>
         </select>
 
         <div class="settings-tabs settings-tabs--sidebar" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
@@ -624,8 +629,24 @@
           <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates">Updates</button>
           <button class="settings-tab" type="button" data-settings-tab="logs" role="tab" id="settingsTab-logs" aria-controls="settingsPanel-logs" aria-selected="false" tabindex="-1" data-testid="settings-tab-logs">Client logs</button>
           <button class="settings-tab" type="button" data-settings-tab="changelog" role="tab" id="settingsTab-changelog" aria-controls="settingsPanel-changelog" aria-selected="false" tabindex="-1" data-testid="settings-tab-changelog">Changelog</button>
+          <button class="settings-tab" type="button" data-settings-tab="node" role="tab" id="settingsTab-node" aria-controls="settingsPanel-node" aria-selected="false" tabindex="-1" data-testid="settings-tab-node" data-admin-only hidden>Node</button>
         </div>
 
+        <section class="settings-panel" id="settingsPanel-node" role="tabpanel" aria-labelledby="settingsTab-node" tabindex="0" data-testid="settings-panel-node" data-admin-only hidden>
+          <p class="settings-hint">Only you, the admin of this node, see this section.</p>
+          <fieldset class="phase-settings" data-testid="settings-node-blocks">
+            <legend>Blocked nodes</legend>
+            <p class="settings-hint">A blocked node can't connect here and its users can't sign in here. Nothing syncs in either direction, and the cluster keeps working for everyone else. Twins can't be blocked; unpair them first.</p>
+            <ul class="node-block-list" id="nodeBlockList" data-testid="node-block-list"></ul>
+            <div class="node-block-add">
+              <label>Block a node
+                <select id="nodeBlockSelect" data-testid="node-block-select"></select>
+              </label>
+              <button class="ghost compact" type="button" id="nodeBlockButton" data-testid="node-block-button">Block</button>
+            </div>
+            <p class="settings-hint" id="nodeBlockStatus" role="status" data-testid="node-block-status"></p>
+          </fieldset>
+        </section>
         <section class="settings-panel" id="settingsPanel-account" role="tabpanel" aria-labelledby="settingsTab-account" tabindex="0">
           <label class="checkbox-row"><input type="checkbox" id="settingsFocusUi" data-testid="settings-focus-ui-toggle" /> Focus interface (experimental)</label>
           <p class="muted compact-copy">One screen at a time, with floating contextual controls. Saves immediately for your account on this node. Turn off here to restore the classic interface without leaving your conversation.</p>

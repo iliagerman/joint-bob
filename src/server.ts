@@ -17,6 +17,8 @@ import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartup
 import { runSyncCheck } from "./server/sync-check.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
+import { flushAccountReplication, flushBlockNotices, syncLocalAccountIds } from "./server/account-sync.js";
+import { getClusterNode } from "./cluster.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { activateManagedHarnesses, startHarnessUpdateScheduler } from "./harness-updater.js";
 import { clusterWorkAllowed, flags, port, server } from "./server/state.js";
@@ -34,6 +36,7 @@ import "./server/chat-socket.js";
 import "./server/maintenance.js";
 import "./server/routes/core.js";
 import "./server/routes/cluster-v2.js";
+import "./server/routes/node-blocks.js";
 import "./server/routes/cluster-manager.js";
 import "./server/routes/twins.js";
 import "./server/routes/sharing.js";
@@ -106,6 +109,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       const retired = await retireUnreachableConversationWorkAfterRestart();
       if (retired) console.log(`Retired ${retired} agent run(s) whose dashboard did not survive the restart`);
     })
+    // Account ids derive from the node id, so it exists before anyone can sign in.
+    .then(async () => { await getClusterNode(); await syncLocalAccountIds(); })
     .then(() => {
   activateManagedHarnesses();
   const bindHost = process.env.JOINT_BOB_BIND_HOST || "0.0.0.0";
@@ -129,6 +134,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       flushSuccessionNotices().catch((error) => console.warn("Succession notice delivery failed", error));
       pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
       flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
+      flushBlockNotices().catch((error) => console.warn("Block notice delivery failed", error));
+      flushAccountReplication().catch((error) => console.warn("Account delivery failed", error));
       flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
       reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     };

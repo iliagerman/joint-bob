@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { visibleTaskMessages } from "../background-task-messages.js";
 import WebSocket from "ws";
-import { usernameForUser } from "../auth.js";
+import { accountIdForUser } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
 import { claimConversationNotification, conversationNotifications, finishConversationNotification, notificationConversationId } from "../conversation-notifications.js";
 import { listPushSubscriberUserIds, notifyConversationReview, reviewNotificationBody } from "../push.js";
@@ -80,7 +80,7 @@ export async function notifyPendingReviews(projectId: string): Promise<void> {
   if (!project) return;
   const local = await getClusterNode();
   for (const userId of userIds) {
-    const username = usernameForUser(userId);
+    const username = accountIdForUser(userId);
     if (!username) continue;
     const sessions = await listProjectSessionsWithReviewState(project, userId, username);
     const preferences = conversationNotifications(username, projectId);

@@ -32,7 +32,7 @@ Hiding things in the UI is therefore not isolation. **The wall needs a separate 
 ## 3. Design
 
 ### 3.1 Identity
-- **Every account has an `accountId`**, a random UUID created with the user that never changes. It's the key for ownership, replication and message authors. Accounts created before this change get a deterministic id, `sha256(homeNodeId + ":" + username)`, so every node computes the same one without coordinating.
+- **Every account has an `accountId`**, derived as `sha256(home + username)`. It's the key for ownership, replication and message authors. For a local user, `home` is the lowest node id among this node and its twins, so a person's twin machines share one account. Pairing or unpairing twins moves that person's rows to the new id. A visitor's id is the one its home node states in the sign-in record. (Built in phase 1.)
 - **Every user has an email.** It's required when the admin creates a user and is unique, case-insensitively, on the node and in everything replicated to it. A replicated user whose email belongs to a different account is rejected, as usernames are today. After the upgrade, the existing home user is asked for an email at their next sign-in.
 - **The UI shows the email** wherever it shows a person: the Users tab, message authors, cluster member lists and My nodes. Sign-in accepts either the email or the username.
 - Local accounts have `users.role` set to `admin` or `member`. Replicated accounts have no local role.
@@ -160,7 +160,7 @@ A full backup is taken first, and the move refuses to start while any turn is ru
 
 On top of the scope:
 - **Keyed by account.** Every per-user row and event uses `(homeNodeId, username)`, so two different "noam"s never share data. Existing rows move to the node's current home user.
-- **Minimal payloads.** Account events carry ids, timestamps and setting values only, with no conversation titles, file paths or prompt text. The receiving node shows titles from records it's already allowed to see.
+- **Payloads (revised while building phase 1).** Account events keep their current fields. The titles they carry belong to conversations in projects already shared with the receiving node, and keying by account keeps each person's rows private to that person.
 - **Dropped when the receiver can't see the target.** A pin or recent pointing at a conversation the receiving node can't reach isn't sent.
 - **Older peers.** For peers on the old version, the sender adds the legacy fields only for peers in the same cluster, and stops once every peer has upgraded.
 
