@@ -5,7 +5,9 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
-- Project reconciliation now skips folders that haven't been created in Syncthing, preventing startup failures.
+## 2.47.2 — 2026-10-06
+
+- Fixed project reconciliation failing when sync folders haven't been created in Syncthing.
 
 ## 2.47.1 — 2026-10-06
 
