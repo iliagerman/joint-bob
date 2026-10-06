@@ -1,3 +1,4 @@
+import { projectAdditionalPaths } from "./session-scope.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
@@ -52,7 +53,7 @@ export async function sharedTranscriptProject(peer:string,id:string){
  const project=await getProject(id);if(!project)throw new ClusterV2HttpError(404,"Project not found");return project;
 }
 async function sourceTranscripts(peer:string,projectId:string){
- const project=await sharedTranscriptProject(peer,projectId),sessions=await listHarnessSessions(project);
+ const project=await sharedTranscriptProject(peer,projectId),sessions=await listHarnessSessions({...project,additionalPaths:await projectAdditionalPaths(projectId)});
  const local=await getClusterNode();
  const entries:Array<{engine:string;id:string;path:string;subagent?:boolean}>=sessions.flatMap(session=>session.segments?.length?session.segments.map(segment=>({engine:segment.engine,id:segment.sessionId,path:segment.path})): [{engine:session.harnessId,id:session.id,path:session.path,subagent:Boolean(session.parentSessionPath)}]);
  // Ticket conversations live under ticket working directories, not the project's cwd.

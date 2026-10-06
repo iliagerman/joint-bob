@@ -71,7 +71,7 @@ export async function stagedPathFor(workspace: string, relativePath: string): Pr
   return path.join(stagedRoot, relativePath);
 }
 
-export async function scanTree(root: string, skipTopLevel: string[] = []): Promise<Map<string, FileState>> {
+export async function scanTree(root: string, skipTopLevel: string[] = [], allowed: (root: string, file: string) => boolean = copyAllowed): Promise<Map<string, FileState>> {
   const skip = new Set(skipTopLevel);
   const states = new Map<string, FileState>();
   const rootPath = path.resolve(root);
@@ -88,7 +88,7 @@ export async function scanTree(root: string, skipTopLevel: string[] = []): Promi
     const filePath = path.join(entry.parentPath, entry.name);
     // The same exclusion policy that governed the copy governs the merge back:
     // agent-created secrets, dependency dirs and builds never round-trip.
-    if (!copyAllowed(rootPath, filePath)) continue;
+    if (!allowed(rootPath, filePath)) continue;
     const relative = path.relative(root, filePath).split(path.sep).join("/");
     if (entry.isSymbolicLink()) {
       states.set(relative, { path: relative, sha256: "", mode: 0, symlink: true });
@@ -192,7 +192,7 @@ function mergeText(entryId: string, workspaceText: string, baselineText: string,
 /** Computes the merge staging area: decisions staged, conflicts recorded, digests
  * produced. Pure filesystem writes inside the workspace only; the project is only
  * read. Callers record the digests on the replicated task record (the trust anchor). */
-export async function prepareTicketMerge(projectRoot: string, workspace: string, trustedBaselineDigest?: string): Promise<PreparedMerge> {
+export async function prepareTicketMerge(projectRoot: string, workspace: string, trustedBaselineDigest?: string, options: { workspaceOnlyDirs?: string[]; allowed?: (root: string, file: string) => boolean } = {}): Promise<PreparedMerge> {
   const baseline = await readBaseline(workspace);
   // A1: a baseline whose manifest no longer matches the digest recorded at
   // workspace creation is agent-tampered; every decision from it degrades to an
@@ -208,8 +208,8 @@ export async function prepareTicketMerge(projectRoot: string, workspace: string,
     }
   }
   const baseStates = baselineTrusted && baseline ? baselineStates(baseline.manifest) : new Map<string, FileState>();
-  const workspaceStates = await scanTree(workspace, [TICKET_BASELINE_DIR, TICKET_MERGE_DIR]);
-  const projectStates = await scanTree(projectRoot);
+  const workspaceStates = await scanTree(workspace, [TICKET_BASELINE_DIR, TICKET_MERGE_DIR, ...(options.workspaceOnlyDirs ?? [])], options.allowed);
+  const projectStates = await scanTree(projectRoot, [], options.allowed);
 
   // Text-mergeable: every side present as bytes, UTF-8, within the size limit.
   const textMergeable = new Set<string>();

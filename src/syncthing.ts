@@ -5,6 +5,7 @@ import { getSettings, syncthingApiKey } from "./settings.js";
 import { AGENT_RESOURCES_FOLDER_ID, AGENT_RESOURCES_FOLDER_LABEL } from "./agent-resources.js";
 import { TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
 import type { ProjectSyncStatus } from "./types.js";
+import { WORKTREE_FOLDER_PREFIX, worktreeBinaryExtensions, worktreeHeavyDirectories } from "./worktree-filters.js";
 
 interface SyncthingDevice {
   deviceID: string;
@@ -112,6 +113,16 @@ const projectIgnorePatterns = [
   "service-account*.json",
   "(?d)test_database_*.db",
   "(?d)**/test_database_*.db",
+];
+
+/* Worktrees are disposable copies: every rule is deletable so removing a worktree on one
+   node removes it everywhere, and heavy trees and binaries never travel. */
+const worktreeIgnorePatterns = [
+  ...projectIgnorePatterns.map((rule) => rule.startsWith("(?d)") ? rule : `(?d)${rule}`),
+  ...worktreeHeavyDirectories.filter((name) => !name.startsWith(".st")).map((name) => `(?d)${name}`),
+  "(?d)*.egg-info",
+  "(?d).joint-bob-merge",
+  ...worktreeBinaryExtensions.map((extension) => `(?d)(?i)*.${extension}`),
 ];
 
 const agentResourceIgnorePatterns = [
@@ -241,8 +252,8 @@ async function setProjectIgnores(folderId: string): Promise<void> {
   const endpoint = `/rest/db/ignores?folder=${encodeURIComponent(folderId)}`;
   const existing = await request<SyncthingIgnores>(endpoint);
   const existingIgnore = existing.ignore ?? [];
-  const folderPatterns = projectIgnorePatterns;
-  const managedPatterns = new Set([...projectIgnorePatterns, ...projectIgnorePatterns.map(withoutDeletable)]);
+  const folderPatterns = folderId.startsWith(WORKTREE_FOLDER_PREFIX) ? worktreeIgnorePatterns : projectIgnorePatterns;
+  const managedPatterns = new Set([...projectIgnorePatterns, ...worktreeIgnorePatterns].flatMap((rule) => [rule, withoutDeletable(rule)]));
   const userRules = [...new Set(existingIgnore.filter((rule) => !managedPatterns.has(rule)))];
   const ignore = [...folderPatterns, ...userRules];
   if (ignore.length === existingIgnore.length && ignore.every((rule, index) => rule === existingIgnore[index])) return;

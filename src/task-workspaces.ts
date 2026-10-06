@@ -64,8 +64,9 @@ export function copyAllowed(projectPath: string, sourcePath: string): boolean {
 // The baseline is the trust root for the later three-way merge back into the project
 // (TICKET-MERGE-PLAN.md §4): the full content of every copied file plus a hash
 // manifest, so any node can diff3 without a git history.
-async function captureBaseline(workspace: string): Promise<void> {
+export async function captureBaseline(workspace: string, allowed: (root: string, file: string) => boolean = copyAllowed, skipTopLevel: string[] = []): Promise<string> {
   const baseline = path.join(workspace, TICKET_BASELINE_DIR);
+  await fs.rm(baseline, { recursive: true, force: true });
   await fs.mkdir(baseline, { recursive: true });
   const files: Record<string, { sha256: string; mode: number } | { symlink: true }> = {};
   // Walk the just-written copy, not the live source: concurrent edits to the
@@ -75,8 +76,8 @@ async function captureBaseline(workspace: string): Promise<void> {
     if (!entry.isFile() && !entry.isSymbolicLink()) continue;
     const sourcePath = path.join(entry.parentPath, entry.name);
     const top = path.relative(workspace, entry.parentPath).split(path.sep)[0];
-    if (top === TICKET_BASELINE_DIR) continue;
-    if (!copyAllowed(workspace, sourcePath)) continue;
+    if (top === TICKET_BASELINE_DIR || skipTopLevel.includes(top)) continue;
+    if (!allowed(workspace, sourcePath)) continue;
     const relative = path.relative(workspace, sourcePath).split(path.sep).join("/");
     if (entry.isSymbolicLink()) {
       files[relative] = { symlink: true };
@@ -88,7 +89,9 @@ async function captureBaseline(workspace: string): Promise<void> {
     await fs.writeFile(target, bytes, { mode: info.mode });
     files[relative] = { sha256: createHash("sha256").update(bytes).digest("hex"), mode: info.mode & 0o7777 };
   }
-  await fs.writeFile(path.join(baseline, "manifest.json"), `${JSON.stringify({ version: 1, files }, null, 2)}\n`);
+  const manifest = `${JSON.stringify({ version: 1, files }, null, 2)}\n`;
+  await fs.writeFile(path.join(baseline, "manifest.json"), manifest);
+  return createHash("sha256").update(manifest).digest("hex");
 }
 
 export async function createTaskWorkspace(projectPath: string, projectId: string, taskId: string, root = ticketWorkspaceRoot()): Promise<string> {

@@ -1,3 +1,4 @@
+import { projectAdditionalPaths } from "./server/session-scope.js";
 import { listHarnessSessions } from "./harnesses.js";
 import { listProjects } from "./store.js";
 import { listTasks } from "./tasks.js";
@@ -52,7 +53,7 @@ async function conversationsIn(project: { id: string; name: string; path: string
   const tasks = await listTasks(project.id);
   const sessions = await listHarnessSessions({
     ...project,
-    additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
+    additionalPaths: await projectAdditionalPaths(project.id, tasks),
   } as Parameters<typeof listHarnessSessions>[0]);
   return sessions.map((session) => ({
     kind: "conversation" as const,

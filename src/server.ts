@@ -55,6 +55,7 @@ import { startCronScheduler } from "./server/cron.js";
 import { startQuickNoteScheduler } from "./server/quick-note-dispatch.js";
 import "./server/routes/cron.js";
 import "./server/routes/tasks.js";
+import "./server/routes/worktrees.js";
 import "./server/routes/project-files.js";
 import "./server/routes/git-review.js";
 import "./server/routes/search.js";

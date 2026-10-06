@@ -1,3 +1,4 @@
+import { projectAdditionalPaths } from "./session-scope.js";
 import { listByTheWaySessionIds } from "../by-the-way-leases.js";
 import { getClusterNode } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
@@ -33,7 +34,7 @@ async function runSweep(now: number): Promise<number> {
     const tasks = await listTasks(project.id);
     const records = new Map((await listConversationRecords(project.id)).map((record) => [`${record.engine}:${record.sessionId}`, record]));
     const temporary = await listByTheWaySessionIds(project.id);
-    const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
+    const sessions = await listHarnessSessions({ ...project, additionalPaths: await projectAdditionalPaths(project.id, tasks) });
     const ownership = new Map(await Promise.all(sessions.map(async (session) => [session, await getConversationOwnership(session.harnessId, session.id)] as const)));
     for (const session of sessions) {
       if (temporary.has(session.id)) continue;

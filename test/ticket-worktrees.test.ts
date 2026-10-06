@@ -148,5 +148,6 @@ test("ticket cards expose a done-only merge action and server endpoint", async (
   assert.match(board, /handlers\.onMerge\(task\)/);
   assert.match(app, /\/merge`/);
   assert.match(server, /tasks\/:taskId\/merge/);
-  assert.match(server, /additionalPaths:\s*tasks/);
+  assert.match(server, /additionalPaths:\s*await projectAdditionalPaths\(project\.id, tasks\)/);
+  assert.match(server, /task\.worktreePath \? \[task\.worktreePath\] : \[\]/);
 });

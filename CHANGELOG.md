@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Agents are now prevented from creating git branches or worktrees; isolated work uses Joint Bob worktrees instead.
+- Project worktrees let you create lightweight copies for parallel work that merge back seamlessly with conflict detection.
 
 ## 2.46.0 — 2026-10-06
 

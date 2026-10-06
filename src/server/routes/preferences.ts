@@ -1,3 +1,4 @@
+import { projectAdditionalPaths } from "../session-scope.js";
 import path from "node:path";
 import { runSyncCheck, syncCheckStatus } from "../sync-check.js";
 import { z } from "zod";
@@ -92,7 +93,7 @@ app.put("/api/pins", async (request, response, next) => {
     // Removing an account pin must work even when its transcript or project is gone.
     if (payload.pinned && project && payload.kind === "conversation") {
       const tasks = await listTasks(project.id);
-      const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
+      const sessions = await listHarnessSessions({ ...project, additionalPaths: await projectAdditionalPaths(project.id, tasks) });
       if (!sessions.some((candidate) => candidate.id === payload.sessionId && candidate.harnessId === payload.engine)) {
         sendError(response, 404, "Conversation not found");
         return;

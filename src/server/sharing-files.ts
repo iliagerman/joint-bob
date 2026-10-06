@@ -13,6 +13,8 @@ import { getProject, updateProjectSyncFolderId } from "../store.js";
 import { ensureSyncthingDevice, ensureSharedProjectFolder, removeSyncthingDevices, pauseSyncthingFolders, syncthingDeviceId, syncthingPeerCaughtUp } from "../syncthing.js";
 import { expectedTaskWorkspacePath, projectTicketSyncFolderId, TICKET_WORKSPACE_FOLDER_ID } from "../task-workspaces.js";
 import { replicationPeers } from "./replication-v2.js";
+import { projectWorktreeRoot, projectWorktreeSyncFolderId } from "../project-worktrees.js";
+import { WORKTREE_FOLDER_PREFIX } from "../worktree-filters.js";
 
 const deviceId=z.string().regex(/^[A-Z2-7]{7}(?:-[A-Z2-7]{7}){7}$/);
 export const fileEnrollmentSchema=z.object({deviceId,projects:z.array(z.string().min(1).max(300)).max(10000),
@@ -62,6 +64,11 @@ async function enroll(db:DatabaseSync,local:string,peer:string,device:string,ids
   const ticketFolder=projectTicketSyncFolderId(id);
   await ensureSharedProjectFolder(ticketFolder,`${project.name} tickets`,ticketPath,device);
   save.run(peer,device,ticketFolder,id);
+  const worktreePath=projectWorktreeRoot(id);
+  await mkdir(worktreePath,{recursive:true});
+  const worktreeFolder=projectWorktreeSyncFolderId(id);
+  await ensureSharedProjectFolder(worktreeFolder,`${project.name} worktrees`,worktreePath,device);
+  save.run(peer,device,worktreeFolder,id);
  }
  db.prepare("DELETE FROM cluster_v2_file_errors WHERE peer_id=?").run(peer);
  return accepted;
@@ -87,7 +94,9 @@ export async function sharingFilesStatus(db:DatabaseSync,local:string,peer:strin
  ensureSchema(db);
  const error=db.prepare("SELECT error FROM cluster_v2_file_errors WHERE peer_id=?").get(peer) as {error:string}|undefined;
  if(error)return {ready:false,error:error.error};
- const rows=db.prepare("SELECT device_id,folder_id,project_id FROM cluster_v2_file_enrollments WHERE peer_id=?").all(peer) as unknown as Array<{device_id:string;folder_id:string;project_id:string|null}>;
+ // A node that predates worktrees never accepts their folder; it must not hold sharing back.
+ const rows=(db.prepare("SELECT device_id,folder_id,project_id FROM cluster_v2_file_enrollments WHERE peer_id=?").all(peer) as unknown as Array<{device_id:string;folder_id:string;project_id:string|null}>)
+  .filter(row=>!row.folder_id.startsWith(WORKTREE_FOLDER_PREFIX));
  if(!rows.length||sharedProjectIds(db,local,peer).some(id=>!rows.some(row=>row.project_id===id)))return {ready:false};
  try{return {ready:await syncthingPeerCaughtUp(rows[0].device_id,rows.map(row=>row.folder_id))};}
  catch(error){return {ready:false,error:error instanceof Error?error.message:"Syncthing status unavailable"};}

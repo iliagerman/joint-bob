@@ -599,3 +599,37 @@ test("agent resources folder is shared unpaused with resource ignores", async ()
   assert.ok(ignore.includes("*.sync-conflict-*"));
   assert.ok(!ignore.includes("!.env"));
 });
+
+test("worktree folders get deletable ignore rules that keep heavy trees and binaries out", async () => {
+  const posted: string[][] = [];
+  const folder = "joint-bob-worktrees-0123";
+  await withSyncthingApi((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url === `/rest/db/ignores?folder=${folder}`) {
+        response.end(JSON.stringify({ ignore: [...managedIgnorePatterns, "keep-me/"] }));
+        return;
+      }
+      if (request.method === "POST" && request.url === `/rest/db/ignores?folder=${folder}`) {
+        posted.push((JSON.parse(body) as { ignore: string[] }).ignore);
+        response.end("{}");
+        return;
+      }
+      response.statusCode = 404;
+      response.end();
+    });
+  }, async (syncthing) => {
+    await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: folder }]);
+  });
+  const ignore = posted[0];
+  assert.ok(ignore, "worktree ignores must be written");
+  const managed = ignore.filter((rule) => rule !== "keep-me/");
+  assert.ok(managed.every((rule) => rule.startsWith("(?d)")), "every managed worktree rule is deletable so a worktree deletion reaches every node");
+  for (const rule of ["(?d).git", "(?d)node_modules/", "(?d).env", "(?d)target", "(?d).next", "(?d)vendor", "(?d)*.egg-info", "(?d)(?i)*.png", "(?d)(?i)*.zip"]) assert.ok(ignore.includes(rule), rule);
+  assert.ok(!ignore.includes("(?d).joint-bob-worktree"), "worktree metadata must sync");
+  assert.ok(!ignore.some((rule) => rule.includes(".joint-bob-baseline")), "the merge baseline must sync");
+  assert.equal(ignore.at(-1), "keep-me/", "user rules survive after the managed rules");
+  assert.ok(!managedIgnorePatterns.filter((rule) => !rule.startsWith("(?d)")).some((rule) => ignore.includes(rule)), "project rules are replaced, not duplicated");
+});

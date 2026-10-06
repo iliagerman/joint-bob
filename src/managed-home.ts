@@ -5,17 +5,18 @@ import type { WorkspaceId } from "./types.js";
 
 export interface ManagedHomePaths {
   tickets: string;
+  worktrees: string;
 }
 
 /** `/projects/` stays so homes created by the previous layout keep ignoring their old tree. */
-const baseIgnoreRules = ["/projects/", "/tickets/", "/.agent-resources/"];
+const baseIgnoreRules = ["/projects/", "/tickets/", "/worktrees/", "/.agent-resources/"];
 
 export function defaultManagedHome(): string {
   return path.join(os.homedir(), "JointBob");
 }
 
 export function managedHomePaths(homePath: string): ManagedHomePaths {
-  return { tickets: path.join(path.resolve(homePath), "tickets") };
+  return { tickets: path.join(path.resolve(homePath), "tickets"), worktrees: path.join(path.resolve(homePath), "worktrees") };
 }
 
 /** Workspace ids and project names both become single path segments, so neither can escape the home. */

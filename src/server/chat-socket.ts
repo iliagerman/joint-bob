@@ -9,6 +9,7 @@ import { type ConversationEngine, getConversationOwnership } from "../conversati
 import { ensureConversationRecord, getConversationRecord, listConversationSegments, parseConversationDraftPath } from "../conversation-records.js";
 import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import { getProjectLock } from "../project-locks.js";
+import { getProjectWorktree, markWorktreeConversation, worktreeConversationIndex, type ProjectWorktree } from "../project-worktrees.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
 import { getProject } from "../store.js";
 import { getSettings } from "../settings.js";
@@ -26,6 +27,7 @@ import { type ForeignConversationOwner, openConversationOwnership } from "./sess
 import { watchClients, webSocketServer } from "./state.js";
 import { ownerPeer } from "./task-handoff.js";
 import { measureOperation, traceOperation } from "./performance-diagnostics.js";
+import { projectAdditionalPaths } from "./session-scope.js";
 import { mergeReservations, taskCwd, taskHandoffContext, taskTerminalCounts } from "./task-runs.js";
 
 function describeSessionRequest(rawSessionPath: string | null) {
@@ -137,6 +139,11 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   const taskIdentity = task && rawSessionPathFromUrl !== "watch" ? taskConversationIdentity(task) : null;
   const requestedSessionId = suppliedSessionId ?? taskIdentity?.sessionId ?? null;
   const sourceTask = sourceTaskId ? tasks.find((candidate) => candidate.id === sourceTaskId) : undefined;
+  const worktreeIdParam = url.searchParams.get("worktreeId");
+  if (worktreeIdParam !== null && (taskId || sourceTaskId || !/^[0-9a-f-]{36}$/i.test(worktreeIdParam))) {
+    socket.close(1008, "Invalid worktree ID");
+    return;
+  }
   if (sourceTaskId && (!sourceTask || sourceTask.status !== "done")) {
     socket.close(1008, "Source ticket is not Done");
     return;
@@ -244,12 +251,17 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
         else taskTerminalCounts.set(task.id, remaining);
       });
     }
-    attachTerminalSession(socket, task ? taskCwd(project, task) : project.path, local.id);
+    const terminalWorktree = !task && worktreeIdParam ? await getProjectWorktree(project.id, worktreeIdParam) : undefined;
+    if (worktreeIdParam && !task && !terminalWorktree) {
+      socket.close(1008, "Worktree is not synchronized on this node");
+      return;
+    }
+    attachTerminalSession(socket, task ? taskCwd(project, task) : terminalWorktree?.path ?? project.path, local.id);
     return;
   }
 
   let rawSessionPath = rawSessionPathFromUrl;
-  const sessionSearchProject = { ...project, additionalPaths: tasks.flatMap((candidate) => candidate.worktreePath ? [candidate.worktreePath] : []) };
+  const sessionSearchProject = { ...project, additionalPaths: await projectAdditionalPaths(project.id, taskId || sourceTaskId || canMatchTaskSession ? tasks : undefined) };
   let listedSessions: SessionSummary[] | undefined;
   // Chosen in the new-conversation dialog; a conversation has no id yet at this point, so the
   // accounts travel with the connection until the engine reports one (FR9.4).
@@ -357,6 +369,21 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
     }
   }
   const refreshSessionsAfterReady = !listedSession || listedSession.draft;
+  // A conversation started in a worktree runs there on every node; its marker travels with the worktree.
+  let worktree: ProjectWorktree | undefined;
+  if (!requestedTask && !task) {
+    const known = (await worktreeConversationIndex(project.id)).get(`${sessionRequest.engine}:${ownershipSessionId}`);
+    const requested = refreshSessionsAfterReady && worktreeIdParam ? await getProjectWorktree(project.id, worktreeIdParam) : undefined;
+    if (refreshSessionsAfterReady && worktreeIdParam && !requested && !known) {
+      socket.close(1008, "Worktree is not synchronized on this node");
+      return;
+    }
+    worktree = known ?? requested;
+    if (worktree) {
+      cwd = worktree.path;
+      if (!known) await markWorktreeConversation(project.id, worktree.id, sessionRequest.engine, ownershipSessionId);
+    }
+  }
   if (refreshSessionsAfterReady) {
     try {
       await ensureConversationRecord(project.id, sessionRequest.engine, ownershipSessionId, local.id);

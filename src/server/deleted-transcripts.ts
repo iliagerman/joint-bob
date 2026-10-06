@@ -2,6 +2,7 @@
 // own transcript; every other node removes its copy here, when the deletion arrives and
 // once at start-up for copies left behind before this existed. A leftover copy would
 // otherwise travel back and fail the project's transcript inventory.
+import { projectAdditionalPaths } from "./session-scope.js";
 import { lstat, unlink } from "node:fs/promises";
 import { deletedConversationKeys } from "../conversation-records.js";
 import { clearHarnessSessionCache, getHarness } from "../harnesses.js";
@@ -15,7 +16,7 @@ export async function removeDeletedTranscripts(projectId: string): Promise<void>
   const deleted = await deletedConversationKeys(projectId);
   if (!deleted.size) return;
   const tasks = await listTasks(project.id);
-  const scope = { ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) };
+  const scope = { ...project, additionalPaths: await projectAdditionalPaths(project.id, tasks) };
   let removed = false;
   // By conversation ID, not the session list: a copy made on another node records that
   // node's directory, and the list finds it only through the record the deletion removed.

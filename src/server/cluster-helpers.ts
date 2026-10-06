@@ -1,3 +1,4 @@
+import { listProjectWorktrees } from "../project-worktrees.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -204,6 +205,9 @@ export async function assertManagedHomeChangeAllowed(nextHomePath: string): Prom
   for (const project of await listProjects()) {
     if ((await listTasks(project.id)).some((task) => task.worktreePath && !task.worktreeBranch)) {
       throw new TaskWorkspaceError("Archive or delete board cards before changing the Joint Bob home folder");
+    }
+    if ((await listProjectWorktrees(project.id)).length) {
+      throw new TaskWorkspaceError("Merge and delete worktrees before changing the Joint Bob home folder");
     }
   }
 }

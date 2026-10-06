@@ -1,3 +1,4 @@
+import { projectAdditionalPaths } from "../session-scope.js";
 import { randomUUID } from "node:crypto";
 import { lstat, unlink } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
@@ -691,7 +692,7 @@ export async function deleteLocalConversation(project: ProjectRecord, engine: Co
   if (ticket?.status === "done" || await conversationBelongsToDoneTask(project.id, engine, sessionId)) {
     throw new ConversationDeleteError(409, "Done ticket conversations are read-only");
   }
-  const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
+  const sessions = await listHarnessSessions({ ...project, additionalPaths: await projectAdditionalPaths(project.id, tasks) });
   const session = sessions.find((candidate) => candidate.id === sessionId && candidate.harnessId === engine);
   if (!session) throw new ConversationDeleteError(404, "Session not found");
   await requireLocalConversationOwner(engine, sessionId);
