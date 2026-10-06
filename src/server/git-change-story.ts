@@ -9,7 +9,7 @@ import { runGitReview } from "./git-review-run.js";
 /** The question text that marks a review thread as a saved change story. */
 export const CHANGE_STORY_MARKER = "Generated change story";
 
-const STORY_DIFF_LIMIT = 90_000;
+const STORY_DIFF_LIMIT = 70_000;
 const STORY_INPUT_LIMIT = 115_000;
 const DIGEST_LIMIT = 24_000;
 const COMMIT_LIMIT = 20;
@@ -69,7 +69,8 @@ export interface StoryTurn { n: number; at?: string; user: string; commits: stri
 /** `turn` is 0 for a commit picked from history rather than made in the conversation. */
 export interface StoryCommit { hash: string; shortHash: string; subject: string; turn: number; date?: string; body?: string }
 export interface StoryPatch { path: string; source: string; patch: string }
-export interface StoryFacts { conversation: boolean; turns: StoryTurn[]; commits: StoryCommit[]; files: StoryFile[] }
+/** `omitted` lists files whose diff was too large to show the reviewer; their counts still come from the full diff. */
+export interface StoryFacts { conversation: boolean; turns: StoryTurn[]; commits: StoryCommit[]; files: StoryFile[]; omitted?: string[] }
 /** A "commits" story explains picked commits alone, without the conversation or pending files. */
 export interface StorySources { kind?: "conversation" | "commits"; scope: "conversation" | "all"; pendingPaths: string[]; includeCommits: boolean; commits?: string[] }
 export interface SavedChangeStory {
@@ -189,25 +190,20 @@ export async function sourcesFromTurns(cwd: string, turns: ConversationTurn[], c
   const patches: StoryPatch[] = [];
   const kinds = new Map<string, GitChangeKind[]>();
   const note = (path: string, kind: GitChangeKind) => kinds.set(path, [...kinds.get(path) ?? [], kind]);
-  let size = 0;
   for (const commit of commits) {
     for (const file of commit.files) {
       const diff = await gitCommitFileDiff(cwd, commit.hash, file.path);
-      if (diff.truncated) throw new GitReviewError(413, `The diff of ${file.path} in ${commit.shortHash} is too large for a story. Pick fewer commits or files.`);
-      size += diff.patch.length;
       patches.push({ path: file.path, source: commit.shortHash, patch: diff.patch });
       note(file.path, file.kind);
     }
   }
-  const pending = await pendingReviewDiff(cwd, sources.pendingPaths);
+  const pending = await pendingReviewDiff(cwd, sources.pendingPaths, { complete: false });
   for (const change of pending.changes) {
     if (patches.some((patch) => patch.source === "pending" && patch.path === change.path)) continue;
     patches.push({ path: change.path, source: "pending", patch: pending.patches[change.path] ?? "" });
-    size += pending.patches[change.path]?.length ?? 0;
     note(change.path, change.kind);
   }
   if (!patches.length) throw new GitReviewError(400, "Nothing to explain. This scope has no commits and no pending files.");
-  if (size > STORY_DIFF_LIMIT) throw new GitReviewError(413, `These changes are too large for a story (${size.toLocaleString("en-US")} characters of diff, the limit is ${STORY_DIFF_LIMIT.toLocaleString("en-US")}). Pick fewer commits or files.`);
   const files: StoryFile[] = [];
   for (const [path, history] of kinds) {
     const own = patches.filter((patch) => patch.path === path);
@@ -230,11 +226,33 @@ export async function sourcesFromTurns(cwd: string, turns: ConversationTurn[], c
     paths: allPaths.filter((path) => turn.text.includes(path)),
   }));
   const fingerprint = createHash("sha256").update(JSON.stringify([patches.map((patch) => [patch.path, patch.source, patch.patch]), turns.length, turns.at(-1)?.user ?? ""])).digest("hex");
+  const fitted = fitPatches(patches, STORY_DIFF_LIMIT);
   return {
-    facts: { conversation, turns: storyTurns, commits: commits.map(({ files: _files, ...commit }) => commit), files },
-    patches, fingerprint, turns,
+    facts: { conversation, turns: storyTurns, commits: commits.map(({ files: _files, ...commit }) => commit), files, ...(fitted.omitted.length ? { omitted: fitted.omitted } : {}) },
+    patches: fitted.patches, fingerprint, turns,
   };
 }
+
+/** Swaps the largest diffs for a line-count note until the rest fits in `limit` characters. */
+export function fitPatches(patches: StoryPatch[], limit: number): { patches: StoryPatch[]; omitted: string[] } {
+  const fitted = [...patches];
+  let size = sum(fitted.map((patch) => patch.patch.length));
+  const largest = fitted.map((patch, index) => ({ index, length: patch.patch.length })).sort((left, right) => right.length - left.length);
+  for (const { index } of largest) {
+    if (size <= limit) break;
+    const original = fitted[index];
+    const { add, del } = lineCounts(original.patch);
+    const patch = `Diff left out of this story because it is too large: +${add} −${del} lines.`;
+    if (patch.length >= original.patch.length) break;
+    size += patch.length - original.patch.length;
+    fitted[index] = { ...original, patch };
+  }
+  if (size > limit) throw new GitReviewError(413, "These changes touch too many files for one story. Pick fewer commits or files.");
+  const omitted = [...new Set(fitted.filter((patch, index) => patch !== patches[index]).map((patch) => patch.path))];
+  return { patches: fitted, omitted };
+}
+
+const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 
 /** A compact per-turn summary for the prompt; older turns shrink first when it runs long. */
 export function turnDigest(turns: ConversationTurn[], facts: StoryFacts): string {
@@ -289,11 +307,12 @@ export async function generateChangeStory(input: GenerateChangeStoryInput): Prom
     `Allowed paths: ${JSON.stringify(facts.files.map((file) => file.path))}`,
     `Turns: ${facts.turns.length}`,
     commits ? `Commits, oldest first:\n${commits}` : "Commits: none included",
+    facts.omitted ? `Diffs left out for size: ${JSON.stringify(facts.omitted)}. Describe these files only from the conversation, commit messages and line counts; never guess their contents.` : "",
     facts.conversation ? `Conversation digest:\n${turnDigest(collected.turns, facts)}`
       : sources.kind === "commits" ? "No conversation: explain the picked commits from their messages and diff. The timeline must be empty."
         : "No conversation: explain the pending changes from the diff alone.",
     `Diff:\n${diff}`,
-  ].join("\n\n");
+  ].filter(Boolean).join("\n\n");
   if (prompt.length > STORY_INPUT_LIMIT) throw new GitReviewError(413, "These changes are too large for one story. Pick fewer commits or files.");
   const result = await runGitReview({
     projectId: project.id, cwd, harnessId: input.harnessId, provider: input.provider, modelId: input.modelId, thinkingLevel: input.thinkingLevel,

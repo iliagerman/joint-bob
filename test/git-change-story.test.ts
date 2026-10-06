@@ -7,7 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { gitPushHistory } from "../src/git-review.js";
 import { buildTurns, commitHashesIn } from "../src/server/conversation-turns.js";
-import { checkStory, fileArea, lineCounts, sourcesFromTurns, turnDigest, type ChangeStory } from "../src/server/git-change-story.js";
+import { checkStory, fileArea, fitPatches, lineCounts, sourcesFromTurns, turnDigest, type ChangeStory } from "../src/server/git-change-story.js";
 
 const git = promisify(execFile);
 
@@ -110,6 +110,31 @@ test("sources include conversation commits and pending files, and the fingerprin
     assert.notEqual(edited.fingerprint, first.fingerprint, "an edit outdates the story");
     await assert.rejects(sourcesFromTurns(root, [], false, { scope: "all", pendingPaths: [], includeCommits: false }), /Nothing to explain/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("pending changes past the review limit still make a story, with the largest diffs left out", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-story-"));
+  try {
+    await git("git", ["init", "-q", root]);
+    await writeFile(path.join(root, "huge.ts"), Array.from({ length: 4000 }, (_, line) => `export const value${line} = "${"x".repeat(20)}";`).join("\n") + "\n");
+    await writeFile(path.join(root, "small.ts"), "export const small = 1;\n");
+    const sources = { scope: "all" as const, pendingPaths: ["huge.ts", "small.ts"], includeCommits: false };
+    const first = await sourcesFromTurns(root, [], false, sources);
+    assert.deepEqual(first.facts.omitted, ["huge.ts"]);
+    assert.deepEqual(first.facts.files.map((file) => [file.path, file.add]), [["huge.ts", 4000], ["small.ts", 1]], "counts come from the full diff");
+    assert.match(first.patches.find((patch) => patch.path === "huge.ts")!.patch, /too large: \+4000 −0 lines/);
+    assert.match(first.patches.find((patch) => patch.path === "small.ts")!.patch, /export const small/);
+    const again = await sourcesFromTurns(root, [], false, sources);
+    assert.deepEqual(again.patches, first.patches, "fitting is stable, so freshness sees no change");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("fitting leaves small changes untouched and refuses only when even line counts do not fit", () => {
+  const patches = [{ path: "a.ts", source: "pending", patch: "+a\n" }, { path: "b.ts", source: "pending", patch: "+b\n" }];
+  assert.deepEqual(fitPatches(patches, 1000), { patches, omitted: [] });
+  assert.throws(() => fitPatches(patches, 4), /too many files for one story/);
 });
 
 test("picked commits are explained oldest first without the conversation, and bad picks are refused", async () => {

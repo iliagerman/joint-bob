@@ -74,7 +74,8 @@ export async function discoverConversationFiles(project: ProjectRecord, cwd: str
   return { paths, lastHarness };
 }
 
-export async function pendingReviewDiff(cwd: string, paths: string[]): Promise<{ diff: string; fingerprint: string; changes: GitFileChange[]; patches: Record<string, string> }> {
+/** `complete: false` returns every selected patch even past the review limit, for callers that fit it themselves. */
+export async function pendingReviewDiff(cwd: string, paths: string[], { complete = true } = {}): Promise<{ diff: string; fingerprint: string; changes: GitFileChange[]; patches: Record<string, string> }> {
   const status = await gitStatus(cwd);
   const selected = new Set(paths);
   const changes = [...status.staged, ...status.unstaged, ...status.untracked].filter(({ path }) => selected.has(path));
@@ -83,9 +84,9 @@ export async function pendingReviewDiff(cwd: string, paths: string[]): Promise<{
   let diffLength = 0;
   for (const change of changes) {
     const result = await gitFileDiff(cwd, change.path, { staged: change.staged, untracked: change.kind === "untracked" });
-    if (result.truncated) throw new GitReviewError(413, `Diff too large to review completely: ${change.path}`);
+    if (complete && result.truncated) throw new GitReviewError(413, `Diff too large to review completely: ${change.path}`);
     diffLength += result.patch.length;
-    if (diffLength > 95_000) throw new GitReviewError(413, "Selected diff exceeds the review limit; choose fewer files");
+    if (complete && diffLength > 95_000) throw new GitReviewError(413, "Selected diff exceeds the review limit; choose fewer files");
     patches.push(result.patch);
     byPath[change.path] = [byPath[change.path], result.patch].filter(Boolean).join("\n");
   }

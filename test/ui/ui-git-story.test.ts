@@ -122,6 +122,7 @@ test("Story tab writes a story out of band, explains it in four sections, and op
   await page.getByTestId("git-review-generate").click();
   await page.getByTestId("git-story-title").waitFor();
   assert.equal(await page.getByTestId("git-story-title").innerText(), "Greeting with an empty-name error");
+  assert.equal(await page.getByTestId("git-story-omitted").count(), 0, "a story that fits names no left-out diffs");
   const { conversationId, ...request } = posts.at(-1) as { conversationId: string };
   assert.ok(conversationId);
   assert.deepEqual(request, { scope: "conversation", paths: ["app.ts", "app.test.ts"], includeCommits: true, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" });
@@ -200,7 +201,7 @@ test("Story tab explains commits picked from past pushes or history, without the
   const posts: Array<Record<string, unknown>> = [];
   const picked = {
     ...saved,
-    facts: { conversation: false, turns: [], commits: [{ hash: history[1].hash, shortHash: history[1].shortHash, subject: history[1].subject, turn: 0, date: history[1].date }, { hash: history[0].hash, shortHash: history[0].shortHash, subject: history[0].subject, turn: 0, date: history[0].date }], files: facts.files.map((file) => ({ ...file, where: [history[1].shortHash] })) },
+    facts: { conversation: false, turns: [], commits: [{ hash: history[1].hash, shortHash: history[1].shortHash, subject: history[1].subject, turn: 0, date: history[1].date }, { hash: history[0].hash, shortHash: history[0].shortHash, subject: history[0].subject, turn: 0, date: history[0].date }], files: facts.files.map((file) => ({ ...file, where: [history[1].shortHash] })), omitted: ["app.ts"] },
     story: { ...written, timeline: [], implementation: { ...written.implementation, decisions: [{ ...written.implementation.decisions[0], turn: null }] } },
     sources: { kind: "commits", scope: "all", pendingPaths: [], includeCommits: false, commits: [history[0].hash, history[1].hash] },
   };
@@ -250,6 +251,8 @@ test("Story tab explains commits picked from past pushes or history, without the
 
   await page.getByTestId("git-story-pick-generate").click();
   await page.getByTestId("git-story-title").waitFor();
+  assert.equal(await page.getByTestId("git-story-omitted").innerText(), " · 1 diff too large to read");
+  assert.match(await page.getByTestId("git-story-omitted").getAttribute("title") ?? "", /app\.ts/);
   const { conversationId, ...request } = posts.at(-1) as { conversationId: string };
   assert.ok(conversationId);
   assert.deepEqual(request, { source: "commits", commits: [history[0].hash, history[3].hash], scope: "all", paths: [], includeCommits: false, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" });

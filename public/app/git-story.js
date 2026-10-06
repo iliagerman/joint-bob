@@ -337,6 +337,7 @@ function storyHead() {
       h("span", { class: "gs-del" }, `−${sum(facts.files.map((file) => file.del)).toLocaleString()}`), " · ",
       storyFromCommits() ? `${plural(facts.commits.length, "picked commit")}` : `${plural(facts.commits.length, "commit")} + ${plural(pending, "pending file")}`,
       facts.conversation ? ` · ${facts.turns.length} turns` : "",
+      facts.omitted?.length ? h("span", { class: "gs-del", "data-testid": "git-story-omitted", title: `The reviewer saw only line counts for: ${facts.omitted.join(", ")}` }, ` · ${plural(facts.omitted.length, "diff")} too large to read`) : "",
       ` · ${thread.harnessId} · ${thread.modelId} · ${thread.thinkingLevel} · written ${relativeTime(thread.createdAt)}`));
 }
 

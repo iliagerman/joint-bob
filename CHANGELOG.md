@@ -3,28 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## 2.45.1 — 2026-10-05
+## 2.45.2 — 2026-10-06
 
-- Project type selector now wraps properly on smaller screens.
-
-## 2.45.0 — 2026-10-05
-
-- Git review now defaults to medium effort level instead of xhigh, with saved preferences taking priority.
-- Git review model picker now groups models by provider for easier selection and to keep models with the same ID from different providers distinct.
-
-## 2.44.0 — 2026-10-05
-
-- Users can now log in to any node in a shared cluster. Cluster members automatically sync user credentials so sign-on works across the network.
-- Cross-cluster logins have restricted access: no terminal, settings, or secrets management (shared secrets work for agents).
-- Users on cluster peer nodes see only projects shared with their home node.
-
-## 2.43.0 — 2026-10-05
-
-- GitHub accounts can now authenticate with a GitHub App installation instead of an API token.
-
-## 2.42.0 — 2026-10-05
-
-- Scheduled tasks can now repeat every 1 to 1,440 minutes.
+- Story tab now shows line counts for oversized diffs instead of refusing to generate the explanation.
 
 ## 2.41.0 — 2026-10-05
 
