@@ -306,13 +306,16 @@ function ownershipEvent(record: ConversationOwnership, originNodeId: string) {
   };
 }
 
+// Peers reached through a Tailscale relay take several seconds per request.
+const TAKEOVER_PEER_TIMEOUT_MS = 15_000;
+
 class OwnershipAcknowledgementError extends Error {}
 
 async function applyOwnershipToPeer(peer: ClusterPeer, record: ConversationOwnership, originNodeId: string): Promise<OwnershipApplyResult> {
   const response = await runtimeFetch(`${peer.url}/api/cluster/sessions/ownership/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ record, originNodeId }), signal: AbortSignal.timeout(3_000),
+    body: JSON.stringify({ record, originNodeId }), signal: AbortSignal.timeout(TAKEOVER_PEER_TIMEOUT_MS),
   });
   const result = await response.json() as OwnershipApplyResult & { error?: string };
   if (!response.ok) throw new OwnershipAcknowledgementError(result.error || `Ownership acknowledgement failed from ${peer.name}`);
@@ -382,16 +385,17 @@ async function assertDraftTakeoverReady(project: ProjectRecord, matching: Sessio
   const ownership = await getConversationOwnership(matching.harnessId, matching.id);
   if (!ownership || ownership.ownerNodeId === localId) return;
   const owner = peers.find((peer) => peer.id === ownership.ownerNodeId);
-  if (!owner) throw new TaskWorktreeError("Conversation owner is unavailable; cannot verify transcript synchronization");
+  if (!owner) throw new TaskWorktreeError("Conversation owner is not a peer for this project; cannot verify transcript synchronization");
   const url = new URL("/api/cluster/sessions/transcript-presence", owner.url);
   url.searchParams.set("projectId", project.id);
   url.searchParams.set("engine", matching.harnessId);
   url.searchParams.set("sessionId", matching.id);
   let response: globalThis.Response;
   try {
-    response = await runtimeFetch(url, { signal: AbortSignal.timeout(3_000) });
-  } catch {
-    throw new TaskWorktreeError("Conversation owner is unavailable; cannot verify transcript synchronization");
+    response = await runtimeFetch(url, { signal: AbortSignal.timeout(TAKEOVER_PEER_TIMEOUT_MS) });
+  } catch (error) {
+    if (!peerIsUnreachable(error)) throw error;
+    throw new TaskWorktreeError(`${owner.name} did not answer the transcript check; cannot verify transcript synchronization`);
   }
   if (!response.ok) throw new Error(`Transcript presence check failed on ${owner.name}`);
   const presence = z.object({ found: z.boolean(), hasTranscript: z.boolean() }).parse(await response.json());
@@ -444,7 +448,7 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
     url.searchParams.set("engine", engine); url.searchParams.set("sessionId", sessionId);
     let body: unknown;
     try {
-      const reply = await runtimeFetch(url, { signal: AbortSignal.timeout(3_000) });
+      const reply = await runtimeFetch(url, { signal: AbortSignal.timeout(TAKEOVER_PEER_TIMEOUT_MS) });
       if (!reply.ok) {
         const refusal = await reply.json().catch(() => ({})) as { error?: string };
         throw new TaskWorktreeError(`Cannot verify queue ownership on ${peer.name} (${reply.status}${refusal.error ? `: ${refusal.error}` : ""})`);
