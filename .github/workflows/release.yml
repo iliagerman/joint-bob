@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.publish.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,11 +27,42 @@ jobs:
         id: version
         run: |
           node scripts/prepare-release.mjs --metadata-only
+      # Skips the test suite for a version that is already published; the release job checks again under its lock.
+      - name: Decide whether to publish
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/prepare-release.mjs
+
+  test:
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # A newer push replaces this run's tests instead of queueing a second full suite behind them.
+    concurrency:
+      group: test-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Install native synchronization test dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends syncthing
+      # The agent CLIs under bin/ run from dist, and tests run them.
+      - run: npm run build
+      - name: Run test suite
+        timeout-minutes: 30
+        run: node scripts/ci-test.mjs
 
   release:
-    needs: version
+    needs: [version, test]
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 20
     permissions:
       contents: write
       id-token: write
@@ -49,25 +81,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           node scripts/prepare-release.mjs
+      # Packing builds dist (prepack), which needs the dev dependencies.
       - run: npm ci
         if: steps.release.outputs.publish == 'true'
-      - run: npm run typecheck
-        if: steps.release.outputs.publish == 'true'
-      - name: Install native synchronization test dependency
-        if: steps.release.outputs.publish == 'true'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends syncthing
-      # The agent CLIs under bin/ run from dist, and tests run them.
-      - run: npm run build
-        if: steps.release.outputs.publish == 'true'
-      - name: Run full test suite
-        if: steps.release.outputs.publish == 'true'
-        timeout-minutes: 60
-        run: |
-          for attempt in 1 2 3; do
-            npm run test:file -- --test-concurrency=2 test/*.test.ts && exit 0
-            [ "$attempt" -eq 3 ] && exit 1
-            echo "Full suite attempt $attempt failed; retrying"
-          done
       - name: Pack and smoke test
         if: steps.release.outputs.publish == 'true'
         run: |

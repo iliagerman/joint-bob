@@ -20,6 +20,11 @@ disposable configuration and data, loopback listeners, and discovery, relays,
 NAT traversal, and automatic upgrades disabled. They stop those instances on
 cleanup; they never use a running production Syncthing service.
 
+CI runs `node scripts/ci-test.mjs`: the whole suite once, four files at a time, then
+only the files that failed, one at a time and once. A test that passes alone but not
+under load still needs fixing; the rerun only keeps it from costing another full pass.
+Pass file paths to run a subset the same way: `node scripts/ci-test.mjs test/a.test.ts`.
+
 `npm run test:ui` points `HOME` at a throwaway directory, but `test/setup.mjs` pins
 `PLAYWRIGHT_BROWSERS_PATH` to the real cache before it does, so a downloaded Chromium
 stays reachable. A node with no browser at all still has to be told where one is:

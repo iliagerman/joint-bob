@@ -3,7 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.54.0 — 2026-10-07
+
+- Agents and scheduled tasks can now create isolated worktrees, start conversations within them, and open pull requests directly from changes, enabling automated issue discovery and fixing.
+- Worktrees are provisioned with the project's .env files and symlinks to installed dependencies, without syncing builds or binaries.
+- Worktree scanning no longer follows symlinks.
 
 ## 2.53.0 — 2026-10-07
 
