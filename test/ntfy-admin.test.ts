@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import test, { after, before, beforeEach } from "node:test";
 import { authenticate, createAdministrator, type AuthSession } from "../src/auth.js";
 import { ntfyAgentEnvironment } from "../src/ntfy-agent.js";
-import { addNtfyService, deleteNtfyService, getNtfyService, listNtfyServices } from "../src/ntfy.js";
+import { addNtfyService, deleteNtfyService, getNtfyService, importNewerNtfyService, listNtfyServices } from "../src/ntfy.js";
 
 const ADMIN = "tk_admin_secret";
 let bridge: Server, bridgeUrl: string, session: AuthSession;
@@ -32,6 +32,11 @@ function fakeNtfy() {
       if (url.pathname.endsWith("/json")) {
         if (!admin) return reply(403, { code: 40301, http: 403, error: "forbidden" });
         return reply(200, messages.map((message) => JSON.stringify(message)).join("\n") + "\n");
+      }
+      if (url.pathname === "/v1/account") {
+        if (admin) return reply(200, { username: "admin", role: "admin" });
+        if (request.headers.authorization === "Bearer tk_phone") return reply(200, { username: "phone", role: "user" });
+        return reply(401, { code: 40101, http: 401, error: "unauthorized" });
       }
       if (url.pathname === "/v1/users" && request.method === "POST") return reply(404, { code: 40401, http: 404, error: "page not found" });
       if (!url.pathname.startsWith("/v1/users")) return reply(404, { code: 40401, http: 404, error: "page not found" });
@@ -147,7 +152,12 @@ test("Settings routes replace the token and manage topics, messages and users", 
   try {
     assert.equal((await settings("GET", `${base}/topics`)).status, 403);
     assert.equal((await settings("PUT", base, { token: ADMIN }, false)).status, 403);
-    assert.deepEqual((await settings("PUT", base, { token: ADMIN })).body, { service: { id: service.id, name: "Home", url: ntfyUrl, hasToken: true, isDefault: true } });
+    const unknown = await settings("PUT", base, { token: "tk_never_created" });
+    assert.equal(unknown.status, 400);
+    assert.match(unknown.body.error, /does not recognize this token/);
+    assert.equal(getNtfyService(service.id)!.token, "tk_publish_only", "a token the server rejects is not saved");
+    assert.deepEqual((await settings("PUT", base, { token: "tk_phone" })).body.account, { status: "user", username: "phone" });
+    assert.deepEqual((await settings("PUT", base, { token: ADMIN })).body, { service: { id: service.id, name: "Home", url: ntfyUrl, hasToken: true, isDefault: true }, sharing: { includeTwins: false, clusterIds: [], pendingNodes: 0 }, results: [], account: { status: "admin", username: "admin" } });
     assert.equal(getNtfyService(service.id)!.token, ADMIN);
 
     assert.equal((await settings("GET", `${base}/topics`)).body.topics.length, 2);
@@ -164,4 +174,14 @@ test("Settings routes replace the token and manage topics, messages and users", 
     assert.equal(getNtfyService(service.id)!.token, ADMIN, "an omitted token keeps the stored one");
     assert.doesNotMatch(JSON.stringify((await settings("GET", "/api/ntfy/services")).body), new RegExp(ADMIN));
   } finally { await closeNtfy(); }
+});
+
+test("a pulled ntfy service replaces only an older local copy", async () => {
+  await closeNtfy();
+  const service = addNtfyService("Pulled", ntfyUrl, "tk_local");
+  const stored = getNtfyService(service.id)!;
+  assert.equal(importNewerNtfyService({ ...stored, token: "tk_stale", updatedAt: stored.updatedAt! - 1 }), false);
+  assert.equal(getNtfyService(service.id)!.token, "tk_local", "an older copy never overwrites a newer local edit");
+  assert.equal(importNewerNtfyService({ ...stored, token: "tk_newer", updatedAt: stored.updatedAt! + 1 }), true);
+  assert.equal(getNtfyService(service.id)!.token, "tk_newer");
 });

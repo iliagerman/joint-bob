@@ -8,7 +8,6 @@ import { state } from "./state.js";
 /** The dialog is shared, so it remembers which conversation it was opened for. */
 let pendingNtfySession = null;
 const ntfyClusterNames = new Map();
-let pendingShareRefresh;
 
 function serviceButton(text, testid, className, action) {
   const button = document.createElement("button");
@@ -72,7 +71,7 @@ async function shareNtfyService(service) {
       const pending = results.filter((result) => !result.ok).length;
       const delivered = results.length - pending;
       toast(pending
-        ? `Sharing is on. Delivered to ${delivered} node${delivered === 1 ? "" : "s"}; ${pending} offline node${pending === 1 ? "" : "s"} will receive it when reachable`
+        ? `Sharing is on. Delivered to ${delivered} node${delivered === 1 ? "" : "s"}; ${pending} offline node${pending === 1 ? "" : "s"} will get it when back online`
         : `Sharing is on${results.length ? `; delivered to ${results.length} node${results.length === 1 ? "" : "s"}` : ""}`, pending ? 8000 : 3000);
       await loadNtfyServicesPanel();
     } catch (error) { toast(error.message, 8000); }
@@ -94,8 +93,8 @@ function renderNtfyService(service) {
   if (pending) {
     const badge = document.createElement("span");
     badge.className = "ntfy-share-pending"; badge.setAttribute("role", "status"); badge.dataset.testid = "ntfy-share-pending";
-    badge.title = "Offline nodes receive the service automatically when they are reachable";
-    badge.textContent = ` Delivering to ${pending} node${pending === 1 ? "" : "s"}…`;
+    badge.title = "Offline nodes ask for the service when they start, and this node retries when it restarts";
+    badge.textContent = ` ${pending} offline node${pending === 1 ? "" : "s"} will get it when back online`;
     label.append(badge);
   }
   const actions = document.createElement("span");
@@ -134,11 +133,6 @@ export async function loadNtfyServicesPanel() {
     }
     elements.ntfyServiceList.replaceChildren(...services.map(renderNtfyService));
     syncNtfyManager(services);
-    clearTimeout(pendingShareRefresh);
-    // Keep the pending badge live while the list is on screen; the server retries delivery itself.
-    if (services.some((service) => service.sharing?.pendingNodes)) {
-      pendingShareRefresh = setTimeout(() => { if (elements.ntfyServiceList.checkVisibility?.() ?? elements.ntfyServiceList.isConnected) void loadNtfyServicesPanel(); }, 15_000);
-    }
   } catch (error) { toast(error.message, 8000); }
 }
 

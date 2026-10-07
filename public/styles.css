@@ -1921,6 +1921,7 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 /* Inline ntfy server management. Every list is paginated, so the section never needs its own scrollbar. */
 fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 .ntfy-manage { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); }
+.ntfy-service-add:not([hidden]) { display: contents; }
 .ntfy-manage[hidden] { display: none; }
 .ntfy-manage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ntfy-manage-heading, .ntfy-manage-subheading { margin: 0; color: var(--text); font-size: 13px; }

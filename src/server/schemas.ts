@@ -334,6 +334,8 @@ export const sharedNtfyServiceSchema = ntfyServiceSchema.extend({
   id: z.string().uuid(),
   token: z.string().max(500),
 }).strict();
+/** A service a peer returns when this node asks what it shares with it. */
+export const pulledNtfyService = sharedNtfyServiceSchema.extend({ updatedAt: z.number().int().nonnegative() }).strict();
 export const sessionNtfySchema = z.object({
   sessionPath: z.string().trim().min(1).max(2000),
   enabled: z.boolean(),

@@ -8,6 +8,8 @@ export interface NtfyService {
   name: string;
   url: string;
   token: string;
+  /** Milliseconds; decides which copy wins when a returning node pulls shares. Absent on services saved before 2.50. */
+  updatedAt?: number;
 }
 
 /** What the UI sees: the token itself never leaves the node. */
@@ -54,19 +56,28 @@ export function getNtfyService(id: string): NtfyService | undefined {
 
 export function addNtfyService(name: string, url: string, token: string): NtfyServiceView {
   const config = readConfig();
-  const service: NtfyService = { id: randomUUID(), name, url: url.replace(/\/+$/, ""), token };
+  const service: NtfyService = { id: randomUUID(), name, url: url.replace(/\/+$/, ""), token, updatedAt: Date.now() };
   const defaultServiceId = config.defaultServiceId ?? service.id;
   writeConfig({ services: [...config.services, service], defaultServiceId });
   return view(service, defaultServiceId);
 }
 
+/** A push is always fresh; a pulled copy carries the sender's updatedAt, so use importNewerNtfyService for pulls. */
 export function importNtfyService(service: NtfyService): NtfyServiceView {
   const config = readConfig();
-  const imported = { ...service, url: service.url.replace(/\/+$/, "") };
+  const imported = { ...service, url: service.url.replace(/\/+$/, ""), updatedAt: service.updatedAt ?? Date.now() };
   const services = [...config.services.filter(({ id }) => id !== service.id), imported];
   const defaultServiceId = config.defaultServiceId ?? service.id;
   writeConfig({ services, defaultServiceId });
   return view(imported, defaultServiceId);
+}
+
+/** Imports a pulled copy unless this node already holds the same or a newer version. */
+export function importNewerNtfyService(service: NtfyService & { updatedAt: number }): boolean {
+  const current = getNtfyService(service.id);
+  if (current && (current.updatedAt ?? 0) >= service.updatedAt) return false;
+  importNtfyService(service);
+  return true;
 }
 
 /** An omitted token keeps the stored one; an empty string clears it. */
@@ -74,7 +85,7 @@ export function updateNtfyService(id: string, changes: { name?: string; url?: st
   const config = readConfig();
   const current = config.services.find((service) => service.id === id);
   if (!current) return undefined;
-  const updated: NtfyService = { ...current, ...(changes.name === undefined ? {} : { name: changes.name }), ...(changes.url === undefined ? {} : { url: changes.url.replace(/\/+$/, "") }), ...(changes.token === undefined ? {} : { token: changes.token }) };
+  const updated: NtfyService = { ...current, ...(changes.name === undefined ? {} : { name: changes.name }), ...(changes.url === undefined ? {} : { url: changes.url.replace(/\/+$/, "") }), ...(changes.token === undefined ? {} : { token: changes.token }), updatedAt: Date.now() };
   writeConfig({ ...config, services: config.services.map((service) => service.id === id ? updated : service) });
   return view(updated, config.defaultServiceId);
 }

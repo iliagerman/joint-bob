@@ -3,12 +3,18 @@ import type { DatabaseSync } from "node:sqlite";
 import { getClusterNode } from "../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { getNtfyService, type NtfyService } from "../ntfy.js";
+import { getNtfyService, importNewerNtfyService, type NtfyService } from "../ntfy.js";
 import { settingsDatabase } from "../settings-store.js";
 import { replicationPeers, signedPeerPost } from "./replication-v2.js";
+import { pulledNtfyService } from "./schemas.js";
+
+/**
+ * ntfy service sharing is event driven: nothing runs on a timer. The sharing node pushes
+ * once when a service is shared or edited; a node that was offline asks its peers for
+ * what they share with it when it starts, and also pushes its own undelivered shares.
+ */
 
 const TWINS = "twins";
-const RETRY_MS = 15_000;
 
 export interface NtfySharing { includeTwins: boolean; clusterIds: string[] }
 export interface NtfySharingView extends NtfySharing { pendingNodes: number }
@@ -59,61 +65,95 @@ export function forgetNtfyServiceSharing(serviceId: string): void {
 
 const fingerprint = (service: NtfyService): string => createHash("sha256").update(JSON.stringify([service.id, service.name, service.url, service.token])).digest("hex");
 
-async function deliverService(serviceId: string, force: boolean): Promise<NtfyShareResult[]> {
-  const service = getNtfyService(serviceId);
-  if (!service) { forgetNtfyServiceSharing(serviceId); return []; }
+/** Older receivers validate the push strictly, so it carries only the original fields. */
+const pushPayload = ({ id, name, url, token }: NtfyService) => ({ id, name, url, token });
+
+async function shareTargets(serviceId: string): Promise<Set<string>> {
   const sharing = ntfyServiceSharing(serviceId);
   const cluster = await clusterV2Database(), local = await getClusterNode();
-  const peers = replicationPeers(cluster, local.id);
   const targets = new Set<string>();
-  if (sharing.includeTwins) for (const peer of peers) if (isTrustedTwin(cluster, local.id, peer.nodeId)) targets.add(peer.nodeId);
+  if (sharing.includeTwins) for (const peer of replicationPeers(cluster, local.id)) if (isTrustedTwin(cluster, local.id, peer.nodeId)) targets.add(peer.nodeId);
   for (const clusterId of sharing.clusterIds) {
     const members = listSharingClusterMembers(cluster, clusterId);
     if (!members.some((member) => member.nodeId === local.id)) continue;
     for (const member of members) if (member.nodeId !== local.id) targets.add(member.nodeId);
   }
-  const db = database(), hash = fingerprint(service), now = Date.now();
-  const state = db.prepare("SELECT delivered_hash AS deliveredHash, attempted_at AS attemptedAt FROM ntfy_service_deliveries WHERE service_id=? AND peer_id=?");
-  const record = db.prepare(`INSERT INTO ntfy_service_deliveries VALUES (?, ?, ?, ?, ?) ON CONFLICT(service_id, peer_id) DO UPDATE SET
-    delivered_hash=COALESCE(excluded.delivered_hash, delivered_hash), attempted_at=excluded.attempted_at, last_error=excluded.last_error`);
-  const due = [...targets].filter((peerId) => {
-    const row = state.get(serviceId, peerId) as { deliveredHash: string | null; attemptedAt: number } | undefined;
-    return row?.deliveredHash !== hash && (force || !row || now - row.attemptedAt >= RETRY_MS);
-  });
+  return targets;
+}
+
+function recordDelivery(serviceId: string, peerId: string, hash: string | null, error: string | null): void {
+  database().prepare(`INSERT INTO ntfy_service_deliveries VALUES (?, ?, ?, ?, ?) ON CONFLICT(service_id, peer_id) DO UPDATE SET
+    delivered_hash=COALESCE(excluded.delivered_hash, delivered_hash), attempted_at=excluded.attempted_at, last_error=excluded.last_error`).run(serviceId, peerId, hash, Date.now(), error);
+}
+
+/** One push to every target still lacking the current version. Unreachable peers stay pending until one side restarts. */
+async function deliverService(serviceId: string): Promise<NtfyShareResult[]> {
+  const service = getNtfyService(serviceId);
+  if (!service) { forgetNtfyServiceSharing(serviceId); return []; }
+  const cluster = await clusterV2Database(), local = await getClusterNode();
+  const peers = replicationPeers(cluster, local.id);
+  const hash = fingerprint(service);
+  const delivered = database().prepare("SELECT delivered_hash AS deliveredHash FROM ntfy_service_deliveries WHERE service_id=? AND peer_id=?");
+  const due = [...await shareTargets(serviceId)].filter((peerId) => (delivered.get(serviceId, peerId) as { deliveredHash: string | null } | undefined)?.deliveredHash !== hash);
   // Parallel, so one offline node's timeout does not hold up the others.
-  const results = await Promise.all(due.map(async (peerId): Promise<NtfyShareResult> => {
+  return Promise.all(due.map(async (peerId): Promise<NtfyShareResult> => {
     const peer = peers.find((candidate) => candidate.nodeId === peerId);
     if (!peer) {
-      record.run(serviceId, peerId, null, now, "Node is not reachable yet");
+      recordDelivery(serviceId, peerId, null, "Node is not reachable yet");
       return { peerId, ok: false, error: "Node is not reachable yet" };
     }
     try {
-      await signedPeerPost(peer, "/api/cluster/v2/ntfy/services", service);
-      record.run(serviceId, peerId, hash, Date.now(), null);
+      await signedPeerPost(peer, "/api/cluster/v2/ntfy/services", pushPayload(service));
+      recordDelivery(serviceId, peerId, hash, null);
       return { peerId, ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Share failed";
-      record.run(serviceId, peerId, null, Date.now(), message);
+      recordDelivery(serviceId, peerId, null, message);
       return { peerId, ok: false, error: message };
     }
   }));
-  return results;
 }
 
-/** Delivers one service right away, ignoring the retry backoff. */
+/** Pushes a service now, after it is shared or edited. A service nobody shares from here sends nothing. */
 export function shareNtfyServiceNow(serviceId: string): Promise<NtfyShareResult[]> {
-  return deliverService(serviceId, true);
+  return deliverService(serviceId);
 }
 
-let flushing = false;
-/** Retries undelivered shares, reaches members that joined a shared cluster later, and re-sends changed services. */
-export async function flushNtfyServiceShares(): Promise<void> {
-  if (flushing) return;
-  flushing = true;
+/** Answers a returning peer: every service this node shares with it, marked delivered on the way out. */
+export async function ntfyServicesSharedWith(peerId: string): Promise<Array<NtfyService & { updatedAt: number }>> {
+  const ids = (database().prepare("SELECT DISTINCT service_id AS id FROM ntfy_service_shares").all() as Array<{ id: string }>).map((row) => row.id);
+  const services: Array<NtfyService & { updatedAt: number }> = [];
+  for (const id of ids) {
+    const service = getNtfyService(id);
+    if (!service || !(await shareTargets(id)).has(peerId)) continue;
+    services.push({ ...pushPayload(service), updatedAt: service.updatedAt ?? 0 });
+    recordDelivery(id, peerId, fingerprint(service), null);
+  }
+  return services;
+}
+
+let syncing = false;
+/** Runs when the node starts or joins a cluster: pull what peers share with this node, then push this node's pending shares. */
+export async function syncNtfyServiceShares(): Promise<void> {
+  if (syncing) return;
+  syncing = true;
   try {
+    const cluster = await clusterV2Database(), local = await getClusterNode();
+    await Promise.all(replicationPeers(cluster, local.id).map(async (peer) => {
+      try {
+        const reply = await signedPeerPost(peer, "/api/cluster/v2/ntfy/services/pull", {}) as { services?: unknown };
+        for (const service of Array.isArray(reply.services) ? reply.services : []) {
+          const parsed = pulledNtfyService.safeParse(service);
+          if (parsed.success) importNewerNtfyService(parsed.data);
+        }
+      } catch (error) {
+        // An offline or older peer has nothing to say now; it pushes to this node when it next starts.
+        console.warn(`ntfy share pull from ${peer.nodeId} skipped: ${error instanceof Error ? error.message : error}`);
+      }
+    }));
     const services = (database().prepare("SELECT DISTINCT service_id AS id FROM ntfy_service_shares").all() as Array<{ id: string }>).map((row) => row.id);
     for (const id of services) {
-      for (const result of await deliverService(id, false)) if (!result.ok) console.warn(`ntfy service share to ${result.peerId} pending: ${result.error}`);
+      for (const result of await deliverService(id)) if (!result.ok) console.warn(`ntfy service share to ${result.peerId} pending: ${result.error}`);
     }
-  } finally { flushing = false; }
+  } finally { syncing = false; }
 }

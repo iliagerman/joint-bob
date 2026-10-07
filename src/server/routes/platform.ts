@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import type { AuthSession } from "../../auth.js";
 import { getHarnessRuntime, listHarnesses, listHarnessModels } from "../../harnesses.js";
 import { addNtfyService, deleteNtfyService, getNtfyService, importNtfyService, listNtfyServices, setDefaultNtfyService, updateNtfyService } from "../../ntfy.js";
-import { createNtfyUser, deleteNtfyTopicAccess, deleteNtfyUser, listNtfyTopics, listNtfyUsers, ntfyPermission, ntfySince, ntfyTopicName, ntfyTopicPattern, ntfyUsername, readNtfyMessages, setNtfyTopicAccess } from "../../ntfy-admin.js";
+import { checkNtfyToken, createNtfyUser, deleteNtfyTopicAccess, deleteNtfyUser, listNtfyTopics, listNtfyUsers, ntfyPermission, ntfySince, ntfyTopicName, ntfyTopicPattern, ntfyUsername, readNtfyMessages, setNtfyTopicAccess } from "../../ntfy-admin.js";
 import { isHarnessId, type HarnessId } from "../../types.js";
 import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "../../push.js";
 import { sendError } from "../http-auth.js";
@@ -12,7 +12,7 @@ import { app } from "../state.js";
 import { getClusterNode } from "../../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { forgetNtfyServiceSharing, ntfyServiceSharingView, setNtfyServiceSharing, shareNtfyServiceNow } from "../ntfy-share.js";
+import { forgetNtfyServiceSharing, ntfyServicesSharedWith, ntfyServiceSharingView, setNtfyServiceSharing, shareNtfyServiceNow } from "../ntfy-share.js";
 import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
 import { z } from "zod";
 import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema, savedNtfyServer } from "../../ntfy-publish.js";
@@ -72,12 +72,19 @@ app.post("/api/ntfy/services", (request, response, next) => {
   }
 });
 
-app.put("/api/ntfy/services/:id", (request, response, next) => {
+/** A new token is checked against the server first: one it does not recognize is never saved. */
+app.put("/api/ntfy/services/:id", async (request, response, next) => {
   try {
     const payload = ntfyServiceSchema.partial().parse(request.body);
+    const current = getNtfyService(request.params.id);
+    if (!current) { sendError(response, 404, "ntfy service not found"); return; }
+    const account = payload.token ? await checkNtfyToken({ url: (payload.url ?? current.url).replace(/\/+$/, ""), token: payload.token }) : undefined;
+    if (account?.status === "rejected") { sendError(response, 400, "The ntfy server does not recognize this token (HTTP 401), so it was not saved. Create it on the server with `ntfy token add <admin user>`."); return; }
     const service = updateNtfyService(request.params.id, payload);
     if (!service) { sendError(response, 404, "ntfy service not found"); return; }
-    response.json({ service });
+    // Nodes this one shares the service with get the edit now; offline ones when either side restarts.
+    const results = await shareNtfyServiceNow(request.params.id);
+    response.json({ service, sharing: ntfyServiceSharingView(request.params.id), results, ...(account ? { account } : {}) });
   } catch (error) { next(error); }
 });
 
@@ -145,6 +152,14 @@ app.post("/api/cluster/v2/ntfy/services", async (request, response, next) => {
       listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === sender));
     if (!isTrustedTwin(db, local.id, sender) && !sharesCluster) { sendError(response, 403, "ntfy servers can only be shared between twins or cluster members"); return; }
     response.status(201).json({ service: importNtfyService(sharedNtfyServiceSchema.parse(request.body)) });
+  } catch (error) { next(error); }
+});
+
+/** A node that just started asks each peer what it shares with it; it was not there for the pushes. */
+app.post("/api/cluster/v2/ntfy/services/pull", async (_request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    response.json({ services: await ntfyServicesSharedWith(response.locals.machineNodeId as string) });
   } catch (error) { next(error); }
 });
 

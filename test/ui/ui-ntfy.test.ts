@@ -137,7 +137,7 @@ test("ntfy settings manage topics, messages, users and the admin token inline", 
       if (!path.startsWith(base)) return nativeFetch(url, options);
       server.requests.push({ path: full, method, body });
       const rest = path.slice(base.length);
-      if (rest === "" && method === "PUT") return Promise.resolve(Response.json({ service: { id: "00000000-0000-4000-8000-000000000001", name: "Home", url: "https://ntfy.home", hasToken: true, isDefault: true } }));
+      if (rest === "" && method === "PUT") return Promise.resolve(Response.json({ service: { id: "00000000-0000-4000-8000-000000000001", name: "Home", url: "https://ntfy.home", hasToken: true, isDefault: true }, account: { status: "admin", username: "root" } }));
       if (rest === "/topics" && method === "GET") {
         return Promise.resolve(Response.json({ topics: Object.keys(server.topics).sort().map((topic) => ({ topic, grants: server.topics[topic] })) }));
       }
@@ -197,6 +197,7 @@ test("ntfy settings manage topics, messages, users and the admin token inline", 
   await click("ntfy-service-manage-button");
   await until(async () => (await sub("ntfy-manage-topic-row").count()) === 2, "topics render");
   assert.match((await sub("ntfy-manage-heading").textContent()) ?? "", /Home/);
+  assert.equal(await sub("ntfy-service-add-form").evaluate((node: HTMLElement) => node.hidden), true, "the add-service token field is hidden while managing");
   assert.deepEqual(await texts("ntfy-manage-topic-name"), ["alerts", "home-*"]);
   const alerts = sub("ntfy-manage-topic-row").nth(0);
   assert.deepEqual(await alerts.getByTestId("ntfy-manage-grant-user").allTextContents(), ["everyone", "alice"]);
@@ -229,6 +230,7 @@ test("ntfy settings manage topics, messages, users and the admin token inline", 
   await click("ntfy-manage-topic-messages-button", sub("ntfy-manage-topic-row").nth(0));
   await until(async () => (await sub("ntfy-manage-message-row").count()) === 4, "first message page renders");
   assert.match((await sub("ntfy-manage-messages-heading").textContent()) ?? "", /alerts/);
+  assert.deepEqual(await sub("ntfy-manage-read-topic-options").evaluate((list: HTMLDataListElement) => [...list.options].map((option) => option.value)), ["alerts"], "pulled concrete topics are suggested");
   const firstPage = await texts("ntfy-manage-message-body");
   assert.deepEqual(firstPage, ["message 8", "message 7", "message 6", "message 5"]);
   assert.equal(await sub("ntfy-manage-message-title").first().textContent(), "Disk full");
@@ -259,10 +261,14 @@ test("ntfy settings manage topics, messages, users and the admin token inline", 
   // Replace the admin token.
   await click("ntfy-manage-tab-token");
   await setValue("ntfy-manage-token-input", "tk_admin");
+  const topicLoads = async () => (await page.evaluate(() => (window as unknown as { ntfyServer: { requests: RecordedRequest[] } }).ntfyServer.requests) as RecordedRequest[])
+    .filter((request) => request.method === "GET" && request.path === `${base}/topics`).length;
+  const loadsBeforeSave = await topicLoads();
   await click("ntfy-manage-token-save-button");
   await until(async () => (await mutations()).length === 4, "token PUT sent");
   assert.deepEqual(await lastMutation(), { path: base, method: "PUT", body: { token: "tk_admin" } });
   await until(async () => (await sub("ntfy-manage-token-input").inputValue()) === "", "token input is cleared");
+  await until(async () => (await topicLoads()) > loadsBeforeSave, "topics reload with the new token");
   assert.equal(await sub("ntfy-manage-heading").count(), 1, "the manager stays open after the service list refreshes");
 
   // Users: protected accounts cannot be deleted.
@@ -298,6 +304,7 @@ test("ntfy settings manage topics, messages, users and the admin token inline", 
   // Close hides the section.
   await click("ntfy-manage-close-button");
   assert.equal(await sub("ntfy-manage-panel").evaluate((node: HTMLElement) => node.hidden), true);
+  assert.equal(await sub("ntfy-service-add-form").evaluate((node: HTMLElement) => node.hidden), false);
 });
 
 test("sharing shows progress while delivering and a pending badge for offline nodes", { timeout: 90_000 }, async (t) => {
@@ -332,6 +339,6 @@ test("sharing shows progress while delivering and a pending badge for offline no
   await page.locator(".ntfy-share-dialog").waitFor({ state: "detached" });
   const badge = page.getByTestId("ntfy-share-pending");
   await badge.waitFor({ state: "attached" });
-  assert.match((await badge.textContent()) ?? "", /Delivering to 1 node/);
+  assert.match((await badge.textContent()) ?? "", /1 offline node will get it when back online/);
   assert.match((await page.getByTestId("ntfy-service-list").textContent()) ?? "", /Shared with twins, Contigos/);
 });

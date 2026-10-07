@@ -248,6 +248,10 @@ function renderMessagesView(body) {
   const topic = input("ntfy-manage-read-topic-input", { placeholder: "alerts", maxLength: 64 });
   topic.value = manager.messageTopicInput;
   topic.addEventListener("input", () => { manager.messageTopicInput = topic.value; });
+  // Suggest the server's concrete topics; wildcard patterns cannot be read.
+  const known = (manager.topics.data ?? []).map((entry) => entry.topic).filter((name) => CONCRETE_TOPIC.test(name));
+  const suggestions = el("datalist", { testid: "ntfy-manage-read-topic-options", attrs: { id: "ntfyManageTopicOptions" } }, ...known.map((name) => new Option(name)));
+  topic.setAttribute("list", "ntfyManageTopicOptions");
   const read = async () => {
     const name = topic.value.trim();
     if (!CONCRETE_TOPIC.test(name)) { toast("Enter a concrete topic: letters, digits, _ or -, up to 64 characters", 8000); return; }
@@ -257,7 +261,7 @@ function renderMessagesView(body) {
   const readButton = button("Read topic", "ntfy-manage-read-topic-button", "ghost compact", read);
   const refresh = button("Refresh", "ntfy-manage-messages-refresh-button", "ghost compact", () => loadMessages(slot.topic));
   refresh.disabled = !slot.topic;
-  body.append(el("div", { className: "ntfy-manage-form", testid: "ntfy-manage-read-form" }, field("Read topic", topic), readButton, refresh));
+  body.append(el("div", { className: "ntfy-manage-form", testid: "ntfy-manage-read-form" }, field("Read topic", topic), suggestions, readButton, refresh));
   if (!slot.topic) { body.append(status("Choose a topic above, or press Messages on a topic.", "ntfy-manage-messages-idle")); return; }
   body.append(el("h4", { className: "ntfy-manage-subheading", text: `Messages on ${slot.topic}`, testid: "ntfy-manage-messages-heading" }));
   if (slot.error) body.append(status(slot.error, "ntfy-manage-messages-error"));
@@ -326,17 +330,33 @@ function renderTokenView(body) {
   const save = button("Save token", "ntfy-manage-token-save-button", "ghost compact", async () => {
     const value = token.value.trim();
     if (!value) { toast("Paste the admin token first"); return; }
-    if (await attempt(() => api(servicePath(""), { method: "PUT", body: JSON.stringify({ token: value }) }))) {
-      token.value = "";
-      toast("Token replaced");
-      await onServiceChanged();
-    }
+    let account, results = [];
+    if (!(await attempt(async () => { ({ account, results = [] } = await api(servicePath(""), { method: "PUT", body: JSON.stringify({ token: value }) })); }))) return;
+    token.value = "";
+    const offline = results.filter((result) => !result.ok).length;
+    const shared = results.length ? `. Sent to ${results.length - offline} node${results.length - offline === 1 ? "" : "s"}${offline ? `; ${offline} offline will get it when back online` : ""}` : "";
+    toast(`${TOKEN_RESULTS[account?.status]?.(account.username) ?? "Token saved"}${shared}`, account?.status === "admin" && !offline ? 3000 : 8000);
+    await onServiceChanged();
+    // The old token's failures are stale now.
+    Object.assign(manager, { topics: freshList(), users: freshList() });
+    await loadTopics();
   });
   body.append(
-    status("Topic and user management needs an ADMIN token. Replacing it updates this node only; share the service again to push it to others.", "ntfy-manage-token-hint"),
+    status(`Topic and user management needs an ADMIN token. The server checks it before it is saved. ${sharedFromHere(manager.service)
+      ? "Nodes this service is shared with receive the new token automatically."
+      : "This node does not share the service, so the new token stays here; press Share to push it to other nodes."}`, "ntfy-manage-token-hint"),
     el("div", { className: "ntfy-manage-form", testid: "ntfy-manage-token-form" }, field(manager.service.hasToken ? "Replace token" : "Set token", token), save),
   );
 }
+
+/** Only the node that pressed Share re-sends later edits. */
+const sharedFromHere = (service) => Boolean(service.sharing?.includeTwins || service.sharing?.clusterIds?.length);
+
+const TOKEN_RESULTS = {
+  admin: (username) => `Token saved: admin ${username ?? ""}`.trim(),
+  user: (username) => `Token saved, but ${username ?? "its user"} is not an admin, so topic and user management will be refused`,
+  unreachable: () => "Token saved, but the ntfy server could not be reached to check it",
+};
 
 const VIEW_RENDERERS = { topics: renderTopicsView, messages: renderMessagesView, users: renderUsersView, token: renderTokenView };
 
@@ -348,6 +368,8 @@ async function selectView(view) {
 
 function render() {
   const root = elements.ntfyManagePanel;
+  // One token field at a time: the add form's optional token is for a new service, not this one.
+  elements.ntfyServiceAddForm.hidden = Boolean(manager);
   if (!manager) { root.hidden = true; root.replaceChildren(); return; }
   root.hidden = false;
   const heading = el("h3", { className: "ntfy-manage-heading", text: `Manage ${manager.service.name}`, testid: "ntfy-manage-heading", attrs: { id: "ntfyManageHeading" } });
