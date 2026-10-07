@@ -57,7 +57,7 @@ test("the conversation list renders child lineage", async () => {
 
   assert.match(app, /function nestedSessionRows\(sessions, shouldExpand = \(\) => true\)/);
   assert.match(app, /row\.dataset\.sessionDepth = String\(depth\)/);
-  assert.match(app, /for \(const \{ session, depth, childCount \} of rows\)/);
+  assert.match(app, /function sessionRow\(\{ session, depth, childCount \}, sessionActive\)/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\]/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\] \.session-card/);
   assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v\d+";/);
