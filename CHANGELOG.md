@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.50.0 — 2026-10-07
 
-- Notification service tokens are now validated against the server before saving, and sharing with clusters syncs when nodes start or rejoin instead of continuously retrying.
+- ntfy service sharing is now event-driven: changes push immediately when shared or edited instead of retrying on a timer.
+- Nodes pull shared ntfy services from peers on startup or cluster rejoin instead of waiting for peers to push them.
+- ntfy service tokens are validated against the server before saving.
+- Add-service form is hidden while managing a service to avoid confusion between edit and add token fields.
+- Messages view now suggests concrete topics and reloads them after a token is saved.
 
 ## 2.49.2 — 2026-10-07
 
