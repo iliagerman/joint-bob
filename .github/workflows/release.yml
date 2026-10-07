@@ -56,6 +56,9 @@ jobs:
       - name: Install native synchronization test dependency
         if: steps.release.outputs.publish == 'true'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends syncthing
+      # The agent CLIs under bin/ run from dist, and tests run them.
+      - run: npm run build
+        if: steps.release.outputs.publish == 'true'
       - name: Run full test suite
         if: steps.release.outputs.publish == 'true'
         timeout-minutes: 60
@@ -65,8 +68,6 @@ jobs:
             [ "$attempt" -eq 3 ] && exit 1
             echo "Full suite attempt $attempt failed; retrying"
           done
-      - run: npm run build
-        if: steps.release.outputs.publish == 'true'
       - name: Pack and smoke test
         if: steps.release.outputs.publish == 'true'
         run: |

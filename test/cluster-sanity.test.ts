@@ -744,7 +744,8 @@ test("offline takeover survives an unresponsive owner and claimant restart, then
     const response = await fetch(`${nodeA.url}/api/projects/${project.id}/sessions/take-ownership`, {
       method: "POST", headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
       body: JSON.stringify({ peerId: nodeA.nodeId, sessionId: target.id, sessionPath: target.path }),
-      signal: AbortSignal.timeout(8_000),
+      // A silent peer is given the full takeover peer timeout (15 s, sized for relayed links) before it counts as offline.
+      signal: AbortSignal.timeout(30_000),
     });
     const result = await response.json();
     assert.equal(response.status, 200, JSON.stringify(result));
