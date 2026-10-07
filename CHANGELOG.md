@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Story generation displays real-time progress as each section completes, so you can see what's being analyzed instead of waiting for the entire story to finish.
+- Worktrees can no longer be deleted while a conversation started in them is still running.
 
 ## 2.54.1 — 2026-10-07
 

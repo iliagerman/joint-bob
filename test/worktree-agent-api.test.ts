@@ -98,6 +98,22 @@ test("an agent creates a worktree with .env and dependency links, and only its c
   assert.equal((await post(creator.token, { operation: "list" })).body.worktrees.some((candidate: { id: string }) => candidate.id === worktree.id), false);
 });
 
+test("a worktree cannot be deleted while a conversation started in it is still running", async () => {
+  const { markWorktreeConversation } = await import("../src/project-worktrees.js");
+  const { holdEndedRun, releaseEndedRun } = await import("../src/conversation-runtime.js");
+  const creator = await capability();
+  const { worktree } = (await post(creator.token, { operation: "create", name: `Running ${randomUUID().slice(0, 8)}` })).body;
+  const child = randomUUID();
+  await markWorktreeConversation(projectId, worktree.id, "claude", child);
+  holdEndedRun("claude", child, false);
+  try {
+    const refused = await post(creator.token, { operation: "delete", worktreeId: worktree.id });
+    assert.equal(refused.status, 409);
+    assert.match(refused.body.error, new RegExp(`${child} is still running`));
+  } finally { releaseEndedRun("claude", child); }
+  assert.deepEqual((await post(creator.token, { operation: "delete", worktreeId: worktree.id })).body, { deleted: worktree.id });
+});
+
 test("a token for a project this node does not have is refused", async () => {
   const { token } = await capability(randomUUID(), "missing_project");
   assert.equal((await post(token, { operation: "list" })).status, 404);
