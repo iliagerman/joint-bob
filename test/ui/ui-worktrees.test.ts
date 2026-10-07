@@ -1,6 +1,7 @@
 // A real Chrome walks the worktree journey: create a worktree from the conversation
-// list, see a conversation that ran inside it carry the worktree's colour, filter by
-// it, start a new conversation there, merge it back, and delete it everywhere.
+// list, see a conversation that ran inside it listed in the worktree's sub-section,
+// fold it, start a new conversation there without the start prompt, merge it back,
+// and delete it everywhere.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -96,17 +97,18 @@ test("a worktree is created from the conversation list as a code-only copy", asy
   await page.locator("#worktreeDialog[open]").waitFor({ timeout: 10_000 });
   await page.getByTestId("worktree-name-input").fill(WORKTREE_NAME);
   await page.getByTestId("worktree-save-button").click();
-  const chip = page.getByTestId("worktree-chip").filter({ hasText: WORKTREE_NAME });
-  await chip.waitFor({ timeout: 20_000 });
+  const section = page.getByTestId("worktree-section").filter({ hasText: WORKTREE_NAME });
+  await section.waitFor({ timeout: 20_000 });
   await page.locator("#worktreeDialog[open]").waitFor({ state: "detached", timeout: 10_000 });
 
   const worktree = await onlyWorktreePath();
   assert.equal(await readFile(path.join(worktree, "src", "inbox.ts"), "utf8"), "export const inbox = 'mock';\n");
   assert.equal(await exists(path.join(worktree, "node_modules")), false, "packages never enter a worktree");
-  assert.equal(await chip.getAttribute("data-worktree-color"), "teal", "the first worktree gets a vivid colour, not slate");
+  assert.equal(await section.getAttribute("data-worktree-color"), "teal", "the first worktree gets a vivid colour, not slate");
+  assert.equal((await section.getByTestId("worktree-section-count").innerText()).trim(), "0");
 });
 
-test("a conversation that ran in the worktree carries its colour and badge, and the chip filters to it", async () => {
+test("a conversation that ran in the worktree is listed in the worktree's sub-section, which folds", async () => {
   const worktree = await onlyWorktreePath();
   await seedWorktreeConversation(worktree);
   await page.reload({ waitUntil: "domcontentloaded" });
@@ -117,18 +119,24 @@ test("a conversation that ran in the worktree carries its colour and badge, and 
   assert.match(await row.getAttribute("class") ?? "", /\bhas-worktree\b/);
   const badge = row.getByTestId("session-worktree-badge");
   assert.equal((await badge.innerText()).trim(), WORKTREE_NAME);
-  const color = await page.getByTestId("worktree-chip").first().getAttribute("data-worktree-color");
+  const section = page.getByTestId("worktree-section").first();
+  const color = await section.getAttribute("data-worktree-color");
   assert.equal(await row.locator(".session-card").getAttribute("data-worktree-color"), color);
   const stripe = await row.locator(".session-card").evaluate((card) => getComputedStyle(card).boxShadow);
   assert.match(stripe, /inset/, `the worktree hue is drawn on the card (${stripe})`);
   assert.equal(await page.locator("#sessionList .list-row", { has: page.getByTestId("session-worktree-badge") }).count(), 1, "only the worktree conversation is marked");
+  assert.equal((await section.getByTestId("worktree-section-count").innerText()).trim(), "1");
+
+  const layout = await page.evaluate(() => [...document.querySelectorAll("#sessionList > *")].map((element) => (element as HTMLElement).dataset.testid || (element.classList.contains("has-worktree") ? "worktree-row" : "project-row")));
+  assert.deepEqual(layout.slice(0, 4), ["worktree-subsection", "worktree-section", "worktree-row", "project-folder-subsection"], layout.join(", "));
+  assert.ok(layout.slice(4).length > 0 && layout.slice(4).every((entry) => entry === "project-row"), "the project folder's conversations follow the worktrees");
 
   const total = await page.locator("#sessionList .list-row").count();
-  assert.ok(total > 1, "the project has other conversations too");
-  await page.getByTestId("worktree-chip-filter").first().click();
-  await page.waitForFunction(() => document.querySelectorAll("#sessionList .list-row").length === 1);
-  assert.equal(await page.locator("#sessionList .list-row", { hasText: CONVERSATION_NAME }).count(), 1);
-  await page.getByTestId("worktree-chip-filter").first().click();
+  await page.getByTestId("worktree-section-toggle").first().click();
+  await page.waitForFunction((expected) => document.querySelectorAll("#sessionList .list-row").length === expected - 1, total);
+  assert.equal(await page.locator("#sessionList .list-row", { hasText: CONVERSATION_NAME }).count(), 0, "a folded worktree hides its conversations");
+  assert.equal(await page.getByTestId("worktree-section-toggle").first().getAttribute("aria-expanded"), "false");
+  await page.getByTestId("worktree-section-toggle").first().click();
   await page.waitForFunction((expected) => document.querySelectorAll("#sessionList .list-row").length === expected, total);
 });
 
@@ -148,6 +156,32 @@ test("starting a conversation from the worktree menu runs it in the worktree", a
   await page.locator("#newSessionNameDialog[open]").waitFor({ state: "detached", timeout: 10_000 });
 });
 
+test("a conversation started in the worktree skips the start-of-conversation prompt", async () => {
+  const START_PROMPT = "Update from main first.";
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-commands").click();
+  await page.getByTestId("settings-start-conversation-enabled").check();
+  await page.getByTestId("settings-start-conversation-prompt").fill(START_PROMPT);
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden", timeout: 20_000 });
+  await page.getByTestId("worktree-menu-button").first().click();
+  await page.getByTestId("worktree-menu-new-conversation").click();
+  await page.locator("#choiceDialog[open]").waitFor({ timeout: 10_000 });
+  await page.getByTestId("choice-accept-button").click();
+  await page.locator("#newSessionNameDialog[open]").waitFor({ timeout: 10_000 });
+  await page.getByTestId("new-session-name-input").fill("Worktree start check");
+  await page.getByTestId("new-session-name-start-button").click();
+  const state = await page.evaluateHandle(async () => (await import("/app/state.js")).state);
+  await page.waitForFunction((state) => Boolean(state.activeSessionId), state, { timeout: 30_000 });
+  await state.dispose();
+  const row = page.locator("#sessionList .list-row.active");
+  await row.waitFor({ timeout: 20_000 });
+  assert.match(await row.getAttribute("class") ?? "", /\bhas-worktree\b/, "the new conversation runs in the worktree");
+  // The prompt would be queued as soon as the conversation is ready; give it time to show.
+  await page.waitForTimeout(3_000);
+  assert.equal(await page.getByText(START_PROMPT, { exact: true }).count(), 0, "the start prompt is not sent in a worktree");
+});
+
 test("merge to project writes the worktree's edits into the project folder", async () => {
   const worktree = await onlyWorktreePath();
   await writeFile(path.join(worktree, "src", "inbox.ts"), "export const inbox = 'real';\n");
@@ -165,7 +199,7 @@ test("deleting a worktree removes its folder and keeps its conversation as histo
   await page.getByTestId("worktree-menu-delete").click();
   await page.locator("#confirmDialog[open]").waitFor({ timeout: 10_000 });
   await page.locator("#confirmAcceptButton").click();
-  await page.getByTestId("worktree-chip").waitFor({ state: "detached", timeout: 20_000 });
+  await page.getByTestId("worktree-section").waitFor({ state: "detached", timeout: 20_000 });
   assert.equal(await exists(worktree), false);
   assert.equal(consoleErrors.filter((message) => !/favicon|ERR_ABORTED|WebSocket/i.test(message)).length, 0, consoleErrors.join("\n"));
 });

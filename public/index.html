@@ -157,7 +157,6 @@
           <button type="button" data-filter="done" data-testid="chats-filter-done-button" title="Reviewed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.7 2.7L16.5 9"/></svg><span class="sr-only">Reviewed</span><span data-filter-count="done">0</span></button>
         </div>
         <div class="classification-filter list-filter-row" id="conversationFilterRow" role="group" aria-label="Filter conversations by label and cluster"></div>
-        <div class="worktree-strip" id="worktreeStrip" role="group" aria-label="Worktrees" data-testid="worktree-strip"></div>
         <label class="done-filter" for="showDoneConversations">
           <input type="checkbox" id="showDoneConversations" data-testid="show-done-conversations-toggle" />
           Show done
@@ -775,7 +774,7 @@
         <section class="settings-panel" id="settingsPanel-commands" role="tabpanel" aria-labelledby="settingsTab-commands" tabindex="0" hidden>
           <fieldset class="phase-settings">
             <legend>Conversation commands</legend>
-            <label class="checkbox-row"><input id="settingsStartConversationEnabled" type="checkbox" data-testid="settings-start-conversation-enabled" /> Run at the start of every new conversation</label>
+            <label class="checkbox-row"><input id="settingsStartConversationEnabled" type="checkbox" data-testid="settings-start-conversation-enabled" /> Run at the start of every new conversation (not in worktrees)</label>
             <label>Start conversation prompt<textarea id="settingsStartConversationPrompt" rows="3" maxlength="10000" data-testid="settings-start-conversation-prompt"></textarea></label>
             <label class="checkbox-row"><input id="settingsEndConversationEnabled" type="checkbox" data-testid="settings-end-conversation-enabled" /> Enable double-click Send to end a conversation</label>
             <label>End conversation prompt<textarea id="settingsEndConversationPrompt" rows="4" maxlength="10000" data-testid="settings-end-conversation-prompt"></textarea></label>

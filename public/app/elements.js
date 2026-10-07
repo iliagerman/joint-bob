@@ -269,7 +269,6 @@ export const elements = {
   newSessionNodeSelect: document.querySelector("#newSessionNodeSelect"),
   newSessionWorktreeLabel: document.querySelector("#newSessionWorktreeLabel"),
   newSessionWorktreeSelect: document.querySelector("#newSessionWorktreeSelect"),
-  worktreeStrip: document.querySelector("#worktreeStrip"),
   worktreeDialog: document.querySelector("#worktreeDialog"),
   worktreeForm: document.querySelector("#worktreeForm"),
   worktreeDialogTitle: document.querySelector("#worktreeDialogTitle"),

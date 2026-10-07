@@ -152,7 +152,7 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
   newSessionNodes = [];
   elements.newSessionNodeSelect.replaceChildren();
   renderSessionColorSwatches(null, elements.newSessionColorSwatches);
-  renderNewSessionWorktrees(preselectedWorktreeId ?? state.worktreeFilter);
+  renderNewSessionWorktrees(preselectedWorktreeId);
   preselectedWorktreeId = null;
   elements.newSessionSecretList.replaceChildren();
   const draft = state.newSessionDraft;

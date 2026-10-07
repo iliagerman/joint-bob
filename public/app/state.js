@@ -63,7 +63,8 @@ export const state = {
   // The Joint Bob worktree a new conversation should run in; null runs it in the project folder.
   newSessionWorktreeId: null,
   worktrees: [],
-  worktreeFilter: null,
+  // Worktree sub-sections the user folded in the conversation list.
+  collapsedWorktreeIds: new Set(),
   // Accounts picked in the new-conversation dialog; the server persists them once the engine reports an id.
   newSessionSecretAccountIds: [],
   pendingSessionTitle: null,

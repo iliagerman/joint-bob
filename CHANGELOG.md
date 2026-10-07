@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations now organize under their worktree's collapsible section in the list instead of filtering via chips.
+
 ## 2.50.1 — 2026-10-07
 
 - Workspaces and conversations now accept multiple accounts with the same environment variable names. Agents can choose an account for an individual command without exposing its values or silently using the wrong account.

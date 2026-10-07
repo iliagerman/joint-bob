@@ -408,7 +408,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       sessionId: ownershipSessionId, sessionPath: sessionRequest.sessionPath,
       accountIds: secretAccountIds, readOnly: conversationReadOnly, ownership: foreignOwner,
       listedSessions, handoffContext: spinOffContext,
-      autoStartPrompt: refreshSessionsAfterReady && !sessionRequest.draft && startCommand.enabled ? startCommand.prompt : null,
+      autoStartPrompt: refreshSessionsAfterReady && !sessionRequest.draft && !worktree && startCommand.enabled ? startCommand.prompt : null,
     });
     if (refreshSessionsAfterReady) broadcastToProject(project.id, { type: "sessionsChanged" });
   } catch (error) {

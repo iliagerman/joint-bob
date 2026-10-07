@@ -141,7 +141,6 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   const started = performance.now();
   if (state.activeProjectId !== projectId) {
     state.classificationFilters.clear();
-    state.worktreeFilter = null;
     state.worktrees = [];
   }
   showConversations();

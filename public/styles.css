@@ -4075,15 +4075,16 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 [data-worktree-color="amber"] { --worktree-hue: #e0a33a; }
 [data-worktree-color="green"] { --worktree-hue: #46b35e; }
 [data-worktree-color="red"] { --worktree-hue: #e05c4b; }
-.worktree-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 6px 12px 2px; font-size: 12px; }
-.worktree-strip[hidden] { display: none; }
-.worktree-strip-label { color: var(--muted); font-weight: 600; margin-right: 2px; }
-.worktree-chip { display: inline-flex; align-items: center; max-width: 180px; border: 1px solid color-mix(in srgb, var(--worktree-hue) 45%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--worktree-hue) 12%, transparent); }
-.worktree-chip.selected { border-color: var(--worktree-hue); background: color-mix(in srgb, var(--worktree-hue) 30%, var(--surface)); }
-.worktree-chip-filter { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 2px 4px 2px 8px; border: 0; background: none; color: var(--heading); font: inherit; cursor: pointer; }
-.worktree-chip-filter { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.worktree-chip-menu { padding: 0 6px; min-height: 0; height: 20px; line-height: 1; }
-.worktree-add-button { padding: 2px 8px; min-height: 0; font-size: 12px; }
+.worktree-subsection-title { display: flex; align-items: center; gap: 8px; margin: 10px 2px 4px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.worktree-subsection-title:first-child { margin-top: 2px; }
+.worktree-subsection-title::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.worktree-add-button { order: 1; padding: 2px 8px; min-height: 0; font-size: 12px; letter-spacing: normal; text-transform: none; }
+.worktree-section-header { display: flex; align-items: center; gap: 4px; margin: 4px 0 2px; border-left: 3px solid var(--worktree-hue); border-radius: 6px; background: color-mix(in srgb, var(--worktree-hue) 12%, transparent); }
+.worktree-section-toggle { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; min-height: 30px; padding: 4px 8px; border: 0; background: none; color: var(--heading); font: inherit; font-size: 12.5px; font-weight: 600; text-align: left; cursor: pointer; }
+.worktree-section-caret { width: 10px; flex: none; color: var(--muted); }
+.worktree-section-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-section-count { flex: none; padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--worktree-hue) 25%, transparent); color: var(--muted); font-size: 10.5px; font-weight: 500; }
+.worktree-section-menu { min-width: 28px; width: 28px; min-height: 26px; margin-right: 4px; font-size: 12.5px; }
 .worktree-glyph { width: 11px; height: 11px; flex: none; color: var(--worktree-hue); }
 /* A worktree conversation carries its worktree's hue on the right edge, so it stays
    distinguishable from the conversation's own colour bar on the left. */
