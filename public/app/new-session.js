@@ -14,6 +14,7 @@ import { chooseOption, toast } from "./shell.js";
 import { openSession } from "./socket.js";
 import { state } from "./state.js";
 import { cancelHandoffWait } from "./tasks.js";
+import { createConversationWorktree } from "./worktrees.js";
 
 const classification = classificationPicker(document.querySelector("#newSessionClassification"), "new-session");
 const projectPicker = createSearchableSelect({ id: "newSessionProjectSelect", testid: "new-session-project-select", optionTestid: "new-session-project-option", label: "Project", prompt: "Choose a project", placeholder: "Search projects", emptyText: "No projects found" });
@@ -21,14 +22,30 @@ document.querySelector("#newSessionProjectPicker").replaceWith(projectPicker.roo
 const harnessSelect = document.querySelector("#newSessionHarnessSelect");
 let newSessionNodes = [];
 let preselectedWorktreeId = null;
+const NEW_WORKTREE = "new";
+// From Settings: the dialog picks New worktree unless the user chooses otherwise.
+let newWorktreeByDefault = false;
+let worktreeChosen = false;
+
+/** A worktree created now exists only here until it syncs, so another node cannot start in it. */
+function runsOnThisNode() {
+  const node = newSessionNodes.find((candidate) => candidate.id === elements.newSessionNodeSelect.value);
+  return !node || node.local;
+}
 
 /** Worktrees are known for the open project only; another project's conversation runs in its folder. */
 function renderNewSessionWorktrees(selected = null) {
   const draft = state.newSessionDraft;
-  const worktrees = draft && draft.projectId === state.activeProjectId && !draft.sourceTaskId ? state.worktrees : [];
-  elements.newSessionWorktreeLabel.hidden = !worktrees.length;
-  elements.newSessionWorktreeSelect.replaceChildren(new Option("Project folder", ""), ...worktrees.map((worktree) => new Option(`Worktree: ${worktree.name}`, worktree.id)));
-  elements.newSessionWorktreeSelect.value = worktrees.some((worktree) => worktree.id === selected) ? selected : "";
+  const offered = Boolean(draft) && !draft.sourceTaskId;
+  const worktrees = offered && draft.projectId === state.activeProjectId ? state.worktrees : [];
+  const select = elements.newSessionWorktreeSelect;
+  elements.newSessionWorktreeLabel.hidden = !offered;
+  const fresh = new Option("New worktree", NEW_WORKTREE);
+  fresh.disabled = !runsOnThisNode();
+  fresh.dataset.testid = "new-session-new-worktree-option";
+  select.replaceChildren(new Option("Project folder", ""), fresh, ...worktrees.map((worktree) => new Option(`Worktree: ${worktree.name}`, worktree.id)));
+  const wanted = selected ?? (newWorktreeByDefault ? NEW_WORKTREE : "");
+  select.value = [...select.options].some((option) => option.value === wanted && !option.disabled) ? wanted : "";
 }
 
 function checkedNewSessionSecretIds() {
@@ -140,6 +157,8 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
   ]);
   if (state.activeProjectId !== projectId) return;
   classification.reset(settings.conversationLabels);
+  newWorktreeByDefault = settings.newConversationWorktree === true;
+  worktreeChosen = preselectedWorktreeId !== null;
   state.newSessionDraft = { sessionPath, defaultTitle, sourceTaskId, projectId: projectId || state.projects[0]?.id };
   document.querySelector("#newSessionProjectLabel").hidden = !document.body.classList.contains("focus-ui");
   projectPicker.setOptions(state.projects.map((project) => ({ value: project.id, label: project.name })));
@@ -181,6 +200,7 @@ async function loadNewSessionNodes() {
   }));
   elements.newSessionNodeSelect.value = (newSessionNodes.find(node => node.local && node.online && node.mapped) || newSessionNodes.find(node => node.online && node.mapped))?.id || "";
   renderNewSessionSecrets([]);
+  renderNewSessionWorktrees(worktreeChosen ? elements.newSessionWorktreeSelect.value : null);
 }
 
 export async function startGlobalConversation() {
@@ -195,7 +215,7 @@ export async function startGlobalConversation() {
 projectPicker.onChange((projectId) => {
   if (!state.newSessionDraft || state.newSessionDraft.projectId === projectId) return;
   state.newSessionDraft.projectId = projectId;
-  renderNewSessionWorktrees(elements.newSessionWorktreeSelect.value);
+  renderNewSessionWorktrees(worktreeChosen ? elements.newSessionWorktreeSelect.value : null);
   loadNewSessionNodes().catch(error => toast(error.message));
 });
 harnessSelect.addEventListener("change", () => {
@@ -290,10 +310,12 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
   const node = newSessionNodes.find((candidate) => candidate.id === elements.newSessionNodeSelect.value);
   if (!node || !node.online || !node.mapped) { showWizardStep(3); toast("Choose an online node with this project mapped"); return; }
   const secretIds = [...elements.newSessionSecretList.querySelectorAll("input:checked:not(:disabled)")].map(input => input.value);
-  const worktreeId = elements.newSessionWorktreeLabel.hidden ? null : elements.newSessionWorktreeSelect.value || null;
+  let worktreeId = elements.newSessionWorktreeLabel.hidden ? null : elements.newSessionWorktreeSelect.value || null;
+  if (worktreeId === NEW_WORKTREE && !node.local) { showWizardStep(3); toast("A new worktree can start only on this node; choose this node or the project folder"); return; }
   const submit = elements.newSessionNameForm.querySelector('[type="submit"]');
   if (submit.disabled) return;
   submit.disabled = true;
+  const submitLabel = submit.textContent;
   projectPicker.disabled = true;
   harnessSelect.disabled = true;
   try {
@@ -311,6 +333,13 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
       await selectProject(projectId);
       if (!elements.newSessionNameDialog.open || state.newSessionDraft !== draft || draft.projectId !== projectId) return;
     }
+    let worktree = state.worktrees.find((candidate) => candidate.id === worktreeId);
+    if (worktreeId === NEW_WORKTREE) {
+      submit.textContent = "Creating worktree…";
+      worktree = await createConversationWorktree(projectId, title || draft.defaultTitle);
+      worktreeId = worktree.id;
+      if (!elements.newSessionNameDialog.open || state.newSessionDraft !== draft) return;
+    }
     state.newSessionSecretAccountIds = secretIds;
     state.spinOffSourceTaskId = draft.sourceTaskId;
     state.newSessionWorktreeId = worktreeId;
@@ -319,7 +348,7 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
     elements.newSessionNameDialog.close();
     state.newSessionDraft = null;
     state.activeSessionId = sessionId;
-    addOptimisticSession(sessionId, draft.sessionPath, title || draft.defaultTitle, color, label, state.worktrees.find((worktree) => worktree.id === worktreeId));
+    addOptimisticSession(sessionId, draft.sessionPath, title || draft.defaultTitle, color, label, worktree);
     openSession(draft.sessionPath, title || draft.defaultTitle);
     state.pendingSessionTitle = title || null;
     state.pendingSessionColor = color;
@@ -327,8 +356,13 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
     toast(error.message);
   } finally {
     submit.disabled = false;
+    submit.textContent = submitLabel;
     projectPicker.disabled = Boolean(state.newSessionDraft?.sourceTaskId);
     harnessSelect.disabled = false;
   }
 });
-elements.newSessionNodeSelect.addEventListener("change", () => renderNewSessionSecrets());
+elements.newSessionNodeSelect.addEventListener("change", () => {
+  renderNewSessionSecrets();
+  renderNewSessionWorktrees(worktreeChosen ? elements.newSessionWorktreeSelect.value : null);
+});
+elements.newSessionWorktreeSelect.addEventListener("change", () => { worktreeChosen = true; });

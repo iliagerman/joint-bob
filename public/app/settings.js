@@ -351,6 +351,7 @@ async function loadSettings() {
   elements.settingsSubprocessMaxLifetimeMinutes.value = settings.subprocessMaxLifetimeMinutes ?? 360;
   elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
   elements.settingsDigestAttachments.checked = settings.digestAttachments;
+  elements.settingsNewConversationWorktree.checked = settings.newConversationWorktree;
   renderSyncCheckSettings(settings);
   elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
   elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
@@ -396,6 +397,7 @@ async function saveSettings(event) {
       shellCommandTimeoutSeconds: elements.settingsShellTimeoutEnabled.checked ? Number(elements.settingsShellTimeoutSeconds.value) : null,
       subprocessMaxLifetimeMinutes: Number(elements.settingsSubprocessMaxLifetimeMinutes.value),
       digestAttachments: elements.settingsDigestAttachments.checked,
+      newConversationWorktree: elements.settingsNewConversationWorktree.checked,
       ...(syncCheck ? { syncCheck } : {}),
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
       conversationCommands: {

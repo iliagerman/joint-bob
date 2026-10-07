@@ -591,6 +591,7 @@
           <option value="account">Account</option>
           <option value="notifications">Notifications</option>
           <option value="labels">Labels</option>
+          <option value="conversations">Conversations</option>
           <option value="commands">Commands</option>
           <option value="secrets">Secrets</option>
           <option value="cluster">Cluster</option>
@@ -610,6 +611,7 @@
           <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
           <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
           <button class="settings-tab" type="button" data-settings-tab="labels" role="tab" id="settingsTab-labels" aria-controls="settingsPanel-labels" aria-selected="false" tabindex="-1" data-testid="settings-tab-labels">Labels</button>
+          <button class="settings-tab" type="button" data-settings-tab="conversations" role="tab" id="settingsTab-conversations" aria-controls="settingsPanel-conversations" aria-selected="false" tabindex="-1" data-testid="settings-tab-conversations">Conversations</button>
           <button class="settings-tab" type="button" data-settings-tab="commands" role="tab" id="settingsTab-commands" aria-controls="settingsPanel-commands" aria-selected="false" tabindex="-1" data-testid="settings-tab-commands">Commands</button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
@@ -796,6 +798,14 @@
             <textarea id="settingsConversationLabels" rows="8" data-testid="settings-conversation-labels" aria-describedby="settingsLabelsHint"></textarea>
           </label>
           <p class="settings-hint" id="settingsLabelsHint">One label per line, up to 50 labels of 80 characters each. These choices are node-local. Other always allows free text. Changing this list does not change existing conversation classifications.</p>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-conversations" role="tabpanel" aria-labelledby="settingsTab-conversations" tabindex="0" hidden>
+          <fieldset class="phase-settings">
+            <legend>New conversations</legend>
+            <label class="checkbox-row"><input id="settingsNewConversationWorktree" type="checkbox" data-testid="settings-new-conversation-worktree" /> Start each new conversation in its own worktree</label>
+            <p class="settings-hint">The new-conversation dialog then picks New worktree: a Joint Bob worktree named after the conversation is created and the conversation runs in it. You can still choose the project folder or an existing worktree. A conversation that runs on another node starts in the project folder, because a new worktree reaches other nodes only after it syncs.</p>
+          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-commands" role="tabpanel" aria-labelledby="settingsTab-commands" tabindex="0" hidden>

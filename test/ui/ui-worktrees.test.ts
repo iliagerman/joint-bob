@@ -203,3 +203,28 @@ test("deleting a worktree removes its folder and keeps its conversation as histo
   assert.equal(await exists(worktree), false);
   assert.equal(consoleErrors.filter((message) => !/favicon|ERR_ABORTED|WebSocket/i.test(message)).length, 0, consoleErrors.join("\n"));
 });
+
+test("with the setting on, each new conversation starts in a worktree of its own named after it", async () => {
+  const AUTO_NAME = "Inbox persistence";
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-conversations").click();
+  await page.getByTestId("settings-new-conversation-worktree").check();
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden", timeout: 20_000 });
+
+  await page.getByTestId("session-create-button").click();
+  await page.locator("#newSessionNameDialog[open]").waitFor({ timeout: 10_000 });
+  await page.getByTestId("new-session-name-input").fill(AUTO_NAME);
+  const picked = await page.getByTestId("new-session-worktree-select").evaluate((element) => (element as HTMLSelectElement).value);
+  assert.equal(picked, "new", "New worktree is the default choice");
+  await page.getByTestId("new-session-name-start-button").click();
+
+  const section = page.getByTestId("worktree-section").filter({ hasText: AUTO_NAME });
+  await section.waitFor({ timeout: 60_000 });
+  const row = page.locator("#sessionList .list-row.active");
+  await row.waitFor({ timeout: 20_000 });
+  assert.match(await row.getAttribute("class") ?? "", /\bhas-worktree\b/, "the conversation runs in the new worktree");
+  assert.equal((await row.getByTestId("session-worktree-badge").innerText()).trim(), AUTO_NAME);
+  const worktree = await onlyWorktreePath();
+  assert.equal(await readFile(path.join(worktree, "src", "inbox.ts"), "utf8"), "export const inbox = 'real';\n", "the worktree copies the project as it is now");
+});

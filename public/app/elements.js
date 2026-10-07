@@ -166,6 +166,7 @@ export const elements = {
   settingsShellTimeoutSeconds: document.querySelector("#settingsShellTimeoutSeconds"),
   settingsSubprocessMaxLifetimeMinutes: document.querySelector("#settingsSubprocessMaxLifetimeMinutes"),
   settingsDigestAttachments: document.querySelector("#settingsDigestAttachments"),
+  settingsNewConversationWorktree: document.querySelector("#settingsNewConversationWorktree"),
   settingsSyncCheckEnabled: document.querySelector("#settingsSyncCheckEnabled"),
   settingsSyncCheckHarness: document.querySelector("#settingsSyncCheckHarness"),
   settingsSyncCheckModel: document.querySelector("#settingsSyncCheckModel"),

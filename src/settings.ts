@@ -109,6 +109,8 @@ export interface SettingsInput {
   subprocessMaxLifetimeMinutes?: number;
   /** Describe images and inline text files for the agent instead of sending raw bytes. */
   digestAttachments?: boolean;
+  /** Start each new conversation in a Joint Bob worktree of its own. */
+  newConversationWorktree?: boolean;
   syncCheck?: SyncCheckSettings;
   /** Which other nodes may open a terminal on this node through a signed peer socket. */
   remoteTerminal?: RemoteTerminalSettings;
@@ -131,6 +133,7 @@ export interface SettingsResponse {
   shellCommandTimeoutSeconds: number | null;
   subprocessMaxLifetimeMinutes: number;
   digestAttachments: boolean;
+  newConversationWorktree: boolean;
   syncCheck: SyncCheckSettings;
   remoteTerminal: RemoteTerminalSettings;
   conversationCommands: ConversationCommandsSettings;
@@ -261,6 +264,7 @@ export function getSettings(): SettingsResponse {
     shellCommandTimeoutSeconds: value("shellCommandTimeoutSeconds", "unlimited") === "unlimited" ? null : Number(value("shellCommandTimeoutSeconds", "unlimited")),
     subprocessMaxLifetimeMinutes: Number(value("subprocessMaxLifetimeMinutes", String(DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES))),
     digestAttachments: value("digestAttachments", "false") === "true",
+    newConversationWorktree: value("newConversationWorktree", "false") === "true",
     syncCheck: syncCheck(conversationDefaults),
     remoteTerminal: remoteTerminalSettings(),
     conversationCommands: conversationCommands(),
@@ -362,6 +366,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const subprocessMaxLifetimeMinutes = input.subprocessMaxLifetimeMinutes === undefined ? previous.subprocessMaxLifetimeMinutes : input.subprocessMaxLifetimeMinutes;
   if (!validSubprocessLifetime(subprocessMaxLifetimeMinutes)) throw new Error("Subprocess maximum lifetime must be an integer from 1 to 10080 minutes");
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
+  const newConversationWorktree = input.newConversationWorktree ?? previous.newConversationWorktree;
   const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
   const conversationCommands = input.conversationCommands ?? previous.conversationCommands;
@@ -383,6 +388,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "shellCommandTimeoutSeconds", shellCommandTimeoutSeconds === null ? "unlimited" : String(shellCommandTimeoutSeconds));
     save(db, "subprocessMaxLifetimeMinutes", String(subprocessMaxLifetimeMinutes));
     save(db, "digestAttachments", String(digestAttachments));
+    save(db, "newConversationWorktree", String(newConversationWorktree));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
     save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));

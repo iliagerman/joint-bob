@@ -25,6 +25,17 @@ export async function loadWorktrees() {
   if (changed) renderSessions();
 }
 
+/** Creates a worktree of the open project named after a conversation, numbering the name when it is taken. */
+export async function createConversationWorktree(projectId, title) {
+  const base = title.replace(/\s+/g, " ").trim().slice(0, 74) || "Conversation";
+  const taken = new Set(state.worktrees.map((worktree) => worktree.name.toLowerCase()));
+  let name = base;
+  for (let suffix = 2; taken.has(name.toLowerCase()); suffix += 1) name = `${base} ${suffix}`;
+  const { worktree } = await api(worktreesUrl(projectId), { method: "POST", body: JSON.stringify({ name, color: nextColor() }) });
+  await loadWorktrees();
+  return worktree;
+}
+
 /** The badge that marks a conversation running inside a worktree, in that worktree's colour. */
 export function worktreeBadge(worktree) {
   const badge = document.createElement("em");

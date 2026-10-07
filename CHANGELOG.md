@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- New conversations can now start in their own worktree, automatically named after the conversation title—enable in Settings → Conversations.
 - Error reports are now sent to ntfy topics for monitoring—enable in Settings → Notifications.
 - Empty conversations are now automatically deleted after an hour of inactivity.
 - Conversations no longer reload repeatedly in the background when you switch away from the tab.
