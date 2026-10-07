@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.55.0 — 2026-10-07
 
-- Story generation displays real-time progress as each section completes, so you can see what's being analyzed instead of waiting for the entire story to finish.
-- Worktrees can no longer be deleted while a conversation started in them is still running.
+- Story generation displays real-time progress as sections complete, eliminating the wait for full explanations.
+- A worktree can no longer be deleted while a conversation started in it is running, and agents that start a worktree conversation are told to leave that issue to it instead of fixing it in the project folder or pushing to main themselves.
 
 ## 2.54.1 — 2026-10-07
 
