@@ -205,21 +205,13 @@ function scopeRows(scopeType: SecretScopeType, scopeId: string): AccountRow[] {
 }
 
 function assertNoCollision(rows: AccountRow[]): void {
-  const names = new Set<string>();
   const origins = new Set<string>();
-  // Several GitHub accounts may be attached together; the remote decides which one git uses.
+  // GitHub already supports multiple accounts; ordinary accounts are selected explicitly
+  // when their environment variable names overlap in the same scope.
   assertGithubAccountsDistinct(rows.filter((row) => row.provider === "github").map(rowGithubAccount));
-  for (const row of rows) {
-    if (row.provider === "github") continue;
-    if (row.website_origin) {
-      if (origins.has(row.website_origin)) throw new Error("Selected website accounts have duplicate origins");
-      origins.add(row.website_origin);
-      continue;
-    }
-    for (const variable of storedVariables(row)) {
-      if (names.has(variable.name)) throw new Error("Selected secret accounts have duplicate environment variable names");
-      names.add(variable.name);
-    }
+  for (const row of rows) if (row.website_origin) {
+    if (origins.has(row.website_origin)) throw new Error("Selected website accounts have duplicate origins");
+    origins.add(row.website_origin);
   }
 }
 
@@ -445,8 +437,19 @@ function projectRepoOwner(project: string): string | undefined {
 
 export function genericSecretEnvironment(project: string, conversation?: SecretConversation): NodeJS.ProcessEnv {
   const values: NodeJS.ProcessEnv = {};
-  for (const { row } of resolved(project, conversation)) if (!row.website_origin && row.provider !== "github") for (const variable of storedVariables(row)) {
-    values[variable.name] = variable.kind === "value" ? variable.value : secretFilePath(row.id, variable.name, variable.value);
+  const accounts = resolved(project, conversation);
+  for (const scope of ["workspace", "project", "conversation"] as const) {
+    const rows = accounts.filter((account) => account.scope === scope && !account.row.website_origin && account.row.provider !== "github")
+      .map(({ row }) => ({ row, variables: storedVariables(row) }));
+    const counts = new Map<string, number>();
+    for (const { variables } of rows) for (const { name } of variables) counts.set(name, (counts.get(name) ?? 0) + 1);
+    for (const { row, variables } of rows) if (variables.some(({ name }) => counts.get(name)! > 1)) {
+      for (const { name } of variables) delete values[name];
+    }
+    for (const { row, variables } of rows) {
+      if (variables.some(({ name }) => counts.get(name)! > 1)) continue;
+      for (const variable of variables) values[variable.name] = variable.kind === "value" ? variable.value : secretFilePath(row.id, variable.name, variable.value);
+    }
   }
   const github = resolvedGithubAccounts(project, conversation);
   applyGithubAccounts(values, github, {
@@ -472,6 +475,42 @@ export function websiteCredentialSnapshot(project: string, conversation?: Secret
 
 export function agentEnvironment(projectId: string, conversation?: SecretConversation): NodeJS.ProcessEnv {
   return genericSecretEnvironment(projectId, conversation);
+}
+
+/** Only attached accounts can be selected. Return metadata, never credential values. */
+export function accountsForAgent(project: string, conversation: SecretConversation) {
+  return resolved(project, conversation).filter(({ row }) => !row.website_origin).map(({ row, scope }) => ({
+    id: row.id, label: row.label, provider: row.provider, scope,
+    variables: storedVariables(row).map(({ name }) => name),
+  }));
+}
+
+/** Used inside the local CLI, not returned to the agent. The chosen account replaces
+    other accounts of its provider for one child process only. */
+export function accountEnvironmentForAgent(project: string, conversation: SecretConversation, accountId: string): { values: NodeJS.ProcessEnv; removeNames: string[] } {
+  const accounts = resolved(project, conversation);
+  const account = accounts.find(({ row }) => row.id === accountId);
+  if (!account || account.row.website_origin) throw new Error("Secret account is not available to this conversation");
+  const { row } = account;
+  const removeNames = new Set(accounts.filter((entry) => entry.row.provider === row.provider && !entry.row.website_origin)
+    .flatMap((entry) => storedVariables(entry.row).map(({ name }) => name)));
+  const values: NodeJS.ProcessEnv = {};
+  if (row.provider === "aws" || storedVariables(row).some(({ name }) => name.startsWith("AWS_"))) {
+    for (const name of ["AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI"]) removeNames.add(name);
+  }
+  if (row.provider === "github" || storedVariables(row).some(({ name }) => name === "GH_TOKEN" || name === "GITHUB_TOKEN")) {
+    for (const name of ["GH_TOKEN", "GITHUB_TOKEN", "PI_GITHUB_TOKEN", "GIT_ASKPASS", "GIT_TERMINAL_PROMPT", "GIT_SSH_COMMAND"]) removeNames.add(name);
+  }
+  if (row.provider === "github") {
+    const github = rowGithubAccount(row);
+    applyGithubAccounts(values, [github.app ? { ...github, token: installationToken(github) } : github], {
+      dataDir, keyFile: () => secretFilePath(row.id, "GITHUB_SSH_KEY", github.sshKey!),
+    });
+    applyGitHubEnvironment(values);
+  } else for (const variable of storedVariables(row)) {
+    values[variable.name] = variable.kind === "value" ? variable.value : secretFilePath(row.id, variable.name, variable.value);
+  }
+  return { values, removeNames: [...removeNames] };
 }
 
 /** Writes the accounts the new-conversation dialog picked, once the engine has reported the
@@ -506,14 +545,14 @@ export function agentCredentialContext(project: string, conversation?: SecretCon
   const ordinary = accounts.filter(({ row }) => !row.website_origin);
   const effectiveRows = new Map(accounts.filter(({ row }) => row.website_origin).map((account) => [account.row.id, account]));
   const lines = ["## Available secret accounts", "This is the current account list for this message, replacing any earlier list."];
-  if (ordinary.length) lines.push("Non-website credentials below are already exported into your shell. Use the matching CLI directly and never ask the user for the values, which stay hidden from you.");
+  if (ordinary.length) lines.push("Accounts with unique variables are exported automatically. When accounts in the same scope reuse names, none of those accounts is exported by default. Run node \"$JOINT_BOB_SECRET_CLI\" run ACCOUNT_ID -- COMMAND ARGS to run one command with that account's variables; never print, expand or inspect secret values. The command runs with the chosen account only, without changing other shell commands. Website accounts use login-fill instead.");
   for (const { row, scope } of ordinary) {
     if (row.provider === "github") {
-      lines.push(`- github ${JSON.stringify(row.label)} (${scope}): ${githubAccountContext(rowGithubAccount(row))}. The gh CLI, the GitHub API and git read these automatically.`);
+      lines.push(`- github ${JSON.stringify(row.label)} (${scope}), account ${row.id}: ${githubAccountContext(rowGithubAccount(row))}. The gh CLI, the GitHub API and git read these automatically.`);
       continue;
     }
     const variables = storedVariables(row).map((item) => `${item.name}${item.kind === "file" ? " (secret file path)" : ""}`).join(", ");
-    lines.push(`- ${row.provider} ${JSON.stringify(row.label)} (${scope}): ${variables} - ${providerHints[row.provider]}`);
+    lines.push(`- ${row.provider} ${JSON.stringify(row.label)} (${scope}), account ${row.id}: ${variables} - ${providerHints[row.provider]}`);
   }
   for (const snapshot of websiteCredentialSnapshot(project, conversation)) {
     const { row, scope } = effectiveRows.get(snapshot.id)!;

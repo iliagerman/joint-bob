@@ -3,6 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Agents can now specify which credential account to use when multiple accounts with the same variable names are attached to a workspace or conversation.
+
+## 2.50.1 — 2026-10-07
+
+- Workspaces and conversations now accept multiple accounts with the same environment variable names. Agents can choose an account for an individual command without exposing its values or silently using the wrong account.
+- Fixed the offline shell manifest to include the ntfy manager.
+
 ## 2.50.0 — 2026-10-07
 
 - ntfy service sharing is now event-driven: changes push immediately when shared or edited instead of retrying on a timer.

@@ -3,6 +3,7 @@ import { browserAgentEnvironment, browserAgentInstructions } from "./browser-age
 import { resolveDataDirectory } from "./data-directory.js";
 import { isHarnessId, type HarnessId } from "./types.js";
 import { websiteCredentialSnapshot, type SecretConversation } from "./secrets.js";
+import { secretAgentEnvironment } from "./secret-agent.js";
 import { ntfyAgentEnvironment, ntfyAgentInstructions } from "./ntfy-agent.js";
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 import { getSettings } from "./settings.js";
@@ -104,6 +105,13 @@ export const agentCapabilities: AgentCapability[] = [
     id: "browser",
     instructions: { path: "/virtual/JOINT_BOB_BROWSER.md", content: browserAgentInstructions },
     environment: ({ projectId, engine, conversationId, secretConversation }) => browserAgentEnvironment(projectId, engine, conversationId, secretConversation ? websiteCredentialSnapshot(projectId, secretConversation) : []),
+  },
+  {
+    id: "secrets",
+    instructions: { path: "/virtual/JOINT_BOB_SECRETS.md", content: `# Joint Bob secret accounts
+
+Run node "$JOINT_BOB_SECRET_CLI" list to see available account IDs, labels and variable names without values. When two attached accounts have the same environment variable names, neither is automatically exported. Choose the account that matches the user's task, then run node "$JOINT_BOB_SECRET_CLI" run ACCOUNT_ID -- COMMAND ARGS to give that child command the account's variables. This does not change future commands or the parent shell. For shell scripts, use sh -c with the script after --. Never print, expand, log or inspect secret values, and never pass them as command arguments. Website login credentials use login-fill, not this command. If account choice is ambiguous, ask the user.`, },
+    environment: ({ projectId, engine, conversationId, secretConversation }) => secretAgentEnvironment(projectId, engine, secretConversation?.sessionId ?? conversationId),
   },
   {
     id: "ntfy",

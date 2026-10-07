@@ -114,21 +114,12 @@ function assignments(handle: DatabaseSync, accountId: string): SecretAssignmentP
     .map((row) => ({ scopeType: row.scope_type, scopeId: row.scope_id }));
 }
 
-/** The same collision rules the local setter enforces, for one scope: two website accounts
-    bound to one origin, or two ordinary accounts exporting one variable name, would make the
-    winner depend on row order. */
+/** Website sign-in still requires one account per origin in a scope; ordinary accounts
+    with overlapping variables can coexist and are selected explicitly by the agent. */
 function assertNoScopeCollision(handle: DatabaseSync, scopeType: SecretAssignmentPayload["scopeType"], scopeId: string, accountId: string, value: SecretAccountPayload): void {
-  if (value.websiteOrigin != null) {
-    const duplicate = handle.prepare("SELECT 1 FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? AND a.id != ? AND a.website_origin = ?").get(scopeType, scopeId, accountId, value.websiteOrigin);
-    if (duplicate) throw new Error("Selected website accounts have duplicate origins");
-    return;
-  }
-  const incomingNames = new Set(value.variables.map((variable) => variable.name));
-  const rows = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? AND a.id != ? AND a.website_origin IS NULL").all(scopeType, scopeId, accountId) as unknown as Array<{ variables_encrypted: string }>;
-  for (const row of rows) {
-    const existing = JSON.parse(decryptSecretValue(row.variables_encrypted)) as SecretAccountPayload["variables"];
-    if (existing.some((variable) => incomingNames.has(variable.name))) throw new Error("Selected secret accounts have duplicate environment variable names");
-  }
+  if (value.websiteOrigin == null) return;
+  const duplicate = handle.prepare("SELECT 1 FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? AND a.id != ? AND a.website_origin = ?").get(scopeType, scopeId, accountId, value.websiteOrigin);
+  if (duplicate) throw new Error("Selected website accounts have duplicate origins");
 }
 
 function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, value: SecretAccountPayload): void {

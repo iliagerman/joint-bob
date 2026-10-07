@@ -215,7 +215,7 @@ test("a received account attaches to matching local workspaces", async () => {
   });
 });
 
-test("a received workspace attachment rejects same-scope variable collisions", async () => {
+test("a received workspace attachment retains accounts with the same variable names", async () => {
   await withNode("workspace-collision", async ({ dataDir, secrets, replication }) => {
     const database = new DatabaseSync(path.join(dataDir, "node.db"));
     try {
@@ -223,27 +223,27 @@ test("a received workspace attachment rejects same-scope variable collisions", a
     } finally {
       database.close();
     }
-    const local = await secrets.saveSecretAccount({ label: "Local", provider: "github", variables: [{ name: "GH_TOKEN", kind: "value", value: "ghp_test_local" }] });
+    const local = await secrets.saveSecretAccount({ label: "Local", provider: "custom", variables: [{ name: "AWS_ACCESS_KEY_ID", kind: "value", value: "synthetic-local" }] });
     await secrets.setScopeSecretAccounts("workspace", "personal", [local.id]);
     const remoteId = randomUUID();
 
-    await assert.rejects(() => replication.receiveSecretCredentialEvents([{
+    await replication.receiveSecretCredentialEvents([{
       id: randomUUID(),
       entityKey: remoteId,
       operation: "upsert",
       value: {
         label: "From peer",
-        provider: "github",
-        variables: [{ name: "GH_TOKEN", kind: "value", value: "ghp_test_peer" }],
+        provider: "custom",
+        variables: [{ name: "AWS_ACCESS_KEY_ID", kind: "value", value: "synthetic-peer" }],
         workspaceIds: ["personal"],
       },
       updatedAt: "2026-01-01T00:00:00.000Z",
       originNodeId: randomUUID(),
       createdAt: "2026-01-01T00:00:00.000Z",
-    }]), /duplicate environment variable/);
+    }]);
 
-    assert.deepEqual(await secrets.getScopeSecretAccounts("workspace", "personal"), { accountIds: [local.id] });
-    assert.deepEqual((await secrets.listSecretAccounts()).map((account: { id: string }) => account.id), [local.id]);
+    assert.deepEqual((await secrets.getScopeSecretAccounts("workspace", "personal")).accountIds, [local.id, remoteId].sort());
+    assert.deepEqual((await secrets.listSecretAccounts()).map((account: { id: string }) => account.id).sort(), [local.id, remoteId].sort());
   });
 });
 

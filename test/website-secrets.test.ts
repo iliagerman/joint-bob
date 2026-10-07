@@ -58,7 +58,7 @@ test("website origin validation allows secure and loopback origins only", async 
   });
 });
 
-test("website collisions are independent while ordinary collision rules remain", async () => {
+test("website origins remain unique while ordinary accounts may share variable names", async () => {
   await useFixture("collision", async ({ secrets }) => {
     const first = await secrets.saveSecretAccount({ label: "One", provider: "custom", websiteOrigin: "https://one.example", variables: [variable("one")] });
     const second = await secrets.saveSecretAccount({ label: "Two", provider: "custom", websiteOrigin: "https://two.example", variables: [variable("two")] });
@@ -66,7 +66,8 @@ test("website collisions are independent while ordinary collision rules remain",
     const ordinary = await secrets.saveSecretAccount({ label: "Ordinary", provider: "custom", variables: [variable("ordinary")] });
     await secrets.setScopeSecretAccounts("project", "project-a", [first.id, second.id, ordinary.id]);
     const duplicate = await secrets.saveSecretAccount({ label: "Duplicate", provider: "custom", variables: [variable("duplicate")] });
-    await assert.rejects(() => secrets.setScopeSecretAccounts("project", "project-a", [ordinary.id, duplicate.id]), /duplicate environment variable/);
+    await secrets.setScopeSecretAccounts("project", "project-a", [ordinary.id, duplicate.id]);
+    assert.equal(secrets.genericSecretEnvironment("project-a").LOGIN_PASSWORD, undefined);
   });
 });
 

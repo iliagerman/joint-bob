@@ -118,8 +118,14 @@ test("resolution is most-specific-wins per variable name across the three scopes
     // Another conversation in the same project is unaffected.
     assert.equal(secrets.genericSecretEnvironment("project-a", { engine: "claude", sessionId: "session-2" }).TOKEN, "project");
 
-    // Two accounts at the same scope declaring the same name are rejected at attachment time.
-    await assert.rejects(() => secrets.setScopeSecretAccounts("project", "project-a", [workspace.id, project.id]), /duplicate environment variable/);
+    // Same-scope duplicates are selectable, but never silently pick one ambient value.
+    await secrets.setScopeSecretAccounts("project", "project-a", [workspace.id, project.id]);
+    assert.equal(secrets.genericSecretEnvironment("project-a", session).TOKEN, "conversation");
+    assert.equal(secrets.genericSecretEnvironment("project-a").TOKEN, undefined);
+    const context = secrets.agentCredentialContext("project-a");
+    assert.match(context, new RegExp(`account ${workspace.id}`));
+    assert.match(context, new RegExp(`account ${project.id}`));
+    assert.match(context, /joint-bob-secret|JOINT_BOB_SECRET_CLI/);
   });
 });
 
