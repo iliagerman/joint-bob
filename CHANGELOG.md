@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Story generation displays real-time progress as each section completes, so you can see what's being analyzed instead of waiting for the entire story to finish.
+
 ## 2.54.1 — 2026-10-07
 
 - Worktree folders pull their small metadata files (node paths, conversation markers) before the bulk copy, so a conversation a scheduled task starts in a new worktree shows up on other nodes without waiting for the whole worktree to sync.

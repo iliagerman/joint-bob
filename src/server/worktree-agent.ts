@@ -8,12 +8,14 @@ import {
   createProjectWorktree, deleteProjectWorktree, getProjectWorktree, listProjectWorktrees, ProjectWorktreeError,
   recordWorktreePullRequest, worktreeChanges, worktreeConversationIndex, type ProjectWorktree,
 } from "../project-worktrees.js";
+import { conversationLeaseRunning } from "../conversation-runtime.js";
 import { conversationScopeId, genericSecretEnvironment, getScopeSecretAccounts, githubAccountsForProject, persistConversationSecretAccounts } from "../secrets.js";
 import { getProject } from "../store.js";
-import { PROJECT_COLORS, type ProjectRecord } from "../types.js";
+import { isHarnessId, PROJECT_COLORS, type ProjectRecord } from "../types.js";
 import type { WorktreeAgentIdentity } from "../worktree-agent.js";
 import { queueConversationPrompt } from "./conversation-prompt.js";
 import { openWorktreePullRequest } from "./github-pull-request.js";
+import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
 import { assertProjectEditable } from "./projects.js";
 import { broadcastToProject } from "./realtime.js";
 
@@ -31,6 +33,19 @@ export type WorktreeAgentRequest = z.infer<typeof worktreeAgentRequestSchema>;
 async function callerWorktree(identity: WorktreeAgentIdentity, projectId: string): Promise<ProjectWorktree | undefined> {
   const index = await worktreeConversationIndex(projectId);
   return index.get(`${identity.engine}:${identity.sessionId}`) ?? index.get(`${identity.engine}:${identity.conversationId}`);
+}
+
+/** Conversations started in the worktree whose turn or background work is still running, here or on a peer. */
+async function runningConversations(projectId: string, worktree: ProjectWorktree): Promise<string[]> {
+  const running: string[] = [];
+  for (const [key, candidate] of await worktreeConversationIndex(projectId)) {
+    if (candidate.id !== worktree.id) continue;
+    const [engine, sessionId] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+    if (!isHarnessId(engine)) continue;
+    const local = findHarnessSession(projectId, engine, sessionId);
+    if ((local && harnessSessionBusy(local)) || conversationLeaseRunning(engine, sessionId)) running.push(sessionId);
+  }
+  return running;
 }
 
 function createdByCaller(worktree: ProjectWorktree, identity: WorktreeAgentIdentity): boolean {
@@ -114,6 +129,8 @@ export async function worktreeAgentRequest(identity: WorktreeAgentIdentity, requ
       const worktree = await localWorktree(project.id, request.worktreeId);
       if (worktree.id === current?.id) throw new ProjectWorktreeError(409, "A conversation cannot delete the worktree it runs in");
       if (!createdByCaller(worktree, identity)) throw new ProjectWorktreeError(403, "Only the conversation that created this worktree may delete it; ask the user");
+      const running = await runningConversations(project.id, worktree);
+      if (running.length) throw new ProjectWorktreeError(409, `Conversation ${running.join(", ")} is still running in this worktree; let it finish with pr, then delete`);
       await deleteProjectWorktree(project.id, worktree.id);
       broadcastToProject(project.id, { type: "worktreesChanged" });
       broadcastToProject(project.id, { type: "sessionsChanged" });

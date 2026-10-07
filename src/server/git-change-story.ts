@@ -9,8 +9,8 @@ import { runGitReview } from "./git-review-run.js";
 /** The question text that marks a review thread as a saved change story. */
 export const CHANGE_STORY_MARKER = "Generated change story";
 
-const STORY_DIFF_LIMIT = 70_000;
-const STORY_INPUT_LIMIT = 115_000;
+export const STORY_DIFF_LIMIT = 70_000;
+export const STORY_INPUT_LIMIT = 115_000;
 const DIGEST_LIMIT = 24_000;
 const COMMIT_LIMIT = 20;
 
@@ -18,7 +18,7 @@ const words = (max: number) => z.string().trim().min(1).max(max);
 const optionalWords = (max: number) => z.string().trim().max(max).default("");
 const NODE_KINDS = ["action", "decision", "process", "model", "store", "source", "error"] as const;
 
-const storySchema = z.object({
+export const storySchema = z.object({
   kind: z.enum(["Feature", "Fix", "Refactor", "Tests", "Docs", "Chore"]),
   title: words(120),
   overview: z.object({
@@ -271,7 +271,7 @@ export function turnDigest(turns: ConversationTurn[], facts: StoryFacts): string
   return turns.map((turn) => render(turn, 80)).join("\n\n").slice(-DIGEST_LIMIT);
 }
 
-const STORY_INSTRUCTIONS = `You write a change story: an explanation of code changes for a developer who has not read the code. Read the conversation digest and the diff, then return ONLY one JSON object, no prose and no code fences:
+export const STORY_INSTRUCTIONS = `You write a change story: an explanation of code changes for a developer who has not read the code. Read the conversation digest and the diff, then return ONLY one JSON object, no prose and no code fences:
 {"kind":"Feature"|"Fix"|"Refactor"|"Tests"|"Docs"|"Chore","title":string,
  "overview":{"what":string,"why":string,"notice":[string],"unchanged":string},
  "diagram":{"lanes":[{"id":string,"label":string}],"nodes":[{"id":string,"lane":string,"kind":"action"|"decision"|"process"|"model"|"store"|"source"|"error","label":string,"sub":string,"text":string,"files":[path]}],"edges":[{"from":id,"to":id,"label":string,"style":"solid"|"dashed"|"bad"}]},

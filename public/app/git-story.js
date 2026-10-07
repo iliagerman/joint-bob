@@ -24,6 +24,9 @@ const story = {
   // Picking commits from history instead of explaining the conversation.
   picking: false,
   pick: { tab: "pushes", pushes: null, history: null, error: "", selected: new Map(), typed: "", typedError: "", adding: false },
+  // Stream progress
+  streamProgress: 0,
+  streamSections: {},
 };
 
 const PICK_LIMIT = 20;
@@ -134,24 +137,83 @@ export async function generateStory(payload) {
   const request = ++story.request;
   story.state = "writing";
   story.error = "";
+  story.streamProgress = 0;
+  story.streamSections = {};
   changed();
   try {
-    const body = await api(story.ctx.apiUrl("story"), { method: "POST", body: JSON.stringify(payload) });
-    if (request !== story.request) return;
-    story.latest = { thread: body.thread, saved: body.saved, freshness: body.freshness };
-    story.state = "ready";
-    story.picking = false;
-    story.section = "overview";
-    story.phase = 0;
-    story.example = 0;
-    story.step = 0;
-    story.pages = {};
+    const url = story.ctx.apiUrl("story-stream");
+    const response = await fetch(url, { method: "POST", body: JSON.stringify(payload) });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No response body");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const chunk = JSON.parse(line.slice(6));
+            if (request !== story.request) return;
+
+            if (chunk.error) {
+              story.state = "rejected";
+              story.error = chunk.error;
+              changed();
+              return;
+            }
+
+            if (chunk.section === "complete") {
+              // Full story is complete
+              story.latest = {
+                thread: chunk.thread,
+                saved: chunk.saved,
+                freshness: chunk.freshness,
+              };
+              story.state = "ready";
+              story.picking = false;
+              story.section = "overview";
+              story.phase = 0;
+              story.example = 0;
+              story.step = 0;
+              story.pages = {};
+              changed();
+              return;
+            }
+
+            if (chunk.section && chunk.section !== "complete") {
+              story.streamProgress = chunk.progress || 0;
+              story.streamSections = story.streamSections || {};
+              story.streamSections[chunk.section] = chunk.data;
+              changed();
+            } else if (chunk.section === "complete") {
+              story.streamProgress = 100;
+              changed();
+            }
+          } catch (e) {
+            console.error("Failed to parse chunk:", line, e);
+          }
+        }
+      }
+    }
   } catch (error) {
     if (request !== story.request) return;
     story.state = "rejected";
     story.error = error.message;
+    changed();
   }
-  changed();
 }
 
 /* ---- Paging: rows per page come from the height the list gets ---- */
@@ -271,9 +333,20 @@ function loadingPanel(message) {
 }
 
 function writingPanel() {
+  const sections = ["overview", "diagram", "timeline", "examples", "implementation"];
+  const completed = sections.filter((s) => story.streamSections[s]).length;
+  const progress = story.streamProgress || 0;
+
   return h("div", { class: "gs-state" }, h("div", { class: "gs-state-card", "data-testid": "git-story-writing" },
     h("div", { class: "git-review-loading-head" }, h("span", { class: "git-review-spinner", "aria-hidden": "true" }), h("h3", {}, "Writing the story")),
     h("p", {}, story.picking ? "The reviewer reads the picked commits in a separate session with every tool turned off. Then the server checks every file and diagram step the story mentions." : "The reviewer reads this conversation and its changes in a separate session with every tool turned off. Then the server checks every file, turn and diagram step the story mentions."),
+    h("div", { class: "gs-progress-container" },
+      h("div", { class: "gs-progress-bar", "aria-valuenow": String(progress), "aria-valuemin": "0", "aria-valuemax": "100", style: `--progress: ${progress}%` }),
+      h("span", { class: "gs-progress-text" }, `${progress}%`)),
+    sections.map((section) =>
+      h("div", { class: `gs-progress-section${story.streamSections[section] ? " is-complete" : ""}` },
+        h("span", { class: story.streamSections[section] ? "gs-progress-icon" : "gs-progress-spinner" }, story.streamSections[section] ? "✓" : "…"),
+        h("span", {}, section.charAt(0).toUpperCase() + section.slice(1)))),
     h("p", { class: "gs-state-note" }, "Nothing is posted to the chat while this runs. You can close the Git view; the story is saved when it finishes.")));
 }
 

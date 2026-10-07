@@ -22,6 +22,7 @@ import {
   type GitReviewThread,
 } from "../../git-review-threads.js";
 import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StorySources } from "../git-change-story.js";
+import { streamChangeStory } from "../story-stream.js";
 import { getProject } from "../../store.js";
 import { genericSecretEnvironment, githubAccountsForProject } from "../../secrets.js";
 import { githubAccountFor } from "../../github-credentials.js";
@@ -518,6 +519,142 @@ app.post("/api/projects/:projectId/git/story", async (request, response, next) =
       performStory(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId")), storyRequest.parse(request.body)), request);
   } catch (error) { handleGitError(response, error, next); }
 });
+
+// Stream story generation with progressive section updates
+app.post("/api/cluster/git/story-stream", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const projectId = queryString(request, "projectId");
+    const project = await getProject(projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+
+    const cwd = await reviewCwd(projectId, queryOptional(request, "taskId"));
+    const input = storyRequest.parse(request.body);
+
+    // Set up SSE response headers
+    response.setHeader("Content-Type", "text/event-stream");
+    response.setHeader("Cache-Control", "no-cache");
+    response.setHeader("Connection", "keep-alive");
+
+    let sources: StorySources;
+    if (input.source === "commits") {
+      if (!input.commits.length) { sendError(response, 400, "Pick at least one commit"); return; }
+      sources = { kind: "commits", scope: "all", pendingPaths: [], includeCommits: false, commits: input.commits };
+    } else {
+      if (input.scope === "conversation" && !input.conversationId) { sendError(response, 400, "Conversation required"); return; }
+      if (input.scope === "conversation" && input.paths.length) checkedConversationFiles(projectId, cwd, input.conversationId!, input.paths);
+      const status = await gitStatus(cwd);
+      const pending = new Set([...status.staged, ...status.unstaged, ...status.untracked].map(({ path }) => path));
+      if (input.paths.some((file) => !pending.has(file))) { sendError(response, 409, "Selected files changed; refresh Git status"); return; }
+      sources = { scope: input.scope, pendingPaths: input.paths, includeCommits: input.includeCommits && Boolean(input.conversationId) };
+    }
+
+    try {
+      let finalData: any = null;
+      for await (const chunk of streamChangeStory({ project, cwd, conversationId: input.conversationId, sources, harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel })) {
+        if (chunk._complete) {
+          // Save the complete story to GitReviewThread
+          finalData = chunk;
+          const thread = createGitReviewThread({
+            projectId,
+            conversationId: input.conversationId,
+            harnessId: input.harnessId,
+            provider: input.provider ?? "",
+            modelId: input.modelId,
+            thinkingLevel: input.thinkingLevel,
+            selection: { scope: "worktree" },
+            snapshot: chunk.diff ?? "",
+            question: CHANGE_STORY_MARKER,
+            answer: JSON.stringify({
+              story: chunk.story,
+              facts: chunk.facts,
+              patches: chunk.patches,
+              fingerprint: chunk.fingerprint,
+              sources: chunk.sources,
+              generatedAt: chunk.generatedAt,
+            }),
+          });
+          const saved = {
+            story: chunk.story,
+            facts: chunk.facts,
+            patches: chunk.patches,
+            fingerprint: chunk.fingerprint,
+            sources: chunk.sources,
+            generatedAt: chunk.generatedAt,
+          };
+          response.write(`data: ${JSON.stringify({ section: "complete", progress: 100, thread: storyThreadInfo(thread), saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } })}\n\n`);
+        } else {
+          response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        }
+      }
+      response.end();
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Unknown error";
+      response.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
+      response.end();
+    }
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.post("/api/projects/:projectId/git/story-stream", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) {
+      response.setHeader("Content-Type", "text/event-stream");
+      response.setHeader("Cache-Control", "no-cache");
+      response.write(`data: ${JSON.stringify({ error: "Unauthorized" })}\n\n`);
+      response.end();
+      return;
+    }
+    await withOwningNodeStream(request, response, "/api/cluster/git/story-stream", request.body);
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+async function withOwningNodeStream(request: Request, response: Response, clusterUrl: string, body: unknown) {
+  const owningNode = response.locals.owningNode ?? response.locals.machineId ?? "local";
+  if (owningNode === "local" || !response.locals.relayUrl) {
+    // Handle locally - forward to cluster endpoint but we're already there
+    return;
+  }
+  // Forward the streaming request to the owning node
+  const url = new URL(clusterUrl, response.locals.relayUrl);
+  url.searchParams.set("projectId", (request as any).params.projectId);
+  if ((request as any).query?.taskId) url.searchParams.set("taskId", (request as any).query.taskId);
+
+  response.setHeader("Content-Type", "text/event-stream");
+  response.setHeader("Cache-Control", "no-cache");
+  response.setHeader("Connection", "keep-alive");
+
+  const upstream = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${response.locals.relayToken}` },
+    body: JSON.stringify(body),
+  });
+
+  if (!upstream.ok) {
+    response.write(`data: ${JSON.stringify({ error: `Request failed: ${upstream.status}` })}\n\n`);
+    response.end();
+    return;
+  }
+
+  if (!upstream.body) {
+    response.write(`data: ${JSON.stringify({ error: "No response body" })}\n\n`);
+    response.end();
+    return;
+  }
+
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      response.write(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    response.end();
+  }
+}
 
 app.get("/api/cluster/git/pushes", async (request, response, next) => {
   try {
