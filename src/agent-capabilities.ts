@@ -5,6 +5,7 @@ import { isHarnessId, type HarnessId } from "./types.js";
 import { websiteCredentialSnapshot, type SecretConversation } from "./secrets.js";
 import { secretAgentEnvironment } from "./secret-agent.js";
 import { ntfyAgentEnvironment, ntfyAgentInstructions } from "./ntfy-agent.js";
+import { worktreeAgentEnvironment, worktreeAgentInstructions } from "./worktree-agent.js";
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 import { getSettings } from "./settings.js";
 import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-git-policy.js";
@@ -117,6 +118,11 @@ Run node "$JOINT_BOB_SECRET_CLI" list to see available account IDs, labels and v
     id: "ntfy",
     instructions: { path: "/virtual/JOINT_BOB_NTFY.md", content: ntfyAgentInstructions },
     environment: ({ projectId, engine, conversationId }) => ntfyAgentEnvironment(projectId, engine, conversationId),
+  },
+  {
+    id: "worktrees",
+    instructions: { path: "/virtual/JOINT_BOB_WORKTREES.md", content: worktreeAgentInstructions },
+    environment: ({ projectId, engine, conversationId, secretConversation }) => worktreeAgentEnvironment(projectId, engine, conversationId, secretConversation?.sessionId ?? conversationId),
   },
   {
     id: "git-policy",

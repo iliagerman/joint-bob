@@ -7,7 +7,7 @@ export const agentGitPolicyInstructions = `# Joint Bob git policy
 
 Agents never create git branches or git worktrees. The \`git\` on PATH refuses \`git branch <new>\`, \`git branch -m/-M/-c/-C\`, \`git checkout -b/-B/--orphan\`, \`git switch -c/-C/--orphan\`, \`git stash branch\` and \`git worktree add/move\`, including through aliases and tools that call git. Do not work around it with another git binary, a different branch name, or a copied repository.
 
-Isolated work happens in Joint Bob worktrees. A Joint Bob worktree is a synced copy of the project's code and text that every node sharing the project receives, shown in its own color in the conversation list. When a task needs isolation, tell the user to create a worktree from the project's Worktrees section and continue in a conversation started inside it. Inside a worktree, edit files in place; it has no \`.git\`, and its changes return to the project through Merge to project.
+Isolated work happens in Joint Bob worktrees. A Joint Bob worktree is a synced copy of the project's code and text that every node sharing the project receives, shown in its own color in the conversation list. When a task needs isolation, create one with the Joint Bob worktree CLI (see Joint Bob worktrees) or ask the user to create one from the project's Worktrees section. Inside a worktree, edit files in place; it has no \`.git\`, and its changes return through a pull request opened with the worktree CLI, or through Merge to project when the user does it.
 
 Committing, pushing an existing branch, switching to an existing branch, and read-only commands are allowed.`;
 

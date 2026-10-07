@@ -66,7 +66,7 @@ interface GithubJob { id: number; name: string; status: string; conclusion: stri
 interface WorkflowRun { id: number; path: string; head_sha: string; [key: string]: unknown }
 interface WorkflowJob { name?: string; needs?: string | string[] }
 
-async function githubRequest(base: string, token: string | undefined, request: typeof fetch, route: string, method = "GET", body?: object): Promise<unknown> {
+export async function githubRequest(base: string, token: string | undefined, request: typeof fetch, route: string, method = "GET", body?: object): Promise<unknown> {
   if (method !== "GET" && !token) throw new GitReviewError(403, "Attach a GitHub token to perform this action");
   let response: Response;
   try {

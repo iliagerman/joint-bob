@@ -6,10 +6,12 @@ import { managedHomePaths } from "./managed-home.js";
 import { applyMergeTransaction, recordMergeTransaction, rollbackMergeTransaction, type MergeOp } from "./merge-journal.js";
 import { getSettings } from "./settings.js";
 import { listSyncthingFolders, rescanSyncthingFolder } from "./syncthing.js";
-import { captureBaseline, copyAllowed, TICKET_MERGE_DIR } from "./task-workspaces.js";
-import { prepareTicketMerge } from "./ticket-merge-ops.js";
+import { promisify } from "node:util";
+import { execFile } from "./subprocess.js";
+import { captureBaseline, copyAllowed, listTreeEntries, TICKET_BASELINE_DIR, TICKET_MERGE_DIR } from "./task-workspaces.js";
+import { prepareTicketMerge, readBaseline } from "./ticket-merge-ops.js";
 import { PROJECT_COLORS, type ProjectColor, type ProjectRecord } from "./types.js";
-import { WORKTREE_FOLDER_PREFIX, WORKTREE_META_DIR, worktreeBinaryExtensions, worktreeHeavyDirectories, worktreeHeavyFiles } from "./worktree-filters.js";
+import { WORKTREE_FOLDER_PREFIX, WORKTREE_META_DIR, worktreeBinaryExtensions, worktreeHeavyDirectories, worktreeHeavyFiles, worktreeLinkedDirectories } from "./worktree-filters.js";
 
 export { WORKTREE_META_DIR } from "./worktree-filters.js";
 const binaryExtensions = new Set(worktreeBinaryExtensions.map((extension) => `.${extension}`));
@@ -21,6 +23,13 @@ const WORKTREE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 // Vivid hues first: a worktree must stand out in the list, and slate reads as no colour.
 const DEFAULT_COLOR_ORDER: ProjectColor[] = ["teal", "violet", "amber", "blue", "magenta", "green", "red", "slate"];
 const BINARY_SNIFF_BYTES = 8192;
+const exec = promisify(execFile);
+const linkedDirectories = new Set<string>(worktreeLinkedDirectories);
+/** Node-local: Syncthing ignores `.joint-bob/` at every depth and the copy never brings one. */
+const LOCAL_FILES_MARKER = path.join(".joint-bob", "worktree-local-files.json");
+
+export interface WorktreeCreator { engine: string; conversationId: string }
+export interface WorktreePullRequest { number: number; url: string; branch: string; base: string; baseCommit: string }
 
 export interface ProjectWorktree {
   id: string;
@@ -31,6 +40,8 @@ export interface ProjectWorktree {
   createdByNodeId: string;
   lastMergedAt: string | null;
   path: string;
+  createdBy: WorktreeCreator | null;
+  pullRequest: WorktreePullRequest | null;
 }
 
 interface WorktreeMetadata {
@@ -42,6 +53,10 @@ interface WorktreeMetadata {
   createdByNodeId: string;
   baselineDigest: string;
   lastMergedAt: string | null;
+  /** Project HEAD when the worktree was copied; a pull request starts from it. */
+  gitBase?: string | null;
+  createdBy?: WorktreeCreator | null;
+  pullRequest?: WorktreePullRequest | null;
 }
 
 export class ProjectWorktreeError extends Error {
@@ -134,7 +149,7 @@ async function readMetadata(worktree: string): Promise<WorktreeMetadata | undefi
 }
 
 function view(projectId: string, worktree: string, metadata: WorktreeMetadata): ProjectWorktree {
-  return { id: metadata.id, projectId, name: metadata.name, color: metadata.color, createdAt: metadata.createdAt, createdByNodeId: metadata.createdByNodeId, lastMergedAt: metadata.lastMergedAt, path: worktree };
+  return { id: metadata.id, projectId, name: metadata.name, color: metadata.color, createdAt: metadata.createdAt, createdByNodeId: metadata.createdByNodeId, lastMergedAt: metadata.lastMergedAt, path: worktree, createdBy: metadata.createdBy ?? null, pullRequest: metadata.pullRequest ?? null };
 }
 
 function normalizeName(name: unknown): string {
@@ -189,7 +204,53 @@ export async function getProjectWorktree(projectId: string, worktreeId: string, 
   return view(projectId, worktree, metadata);
 }
 
-export async function createProjectWorktree(project: ProjectRecord, input: { name: unknown; color?: unknown }, root = worktreeRoot()): Promise<ProjectWorktree> {
+async function gitHead(projectPath: string): Promise<string | null> {
+  try {
+    const head = (await exec("git", ["-C", projectPath, "rev-parse", "--verify", "HEAD"], { timeout: 10_000 })).stdout.trim();
+    return /^[0-9a-f]{40}$/.test(head) ? head : null;
+  } catch { return null; }
+}
+
+async function lstatOrNull(file: string): Promise<Stats | null> {
+  try { return await fs.lstat(file); }
+  catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return null;
+    throw error;
+  }
+}
+
+/** Copies the project's `.env` files and links its dependency folders into the worktree, once per node.
+    Neither syncs, so every node that runs a conversation in the worktree provisions its own. */
+export async function ensureWorktreeLocalFiles(projectPath: string, worktree: string): Promise<{ envFiles: number; links: number }> {
+  const marker = path.join(worktree, LOCAL_FILES_MARKER);
+  if (await lstatOrNull(marker)) return { envFiles: 0, links: 0 };
+  const source = path.resolve(projectPath);
+  let envFiles = 0;
+  let links = 0;
+  const pending = [""];
+  while (pending.length) {
+    const relative = pending.pop()!;
+    let entries;
+    try { entries = await fs.readdir(path.join(source, relative), { withFileTypes: true }); }
+    catch { continue; }
+    for (const entry of entries) {
+      const child = path.join(relative, entry.name);
+      const target = path.join(worktree, child);
+      if (linkedDirectories.has(entry.name) && (entry.isDirectory() || entry.isSymbolicLink())) {
+        if (!await lstatOrNull(target)) { await fs.symlink(path.join(source, child), target, "dir"); links += 1; }
+      } else if (entry.isDirectory()) {
+        // Only folders the copy kept: excluded trees (.git, builds, caches) are never walked.
+        if ((await lstatOrNull(target))?.isDirectory()) pending.push(child);
+      } else if (entry.isFile() && (entry.name === ".env" || entry.name.startsWith(".env."))) {
+        if (!await lstatOrNull(target)) { await fs.copyFile(path.join(source, child), target, fs.constants.COPYFILE_EXCL); envFiles += 1; }
+      }
+    }
+  }
+  await writeAtomic(marker, `${JSON.stringify({ provisionedAt: new Date().toISOString(), envFiles, links })}\n`);
+  return { envFiles, links };
+}
+
+export async function createProjectWorktree(project: ProjectRecord, input: { name: unknown; color?: unknown; createdBy?: WorktreeCreator }, root = worktreeRoot()): Promise<ProjectWorktree> {
   const name = normalizeName(input.name);
   const existing = await listProjectWorktrees(project.id, root);
   if (existing.some((worktree) => worktree.name.toLowerCase() === name.toLowerCase())) throw new ProjectWorktreeError(409, "A worktree with this name already exists");
@@ -204,9 +265,11 @@ export async function createProjectWorktree(project: ProjectRecord, input: { nam
   // Copied privately, then renamed in: the synced folder never sees a half-made worktree.
   const staging = path.join(path.dirname(worktree), `.creating-${id}`);
   try {
+    const gitBase = await gitHead(source);
     await fs.cp(source, staging, { recursive: true, force: false, errorOnExist: true, filter: (entry) => copyCandidate(source, entry) });
+    await ensureWorktreeLocalFiles(source, staging);
     const baselineDigest = await captureBaseline(staging, worktreePathAllowed, [WORKTREE_META_DIR]);
-    const metadata: WorktreeMetadata = { version: 1, id, name, color, createdAt: new Date().toISOString(), createdByNodeId: node.id, baselineDigest, lastMergedAt: null };
+    const metadata: WorktreeMetadata = { version: 1, id, name, color, createdAt: new Date().toISOString(), createdByNodeId: node.id, baselineDigest, lastMergedAt: null, gitBase, createdBy: input.createdBy ?? null, pullRequest: null };
     await writeAtomic(metadataFile(staging), `${JSON.stringify(metadata, null, 2)}\n`);
     await fs.rename(staging, worktree);
     await registerLocalPath(worktree, node.id);
@@ -365,3 +428,41 @@ async function mergeLocked(project: ProjectRecord, worktreeId: string, root: str
   }
 }
 
+
+export interface WorktreeFileChange { path: string; content: Buffer; executable: boolean }
+export interface WorktreeChanges { gitBase: string | null; writes: WorktreeFileChange[]; deletes: string[] }
+
+/** Everything the worktree changed since it was copied (or last merged), for a pull request. */
+export async function worktreeChanges(projectId: string, worktreeId: string, root = worktreeRoot()): Promise<WorktreeChanges> {
+  const worktree = expectedWorktreePath(projectId, worktreeId, root);
+  const metadata = await readMetadata(worktree);
+  if (!metadata) throw new ProjectWorktreeError(404, "Worktree not found");
+  const baseline = await readBaseline(worktree);
+  // The digest recorded at creation pins the manifest an agent could otherwise rewrite.
+  if (!baseline || baseline.digest !== metadata.baselineDigest) throw new ProjectWorktreeError(409, "Worktree baseline changed; its changes cannot be determined");
+  const skipped = new Set([TICKET_BASELINE_DIR, TICKET_MERGE_DIR, WORKTREE_META_DIR]);
+  const writes: WorktreeFileChange[] = [];
+  const present = new Set<string>();
+  for (const entry of await listTreeEntries(worktree)) {
+    const relative = path.relative(worktree, entry.path).split(path.sep).join("/");
+    if (entry.symlink || skipped.has(relative.split("/")[0]) || !worktreePathAllowed(worktree, entry.path)) continue;
+    present.add(relative);
+    const [content, info] = await Promise.all([fs.readFile(entry.path), fs.stat(entry.path)]);
+    const before = baseline.manifest.files[relative];
+    const executable = (info.mode & 0o111) !== 0;
+    if (before && !("symlink" in before) && before.sha256 === createHash("sha256").update(content).digest("hex") && ((before.mode & 0o111) !== 0) === executable) continue;
+    writes.push({ path: relative, content, executable });
+  }
+  const deletes = Object.entries(baseline.manifest.files).filter(([file, entry]) => !("symlink" in entry) && !present.has(file)).map(([file]) => file).sort();
+  return { gitBase: metadata.gitBase ?? null, writes, deletes };
+}
+
+export async function recordWorktreePullRequest(projectId: string, worktreeId: string, pullRequest: WorktreePullRequest, root = worktreeRoot()): Promise<ProjectWorktree> {
+  const worktree = expectedWorktreePath(projectId, worktreeId, root);
+  const metadata = await readMetadata(worktree);
+  if (!metadata) throw new ProjectWorktreeError(404, "Worktree not found");
+  const next = { ...metadata, pullRequest };
+  await writeAtomic(metadataFile(worktree), `${JSON.stringify(next, null, 2)}\n`);
+  announce(projectId);
+  return view(projectId, worktree, next);
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { claudeProjectDir } from "../src/harnesses/claude/paths.ts";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
@@ -119,7 +119,8 @@ test("worktree API creates, tags conversations, renames, merges and deletes work
     const worktree = (await made.json() as { worktree: Worktree }).worktree;
     assert.equal(worktree.path, path.join(homePath, "worktrees", project.id, worktree.id));
     assert.equal(await readFile(path.join(worktree.path, "src", "inbox.ts"), "utf8"), "export const inbox = 'mock';\n");
-    assert.equal(await isMissing(path.join(worktree.path, "node_modules")), true);
+    // Dependencies are linked to the project's own folder, never copied.
+    assert.equal(await realpath(path.join(worktree.path, "node_modules")), await realpath(path.join(project.path, "node_modules")));
     assert.match(await readFile(path.join(homePath, ".gitignore"), "utf8"), /^\/worktrees\/$/m);
     assert.equal((await fetch(base, { method: "POST", headers, body: JSON.stringify({ name: "slice 4" }) })).status, 409);
     const listed = await (await fetch(base, { headers })).json() as { worktrees: Worktree[] };

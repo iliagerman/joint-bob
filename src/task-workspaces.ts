@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { managedHomePaths } from "./managed-home.js";
 import { getSettings } from "./settings.js";
@@ -61,6 +61,28 @@ export function copyAllowed(projectPath: string, sourcePath: string): boolean {
   return !excludedPrefixes.some((prefix) => name.startsWith(prefix));
 }
 
+/** Files and symlinks under root, sorted. Never descends a symlink (a worktree links its
+    project's dependencies) or a directory the copy rules exclude at every depth. */
+export async function listTreeEntries(root: string): Promise<Array<{ path: string; symlink: boolean }>> {
+  const found: Array<{ path: string; symlink: boolean }> = [];
+  const pending = [root];
+  while (pending.length) {
+    const directory = pending.pop()!;
+    let entries: Dirent[];
+    try { entries = await fs.readdir(directory, { withFileTypes: true }); }
+    catch (error) {
+      if (directory !== root && ["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) { if (!excludedDirectories.has(entry.name)) pending.push(full); }
+      else if (entry.isFile() || entry.isSymbolicLink()) found.push({ path: full, symlink: entry.isSymbolicLink() });
+    }
+  }
+  return found.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+}
+
 // The baseline is the trust root for the later three-way merge back into the project
 // (TICKET-MERGE-PLAN.md §4): the full content of every copied file plus a hash
 // manifest, so any node can diff3 without a git history.
@@ -71,15 +93,13 @@ export async function captureBaseline(workspace: string, allowed: (root: string,
   const files: Record<string, { sha256: string; mode: number } | { symlink: true }> = {};
   // Walk the just-written copy, not the live source: concurrent edits to the
   // project during creation can otherwise leave workspace and baseline disagreeing.
-  const entries = await fs.readdir(workspace, { recursive: true, withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-    const sourcePath = path.join(entry.parentPath, entry.name);
-    const top = path.relative(workspace, entry.parentPath).split(path.sep)[0];
+  for (const entry of await listTreeEntries(workspace)) {
+    const sourcePath = entry.path;
+    const top = path.relative(workspace, sourcePath).split(path.sep)[0];
     if (top === TICKET_BASELINE_DIR || skipTopLevel.includes(top)) continue;
     if (!allowed(workspace, sourcePath)) continue;
     const relative = path.relative(workspace, sourcePath).split(path.sep).join("/");
-    if (entry.isSymbolicLink()) {
+    if (entry.symlink) {
       files[relative] = { symlink: true };
       continue;
     }

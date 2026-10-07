@@ -9,7 +9,7 @@ import { type ConversationEngine, getConversationOwnership } from "../conversati
 import { ensureConversationRecord, getConversationRecord, listConversationSegments, parseConversationDraftPath } from "../conversation-records.js";
 import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import { getProjectLock } from "../project-locks.js";
-import { getProjectWorktree, markWorktreeConversation, worktreeConversationIndex, type ProjectWorktree } from "../project-worktrees.js";
+import { ensureWorktreeLocalFiles, getProjectWorktree, markWorktreeConversation, worktreeConversationIndex, type ProjectWorktree } from "../project-worktrees.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
 import { getProject } from "../store.js";
 import { getSettings } from "../settings.js";
@@ -29,6 +29,12 @@ import { ownerPeer } from "./task-handoff.js";
 import { measureOperation, traceOperation } from "./performance-diagnostics.js";
 import { projectAdditionalPaths } from "./session-scope.js";
 import { mergeReservations, taskCwd, taskHandoffContext, taskTerminalCounts } from "./task-runs.js";
+
+/** A worktree that arrived through sync has no `.env` or dependency links on this node yet. */
+async function provisionWorktree(projectPath: string, worktreePath: string): Promise<void> {
+  await ensureWorktreeLocalFiles(projectPath, worktreePath).catch((error) => console.warn("Worktree local files could not be provisioned", error));
+}
+
 
 function describeSessionRequest(rawSessionPath: string | null) {
   const selected = rawSessionPath ?? listHarnesses()[0].paths.newSession;
@@ -256,6 +262,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       socket.close(1008, "Worktree is not synchronized on this node");
       return;
     }
+    if (terminalWorktree) await provisionWorktree(project.path, terminalWorktree.path);
     attachTerminalSession(socket, task ? taskCwd(project, task) : terminalWorktree?.path ?? project.path, local.id);
     return;
   }
@@ -384,6 +391,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
     worktree = known ?? requested;
     if (worktree) {
       cwd = worktree.path;
+      await provisionWorktree(project.path, worktree.path);
       if (!known) await markWorktreeConversation(project.id, worktree.id, sessionRequest.engine, ownershipSessionId);
     }
   }

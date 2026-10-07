@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   createProjectWorktree,
   deleteProjectWorktree,
+  ensureWorktreeLocalFiles,
   listProjectWorktrees,
   markWorktreeConversation,
   mergeProjectWorktree,
   projectWorktreeSyncFolderId,
+  recordWorktreePullRequest,
   updateProjectWorktree,
   WORKTREE_META_DIR,
+  worktreeChanges,
   worktreeConversationIndex,
   worktreePathAllowed,
   worktreeSessionPaths,
@@ -58,12 +61,18 @@ test("a worktree copies only code and text and lists with its name and color", a
     assert.equal(worktree.name, "Slice 4");
     assert.equal(worktree.path, path.join(worktrees, project.id, worktree.id));
     for (const kept of ["src/index.ts", "README.md", "assets/icon.svg"]) assert.ok(await exists(path.join(worktree.path, kept)), `${kept} should be copied`);
-    for (const skipped of ["assets/logo.png", "data/blob.dat", "data/huge.txt", "node_modules", ".venv", "web/.next", "rust/target", "lib.egg-info", ".git", ".env", ".stignore"]) {
+    for (const skipped of ["assets/logo.png", "data/blob.dat", "data/huge.txt", "web/.next", "rust/target", "lib.egg-info", ".git", ".stignore"]) {
       assert.equal(await exists(path.join(worktree.path, skipped)), false, `${skipped} should not be copied`);
     }
+    for (const linked of ["node_modules", ".venv"]) {
+      assert.ok((await lstat(path.join(worktree.path, linked))).isSymbolicLink(), `${linked} should link to the project`);
+      assert.equal(await realpath(path.join(worktree.path, linked)), await realpath(path.join(project.path, linked)));
+    }
+    assert.equal(await readFile(path.join(worktree.path, ".env"), "utf8"), "SECRET=1\n");
     assert.ok(await exists(path.join(worktree.path, WORKTREE_META_DIR, "worktree.json")));
     assert.ok(await exists(path.join(worktree.path, ".joint-bob-baseline", "manifest.json")));
-    assert.equal((await readFile(path.join(worktree.path, ".joint-bob-baseline", "manifest.json"), "utf8")).includes(WORKTREE_META_DIR), false);
+    const manifest = await readFile(path.join(worktree.path, ".joint-bob-baseline", "manifest.json"), "utf8");
+    for (const local of [WORKTREE_META_DIR, "node_modules", ".venv", ".env"]) assert.equal(manifest.includes(`"${local}`), false, `${local} must stay out of the baseline`);
 
     await assert.rejects(createProjectWorktree(project, { name: "slice 4" }, worktrees), /already exists/);
     const second = await createProjectWorktree(project, { name: "Other", color: "red" }, worktrees);
@@ -171,9 +180,9 @@ test("deleting a worktree removes its folder, so Syncthing removes it from every
   const { root, worktrees, project } = await fixture();
   try {
     const worktree = await createProjectWorktree(project, { name: "Gone" }, worktrees);
-    await mkdir(path.join(worktree.path, "node_modules/x"), { recursive: true });
     await deleteProjectWorktree(project.id, worktree.id, worktrees);
     assert.equal(await exists(worktree.path), false);
+    assert.ok(await exists(path.join(project.path, "node_modules/pkg/index.js")), "deleting removes the link, not the project's dependencies");
     assert.deepEqual(await listProjectWorktrees(project.id, worktrees), []);
     await assert.rejects(deleteProjectWorktree(project.id, worktree.id, worktrees), /not found/);
     await assert.rejects(deleteProjectWorktree(project.id, "../../etc", worktrees), /invalid/);
@@ -187,5 +196,58 @@ test("the worktree filter keeps code and text and drops heavy paths", () => {
   for (const kept of ["/p/src/a.ts", "/p/docs/readme.md", "/p/app/icon.svg", "/p/backend/main.py"]) assert.ok(worktreePathAllowed(root, kept), kept);
   for (const dropped of ["/p/node_modules/a.js", "/p/x/.venv/y.py", "/p/a.png", "/p/B.JPG", "/p/build.zip", "/p/target/x", "/p/a.egg-info/b", "/p/.git/HEAD", "/p/.env.local"]) {
     assert.equal(worktreePathAllowed(root, dropped), false, dropped);
+  }
+});
+
+test("a node that receives a worktree through sync provisions its own .env and dependency links once", async () => {
+  const { root, worktrees, project } = await fixture();
+  try {
+    await mkdir(path.join(project.path, "web/node_modules/lib"), { recursive: true });
+    await writeFile(path.join(project.path, "web/.env.local"), "WEB=1\n");
+    await writeFile(path.join(project.path, "web/page.ts"), "export {};\n");
+    const worktree = await createProjectWorktree(project, { name: "Synced" }, worktrees);
+    assert.equal(await readlink(path.join(worktree.path, "web/node_modules")), path.join(project.path, "web/node_modules"));
+    assert.equal(await readFile(path.join(worktree.path, "web/.env.local"), "utf8"), "WEB=1\n");
+
+    // What a peer receives: no node-local marker, no .env, no links.
+    for (const local of [".joint-bob", ".env", "web/.env.local", "node_modules", ".venv", "web/node_modules"]) await rm(path.join(worktree.path, local), { recursive: true, force: true });
+    await writeFile(path.join(worktree.path, ".env"), "SECRET=peer\n");
+    assert.deepEqual(await ensureWorktreeLocalFiles(project.path, worktree.path), { envFiles: 1, links: 3 });
+    assert.equal(await readFile(path.join(worktree.path, ".env"), "utf8"), "SECRET=peer\n", "an existing .env is never overwritten");
+    assert.ok((await lstat(path.join(worktree.path, "web/node_modules"))).isSymbolicLink());
+    assert.deepEqual(await ensureWorktreeLocalFiles(project.path, worktree.path), { envFiles: 0, links: 0 });
+    assert.equal(await exists(path.join(worktree.path, "rust/target")), false, "excluded build trees are never linked");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("worktree changes list edits, additions and deletions, never local files, and refuse a rewritten baseline", async () => {
+  const { root, worktrees, project } = await fixture();
+  try {
+    const worktree = await createProjectWorktree(project, { name: "Changes", createdBy: { engine: "claude", conversationId: "c1" } }, worktrees);
+    assert.deepEqual(worktree.createdBy, { engine: "claude", conversationId: "c1" });
+    assert.deepEqual(await worktreeChanges(project.id, worktree.id, worktrees), { gitBase: null, writes: [], deletes: [] });
+    await writeFile(path.join(worktree.path, "src/index.ts"), "export const value = 2;\n");
+    await writeFile(path.join(worktree.path, "src/run.sh"), "#!/bin/sh\n", { mode: 0o755 });
+    await rm(path.join(worktree.path, "src/remove.ts"));
+    await writeFile(path.join(worktree.path, ".env"), "SECRET=changed\n");
+    await writeFile(path.join(project.path, "node_modules/pkg/index.js"), "module.exports = 2;\n");
+    await symlink("/etc/hosts", path.join(worktree.path, "src/hosts"));
+    const changes = await worktreeChanges(project.id, worktree.id, worktrees);
+    assert.deepEqual(changes.writes.map((file) => [file.path, file.content.toString(), file.executable]), [
+      ["src/index.ts", "export const value = 2;\n", false],
+      ["src/run.sh", "#!/bin/sh\n", true],
+    ]);
+    assert.deepEqual(changes.deletes, ["src/remove.ts"]);
+
+    const pullRequest = { number: 7, url: "https://github.com/o/r/pull/7", branch: "joint-bob/changes-1", base: "main", baseCommit: "a".repeat(40) };
+    assert.deepEqual((await recordWorktreePullRequest(project.id, worktree.id, pullRequest, worktrees)).pullRequest, pullRequest);
+    assert.deepEqual((await listProjectWorktrees(project.id, worktrees))[0].pullRequest, pullRequest);
+
+    await writeFile(path.join(worktree.path, ".joint-bob-baseline/manifest.json"), "{\"version\":1,\"files\":{}}\n");
+    await assert.rejects(worktreeChanges(project.id, worktree.id, worktrees), /baseline changed/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

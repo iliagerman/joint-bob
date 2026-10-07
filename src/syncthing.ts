@@ -5,7 +5,7 @@ import { getSettings, syncthingApiKey } from "./settings.js";
 import { AGENT_RESOURCES_FOLDER_ID, AGENT_RESOURCES_FOLDER_LABEL } from "./agent-resources.js";
 import { TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
 import type { ProjectSyncStatus } from "./types.js";
-import { WORKTREE_FOLDER_PREFIX, worktreeBinaryExtensions, worktreeHeavyDirectories } from "./worktree-filters.js";
+import { WORKTREE_FOLDER_PREFIX, worktreeBinaryExtensions, worktreeHeavyDirectories, worktreeLinkedDirectories } from "./worktree-filters.js";
 
 interface SyncthingDevice {
   deviceID: string;
@@ -120,6 +120,8 @@ const projectIgnorePatterns = [
 const worktreeIgnorePatterns = [
   ...projectIgnorePatterns.map((rule) => rule.startsWith("(?d)") ? rule : `(?d)${rule}`),
   ...worktreeHeavyDirectories.filter((name) => !name.startsWith(".st")).map((name) => `(?d)${name}`),
+  // Each node links its own project's dependencies; a link never travels to a peer.
+  ...worktreeLinkedDirectories.filter((name) => !(worktreeHeavyDirectories as readonly string[]).includes(name)).map((name) => `(?d)${name}`),
   "(?d)*.egg-info",
   "(?d).joint-bob-merge",
   ...worktreeBinaryExtensions.map((extension) => `(?d)(?i)*.${extension}`),
