@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.54.1 — 2026-10-07
 
-- Worktree folders now prioritize metadata and conversation markers, ensuring they synchronize before bulk files are copied.
+- Worktree folders pull their small metadata files (node paths, conversation markers) before the bulk copy, so a conversation a scheduled task starts in a new worktree shows up on other nodes without waiting for the whole worktree to sync.
 
 ## 2.54.0 — 2026-10-07
 
