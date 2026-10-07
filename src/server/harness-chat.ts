@@ -36,7 +36,7 @@ import { claimConversationLocally, describeConversationOwner, type ForeignConver
 import { flags } from "./state.js";
 import { measureOperation } from "./performance-diagnostics.js";
 import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
-import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
+import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, historyBeforeLiveTurn, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 
 export interface HarnessChatConnection {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
@@ -729,7 +729,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const transcript = await measureOperation("chat.open.history", () => conversationTranscriptPayload(options.project.id, options.engine, shared.session.id, options.listedSessions, shared.session.messages));
   if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
   const scheduled = Boolean(record?.cronTaskId);
-  const history = withTurnFailures(transcript.messages, listTurnFailures(options.engine, shared.session.id));
+  const history = withTurnFailures(historyBeforeLiveTurn(transcript.messages, shared), listTurnFailures(options.engine, shared.session.id));
   const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
   const goal = await getConversationGoal(options.project.id, conversationId);
   const routing = await routingClientState(connection, local.id);

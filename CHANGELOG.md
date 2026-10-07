@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed duplicate output when reattaching to a Claude session mid-turn.
+
 ## 2.49.1 — 2026-10-07
 
 - Secret account pickers now show why a workspace or conversation assignment failed instead of silently ignoring Save.

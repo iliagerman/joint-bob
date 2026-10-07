@@ -3,7 +3,7 @@ import { COMPACTION_INACTIVITY_TIMEOUT_MS, CONVERSATION_INACTIVITY_TIMEOUT_MS, c
 import { conversationWorkActive } from "../conversation-work.js";
 import { getHarness, getHarnessRuntime, refreshHarnessSessions } from "../harnesses.js";
 import type { HarnessEvent, HarnessOpenOptions, HarnessSession } from "../harnesses/runtime.js";
-import type { HarnessId } from "../types.js";
+import type { ChatMessage, HarnessId } from "../types.js";
 import { broadcastToProject, scheduleReviewNotifications, send } from "./realtime.js";
 import { idleSessionTimeoutMs, localWriteGraceMs } from "./state.js";
 
@@ -42,6 +42,13 @@ export function harnessSessionBusy(shared: SharedHarnessSession): boolean {
 
 export function listHarnessSessionsRunning(): SharedHarnessSession[] {
   return [...harnessSessions.values()].filter(harnessSessionBusy);
+}
+
+/** The live replay re-sends the running turn's output, so history keeps only its prompt from that turn. */
+export function historyBeforeLiveTurn(messages: ChatMessage[], shared: Pick<SharedHarnessSession, "turnStartedAt" | "liveEvents">): ChatMessage[] {
+  const startedAt = Date.parse(shared.turnStartedAt ?? "");
+  if (!Number.isFinite(startedAt) || !shared.liveEvents.length) return messages;
+  return messages.filter((message) => message.role === "user" || !(Date.parse(message.timestamp ?? "") >= startedAt));
 }
 
 function appendEvent(events: HarnessEvent[], event: HarnessEvent): void {
