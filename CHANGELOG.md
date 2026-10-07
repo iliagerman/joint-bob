@@ -3,11 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.49.1 — 2026-10-07
 
 - Secret account pickers now show why a workspace or conversation assignment failed instead of silently ignoring Save.
-
-## 2.49.1 — 2026-10-07
 
 ## 2.49.0 — 2026-10-07
 
