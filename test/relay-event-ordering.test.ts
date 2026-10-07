@@ -60,8 +60,11 @@ test("a conversation whose ownership was recorded before its record still reache
       const ownership = query<{ owner_node_id: string }>(c, "SELECT owner_node_id FROM conversation_ownership WHERE session_id=?", sessionId);
       assert.deepEqual(ownership.map((row) => row.owner_node_id), [a.nodeId], "the member applies the ownership once it knows the conversation's project");
     });
-    const stuck = query<{ n: number }>(a, "SELECT count(*) n FROM cluster_v2_hub_queue WHERE cluster_id=? AND delivered_at IS NULL", clusterId)[0].n;
-    assert.equal(stuck, 0, "no batch stays undelivered");
+    // The rest of the shared project's history can still be in flight; none of it may stay stuck.
+    await eventually(async () => {
+      const stuck = query<{ n: number }>(a, "SELECT count(*) n FROM cluster_v2_hub_queue WHERE cluster_id=? AND delivered_at IS NULL", clusterId)[0].n;
+      assert.equal(stuck, 0, "no batch stays undelivered");
+    });
   } finally {
     await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });
