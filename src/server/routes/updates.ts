@@ -149,6 +149,22 @@ app.post("/api/cluster/v2/update/install", async (request, response, next) => {
 });
 
 app.use((error: unknown, request: Request, response: Response, _next: NextFunction) => {
+  // body-parser's abort: the client went away mid-upload, so there is nobody to answer and nothing to fix.
+  if ((error as { type?: unknown } | null)?.type === "request.aborted") {
+    console.warn(`${request.method} ${request.path} aborted by the client`);
+    return;
+  }
+  if (response.headersSent) {
+    console.error(`${request.method} ${request.path} failed after its response started`, error);
+    response.end();
+    return;
+  }
+  // body-parser marks client mistakes (malformed JSON, oversized bodies) with their own 4xx status.
+  const exposed = error as { status?: unknown; expose?: unknown; message?: unknown } | null;
+  if (exposed?.expose === true && typeof exposed.status === "number" && exposed.status >= 400 && exposed.status < 500) {
+    sendError(response, exposed.status, typeof exposed.message === "string" ? exposed.message : "Bad request");
+    return;
+  }
   if (error instanceof z.ZodError) {
     sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
     return;

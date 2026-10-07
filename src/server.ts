@@ -15,6 +15,7 @@ import { removeAllDeletedTranscripts } from "./server/deleted-transcripts.js";
 import { flushSuccessionNotices } from "./server/succession.js";
 import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, sweepRuntimeLeases, sweepStaleConversations } from "./server/maintenance.js";
 import { runSyncCheck } from "./server/sync-check.js";
+import { installBackendErrorCapture } from "./server/error-capture.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { syncNtfyServiceShares } from "./server/ntfy-share.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
@@ -66,6 +67,7 @@ import "./server/routes/updates.js";
 export { app, createApp, server } from "./server/state.js";
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  installBackendErrorCapture();
   // Playwright installs signal handlers of its own. Explicitly finish node shutdown
   // after closing Chrome rather than leaving the HTTP server alive after SIGTERM.
   let stopping = false;

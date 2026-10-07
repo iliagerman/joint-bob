@@ -18,6 +18,7 @@ import { renderSessions } from "./session-list.js";
 import { maybeNotifyTurnComplete, playCompletionSound, setConnecting, setStatus, subscribeToPush, toast } from "./shell.js";
 import { state } from "./state.js";
 import { loadTasks } from "./tasks.js";
+import { logTranscriptChanges } from "./transcript-diagnostics.js";
 
 const GOAL_COMPLETE_MARKER = "BOB_GOAL_COMPLETE";
 
@@ -306,10 +307,14 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     updateStatus(payload.status);
     console.info("Conversation transcript ready", {
       engine: payload.engine,
+      sessionId: payload.sessionId || null,
+      load: scrollOnReady ? "open" : "reconnect",
       messages: payload.messages?.length || 0,
       characters: payload.messages?.reduce((total, message) => total + String(message.text || "").length, 0) || 0,
       segments: payload.segments?.length || 1,
+      ...(payload.diagnostics || {}),
     });
+    logTranscriptChanges(state.activeConversationId || payload.sessionId, payload.messages, scrollOnReady ? "open" : "reconnect");
     state.conversationStartedAt = payload.conversationStartedAt || null;
     const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments, state.conversationStartedAt);
     const activeTurnStartedAt = Date.parse(payload.turnStartedAt || "");
@@ -566,6 +571,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     // Read-only Claude transcript synchronized from another node: re-render in
     // place, following if the reader was at the bottom, anchoring if not.
     const segments = payload.segments || state.conversationSegments;
+    logTranscriptChanges(state.activeConversationId || state.activeSessionId, payload.messages, "synchronized update");
     const resumeFromTop = rerenderChatTranscript(payload.messages, segments, state.conversationStartedAt);
     restoreConversationTimer(payload.messages, state.lastTurnStartedAt);
     if (state.followChat) requestPinChat();

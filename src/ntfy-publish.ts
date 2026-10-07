@@ -77,11 +77,15 @@ function conversationTopic(server: NtfyServer, targets: NtfyConversationTarget[]
 }
 
 async function publish(server: { url: string; token: string }, request: Extract<Request, { operation: "send" }>, selectedTopic: string): Promise<void> {
+  await publishNtfyMessage(server, selectedTopic, { message: request.message, ...(request.title === undefined ? {} : { title: request.title }) });
+}
+
+export async function publishNtfyMessage(server: NtfyServer, selectedTopic: string, content: { message: string; title?: string; tags?: string[] }): Promise<void> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (server.token) headers.Authorization = `Bearer ${server.token}`;
   let response: Response;
   try {
-    response = await fetch(server.url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), headers, body: JSON.stringify({ topic: selectedTopic, message: request.message, ...(request.title === undefined ? {} : { title: request.title }) }) });
+    response = await fetch(server.url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), headers, body: JSON.stringify({ topic: selectedTopic, ...content }) });
   } catch {
     throw new NtfyRequestError(502, "ntfy request failed or timed out; delivery may be uncertain. Do not retry automatically.");
   }

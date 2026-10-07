@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import express from "express";
 import WebSocket, { WebSocketServer } from "ws";
 import { performanceDiagnostics } from "./performance-diagnostics.js";
+import { forwardAsyncRouteErrors } from "./error-capture.js";
 
 /** Node-wide mutable flags shared by several server modules. */
 export const flags = {
@@ -90,6 +91,7 @@ export const machineRoutes = new Set([
   "POST /cluster/update/install",
   "POST /update/prepare",
 ]);
+forwardAsyncRouteErrors();
 export const app = express();
 app.use("/api", performanceDiagnostics.middleware);
 export function createApp(): express.Express {

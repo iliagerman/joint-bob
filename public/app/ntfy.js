@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { syncErrorReportingServices } from "./error-reporting-settings.js";
 import { openNtfyManager, syncNtfyManager } from "./ntfy-manage.js";
 import { toast } from "./shell.js";
 import { refreshSessionsQuietly } from "./socket.js";
@@ -133,6 +134,7 @@ export async function loadNtfyServicesPanel() {
     }
     elements.ntfyServiceList.replaceChildren(...services.map(renderNtfyService));
     syncNtfyManager(services);
+    syncErrorReportingServices(services);
   } catch (error) { toast(error.message, 8000); }
 }
 

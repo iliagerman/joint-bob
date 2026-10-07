@@ -8,6 +8,7 @@ import { loadClusterPanel } from "./cluster-panel.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadNtfyServicesPanel } from "./ntfy.js";
+import { loadErrorReportingSettings } from "./error-reporting-settings.js";
 import { loadMfaSettings } from "./mfa.js";
 import { loadRoutingConfigs, saveDirtyRoutingConfig } from "./routing-configs.js";
 import { showResourcesPanel } from "./resources.js";
@@ -101,7 +102,7 @@ function selectSettingsTab(name) {
   if (elements.settingsTabsSelect) elements.settingsTabsSelect.value = name;
   if (name === "cluster" || name === "browser") void loadBrowserStatus();
   if (name === "browser") void loadBrowserProfileDirectory();
-  if (name === "notifications") void loadNtfyServicesPanel();
+  if (name === "notifications") { void loadNtfyServicesPanel(); void loadErrorReportingSettings(); }
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();

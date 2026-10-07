@@ -762,6 +762,33 @@
             <button class="ghost" id="ntfyServiceAddButton" type="button" data-testid="ntfy-service-add-button">Add service</button>
             </div>
           </fieldset>
+          <fieldset class="phase-settings" data-testid="error-reporting-settings">
+            <legend>Send errors to ntfy</legend>
+            <p class="settings-hint">Forwards UI errors from browsers signed in to this node and this node's backend errors, with their stack traces. The same error is sent once every 10 minutes, at most 20 per channel. Applies to this node when you press Save error reporting.</p>
+            <label class="checkbox-row"><input id="errorReportingEnabled" type="checkbox" data-testid="error-reporting-enabled" /> Send errors to ntfy</label>
+            <div id="errorReportingOptions" class="ntfy-service-add" data-testid="error-reporting-options" hidden>
+              <label class="checkbox-row"><input id="errorReportingClientEnabled" type="checkbox" data-testid="error-reporting-client-enabled" /> Client (UI) errors</label>
+              <div id="errorReportingClientDestination" class="ntfy-service-add" data-testid="error-reporting-client-destination">
+                <label>Client errors server
+                  <select id="errorReportingClientService" data-testid="error-reporting-client-service"></select>
+                </label>
+                <label>Client errors topic
+                  <input id="errorReportingClientTopic" autocomplete="off" maxlength="64" placeholder="joint-bob-ui-errors" data-testid="error-reporting-client-topic" />
+                </label>
+              </div>
+              <label class="checkbox-row"><input id="errorReportingBackendEnabled" type="checkbox" data-testid="error-reporting-backend-enabled" /> Backend errors</label>
+              <label class="checkbox-row" id="errorReportingSameRow"><input id="errorReportingSameDestination" type="checkbox" data-testid="error-reporting-same-destination" /> Send backend errors to the client server and topic</label>
+              <div id="errorReportingBackendDestination" class="ntfy-service-add" data-testid="error-reporting-backend-destination">
+                <label>Backend errors server
+                  <select id="errorReportingBackendService" data-testid="error-reporting-backend-service"></select>
+                </label>
+                <label>Backend errors topic
+                  <input id="errorReportingBackendTopic" autocomplete="off" maxlength="64" placeholder="joint-bob-backend-errors" data-testid="error-reporting-backend-topic" />
+                </label>
+              </div>
+            </div>
+            <button class="ghost" id="errorReportingSaveButton" type="button" data-testid="error-reporting-save-button">Save error reporting</button>
+          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-labels" role="tabpanel" aria-labelledby="settingsTab-labels" tabindex="0" hidden>

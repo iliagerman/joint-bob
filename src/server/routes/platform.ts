@@ -16,6 +16,7 @@ import { forgetNtfyServiceSharing, ntfyServicesSharedWith, ntfyServiceSharingVie
 import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
 import { z } from "zod";
 import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema, savedNtfyServer } from "../../ntfy-publish.js";
+import { ErrorReportingSettingsError, getErrorReportingSettings, reportError, updateErrorReportingSettings } from "../../error-reporting.js";
 
 app.get("/api/push/vapid-public-key", async (_request, response, next) => {
   try {
@@ -167,6 +168,35 @@ app.delete("/api/ntfy/services/:id", (request, response) => {
   if (!deleteNtfyService(request.params.id)) { sendError(response, 404, "ntfy service not found"); return; }
   forgetNtfyServiceSharing(request.params.id);
   response.status(204).send();
+});
+
+app.get("/api/error-reporting", (_request, response) => {
+  response.json(getErrorReportingSettings());
+});
+
+app.put("/api/error-reporting", (request, response, next) => {
+  try {
+    response.json(updateErrorReportingSettings(request.body));
+  } catch (error) {
+    if (error instanceof ErrorReportingSettingsError) { sendError(response, 400, error.message); return; }
+    next(error);
+  }
+});
+
+const clientErrorSchema = z.object({
+  kind: z.enum(["error", "uncaught", "unhandled"]),
+  message: z.string().min(1).max(4_000),
+  page: z.string().max(500).optional(),
+}).strict();
+
+app.post("/api/client-errors", (request, response) => {
+  const report = clientErrorSchema.parse(request.body);
+  const [summary, ...detail] = report.message.split("\n");
+  const username = (response.locals.authSession as AuthSession | undefined)?.username ?? "unknown user";
+  console.warn(`Client ${report.kind} from ${username}: ${summary}`);
+  const userAgent = request.get("user-agent");
+  void reportError("client", { summary, detail: [...detail, ...(userAgent ? ["", `Browser: ${userAgent}`] : [])].join("\n"), source: [report.page, username].filter(Boolean).join(" · ") });
+  response.status(202).send();
 });
 
 async function harnessProblems(id: HarnessId): Promise<string[]> {

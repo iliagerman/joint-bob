@@ -9,12 +9,19 @@ function headers() {
   return state.csrfToken ? { "X-CSRF-Token": state.csrfToken, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 }
 
+// Safari's stack for a failed fetch names only api.js; the request makes an unhandled rejection traceable.
 export async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, cache: "no-store", headers: { ...headers(), ...(options.headers || {}) } });
+  const method = (options.method || "GET").toUpperCase();
+  let response;
+  try {
+    response = await fetch(path, { ...options, cache: "no-store", headers: { ...headers(), ...(options.headers || {}) } });
+  } catch (error) {
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { method, path, status: 0 });
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }));
     if (response.status === 401 && !["/api/auth/status", "/api/auth/login", "/api/auth/login/mfa"].includes(path)) showSignedOut();
-    throw new Error(body.error || response.statusText);
+    throw Object.assign(new Error(body.error || response.statusText), { method, path, status: response.status });
   }
   if (response.status === 204) return null;
   return response.json();

@@ -24,6 +24,7 @@ import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, to
 import { state } from "./app/state.js";
 import { openUsageDashboard } from "./app/usage-dashboard.js";
 import "./app/state.js";
+import "./app/error-reporting.js";
 import "./app/elements.js";
 import "./app/project-files.js";
 import "./app/project-explorer.js";
