@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.49.2 — 2026-10-07
 
 - Fixed duplicate output when reattaching to a Claude session mid-turn.
 
