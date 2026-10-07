@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Conversations now organize under their worktree's collapsible section in the list instead of filtering via chips.
+- Transcript replication continues with other conversations when one fails, and worktree conversations are now properly included in cluster takeover lookups.
 
 ## 2.50.1 — 2026-10-07
 

@@ -199,3 +199,46 @@ test("a Claude conversation is claimed from a node whose checkout sits elsewhere
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a worktree conversation's owner reports its transcript, so a peer cannot take it over before the transcript arrives", { timeout: 180_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-worktree-takeover-"));
+  const home = path.join(root, "home");
+  const projectA = path.join(root, "checkout-a", "project");
+  const projectB = path.join(root, "workspace-b", "project");
+  const sessionId = "claude-worktree-session";
+  const children: ChildProcess[] = [];
+  try {
+    await Promise.all([mkdir(path.join(projectA, "src"), { recursive: true }), mkdir(projectB, { recursive: true }), mkdir(path.join(home, ".pi", "sessions"), { recursive: true })]);
+    await writeFile(path.join(projectA, "src", "inbox.ts"), "export const inbox = 'mock';\n");
+    const nodeA = await initializeNode(root, "a", home, projectA);
+    const nodeB = await initializeNode(root, "b", home, projectB, nodeA.projects[0]);
+    const environment: DevEnvironment = { root, home, username, password, nodes: [nodeA, nodeB] };
+    for (const node of [nodeA, nodeB]) children.push(await startDevNode(environment, node));
+    await pairTwinNodes(environment);
+    const sessionA = await signIn(environment, nodeA);
+    const projectId = nodeA.projects[0].id;
+
+    const created = await fetch(`${nodeA.url}/api/projects/${projectId}/worktrees`, {
+      method: "POST",
+      headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Slice 4" }),
+    });
+    assert.equal(created.status, 201, await created.clone().text());
+    const worktree = (await created.json() as { worktree: { path: string } }).worktree;
+    const transcriptDir = path.join(home, ".claude", "projects", claudeProjectDirName(worktree.path));
+    await mkdir(transcriptDir, { recursive: true });
+    await writeFile(path.join(transcriptDir, `${sessionId}.jsonl`), `${JSON.stringify({ type: "user", sessionId, cwd: worktree.path, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "work in the worktree" } })}\n`);
+    // Joint Bob records every conversation it starts; without the worktree path that record reads as an empty draft.
+    await runScript(nodeA.dataDir, home, `
+      const { ensureConversationRecord } = await import('./src/conversation-records.ts');
+      await ensureConversationRecord(process.argv[1], 'claude', process.argv[2], process.argv[3]);
+    `, [projectId, sessionId, nodeA.nodeId]);
+
+    const presence = await signedNodeRequest(environment, nodeB, nodeA, "GET", `/api/cluster/v2/runtime/sessions/transcript-presence?${new URLSearchParams({ projectId, engine: "claude", sessionId })}`);
+    assert.equal(presence.status, 200);
+    assert.deepEqual(await presence.json(), { found: true, hasTranscript: true });
+  } finally {
+    await Promise.all(children.map(stopDevNode));
+    await rm(root, { recursive: true, force: true });
+  }
+});

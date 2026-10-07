@@ -19,7 +19,7 @@ import { getConversationOwnership } from "../conversation-ownership.js";
 import { deletedConversationKeys, ensureConversationRecord, ensureConversationRecordSchema } from "../conversation-records.js";
 import { replicationPeers } from "./replication-v2.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
-import { fetchPeer, whilePeerOptional } from "./peer-availability.js";
+import { fetchPeer, isPeerUnreachable, whilePeerOptional } from "./peer-availability.js";
 
 export const transcriptQuery=z.object({projectId:z.string().min(1).max(300),engine:z.string().min(1).max(80).optional(),sessionId:z.string().min(1).max(300).optional()}).strict();
 const entrySchema=z.object({engine:z.string().min(1).max(80),sessionId:z.string().min(1).max(300),relativePath:z.string().min(1).max(4096),size:z.number().int().min(0).max(1024*1024*1024),hash:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
@@ -234,7 +234,10 @@ async function runSharedTranscripts():Promise<void>{
   const target='/api/cluster/v2/transcripts?'+new URLSearchParams({projectId});
   // A peer known to be down is skipped until its next probe instead of waited on.
   const payload=inventorySchema.parse(await(await whilePeerOptional(()=>peerGet(peer,target))).json());
-  for(const entry of payload.entries)await receiveTranscript(db,peer,projectId,entry);
+  // One transcript that keeps failing (still growing, edited here) must not hold back the rest; a peer that stops answering ends the pass.
+  let failure:unknown;
+  for(const entry of payload.entries)try{await receiveTranscript(db,peer,projectId,entry);}catch(error){failure??=error;if(isPeerUnreachable(error))break;}
+  if(failure)throw failure;
   db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=?').run(peer.nodeId,projectId);
   db.prepare('INSERT OR IGNORE INTO cluster_v2_transcript_progress VALUES(?,?)').run(peer.nodeId,projectId);
  }catch(error){db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_errors VALUES(?,?,?)').run(peer.nodeId,projectId,error instanceof Error?error.message:'Transcript transfer failed');}

@@ -342,8 +342,13 @@ app.post(["/api/cluster/sessions/ownership/apply", "/api/cluster/v2/runtime/sess
 
 interface ConversationTranscriptPresence { found: boolean; hasTranscript: boolean }
 
+/** Worktree conversations live outside the project folder; a lookup that misses them sees only their draft record. */
+async function listProjectScopeSessions(project: ProjectRecord): Promise<SessionSummary[]> {
+  return listHarnessSessions({ ...project, additionalPaths: await projectAdditionalPaths(project.id) });
+}
+
 async function localConversationTranscriptPresence(project: ProjectRecord, engine: ConversationEngine, sessionId: string): Promise<ConversationTranscriptPresence> {
-  const session = (await listHarnessSessions(project)).find((candidate) => candidate.harnessId === engine && candidate.id === sessionId);
+  const session = (await listProjectScopeSessions(project)).find((candidate) => candidate.harnessId === engine && candidate.id === sessionId);
   return { found: Boolean(session), hasTranscript: Boolean(session && !session.draft) };
 }
 
@@ -399,7 +404,7 @@ app.post(["/api/cluster/sessions/queue-transfer", "/api/cluster/v2/runtime/sessi
     const payload = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().min(1) }).parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
-    const listed = await listHarnessSessions(project);
+    const listed = await listProjectScopeSessions(project);
     if (!listed.some((session) => session.id === payload.sessionId && session.harnessId === payload.engine)) throw new Error("Queue conversation is not the active segment in this project");
     const local = await getClusterNode();
     const destination = response.locals.machineNodeId as string;
@@ -484,7 +489,7 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
 }
 
 export async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>, requireOnline = false): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
-  const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listRuntimePeers(project.id)]);
+  const [local, sessions, peers] = await Promise.all([getClusterNode(), listProjectScopeSessions(project), listRuntimePeers(project.id)]);
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
   if (!matching) throw new TaskWorktreeError("Conversation was not found on the destination node");
