@@ -2,7 +2,7 @@ import { inheritWorkspaceSharing } from "./selected-sharing.js";
 import { NotFoundError } from "./not-found.js";
 import { actingAccount, type ActingAccount } from "./account-context.js";
 import { accountInCluster } from "./cluster-accounts.js";
-import { actorOwns, forgetResourceOwner, newResourceOwner, setResourceOwner } from "./ownership.js";
+import { actorOwns, forgetResourceOwner, newResourceOwner, resourceOwner, setResourceOwner } from "./ownership.js";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
@@ -502,6 +502,20 @@ function projectVisibleToActor(db: DatabaseSync, projectId: string, account: Act
   if (owner === localNodeId) return actorOwns("project", projectId, account, db);
   if (isActiveTwin(db, owner)) return account.role === "admin";
   return clusters().some((clusterId) => accountInCluster(db, account.accountId, clusterId));
+}
+
+/** Who this project's agents run as on this node: a local project's owner, the admin for a
+    twin's copy of the admin's own projects, or the cluster account for a received project. */
+export async function projectRuntimeOwner(projectId: string): Promise<{ accountId: string | undefined } | { clusterId: string } | undefined> {
+  const db = await projectDatabase();
+  const canonical = resolveProjectId(db, projectId);
+  if (!canonical) return undefined;
+  const owner = (db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind='project' AND resource_id=?").get(canonical) as { owner_node_id: string } | undefined)?.owner_node_id ?? localNodeId;
+  if (owner === localNodeId) return { accountId: resourceOwner("project", canonical, db) };
+  if (isActiveTwin(db, owner)) return { accountId: undefined };
+  let clusters: string[] = [];
+  try { clusters = resourceClusterIds(db, localNodeId, "project", canonical); } catch { clusters = []; }
+  return clusters.length ? { clusterId: [...clusters].sort()[0] } : { accountId: undefined };
 }
 
 /** Whether the acting person may see this project; for checks outside the store. */

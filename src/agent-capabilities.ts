@@ -7,6 +7,7 @@ import { ntfyAgentEnvironment, ntfyAgentInstructions } from "./ntfy-agent.js";
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 import { getSettings } from "./settings.js";
 import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-git-policy.js";
+import { multiUserEnabled } from "./account-runtime.js";
 
 export interface AgentCapabilityIdentity {
   projectId: string;
@@ -77,6 +78,10 @@ function taskEnvironment(identity: AgentCapabilityIdentity): NodeJS.ProcessEnv {
     JOINT_BOB_TASK_TOKEN: undefined,
     JOINT_BOB_TASK_API: Number.isInteger(port) && port >= 1 && port <= 65535
       ? `http://127.0.0.1:${port}/api/background-tasks/agent`
+      : undefined,
+    // Agents under a person's OS account can't open the socket; the server relays for them.
+    JOINT_BOB_TASK_RELAY: multiUserEnabled() && Number.isInteger(port) && port >= 1 && port <= 65535
+      ? `http://127.0.0.1:${port}/api/background-tasks/relay`
       : undefined,
   };
   try {

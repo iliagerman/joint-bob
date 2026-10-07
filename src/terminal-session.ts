@@ -3,6 +3,7 @@ import WebSocket from "ws";
 import { z } from "zod";
 import { watchSubprocess } from "../scripts/subprocess-lifetime.mjs";
 import { resolveDataDirectory } from "./data-directory.js";
+import { runtimeCommand, runtimeEnvironment, serviceRuntime, type RuntimeAccount } from "./account-runtime.js";
 
 const terminalMessageSchema = z.union([
   z.object({
@@ -22,14 +23,16 @@ function send(socket: WebSocket, payload: unknown): void {
 
 // A real pseudo-terminal, so interactive programs, colours, job control, and
 // xterm resize all behave exactly like a local terminal in the project folder.
-export function attachTerminalSession(socket: WebSocket, cwd: string, nodeId: string, lifetimeOptions?: Parameters<typeof watchSubprocess>[1], idleMinutes?: number): void {
-  const shell = process.env.SHELL || (process.platform === "win32" ? "cmd.exe" : "/bin/sh");
-  const terminal: IPty = spawnPty(shell, [], {
+export function attachTerminalSession(socket: WebSocket, cwd: string, nodeId: string, lifetimeOptions?: Parameters<typeof watchSubprocess>[1], idleMinutes?: number, runtime: RuntimeAccount = serviceRuntime()): void {
+  // A person's terminal is a shell under their own OS account, in their project folder.
+  const shell = runtime.name ? (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash") : process.env.SHELL || (process.platform === "win32" ? "cmd.exe" : "/bin/sh");
+  const launch = runtimeCommand(runtime, cwd, shell, []);
+  const terminal: IPty = spawnPty(launch.command, launch.args, {
     name: "xterm-256color",
-    cwd,
+    cwd: runtime.name ? runtime.home : cwd,
     cols: 80,
     rows: 24,
-    env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>,
+    env: runtimeEnvironment(runtime, { ...process.env, TERM: "xterm-256color" }) as Record<string, string>,
   });
   let exited = false;
   const lifetime = watchSubprocess({ pid: terminal.pid, kill: (signal) => {

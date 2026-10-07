@@ -1,4 +1,5 @@
 import { accessSync, constants as fsConstants, statSync } from "node:fs";
+import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -233,7 +234,7 @@ function resolveRuntimeInput(
   return canonical ?? legacy ?? previousOverride;
 }
 export function getRuntimeDefaults(): Record<string, RuntimeSettings> & { pi: RuntimeSettings; claude: RuntimeSettings } {
-  return runtimeRecord((adapter) => adapter.configuration.defaults(os.homedir())) as Record<string, RuntimeSettings> & { pi: RuntimeSettings; claude: RuntimeSettings };
+  return runtimeRecord((adapter) => adapter.configuration.defaults(runtimeHome())) as Record<string, RuntimeSettings> & { pi: RuntimeSettings; claude: RuntimeSettings };
 }
 
 export function syncthingApiKey(): string | undefined {
@@ -395,7 +396,7 @@ export function deletePersonalSettings(accountId: string): void {
 
 /** The node's own settings, without anyone's personal values. */
 export function nodeSettings(): SettingsResponse {
-  const runtimes = runtimeRecord((adapter) => configuredRuntime(adapter.id, adapter.configuration.defaults(os.homedir())));
+  const runtimes = runtimeRecord((adapter) => configuredRuntime(adapter.id, adapter.configuration.defaults(runtimeHome())));
   const defaults = Object.fromEntries(listDiscoveredHarnesses().map((adapter) => [adapter.id, adapter.defaults]));
   const conversationDefaults = conversationDefaultsSchema.parse(JSON.parse(value("conversationDefaults", JSON.stringify(defaults))));
   return {
@@ -442,7 +443,7 @@ function validateRuntimePath(label: string, field: "config" | "session", input: 
 }
 
 function validateRuntimeSettings(adapter: RuntimeAdapter, settings: RuntimeSettings): void {
-  const defaults = adapter.configuration.defaults(os.homedir());
+  const defaults = adapter.configuration.defaults(runtimeHome());
   validateRuntimePath(adapter.label, "config", settings.configPath, defaults.configPath);
   validateRuntimePath(adapter.label, "session", settings.sessionPath, defaults.sessionPath);
   if (settings.executable && (settings.executable.includes("/") || settings.executable.includes("\\")) && !path.isAbsolute(settings.executable)) throw new Error(`${adapter.label} executable must be a command name or absolute path`);

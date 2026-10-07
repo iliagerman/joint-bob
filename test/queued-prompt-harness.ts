@@ -155,11 +155,10 @@ export interface Fixture {
 
 /** Signs in, retires the bootstrap password, and points the node at the gated
  * fake CLI. Works against an in-process server or a spawned one. */
-export async function configure(baseUrl: string, root: string, executable: string): Promise<Fixture> {
+export async function configure(baseUrl: string, root: string, executable: string, projectPath = path.join(root, "project")): Promise<Fixture> {
   const { cookie, headers } = await login(baseUrl, "initial-password");
   const changed = await fetch(`${baseUrl}/api/auth/change-password`, { method: "POST", headers, body: JSON.stringify({ currentPassword: "initial-password", newPassword: "replacement-password" }) });
   assert.equal(changed.status, 204);
-  const projectPath = path.join(root, "project");
   await mkdir(projectPath, { recursive: true });
   const projectResponse = await fetch(`${baseUrl}/api/projects`, { method: "POST", headers, body: JSON.stringify({ name: "Queue", path: projectPath }) });
   const { project } = await projectResponse.json() as { project: { id: string } };

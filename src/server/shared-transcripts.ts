@@ -1,3 +1,5 @@
+import { confinedToRuntime, currentRuntime } from "../account-runtime.js";
+import { withProjectRuntime } from "../project-runtime.js";
 import { projectAdditionalPaths } from "./session-scope.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -70,19 +72,25 @@ async function sourceTranscripts(peer:string,projectId:string){
  for(const entry of unique)if(!entry.subagent)await ensureConversationRecord(projectId,entry.engine,entry.id,local.id);
  return unique;
 }
-export async function sharedTranscriptFile(peer:string,projectId:string,engine:string,sessionId:string):Promise<string>{
+export function sharedTranscriptFile(peer:string,projectId:string,engine:string,sessionId:string):Promise<string>{
+ return withProjectRuntime(projectId,()=>sharedTranscriptFileNow(peer,projectId,engine,sessionId));
+}
+async function sharedTranscriptFileNow(peer:string,projectId:string,engine:string,sessionId:string):Promise<string>{
  const session=(await sourceTranscripts(peer,projectId)).find(row=>row.engine===engine&&row.id===sessionId);
  if(!session)throw new ClusterV2HttpError(404,"Conversation not found in shared project");
  return localTranscriptFile(session);
 }
 async function localTranscriptFile(session:{engine:string;path:string}):Promise<string>{
  const adapter=getHarness(session.engine),file=adapter.paths.transcriptFile?.(session.path);
- if(!file||!within(adapter.sync.transcriptRoot(),file))throw new ClusterV2HttpError(409,"Conversation transcript is not available");
+ if(!file||!within(adapter.sync.transcriptRoot(),file)||!confinedToRuntime(currentRuntime(),file))throw new ClusterV2HttpError(409,"Conversation transcript is not available");
  if(!(await lstat(file)).isFile()||!within(await realpath(adapter.sync.transcriptRoot()),await realpath(file)))throw new ClusterV2HttpError(409,"Conversation transcript is not a regular local file");
  return file;
 }
 /** A peer catching up on one conversation names it, so only that transcript is hashed and sent. */
-export async function sharedTranscriptInventory(peer:string,projectId:string,only?:{engine:string;sessionId:string}):Promise<Entry[]>{
+export function sharedTranscriptInventory(peer:string,projectId:string,only?:{engine:string;sessionId:string}):Promise<Entry[]>{
+ return withProjectRuntime(projectId,()=>sharedTranscriptInventoryNow(peer,projectId,only));
+}
+async function sharedTranscriptInventoryNow(peer:string,projectId:string,only?:{engine:string;sessionId:string}):Promise<Entry[]>{
  const entries:Entry[]=[];
  for(const session of await sourceTranscripts(peer,projectId)){
   if(session.path.startsWith('draft:'))continue;
@@ -127,9 +135,13 @@ function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:string,en
  activeReceives.set(key,settled);
  return run;
 }
-async function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
+// A project's transcripts go where its agents read them: its runtime account's home.
+function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
+ return withProjectRuntime(projectId,()=>receiveTranscriptInRuntime(db,peer,projectId,entry));
+}
+async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
  const adapter=getHarness(entry.engine),root=path.resolve(adapter.sync.transcriptRoot()),destination=path.resolve(root,entry.relativePath);
- if(!within(root,destination)||!adapter.paths.ownsTranscript(destination)||(adapter.paths.sessionId(destination)??adapter.paths.sessionId(`${entry.engine}:${destination}`))!==entry.sessionId)throw new Error('Invalid shared transcript identity');
+ if(!within(root,destination)||!confinedToRuntime(currentRuntime(),destination)||!adapter.paths.ownsTranscript(destination)||(adapter.paths.sessionId(destination)??adapter.paths.sessionId(`${entry.engine}:${destination}`))!==entry.sessionId)throw new Error('Invalid shared transcript identity');
  const receipt=db.prepare('SELECT path,hash FROM cluster_v2_transcript_receipts WHERE peer_id=? AND project_id=? AND engine=? AND session_id=?').get(peer.nodeId,projectId,entry.engine,entry.sessionId) as {path:string;hash:string}|undefined;
  const ownership=await getConversationOwnership(entry.engine,entry.sessionId);
  if(ownership&&ownership.ownerNodeId!==peer.nodeId)return;
@@ -162,7 +174,10 @@ async function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:
   clearHarnessSessionCache(projectId);
  }finally{await rm(temporary,{force:true});}
 }
-export async function assertSharedTranscriptReady(projectId:string,sessionPath:string,ownerNodeId?:string):Promise<void>{
+export function assertSharedTranscriptReady(projectId:string,sessionPath:string,ownerNodeId?:string):Promise<void>{
+ return withProjectRuntime(projectId,()=>assertSharedTranscriptReadyNow(projectId,sessionPath,ownerNodeId));
+}
+async function assertSharedTranscriptReadyNow(projectId:string,sessionPath:string,ownerNodeId?:string):Promise<void>{
  const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);
  const adapter=harnessForSessionPath(sessionPath),sessionId=adapter.paths.sessionId(sessionPath);
  if(!sessionId)throw new Error('Conversation has no transcript identity');

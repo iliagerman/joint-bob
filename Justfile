@@ -29,3 +29,7 @@ update:
 # Run the release gate, commit the notes it writes, and push main in one go.
 push:
     ./scripts/push-main.sh
+
+# Install the multi-user helper on this machine (asks for your administrator password).
+install-multi-user:
+    sudo sh scripts/multi-user/install-multi-user.sh "$(id -un)"

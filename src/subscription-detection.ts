@@ -1,4 +1,5 @@
 import os from "node:os";
+import { runtimeHome } from "./account-runtime.js";
 import { promisify } from "node:util";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime } from "./harnesses/runtime-configuration.js";
@@ -24,7 +25,7 @@ export async function detectHarnessSubscription(harness: { id: string; label: st
   const base = { harnessId: harness.id, planName: null, authMethod: null, price: null, source: "harness auth status", checkedAt } as const;
   if (harness.id !== "claude" || !harness.configuration) return { ...base, status: "unsupported", message: "Harness does not expose subscription plan or billed price" };
   try {
-    const runtime = configuredRuntime(harness.id, harness.configuration.defaults(os.homedir()));
+    const runtime = configuredRuntime(harness.id, harness.configuration.defaults(runtimeHome()));
     const result = await execute(runtime.executable, ["auth", "status", "--json"], {
       env: { ...process.env, CLAUDE_CONFIG_DIR: runtime.configPath }, timeout: 5_000, maxBuffer: 64 * 1024,
     });

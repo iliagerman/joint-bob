@@ -1,3 +1,4 @@
+import { claudeSubscriptionEnvironment } from "../../account-runtime.js";
 import { execFile } from "../../subprocess.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFile, access } from "node:fs/promises";
@@ -382,7 +383,7 @@ const runtime: HarnessRuntime = {
     const configPath = claudeConfigPath();
     // `claude auth status` exits non-zero when no account or API provider is configured.
     try {
-      await execute(getSettings().runtimes.claude.executable || "claude", ["auth", "status"], { env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) }, timeout: 5_000 });
+      await execute(getSettings().runtimes.claude.executable || "claude", ["auth", "status"], { env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() }, timeout: 5_000 });
       return [];
     } catch {
       return ["Claude is not signed in on this node"];

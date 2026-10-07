@@ -1,3 +1,4 @@
+import { claudeSubscriptionEnvironment } from "./account-runtime.js";
 import { execFile } from "./subprocess.js";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -10,7 +11,7 @@ export async function preflightQueuedClaude(cwd: string, env: NodeJS.ProcessEnv)
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();
   const result = await execute(settings.executable || "claude", ["auth", "status", "--json"], {
-    cwd, env: { ...process.env, ...env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) },
+    cwd, env: { ...process.env, ...env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() },
     timeout: 10_000, maxBuffer: 64 * 1024,
   });
   const status = z.object({ loggedIn: z.boolean() }).parse(JSON.parse(result.stdout));

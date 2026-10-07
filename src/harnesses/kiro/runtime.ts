@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { currentRuntime, spawnInRuntime } from "../../account-runtime.js";
 import { execFile, spawn } from "../../subprocess.js";
 import { access } from "node:fs/promises";
 import path from "node:path";
@@ -232,7 +233,7 @@ class KiroSession implements HarnessSession {
     if (this.trustedTools === undefined) args.push("--trust-all-tools");
     else args.push(`--trust-tools=${this.trustedTools.join(",")}`);
     if (this.model.modelId !== "default") args.push("--model", this.model.modelId);
-    this.child = spawn(settings.executable || "kiro-cli", args, {
+    this.child = spawnInRuntime(currentRuntime(), settings.executable || "kiro-cli", args, {
       cwd: this.options.cwd,
       env,
       detached: process.platform !== "win32",

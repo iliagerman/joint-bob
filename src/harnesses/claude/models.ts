@@ -1,3 +1,4 @@
+import { claudeSubscriptionEnvironment } from "../../account-runtime.js";
 import os from "node:os";
 import { claudeConfigPath } from "../../claude-service.js";
 import { getSettings } from "../../settings.js";
@@ -56,7 +57,7 @@ async function queryClaudeModels(executable: string): Promise<ClaudeModel[]> {
     const child = execFile(
       executable,
       ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"],
-      { cwd: os.tmpdir(), env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) }, timeout: 20_000, maxBuffer: 8 * 1024 * 1024 },
+      { cwd: os.tmpdir(), env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() }, timeout: 20_000, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => (error ? reject(error) : resolve(String(stdout))),
     );
     // A CLI that exits before reading its input breaks the pipe; the callback already reports that run.

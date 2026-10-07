@@ -1,4 +1,6 @@
 import WebSocket from "ws";
+import { runInRuntime } from "../account-runtime.js";
+import { bindToRuntime, runtimeForProject } from "../project-runtime.js";
 import { COMPACTION_INACTIVITY_TIMEOUT_MS, CONVERSATION_INACTIVITY_TIMEOUT_MS, conversationInactive } from "../conversation-watchdog.js";
 import { conversationWorkActive } from "../conversation-work.js";
 import { getHarness, getHarnessRuntime, refreshHarnessSessions } from "../harnesses.js";
@@ -84,7 +86,9 @@ function subscribe(shared: SharedHarnessSession): () => void {
 }
 
 async function createSession(engine: HarnessId, options: HarnessOpenOptions): Promise<SharedHarnessSession> {
-  const session = await (await getHarnessRuntime(engine)).open(options);
+  // The session runs as the project's account from here on, whoever opened it.
+  const runtime = await runtimeForProject(options.projectId);
+  const session = bindToRuntime(await runInRuntime(runtime, async () => (await getHarnessRuntime(engine)).open(options)), runtime);
   if (session.id !== options.sessionId) throw new Error(`Harness returned unexpected session ID: ${session.id}`);
   const shared: SharedHarnessSession = { engine, projectId: options.projectId, conversationId: options.conversationId ?? options.sessionId, cwd: options.cwd, session, clients: new Set(), turnInFlight: 0, lastLocalEventAt: 0, lastActivityAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false };
   shared.unsubscribe = subscribe(shared);

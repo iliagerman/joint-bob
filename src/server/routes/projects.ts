@@ -1,4 +1,6 @@
 import path from "node:path";
+import { assertProjectFolderAllowed, projectHomeFor } from "../../project-runtime.js";
+import { grantProjectFolder } from "../multi-user-setup.js";
 import { actingAccount, asNode } from "../../account-context.js";
 import { terminalAccessSettings, terminalAllowedFor } from "../../settings.js";
 import { z } from 'zod';
@@ -73,12 +75,15 @@ app.post("/api/projects/:projectId/sync/rescan", async (request, response, next)
 app.post("/api/projects", async (request, response, next) => {
   try {
     const payload = projectSchema.parse(request.body);
-    const homePath = getSettings().projects.homePath;
+    const homePath = projectHomeFor(actingAccount(), getSettings().projects.homePath);
     const workspaces = await listWorkspaces();
     if (!workspaces.some((workspace) => workspace.id === payload.type)) {
       throw new WorkspaceError(`Unknown workspace "${payload.type}"`);
     }
     const projectPath = payload.path ?? managedProjectPath(homePath, payload.type, payload.name);
+    // In multi-user mode a folder must be the person's own; the admin's may need a grant.
+    const grantTo = await assertProjectFolderAllowed(actingAccount(), projectPath);
+    if (payload.sourcePath) await assertProjectFolderAllowed(actingAccount(), payload.sourcePath);
     if (!payload.path) await ensureManagedHome(homePath, workspaces.map((workspace) => workspace.id));
     if (payload.sourcePath) {
       if (!payload.importMode) throw new ProjectDirectoryImportError("Choose how to import the project");
@@ -100,6 +105,7 @@ app.post("/api/projects", async (request, response, next) => {
       color: payload.color ?? undefined,
       writeInstructions: !payload.sourcePath,
     });
+    if (grantTo) await grantProjectFolder(grantTo, project.path);
     if (payload.synced && project.syncFolderId) {
       await ensureSyncthingFolder(project.syncFolderId, project.name, project.path);
     }

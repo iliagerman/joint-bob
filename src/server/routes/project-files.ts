@@ -1,3 +1,5 @@
+import { multiUserEnabled } from "../../account-runtime.js";
+import { projectFolderConfined, runtimeForProject } from "../../project-runtime.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
 import { copyFile, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
@@ -128,6 +130,8 @@ async function resolveProjectFile(projectId: string, requestedPath: string, task
 // A ticket-scoped resolution roots at the ticket workspace so agent paths resolve to
 // the copy the agent actually edited, never to a same-named project file.
 async function resolutionRoot(projectId: string, projectPath: string, taskId?: string): Promise<string> {
+  // In multi-user mode the service serves a folder only while it stays in its owner's home.
+  if (multiUserEnabled() && !await projectFolderConfined(await runtimeForProject(projectId), projectPath, projectId)) throw new ProjectFileError(409, "This project's folder is outside its owner's home");
   if (!taskId) return await realpath(projectPath);
   const task = (await listTasks(projectId)).find((candidate) => candidate.id === taskId);
   if (!task) throw new ProjectFileError(404, "Ticket was not found");

@@ -2,6 +2,7 @@ import { accessSync, constants as fsConstants } from "node:fs";
 import path from "node:path";
 import type { RuntimeSettings } from "../settings.js";
 import { value } from "../settings-store.js";
+import { confinedToRuntime, currentRuntime, usingServiceRuntime } from "../account-runtime.js";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type HarnessUpdateInstructions =
@@ -20,13 +21,32 @@ export function runtimeOverrides(id: string): RuntimeSettings {
   return { executable: value(`${id}.executable`), configPath: value(`${id}.configPath`), sessionPath: value(`${id}.sessionPath`) };
 }
 
+/** The node's path overrides point into the service account's home, so a person's own
+    runtime always uses the defaults under their own home; the executable stays the node's. */
 export function configuredRuntime(id: string, defaults: RuntimeSettings): RuntimeSettings {
   const overrides = runtimeOverrides(id);
+  const service = usingServiceRuntime();
   return {
     executable: overrides.executable || defaults.executable,
-    configPath: overrides.configPath || defaults.configPath,
-    sessionPath: overrides.sessionPath || defaults.sessionPath,
+    configPath: (service && overrides.configPath) || confined(defaults.configPath),
+    sessionPath: (service && overrides.sessionPath) || confined(defaults.sessionPath),
   };
+}
+
+/** The service reads a person's harness folders for them. One they turned into a link out of
+    their home reads as missing, so the server never reads someone else's files through it. */
+const REFUSED = "/nonexistent/joint-bob-refused-link";
+const checked = new Map<string, { confined: boolean; at: number }>();
+function confined(folder: string): string {
+  if (!folder || usingServiceRuntime()) return folder;
+  const runtime = currentRuntime();
+  const key = `${runtime.home}\n${folder}`;
+  let entry = checked.get(key);
+  if (!entry || Date.now() - entry.at > 2000) {
+    entry = { confined: confinedToRuntime(runtime, folder), at: Date.now() };
+    checked.set(key, entry);
+  }
+  return entry.confined ? folder : path.join(REFUSED, path.basename(folder));
 }
 
 /** Harness defaults resolve their executable whenever a transcript root is read, once per

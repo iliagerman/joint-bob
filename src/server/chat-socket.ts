@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { projectFolderConfined, runtimeForProject } from "../project-runtime.js";
+import { multiUserEnabled, runInRuntime, type RuntimeAccount } from "../account-runtime.js";
 import { decodeAuthor, encodeAuthor, type MessageAuthor } from "../message-authors.js";
-import { actingAccountFromSession, runAsAccount, type ActingAccount } from "../account-context.js";
+import { actingAccountFromSession, asNode, runAsAccount, type ActingAccount } from "../account-context.js";
 import { claimTerminal } from "./terminal-policy.js";
 import { terminalAccessSettings } from "../settings.js";
 import type { IncomingMessage } from "node:http";
@@ -109,16 +111,33 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   const author: MessageAuthor | undefined = session && !session.mustChangePassword
     ? { accountId: session.accountId, email: session.email, username: session.username, homeNodeId: session.homeNodeId }
     : signedPeer ? decodeAuthor(url.searchParams.get("author")) : undefined;
+  // Everything the socket does for its project resolves paths and starts processes as the
+  // project's OS account (multi-user mode); without the mode this is the service itself.
+  const runtime = await socketRuntime(url.searchParams.get("projectId"));
+  if (runtime === "unconfined") { socket.close(1008, "This project's folder is outside its owner's home"); return; }
+  const inRuntime = <T>(work: () => T): T => runtime ? runInRuntime(runtime, work) : work();
   // A browser's socket acts for its person from here on, including every message it sends.
   if (!machineAuthenticated && session) {
     const account = actingAccountFromSession(session);
     socketAccounts.set(socket, account);
     const emit = socket.emit.bind(socket) as (...args: unknown[]) => boolean;
-    (socket as unknown as { emit: (...args: unknown[]) => boolean }).emit = (...args) => runAsAccount(account, () => emit(...args));
-    await runAsAccount(account, () => handleBrowserConnection(socket, request, url, session, author, signedPeer, browserMode, browserMachineId));
+    (socket as unknown as { emit: (...args: unknown[]) => boolean }).emit = (...args) => runAsAccount(account, () => inRuntime(() => emit(...args)));
+    await runAsAccount(account, () => inRuntime(() => handleBrowserConnection(socket, request, url, session, author, signedPeer, browserMode, browserMachineId)));
     return;
   }
-  await handleBrowserConnection(socket, request, url, session, author, signedPeer, browserMode, browserMachineId);
+  if (runtime) {
+    const emit = socket.emit.bind(socket) as (...args: unknown[]) => boolean;
+    (socket as unknown as { emit: (...args: unknown[]) => boolean }).emit = (...args) => inRuntime(() => emit(...args));
+  }
+  await inRuntime(() => handleBrowserConnection(socket, request, url, session, author, signedPeer, browserMode, browserMachineId));
+}
+
+async function socketRuntime(projectId: string | null): Promise<RuntimeAccount | "unconfined" | undefined> {
+  if (!projectId || !multiUserEnabled()) return undefined;
+  const runtime = await runtimeForProject(projectId).catch(() => undefined);
+  if (!runtime) return undefined;
+  const project = await asNode(() => getProject(projectId));
+  return project && !await projectFolderConfined(runtime, project.path, project.id) ? "unconfined" : runtime;
 }
 
 async function handleBrowserConnection(socket: WebSocket, request: IncomingMessage, url: URL, session: ReturnType<typeof sessionForId>, author: MessageAuthor | undefined, signedPeer: string | undefined, browserMode: string | null, browserMachineId: string | undefined): Promise<void> {
@@ -296,7 +315,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
       socket.close(4031, claim.reason);
       return;
     }
-    attachTerminalSession(socket, task ? taskCwd(project, task) : terminalWorktree?.path ?? project.path, local.id, undefined, claim.idleMinutes);
+    attachTerminalSession(socket, task ? taskCwd(project, task) : terminalWorktree?.path ?? project.path, local.id, undefined, claim.idleMinutes, await runtimeForProject(project.id));
     return;
   }
 

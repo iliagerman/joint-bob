@@ -264,7 +264,8 @@ export interface LocalUserRecord {
 
 /** Member usernames also name the member's OS account, so they are lowercase and short. */
 export function validMemberUsername(username: string): boolean {
-  return /^[a-z][a-z0-9_-]{2,27}$/.test(username);
+  // Cluster and visitor OS accounts, and the self-test's, use these names.
+  return /^[a-z][a-z0-9_-]{2,27}$/.test(username) && !/^[cv][0-9a-f]{12}$/.test(username) && !username.startsWith("zzjbselftest");
 }
 
 /** The admin adds a member. The member signs in once with the returned one-time password

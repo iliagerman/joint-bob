@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { requestSupervisor } from "../scripts/supervisor-client.mjs";
+import { requestTaskControl } from "../scripts/supervisor-client.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function id(value) { if (!UUID.test(value ?? "")) throw new Error("Invalid task id"); return value; }
@@ -101,16 +101,17 @@ async function remoteRequest(command, token) {
 }
 async function main() {
   const command = parseArguments(process.argv.slice(2));
-  const socket = process.env.JOINT_BOB_TASK_SOCKET, token = process.env.JOINT_BOB_TASK_TOKEN;
+  // An agent under a person's OS account has no socket; the server relays for it.
+  const local = process.env.JOINT_BOB_TASK_SOCKET || process.env.JOINT_BOB_TASK_RELAY, token = process.env.JOINT_BOB_TASK_TOKEN;
   const useRemote = Boolean(command.nodeId || (command.verb === "status" && !command.taskId && process.env.JOINT_BOB_TASK_API));
-  if (!token || (!useRemote && !socket)) throw new Error("Background tasks require the Joint Bob supervisor");
+  if (!token || (!useRemote && !local)) throw new Error("Background tasks require the Joint Bob supervisor");
   let body;
   if (command.verb === "start") body = { action: "start", id: command.taskId, name: command.name, executable: command.executable, args: command.args, cwd: realpathSync(process.cwd()), env: taskEnvironment() };
   if (command.verb === "status") body = command.taskId ? { action: "task", id: command.taskId } : { action: "list" };
   if (command.verb === "output") body = { action: "output", id: command.taskId, offset: command.offset, limit: command.limit };
   if (command.verb === "stop") body = { action: "stop", id: command.taskId };
   try {
-    const result = useRemote ? await remoteRequest(command, token) : await requestSupervisor(socket, token, body);
+    const result = useRemote ? await remoteRequest(command, token) : await requestTaskControl(process.env, body);
     if (command.verb === "output") process.stdout.write(Buffer.from(result.chunk, "base64"));
     else process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {

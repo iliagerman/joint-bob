@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { requestSupervisor } from "./supervisor-client.mjs";
+import { requestTaskControl } from "./supervisor-client.mjs";
 
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const terminal = new Set(["completed", "failed", "stopped", "stopping", "unknown"]);
@@ -14,28 +14,27 @@ function fail(message) {
 async function groupHasCommands(groupId) {
   let queryPid;
   const output = await new Promise((resolve, reject) => {
-    const query = execFile("/bin/ps", ["-axo", "pid=,pgid=,stat="], {
+    const query = execFile("/bin/ps", ["-axo", "pid=,ppid=,pgid=,stat="], {
       timeout: 2000,
       maxBuffer: 1024 * 1024,
       env: { PATH: "/usr/bin:/bin", LANG: "C" },
     }, (error, stdout) => error ? reject(error) : resolve(stdout));
     queryPid = query.pid;
   });
-  return output.split("\n").some(line => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*$/.exec(line);
-    if (!match) return false;
-    const pid = Number(match[1]);
-    const pgid = Number(match[2]);
-    const stat = match[3];
-    return pgid === groupId && pid !== groupId && pid !== process.pid && pid !== queryPid && !stat.startsWith("Z") && !stat.startsWith("X");
-  });
+  const processes = output.split("\n").map(line => /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*$/.exec(line)).filter(Boolean)
+    .map(match => ({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), stat: match[4] }));
+  // Under a person's OS account the worker starts through sudo, which stays in the group as
+  // this worker's parent until it exits; this worker's ancestors are never the command's.
+  const parents = new Map(processes.map(entry => [entry.pid, entry.ppid]));
+  const ancestors = new Set();
+  for (let pid = parents.get(process.pid); pid && pid !== groupId && !ancestors.has(pid); pid = parents.get(pid)) ancestors.add(pid);
+  return processes.some(({ pid, pgid, stat }) => pgid === groupId && pid !== groupId && pid !== process.pid && pid !== queryPid && !ancestors.has(pid) && !stat.startsWith("Z") && !stat.startsWith("X"));
 }
 
 async function main() {
   const id = process.env.JOINT_BOB_SUPERVISED_SHELL_ID;
-  const socket = process.env.JOINT_BOB_TASK_SOCKET;
   const token = process.env.JOINT_BOB_TASK_TOKEN;
-  if (!id || !socket || !token) {
+  if (!id || !token || !(process.env.JOINT_BOB_TASK_SOCKET || process.env.JOINT_BOB_TASK_RELAY)) {
     fail("invalid launch context");
     return;
   }
@@ -45,7 +44,7 @@ async function main() {
   while (true) {
     let task;
     try {
-      task = await requestSupervisor(socket, token, { action: "task", id }, 2000);
+      task = await requestTaskControl(process.env, { action: "task", id }, 2000);
     } catch {
       fail("could not confirm task registration");
       return;
@@ -69,7 +68,7 @@ async function main() {
     await pause(25);
   }
 
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name, value]) => name !== "JOINT_BOB_SUPERVISED_SHELL_ID" && typeof value === "string"));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name, value]) => name !== "JOINT_BOB_SUPERVISED_SHELL_ID" && name !== "JOINT_BOB_SHELL_EXITS" && typeof value === "string"));
   let child;
   try {
     child = spawn("/bin/bash", process.argv.slice(2), {
@@ -85,7 +84,7 @@ async function main() {
     // Inspect once before publishing the shell exit. Otherwise a slow ps can
     // outlast the shim's grace period and falsely report background children.
     let commandsRemain = await groupHasCommands(groupId);
-    const exits = path.join(process.env.JOINT_BOB_TASK_DATA_DIR, "shell-exits");
+    const exits = process.env.JOINT_BOB_SHELL_EXITS || path.join(process.env.JOINT_BOB_TASK_DATA_DIR, "shell-exits");
     mkdirSync(exits, { recursive: true, mode: 0o700 });
     writeFileSync(path.join(exits, id), String(code ?? 1), { mode: 0o600 });
     while (commandsRemain) {

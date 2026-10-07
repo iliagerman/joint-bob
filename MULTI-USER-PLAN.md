@@ -125,6 +125,24 @@ Users signed in from other nodes get the same wall on the node they visit.
 
 A full backup is taken first, and the move refuses to start while any turn is running. Single-user nodes that never enable multi-user mode are untouched.
 
+**How it's built (phase 4):**
+- `joint-bob-userctl` can also `killgroup` (stop an account's processes in a group the service leads, for stopping tasks) and `repair`, and it reapplies the port rules on every account change. `just install-multi-user` installs it; Users → Run self-test proves the wall, and Users → Turn on multi-user mode moves the admin.
+- Every process runs as its project's account. A person's project runs as their account, a twin's as the admin's, a cluster's as that cluster's own account (`jb-c<id>`), and a visitor's as one named by account id (`jb-v<id>`), so it never shares a local person's account. Cluster and visitor accounts are made on first use. Every `:projectId` route and project socket resolves harness paths in that account.
+- Agents under an account can't open the supervisor socket or the node database. Their shell commands and `joint-bob-task` go through a relay, `POST /api/background-tasks/relay`, with their own scoped token. The supervisor still checks that scope, and the server only rewrites a start to run as the project's account.
+- The Pi worker never gets a sign-in file. It reads the node's sign-ins through the server, which refreshes them under its own lock first, so no account refreshes (and so rotates) a login, and none can replace or remove one. Its session hooks are pinned to the session and conversation they first named.
+- Claude reaches accounts through a long-lived token from `claude setup-token`, which the admin saves once in Users. Copying the node's login would refresh it in one account and sign out the rest.
+- **The service is never a confused deputy.** The server reads people's folders with the service's rights, so:
+  - A person's project folder must be inside their own home. The admin may also use the node's projects folder, and their account is then given that folder.
+  - A project folder that has become a link out of its owner's home is refused on every route and socket.
+  - Transcript roots, transcript files and forks count only while their real path stays inside the account's home.
+  - The service's data folder is never a project.
+
+**Known limits:**
+- Kiro and Codex sign-ins aren't shared with accounts yet; people's Kiro runs aren't signed in.
+- Symlink confinement is checked before reading, so a swap in the instant between the check and the read isn't caught.
+- Stopping a task signals everything it left in its process group, through a shell that runs as the account. A process that ignores the signal, or that left the group, stays until the account is deleted. A stop from the Tasks panel or an agent also forces it out after 5 seconds; a stop at the task's lifetime limit doesn't.
+- On macOS, process-argument and port isolation are reported as self-test warnings: macOS hides other users' arguments itself, and `pf` rules aren't installed yet.
+
 ### 3.6 Per-user resources
 | Resource | Today | Plan |
 |---|---|---|

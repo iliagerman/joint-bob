@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import type { HarnessId } from "./types.js";
@@ -31,7 +32,7 @@ export function defaultSkillRoots(): SkillRoots {
   const roots: SkillRoots = { user, shared: agentResourcePaths().sharedSkills, global: [], project: [] };
   for (const adapter of listDiscoveredHarnesses()) {
     if (!adapter.configuration) continue;
-    const runtime = configuredRuntime(adapter.id, adapter.configuration.defaults(os.homedir()));
+    const runtime = configuredRuntime(adapter.id, adapter.configuration.defaults(runtimeHome()));
     const skillRoot = path.join(runtime.configPath, "skills");
     user[adapter.id] = skillRoot;
     roots[`${adapter.id}User`] = skillRoot;

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { runtimeHome } from "../../account-runtime.js";
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -149,7 +150,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   if (enabledTools !== undefined && (!Array.isArray(enabledTools) || enabledTools.some((name) => typeof name !== "string" || !kiroToolCategories.includes(name)))) {
     throw new Error("Unknown Kiro tool");
   }
-  const runtime = configuredRuntime("kiro", defaults(os.homedir()));
+  const runtime = configuredRuntime("kiro", defaults(runtimeHome()));
   const name = `joint-bob-${options.sessionId}`;
   const agents = path.join(runtime.configPath, "agents");
   await mkdir(agents, { recursive: true, mode: 0o700 });

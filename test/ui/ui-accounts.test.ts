@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -148,5 +149,64 @@ test("the admin adds a person in Users, who signs in with the one-time password"
 
   await page.getByTestId("users-row").filter({ hasText: "lior@example.test" }).getByTestId("users-toggle").click();
   await page.getByTestId("users-row").filter({ hasText: "lior@example.test" }).getByText("Disabled").waitFor();
+  assert.deepEqual(errors, []);
+});
+
+test("the admin runs the self-test, sees what failed, and turns multi-user mode on once it passes", { timeout: 150_000 }, async (t) => {
+  let homes = "";
+  const { page, environment, node } = await nativeUiFixture(t, (root) => (homes = path.join(root, "homes"), {
+    JOINT_BOB_USERCTL: path.resolve("test/fixtures/fake-userctl.sh"),
+    JOINT_BOB_USERCTL_SUDO: "0",
+    JOINT_BOB_ACCOUNT_HOME_ROOT: path.join(root, "homes"),
+  }));
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator("#loginDialog[open]").waitFor({ timeout: 30_000 });
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 30_000 });
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-users").click();
+  await page.getByTestId("users-self-test-button").waitFor({ state: "visible" });
+  assert.match(await page.getByTestId("users-multi-user-status").textContent() ?? "", /helper is installed/);
+  assert.equal(await page.getByTestId("users-add-button").isDisabled(), true, "no one can be added before the wall is up");
+  assert.equal(await page.getByTestId("users-enable-button").isVisible(), false);
+
+  // The stand-in helper keeps one OS user, so the wall really is down and the test says so.
+  await page.getByTestId("users-self-test-button").click();
+  await page.getByTestId("users-self-test-findings").waitFor({ state: "visible", timeout: 60_000 });
+  assert.match(await page.getByTestId("users-self-test-findings").textContent() ?? "", /Failed: One account can read another's home/);
+  assert.match(await page.getByTestId("users-multi-user-status").textContent() ?? "", /didn't pass/);
+  assert.equal(await page.getByTestId("users-enable-button").isVisible(), false, "a failed self-test can't be turned on");
+
+  // On a machine where it passes, the admin turns the mode on after confirming in place.
+  runOnNode(environment, node, `
+    const { recordSelfTest } = await import(${JSON.stringify(path.resolve("src/multi-user.ts"))});
+    recordSelfTest(true, [], true);
+  `);
+  await page.keyboard.press("Escape");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 30_000 });
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-users").click();
+  await page.getByTestId("users-enable-button").waitFor({ state: "visible" });
+  // What the admin's agents left in the service account moves with them, as a copy.
+  const transcript = path.join(environment.home, ".claude", "projects", "-work", "old-conversation.jsonl");
+  await mkdir(path.dirname(transcript), { recursive: true });
+  await writeFile(transcript, "{}\n");
+  await writeFile(path.join(environment.home, ".claude.json"), JSON.stringify({ mcpServers: {} }));
+  await page.getByTestId("users-enable-button").click();
+  await page.getByTestId("users-enable-confirm").waitFor({ state: "visible" });
+  await page.getByTestId("users-enable-confirm-button").click();
+  await page.getByTestId("users-status").getByText("Multi-user mode is on. You can add people now.").waitFor({ timeout: 60_000 });
+  assert.match(await page.getByTestId("users-multi-user-status").textContent() ?? "", /Multi-user mode is on/);
+  assert.equal(await page.getByTestId("users-mode-actions").isVisible(), false);
+  assert.equal(await page.getByTestId("users-add-button").isDisabled(), false, "people can be added now");
+  const adminHome = path.join(homes, `jb-${environment.username.toLowerCase()}`);
+  assert.equal(await readFile(path.join(adminHome, ".claude", "projects", "-work", "old-conversation.jsonl"), "utf8"), "{}\n", "their transcripts are in their own home");
+  assert.ok(await readFile(path.join(adminHome, ".claude", ".claude.json"), "utf8"), "with Claude's settings where their Claude reads them");
+  assert.ok(await readFile(transcript, "utf8"), "and the service keeps its copy");
   assert.deepEqual(errors, []);
 });

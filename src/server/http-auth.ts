@@ -133,9 +133,9 @@ export async function requireHttpAuth(request: Request, response: Response, next
     const identity = browserAgentIdentity(token);
     if (identity) { response.locals.browserAgent = identity; response.locals.browserAgentToken = token; next(); return; }
   }
-  if (request.path === "/background-tasks/agent" && request.method === "POST" && token) {
+  if ((request.path === "/background-tasks/agent" || request.path === "/background-tasks/relay") && request.method === "POST" && token) {
     const identity = backgroundTaskAgentIdentity(token);
-    if (identity) { response.locals.taskAgent = identity; next(); return; }
+    if (identity) { response.locals.taskAgent = identity; response.locals.taskAgentToken = token; next(); return; }
   }
   if (request.path === "/ntfy/agent" && request.method === "POST" && token) {
     const identity = ntfyAgentIdentity(token);

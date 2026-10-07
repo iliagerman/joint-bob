@@ -1,4 +1,6 @@
 import { projectAdditionalPaths } from "../session-scope.js";
+import { projectHomeFor } from "../../project-runtime.js";
+import { actingAccount } from "../../account-context.js";
 import { isNodeAdmin } from "../admin.js";
 import { personalSettings, terminalAccessSettings, updatePersonalSettings, updateTerminalAccessSettings } from "../../settings.js";
 import path from "node:path";
@@ -285,7 +287,7 @@ app.get("/api/settings", (_request, response) => {
 
 /** What a member or visitor sees of settings: their own values, and where their projects go. */
 function personalSettingsView(): Record<string, unknown> {
-  return { ...personalSettings(), projects: { homePath: getSettings().projects.homePath } };
+  return { ...personalSettings(), projects: { homePath: projectHomeFor(actingAccount(), getSettings().projects.homePath) } };
 }
 
 const personalSettingsSchema = z.object({

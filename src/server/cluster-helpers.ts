@@ -1,3 +1,4 @@
+import { withProjectRuntime } from "../project-runtime.js";
 import { listProjectWorktrees } from "../project-worktrees.js";
 import { asNode } from "../account-context.js";
 import { lstat, realpath, stat } from "node:fs/promises";
@@ -63,7 +64,11 @@ export async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string)
   return false;
 }
 
-async function assertTaskSessionReady(projectId:string, task:TaskRecord, syncStatusChecked = false): Promise<void> {
+function assertTaskSessionReady(projectId:string, task:TaskRecord, syncStatusChecked = false): Promise<void> {
+  return withProjectRuntime(projectId, () => assertTaskSessionReadyNow(projectId, task, syncStatusChecked));
+}
+
+async function assertTaskSessionReadyNow(projectId:string, task:TaskRecord, syncStatusChecked: boolean): Promise<void> {
   const sessionPath=task.sessionPath!;
   const session = resolveLocalSessionPath(sessionPath);
   const adapter = getHarness(session.engine);

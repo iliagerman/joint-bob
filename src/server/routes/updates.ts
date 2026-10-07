@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { NotFoundError } from "../../not-found.js";
+import { ProjectFolderError } from "../../project-runtime.js";
 import { z } from "zod";
 import { appVersion, readChangelog } from "../../changelog.js";
 import { ProjectDirectoryImportError } from "../../project-directory-import.js";
@@ -156,6 +157,7 @@ app.use((error: unknown, request: Request, response: Response, _next: NextFuncti
   }
   const message = error instanceof Error ? error.message : "Unexpected server error";
   if (error instanceof NotFoundError) { sendError(response, 404, message); return; }
+  if (error instanceof ProjectFolderError) { sendError(response, error.statusCode, message); return; }
   if (error instanceof WorkspaceError) {
     sendError(response, 400, message);
     return;

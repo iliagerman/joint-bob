@@ -178,15 +178,91 @@ function actionButton(label, testid, onClick) {
   return button;
 }
 
+const usersFindings = document.querySelector("#usersSelfTestFindings");
+const usersModeActions = document.querySelector("#usersModeActions");
+const usersSelfTest = document.querySelector("#usersSelfTestButton");
+const usersEnable = document.querySelector("#usersEnableButton");
+const usersEnableConfirm = document.querySelector("#usersEnableConfirm");
+
+function showFindings(failures = [], warnings = []) {
+  usersFindings.replaceChildren(...[...failures.map((text) => ["Failed", text]), ...warnings.map((text) => ["Warning", text])].map(([kind, text]) => {
+    const item = document.createElement("li");
+    item.textContent = `${kind}: ${text}`;
+    return item;
+  }));
+  usersFindings.hidden = !usersFindings.children.length;
+}
+
+/** Where the node is on the way to holding more than one person, and the next step. */
+function showMultiUserMode(multiUser) {
+  usersModeActions.hidden = multiUser.enabled || !multiUser.helperPresent;
+  usersSelfTest.hidden = multiUser.enabled;
+  usersEnable.hidden = !multiUser.ready;
+  if (multiUser.enabled) usersEnableConfirm.hidden = true;
+  usersMode.textContent = multiUser.enabled
+    ? "Multi-user mode is on: every person runs under their own OS account."
+    : !multiUser.helperPresent
+    ? "Adding people needs multi-user mode. Run `just install-multi-user` on this machine as an administrator, then run the self-test here."
+    : multiUser.ready
+    ? "The self-test passed. Turn on multi-user mode to move your agents into your own OS account and start adding people."
+    : multiUser.selfTest.at
+    ? "The self-test didn't pass. Fix what it found, then run it again."
+    : "The multi-user helper is installed. Run the self-test to prove people on this machine can't reach each other.";
+  if (!multiUser.enabled) showFindings(multiUser.selfTest.failures);
+  else showFindings();
+}
+
+usersSelfTest?.addEventListener("click", async () => {
+  usersSelfTest.disabled = true;
+  usersMode.textContent = "Running the self-test with two throwaway accounts…";
+  try {
+    const result = await api("/api/multi-user/self-test", { method: "POST" });
+    await loadUsers();
+    showFindings(result.failures, result.warnings);
+  } catch (error) {
+    usersStatus.textContent = error.message;
+  } finally {
+    usersSelfTest.disabled = false;
+  }
+});
+usersEnable?.addEventListener("click", () => { usersEnableConfirm.hidden = false; document.querySelector("#usersEnableConfirmButton").focus(); });
+document.querySelector("#usersEnableCancelButton")?.addEventListener("click", () => { usersEnableConfirm.hidden = true; });
+document.querySelector("#usersEnableConfirmButton")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  usersStatus.textContent = "Moving your agents into your own OS account…";
+  try {
+    await api("/api/multi-user/enable", { method: "POST" });
+    usersStatus.textContent = "Multi-user mode is on. You can add people now.";
+    await loadUsers();
+  } catch (error) {
+    usersStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+const claudeToken = document.querySelector("#usersClaudeToken");
+const claudeTokenStatus = document.querySelector("#usersClaudeTokenStatus");
+function showClaudeToken(saved) {
+  claudeTokenStatus.textContent = saved ? "A Claude token is saved. People's agents use the node's Claude subscription." : "No Claude token is saved. Claude won't be signed in for anyone but the node itself.";
+  document.querySelector("#usersClaudeTokenClear").hidden = !saved;
+}
+async function saveClaudeToken(token) {
+  const { claudeToken: saved } = await api("/api/multi-user/claude-token", { method: "PUT", body: JSON.stringify({ token }) });
+  claudeToken.value = "";
+  showClaudeToken(saved);
+}
+document.querySelector("#usersClaudeTokenSave")?.addEventListener("click", () => void saveClaudeToken(claudeToken.value.trim() || null).catch((error) => { claudeTokenStatus.textContent = error.message; }));
+document.querySelector("#usersClaudeTokenClear")?.addEventListener("click", () => void saveClaudeToken(null).catch((error) => { claudeTokenStatus.textContent = error.message; }));
+
 export async function loadUsers() {
   if (!isNodeAdmin()) return;
   const { users, multiUser, adminTransfer } = await api("/api/users");
-  usersMode.textContent = multiUser.ready
-    ? "Multi-user mode is on: every person runs under their own OS account."
-    : multiUser.helperInstalled
-    ? `Multi-user mode is installed but its self-test hasn't passed${multiUser.selfTest.failures.length ? `: ${multiUser.selfTest.failures.join("; ")}` : ""}.`
-    : "Adding people needs multi-user mode. Run `just install-multi-user` on this machine as an administrator, then reload.";
-  usersAdd.disabled = !multiUser.ready;
+  showMultiUserMode(multiUser);
+  showClaudeToken(multiUser.claudeToken);
+  usersAdd.dataset.blocked = String(!multiUser.canAddPeople);
+  usersAdd.disabled = !multiUser.canAddPeople;
   usersBody.replaceChildren(...users.map((user) => {
     const row = document.createElement("tr");
     row.dataset.testid = "users-row";
@@ -237,7 +313,7 @@ usersAdd?.addEventListener("click", async () => {
   } catch (error) {
     usersStatus.textContent = error.message;
   } finally {
-    usersAdd.disabled = false;
+    usersAdd.disabled = usersAdd.dataset.blocked === "true";
   }
 });
 

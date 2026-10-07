@@ -4076,3 +4076,7 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .users-table th, .users-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .users-table td:last-child { display: flex; gap: 6px; flex-wrap: wrap; }
 .users-one-time { font-family: var(--mono, monospace); padding: 8px; border: 1px dashed var(--line); border-radius: var(--radius-ctl); user-select: all; }
+.users-self-test { margin: 0 0 8px; padding-left: 18px; font-size: 13px; color: var(--muted); }
+.users-self-test[hidden], #usersModeActions[hidden], .users-enable-confirm[hidden], #usersModeActions button[hidden] { display: none; }
+.users-enable-confirm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.users-enable-confirm p { flex-basis: 100%; margin: 0; }

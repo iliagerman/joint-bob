@@ -676,10 +676,30 @@
         <section class="settings-panel" id="settingsPanel-users" role="tabpanel" aria-labelledby="settingsTab-users" tabindex="0" data-testid="settings-panel-users" data-admin-only hidden>
           <p class="settings-hint">People on this node. You see their accounts, never their projects, conversations or activity, and you can't read or reset their passwords.</p>
           <p class="settings-hint" id="usersMultiUserStatus" role="status" data-testid="users-multi-user-status"></p>
+          <ul class="users-self-test" id="usersSelfTestFindings" data-testid="users-self-test-findings" hidden></ul>
+          <div class="node-block-add" id="usersModeActions" data-testid="users-mode-actions" hidden>
+            <button class="ghost compact" type="button" id="usersSelfTestButton" data-testid="users-self-test-button">Run self-test</button>
+            <button class="ghost compact" type="button" id="usersEnableButton" data-testid="users-enable-button">Turn on multi-user mode</button>
+          </div>
+          <div class="users-enable-confirm" id="usersEnableConfirm" data-testid="users-enable-confirm" hidden>
+            <p class="settings-hint">Your agents, shells and terminal move into your own OS account. Your Claude, Pi and Kiro transcripts and settings are copied there, and your projects stay where they are. This can't be turned off from here. It waits until no turn is running.</p>
+            <button class="ghost compact" type="button" id="usersEnableConfirmButton" data-testid="users-enable-confirm-button">Turn it on</button>
+            <button class="ghost compact" type="button" id="usersEnableCancelButton" data-testid="users-enable-cancel-button">Cancel</button>
+          </div>
           <table class="users-table" data-testid="users-table">
             <thead><tr><th>Email</th><th>Username</th><th>Role</th><th>Status</th><th>Added</th><th></th></tr></thead>
             <tbody id="usersTableBody"></tbody>
           </table>
+          <fieldset class="phase-settings" id="usersSubscriptionFieldset" data-testid="users-subscription">
+            <legend>Model subscriptions</legend>
+            <p class="settings-hint">Subscriptions belong to the node: everyone's agents use the logins you made here. Claude reaches people's accounts through a long-lived token. Run <code>claude setup-token</code> and paste what it prints. People's agents can read it, so share it only with people you'd share the subscription with.</p>
+            <div class="node-block-add">
+              <label>Claude token<input id="usersClaudeToken" type="password" autocomplete="off" spellcheck="false" form="usersAddForm" data-testid="users-claude-token" /></label>
+              <button class="ghost compact" type="button" id="usersClaudeTokenSave" data-testid="users-claude-token-save">Save</button>
+              <button class="ghost compact" type="button" id="usersClaudeTokenClear" data-testid="users-claude-token-clear">Remove</button>
+            </div>
+            <p class="settings-hint" id="usersClaudeTokenStatus" role="status" data-testid="users-claude-token-status"></p>
+          </fieldset>
           <fieldset class="phase-settings" id="usersAddFieldset" data-testid="users-add">
             <legend>Add a person</legend>
             <div class="node-block-add">

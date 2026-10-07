@@ -1,7 +1,8 @@
 import { readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
-import { isHarnessId } from "../types.js";
+import { isHarnessId, type SessionSummary } from "../types.js";
+import { confinedToRuntime, currentRuntime } from "../account-runtime.js";
 import type { HarnessAdapter } from "./contract.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -61,7 +62,35 @@ export function resolveHarnessForSessionPath(adapters: readonly HarnessAdapter[]
   return matches[0];
 }
 
-const builtInAdapters = await discoverHarnesses(path.dirname(fileURLToPath(import.meta.url)));
+/** Reading a project's transcripts reads them where its agents write them: the project's
+    runtime account's home in multi-user mode. Loaded late, as it depends on the store. */
+function inProjectRuntime(adapter: HarnessAdapter): HarnessAdapter {
+  const run = async <T>(projectId: string, work: () => Promise<T>): Promise<T> => (await import("../project-runtime.js")).withProjectRuntime(projectId, work);
+  const sessions = adapter.sessions;
+  // A transcript the server reads for a person must really be in their home (see confinedToRuntime).
+  const confinedFile = (file: string) => confinedToRuntime(currentRuntime(), file);
+  const confinedSession = (sessionPath: string) => {
+    let file: string | undefined;
+    try { file = adapter.paths.transcriptFile?.(sessionPath); } catch { return true; }
+    return !file || confinedFile(file);
+  };
+  const confinedSummary = (session: SessionSummary) => confinedSession(session.path) && (session.segments ?? []).every((segment) => confinedSession(segment.path));
+  return {
+    ...adapter,
+    sessions: {
+      ...sessions,
+      files: (project) => run(project.id, async () => (await sessions.files(project)).filter(confinedFile)),
+      list: (project) => run(project.id, async () => (await sessions.list(project)).filter(confinedSummary)),
+      refresh: (project, previous, changedFiles) => run(project.id, async () => (await sessions.refresh(project, previous, changedFiles.filter(confinedFile))).filter(confinedSummary)),
+      loadMessages: (project, sessionPath) => run(project.id, () => {
+        if (!confinedSession(sessionPath)) throw new Error("Conversation transcript is outside its owner's home");
+        return sessions.loadMessages(project, sessionPath);
+      }),
+    },
+  };
+}
+
+const builtInAdapters = (await discoverHarnesses(path.dirname(fileURLToPath(import.meta.url)))).map(inProjectRuntime);
 
 export function listDiscoveredHarnesses(): HarnessAdapter[] {
   return [...builtInAdapters];

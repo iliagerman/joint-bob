@@ -1,4 +1,5 @@
 import { mkdir, readdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import { agentResourcePaths } from "./agent-resources.js";
@@ -98,7 +99,7 @@ function servers(map: unknown, base: Omit<InventoryMcpServer, "name" | "transpor
 function runtimeConfigPath(id: HarnessId): string | undefined {
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === id);
   if (!adapter?.configuration) return undefined;
-  return configuredRuntime(adapter.id, adapter.configuration.defaults(os.homedir())).configPath;
+  return configuredRuntime(adapter.id, adapter.configuration.defaults(runtimeHome())).configPath;
 }
 
 async function claudeServers(projectPath: string | undefined): Promise<InventoryMcpServer[]> {

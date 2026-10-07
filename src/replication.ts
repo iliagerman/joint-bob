@@ -14,6 +14,7 @@ import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
 import { applyUserRecentSessionEvent, ensureUserRecentSessionSchema } from "./recent-sessions.js";
 import { isHarnessId, PROJECT_COLORS, type TaskRecord } from "./types.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
+import { multiUserEnabled, runInRuntime, serviceRuntime, type RuntimeAccount } from "./account-runtime.js";
 import { applyClusterRoutingEvent, ensureRoutingPolicySchema } from "./routing-policy.js";
 import { applyUsageDifficultyEvent, applyUsageEvent, ensureUsageSchema } from "./usage-ledger.js";
 import { isTwinOrigin, translateLegacyAccountEvent } from "./account-keys.js";
@@ -313,17 +314,28 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
 /** Every event type this node can apply. Each one needs a scope in replication-v2.ts. */
 export function replicatedEntityTypes(): string[] { return Object.keys(REPLICATION_APPLIERS); }
 
+async function replicationRuntime(projectId: string): Promise<RuntimeAccount> {
+  if (!multiUserEnabled()) return serviceRuntime();
+  const { runtimeForProject } = await import("./project-runtime.js");
+  return runtimeForProject(projectId).catch(() => serviceRuntime());
+}
+
 export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<string[]> {
   const db = await replicationDatabase();
   const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string }).id;
-  const localTranscripts = new Map<string, LocalTranscript>();
-  if (batch.events.some((event) => event.entityType === "task" && event.operation === "upsert")) {
-    for (const adapter of listDiscoveredHarnesses()) {
-      localTranscripts.set(adapter.id, {
-        root: path.resolve(adapter.sync.transcriptRoot()),
-        sessionId: (pointer) => adapter.paths.ownsSession(pointer) ? adapter.paths.sessionId(pointer) : undefined,
-      });
-    }
+  // A task's transcripts are where its project's agents write them: the project's runtime
+  // account's home in multi-user mode, else the service's.
+  const projectTranscripts = new Map<string, Map<string, LocalTranscript>>();
+  const taskProject = (event: ReplicationEvent): string | undefined => { try { return resolveProjectAlias(db, taskPayload(event).projectId); } catch { return undefined; } };
+  for (const event of batch.events) {
+    if (event.entityType !== "task" || event.operation !== "upsert") continue;
+    const projectId = taskProject(event);
+    if (!projectId || projectTranscripts.has(projectId)) continue;
+    const runtime = await replicationRuntime(projectId);
+    projectTranscripts.set(projectId, runInRuntime(runtime, () => new Map(listDiscoveredHarnesses().map((adapter) => [adapter.id, {
+      root: path.resolve(adapter.sync.transcriptRoot()),
+      sessionId: (pointer: string) => adapter.paths.ownsSession(pointer) ? adapter.paths.sessionId(pointer) : undefined,
+    }]))));
   }
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -339,7 +351,7 @@ export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<
       }
       const applier = REPLICATION_APPLIERS[event.entityType];
       if (!applier) throw new Error("Unsupported replication event");
-      const applied = (event.entityType === "task" ? applyTaskEvent(db, event, localTranscripts) : applier(db, event)) !== false;
+      const applied = (event.entityType === "task" ? applyTaskEvent(db, event, projectTranscripts.get(taskProject(event) ?? "")) : applier(db, event)) !== false;
       if (!applied) {
         remove.run(event.id);
         continue;

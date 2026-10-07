@@ -1,5 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { adminGate } from "../admin.js";
+import { multiUserEnabled, runInRuntime } from "../../account-runtime.js";
+import { projectFolderConfined, runtimeForProject } from "../../project-runtime.js";
+import { asNode } from "../../account-context.js";
+import { getProject } from "../../store.js";
 import { createHash } from "node:crypto";
 import { dispatchSignedRuntime, twinRuntimeGuard } from "../runtime-peers.js";
 import path from "node:path";
@@ -141,6 +145,19 @@ app.post("/api/auth/login/mfa", (request, response, next) => {
 });
 
 app.use("/api", requireHttpAuth, requireCsrf, adminGate);
+// A project's routes resolve harness paths and start processes as the project's OS account
+// in multi-user mode, the way its sockets and sessions do.
+app.param("projectId", (_request, response, next, projectId: string) => {
+  if (!multiUserEnabled()) { next(); return; }
+  void (async () => {
+    const runtime = await runtimeForProject(projectId).catch(() => undefined);
+    if (!runtime) { next(); return; }
+    // A folder its owner swapped for a link elsewhere is never served.
+    const project = await asNode(() => getProject(projectId));
+    if (project && !await projectFolderConfined(runtime, project.path, project.id)) { sendError(response, 409, "This project's folder is outside its owner's home"); return; }
+    runInRuntime(runtime, next);
+  })().catch(next);
+});
 app.use("/api/cluster/v2/runtime", twinRuntimeGuard);
 app.use(dispatchSignedRuntime);
 app.use("/api", (request, response, next) => {
