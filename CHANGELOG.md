@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Worktree folders now prioritize metadata and conversation markers, ensuring they synchronize before bulk files are copied.
+
 ## 2.54.0 — 2026-10-07
 
 - Agents and scheduled tasks can now create isolated worktrees, start conversations within them, and open pull requests directly from changes, enabling automated issue discovery and fixing.
