@@ -3,11 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.51.0 — 2026-10-07
 
-- Conversations now organize under their worktree's collapsible section in the list instead of filtering via chips.
-- Transcript replication continues with other conversations when one fails, and worktree conversations are now properly included in cluster takeover lookups.
-- Cluster takeovers now account for Tailscale relay latency when verifying peer availability and transcript synchronization.
+- Conversations in worktrees now organize under a collapsible section in the conversation list instead of filter chips.
+- Transcript replication now continues past failed transcripts when syncing with cluster peers, and conversations in worktrees are properly included in ownership transfer lookups.
+- Cluster ownership transfers are now more reliable when communicating through Tailscale relays by accounting for higher latency.
 
 ## 2.50.1 — 2026-10-07
 
