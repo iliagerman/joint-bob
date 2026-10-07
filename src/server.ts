@@ -52,6 +52,7 @@ import "./server/routes/projects.js";
 import "./server/routes/resources.js";
 import "./server/routes/quick-notes.js";
 import { cleanupAbandonedByTheWayConversations } from "./server/routes/sessions.js";
+import { sweepConversationRetention } from "./server/conversation-retention.js";
 import { startCronScheduler } from "./server/cron.js";
 import { startQuickNoteScheduler } from "./server/quick-note-dispatch.js";
 import "./server/routes/cron.js";
@@ -155,6 +156,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     // First run comes a quarter hour after start, clear of the release health check.
     setInterval(() => { if (clusterWorkAllowed()) runReplicationHousekeeping().catch((error) => console.warn("Replication housekeeping failed", error)); }, 15 * 60_000).unref();
     setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
+    // Empty drafts go an hour after their last activity; the first sweep waits out the release health check.
+    const sweepRetention = (): void => { sweepConversationRetention().catch((error) => console.warn("Conversation retention sweep failed", error)); };
+    setTimeout(sweepRetention, 5 * 60_000).unref();
+    setInterval(sweepRetention, 60 * 60_000).unref();
     setInterval(() => {
       void initializeStartupReadiness();
       sweepRuntimeLeases();

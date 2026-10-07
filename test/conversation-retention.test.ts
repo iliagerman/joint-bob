@@ -101,11 +101,12 @@ test("the sweep deletes this node's expired and empty conversations and keeps th
   const staleDraft = await draft(2 * EMPTY_CONVERSATION_GRACE_MS);
   const freshDraft = await draft(60_000);
   const peerDraft = await draft(2 * EMPTY_CONVERSATION_GRACE_MS, randomUUID(), false);
+  const unclaimedDraft = await draft(2 * EMPTY_CONVERSATION_GRACE_MS, local.id, false);
   db.close();
 
   const { clearHarnessSessionCache } = await import("../src/harnesses.js");
   clearHarnessSessionCache(project.id);
-  assert.equal(await sweepConversationRetention(), 2);
+  assert.equal(await sweepConversationRetention(), 3);
   const exists = (file: string) => access(file).then(() => true, () => false);
   assert.equal(await exists(expired.file), false, "the 45-day-old transcript is deleted");
   assert.equal(await exists(recent.file), true);
@@ -113,6 +114,7 @@ test("the sweep deletes this node's expired and empty conversations and keeps th
   const deleted = await deletedConversationKeys(project.id);
   assert.ok(deleted.has(`claude:${expired.id}`), "the deletion replicates as a tombstone");
   assert.ok(deleted.has(`claude:${staleDraft}`), "an hour-old empty conversation is deleted");
+  assert.ok(deleted.has(`claude:${unclaimedDraft}`), "a draft this node created goes after an hour even though it never claimed ownership");
   const remaining = new Set((await listConversationRecords(project.id)).map((record) => record.sessionId));
   assert.ok(remaining.has(freshDraft), "a just-opened conversation is kept");
   assert.ok(remaining.has(peerDraft), "a draft another node created is left to that node");
@@ -124,4 +126,12 @@ test("the sweep deletes this node's expired and empty conversations and keeps th
   assert.equal(await sweepConversationRetention(), 0, "a longer retention keeps a 50-day-old conversation");
   assert.equal(await exists(older.file), true);
   assert.throws(() => settings.updateSettings({ ...settings.getSettings(), syncthing: { endpoint: "" }, conversationRetentionDays: 0 }), /retention/);
+});
+
+test("the node schedules the retention sweep", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/server.ts", import.meta.url), "utf8");
+  assert.match(source, /setInterval\(sweepRetention, 60 \* 60_000\)/, "server.ts must run the retention sweep hourly");
+  assert.match(source, /setTimeout\(sweepRetention, 5 \* 60_000\)/, "server.ts must run the first retention sweep five minutes after start");
+  assert.ok(source.indexOf("./server/conversation-retention.js") > source.indexOf("./server/routes/core.js"), "importing the sweep before routes/core would register session routes ahead of the auth gate");
 });

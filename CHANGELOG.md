@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Empty conversations are now automatically deleted after an hour of inactivity.
+
 ## 2.51.0 — 2026-10-07
 
 - Conversations in worktrees now organize under a collapsible section in the conversation list instead of filter chips.
