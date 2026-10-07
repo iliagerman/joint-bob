@@ -5,7 +5,11 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
-- Agents can now create and manage worktrees programmatically, start conversations within them, and open pull requests to commit changes back to the project.
+## 2.53.0 — 2026-10-07
+
+- Agents and scheduled tasks can now create isolated worktrees, start conversations within them, and open pull requests directly from those changes, enabling automated issue discovery and fixing.
+- Worktrees are now provisioned with the project's .env files and symlinks to installed dependencies without syncing builds or binaries.
+- Worktree scanning no longer follows symlinks, preventing build artifacts from being indexed.
 
 ## 2.52.0 — 2026-10-07
 
