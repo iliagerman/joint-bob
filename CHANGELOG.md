@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.52.0 — 2026-10-07
 
 - New conversations can now start in their own worktree, automatically named after the conversation title—enable in Settings → Conversations.
 - Error reports are now sent to ntfy topics for monitoring—enable in Settings → Notifications.
