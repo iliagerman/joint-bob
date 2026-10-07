@@ -217,6 +217,19 @@ On top of the scope:
 
 **My nodes** (new page): every node in your clusters, each with a status: home, signed in, can sign in, or not available. It has a **Forget this node** button. "Not available" covers both offline and blocked, and says no more.
 
+**How it's built (phase 6):**
+- Every cluster route that names a cluster answers 404 to a person who didn't join it. Creating or joining a cluster records the person. Joining one the node is already in needs a valid invitation and no network join. Leaving takes the person and their projects out, and the node leaves with its last person.
+- The cluster sharing page lists only the person's own projects and workspaces. Saving it changes only their part of the selection. A project is shared only into clusters its owner joined.
+- A sign-in record goes to a node only when the person joined a cluster that node is in, and it names those clusters. A visitor sees the projects shared into those clusters.
+- On a visitor's sign-in, the node asks their home node for their profile (`/api/cluster/v2/accounts/signed-in`). The home records the node and sends a signed profile: settings, travelling preferences (theme, sounds, keymap, panels, focus, Git reviewer), pins and recents. It re-sends the profile whenever it changes.
+- A visitor's settings and preferences edits go home first, and fail with "read-only" while home can't be reached. Their pins and recents go home as account events, which now travel only between the person's twins, home and the nodes they signed in to.
+- My nodes (Settings → Account) shows every node of the person's clusters. Forget this node, leaving the shared clusters, a block or deleting the account removes the copy there and signs them out.
+
+**Known limits:**
+- The profile doesn't carry canvas shortcuts, ntfy servers, skills, MCP definitions or secret metadata yet.
+- A received project doesn't show which person owns it.
+- Review marks and notification choices made while visiting reach home, but not the person's other visited nodes or home's twins.
+
 ### 3.10 Blocking nodes
 - **Admin-only setting: Blocked nodes.** The admin picks any node from the clusters this node's users belong to. The default is none. Blocking doesn't remove anyone from a cluster, and the other members are unaffected.
 - **A block works both ways.** When studio-mac blocks build-01:

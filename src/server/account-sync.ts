@@ -8,6 +8,7 @@ import { accountSnapshotsDue, ensureAccountReplicationSchema, recordAccountSnaps
 import { replicationPeers, signedPeerPost } from "./replication-v2.js";
 import { refreshLocalAccountIds } from "../auth.js";
 import { migrateAccountKeys, remapAccountKey } from "../account-keys.js";
+import { accountClusterIds } from "../cluster-accounts.js";
 
 /** Keeps local account ids current (pairing twins changes them) and moves per-person
     rows along, then runs the one-time move from usernames to account ids. */
@@ -76,7 +77,7 @@ export async function changeNodeBlock(nodeId: string, blocked: boolean): Promise
   setNodeBlock(db, nodeId, name, blocked, peers.map((peer) => peer.nodeId));
   // Either way its copy of our accounts changes: removed now, or re-sent after unblocking.
   db.prepare("DELETE FROM account_replication_deliveries WHERE peer_id = ?").run(nodeId);
-  if (blocked) removeReplicatedUsersFromNode(nodeId);
+  if (blocked) { removeReplicatedUsersFromNode(nodeId); forgetRoamingTo(db, nodeId); }
   await flushBlockNotices();
 }
 
@@ -102,26 +103,40 @@ export async function receiveBlockNotice(blocker: string, blockedNodeId: string,
   if (blockedNodeId === local.id) {
     ensureAccountReplicationSchema(db);
     db.prepare("DELETE FROM account_replication_deliveries WHERE peer_id = ?").run(blocker);
-    if (blocked) removeReplicatedUsersFromNode(blocker);
+    if (blocked) { removeReplicatedUsersFromNode(blocker); forgetRoamingTo(db, blocker); }
   }
 }
 
-export type AccountNodeStatus = "home" | "can sign in" | "pending" | "not available";
+/** A block ends roaming at once: our people's profiles there are forgotten on both sides
+    (that node drops its copies with their sign-in records). */
+function forgetRoamingTo(db: DatabaseSync, nodeId: string): void {
+  for (const table of ["account_roaming_nodes", "account_profile_deliveries", "account_forget_notices"]) {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) db.prepare(`DELETE FROM ${table} WHERE node_id = ?`).run(nodeId);
+  }
+}
 
-/** The nodes a local account can sign in to, as My nodes shows them. A node is
-    "not available" when blocked either way, with no more detail than for an offline one. */
-export async function accountNodes(): Promise<Array<{ nodeId: string; name: string; status: AccountNodeStatus }>> {
+export type AccountNodeStatus = "home" | "signed in" | "can sign in" | "pending" | "not available";
+
+/** The nodes one person can sign in to, as My nodes shows them: the nodes of the clusters
+    they joined. A node is "not available" when blocked either way, with no more detail than
+    for an offline one, and "signed in" once their profile went there. */
+export async function accountNodes(accountId: string): Promise<Array<{ nodeId: string; name: string; status: AccountNodeStatus }>> {
   const db = await clusterV2Database(), local = await getClusterNode();
   ensurePeerEndpointSchema(db);
   ensureAccountReplicationSchema(db);
-  const reachable = new Set(replicationPeers(db, local.id).map((peer) => peer.nodeId));
-  const due = new Set(accountSnapshotsDue(db, local.id, [...reachable], 0).map((entry) => entry.peer));
+  const { roamingNodes } = await import("./roaming.js");
+  const roaming = new Set(await roamingNodes(accountId));
+  const reachable = new Map(replicationPeers(db, local.id).map((peer) => [peer.nodeId, peer]));
+  const due = new Set(accountSnapshotsDue(db, local.id, [...reachable.keys()], 0).map((entry) => entry.peer));
+  const clusters = accountClusterIds(db, accountId, listSharingMemberships(db, local.id).map((membership) => membership.clusterId));
+  const theirs = new Set(clusters.flatMap((clusterId) => listSharingClusterMembers(db, clusterId).map((member) => member.nodeId)));
   const rows: Array<{ nodeId: string; name: string; status: AccountNodeStatus }> = [{ nodeId: local.id, name: local.name, status: "home" }];
   const seen = new Set<string>([local.id]);
-  for (const peer of [...replicationPeers(db, local.id), ...noticePeers(db, local.id)]) {
+  for (const peer of [...reachable.values(), ...noticePeers(db, local.id)]) {
     if (seen.has(peer.nodeId)) continue;
     seen.add(peer.nodeId);
-    rows.push({ nodeId: peer.nodeId, name: peer.name, status: !reachable.has(peer.nodeId) ? "not available" : due.has(peer.nodeId) ? "pending" : "can sign in" });
+    if (!theirs.has(peer.nodeId) && !isTrustedTwin(db, local.id, peer.nodeId)) continue;
+    rows.push({ nodeId: peer.nodeId, name: peer.name, status: !reachable.has(peer.nodeId) ? "not available" : roaming.has(peer.nodeId) ? "signed in" : due.has(peer.nodeId) ? "pending" : "can sign in" });
   }
   return rows;
 }

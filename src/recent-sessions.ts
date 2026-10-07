@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
@@ -213,4 +214,28 @@ function recentPayload(event: ReplicationEvent): RecentPayload {
 }
 export function applyUserRecentSessionEvent(db: DatabaseSync, event: ReplicationEvent): void {
   ensureUserRecentSessionSchema(db); apply(db, recentPayload(event));
+}
+
+/** `username`'s recents and recent removals as the events that recreate them, for their
+    roaming profile. */
+export function userRecentEvents(username: string): ReplicationEvent[] {
+  const db = recentDatabase();
+  const rows = db.prepare(`SELECT project_id, engine, session_id, session_path, title, opened_at, activity_updated_at, updated_at, origin_node_id
+    FROM user_recent_sessions WHERE username = ? ORDER BY opened_at DESC LIMIT 20`).all(username) as unknown as RecentRow[];
+  const removed = db.prepare(`SELECT project_id, engine, session_id, updated_at, origin_node_id FROM user_recent_session_tombstones
+    WHERE username = ? ORDER BY updated_at DESC LIMIT 50`).all(username) as unknown as Array<{ project_id: string; engine: HarnessId; session_id: string; updated_at: string; origin_node_id: string }>;
+  const event = (row: { project_id: string; engine: HarnessId; session_id: string; updated_at: string; origin_node_id: string }, recent: SyncedRecentSession | null): ReplicationEvent => {
+    const payload: RecentPayload = { username, projectId: row.project_id, engine: row.engine, sessionId: row.session_id, recent, updatedAt: row.updated_at, originNodeId: row.origin_node_id };
+    return { id: randomUUID(), originNodeId: row.origin_node_id, entityType: "user.recent", entityKey: entityKey(username, payload), operation: recent ? "upsert" : "delete", payload, createdAt: row.updated_at };
+  };
+  return [...rows.map((row) => event(row, fromRow(row))), ...removed.map((row) => event(row, null))].filter((entry) => {
+    try { recentPayload(entry); return true; } catch { return false; }
+  });
+}
+
+/** Forgets a visitor's recents on this node. */
+export function deleteUserRecents(username: string): void {
+  const db = recentDatabase();
+  db.prepare("DELETE FROM user_recent_sessions WHERE username = ?").run(username);
+  db.prepare("DELETE FROM user_recent_session_tombstones WHERE username = ?").run(username);
 }

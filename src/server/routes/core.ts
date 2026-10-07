@@ -84,6 +84,8 @@ app.get("/api/health", (_request, response) => {
 function sendLogin(response: Response, result: AuthSession | MfaLoginChallenge): void {
   if ("mfaRequired" in result) { response.json(result); return; }
   response.setHeader("Set-Cookie", sessionCookieValue(result));
+  // A visitor's profile comes from their home node, asked for at each sign-in here.
+  if (result.isRemoteLogin) void import("../roaming.js").then(({ requestProfile }) => requestProfile(result.accountId)).catch((error) => console.warn("Profile request failed", error));
   response.json({ mustChangePassword: result.mustChangePassword, csrfToken: result.csrfToken, username: result.username, email: result.email, accountId: result.accountId, role: result.role, needsEmail: !result.isRemoteLogin && !result.email, isRemoteLogin: result.isRemoteLogin });
 }
 

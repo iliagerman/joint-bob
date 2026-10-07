@@ -26,6 +26,9 @@ test("the admin signs in by email, sees the Node tab, and an account without an 
   await nodeTab.click();
   await page.getByTestId("node-block-list").getByText("No node is blocked.").waitFor();
   assert.match(await page.getByTestId("node-block-status").textContent() ?? "", /No other node to block/);
+  await page.getByTestId("settings-tab-account").click();
+  await page.getByTestId("my-nodes-row").first().waitFor();
+  assert.equal(await page.getByTestId("my-nodes-status").first().textContent(), "Home", "My nodes starts with this, their home");
   await page.keyboard.press("Escape");
 
   const db = new DatabaseSync(path.join(node.dataDir, "node.db"));

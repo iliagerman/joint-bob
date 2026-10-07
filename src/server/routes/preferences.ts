@@ -1,3 +1,4 @@
+import { forwardRoamingEdit, HomeOfflineError, roamingPreferences } from "../roaming.js";
 import { projectAdditionalPaths } from "../session-scope.js";
 import { projectHomeFor } from "../../project-runtime.js";
 import { actingAccount } from "../../account-context.js";
@@ -225,7 +226,7 @@ function canvasLayoutExceedsLimits(value: unknown): boolean {
   return false;
 }
 
-app.put("/api/preferences", (request, response, next) => {
+app.put("/api/preferences", async (request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
     if (canvasLayoutExceedsLimits((request.body as { canvasLayout?: unknown }).canvasLayout)) {
@@ -237,8 +238,15 @@ app.put("/api/preferences", (request, response, next) => {
     const update: Partial<UserPreferences> = preferences;
     if (canvasKeymap) update.canvasKeymap = normalizeCanvasKeymapPreference(canvasKeymap);
     if (canvasLayout) update.canvasLayout = normalizeCanvasLayoutPreference(canvasLayout);
+    // A visitor's travelling preferences (theme, sounds, keymap…) change at home first.
+    if (session.isRemoteLogin) {
+      const current = getUserPreferences(session.userId) as unknown as Record<string, unknown>;
+      const changed = Object.fromEntries(Object.keys(roamingPreferences.shape).filter((key) => key in update && JSON.stringify((update as Record<string, unknown>)[key]) !== JSON.stringify(current[key])).map((key) => [key, (update as Record<string, unknown>)[key]]));
+      if (Object.keys(changed).length) await forwardRoamingEdit(session.accountId, { preferences: changed });
+    }
     response.json(updateUserPreferences(session.userId, update));
   } catch (error) {
+    if (error instanceof HomeOfflineError) { sendError(response, error.statusCode, error.message); return; }
     next(error);
   }
 });
@@ -299,13 +307,17 @@ const personalSettingsSchema = z.object({
   conversationDefaults: z.unknown().optional(),
 }).strict();
 
-app.put("/api/settings/personal", (request, response, next) => {
+app.put("/api/settings/personal", async (request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
-    updatePersonalSettings(personalSettingsSchema.parse(request.body) as Parameters<typeof updatePersonalSettings>[0], undefined, session.userId);
+    const input = personalSettingsSchema.parse(request.body) as Parameters<typeof updatePersonalSettings>[0];
+    // A visitor's settings belong to their home node; the edit goes there first.
+    if (session.isRemoteLogin) await forwardRoamingEdit(session.accountId, { settings: input as Record<string, unknown> });
+    else updatePersonalSettings(input, undefined, session.userId);
     response.json(isNodeAdmin(session) ? getSettings() : personalSettingsView());
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
+    if (error instanceof HomeOfflineError) { sendError(response, error.statusCode, error.message); return; }
     next(error);
   }
 });

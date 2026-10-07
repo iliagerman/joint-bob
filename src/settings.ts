@@ -388,6 +388,20 @@ export function seedPersonalSettings(accountId: string): void {
   db.prepare("INSERT OR IGNORE INTO account_settings (account_id, payload, updated_at) VALUES (?, ?, ?)").run(accountId, JSON.stringify(payload), new Date().toISOString());
 }
 
+/** Replaces a visitor's settings here with the ones their home node sent; values this
+    node can't read keep its defaults. */
+export function replacePersonalSettings(accountId: string, input: Record<string, unknown>): void {
+  const payload: Record<string, unknown> = {};
+  for (const key of PERSONAL_SETTING_KEYS) {
+    const parsed = personalSchemas[key].safeParse(input[key]);
+    if (parsed.success) payload[key] = parsed.data;
+  }
+  const db = settingsDatabase();
+  ensureAccountSettingsSchema(db);
+  db.prepare("INSERT INTO account_settings (account_id, payload, updated_at) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at")
+    .run(accountId, JSON.stringify(payload), new Date().toISOString());
+}
+
 export function deletePersonalSettings(accountId: string): void {
   const db = settingsDatabase();
   ensureAccountSettingsSchema(db);

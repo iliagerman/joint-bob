@@ -8,7 +8,11 @@ import { verifyClusterMessage } from "../../cluster-identity.js";
 import { getSharingCluster, listSharingClusterMembers, listSharingMemberships, setAutoShareProjects } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
-import { clusterManager, ensureV2HttpSchema, flushV2MembershipOutbox, invitationLink, joinV2Membership, localMembershipDescriptor, mapV2Error, signedPost } from "../cluster-v2.js";
+import { clusterManager, ensureV2HttpSchema, flushV2MembershipOutbox, invitationLink, joinV2Membership, localMembershipDescriptor, mapV2Error, parseV2InvitationLink, signedPost } from "../cluster-v2.js";
+import { actingAccount, type ActingAccount } from "../../account-context.js";
+import { accountInCluster, addClusterLocalMember, clusterLocalMembers, forgetCluster, removeClusterLocalMember } from "../../cluster-accounts.js";
+import { unshareOwnedProjects } from "../../selected-sharing.js";
+import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
 
 const uuid = z.string().uuid();
@@ -21,6 +25,25 @@ const descriptorSchema = z.object({ clusterId: uuid, name: z.string(), url: z.st
 function localOnly(response: Response): void {
   if (!response.locals.authSession) throw new ClusterV2HttpError(401, "Unauthorized");
 }
+
+/** People join clusters themselves; a visitor from another node manages none here. */
+function clusterPerson(response: Response): ActingAccount {
+  localOnly(response);
+  const account = actingAccount();
+  if (!account || account.isRemoteLogin) throw new ClusterV2HttpError(404, "Not found");
+  return account;
+}
+
+// A cluster the acting person didn't join answers like an unknown route, on every route
+// that names one. Node-to-node routes carry no person and are checked by signature.
+app.param("clusterId", (_request, response, next, clusterId: string) => {
+  const account = actingAccount();
+  if (!response.locals.authSession || !account) { next(); return; }
+  void clusterV2Database().then((db) => {
+    if (account.isRemoteLogin || !accountInCluster(db, account.accountId, clusterId)) { sendError(response, 404, "Not found"); return; }
+    next();
+  }, next);
+});
 function machineOnly(response: Response): string {
   if (response.locals.machineProtocol !== 2 || typeof response.locals.machineNodeId !== "string") throw new ClusterV2HttpError(401, "Unauthorized");
   return response.locals.machineNodeId as string;
@@ -31,12 +54,16 @@ function handler(action: (request: Request, response: Response) => Promise<void>
 
 app.get("/api/clusters", handler(async (_request, response) => {
   localOnly(response);
+  const account = actingAccount();
+  if (account?.isRemoteLogin) { response.json({ clusters: [] }); return; }
   const local = await getClusterNode();
   const db = await clusterV2Database();
   ensureV2HttpSchema(db);
   const deliveries = db.prepare("SELECT cluster_id,count(*) count FROM cluster_v2_membership_deliveries GROUP BY cluster_id").all() as unknown as Array<{ cluster_id: string; count: number }>;
   const pending = new Map(deliveries.map((row) => [row.cluster_id, row.count]));
-  const clusters = listSharingMemberships(db, local.id).map((membership) => {
+  // Only the clusters this person joined; others on the node joined theirs.
+  const mine = listSharingMemberships(db, local.id).filter((membership) => !account || accountInCluster(db, account.accountId, membership.clusterId));
+  const clusters = mine.map((membership) => {
     const snapshot = getMembershipSnapshot(db, membership.clusterId);
     const descriptors = new Map(snapshot.body.members.map((member) => [member.nodeId, member]));
     const members = listSharingClusterMembers(db, membership.clusterId).map((member) => {
@@ -51,13 +78,15 @@ app.get("/api/clusters", handler(async (_request, response) => {
 }));
 
 app.post("/api/clusters", handler(async (request, response) => {
-  localOnly(response);
+  const person = clusterPerson(response);
   const payload = z.object({ name: z.string().trim().min(1).max(80) }).strict().parse(request.body);
   const local = await localMembershipDescriptor();
   const db = await clusterV2Database(); ensureV2HttpSchema(db);
   db.exec("SAVEPOINT cluster_v2_create");
   try {
-    const snapshot = createMembershipCluster(db, local, { id: randomUUID(), name: payload.name });
+    const id = randomUUID();
+    const snapshot = createMembershipCluster(db, local, { id, name: payload.name });
+    addClusterLocalMember(db, id, person.accountId);
     db.exec("RELEASE cluster_v2_create"); response.status(201).json({ snapshot });
   } catch (error) { db.exec("ROLLBACK TO cluster_v2_create; RELEASE cluster_v2_create"); throw error; }
 }));
@@ -78,9 +107,25 @@ app.post("/api/clusters/:clusterId/invitations", handler(async (request, respons
 }));
 
 app.post("/api/clusters/join", handler(async (request, response) => {
-  localOnly(response);
+  const person = clusterPerson(response);
   const payload = z.object({ link: z.string().max(32768), requestId: uuid }).strict().parse(request.body);
+  const parsed = parseV2InvitationLink(payload.link);
+  const clusterId = parsed.invitation.body.clusterId;
+  const db = await clusterV2Database(), local = await getClusterNode();
+  // The node is already in: a valid invitation lets one more person here join it. A retried
+  // or reused request id goes the usual way, which answers it consistently.
+  ensureV2HttpSchema(db);
+  const seen = db.prepare("SELECT 1 FROM cluster_v2_join_results WHERE request_id=? UNION ALL SELECT 1 FROM cluster_v2_join_attempts WHERE request_id=?").get(payload.requestId, payload.requestId);
+  if (!seen && db.prepare("SELECT 1 FROM sharing_memberships WHERE cluster_id=? AND node_id=?").get(clusterId, local.id)) {
+    const key = pinnedClusterPublicKey(db, parsed.invitation.body.manager.nodeId);
+    if (!key || key !== parsed.invitation.body.manager.publicKey || Date.now() > parsed.invitation.body.expiresAt
+      || !verifyClusterMessage(key, "membership-invitation", JSON.stringify(parsed.invitation.body), parsed.invitation.signature)) throw new ClusterV2HttpError(401, "Unauthorized");
+    addClusterLocalMember(db, clusterId, person.accountId);
+    response.json({ snapshot: getMembershipSnapshot(db, clusterId) });
+    return;
+  }
   const result = await joinV2Membership(payload.link, payload.requestId);
+  addClusterLocalMember(db, result.snapshot.body.clusterId, person.accountId);
   response.status(result.created ? 201 : 200).json({ snapshot: result.snapshot });
 }));
 
@@ -97,9 +142,20 @@ async function remove(request: Request, response: Response, targetNodeId: string
   if (manager !== local.id) applyMembershipSnapshot(db, local.id, snapshot);
   response.json({ snapshot });
 }
+// A person leaves; the node leaves with the last of its people in the cluster.
 app.post("/api/clusters/:clusterId/leave", handler(async (request, response) => {
-  const local = await getClusterNode();
+  const person = clusterPerson(response);
+  const clusterId = uuid.parse(request.params.clusterId);
+  const local = await getClusterNode(), db = await clusterV2Database();
+  if (clusterLocalMembers(db, clusterId).filter((accountId) => accountId !== person.accountId).length) {
+    epochSchema.parse(request.body);
+    unshareOwnedProjects(db, local.id, clusterId, person.accountId);
+    removeClusterLocalMember(db, clusterId, person.accountId);
+    response.json({ snapshot: getMembershipSnapshot(db, clusterId) });
+    return;
+  }
   await remove(request, response, local.id);
+  forgetCluster(db, clusterId);
 }));
 app.delete("/api/clusters/:clusterId/members/:nodeId", handler((request, response) => remove(request, response, uuid.parse(request.params.nodeId))));
 

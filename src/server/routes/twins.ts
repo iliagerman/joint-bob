@@ -7,7 +7,7 @@ import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import {
   acceptTwinHttpLink, applyRemoteTwinRevocation, bootstrapOwnedTwinPolicies,
   createTwinHttpInvitation, ensureTwinHttpSchema, mapTwinError, pendingTwinDeliveries,
-  revokeTwinHttp,
+  revokeTwinHttp, resyncAccountIds,
 } from "../twins.js";
 import { app } from "../state.js";
 import { declareTwinLost, receiveSuccession, successionNoticeSchema } from "../succession.js";
@@ -141,7 +141,7 @@ app.post("/api/cluster/v2/succession",handler(async(request,response)=>{
 }));
 app.delete("/api/twins/:relationshipId",handler(async(request,response)=>{
   localOnly(response); const local=await getClusterNode(),db=await clusterV2Database(),relationshipId=uuid.parse(request.params.relationshipId);
-  const result=revokeTwinHttp(db,local.id,relationshipId);
+  const result=revokeTwinHttp(db,local.id,relationshipId);await resyncAccountIds();
   await disconnectRevokedRuntimeSockets();
   response.json({relationshipId,status:"revoked",pending:result.pending});
 }));
@@ -159,11 +159,12 @@ app.post("/api/cluster/v2/twins/certificate",handler(async(request,response)=>{
   const other=certificate.body.inviter.nodeId===local.id?certificate.body.acceptor.nodeId:certificate.body.inviter.nodeId;
   if(sender!==other) throw new ClusterV2HttpError(403,"Forbidden");
   const db=await clusterV2Database();ensureTwinHttpSchema(db);transaction(db,()=>{applyTwinCertificate(db,local.id,certificate);bootstrapOwnedTwinPolicies(db,local.id);scheduleTwinSharing(db,certificate.body.relationshipId);});
+  await resyncAccountIds();
   response.json({ok:true});
 }));
 app.post("/api/cluster/v2/twins/revocation",handler(async(request,response)=>{
   const sender=machineOnly(response),revocation=twinRevocationSchema.parse(z.object({revocation:twinRevocationSchema}).strict().parse(request.body).revocation);
   if(sender!==revocation.signerNodeId) throw new ClusterV2HttpError(403,"Forbidden");
   const local=await getClusterNode(),db=await clusterV2Database();ensureTwinHttpSchema(db);
-  applyRemoteTwinRevocation(db,local.id,revocation);await disconnectRevokedRuntimeSockets();response.json({ok:true});
+  applyRemoteTwinRevocation(db,local.id,revocation);await resyncAccountIds();await disconnectRevokedRuntimeSockets();response.json({ok:true});
 }));

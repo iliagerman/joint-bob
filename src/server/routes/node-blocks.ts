@@ -82,6 +82,6 @@ app.get("/api/account/nodes", async (_request, response, next) => {
     if (!session) { sendError(response, 401, "Unauthorized"); return; }
     // A visitor's nodes are known to its home node; here it sees only this one.
     if (session.isRemoteLogin) { response.json({ nodes: [] }); return; }
-    response.json({ nodes: await accountNodes() });
+    response.json({ nodes: await accountNodes(session.accountId) });
   } catch (error) { next(error); }
 });

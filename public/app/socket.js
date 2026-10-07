@@ -1,3 +1,4 @@
+import { reloadTravellingPreferences } from "./roaming.js";
 import { loadWorktrees } from "./worktrees.js";
 import { harnessIdFromPath, harnessLabel } from "../harness-metadata.js";
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
@@ -590,6 +591,7 @@ const INVALIDATION_HANDLERS = {
   shortcutsChanged: () => state.canvasController?.reloadShortcuts(),
   tasksChanged: () => loadTasks().catch((error) => console.warn(error)),
   worktreesChanged: () => loadWorktrees().catch((error) => console.warn(error)),
+  profileChanged: () => reloadTravellingPreferences().catch((error) => console.warn(error)),
 };
 
 /** Runs the loader for an invalidation notice; false when the payload is not one. */

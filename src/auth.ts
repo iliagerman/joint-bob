@@ -1,3 +1,4 @@
+import { ACCOUNT_KEY_COLUMNS } from "./account-keys.js";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { hostname } from "node:os";
@@ -161,6 +162,8 @@ function ensureReplicatedUserSchema(db: DatabaseSync): void {
   if (!userColumns.some((column) => column.name === "remote_mfa")) db.exec("ALTER TABLE users ADD COLUMN remote_mfa INTEGER NOT NULL DEFAULT 0");
   if (!userColumns.some((column) => column.name === "account_id")) db.exec("ALTER TABLE users ADD COLUMN account_id TEXT");
   if (!userColumns.some((column) => column.name === "disabled")) db.exec("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0");
+  // A visitor's clusters as their home node states them: the shared projects they may see here.
+  if (!userColumns.some((column) => column.name === "remote_clusters")) db.exec("ALTER TABLE users ADD COLUMN remote_clusters TEXT");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email COLLATE NOCASE) WHERE email IS NOT NULL");
   // Before roles existed a node had one local user, so whoever is local and unroled is its admin.
   db.exec("UPDATE users SET role = 'admin' WHERE home_node_id IS NULL AND role IS NULL AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
@@ -807,6 +810,8 @@ export interface ReplicatedUserInput {
   accountId: string;
   /** The home node requires a second factor; this node can't verify it, so it refuses sign-in. */
   mfaRequired: boolean;
+  /** The clusters, shared with this node, that the person joined at home. */
+  clusterIds?: string[];
 }
 
 export interface ReplicatedUserRecord {
@@ -833,11 +838,11 @@ export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUser
     if (email !== null && emailTaken(db, email, existing?.id)) throw new Error("Email conflict: another account on this node uses that email");
     const id = existing?.id ?? nanoid(18);
     if (existing) {
-      db.prepare("UPDATE users SET password_hash = ?, password_salt = ?, email = ?, remote_mfa = ?, account_id = ?, updated_at = ? WHERE id = ?")
-        .run(input.passwordHash, input.passwordSalt, email, input.mfaRequired ? 1 : 0, input.accountId, now, id);
+      db.prepare("UPDATE users SET password_hash = ?, password_salt = ?, email = ?, remote_mfa = ?, account_id = ?, remote_clusters = ?, updated_at = ? WHERE id = ?")
+        .run(input.passwordHash, input.passwordSalt, email, input.mfaRequired ? 1 : 0, input.accountId, JSON.stringify(input.clusterIds ?? []), now, id);
     } else {
-      db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, must_change_password, home_node_id, email, remote_mfa, account_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`).run(id, input.username, input.passwordHash, input.passwordSalt, input.homeNodeId, email, input.mfaRequired ? 1 : 0, input.accountId, now, now);
+      db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, must_change_password, home_node_id, email, remote_mfa, account_id, remote_clusters, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.username, input.passwordHash, input.passwordSalt, input.homeNodeId, email, input.mfaRequired ? 1 : 0, input.accountId, JSON.stringify(input.clusterIds ?? []), now, now);
     }
     appendAuditEvent(db, { eventType: existing ? "auth.replicated_user.updated" : "auth.replicated_user.created", actorType: "system", entityType: "user", entityId: id, details: { homeNodeId: input.homeNodeId } });
     db.exec("COMMIT");
@@ -848,16 +853,43 @@ export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUser
   }
 }
 
+/** A visitor here by account id: their local user row and the node they call home. */
+export function replicatedUserByAccount(accountId: string): { userId: string; username: string; homeNodeId: string } | undefined {
+  const row = authDatabase().prepare("SELECT id, username, home_node_id FROM users WHERE account_id = ? AND home_node_id IS NOT NULL").get(accountId) as { id: string; username: string; home_node_id: string } | undefined;
+  return row ? { userId: row.id, username: row.username, homeNodeId: row.home_node_id } : undefined;
+}
+
+/** Signs a visitor out here, as "Forget this node" asks; their sign-in record stays. */
+export function endVisitorSessions(userId: string): void {
+  const db = authDatabase();
+  const visitor = db.prepare("SELECT 1 FROM users WHERE id = ? AND home_node_id IS NOT NULL").get(userId);
+  const ended = visitor ? endSessions(db, userId) : [];
+  if (ended.length) authSessionEvents.emit("revoked", ended);
+}
+
+/** The clusters a visitor joined at home, as their home node last stated them. */
+export function visitorClusterIds(accountId: string): string[] {
+  const row = authDatabase().prepare("SELECT remote_clusters FROM users WHERE account_id = ? AND home_node_id IS NOT NULL").get(accountId) as { remote_clusters: string | null } | undefined;
+  try { const ids = JSON.parse(row?.remote_clusters ?? "[]") as unknown; return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : []; } catch { return []; }
+}
+
 /** Removes a replicated user and all their sessions. */
 export function deleteReplicatedUser(homeNodeId: string, username: string): boolean {
   const db = authDatabase();
-  const user = db.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE AND home_node_id = ?").get(username, homeNodeId) as { id: string } | undefined;
+  const user = db.prepare("SELECT id, account_id FROM users WHERE username = ? COLLATE NOCASE AND home_node_id = ?").get(username, homeNodeId) as { id: string; account_id: string | null } | undefined;
   if (!user) return false;
 
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM login_sessions WHERE user_id = ?").run(user.id);
     db.prepare("DELETE FROM users WHERE id = ?").run(user.id);
+    // Their copy here goes with them: every per-person row and their roaming profile.
+    if (user.account_id) {
+      const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as unknown as Array<{ name: string }>).map((row) => row.name));
+      for (const [table, column] of [...ACCOUNT_KEY_COLUMNS, ["visitor_profiles", "account_id"] as [string, string]]) {
+        if (tables.has(table)) db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).run(user.account_id);
+      }
+    }
     db.exec("COMMIT");
     appendAuditEvent(db, { eventType: "auth.replicated_user.deleted", actorType: "system", entityType: "user", entityId: user.id, details: { homeNodeId } });
     return true;

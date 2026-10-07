@@ -4080,3 +4080,7 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .users-self-test[hidden], #usersModeActions[hidden], .users-enable-confirm[hidden], #usersModeActions button[hidden] { display: none; }
 .users-enable-confirm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
 .users-enable-confirm p { flex-basis: 100%; margin: 0; }
+
+.my-nodes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.my-nodes li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.visitor-banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); z-index: 60; }

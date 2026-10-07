@@ -1,5 +1,6 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks, loadTerminalPolicy, loadUsers } from "./node-admin.js";
+import { loadMyNodes } from "./roaming.js";
 import { loadBrowserStatus } from "./browser.js";
 import { loadBrowserProfileDirectory } from "./browser-profiles-settings.js";
 import { fillShortcutSettings } from "./shortcut-settings.js";
@@ -110,6 +111,7 @@ function selectSettingsTab(name) {
   if (name === "resources") showResourcesPanel();
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
   if (name === "users") void loadUsers().catch((error) => toast(error.message));
+  if (name === "account") void loadMyNodes().catch((error) => toast(error.message));
   if (name === "node") {
     void loadNodeBlocks().catch((error) => toast(error.message));
     void loadTerminalPolicy().catch((error) => toast(error.message));

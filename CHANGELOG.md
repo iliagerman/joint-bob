@@ -10,6 +10,7 @@ Every deployment is a version. The newest section must always match the
 - User messages now show who wrote them by email; multi-user conversations attribute each message to its author and persist the attribution across reloads.
 - Each member now has their own projects, secrets, workspaces, and settings; admins manage accounts and can transfer the admin role from the Users tab.
 - Agents, shells, and terminals now run in separate OS accounts when multi-user mode is enabled, providing process and network isolation.
+- Members can now join clusters independently and visit cluster nodes; their settings, preferences, and pins follow them there.
 
 ## 2.48.0 — 2026-10-07
 

@@ -13,7 +13,7 @@ import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
 import { signedPost } from "./cluster-v2.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { isTrustedTwin } from "../cluster-sharing-policy.js";
-import { mayReplicateEvent, replicationPeers, sendReplicationV2, signedPeerPost } from "./replication-v2.js";
+import { accountEventPeers, mayReplicateEvent, visitorEventRoute, replicationPeers, sendReplicationV2, signedPeerPost } from "./replication-v2.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
 import { listProjects } from "../store.js";
 import { reconcileSyncthingProjectFolders } from "../syncthing.js";
@@ -386,9 +386,12 @@ export async function flushReplicationOutbox(): Promise<void> {
   flags.replicationFlushInProgress = true;
   try {
     const db = await clusterV2Database(), local = await getClusterNode();
-    // Twins get every event directly; cluster members get project events through the hubs (cluster-hubs.ts).
-    for (const peer of replicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId))) {
-      const events = await eventsForPeer(peer.nodeId, new Date(), (event) => event.originNodeId === local.id && mayReplicateEvent(db, local.id, peer.nodeId, event));
+    // Twins get every event directly; cluster members get project events through the hubs
+    // (cluster-hubs.ts). A visitor's own pins and recents go straight to their home node.
+    const own = accountEventPeers(db);
+    for (const peer of replicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId) || own.has(peer.nodeId))) {
+      const twin = isTrustedTwin(db, local.id, peer.nodeId);
+      const events = await eventsForPeer(peer.nodeId, new Date(), (event) => event.originNodeId === local.id && (twin || visitorEventRoute(db, local.id, peer.nodeId, event)) && mayReplicateEvent(db, local.id, peer.nodeId, event));
       if (!events.length) continue;
       try {
         const receipt = replicationReceiptSchema.parse(await sendReplicationV2(peer, events));

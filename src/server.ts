@@ -37,6 +37,7 @@ import "./server/maintenance.js";
 import "./server/routes/core.js";
 import "./server/routes/cluster-v2.js";
 import "./server/routes/node-blocks.js";
+import "./server/routes/roaming.js";
 import "./server/routes/users.js";
 import "./server/routes/cluster-manager.js";
 import "./server/routes/twins.js";
@@ -138,6 +139,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
       flushBlockNotices().catch((error) => console.warn("Block notice delivery failed", error));
       flushAccountReplication().catch((error) => console.warn("Account delivery failed", error));
+      void import("./server/roaming.js").then(({ flushProfiles, sendSignInNotices }) => Promise.all([flushProfiles(), sendSignInNotices()])).catch((error) => console.warn("Profile delivery failed", error));
       flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
       reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     };

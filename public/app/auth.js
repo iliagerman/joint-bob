@@ -19,6 +19,7 @@ import { closeSocket, closeWatchSocket } from "./socket.js";
 import { BOOT_MINIMUM_MS, BOOT_REQUEST_TIMEOUT_MS, bootStartedAt, LEGACY_PREFERENCE_KEYS, shared, state } from "./state.js";
 import { renderBoardView } from "./tasks.js";
 import { loadWorkspaces } from "./workspaces.js";
+import { watchVisitorProfile } from "./roaming.js";
 
 // A short-lived password proof, held only in memory. It never authorizes app requests.
 let mfaChallenge = "";
@@ -204,6 +205,7 @@ export async function initializeApplication() {
     setMobileView("chat", false);
   }
   revealApplication();
+  void watchVisitorProfile();
   await loadWorkspaces();
   await loadProjects();
   if (!state.canvasPaneMode) setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);

@@ -713,6 +713,11 @@
           <p class="settings-hint" id="usersStatus" role="status" data-testid="users-status"></p>
         </section>
         <section class="settings-panel" id="settingsPanel-account" role="tabpanel" aria-labelledby="settingsTab-account" tabindex="0">
+          <fieldset class="phase-settings" id="myNodesFieldset" data-testid="my-nodes" hidden>
+            <legend>My nodes</legend>
+            <p class="settings-hint">The nodes of the clusters you joined. Your settings, pins and recents reach a node only after you sign in there.</p>
+            <ul class="my-nodes" id="myNodesList" data-testid="my-nodes-list"></ul>
+          </fieldset>
           <label class="checkbox-row"><input type="checkbox" id="settingsFocusUi" data-testid="settings-focus-ui-toggle" /> Focus interface (experimental)</label>
           <p class="muted compact-copy">One screen at a time, with floating contextual controls. Saves immediately for your account on this node. Turn off here to restore the classic interface without leaving your conversation.</p>
           <fieldset class="phase-settings">

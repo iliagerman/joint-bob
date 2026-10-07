@@ -51,7 +51,7 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
   "conversation.author": "project",
   "model.usage": "project",
   "usage.difficulty": "project",
-  // One person's data, keyed by account: twins, and project nodes for project items.
+  // One person's data, keyed by account: their twins, home and the nodes they signed in to.
   "conversation.review": "account",
   "conversation.notification": "account",
   "conversation.notification.delivered": "account",
@@ -74,13 +74,44 @@ function peerUnderstands(db: DatabaseSync, peer: string, entityType: string): bo
   return Boolean(db.prepare("SELECT 1 FROM account_replication_deliveries WHERE peer_id = ?").get(peer));
 }
 
+/**
+ * A person's account events (pins, recents, review marks, notification choices) go to their
+ * own nodes only: twins, their home node from a node they signed in to, and from home to
+ * every node they signed in to. They travel directly, never through a cluster's hub.
+ */
+export function visitorEventRoute(db: DatabaseSync, _local: string, peer: string, event: ReplicationEvent): boolean {
+  const account = (event.payload as { username?: unknown } | null)?.username;
+  if (typeof account !== "string" || !/^[0-9a-f]{32}$/.test(account)) return false;
+  const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'account_roaming_nodes')").all() as unknown as Array<{ name: string }>).map((row) => row.name));
+  // A visitor here, whose home is the peer.
+  if (tables.has("users") && db.prepare("SELECT 1 FROM users WHERE account_id = ? AND home_node_id = ?").get(account, peer)) return true;
+  // One of our people, signed in on the peer.
+  return tables.has("account_roaming_nodes") && Boolean(db.prepare("SELECT 1 FROM account_roaming_nodes WHERE account_id = ? AND node_id = ?").get(account, peer));
+}
+
+/** The nodes our account events go to directly: visitors' home nodes and the nodes our
+    people signed in to. */
+export function accountEventPeers(db: DatabaseSync): Set<string> {
+  const peers = visitorHomeNodes(db);
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'account_roaming_nodes'").get()) {
+    for (const row of db.prepare("SELECT DISTINCT node_id FROM account_roaming_nodes").all() as unknown as Array<{ node_id: string }>) peers.add(row.node_id);
+  }
+  return peers;
+}
+
+/** The home nodes of the visitors signed in here. */
+export function visitorHomeNodes(db: DatabaseSync): Set<string> {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()) return new Set();
+  return new Set((db.prepare("SELECT DISTINCT home_node_id FROM users WHERE home_node_id IS NOT NULL").all() as unknown as Array<{ home_node_id: string }>).map((row) => row.home_node_id));
+}
+
 export function mayReplicateEvent(db: DatabaseSync, local: string, peer: string, event: ReplicationEvent): boolean {
   const scope = EVENT_SCOPES[event.entityType];
   if (!scope || scope === "separate") return false;
   if (!peerUnderstands(db, peer, event.entityType)) return false;
   // A block between any two of the three nodes involved stops the event, relays included.
   if (nodesBlockedBetween(db, local, peer) || nodesBlockedBetween(db, local, event.originNodeId, peer)) return false;
-  if (scope === "twins") return isTrustedTwin(db, local, peer);
+  if (scope === "account" || scope === "twins") return isTrustedTwin(db, local, peer) || visitorEventRoute(db, local, peer, event);
   const project = replicationEventProject(db, event);
   // Data outside any project stays on the user's own machines: twins only.
   if (!project) return isTrustedTwin(db, local, peer);

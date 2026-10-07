@@ -101,6 +101,7 @@ export async function acceptTwinHttpLink(link: unknown): Promise<{relationshipId
     throw new ClusterV2HttpError(503, "Twin peer returned an unrelated certificate");
   }
   savepoint(db, "twin_http_activate", () => { applyTwinCertificate(db, local.nodeId, certificate); bootstrapOwnedTwinPolicies(db, local.nodeId); scheduleTwinSharing(db, certificate.body.relationshipId); });
+  await resyncAccountIds();
   await flushTwinSharing(certificate.body.relationshipId);
   return { relationshipId: acceptance.body.relationshipId, status:"active" };
 }
@@ -121,6 +122,7 @@ export async function confirmTwinHttp(request: Request, response: Response, next
       queueDelivery(db,result.body.relationshipId,payload.acceptor.nodeId,"certificate",result);
       bootstrapOwnedTwinPolicies(db,local.id); scheduleTwinSharing(db,result.body.relationshipId); return result;
     });
+    await resyncAccountIds();
     response.status(201).json({ certificate });
   } catch (error) { mapTwinError(error, response, next); }
 }
@@ -173,4 +175,11 @@ export function mapTwinError(error:unknown,response:Response,next:NextFunction):
     if(/conflict|revoked/i.test(error.message)){response.status(409).json({error:error.message});return;}
   }
   next(error);
+}
+
+/** Twins share one account per person: pairing or unpairing changes local account ids, and
+    every per-person row follows at once rather than at the next sync. */
+export async function resyncAccountIds(): Promise<void> {
+  const { syncLocalAccountIds } = await import("./account-sync.js");
+  await syncLocalAccountIds().catch((error) => console.warn("Account id sync failed", error));
 }

@@ -1,3 +1,4 @@
+import { visitorClusterIds } from "./auth.js";
 import { inheritWorkspaceSharing } from "./selected-sharing.js";
 import { NotFoundError } from "./not-found.js";
 import { actingAccount, type ActingAccount } from "./account-context.js";
@@ -495,9 +496,11 @@ function projectVisibleToActor(db: DatabaseSync, projectId: string, account: Act
   const sharedIn = (): string[] => { try { return resourceClusterIds(db, localNodeId, "project", projectId); } catch { return []; } };
   const clusters = () => owner === localNodeId ? [] : sharedIn();
   if (account.isRemoteLogin) {
+    // A visitor sees projects shared into the clusters they joined at home, as it states them.
     if (!account.homeNodeId || !tableExists(db, "sharing_memberships")) return false;
     const homeClusters = new Set((db.prepare("SELECT cluster_id FROM sharing_memberships WHERE node_id = ?").all(account.homeNodeId) as unknown as Array<{ cluster_id: string }>).map((row) => row.cluster_id));
-    return sharedIn().some((clusterId) => homeClusters.has(clusterId));
+    const joined = new Set(visitorClusterIds(account.accountId).filter((clusterId) => homeClusters.has(clusterId)));
+    return sharedIn().some((clusterId) => joined.has(clusterId));
   }
   if (owner === localNodeId) return actorOwns("project", projectId, account, db);
   if (isActiveTwin(db, owner)) return account.role === "admin";

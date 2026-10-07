@@ -12,6 +12,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { deleteReplicatedUser, listReplicatedUsers, localAccountsForReplication, upsertReplicatedUser } from "./auth.js";
 import { isNodeBlocked } from "./node-blocks.js";
+import { accountClusterIds } from "./cluster-accounts.js";
+import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "./cluster-sharing-policy.js";
 
 const hex = z.string().regex(/^[0-9a-f]+$/i).max(256);
 const accountSchema = z.object({
@@ -22,6 +24,7 @@ const accountSchema = z.object({
   passwordSalt: hex,
   mfaRequired: z.boolean(),
   updatedAt: z.string().max(40),
+  clusterIds: z.array(z.string().uuid()).max(200),
 }).strict();
 
 export const accountSnapshotSchema = z.object({
@@ -36,12 +39,19 @@ export function ensureAccountReplicationSchema(db: DatabaseSync): void {
     DROP TABLE IF EXISTS cluster_v2_user_replication_outbox;`);
 }
 
-/** The local accounts allowed to sign in on `peer`. */
+/**
+ * The local accounts allowed to sign in on `peer`: on a twin, everyone (it's the same node);
+ * elsewhere, each person who joined a cluster the peer is in, with those clusters named.
+ */
 export function accountSnapshotFor(db: DatabaseSync, local: string, peer: string): AccountSnapshot {
   if (isNodeBlocked(db, local, peer)) return { version: 2, accounts: [] };
+  const twin = isTrustedTwin(db, local, peer);
+  const shared = listSharingMemberships(db, local).map((membership) => membership.clusterId)
+    .filter((clusterId) => listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === peer));
   return {
     version: 2,
-    accounts: localAccountsForReplication().filter((account) => account.accountId).map((account) => ({
+    accounts: localAccountsForReplication().filter((account) => account.accountId).map((account) => ({ account, clusterIds: accountClusterIds(db, account.accountId, shared) }))
+      .filter(({ clusterIds }) => twin || clusterIds.length).map(({ account, clusterIds }) => ({
       accountId: account.accountId,
       username: account.username,
       email: account.email,
@@ -49,6 +59,7 @@ export function accountSnapshotFor(db: DatabaseSync, local: string, peer: string
       passwordSalt: account.passwordSalt.toString("hex"),
       mfaRequired: account.mfaEnabled,
       updatedAt: account.updatedAt,
+      clusterIds,
     })),
   };
 }
@@ -95,6 +106,7 @@ export function applyAccountSnapshot(db: DatabaseSync, local: string, sender: st
         homeNodeId: sender,
         accountId: account.accountId,
         mfaRequired: account.mfaRequired,
+        clusterIds: account.clusterIds,
       });
       applied.push(account.username.toLowerCase());
     } catch (error) {

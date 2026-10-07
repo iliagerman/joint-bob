@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { accountIdFor, canonicalLocalHome } from "./accounts.js";
 import { adminAccountId } from "./ownership.js";
 
 /**
@@ -19,8 +20,20 @@ export function clusterLocalMembers(db: DatabaseSync, clusterId: string): string
   return admin ? [admin] : [];
 }
 
+/** The ids a local person's rows may still carry: pairing or unpairing twins changes their id,
+    and their stored rows move at the next account sync. */
+function storedIdsFor(db: DatabaseSync, accountId: string): string[] {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()) return [accountId];
+  const home = canonicalLocalHome(db);
+  if (!home) return [accountId];
+  const rows = db.prepare("SELECT username, account_id FROM users WHERE home_node_id IS NULL").all() as unknown as Array<{ username: string; account_id: string | null }>;
+  const row = rows.find((candidate) => accountIdFor(home, candidate.username) === accountId);
+  return row?.account_id && row.account_id !== accountId ? [accountId, row.account_id] : [accountId];
+}
+
 export function accountInCluster(db: DatabaseSync, accountId: string, clusterId: string): boolean {
-  return clusterLocalMembers(db, clusterId).includes(accountId);
+  const members = clusterLocalMembers(db, clusterId);
+  return storedIdsFor(db, accountId).some((id) => members.includes(id));
 }
 
 /** Records that `accountId` joined. The first explicit join of a cluster the node was
