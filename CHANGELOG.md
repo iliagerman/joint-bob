@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Empty conversations are now automatically deleted after an hour of inactivity.
+- Conversations no longer reload repeatedly in the background when you switch away from the tab.
 
 ## 2.51.0 — 2026-10-07
 

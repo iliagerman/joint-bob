@@ -64,41 +64,70 @@ function scheduleReconnect(sessionPath, delay = 1500) {
   }, delay);
 }
 
+const PONG_TIMEOUT_MS = 30000;
+const PROBE_TIMEOUT_MS = 5000;
+let pingSentAt = 0;
+let probeTimer = null;
+
+function sendPing() {
+  pingSentAt = Date.now();
+  state.socket.send(JSON.stringify({ type: "ping" }));
+  return pingSentAt;
+}
+
 function startHeartbeat() {
   stopHeartbeat();
   state.lastPongAt = Date.now();
+  pingSentAt = 0;
   state.heartbeatTimer = setInterval(() => {
-    if (!state.socket) return;
-    if (state.socket.readyState === WebSocket.OPEN) {
-      if (Date.now() - state.lastPongAt > 45000) {
-        // Connection looks dead (no pong in 3+ intervals). Force a reconnect.
-        resumeConnection(true);
-        return;
-      }
-      state.socket.send(JSON.stringify({ type: "ping" }));
-    } else if (state.socket.readyState === WebSocket.CLOSING || state.socket.readyState === WebSocket.CLOSED) {
-      resumeConnection(true);
+    const socket = state.socket;
+    if (!socket) return;
+    if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+      resumeConnection(true, "heartbeat found the socket closed");
+      return;
     }
+    if (socket.readyState !== WebSocket.OPEN) return;
+    // Browsers throttle a hidden tab's timers past any pong deadline, so a healthy
+    // socket looked dead and reloaded its whole transcript every few minutes.
+    // Returning to the tab probes once instead.
+    if (document.visibilityState === "hidden") return;
+    if (pingSentAt > state.lastPongAt) {
+      if (Date.now() - pingSentAt > PONG_TIMEOUT_MS) resumeConnection(true, `no pong ${Math.round((Date.now() - pingSentAt) / 1000)} s after a ping`);
+      return;
+    }
+    sendPing();
   }, 15000);
 }
 
 function stopHeartbeat() {
   if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
   state.heartbeatTimer = null;
+  if (probeTimer) clearTimeout(probeTimer);
+  probeTimer = null;
+}
+
+/** One ping with a short deadline; a socket that stays silent is replaced. */
+function probeConnection(reason) {
+  const socket = state.socket;
+  const sentAt = sendPing();
+  if (probeTimer) clearTimeout(probeTimer);
+  probeTimer = setTimeout(() => {
+    probeTimer = null;
+    if (state.socket === socket && state.lastPongAt < sentAt) resumeConnection(true, `${reason}: no pong within ${PROBE_TIMEOUT_MS / 1000} s`);
+  }, PROBE_TIMEOUT_MS);
 }
 
 // Proactively restore the session connection. Mobile browsers freeze JS timers
 // and kill sockets when the app is backgrounded or the screen locks, so the
 // WebSocket "close" event often only fires after the user returns. This is
-// called on visibilitychange / pageshow / online and from the heartbeat.
-function resumeConnection(force = false) {
+// called on visibilitychange / pageshow / online / focus and from the heartbeat.
+function resumeConnection(force = false, reason = "resume") {
   if (!state.activeProjectId || !state.activeSessionPath) return;
-  const fresh = Date.now() - state.lastPongAt < 40000;
-  if (!force && socketOpen() && fresh) {
-    // Looks healthy — probe anyway so we notice zombies quickly.
-    sendSocket({ type: "ping" });
+  if (!force && socketOpen()) {
+    probeConnection(reason);
     return;
   }
+  console.info("Reconnecting conversation socket", { reason, engine: state.engine, sessionId: state.activeSessionId || null });
   if (state.socket) {
     const stale = state.socket;
     state.socket = null;
@@ -707,6 +736,7 @@ export function ensureWatchSocket() {
     loadPins().catch((error) => console.warn(error));
     loadRecentSessions().catch((error) => console.warn(error));
     state.watchPingTimer = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
     }, 25000);
   });
@@ -730,7 +760,7 @@ export function ensureWatchSocket() {
 // this the connection stays "dropped" until the user sends a follow-up message.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
-  resumeConnection();
+  resumeConnection(false, "tab became visible");
   ensureWatchSocket();
   refreshSessionsQuietly();
   loadPins().catch((error) => console.warn(error));
@@ -739,13 +769,13 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {
-    resumeConnection(true);
+    resumeConnection(true, "page restored from the back/forward cache");
     ensureWatchSocket();
     refreshSessionsQuietly();
   }
 });
 window.addEventListener("online", () => {
-  resumeConnection(true);
+  resumeConnection(true, "network came back online");
   ensureWatchSocket();
 });
-window.addEventListener("focus", () => resumeConnection());
+window.addEventListener("focus", () => resumeConnection(false, "window focused"));
