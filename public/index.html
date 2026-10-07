@@ -610,6 +610,7 @@
           <option value="logs">Client logs</option>
           <option value="changelog">Changelog</option>
           <option value="node" data-admin-only>Node</option>
+          <option value="users" data-admin-only>Users</option>
         </select>
 
         <div class="settings-tabs settings-tabs--sidebar" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
@@ -630,6 +631,7 @@
           <button class="settings-tab" type="button" data-settings-tab="logs" role="tab" id="settingsTab-logs" aria-controls="settingsPanel-logs" aria-selected="false" tabindex="-1" data-testid="settings-tab-logs">Client logs</button>
           <button class="settings-tab" type="button" data-settings-tab="changelog" role="tab" id="settingsTab-changelog" aria-controls="settingsPanel-changelog" aria-selected="false" tabindex="-1" data-testid="settings-tab-changelog">Changelog</button>
           <button class="settings-tab" type="button" data-settings-tab="node" role="tab" id="settingsTab-node" aria-controls="settingsPanel-node" aria-selected="false" tabindex="-1" data-testid="settings-tab-node" data-admin-only>Node</button>
+          <button class="settings-tab" type="button" data-settings-tab="users" role="tab" id="settingsTab-users" aria-controls="settingsPanel-users" aria-selected="false" tabindex="-1" data-testid="settings-tab-users" data-admin-only>Users</button>
         </div>
 
         <section class="settings-panel" id="settingsPanel-node" role="tabpanel" aria-labelledby="settingsTab-node" tabindex="0" data-testid="settings-panel-node" data-admin-only hidden>
@@ -670,6 +672,25 @@
             </div>
             <p class="settings-hint" id="nodeBlockStatus" role="status" data-testid="node-block-status"></p>
           </fieldset>
+        </section>
+        <section class="settings-panel" id="settingsPanel-users" role="tabpanel" aria-labelledby="settingsTab-users" tabindex="0" data-testid="settings-panel-users" data-admin-only hidden>
+          <p class="settings-hint">People on this node. You see their accounts, never their projects, conversations or activity, and you can't read or reset their passwords.</p>
+          <p class="settings-hint" id="usersMultiUserStatus" role="status" data-testid="users-multi-user-status"></p>
+          <table class="users-table" data-testid="users-table">
+            <thead><tr><th>Email</th><th>Username</th><th>Role</th><th>Status</th><th>Added</th><th></th></tr></thead>
+            <tbody id="usersTableBody"></tbody>
+          </table>
+          <fieldset class="phase-settings" id="usersAddFieldset" data-testid="users-add">
+            <legend>Add a person</legend>
+            <div class="node-block-add">
+              <label>Username<input id="usersAddUsername" autocomplete="off" maxlength="28" form="usersAddForm" data-testid="users-add-username" /></label>
+              <label>Email<input id="usersAddEmail" type="email" autocomplete="off" maxlength="254" form="usersAddForm" data-testid="users-add-email" /></label>
+              <button class="ghost compact" type="button" id="usersAddButton" data-testid="users-add-button">Add</button>
+            </div>
+            <p class="settings-hint">They sign in once with a one-time password shown here, then choose their own. Each person gets their own OS account, projects and settings.</p>
+            <p class="users-one-time" id="usersOneTime" data-testid="users-one-time" hidden></p>
+          </fieldset>
+          <p class="settings-hint" id="usersStatus" role="status" data-testid="users-status"></p>
         </section>
         <section class="settings-panel" id="settingsPanel-account" role="tabpanel" aria-labelledby="settingsTab-account" tabindex="0">
           <label class="checkbox-row"><input type="checkbox" id="settingsFocusUi" data-testid="settings-focus-ui-toggle" /> Focus interface (experimental)</label>
@@ -2150,5 +2171,6 @@
     <script src="/app.js" type="module"></script>
       <!-- Owns the terminal policy inputs, so the settings form never validates them. -->
     <form id="terminalPolicyForm" hidden></form>
+    <form id="usersAddForm" hidden></form>
 </body>
 </html>

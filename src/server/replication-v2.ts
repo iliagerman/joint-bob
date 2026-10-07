@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { ownedByAdmin } from "../ownership.js";
 import { getClusterNode } from "../cluster.js";
 import { ensurePeerEndpointSchema, type PeerEndpoint } from "../cluster-peer-endpoints.js";
 import { signClusterRequest } from "../cluster-protocol.js";
@@ -62,9 +63,21 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
   "cluster.routing": "separate",
 };
 
+/** Event types an older node doesn't know. It rejects a whole batch over one unknown type,
+    so these go only to peers that have accepted this node's account snapshot, which only an
+    upgraded node can. The periodic full scan offers them again once a peer upgrades. */
+const NEWER_EVENT_TYPES = new Set(["conversation.author"]);
+
+function peerUnderstands(db: DatabaseSync, peer: string, entityType: string): boolean {
+  if (!NEWER_EVENT_TYPES.has(entityType)) return true;
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'account_replication_deliveries'").get()) return false;
+  return Boolean(db.prepare("SELECT 1 FROM account_replication_deliveries WHERE peer_id = ?").get(peer));
+}
+
 export function mayReplicateEvent(db: DatabaseSync, local: string, peer: string, event: ReplicationEvent): boolean {
   const scope = EVENT_SCOPES[event.entityType];
   if (!scope || scope === "separate") return false;
+  if (!peerUnderstands(db, peer, event.entityType)) return false;
   // A block between any two of the three nodes involved stops the event, relays included.
   if (nodesBlockedBetween(db, local, peer) || nodesBlockedBetween(db, local, event.originNodeId, peer)) return false;
   if (scope === "twins") return isTrustedTwin(db, local, peer);
@@ -99,7 +112,7 @@ export async function flushTwinCredentials(): Promise<void> {
   for (const peer of peers) {
     const events = (await secretCredentialEventsForPeer(peer.nodeId)).filter(event => event.originNodeId === local.id);
     const activeIds=(db.prepare(`SELECT id FROM secret_accounts WHERE replicate=1 AND origin_node_id=?
-      AND project_id IS NULL`).all(local.id) as unknown as Array<{id:string}>).map(row=>row.id);
+      AND project_id IS NULL`).all(local.id) as unknown as Array<{id:string}>).map(row=>row.id).filter(id=>ownedByAdmin("secret",id,db));
     try {
       const reply = await signedPeerPost(peer, "/api/cluster/v2/twins/credentials", { events, activeIds }) as { received: string[] };
       if (!Array.isArray(reply.received) || reply.received.some(id => !events.some(event => event.id === id))) throw new Error("Invalid credential receipt");

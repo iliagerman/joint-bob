@@ -3,7 +3,7 @@
 // own values, and the terminal follows the admin's policy.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -23,13 +23,18 @@ async function memberSession(node: SeededNode, username: string, oneTimePassword
   return session;
 }
 
+const openSockets: WebSocket[] = [];
+
 function terminalReply(node: SeededNode, session: SignedIn, projectId: string): Promise<{ type: string; error?: string }> {
   const url = new URL(`/ws?mode=terminal&projectId=${projectId}`, node.url);
   url.protocol = "ws:";
   const socket = new WebSocket(url, { origin: node.url, headers: { Cookie: session.cookie } });
-  return new Promise((resolve, reject) => {
-    socket.once("message", (raw) => { resolve(JSON.parse(String(raw)) as { type: string; error?: string }); });
-    socket.once("error", reject);
+  openSockets.push(socket);
+  return new Promise<{ type: string; error?: string }>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("No terminal reply")), 15_000);
+    socket.once("message", (raw) => { clearTimeout(timer); resolve(JSON.parse(String(raw)) as { type: string; error?: string }); });
+    socket.once("close", (code, reason) => { clearTimeout(timer); resolve({ type: "closed", error: `${code} ${String(reason)}` }); });
+    socket.once("error", (error) => { clearTimeout(timer); reject(error); });
   }).finally(() => { if (socket.readyState === WebSocket.OPEN) socket.close(); });
 }
 
@@ -90,6 +95,7 @@ test("every admin route answers a member like an unknown route, and the admin st
     const audit = await api<{ events: Array<{ actorId: string | null; entityId: string | null }> }>(node, admin, "GET", "/audit?limit=200");
     assert.equal(audit.body.events.some((event) => event.actorId === member.userId || event.entityId === member.userId), false, "the admin sees no member activity in the audit log");
   } finally {
+    for (const socket of openSockets.splice(0)) socket.terminate();
     await stopDevNode(child);
     await rm(root, { recursive: true, force: true });
   }
@@ -105,7 +111,7 @@ test("the terminal follows the admin's policy, per person, with a limit", { time
     const db = new DatabaseSync(process.env.JOINT_BOB_DATA_DIR + "/node.db");
     db.exec("DELETE FROM node_settings WHERE key LIKE 'terminalAccess.%'");
   `);
-  const child = await startDevNode(environment, node);
+  const child = await startDevNode(environment, node, { JOINT_BOB_TEST_MULTI_USER_READY: "1" });
   try {
     const admin = await signIn(environment, node);
     const projectId = node.projects[0].id;
@@ -116,26 +122,32 @@ test("the terminal follows the admin's policy, per person, with a limit", { time
 
     const member = addMember(environment, node, "dana", "dana@example.test");
     const dana = await memberSession(node, "dana", member.oneTimePassword);
+    const danaFolder = path.join(root, "dana-project");
+    await mkdir(danaFolder, { recursive: true });
+    const danaProject = await api<{ project: { id: string } }>(node, dana, "POST", "/projects", { name: "Dana Project", path: danaFolder, type: "dana--personal" });
+    assert.equal(danaProject.status, 201, JSON.stringify(danaProject.body));
     assert.equal((await api(node, admin, "PUT", "/terminal-policy", { mode: "admin" })).status, 200);
     assert.equal((await terminalReply(node, admin, projectId)).type, "terminalReady", "only the admin, when set to admin");
-    assert.deepEqual(await terminalReply(node, dana, projectId), { type: "terminalError", error: "Not available" });
-    const nodes = await api<{ nodes: Array<{ local: boolean; terminal: boolean }> }>(node, dana, "GET", `/projects/${projectId}/session-nodes`);
-    // A member can't see the admin's project; the policy itself is what this checks.
-    if (nodes.status === 200) assert.equal(nodes.body.nodes.find((entry) => entry.local)?.terminal, false);
+    assert.deepEqual(await terminalReply(node, dana, danaProject.body.project.id), { type: "terminalError", error: "Not available" });
+    const nodes = await api<{ nodes: Array<{ local: boolean; terminal: boolean }> }>(node, dana, "GET", `/projects/${danaProject.body.project.id}/session-nodes`);
+    assert.equal(nodes.body.nodes.find((entry) => entry.local)?.terminal, false, "her project shows no terminal");
 
     assert.equal((await api(node, admin, "PUT", "/terminal-policy", { mode: "selected", accounts: [member.accountId], maxPerUser: 1 })).status, 200);
+    assert.equal((await terminalReply(node, dana, danaProject.body.project.id)).type, "terminalReady", "a selected member gets her terminal");
     assert.deepEqual(await terminalReply(node, admin, projectId), { type: "terminalError", error: "Not available" }, "selected people only, even the admin");
 
     assert.equal((await api(node, admin, "PUT", "/terminal-policy", { mode: "admin", maxPerUser: 1 })).status, 200);
     const url = new URL(`/ws?mode=terminal&projectId=${projectId}`, node.url);
     url.protocol = "ws:";
     const first = new WebSocket(url, { origin: node.url, headers: { Cookie: admin.cookie } });
+    openSockets.push(first);
     await new Promise((resolve) => first.once("message", resolve));
     const second = await terminalReply(node, admin, projectId);
     assert.equal(second.type, "terminalError");
     assert.match(second.error ?? "", /already have 1 terminals open/, "the per-person limit holds");
     first.close();
   } finally {
+    for (const socket of openSockets.splice(0)) socket.terminate();
     await stopDevNode(child);
     await rm(root, { recursive: true, force: true });
   }

@@ -75,9 +75,11 @@ test("twins replicate project events over signed transport without bearer peers"
     const paused = await cron({ action: "update", id: cronId, input: { ...cronInput, enabled: false } });
     assert.equal(paused.status, 200, JSON.stringify(paused.body));
     assert.equal(paused.body.task.enabled, false);
-    const history = await cron({ action: "history", id: cronId });
+    // A command for another node names its project, which this node checks first.
+    const history = await cron({ action: "history", id: cronId, projectId: id });
     assert.equal(history.status, 200, JSON.stringify(history.body));
-    assert.equal((await cron({ action: "delete", id: cronId })).status, 200, "a twin must be able to stop a task it owns remotely");
+    assert.equal((await cron({ action: "history", id: cronId })).status, 404, "a remote task without its project can't be checked here");
+    assert.equal((await cron({ action: "delete", id: cronId, projectId: id })).status, 200, "a twin must be able to stop a task it owns remotely");
     const unknown = await signedNodeRequest(a, left, right, "POST", "/api/cluster/v2/runtime/cron", { action: "delete", id: cronId });
     assert.equal(unknown.status, 403, "a task ID with no stored project cannot authorize itself");
     const renamed = await api(left, sa, "PATCH", `/projects/${id}`, { name: "Signed project" });

@@ -1,5 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
-import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks, loadTerminalPolicy } from "./node-admin.js";
+import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks, loadTerminalPolicy, loadUsers } from "./node-admin.js";
 import { loadBrowserStatus } from "./browser.js";
 import { loadBrowserProfileDirectory } from "./browser-profiles-settings.js";
 import { fillShortcutSettings } from "./shortcut-settings.js";
@@ -88,10 +88,10 @@ function renderClientLogs() {
 }
 
 // These panels guard their own loading and do not depend on Save settings.
-const ownLoading = (panel) => panel.id === "settingsPanel-cluster" || panel.id === "settingsPanel-browser" || panel.id === "settingsPanel-node";
+const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users"].includes(panel.id);
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
-const ADMIN_TABS = new Set(["node", "updates", "resources"]);
+const ADMIN_TABS = new Set(["node", "users", "updates", "resources"]);
 function selectSettingsTab(name) {
   if (ADMIN_TABS.has(name) && !isNodeAdmin()) name = "account";
   elements.settingsForm.dataset.tab = name;
@@ -109,6 +109,7 @@ function selectSettingsTab(name) {
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
+  if (name === "users") void loadUsers().catch((error) => toast(error.message));
   if (name === "node") {
     void loadNodeBlocks().catch((error) => toast(error.message));
     void loadTerminalPolicy().catch((error) => toast(error.message));

@@ -37,6 +37,7 @@ import "./server/maintenance.js";
 import "./server/routes/core.js";
 import "./server/routes/cluster-v2.js";
 import "./server/routes/node-blocks.js";
+import "./server/routes/users.js";
 import "./server/routes/cluster-manager.js";
 import "./server/routes/twins.js";
 import "./server/routes/sharing.js";

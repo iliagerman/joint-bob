@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { actingAccount, type ActingAccount } from "./account-context.js";
+import { adminAccountId, forgetResourceOwner, newResourceOwner, resourceOwner, setResourceOwner } from "./ownership.js";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { getDifficultyClassifier } from "./classifiers/registry.js";
@@ -75,7 +77,8 @@ CREATE TABLE IF NOT EXISTS routing_config_selection(singleton INTEGER PRIMARY KE
 CREATE TABLE IF NOT EXISTS routing_config_inbox(event_id TEXT PRIMARY KEY, origin_node_id TEXT NOT NULL, received_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS routing_config_tombstones(config_id TEXT PRIMARY KEY, owner_node_id TEXT NOT NULL, revision INTEGER NOT NULL, deleted_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS routing_config_deliveries(${DELIVERY_COLUMNS});
-CREATE TABLE IF NOT EXISTS routing_config_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+CREATE TABLE IF NOT EXISTS routing_config_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS routing_config_account_selection(account_id TEXT PRIMARY KEY, config_id TEXT NOT NULL DEFAULT '');`);
   // Deliveries from before twins were distribution targets only allowed 'legacy' and 'cluster'.
   const deliveries = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='routing_config_deliveries'").get() as { sql: string };
   if (!deliveries.sql.includes("'twin'")) {
@@ -96,16 +99,26 @@ function rowToConfig(row: ConfigRow): StoredRoutingConfig {
   return { id: row.id, name: row.name, policy: routingPolicySchema.parse(JSON.parse(row.policy)), ownerNodeId: row.owner_node_id, shared: row.shared === 1, revision: row.revision, updatedAt: row.updated_at };
 }
 
-export function listRoutingConfigs(db: DatabaseSync): StoredRoutingConfig[] {
-  ensureRoutingConfigSchema(db);
-  return (db.prepare("SELECT id,name,policy,owner_node_id,shared,revision,updated_at FROM routing_configs ORDER BY name, id").all() as unknown as ConfigRow[]).map(rowToConfig);
+/** A person's own configurations; one shared from another node is the admin's until people
+    join clusters themselves. The node itself sees all of them. */
+function configVisible(db: DatabaseSync, row: ConfigRow, account: ActingAccount | undefined = actingAccount()): boolean {
+  if (!account) return true;
+  if (account.isRemoteLogin) return false;
+  const local = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
+  if (row.owner_node_id !== local) return account.role === "admin";
+  return resourceOwner("routing_config", row.id, db) === account.accountId;
 }
 
-export function getRoutingConfig(db: DatabaseSync, id: string): StoredRoutingConfig | null {
+export function listRoutingConfigs(db: DatabaseSync): StoredRoutingConfig[] {
+  ensureRoutingConfigSchema(db);
+  return (db.prepare("SELECT id,name,policy,owner_node_id,shared,revision,updated_at FROM routing_configs ORDER BY name, id").all() as unknown as ConfigRow[]).filter((row) => configVisible(db, row)).map(rowToConfig);
+}
+
+export function getRoutingConfig(db: DatabaseSync, id: string, account: ActingAccount | undefined = actingAccount()): StoredRoutingConfig | null {
   ensureRoutingConfigSchema(db);
   if (!UUID_PATTERN.test(id)) return null;
   const row = db.prepare("SELECT id,name,policy,owner_node_id,shared,revision,updated_at FROM routing_configs WHERE id = ?").get(id) as ConfigRow | undefined;
-  return row ? rowToConfig(row) : null;
+  return row && configVisible(db, row, account) ? rowToConfig(row) : null;
 }
 
 function insertConfigRow(db: DatabaseSync, config: StoredRoutingConfig): void {
@@ -121,6 +134,7 @@ export function createRoutingConfig(db: DatabaseSync, localNodeId: string, name:
   db.exec("BEGIN IMMEDIATE");
   try {
     insertConfigRow(db, config);
+    setResourceOwner("routing_config", config.id, newResourceOwner(), db);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   return config;
@@ -159,6 +173,7 @@ export function deleteRoutingConfig(db: DatabaseSync, localNodeId: string, id: s
   try {
     db.prepare("DELETE FROM routing_configs WHERE id = ?").run(id);
     db.prepare("DELETE FROM routing_config_deliveries WHERE config_id = ?").run(id);
+    forgetResourceOwner("routing_config", id, db);
     db.prepare("INSERT INTO routing_config_tombstones(config_id, owner_node_id, revision, deleted_at) VALUES (?,?,?,?) ON CONFLICT(config_id) DO UPDATE SET revision=MAX(routing_config_tombstones.revision, excluded.revision), deleted_at=excluded.deleted_at")
       .run(id, existing.ownerNodeId, existing.revision, new Date().toISOString());
     if (selectedRoutingConfigId(db) === id) setRoutingConfigSelection(db, "");
@@ -166,28 +181,37 @@ export function deleteRoutingConfig(db: DatabaseSync, localNodeId: string, id: s
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
-export function selectedRoutingConfigId(db: DatabaseSync): string {
+/** Each person picks their own active configuration; the admin's is the node's. */
+function selectionAccount(db: DatabaseSync, accountId: string | undefined): string | undefined {
+  return accountId && accountId !== adminAccountId(db) ? accountId : undefined;
+}
+
+export function selectedRoutingConfigId(db: DatabaseSync, accountId: string | undefined = newResourceOwner()): string {
   ensureRoutingConfigSchema(db);
+  const person = selectionAccount(db, accountId);
+  if (person) return ((db.prepare("SELECT config_id FROM routing_config_account_selection WHERE account_id = ?").get(person) as { config_id: string } | undefined)?.config_id) ?? "";
   return ((db.prepare("SELECT config_id FROM routing_config_selection WHERE singleton = 1").get() as { config_id: string } | undefined)?.config_id) ?? "";
 }
 
-/** Sets this node's active configuration. An empty id turns automatic routing off. */
-export function setRoutingConfigSelection(db: DatabaseSync, configId: string): void {
+/** Sets the person's active configuration. An empty id turns automatic routing off. */
+export function setRoutingConfigSelection(db: DatabaseSync, configId: string, accountId: string | undefined = newResourceOwner()): void {
   ensureRoutingConfigSchema(db);
   if (configId !== "" && configId !== DEFAULT_ROUTING_CONFIG_ID && !getRoutingConfig(db, configId)) throw new RoutingConfigError(404, "Routing configuration not found");
+  const person = selectionAccount(db, accountId);
+  if (person) { db.prepare("INSERT INTO routing_config_account_selection(account_id, config_id) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET config_id = excluded.config_id").run(person, configId); return; }
   db.prepare("INSERT INTO routing_config_selection(singleton, config_id) VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET config_id = excluded.config_id").run(configId);
 }
 
-/** The configuration that drives routing on this node right now: the local selection,
-    resolved independently of any cluster. A disabled or missing selection means no routing. */
-export function activeRoutingConfig(db: DatabaseSync): StoredRoutingConfig | null {
+/** The configuration that drives routing for a person's conversations right now: their
+    selection, resolved independently of any cluster. A disabled or missing one means none. */
+export function activeRoutingConfig(db: DatabaseSync, accountId: string | undefined = newResourceOwner()): StoredRoutingConfig | null {
   ensureRoutingConfigSchema(db);
-  const selected = selectedRoutingConfigId(db);
+  const selected = selectedRoutingConfigId(db, accountId);
   if (!selected) return null;
   if (selected === DEFAULT_ROUTING_CONFIG_ID) return defaultRoutingConfig();
-  const config = getRoutingConfig(db, selected);
+  const config = getRoutingConfig(db, selected, undefined);
   if (!config) {
-    setRoutingConfigSelection(db, "");
+    setRoutingConfigSelection(db, "", accountId);
     return null;
   }
   return config.policy.enabled ? config : null;

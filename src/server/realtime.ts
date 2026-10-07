@@ -14,7 +14,7 @@ import { harnessChatConnections, drainHarnessPromptQueue } from "./harness-chat.
 import { disposeHarnessSession, harnessSessionBusy, harnessSessions, refreshHarnessTranscripts, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
 import { flushReplicationOutbox } from "./maintenance.js";
-import { flags, server, watchClients, webSocketServer } from "./state.js";
+import { flags, server, socketAccounts, watchClients, webSocketServer } from "./state.js";
 import { harnessTaskRuns } from "./task-runs.js";
 
 let updateRestartTimer: NodeJS.Timeout | undefined;
@@ -58,11 +58,13 @@ export function broadcastToProject(projectId: string, payload: unknown): void {
   for (const session of harnessSessions.values()) if (session.projectId === projectId) for (const client of session.clients) sockets.add(client);
   for (const socket of sockets) send(socket, payload);
 }
-export function broadcastToAllClients(payload: unknown): void {
+/** `accountId` limits an event to one person's sockets: their pins, recents and shortcuts
+    are nobody else's business, not even that they changed. */
+export function broadcastToAllClients(payload: unknown, accountId?: string): void {
   const sockets = new Set<WebSocket>();
   for (const clients of watchClients.values()) for (const client of clients) sockets.add(client);
   for (const session of harnessSessions.values()) for (const client of session.clients) sockets.add(client);
-  for (const socket of sockets) send(socket, payload);
+  for (const socket of sockets) if (!accountId || socketAccounts.get(socket)?.accountId === accountId) send(socket, payload);
 }
 export function broadcastSessionsChangedToAllProjects(): void { broadcastToAllClients({ type: "sessionsChanged" }); }
 export function wakeQueuedConversations(): void {

@@ -108,6 +108,8 @@ export const idleSessionTimeoutMs = 30 * 60 * 1000;
 // write, not an external Syncthing sync.
 export const localWriteGraceMs = 15_000;
 export const watchClients = new Map<string, Set<WebSocket>>();
+/** The person each browser socket belongs to, so personal events reach only them. */
+export const socketAccounts = new WeakMap<WebSocket, import("../account-context.js").ActingAccount>();
 export const updateContinuationPrompt = "A service update interrupted this turn. Inspect the transcript and working tree, continue unfinished work, and do not repeat completed side effects.";
 
 /** Cluster traffic and work wait for startup reconciliation so a restarting node can become

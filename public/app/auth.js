@@ -1,5 +1,5 @@
 import { DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, normalizeCanvasKeymap } from "../canvas-layout.js";
-import { applyAdminVisibility, showTerminalNoticeOnce } from "./node-admin.js";
+import { applyAdminVisibility, showAdminTransferOffer, showTerminalNoticeOnce } from "./node-admin.js";
 import { api, savePreferences, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { setComposerEnabled } from "./chat-controls.js";
@@ -121,6 +121,7 @@ function applyAuthStatus(status) {
   state.email = status.email || "";
   state.role = status.role || null;
   state.needsEmail = status.authenticated === true && status.needsEmail === true;
+  state.isRemoteLogin = status.isRemoteLogin === true;
   applyAdminVisibility();
   state.setupRequired = status.setupRequired === true;
   state.mustChangePassword = status.mustChangePassword === true;
@@ -215,6 +216,7 @@ export async function initializeApplication() {
   }
   if (state.authenticated && !state.canvasPaneMode) startProjectSyncPolling();
   if (state.authenticated && !state.canvasPaneMode) void showTerminalNoticeOnce();
+  if (state.authenticated && !state.canvasPaneMode) void showAdminTransferOffer();
 }
 
 async function submitLogin(event) {

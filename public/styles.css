@@ -4072,3 +4072,7 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .terminal-policy-limits { display: flex; gap: 16px; flex-wrap: wrap; }
 .toast [data-testid="terminal-notice-enable"] { margin-left: 8px; }
 .message-author { font-weight: 600; color: var(--heading); margin-right: 6px; }
+.users-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.users-table th, .users-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.users-table td:last-child { display: flex; gap: 6px; flex-wrap: wrap; }
+.users-one-time { font-family: var(--mono, monospace); padding: 8px; border: 1px dashed var(--line); border-radius: var(--radius-ctl); user-select: all; }

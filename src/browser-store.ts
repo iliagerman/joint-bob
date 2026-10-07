@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { resolveDataDirectory } from "./data-directory.js";
 import { encryptSecretValue, decryptSecretValue } from "./secrets.js";
+import { ensureOwnershipSchema } from "./ownership.js";
 import { browserLoginRequestSchema, type BrowserAccess, type BrowserLoginRequest, type BrowserProfile, type BrowserProfileGrant, type BrowserSessionRecord, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
 
 /** Conversation deletion drops that conversation's profile assignments everywhere
@@ -383,14 +384,22 @@ export class BrowserStore {
     return { sql: clauses.join(" OR "), params };
   }
 
+  /** No grant, whatever its scope, reaches another person's conversations: the profile's
+      own project and the project using it must have the same owner on this node. */
+  private sameOwner(): string {
+    ensureOwnershipSchema(this.db);
+    return `COALESCE((SELECT o.account_id FROM resource_account_owners o WHERE o.kind = 'project' AND o.resource_id = (SELECT projectId FROM browser_profiles WHERE id = g.profileId)), '')
+      = COALESCE((SELECT o.account_id FROM resource_account_owners o WHERE o.kind = 'project' AND o.resource_id = ?), '')`;
+  }
+
   profileUsable(id: string, access: BrowserAccess): boolean {
     const match = this.grantMatch(access);
-    return Boolean(this.db.prepare(`SELECT 1 FROM browser_profile_grants g WHERE g.profileId = ? AND (${match.sql}) LIMIT 1`).get(id, ...match.params));
+    return Boolean(this.db.prepare(`SELECT 1 FROM browser_profile_grants g WHERE g.profileId = ? AND (${match.sql}) AND ${this.sameOwner()} LIMIT 1`).get(id, ...match.params, access.projectId));
   }
 
   usableProfiles(access: BrowserAccess): BrowserProfile[] {
     const match = this.grantMatch(access);
-    const ids = this.db.prepare(`SELECT DISTINCT g.profileId AS id FROM browser_profile_grants g JOIN browser_profiles p ON p.id = g.profileId WHERE ${match.sql}`).all(...match.params) as unknown as Array<{ id: string }>;
+    const ids = this.db.prepare(`SELECT DISTINCT g.profileId AS id FROM browser_profile_grants g JOIN browser_profiles p ON p.id = g.profileId WHERE (${match.sql}) AND ${this.sameOwner()}`).all(...match.params, access.projectId) as unknown as Array<{ id: string }>;
     return ids.map(({ id }) => this.profile(id))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .map(profile => ({ ...profile, grants: this.profileGrants(profile.id) }));

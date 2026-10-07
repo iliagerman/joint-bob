@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ownedByAdmin } from "./ownership.js";
 import { mkdirSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
@@ -161,7 +162,9 @@ function refreshOutbox(handle: DatabaseSync, nodeId: string): void {
     WHERE a.id IS NULL OR a.replicate=0 OR a.project_id IS NOT NULL OR e.updated_at<>a.updated_at`;
   handle.prepare(`DELETE FROM secret_credential_deliveries WHERE event_id IN (${obsolete})`).run();
   handle.prepare(`DELETE FROM secret_credential_events WHERE event_id IN (${obsolete})`).run();
-  const replicating = handle.prepare("SELECT id, label, provider, variables_encrypted, website_origin, updated_at, origin_node_id FROM secret_accounts WHERE replicate = 1 AND project_id IS NULL").all() as unknown as Array<{ id: string; label: string; provider: SecretProvider; variables_encrypted: string; website_origin: string | null; updated_at: string; origin_node_id: string }>;
+  // Twins carry the admin's own replicating accounts; a member's never leave this node that way.
+  const replicating = (handle.prepare("SELECT id, label, provider, variables_encrypted, website_origin, updated_at, origin_node_id FROM secret_accounts WHERE replicate = 1 AND project_id IS NULL").all() as unknown as Array<{ id: string; label: string; provider: SecretProvider; variables_encrypted: string; website_origin: string | null; updated_at: string; origin_node_id: string }>)
+    .filter((row) => ownedByAdmin("secret", row.id, handle));
   for (const account of replicating) {
     const originNodeId = account.origin_node_id || nodeId;
     if (!account.origin_node_id) handle.prepare("UPDATE secret_accounts SET origin_node_id = ? WHERE id = ?").run(nodeId, account.id);

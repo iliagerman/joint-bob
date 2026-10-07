@@ -163,3 +163,101 @@ export async function showTerminalNoticeOnce() {
   node.append(text, enable, dismiss);
   document.body.append(node);
 }
+
+const usersBody = document.querySelector("#usersTableBody");
+const usersStatus = document.querySelector("#usersStatus");
+const usersMode = document.querySelector("#usersMultiUserStatus");
+const usersAdd = document.querySelector("#usersAddButton");
+const usersOneTime = document.querySelector("#usersOneTime");
+
+function cell(text) { const td = document.createElement("td"); td.textContent = text; return td; }
+function actionButton(label, testid, onClick) {
+  const button = document.createElement("button");
+  button.type = "button"; button.className = "ghost compact"; button.textContent = label; button.dataset.testid = testid;
+  button.addEventListener("click", () => void onClick().catch((error) => { usersStatus.textContent = error.message; }));
+  return button;
+}
+
+export async function loadUsers() {
+  if (!isNodeAdmin()) return;
+  const { users, multiUser, adminTransfer } = await api("/api/users");
+  usersMode.textContent = multiUser.ready
+    ? "Multi-user mode is on: every person runs under their own OS account."
+    : multiUser.helperInstalled
+    ? `Multi-user mode is installed but its self-test hasn't passed${multiUser.selfTest.failures.length ? `: ${multiUser.selfTest.failures.join("; ")}` : ""}.`
+    : "Adding people needs multi-user mode. Run `just install-multi-user` on this machine as an administrator, then reload.";
+  usersAdd.disabled = !multiUser.ready;
+  usersBody.replaceChildren(...users.map((user) => {
+    const row = document.createElement("tr");
+    row.dataset.testid = "users-row";
+    const actions = document.createElement("td");
+    if (user.role !== "admin") {
+      actions.append(
+        actionButton(user.disabled ? "Enable" : "Disable", "users-toggle", async () => { await api(`/api/users/${encodeURIComponent(user.userId)}`, { method: "PUT", body: JSON.stringify({ disabled: !user.disabled }) }); await loadUsers(); }),
+        actionButton(adminTransfer?.toUserId === user.userId ? "Admin role offered" : "Make admin", "users-transfer", async () => {
+          if (adminTransfer?.toUserId === user.userId) await api("/api/users/admin-transfer", { method: "DELETE" });
+          else await api(`/api/users/${encodeURIComponent(user.userId)}/admin-transfer`, { method: "POST" });
+          await loadUsers();
+        }),
+        actionButton("Delete", "users-delete", async () => {
+          // Deleting is typed out in place: the account and everything it has go, and nothing moves to the admin.
+          const input = Object.assign(document.createElement("input"), { placeholder: `Type ${user.username}`, autocomplete: "off" });
+          input.dataset.testid = "users-delete-confirm";
+          input.setAttribute("aria-label", `Type ${user.username} to delete their account and everything they have on this node`);
+          const confirm = actionButton("Delete for good", "users-delete-final", async () => {
+            if (input.value !== user.username) { usersStatus.textContent = `Type ${user.username} to delete.`; return; }
+            const response = await fetch(`/api/users/${encodeURIComponent(user.userId)}`, { method: "DELETE", headers: { "Content-Type": "application/json", "x-csrf-token": state.csrfToken }, body: JSON.stringify({ confirm: input.value }) });
+            if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "Could not delete this person");
+            usersStatus.textContent = `${user.email || user.username} and everything they had here are deleted.`;
+            await loadUsers();
+          });
+          const cancel = actionButton("Cancel", "users-delete-cancel", async () => { await loadUsers(); });
+          actions.replaceChildren(input, confirm, cancel);
+          input.focus();
+        }),
+      );
+    }
+    row.append(cell(user.email || "—"), cell(user.username), cell(user.role === "admin" ? "Admin" : "Member"), cell(user.disabled ? "Disabled" : "Active"), cell(new Date(user.createdAt).toLocaleDateString()), actions);
+    return row;
+  }));
+}
+
+usersAdd?.addEventListener("click", async () => {
+  usersAdd.disabled = true;
+  usersOneTime.hidden = true;
+  try {
+    const username = document.querySelector("#usersAddUsername").value.trim();
+    const email = document.querySelector("#usersAddEmail").value.trim();
+    const created = await api("/api/users", { method: "POST", body: JSON.stringify({ username, email }) });
+    usersOneTime.textContent = `One-time password for ${created.user.email}: ${created.oneTimePassword} — it is shown only now.`;
+    usersOneTime.hidden = false;
+    document.querySelector("#usersAddUsername").value = "";
+    document.querySelector("#usersAddEmail").value = "";
+    await loadUsers();
+  } catch (error) {
+    usersStatus.textContent = error.message;
+  } finally {
+    usersAdd.disabled = false;
+  }
+});
+
+/** A member offered the admin role is asked once per sign-in; nothing changes until they accept. */
+export async function showAdminTransferOffer() {
+  if (isNodeAdmin() || state.isRemoteLogin) return;
+  const { offered } = await api("/api/account/admin-transfer").catch(() => ({ offered: false }));
+  if (!offered || document.querySelector("[data-testid='admin-transfer-offer']")) return;
+  const node = document.createElement("div");
+  node.className = "toast";
+  node.dataset.testid = "admin-transfer-offer";
+  const text = document.createElement("span");
+  text.className = "toast-message";
+  text.textContent = "You're offered the admin role of this node.";
+  const accept = document.createElement("button");
+  accept.type = "button"; accept.className = "ghost compact"; accept.textContent = "Accept"; accept.dataset.testid = "admin-transfer-accept";
+  accept.addEventListener("click", async () => { node.remove(); await api("/api/account/admin-transfer/accept", { method: "POST" }); location.reload(); });
+  const dismiss = document.createElement("button");
+  dismiss.type = "button"; dismiss.className = "toast-close"; dismiss.textContent = "×"; dismiss.setAttribute("aria-label", "Not now");
+  dismiss.addEventListener("click", () => node.remove());
+  node.append(text, accept, dismiss);
+  document.body.append(node);
+}

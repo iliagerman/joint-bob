@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { decrypt, save, setting, settingsDatabase } from "./settings-store.js";
+import { adminAccountId, newResourceOwner } from "./ownership.js";
 
 /** A user-defined ntfy server. The token grants publish access, so the whole
     list is stored encrypted in the node settings store. */
@@ -26,8 +27,14 @@ interface NtfyConfig {
 
 const SERVICES_KEY = "ntfy.services";
 
+/** Each person keeps their own ntfy servers; the admin's are the node's original list. */
+function servicesKey(): string {
+  const account = newResourceOwner();
+  return account && account !== adminAccountId() ? `${SERVICES_KEY}.${account}` : SERVICES_KEY;
+}
+
 function readConfig(): NtfyConfig {
-  const found = setting(SERVICES_KEY);
+  const found = setting(servicesKey());
   if (!found) return { services: [], defaultServiceId: null };
   const stored = JSON.parse(found.isSecret ? decrypt(found.value) : found.value) as NtfyConfig | NtfyService[];
   if (Array.isArray(stored)) return { services: stored, defaultServiceId: stored[0]?.id ?? null };
@@ -36,7 +43,7 @@ function readConfig(): NtfyConfig {
 }
 
 function writeConfig(config: NtfyConfig): void {
-  save(settingsDatabase(), SERVICES_KEY, JSON.stringify(config), true);
+  save(settingsDatabase(), servicesKey(), JSON.stringify(config), true);
 }
 
 function view(service: NtfyService, defaultServiceId: string | null): NtfyServiceView {

@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { projectVisible } from "../store.js";
 import { Readable } from "node:stream";
 import WebSocket from "ws";
 import { z } from "zod";
@@ -293,7 +294,8 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
   const callerNodeId = machineNodeId ?? local.id;
   // Only this machine and its twins change a profile, and only a profile shared with them.
   const assertManager = async (profile: BrowserProfile): Promise<void> => {
-    if (!machineNodeId) return;
+    // A person on this node manages only profiles of projects they can see.
+    if (!machineNodeId) { if (!await projectVisible(profile.projectId)) throw new BrowserRequestError(404, "Browser profile not found"); return; }
     if (actor.kind !== "human" || !trustedTwin(db, local.id, machineNodeId) || !(await reachingGrants(service.profileGrants(profile.id), machineNodeId, null)).length)
       throw new BrowserRequestError(403, "Only this profile's machine and its twins can manage it");
   };
@@ -403,6 +405,7 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
     }
     case "profileAccess": {
       const profile = service.profile(operation.args.id);
+      if (!machineNodeId && !await projectVisible(profile.projectId)) throw new BrowserRequestError(404, "Browser profile not found");
       // Management is bound to the actual profile: the caller must reach it through
       // its home project or a grant, not through an arbitrary shared project id.
       assertManageable(profile, operation.args.projectId, operation.args.conversationId);
@@ -418,6 +421,7 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
       const projectIds = machineNodeId ? new Set(operation.args.projectIds) : null;
       const entries = [];
       for (const profile of service.allProfiles()) {
+        if (!machineNodeId && !await projectVisible(profile.projectId)) continue;
         const grants = profile.grants ?? [];
         const reaching = machineNodeId ? await reachingGrants(grants, machineNodeId, projectIds) : grants;
         // A profile nobody shared with the caller's machine stays invisible there, twins included.

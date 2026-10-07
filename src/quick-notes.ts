@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { adminAccountId, newResourceOwner } from "./ownership.js";
 import { mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -159,6 +160,7 @@ function db(): DatabaseSync {
       suspended INTEGER NOT NULL DEFAULT 0
     );
     INSERT OR IGNORE INTO quick_note_queue (singleton, enabled, max_parallel) VALUES (1, 0, 1);
+    CREATE TABLE IF NOT EXISTS quick_note_account_queue (account_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, max_parallel INTEGER NOT NULL DEFAULT 1);
     CREATE INDEX IF NOT EXISTS quick_notes_backlog ON quick_notes(status, created_at, id);`);
   return database;
 }
@@ -357,18 +359,28 @@ export function finishQuickNote(id: string, status: "completed" | "failed", erro
   db().prepare("UPDATE quick_notes SET status = ?, error = ?, updated_at = ? WHERE id = ?").run(status, error, new Date().toISOString(), id);
 }
 
-export function getQuickNoteQueue(): QuickNoteQueue {
-  const row = db().prepare("SELECT enabled, max_parallel FROM quick_note_queue WHERE singleton = 1").get() as { enabled: number; max_parallel: number };
-  return { enabled: Boolean(row.enabled), maxParallel: row.max_parallel };
+/** Each person has their own queue; the admin's is the node's. */
+function queueAccount(accountId: string | undefined): string | undefined {
+  return accountId && accountId !== adminAccountId() ? accountId : undefined;
 }
 
-export function setQuickNoteQueue(update: { enabled?: boolean; maxParallel?: number }): QuickNoteQueue {
+export function getQuickNoteQueue(accountId: string | undefined = newResourceOwner()): QuickNoteQueue {
+  const person = queueAccount(accountId);
+  const row = person
+    ? db().prepare("SELECT enabled, max_parallel FROM quick_note_account_queue WHERE account_id = ?").get(person) as { enabled: number; max_parallel: number } | undefined
+    : db().prepare("SELECT enabled, max_parallel FROM quick_note_queue WHERE singleton = 1").get() as { enabled: number; max_parallel: number };
+  return row ? { enabled: Boolean(row.enabled), maxParallel: row.max_parallel } : { enabled: false, maxParallel: 1 };
+}
+
+export function setQuickNoteQueue(update: { enabled?: boolean; maxParallel?: number }, accountId: string | undefined = newResourceOwner()): QuickNoteQueue {
   if (update.maxParallel !== undefined) {
     if (!Number.isInteger(update.maxParallel) || update.maxParallel < 1 || update.maxParallel > 20) throw new Error("Parallel limit must be a whole number between 1 and 20");
   }
-  const current = getQuickNoteQueue();
+  const current = getQuickNoteQueue(accountId);
   const next = { enabled: update.enabled ?? current.enabled, maxParallel: update.maxParallel ?? current.maxParallel };
-  db().prepare("UPDATE quick_note_queue SET enabled = ?, max_parallel = ?, suspended = 0 WHERE singleton = 1").run(next.enabled ? 1 : 0, next.maxParallel);
+  const person = queueAccount(accountId);
+  if (person) db().prepare("INSERT INTO quick_note_account_queue (account_id, enabled, max_parallel) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET enabled = excluded.enabled, max_parallel = excluded.max_parallel").run(person, next.enabled ? 1 : 0, next.maxParallel);
+  else db().prepare("UPDATE quick_note_queue SET enabled = ?, max_parallel = ?, suspended = 0 WHERE singleton = 1").run(next.enabled ? 1 : 0, next.maxParallel);
   return next;
 }
 

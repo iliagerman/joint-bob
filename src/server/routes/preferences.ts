@@ -66,7 +66,7 @@ app.put("/api/recents", async (request, response, next) => {
     const local = await getClusterNode();
     const { recentSessions, changed } = setUserRecentSession(session.accountId, { ...entry, projectId: project.id }, local.id);
     response.json({ recentSessions });
-    if (changed) broadcastToAllClients({ type: "recentsChanged" });
+    if (changed) broadcastToAllClients({ type: "recentsChanged" }, (response.locals.authSession as AuthSession).accountId);
   } catch (error) { next(error); }
 });
 
@@ -77,7 +77,7 @@ app.delete("/api/recents", async (request, response, next) => {
     const project = await getProject(target.projectId);
     const local = await getClusterNode();
     response.json({ recentSessions: removeUserRecentSession(session.accountId, { ...target, projectId: project?.id ?? target.projectId }, local.id) });
-    broadcastToAllClients({ type: "recentsChanged" });
+    broadcastToAllClients({ type: "recentsChanged" }, (response.locals.authSession as AuthSession).accountId);
   } catch (error) { next(error); }
 });
 
@@ -107,7 +107,7 @@ app.put("/api/pins", async (request, response, next) => {
       ? { kind: payload.kind, projectId } as const
       : { kind: payload.kind, projectId, engine: payload.engine, sessionId: payload.sessionId } as const;
     const pins = setUserPin(session.accountId, target, payload.pinned, local.id);
-    broadcastToAllClients({ type: "pinsChanged" });
+    broadcastToAllClients({ type: "pinsChanged" }, (response.locals.authSession as AuthSession).accountId);
     response.json(pins);
   } catch (error) {
     next(error);
@@ -133,7 +133,7 @@ app.put("/api/canvas/shortcuts/:binding", async (request, response, next) => {
     const target = canvasShortcutTargetSchema.parse(request.body);
     const local = await getClusterNode();
     const shortcuts = setCanvasShortcut(session.accountId, request.params.binding, target, local.id);
-    broadcastToAllClients({ type: "shortcutsChanged" });
+    broadcastToAllClients({ type: "shortcutsChanged" }, (response.locals.authSession as AuthSession).accountId);
     response.json({ shortcuts });
   } catch (error) {
     if (error instanceof Error && /canvas binding/i.test(error.message)) {
@@ -152,7 +152,7 @@ app.post("/api/canvas/shortcuts/release", async (request, response, next) => {
     const target = canvasShortcutTargetSchema.parse(request.body);
     const local = await getClusterNode();
     const shortcuts = releaseCanvasShortcuts(session.accountId, [target], local.id);
-    broadcastToAllClients({ type: "shortcutsChanged" });
+    broadcastToAllClients({ type: "shortcutsChanged" }, (response.locals.authSession as AuthSession).accountId);
     response.json({ shortcuts });
   } catch (error) {
     next(error);
@@ -164,7 +164,7 @@ app.delete("/api/canvas/shortcuts/:binding", async (request, response, next) => 
     const session = response.locals.authSession as AuthSession;
     const local = await getClusterNode();
     const shortcuts = clearCanvasShortcut(session.accountId, request.params.binding, local.id);
-    broadcastToAllClients({ type: "shortcutsChanged" });
+    broadcastToAllClients({ type: "shortcutsChanged" }, (response.locals.authSession as AuthSession).accountId);
     response.json({ shortcuts });
   } catch (error) {
     if (error instanceof Error && /canvas binding/i.test(error.message)) {

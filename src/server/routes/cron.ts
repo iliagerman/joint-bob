@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NotFoundError } from "../../not-found.js";
 import { getClusterNode } from "../../cluster.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { cronInputSchema, cronRunSchema, cronStore, type CronTask } from "../../cron.js";
@@ -17,9 +18,10 @@ const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("create"), input: cronInputSchema }).strict(),
   z.object({ action: z.literal("install"), id: z.string().uuid(), input: cronInputSchema, runs: z.array(cronRunSchema).max(100) }).strict(),
   z.object({ action: z.literal("update"), id: z.string().uuid(), input: cronInputSchema }).strict(),
-  z.object({ action: z.literal("run"), id: z.string().uuid() }).strict(),
-  z.object({ action: z.literal("delete"), id: z.string().uuid() }).strict(),
-  z.object({ action: z.literal("history"), id: z.string().uuid() }).strict(),
+  // The project lets every node check that the task belongs where the caller says it does.
+  z.object({ action: z.literal("run"), id: z.string().uuid(), projectId: z.string().min(1).optional() }).strict(),
+  z.object({ action: z.literal("delete"), id: z.string().uuid(), projectId: z.string().min(1).optional() }).strict(),
+  z.object({ action: z.literal("history"), id: z.string().uuid(), projectId: z.string().min(1).optional() }).strict(),
 ]);
 type Command = z.infer<typeof commandSchema>;
 
@@ -52,7 +54,17 @@ async function manageCron(command: Command): Promise<unknown> {
     const project = await getProject(command.projectId);
     return { tasks: project ? store.list(project.id) : [] };
   }
-  if (command.action === "ready") return { ready: await cronConversationReady(command.projectId, command.sessionId, command.engine) };
+  if (command.action === "ready") {
+    if (!await getProject(command.projectId)) throw new NotFoundError("Project not found");
+    return { ready: await cronConversationReady(command.projectId, command.sessionId, command.engine) };
+  }
+  // A task id from someone who can't see its project, or named under another project, is unknown.
+  if (command.action !== "create" && command.action !== "install") {
+    const task = store.get(command.id);
+    const named = "projectId" in command && command.projectId ? command.projectId : "input" in command ? command.input.projectId : undefined;
+    const project = task ? await getProject(task.projectId) : undefined;
+    if (task && (!project || (named && (await getProject(named))?.id !== project.id))) throw new NotFoundError("Scheduled task not found");
+  }
   if (command.action === "history") return { runs: store.history(command.id) };
   if (command.action === "run") return { task: store.runNow(command.id) };
   if (command.action === "delete") { store.delete(command.id); return { ok: true }; }
@@ -87,6 +99,13 @@ app.post("/api/cron", async (request, response, next) => {
   try {
     const payload = z.object({ nodeId: z.string().uuid(), command: commandSchema }).strict().parse(request.body);
     if (payload.command.action === "install") { sendError(response, 403, "Task installation is reserved for owner transfer"); return; }
+    // A person must be able to see the command's project here. A command this node runs
+    // itself is checked against the task; one for another node must name its project.
+    const named = "projectId" in payload.command ? payload.command.projectId : "input" in payload.command ? payload.command.input.projectId : undefined;
+    const local = payload.nodeId === (await getClusterNode()).id;
+    const stored = !named && local && "id" in payload.command ? cronStore().get(payload.command.id) : undefined;
+    const projectId = named ?? stored?.projectId;
+    if (!projectId || !await getProject(projectId)) { sendError(response, 404, "Scheduled task not found"); return; }
     response.json(await routeCommand(payload.nodeId, payload.command));
   } catch (error) { next(error); }
 });

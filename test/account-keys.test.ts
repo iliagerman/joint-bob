@@ -77,3 +77,16 @@ test("pairing twins moves a person's rows to the account id the pair shares", ()
   const rows = db.prepare("SELECT username, project_id FROM user_pins ORDER BY project_id").all() as Array<{ username: string; project_id: string }>;
   assert.deepEqual(rows.map((row) => [row.username, row.project_id]), [[after, "p1"], [after, "p2"]]);
 });
+
+test("an event type older nodes don't know goes only to peers that proved they're upgraded", async () => {
+  const { mayReplicateEvent } = await import("../src/server/replication-v2.js");
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE sharing_twins (left_node_id TEXT, right_node_id TEXT);
+    INSERT INTO sharing_twins VALUES ('${LOCAL}', '${TWIN}');
+    CREATE TABLE cluster_v2_resource_policy (kind TEXT, resource_id TEXT, deleted INTEGER);
+    CREATE TABLE account_replication_deliveries (peer_id TEXT PRIMARY KEY, digest TEXT, delivered_at TEXT);`);
+  const author = { id: "a", originNodeId: LOCAL, entityType: "conversation.author", entityKey: "k", operation: "upsert", payload: {}, createdAt: "" };
+  assert.equal(mayReplicateEvent(db, LOCAL, TWIN, author), false, "an old twin never gets the new event");
+  db.exec(`INSERT INTO account_replication_deliveries VALUES ('${TWIN}', 'd', '')`);
+  assert.equal(mayReplicateEvent(db, LOCAL, TWIN, author), true, "an upgraded twin gets it");
+});

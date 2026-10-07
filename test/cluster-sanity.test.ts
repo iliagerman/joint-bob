@@ -159,7 +159,7 @@ test("scheduled conversation keeps its active run isolated while edits apply to 
     assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
     assert.equal(resumed.body.task.enabled, true, "a previous conversation run must not block edits or resume");
     publishPiRuntime(runtimeDb, runtime, false);
-    assert.equal((await api(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "delete", id } })).status, 200);
+    assert.equal((await api(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "delete", id, projectId: project.id } })).status, 200);
   } finally { publishPiRuntime(runtimeDb, runtime, false); runtimeDb.close(); db.close(); }
 });
 

@@ -108,3 +108,45 @@ test("a user message shows who wrote it, live and after a reload", { timeout: 15
   assert.equal(await reloaded.getByTestId("message-author").textContent(), `${environment.username}@example.test`, "the reloaded bubble keeps its author");
   assert.equal(await page.locator("#messages .message.user").filter({ hasText: "Single short line" }).getByTestId("message-author").count(), 0, "messages from before authors existed show no name");
 });
+
+test("the admin adds a person in Users, who signs in with the one-time password", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t, () => ({ JOINT_BOB_TEST_MULTI_USER_READY: "1" }));
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator("#loginDialog[open]").waitFor({ timeout: 30_000 });
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 30_000 });
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-users").click();
+  await page.getByTestId("users-row").first().waitFor();
+  await page.getByTestId("users-add-username").fill("lior");
+  await page.getByTestId("users-add-email").fill("lior@example.test");
+  await page.getByTestId("users-add-button").click();
+  await page.getByTestId("users-one-time").waitFor({ state: "visible" });
+  const oneTime = await page.getByTestId("users-one-time").textContent();
+  const password = /: (\S+) —/.exec(oneTime ?? "")?.[1];
+  assert.ok(password, `the one-time password is shown once: ${oneTime}`);
+  await page.getByTestId("users-row").filter({ hasText: "lior@example.test" }).waitFor();
+
+  const memberContext = await page.context().browser()!.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+  t.after(() => memberContext.close());
+  const member = await memberContext.newPage();
+  await member.goto(node.url, { waitUntil: "domcontentloaded" });
+  await member.locator("#loginDialog[open]").waitFor({ timeout: 30_000 });
+  await member.getByTestId("login-username-input").fill("lior@example.test");
+  await member.getByTestId("login-password-input").fill(password!);
+  await member.getByTestId("login-submit-button").click();
+  await member.getByTestId("login-new-password-input").waitFor({ state: "visible" });
+  await member.getByTestId("login-password-input").fill(password!);
+  await member.getByTestId("login-new-password-input").fill("lior-chosen-password-1");
+  await member.getByTestId("login-submit-button").click();
+  await member.waitForFunction(() => !document.querySelector("#loginDialog")?.hasAttribute("open"), undefined, { timeout: 30_000 });
+  assert.equal(await member.getByText("Internal Assistant", { exact: true }).count(), 0, "the new person sees none of the admin's projects");
+
+  await page.getByTestId("users-row").filter({ hasText: "lior@example.test" }).getByTestId("users-toggle").click();
+  await page.getByTestId("users-row").filter({ hasText: "lior@example.test" }).getByText("Disabled").waitFor();
+  assert.deepEqual(errors, []);
+});

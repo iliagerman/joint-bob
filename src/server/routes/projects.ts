@@ -1,5 +1,5 @@
 import path from "node:path";
-import { actingAccount } from "../../account-context.js";
+import { actingAccount, asNode } from "../../account-context.js";
 import { terminalAccessSettings, terminalAllowedFor } from "../../settings.js";
 import { z } from 'zod';
 import type { AuthSession } from "../../auth.js";
@@ -82,7 +82,8 @@ app.post("/api/projects", async (request, response, next) => {
     if (!payload.path) await ensureManagedHome(homePath, workspaces.map((workspace) => workspace.id));
     if (payload.sourcePath) {
       if (!payload.importMode) throw new ProjectDirectoryImportError("Choose how to import the project");
-      const projects = await listProjects();
+      // Every project on the node, so no two people register one folder; the message names none.
+      const projects = await asNode(() => listProjects());
       if (projects.some((project) => path.resolve(project.path) === path.resolve(projectPath))) {
         throw new ProjectDirectoryImportError("Managed project folder is already registered");
       }

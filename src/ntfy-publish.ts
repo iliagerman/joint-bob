@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { runAsAccount } from "./account-context.js";
+import { ownerAsActor, resourceOwner } from "./ownership.js";
 import type { AgentCapabilityIdentity } from "./agent-capabilities.js";
 import { createNtfyUser, deleteNtfyTopicAccess, deleteNtfyUser, listNtfyTopics, listNtfyUsers, NtfyRequestError, ntfyPermission, ntfySince, ntfyTopicName, ntfyTopicPattern, ntfyUsername, readNtfyMessages, setNtfyTopicAccess, type NtfyServer } from "./ntfy-admin.js";
 import { getNtfyService, listNtfyServices, type NtfyService } from "./ntfy.js";
@@ -89,7 +91,12 @@ async function publish(server: { url: string; token: string }, request: Extract<
   await response.body?.cancel();
 }
 
+/** An agent sends with its conversation's owner's ntfy servers. */
 export async function ntfyAgentRequest(identity: AgentCapabilityIdentity, request: Request): Promise<NtfyAgentResult> {
+  return runAsAccount(ownerAsActor(resourceOwner("project", identity.projectId)), () => ownerNtfyAgentRequest(identity, request));
+}
+
+async function ownerNtfyAgentRequest(identity: AgentCapabilityIdentity, request: Request): Promise<NtfyAgentResult> {
   const targets = await ntfyConversationTargets(identity.projectId, identity.conversationId);
   if (request.operation === "status") {
     const pairs = [...new Set(targets.map((target) => `${normalizedUrl(target.url)}\0${target.topic}`))];

@@ -193,6 +193,8 @@ export async function routeBackgroundTaskOperation(nodeId: string, commandInput:
   const command = backgroundTaskCommandSchema.parse(commandInput);
   const local = await getClusterNode();
   if (nodeId === local.id) return localBackgroundTaskOperation(command);
+  // The caller must see the project here before anything is asked of another node.
+  if (!await getProject(command.projectId)) throw new TaskRequestError(404, "Project not found");
   const peer = await getRuntimePeer(nodeId);
   if (!peer) throw new TaskRequestError(404, "Cluster node not found");
   try {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resourceOwner } from "../ownership.js";
 import WebSocket from "ws";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, runtimeFetch, runtimeSocketHeaders } from "./runtime-peers.js";
@@ -307,14 +308,23 @@ export async function dispatchQuickNotes(now = Date.now()): Promise<void> {
     if (quickNoteQueueSuspended()) return;
     const pending = listPendingQuickNoteSummaries();
     if (!pending.length) return;
-    const queue = getQuickNoteQueue();
-    const dueScheduled = pending.some((note) => note.scheduledAt !== null && Date.parse(note.scheduledAt) <= now);
-    if (!queue.enabled && !dueScheduled) return;
+    // Each person's notes follow that person's own queue.
+    const owners = new Map<string, string | undefined>();
+    for (const note of pending) if (!owners.has(note.projectId)) owners.set(note.projectId, resourceOwner("project", note.projectId));
+    const byOwner = new Map<string | undefined, typeof pending>();
+    for (const note of pending) { const owner = owners.get(note.projectId); byOwner.set(owner, [...(byOwner.get(owner) ?? []), note]); }
     const running = await runningConversationCounts();
-    for (const noteId of planQuickNoteLaunches(pending, queue, running, now)) {
+    const planned: Array<{ noteId: string; owner: string | undefined }> = [];
+    for (const [owner, notes] of byOwner) {
+      const queue = getQuickNoteQueue(owner);
+      const dueScheduled = notes.some((note) => note.scheduledAt !== null && Date.parse(note.scheduledAt) <= now);
+      if (!queue.enabled && !dueScheduled) continue;
+      for (const noteId of planQuickNoteLaunches(notes, queue, running, now)) planned.push({ noteId, owner });
+    }
+    for (const { noteId, owner } of planned) {
       const counts = await runningConversationCounts();
       if (quickNoteQueueSuspended() || flags.updatePreparing) break;
-      const latestQueue = getQuickNoteQueue();
+      const latestQueue = getQuickNoteQueue(owner);
       if (!planQuickNoteLaunches(listPendingQuickNoteSummaries().filter(note => note.id === noteId), latestQueue, counts, now).length) continue;
       try {
         const note = getQuickNote(noteId);

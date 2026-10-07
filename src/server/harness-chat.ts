@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resourceOwner } from "../ownership.js";
 import { attachMessageAuthors, authoredPromptText, recordMessageAuthor, type MessageAuthor } from "../message-authors.js";
 import { internalTaskPrompt } from "../background-task-messages.js";
 import { stat, unlink } from "node:fs/promises";
@@ -62,6 +63,11 @@ const startingIds = new Set<string>();
 // Keyed by conversation, not session object: a reopened session must not retry a
 // compaction that already ran or failed since the last prompt.
 const autoCompacted = new Set<string>();
+
+/** Whose conversation this is: its project's owner, whose own settings drive it. */
+export function conversationOwner(connection: Pick<HarnessChatConnection, "project">): string | undefined {
+  return resourceOwner("project", connection.project.id);
+}
 
 export function armAutoCompactAfterPrompt(session: HarnessSession): void { autoCompacted.delete(session.id); }
 
@@ -226,7 +232,7 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   const result = (status: string, extra: Partial<UsageDifficulty> = {}): UsageDifficulty => ({ ...base, status, ...extra });
   if (queued.systemEventId) return result("internal");
   let policy: StoredRoutingConfig | null = null;
-  try { policy = activeRoutingConfig(routingConfigDatabase()); }
+  try { policy = activeRoutingConfig(routingConfigDatabase(), conversationOwner(connection)); }
   catch (error) { console.warn("Routing configuration resolution failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error"); }
   if (!policy) return result("disabled");
   const key = queueKey(connection);
@@ -523,7 +529,7 @@ async function switchHarness(connection: HarnessChatConnection, engine: HarnessI
     drives this conversation here, which classifier won, and whether this node's own
     configuration may be edited from the model dialog. */
 async function routingClientState(connection: HarnessChatConnection, localNodeId: string): Promise<{ active: boolean; mode: "auto" | "manual"; classifierId?: string; configId?: string; editable?: boolean; warning?: string } | null> {
-  const config = activeRoutingConfig(routingConfigDatabase());
+  const config = activeRoutingConfig(routingConfigDatabase(), conversationOwner(connection));
   if (!config) return null;
   return {
     active: true,
@@ -550,7 +556,7 @@ export function broadcastRoutingMode(): void {
 
 /** An explicit model or reasoning pick ends classifier control of the conversation. */
 function markRoutingManual(connection: HarnessChatConnection): void {
-  if (!activeRoutingConfig(routingConfigDatabase())) return;
+  if (!activeRoutingConfig(routingConfigDatabase(), conversationOwner(connection))) return;
   if (readRoutingState(queueKey(connection)).mode === "manual") return;
   setRoutingMode(queueKey(connection), "manual");
   publishRoutingMode(connection);
@@ -598,7 +604,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
   if (message.type === "setTools") { if (!message.toolNames) throw new Error("Tools are required"); await connection.shared.session.setTools(message.toolNames); recordQueueSettings(queueKey(connection), currentSettings(connection)); send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); sendHarnessStatus(connection.shared); return true; }
   if (message.type === "setModel") {
     if (message.modelId === "bob-auto") {
-      if (!activeRoutingConfig(routingConfigDatabase())) throw new Error("Prompt routing is not active on this node");
+      if (!activeRoutingConfig(routingConfigDatabase(), conversationOwner(connection))) throw new Error("Prompt routing is not active on this node");
       setRoutingMode(queueKey(connection), "auto");
       publishRoutingMode(connection);
       sendHarnessStatus(connection.shared);

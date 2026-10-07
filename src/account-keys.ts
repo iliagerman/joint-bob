@@ -8,7 +8,7 @@ import type { ReplicationEvent } from "./replication.js";
  * column; it now holds the account id, so two different people who share a username on
  * two nodes never share a row.
  */
-const ACCOUNT_KEY_COLUMNS: Array<[table: string, column: string]> = [
+export const ACCOUNT_KEY_COLUMNS: Array<[table: string, column: string]> = [
   ["user_pins", "username"],
   ["user_recent_sessions", "username"],
   ["user_recent_session_tombstones", "username"],
@@ -22,6 +22,8 @@ const ACCOUNT_KEY_COLUMNS: Array<[table: string, column: string]> = [
   ["push_session_subscriptions", "username"],
   ["subscription_plans", "owner"],
   ["account_settings", "account_id"],
+  ["resource_account_owners", "account_id"],
+  ["cluster_local_members", "account_id"],
 ];
 
 export const ACCOUNT_KEYED_EVENTS = new Set(["user.pin", "user.recent", "canvas.shortcut", "conversation.review", "conversation.notification", "conversation.notification.delivered"]);

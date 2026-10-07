@@ -15,7 +15,13 @@ export function runOnNode(environment: DevEnvironment, node: SeededNode, body: s
 export function addMember(environment: DevEnvironment, node: SeededNode, username: string, email: string): { userId: string; accountId: string; oneTimePassword: string } {
   const output = runOnNode(environment, node, `
     const { createLocalUser } = await import("./src/auth.ts");
+    const { runAsAccount } = await import("./src/account-context.ts");
+    const { seedPersonalSettings } = await import("./src/settings.ts");
+    const { saveWorkspace } = await import("./src/store.ts");
     const created = createLocalUser({ username: ${JSON.stringify(username)}, email: ${JSON.stringify(email)} });
+    // What the Users route does for a new person.
+    seedPersonalSettings(created.user.accountId);
+    await runAsAccount({ accountId: created.user.accountId, userId: created.user.userId, username: created.user.username, email: created.user.email, role: "member", isRemoteLogin: false, homeNodeId: null }, () => saveWorkspace({ label: "Personal", id: "personal" }));
     process.stdout.write(JSON.stringify({ userId: created.user.userId, accountId: created.user.accountId, oneTimePassword: created.oneTimePassword }));
   `);
   return JSON.parse(output.trim().split("\n").at(-1)!) as { userId: string; accountId: string; oneTimePassword: string };

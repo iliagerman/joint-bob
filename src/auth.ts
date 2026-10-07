@@ -297,6 +297,110 @@ export function listLocalUsers(): LocalUserRecord[] {
   return rows.map((row) => ({ userId: row.id, accountId: accountIdForRow(db, row), username: row.username, email: row.email, role: row.role ?? "member", disabled: row.disabled === 1, createdAt: row.created_at }));
 }
 
+function endSessions(db: DatabaseSync, userId: string): string[] {
+  const ids = (db.prepare("SELECT id FROM login_sessions WHERE user_id = ?").all(userId) as unknown as Array<{ id: string }>).map((row) => row.id);
+  db.prepare("DELETE FROM login_sessions WHERE user_id = ?").run(userId);
+  return ids;
+}
+
+/** The admin turns a member off or on again. A disabled member is signed out everywhere here. */
+export function setLocalUserDisabled(userId: string, disabled: boolean, actorId?: string): LocalUserRecord {
+  const db = authDatabase();
+  const user = localUser(userId);
+  if (!user) throw new AuthError(404, "User not found");
+  if (user.role === "admin") throw new AuthError(409, "Transfer the admin role before disabling this account");
+  let ended: string[] = [];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE users SET disabled = ?, updated_at = ? WHERE id = ?").run(disabled ? 1 : 0, new Date().toISOString(), userId);
+    if (disabled) ended = endSessions(db, userId);
+    appendAuditEvent(db, { eventType: disabled ? "auth.user.disabled" : "auth.user.enabled", actorType: actorId ? "user" : "system", actorId, entityType: "user", entityId: userId });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  if (ended.length) authSessionEvents.emit("revoked", ended);
+  return localUser(userId)!;
+}
+
+/** Removes the account itself; the caller removes everything the account owned first. */
+export function deleteLocalUser(userId: string, actorId?: string): void {
+  const db = authDatabase();
+  const user = localUser(userId);
+  if (!user) throw new AuthError(404, "User not found");
+  if (user.role === "admin") throw new AuthError(409, "The admin account can't be deleted");
+  let ended: string[] = [];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    ended = endSessions(db, userId);
+    for (const table of ["user_mfa", "mfa_recovery_codes", "mfa_login_challenges", "mfa_enrollments"]) {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
+    }
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'admin_transfers'").get()) db.prepare("DELETE FROM admin_transfers WHERE to_user_id = ?").run(userId);
+    db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+    appendAuditEvent(db, { eventType: "auth.user.deleted", actorType: actorId ? "user" : "system", actorId, entityType: "user", entityId: userId });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  if (ended.length) authSessionEvents.emit("revoked", ended);
+}
+
+function ensureAdminTransferSchema(db: DatabaseSync): void {
+  db.exec("CREATE TABLE IF NOT EXISTS admin_transfers (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), to_user_id TEXT NOT NULL, offered_by TEXT NOT NULL, offered_at TEXT NOT NULL)");
+}
+
+/** The admin offers the role to a member; nothing changes until the member accepts. */
+export function offerAdminTransfer(toUserId: string, actorId: string): void {
+  const db = authDatabase();
+  ensureAdminTransferSchema(db);
+  const user = localUser(toUserId);
+  if (!user || user.disabled || user.role === "admin") throw new AuthError(404, "User not found");
+  db.prepare("INSERT INTO admin_transfers (singleton, to_user_id, offered_by, offered_at) VALUES (1, ?, ?, ?) ON CONFLICT(singleton) DO UPDATE SET to_user_id = excluded.to_user_id, offered_by = excluded.offered_by, offered_at = excluded.offered_at")
+    .run(toUserId, actorId, new Date().toISOString());
+  appendAuditEvent(db, { eventType: "auth.admin_transfer.offered", actorType: "user", actorId, entityType: "user", entityId: toUserId });
+}
+
+export function cancelAdminTransfer(actorId: string): void {
+  const db = authDatabase();
+  ensureAdminTransferSchema(db);
+  db.prepare("DELETE FROM admin_transfers").run();
+  appendAuditEvent(db, { eventType: "auth.admin_transfer.cancelled", actorType: "user", actorId, entityType: "user" });
+}
+
+export function pendingAdminTransfer(): { toUserId: string; offeredAt: string } | undefined {
+  const db = authDatabase();
+  ensureAdminTransferSchema(db);
+  const row = db.prepare("SELECT to_user_id, offered_at FROM admin_transfers WHERE singleton = 1").get() as { to_user_id: string; offered_at: string } | undefined;
+  return row ? { toUserId: row.to_user_id, offeredAt: row.offered_at } : undefined;
+}
+
+/** The member takes the role. `beforeSwap` runs first, so everything the old admin owned
+    implicitly is written down as theirs before the role moves. */
+export function acceptAdminTransfer(session: AuthSession, beforeSwap: (oldAdminAccountId: string) => void): void {
+  const db = authDatabase();
+  ensureAdminTransferSchema(db);
+  const pending = pendingAdminTransfer();
+  if (!pending || pending.toUserId !== session.userId || session.isRemoteLogin) throw new AuthError(404, "No admin role is offered to you");
+  const oldAdmin = listLocalUsers().find((user) => user.role === "admin");
+  if (!oldAdmin) throw new AuthError(409, "This node has no admin to take over from");
+  // Its writes use other connections to the same database, so it runs before this one locks it.
+  beforeSwap(oldAdmin.accountId);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE users SET role = 'member' WHERE id = ?").run(oldAdmin.userId);
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(session.userId);
+    db.prepare("DELETE FROM admin_transfers").run();
+    appendAuditEvent(db, { eventType: "auth.admin_transfer.accepted", actorType: "user", actorId: session.userId, entityType: "user", entityId: session.userId });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function insertLocalUser(db: DatabaseSync, username: string, password: string, mustChangePassword: boolean, email: string | null, role: AccountRole): string {
   if (email && emailTaken(db, email)) throw new AuthError(409, "That email is already used on this node");
   if (db.prepare("SELECT 1 FROM users WHERE username = ? COLLATE NOCASE").get(username)) throw new AuthError(409, "That username is already used on this node");

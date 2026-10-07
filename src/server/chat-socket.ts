@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { decodeAuthor, encodeAuthor, type MessageAuthor } from "../message-authors.js";
-import { actingAccountFromSession, type ActingAccount } from "../account-context.js";
+import { actingAccountFromSession, runAsAccount, type ActingAccount } from "../account-context.js";
 import { claimTerminal } from "./terminal-policy.js";
 import { terminalAccessSettings } from "../settings.js";
 import type { IncomingMessage } from "node:http";
@@ -28,7 +28,7 @@ import { attachBrowserViewer } from "./browser.js";
 import { broadcastToProject, send } from "./realtime.js";
 import { socketSecretAccountIdsSchema, socketTaskIdSchema } from "./schemas.js";
 import { type ForeignConversationOwner, openConversationOwnership } from "./sessions-helpers.js";
-import { watchClients, webSocketServer } from "./state.js";
+import { socketAccounts, watchClients, webSocketServer } from "./state.js";
 import { ownerPeer } from "./task-handoff.js";
 import { measureOperation, traceOperation } from "./performance-diagnostics.js";
 import { projectAdditionalPaths } from "./session-scope.js";
@@ -109,6 +109,21 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   const author: MessageAuthor | undefined = session && !session.mustChangePassword
     ? { accountId: session.accountId, email: session.email, username: session.username, homeNodeId: session.homeNodeId }
     : signedPeer ? decodeAuthor(url.searchParams.get("author")) : undefined;
+  // A browser's socket acts for its person from here on, including every message it sends.
+  if (!machineAuthenticated && session) {
+    const account = actingAccountFromSession(session);
+    socketAccounts.set(socket, account);
+    const emit = socket.emit.bind(socket) as (...args: unknown[]) => boolean;
+    (socket as unknown as { emit: (...args: unknown[]) => boolean }).emit = (...args) => runAsAccount(account, () => emit(...args));
+    await runAsAccount(account, () => handleBrowserConnection(socket, request, url, session, author, signedPeer, browserMode, browserMachineId));
+    return;
+  }
+  await handleBrowserConnection(socket, request, url, session, author, signedPeer, browserMode, browserMachineId);
+}
+
+async function handleBrowserConnection(socket: WebSocket, request: IncomingMessage, url: URL, session: ReturnType<typeof sessionForId>, author: MessageAuthor | undefined, signedPeer: string | undefined, browserMode: string | null, browserMachineId: string | undefined): Promise<void> {
+  const machineAuthenticated = Boolean(signedPeer);
+  const browserAuthenticated = !machineAuthenticated && Boolean(session);
   if (!machineAuthenticated && session) {
     authenticatedSockets.set(socket, session.id);
     socket.once("close", () => authenticatedSockets.delete(socket));
