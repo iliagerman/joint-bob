@@ -411,16 +411,31 @@ export async function openSecretScope(scopeType, scopeId, label) {
   elements.secretScopeAddButton.hidden = false;
   elements.secretScopeAddButton.textContent = scopeType === "project" ? "New project secret" : "New secret account";
   renderSecretScopeList(accountIds);
+  secretScopeError.hidden = true;
   elements.secretScopeDialog.showModal();
 }
 
+const secretScopeError = document.createElement("p");
+secretScopeError.className = "queued-error";
+secretScopeError.setAttribute("role", "alert");
+secretScopeError.hidden = true;
+elements.secretScopeList.after(secretScopeError);
+elements.secretScopeList.addEventListener("change", () => { secretScopeError.hidden = true; });
 elements.secretScopeCancelButton.addEventListener("click", () => elements.secretScopeDialog.close());
 elements.secretScopeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!secretScopeTarget) throw new Error("Secret scope target is missing");
-  const accountIds = checkedSecretScopeIds();
-  await api(`/api/secrets/scopes/${encodeURIComponent(secretScopeTarget.scopeType)}/${encodeURIComponent(secretScopeTarget.scopeId)}`, { method: "PUT", body: JSON.stringify({ accountIds }) });
-  elements.secretScopeDialog.close(); toast("Secret accounts saved");
+  secretScopeError.hidden = true;
+  const save = elements.secretScopeForm.querySelector('[type="submit"]');
+  save.disabled = true;
+  try {
+    if (!secretScopeTarget) throw new Error("Secret scope target is missing");
+    const accountIds = checkedSecretScopeIds();
+    await api(`/api/secrets/scopes/${encodeURIComponent(secretScopeTarget.scopeType)}/${encodeURIComponent(secretScopeTarget.scopeId)}`, { method: "PUT", body: JSON.stringify({ accountIds }) });
+    elements.secretScopeDialog.close(); toast("Secret accounts saved");
+  } catch (error) {
+    secretScopeError.textContent = error.message;
+    secretScopeError.hidden = false;
+  } finally { save.disabled = false; }
 });
 elements.secretAccountAddButton.addEventListener("click", () => {
   openSecretAccount();

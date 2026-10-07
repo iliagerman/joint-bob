@@ -98,7 +98,45 @@ test("a secret account created from the project picker belongs to that project o
     const workspaceScope = await api<{ accountIds: string[] }>(node, session, "GET", `/secrets/scopes/workspace/${workspace.id}`);
     assert.deepEqual(workspaceScope.body.accountIds, [workspaceBody.account.id]);
 
+    // Conflicting accounts cannot be attached to the same workspace (or conversation).
+    // The picker must report the failure and keep the selection editable instead of doing nothing.
+    const conflict = await api<{ account: { id: string } }>(node, session, "POST", "/secrets/accounts", {
+      label: "Other workspace token", provider: "custom",
+      variables: [{ name: "WORKSPACE_TOKEN", kind: "value", value: "synthetic-other-token" }],
+    });
+    assert.equal(conflict.status, 201);
+    await page.getByTestId("workspace-secrets-button").first().click();
+    await picker.waitFor();
+    const conflictRow = picker.locator(".secret-scope-row", { hasText: "Other workspace token" });
+    await conflictRow.getByTestId("secret-scope-account-checkbox").check();
+    const rejected = page.waitForResponse((response) => response.url().includes("/api/secrets/scopes/workspace/") && response.request().method() === "PUT");
+    await page.getByTestId("secret-scope-save-button").click();
+    assert.equal((await rejected).status(), 409);
+    await picker.getByRole("alert").getByText(/duplicate environment variable names/).waitFor();
+    assert.equal(await picker.isVisible(), true);
+    assert.deepEqual((await api<{ accountIds: string[] }>(node, session, "GET", `/secrets/scopes/workspace/${workspace.id}`)).body.accountIds, [workspaceBody.account.id]);
+    await conflictRow.getByTestId("secret-scope-account-checkbox").uncheck();
+    await page.getByTestId("secret-scope-save-button").click();
+    await picker.waitFor({ state: "hidden" });
+
+    // Conversation picker uses the same save path; its failure must be visible too.
+    await page.getByTestId("settings-cancel-button").click();
+    await page.getByText("Internal Assistant", { exact: true }).first().click();
+    await page.locator('#sessionList [data-testid="session-menu-button"]').first().click();
+    await page.getByTestId("session-secrets-button").click();
+    await picker.waitFor();
+    await picker.getByRole("checkbox", { name: "Workspace token", exact: true }).check();
+    await picker.locator(".secret-scope-row", { hasText: "Other workspace token" }).getByTestId("secret-scope-account-checkbox").check();
+    const conversationRejected = page.waitForResponse((response) => response.url().includes("/api/secrets/scopes/conversation/") && response.request().method() === "PUT");
+    await page.getByTestId("secret-scope-save-button").click();
+    assert.equal((await conversationRejected).status(), 409);
+    await picker.getByRole("alert").getByText(/duplicate environment variable names/).waitFor();
+    await picker.locator(".secret-scope-row", { hasText: "Other workspace token" }).getByTestId("secret-scope-account-checkbox").uncheck();
+    await page.getByTestId("secret-scope-save-button").click();
+    await picker.waitFor({ state: "hidden" });
+
     // Settings still lists both, the project one tagged with its project, so either can be edited or deleted.
+    await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-secrets").click();
     await page.getByTestId("secret-account-list").getByText(`Project token · Custom · ${project.name}`, { exact: true }).waitFor();
     await page.getByTestId("secret-account-list").getByText("Workspace token · Custom", { exact: true }).waitFor();

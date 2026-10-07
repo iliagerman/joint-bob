@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Secret account pickers now show why a workspace or conversation assignment failed instead of silently ignoring Save.
+
+## 2.49.1 — 2026-10-07
+
 ## 2.49.0 — 2026-10-07
 
 - Share dialog now shows a progress spinner while services are being delivered to cluster members.

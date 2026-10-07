@@ -117,7 +117,10 @@ app.put("/api/secrets/scopes/:scopeType/:scopeId", async (request, response, nex
     const payload = secretScopeSchema.parse(request.body);
     await setScopeSecretAccounts(scope.scopeType, scope.scopeId, payload.accountIds);
     response.json(await getScopeSecretAccounts(scope.scopeType, scope.scopeId));
-  } catch (error) { next(error); }
+  } catch (error) {
+    if (error instanceof Error && /Selected .* accounts have duplicate /.test(error.message)) { response.status(409).json({ error: error.message }); return; }
+    next(error);
+  }
 });
 
 app.get("/api/workspaces", async (_request, response, next) => {
