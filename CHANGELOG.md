@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Worktrees with no visible conversations now stay in a collapsed Other worktrees section instead of filling the list after reload. Their actions remain available, and newly created worktrees open immediately.
+
 ## 2.62.2 — 2026-10-08
 
 - Moved the new scheduled task action into the dialog footer as a plus button, so it stays visible while scrolling.

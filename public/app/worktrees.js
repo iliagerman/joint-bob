@@ -88,6 +88,22 @@ export function worktreesHeading() {
   return heading;
 }
 
+/** Keep zero-visible groups accessible without crowding the conversation list. */
+export function otherWorktreesSection(worktrees, expanded) {
+  const section = document.createElement("details");
+  section.className = "other-worktrees";
+  section.dataset.testid = "other-worktrees";
+  section.dataset.projectId = state.activeProjectId;
+  section.open = expanded;
+  const summary = document.createElement("summary");
+  summary.dataset.testid = "other-worktrees-toggle";
+  summary.textContent = `Other worktrees (${worktrees.length})`;
+  const note = document.createElement("p");
+  note.textContent = "No conversations shown in these groups. Check Show done and Show scheduled for hidden conversations.";
+  section.append(summary, note, ...worktrees.map((worktree) => worktreeSectionHeader(worktree, 0)));
+  return section;
+}
+
 /** One worktree's fold header; its conversations are listed beneath it. */
 export function worktreeSectionHeader(worktree, count) {
   const collapsed = state.collapsedWorktreeIds.has(worktree.id);
@@ -239,6 +255,8 @@ elements.worktreeForm.addEventListener("submit", async (event) => {
     }
     elements.worktreeDialog.close();
     await loadWorktrees();
+    // An explicitly created empty worktree should be visible immediately.
+    if (!editing && state.activeProjectId === projectId) elements.sessionList.querySelector(".other-worktrees")?.setAttribute("open", "");
   } catch (error) {
     toast(error.message);
   } finally {
