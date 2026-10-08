@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed the default model routing to sort requests into six task types, so multi-file coding now runs on Sonnet and debugging and planning on Opus.
+
 ## 2.60.0 — 2026-10-08
 
 - Added a Tasks icon to the chat action row, and chat toolbar icons now share one size with their names appearing in a quick tooltip instead of the slow native one.
