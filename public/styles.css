@@ -3895,6 +3895,8 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-story .gs-banner b { color: var(--amber); }
 .git-story .gs-spacer { flex: 1; }
 .git-story .gs-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px; padding: 10px 18px 9px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.git-story .gs-head > .gs-state-actions { grid-column: 1 / -1; margin: 6px 0 0; }
+.git-story .gs-state-actions input { min-width: 180px; max-width: 100%; }
 .git-story .gs-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .git-story .gs-title h3 { margin: 0; overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .git-story .gs-actions { display: flex; grid-row: span 2; align-items: center; gap: 8px; }

@@ -166,6 +166,15 @@ test("Story tab writes a story out of band, explains it in four sections, and op
   await page.keyboard.press("Escape");
   await page.getByTestId("git-diff-dialog").waitFor({ state: "hidden" });
 
+  await page.getByTestId("git-story-pull-input").fill("https://github.com/acme/widget/pull/42");
+  const prRequest = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith("/git/story") && request.method() === "POST");
+  await page.getByTestId("git-story-pull-generate").click();
+  const prPayload = (await prRequest).postDataJSON();
+  assert.equal(prPayload.source, "pull");
+  assert.equal(prPayload.pullNumber, 42);
+  assert.equal(prPayload.pullUrl, "https://github.com/acme/widget/pull/42");
+  assert.deepEqual(prPayload.paths, []);
+  await page.getByTestId("git-story-title").waitFor();
   await page.getByTestId("git-review-tab-changes").click();
   assert.equal(await page.getByTestId("git-review-generate").innerText(), "Generate review comments");
 });

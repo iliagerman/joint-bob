@@ -6,6 +6,7 @@ import { GitReviewError } from "../git-review.js";
 const exec = promisify(execFile);
 const API = "https://api.github.com";
 const MAX_LOG_BYTES = 1024 * 1024;
+const BRANCH = /^(?!\/)(?!.*\/\/)(?!.*\.\.)(?!.*\.lock$)[A-Za-z0-9._/-]{1,200}(?<!\/)$/;
 type GithubCall = (route: string, method?: string, body?: object) => Promise<unknown>;
 /** Picks a token per repository, so two GitHub accounts can serve different remotes. */
 export interface GithubCredentials { tokenFor(repository: { owner: string; host?: string }): string | undefined; sshHosts?: string[] }
@@ -180,10 +181,29 @@ export async function createGitHubReview(cwd: string, credentials: Credentials, 
   return {
     repository: { owner, repo },
     pulls: (state: "open" | "closed", page: number) => call(`/pulls?state=${state}&per_page=30&page=${page}&sort=updated&direction=desc`),
+    create: (head: string, target: string, title: string, body: string, draft: boolean) => {
+      if (!BRANCH.test(head) || !BRANCH.test(target) || head === target) throw new GitReviewError(400, "Choose different, valid head and base branches");
+      if (!title.trim() || title.length > 256 || body.length > 65536) throw new GitReviewError(400, "Invalid pull request title or description");
+      return call("/pulls", "POST", { head, base: target, title: title.trim(), body, draft });
+    },
     pull: (number: number) => pullDetail(call, number),
     comment: (number: number, body: string) => { assertId(number, "pull request"); assertBody(body); return call(`/issues/${number}/comments`, "POST", { body }); },
     review: (number: number, event: "APPROVE" | "REQUEST_CHANGES", body: string) => { assertId(number, "pull request"); if (event !== "APPROVE" && event !== "REQUEST_CHANGES") throw new GitReviewError(400, "Invalid review decision"); if (event === "REQUEST_CHANGES") assertBody(body); return call(`/pulls/${number}/reviews`, "POST", { event, body }); },
     close: (number: number) => { assertId(number, "pull request"); return call(`/pulls/${number}`, "PATCH", { state: "closed" }); },
+    reopen: (number: number) => { assertId(number, "pull request"); return call(`/pulls/${number}`, "PATCH", { state: "open" }); },
+    merge: (number: number, sha: string, method: "merge" | "squash" | "rebase") => {
+      assertId(number, "pull request");
+      if (!/^[0-9a-f]{40}$/.test(sha)) throw new GitReviewError(400, "Invalid pull request head");
+      return call(`/pulls/${number}/merge`, "PUT", { sha, merge_method: method });
+    },
+    storyPull: async (number: number) => {
+      assertId(number, "pull request");
+      const pull = await call(`/pulls/${number}`) as { number: number; title: string; body: string | null; html_url: string; head: { sha: string }; base: { ref: string }; changed_files: number };
+      if (pull.changed_files > 500) throw new GitReviewError(413, "This PR changes more than 500 files; it is too large for one story");
+      const files = await collection(call, `/pulls/${number}/files`);
+      if (files.truncated || files.items.length !== pull.changed_files) throw new GitReviewError(413, "Could not read every PR file for the story");
+      return { pull, files: files.items as Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string }> };
+    },
     runs: (page: number) => call(`/actions/runs?per_page=30&page=${page}`),
     run: (id: number) => runDetails(call, id),
     log,

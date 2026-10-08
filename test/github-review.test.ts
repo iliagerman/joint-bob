@@ -66,15 +66,26 @@ test("pull request mutations require token and send only scoped, validated reque
     await assert.rejects(withoutToken.review(42, "APPROVE", "Looks good"), /GitHub token/);
     assert.equal(requests.length, 0);
     const github = await createGitHubReview(dir, "test-token", fakeFetch);
+    await github.create("fix/retry", "main", "Fix retry handling", "Tests included", true);
+    assert.equal(requests[0].url, "https://api.github.com/repos/acme/widget/pulls");
+    assert.deepEqual(JSON.parse(requests[0].body!), { head: "fix/retry", base: "main", title: "Fix retry handling", body: "Tests included", draft: true });
+    assert.throws(() => github.create("../bad", "main", "Title", "", false), /valid head and base/);
     await github.review(42, "REQUEST_CHANGES", "Please fix the failing test");
-    assert.equal(requests[0].url, "https://api.github.com/repos/acme/widget/pulls/42/reviews");
-    assert.equal(requests[0].method, "POST");
-    assert.deepEqual(JSON.parse(requests[0].body!), { event: "REQUEST_CHANGES", body: "Please fix the failing test" });
+    assert.equal(requests[1].url, "https://api.github.com/repos/acme/widget/pulls/42/reviews");
+    assert.equal(requests[1].method, "POST");
+    assert.deepEqual(JSON.parse(requests[1].body!), { event: "REQUEST_CHANGES", body: "Please fix the failing test" });
     await github.close(42);
-    assert.equal(requests[1].url, "https://api.github.com/repos/acme/widget/pulls/42");
-    assert.deepEqual(JSON.parse(requests[1].body!), { state: "closed" });
+    assert.equal(requests[2].url, "https://api.github.com/repos/acme/widget/pulls/42");
+    assert.deepEqual(JSON.parse(requests[2].body!), { state: "closed" });
+    await github.reopen(42);
+    assert.deepEqual(JSON.parse(requests[3].body!), { state: "open" });
+    await github.merge(42, "a".repeat(40), "squash");
+    assert.equal(requests[4].url, "https://api.github.com/repos/acme/widget/pulls/42/merge");
+    assert.equal(requests[4].method, "PUT");
+    assert.deepEqual(JSON.parse(requests[4].body!), { sha: "a".repeat(40), merge_method: "squash" });
     assert.throws(() => github.comment(0, "hello"), /Invalid pull request/);
-    assert.equal(requests.length, 2);
+    assert.throws(() => github.merge(42, "bad", "merge"), /Invalid pull request head/);
+    assert.equal(requests.length, 5);
   });
 });
 
@@ -130,6 +141,22 @@ test("pull request detail includes later comment pages", async () => {
     const detail = await github.pull(42);
     assert.equal((detail.comments as Array<{ id: number }>).length, 101);
     assert.deepEqual(detail.truncated, { comments: false, reviews: false, inline: false, files: false });
+  });
+});
+
+test("PR story reads every changed file and rejects incomplete diffs", async () => {
+  await fixture("https://github.com/acme/widget.git", async (dir) => {
+    let count = 2;
+    const github = await createGitHubReview(dir, "test-token", async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new" }, { filename: "src/b.ts", status: "added", additions: 1, deletions: 0 }]);
+      return Response.json({ number: 42, title: "Change", body: "Why", html_url: "https://github.com/acme/widget/pull/42", head: { sha: "a".repeat(40) }, base: { ref: "main" }, changed_files: count });
+    });
+    assert.equal((await github.storyPull(42)).files.length, 2);
+    count = 3;
+    await assert.rejects(github.storyPull(42), /every PR file/);
+    count = 501;
+    await assert.rejects(github.storyPull(42), /more than 500/);
   });
 });
 

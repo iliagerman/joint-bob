@@ -26,6 +26,9 @@ const story = {
   pick: { tab: "pushes", pushes: null, history: null, error: "", selected: new Map(), typed: "", typedError: "", adding: false },
   // The facts and sections received so far while a story is being written.
   draft: null,
+  pullNumber: null,
+  pullUrl: null,
+  pullDraft: "",
 };
 
 const PICK_LIMIT = 20;
@@ -76,7 +79,20 @@ export function resetStory(ctx) {
   story.picking = false;
   story.pick = { tab: "pushes", pushes: null, history: null, error: "", selected: new Map(), typed: "", typedError: "", adding: false };
   story.draft = null;
+  story.pullNumber = null;
+  story.pullUrl = null;
+  story.pullDraft = "";
 }
+
+export function selectStoryPull(number, url = null) {
+  story.pullNumber = number;
+  story.pullUrl = url;
+  story.pullDraft = "";
+  story.picking = false;
+  changed();
+}
+export function storyPullNumber() { return story.picking ? null : story.pullNumber ?? (story.latest?.saved.sources.kind === "pull" ? story.latest.saved.sources.pullNumber : null); }
+export function storyPullUrl() { return story.pullUrl; }
 
 export function storyCommitCount() { return story.commits.length; }
 export function storyIsFresh() { return Boolean(story.latest?.freshness.fresh); }
@@ -88,13 +104,14 @@ export function storyCommitsToExplain() {
   if (story.picking) return [...story.pick.selected.keys()];
   return story.latest?.saved.sources.kind === "commits" && story.state !== "empty" ? story.latest.saved.sources.commits : null;
 }
-export function storyHidesScope() { return story.picking || storyFromCommits(); }
+export function storyHidesScope() { return story.picking || storyFromCommits() || Boolean(storyPullNumber()); }
 
 /** Label and status text for the shared reviewer bar while the Story tab is open. */
 export function storyChrome() {
   const freshness = story.latest?.freshness;
   if (story.state === "writing") return { button: "Writing…", disabled: true, status: "Writing the story. Each section opens as soon as the reviewer finishes it. The reviewer reads but never edits." };
   if (story.state === "loading" || story.state === "idle") return { button: "Generate story", disabled: true, status: "Loading the saved story…" };
+  if (storyPullNumber() && story.state !== "rejected") return { button: `Generate story for PR #${storyPullNumber()}`, disabled: false, status: "The reviewer reads this PR's description and GitHub diff, not local pending changes." };
   if (story.picking && story.state !== "rejected") {
     const count = story.pick.selected.size;
     return { button: count ? `Generate story for ${plural(count, "commit")}` : "Generate story", disabled: !count, status: "The story explains the picked commits from their messages and diffs, without this conversation. Nothing is posted to the chat." };
@@ -160,6 +177,8 @@ export async function generateStory(payload) {
         story.latest = { thread: line.thread, saved: line.saved, freshness: line.freshness };
         story.state = "ready";
         story.picking = false;
+        story.pullNumber = null;
+        story.pullUrl = null;
         story.draft = null;
       } else return;
       changed();
@@ -281,7 +300,7 @@ function showDiff(path) {
     title: path,
     meta: file ? `${file.kind} · +${file.add} −${file.del} · ${file.where.map((where) => where === "pending" ? "pending" : where).join(", ")}` : "",
     sections: saved.patches.filter((patch) => patch.path === path).map((patch) => ({
-      label: patch.source === "pending" ? "Pending, not committed" : `Commit ${patch.source}${commits.get(patch.source) ? ` · ${commits.get(patch.source).subject}` : ""}`,
+      label: patch.source === "pending" ? "Pending, not committed" : saved.sources.kind === "pull" ? patch.source : `Commit ${patch.source}${commits.get(patch.source) ? ` · ${commits.get(patch.source).subject}` : ""}`,
       patch: patch.patch,
     })),
   });
@@ -347,6 +366,12 @@ function writingPanel() {
     h("p", { class: "gs-state-note" }, "The story opens as soon as its first section is written. Nothing is posted to the chat. You can close the Git view; the story is saved when it finishes.")));
 }
 
+function pullForm() {
+  return h("form", { class: "gs-state-actions", onsubmit: (event) => { event.preventDefault(); const value = event.currentTarget.elements.pull.value.trim(); const match = value.match(/^(?:https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/)?([1-9][0-9]*)\/?$/); if (!match || !Number.isSafeInteger(Number(match[1]))) { toast("Enter a PR number or GitHub PR URL"); return; } selectStoryPull(Number(match[1]), value.startsWith("https://") ? value.replace(/\/$/, "") : null); story.ctx.generate(); } },
+    h("input", { name: "pull", type: "text", value: story.pullDraft, oninput: (event) => { story.pullDraft = event.target.value; }, placeholder: "PR number or GitHub PR URL", "aria-label": "Pull request number or URL", "data-testid": "git-story-pull-input", required: true }),
+    h("button", { class: "ghost gs-boxed", type: "submit", "data-testid": "git-story-pull-generate" }, "Explain PR"));
+}
+
 function emptyPanel() {
   const part = (n, title, text) => h("li", {}, h("span", { class: "gs-rail-num" }, String(n)), h("span", {}, h("b", {}, `${title}. `), text));
   return h("div", { class: "gs-state" }, h("div", { class: "gs-state-card", "data-testid": "git-story-empty" },
@@ -360,6 +385,7 @@ function emptyPanel() {
     h("div", { class: "gs-state-actions" },
       h("button", { class: story.ctx.hasCoverage() ? "primary" : "ghost gs-boxed", type: "button", "data-testid": "git-story-generate", disabled: !story.ctx.hasCoverage(), onclick: () => story.ctx.generate() }, "Generate story"),
       h("span", { class: "gs-muted" }, story.ctx.coverage())),
+    pullForm(),
     h("div", { class: "gs-state-actions" },
       h("button", { class: story.ctx.hasCoverage() ? "ghost gs-boxed" : "primary", type: "button", "data-testid": "git-story-pick", onclick: openPicker }, "Pick past commits or pushes"),
       h("span", { class: "gs-muted" }, "Explain work that is already committed or pushed.")),
@@ -400,6 +426,7 @@ function storyHead() {
     h("div", { class: "gs-title" }, h("span", { class: "gs-pill is-accent" }, saved.story.kind), h("h3", { "data-testid": "git-story-title" }, saved.story.title)),
     draft ? h("div", { class: "gs-actions" }, h("span", { class: "gs-pill is-info" }, "Being written")) : h("div", { class: "gs-actions" },
       h("span", { class: freshness.fresh ? "gs-pill is-accent" : "gs-pill is-amber" }, freshness.fresh ? "Fresh" : "Outdated"),
+      storyPullNumber() ? h("span", { class: "gs-pill is-info" }, `PR #${storyPullNumber()}`) : null,
       storyFromCommits() && story.ctx.conversationId ? h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-explain-conversation", onclick: () => story.ctx.generate({ conversation: true }) }, "Explain this conversation") : null,
       h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-pick", onclick: openPicker }, "Explain other commits"),
       h("button", { class: "ghost compact gs-boxed", type: "button", onclick: copyMarkdown }, "Copy as Markdown")),
@@ -407,14 +434,16 @@ function storyHead() {
       h("b", {}, `${facts.files.length} file${facts.files.length === 1 ? "" : "s"}`), " · ",
       h("span", { class: "gs-add" }, `+${sum(facts.files.map((file) => file.add)).toLocaleString()}`), " ",
       h("span", { class: "gs-del" }, `−${sum(facts.files.map((file) => file.del)).toLocaleString()}`), " · ",
-      storyFromCommits() ? `${plural(facts.commits.length, "picked commit")}` : `${plural(facts.commits.length, "commit")} + ${plural(pending, "pending file")}`,
+      saved.sources.kind === "pull" ? `PR #${saved.sources.pullNumber}` : storyFromCommits() ? `${plural(facts.commits.length, "picked commit")}` : `${plural(facts.commits.length, "commit")} + ${plural(pending, "pending file")}`,
       facts.conversation ? ` · ${facts.turns.length} turns` : "",
       facts.omitted?.length ? h("span", { class: "gs-del", "data-testid": "git-story-omitted", title: `The reviewer saw only line counts for: ${facts.omitted.join(", ")}` }, ` · ${plural(facts.omitted.length, "diff")} too large to read`) : "",
-      draft ? " · not checked yet" : ` · ${thread.harnessId} · ${thread.modelId} · ${thread.thinkingLevel} · written ${relativeTime(thread.createdAt)}`));
+      draft ? " · not checked yet" : ` · ${thread.harnessId} · ${thread.modelId} · ${thread.thinkingLevel} · written ${relativeTime(thread.createdAt)}`),
+    !draft ? pullForm() : null);
 }
 
 function storySections() {
-  return storyFromCommits() ? SECTIONS.map((section) => section.id === "conversation" ? { ...section, title: "Commits", sub: "What each commit did" } : section) : SECTIONS;
+  const source = shown()?.saved.sources.kind;
+  return SECTIONS.map((section) => section.id === "conversation" && source === "commits" ? { ...section, title: "Commits", sub: "What each commit did" } : section.id === "conversation" && source === "pull" ? { ...section, title: "Pull request", sub: "The PR's source and scope" } : section);
 }
 
 function storyBody() {
@@ -512,6 +541,10 @@ function renderConversation(section) {
   const { saved } = shown();
   const { facts, story: written } = saved;
   if (saved.sources.kind === "commits") { renderCommitsSection(section); return; }
+  if (saved.sources.kind === "pull") {
+    section.append(sectionHead(`Pull request #${saved.sources.pullNumber}`), h("p", { class: "gs-muted" }, `This story uses the GitHub PR description and ${plural(facts.files.length, "changed file")}. It does not read local commits or pending changes.`));
+    return;
+  }
   if (!facts.conversation || !written.timeline.length) {
     section.append(sectionHead("How the change evolved"), h("p", { class: "gs-muted" }, facts.conversation ? "The reviewer did not describe the conversation's turns." : "No conversation is selected, so this story covers pending changes only. The why comes from the diff alone."));
     return;
@@ -763,6 +796,8 @@ function testRow(item) {
 
 function openPicker() {
   story.picking = true;
+  story.pullNumber = null;
+  story.pullUrl = null;
   story.pages.pick = 0;
   changed();
   if (!story.pick.pushes || !story.pick.history) void loadPickSources();

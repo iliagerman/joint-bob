@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added creating, reopening, and merging GitHub pull requests from the pull request tab, and an action that explains any pull request in the Story tab.
+
 ## 2.62.5 — 2026-10-08
 
 - Worktrees with no visible conversations now stay in a collapsed Other worktrees section instead of filling the list after reload. Their actions remain available, and newly created worktrees open immediately.

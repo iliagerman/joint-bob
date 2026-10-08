@@ -135,9 +135,12 @@ const githubQuery = z.object({
   id: z.coerce.number().int().positive().optional(),
 });
 const githubAction = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("create"), head: z.string().min(1).max(200), base: z.string().min(1).max(200), title: z.string().trim().min(1).max(256), body: z.string().max(65536), draft: z.boolean() }).strict(),
   z.object({ action: z.literal("comment"), number: z.number().int().positive(), body: z.string().trim().min(1).max(65536) }).strict(),
   z.object({ action: z.literal("review"), number: z.number().int().positive(), event: z.enum(["APPROVE", "REQUEST_CHANGES"]), body: z.string().max(65536) }).strict(),
   z.object({ action: z.literal("close"), number: z.number().int().positive() }).strict(),
+  z.object({ action: z.literal("reopen"), number: z.number().int().positive() }).strict(),
+  z.object({ action: z.literal("merge"), number: z.number().int().positive(), sha: z.string().regex(/^[0-9a-f]{40}$/), method: z.enum(["merge", "squash", "rebase"]) }).strict(),
 ]);
 
 async function githubClient(projectId: string, taskId?: string) {
@@ -168,8 +171,11 @@ async function githubWrite(projectId: string, taskId: string | undefined, body: 
   if (!parsed.success) throw new GitReviewError(400, "Invalid GitHub action");
   const github = await githubClient(projectId, taskId);
   const action = parsed.data;
+  if (action.action === "create") return github.create(action.head, action.base, action.title, action.body, action.draft);
   if (action.action === "comment") return github.comment(action.number, action.body);
   if (action.action === "close") return github.close(action.number);
+  if (action.action === "reopen") return github.reopen(action.number);
+  if (action.action === "merge") return github.merge(action.number, action.sha, action.method);
   return github.review(action.number, action.event, action.body);
 }
 
@@ -462,7 +468,9 @@ app.get("/api/projects/:projectId/git/guide-latest", async (request, response, n
 
 const storyRequest = z.object({
   conversationId: z.string().min(1).max(240).nullable(),
-  source: z.enum(["conversation", "commits"]).default("conversation"),
+  source: z.enum(["conversation", "commits", "pull"]).default("conversation"),
+  pullNumber: z.number().int().positive().optional(),
+  pullUrl: z.string().url().max(500).optional(),
   commits: z.array(z.string().regex(/^[0-9a-f]{7,40}$/i)).max(20).default([]),
   scope: z.enum(["conversation", "all"]),
   paths: z.array(z.string().min(1).max(2000)).max(100),
@@ -481,7 +489,12 @@ async function performStory(projectId: string, cwd: string, input: z.infer<typeo
   const project = await getProject(projectId);
   if (!project) throw new GitReviewError(404, "Project not found");
   let sources: StorySources;
-  if (input.source === "commits") {
+  const pull = input.source === "pull" && input.pullNumber ? await (await githubClient(projectId)).storyPull(input.pullNumber) : undefined;
+  if (input.source === "pull") {
+    if (!pull) throw new GitReviewError(400, "Pull request number required");
+    if (input.pullUrl && input.pullUrl.replace(/\/$/, "") !== pull.pull.html_url) throw new GitReviewError(400, "PR URL does not belong to this project's GitHub repository");
+    sources = { kind: "pull", scope: "all", pendingPaths: [], includeCommits: false, pullNumber: pull.pull.number };
+  } else if (input.source === "commits") {
     if (!input.commits.length) throw new GitReviewError(400, "Pick at least one commit");
     sources = { kind: "commits", scope: "all", pendingPaths: [], includeCommits: false, commits: input.commits };
   } else {
@@ -494,7 +507,7 @@ async function performStory(projectId: string, cwd: string, input: z.infer<typeo
   }
   const { diff, ...saved } = await generateChangeStory({
     project, cwd, conversationId: input.conversationId, sources,
-    harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel, onProgress,
+    harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel, onProgress, pull,
   });
   const thread = createGitReviewThread({ projectId, conversationId: input.conversationId, harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel, selection: { scope: "worktree" }, snapshot: diff, question: CHANGE_STORY_MARKER, answer: JSON.stringify(saved) });
   return { thread: storyThreadInfo(thread), saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } };
@@ -513,7 +526,14 @@ async function latestStory(projectId: string, cwd: string, conversationId: strin
     return { latest: null, commits };
   }
   const saved = JSON.parse(thread.messages[1].text) as SavedChangeStory;
-  return { latest: { thread: storyThreadInfo(thread), saved, freshness: await storyFreshness(project, cwd, thread.conversationId, saved) }, commits };
+  let freshness;
+  try {
+    const pull = saved.sources.kind === "pull" && saved.sources.pullNumber ? await (await githubClient(projectId)).storyPull(saved.sources.pullNumber) : undefined;
+    freshness = await storyFreshness(project, cwd, thread.conversationId, saved, pull);
+  } catch (error) {
+    freshness = { fresh: false, newTurns: 0, changedPaths: [], reason: error instanceof Error ? error.message : "PR unavailable" };
+  }
+  return { latest: { thread: storyThreadInfo(thread), saved, freshness }, commits };
 }
 
 const NDJSON = "application/x-ndjson";
