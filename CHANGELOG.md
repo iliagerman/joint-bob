@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed conversations that loaded before the worktree list being filed under the project folder, and worktree groups no longer wait for finished-worktree cleanup before they appear.
+
 ## 2.62.0 — 2026-10-08
 
 - Marking the last conversation in a worktree done now deletes that worktree when it has no unmerged changes or running work, and finished worktrees from earlier versions are cleaned up when the list opens.

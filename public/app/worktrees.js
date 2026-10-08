@@ -9,6 +9,7 @@ import { state } from "./state.js";
 
 let editing = null;
 let loadGeneration = 0;
+const cleanupAfter = new Map();
 
 function worktreesUrl(projectId, suffix = "") {
   return `/api/projects/${encodeURIComponent(projectId)}/worktrees${suffix}`;
@@ -18,11 +19,26 @@ export async function loadWorktrees() {
   const projectId = state.activeProjectId;
   if (!projectId || state.canvasPaneMode) return;
   const generation = ++loadGeneration;
-  const { worktrees } = await api(worktreesUrl(projectId, "/cleanup"), { method: "POST", body: "{}" });
+  // Listing must stay fast even when checking finished worktrees takes seconds.
+  const { worktrees } = await api(worktreesUrl(projectId));
   if (generation !== loadGeneration || state.activeProjectId !== projectId) return;
   const changed = JSON.stringify(worktrees) !== JSON.stringify(state.worktrees);
   state.worktrees = worktrees;
   if (changed) renderSessions();
+  cleanupFinishedWorktrees(projectId);
+}
+
+function cleanupFinishedWorktrees(projectId) {
+  // Session notices can arrive every few seconds. Do not rescan a whole project
+  // on each notice, or pile up requests while a scan is already running.
+  if (Date.now() < (cleanupAfter.get(projectId) || 0)) return;
+  cleanupAfter.set(projectId, Infinity);
+  void api(worktreesUrl(projectId, "/cleanup"), { method: "POST", body: "{}" })
+    .then(async ({ deletedWorktreeIds }) => {
+      if (deletedWorktreeIds.length && state.activeProjectId === projectId) await loadWorktrees();
+    })
+    .catch((error) => console.warn("Could not clean up finished worktrees", error))
+    .finally(() => cleanupAfter.set(projectId, Date.now() + 60_000));
 }
 
 /** Creates a worktree of the open project named after a conversation, numbering the name when it is taken. */

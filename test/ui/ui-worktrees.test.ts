@@ -141,6 +141,58 @@ test("a conversation that ran in the worktree is listed in the worktree's sub-se
   await page.waitForFunction((expected) => document.querySelectorAll("#sessionList .list-row").length === expected, total);
 });
 
+test("worktree grouping does not wait for a slow cleanup scan", async () => {
+  let release!: () => void;
+  const scan = new Promise<void>((resolve) => { release = resolve; });
+  const route = "**/api/projects/*/worktrees/cleanup";
+  let cleanupRequests = 0;
+  let listRequests = 0;
+  await page.route("**/api/projects/*/worktrees", async (request) => { listRequests += 1; await request.continue(); });
+  await page.route(route, async (request) => {
+    cleanupRequests += 1;
+    await scan;
+    await request.continue();
+  });
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await openProject();
+    const row = page.locator("#sessionList .list-row", { hasText: CONVERSATION_NAME });
+    await row.getByTestId("session-worktree-badge").waitFor();
+    const section = page.getByTestId("worktree-section").filter({ hasText: WORKTREE_NAME });
+    await section.waitFor({ timeout: 5_000 });
+    assert.equal(await section.getByTestId("worktree-section-count").innerText(), "1");
+    assert.ok(listRequests > 0, "headers come from the fast listing endpoint");
+    await page.evaluate(async () => {
+      const { loadWorktrees } = await import("/app/worktrees.js");
+      await loadWorktrees();
+      await loadWorktrees();
+    });
+    assert.equal(cleanupRequests, 1, "refresh notices do not pile up cleanup requests");
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
+test("conversation badges still have matching groups while the worktree listing is pending", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/projects/*/worktrees", async (request) => { await pending; await request.continue(); });
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await openProject();
+    const row = page.locator("#sessionList .list-row", { hasText: CONVERSATION_NAME });
+    await row.getByTestId("session-worktree-badge").waitFor();
+    const header = page.getByTestId("worktree-section").filter({ hasText: WORKTREE_NAME });
+    await header.waitFor({ timeout: 5_000 });
+    const order = await page.evaluate(() => [...document.querySelectorAll("#sessionList > *")].map((element) => (element as HTMLElement).dataset.testid || (element.classList.contains("has-worktree") ? "worktree-row" : "project-row")));
+    assert.deepEqual(order.slice(0, 4), ["worktree-subsection", "worktree-section", "worktree-row", "project-folder-subsection"]);
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
 test("long worktree headers and conversation cards fit the column without horizontal scrolling", async () => {
   try {
     for (const width of [1440, 1024, 390, 320]) {

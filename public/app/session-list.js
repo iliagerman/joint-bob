@@ -78,13 +78,18 @@ export function renderSessions() {
   const narrowed = Boolean(state.classificationFilters.size || state.sessionClusterFilters.size || normalizedQuery(elements.sessionSearchInput.value || ""));
   const sessionIsActive = (candidate) => state.activeSessionId ? candidate.id === state.activeSessionId : candidate.path === state.activeSessionPath;
   const rows = nestedSessionRows(sessions, (parent, childSessions) => state.expandedSessionParents.has(parent.path) || childSessions.some(sessionIsActive));
+  // Sessions can arrive before the worktree listing. Their badges already carry
+  // enough metadata to group them instead of misfiling them in the project folder.
+  const worktrees = new Map(state.worktrees.map((worktree) => [worktree.id, worktree]));
+  for (const session of state.sessions) {
+    if (session.worktree && !worktrees.has(session.worktree.id)) worktrees.set(session.worktree.id, session.worktree);
+  }
   // A sub-agent conversation stays with its root's group, whatever folder it ran in.
-  const known = new Set(state.worktrees.map((worktree) => worktree.id));
   const worktreeRows = new Map();
   const projectRows = [];
   let owner = null;
   for (const row of rows) {
-    if (row.depth === 0) owner = known.has(row.session.worktree?.id) ? row.session.worktree.id : null;
+    if (row.depth === 0) owner = worktrees.has(row.session.worktree?.id) ? row.session.worktree.id : null;
     if (!owner) projectRows.push(row);
     else if (worktreeRows.has(owner)) worktreeRows.get(owner).push(row);
     else worktreeRows.set(owner, [row]);
@@ -92,7 +97,7 @@ export function renderSessions() {
 
   const list = elements.sessionList;
   list.append(worktreesHeading());
-  for (const worktree of state.worktrees) {
+  for (const worktree of worktrees.values()) {
     const group = worktreeRows.get(worktree.id) || [];
     if (!group.length && (narrowed || state.chatFilters.size)) continue;
     list.append(worktreeSectionHeader(worktree, group.filter((row) => row.depth === 0).length));
@@ -110,7 +115,7 @@ export function renderSessions() {
     list.append(empty);
     return;
   }
-  if (state.worktrees.length && projectRows.length) {
+  if (worktrees.size && projectRows.length) {
     const heading = document.createElement("div");
     heading.className = "worktree-subsection-title";
     heading.dataset.testid = "project-folder-subsection";
