@@ -75,6 +75,9 @@ test("cron validates schedule and required user input", async () => {
   for (const invalid of [{ name: " " }, { prompt: "" }, { ownerNodeId: "bad" }, { schedule: { ...input().schedule, timezone: "Mars" } }, { schedule: { ...input().schedule, hour: 24 } }]) {
     assert.equal(cronInputSchema.safeParse({ ...input(), ...invalid }).success, false);
   }
+  assert.equal(cronInputSchema.parse(input()).markForReview, true, "legacy schedules keep review enabled");
+  assert.equal(cronInputSchema.parse({ ...input(), markForReview: false }).markForReview, false);
+  assert.equal(cronInputSchema.safeParse({ ...input(), markForReview: "false" }).success, false);
   assert.equal(cronInputSchema.parse(input()).pauseOnFailure, false);
   assert.equal(cronInputSchema.parse({ ...input(), pauseOnFailure: true }).pauseOnFailure, true);
   assert.equal(cronInputSchema.safeParse({ ...input(), engine: "pi", model: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoning: "high" } }).success, true);
@@ -119,7 +122,10 @@ test("interrupted scheduled runs pause on restart and never replay an uncertain 
     const task = store.create(data);
     const run = store.claim(task.id, data.ownerNodeId, task.nextRun)!;
     store.target(run.id, "conversation");
+    assert.equal(store.taskForRun(run.id, "conversation")?.id, task.id);
+    assert.equal(store.taskForRun(run.id, "another-conversation"), null);
     store.recover();
+    assert.equal(store.taskForRun(run.id, "conversation"), null, "settled runs cannot silence another prompt");
     const recovered = store.get(task.id)!;
     assert.equal(recovered.enabled, false);
     assert.equal(recovered.lastRun?.status, "failed");
@@ -149,15 +155,26 @@ test("cron provenance survives concurrent discovery records in either replicatio
     const projectId = "project", engine = "pi" as const, sessionId = randomUUID(), originNodeId = randomUUID(), cronTaskId = randomUUID();
     const event = (updatedAt: string, scheduled: boolean, deleted = false) => ({
       id: randomUUID(), originNodeId, entityType: "conversation.record", entityKey: `${projectId}:${engine}:${sessionId}`, operation: deleted ? "delete" : "upsert",
-      payload: { projectId, engine, sessionId, updatedAt, originNodeId, record: deleted ? null : { projectId, engine, sessionId, updatedAt, createdAt: updatedAt, originNodeId, taskId: null, ...(scheduled ? { cronTaskId } : {}) } }, createdAt: updatedAt,
+      payload: { projectId, engine, sessionId, updatedAt, originNodeId, record: deleted ? null : { projectId, engine, sessionId, updatedAt, createdAt: updatedAt, originNodeId, taskId: null, ...(scheduled ? { cronTaskId, silentReviewFrom: "2026-02-28T23:00:00.000Z", silentReviewUntil: "2026-03-01T00:00:00.000Z" } : {}) } }, createdAt: updatedAt,
     });
     const scheduled = event("2026-03-01T00:00:00.000Z", true), discovered = event("2026-03-01T00:00:01.000Z", false);
     for (const events of [[scheduled, discovered], [discovered, scheduled]]) {
       db.exec("DELETE FROM conversation_records");
       for (const change of events) applyConversationRecordEvent(db, change);
-      assert.equal(db.prepare("SELECT cron_task_id FROM conversation_records").get()!.cron_task_id, cronTaskId, "concurrent discovery must not erase scheduled provenance");
+      const record = db.prepare("SELECT cron_task_id, silent_review_until FROM conversation_records").get()!;
+      assert.equal(record.cron_task_id, cronTaskId, "concurrent discovery must not erase scheduled provenance");
+      assert.equal(record.silent_review_until, "2026-03-01T00:00:00.000Z", "concurrent discovery must not erase silent review boundary");
     }
-    applyConversationRecordEvent(db, event("2026-03-01T00:00:02.000Z", false, true));
+    const staleBoundary = event("2026-03-01T00:00:02.000Z", true);
+    staleBoundary.payload.record!.silentReviewUntil = "2026-02-28T23:30:00.000Z";
+    applyConversationRecordEvent(db, staleBoundary);
+    assert.equal(db.prepare("SELECT silent_review_until FROM conversation_records").get()!.silent_review_until, "2026-03-01T00:00:00.000Z", "a newer discovery must not rewind the boundary");
+    for (const invalid of [{ silentReviewFrom: undefined }, { silentReviewUntil: 123 }, { silentReviewFrom: "tomorrow" }, { silentReviewFrom: "2026-03-02T00:00:00.000Z" }]) {
+      const malformed = event("2026-03-01T00:00:02.000Z", true);
+      Object.assign(malformed.payload.record!, invalid);
+      assert.throws(() => applyConversationRecordEvent(db, malformed), /Malformed/);
+    }
+    applyConversationRecordEvent(db, event("2026-03-01T00:00:03.000Z", false, true));
     applyConversationRecordEvent(db, scheduled);
     assert.equal(db.prepare("SELECT count(*) AS n FROM conversation_records").get()!.n, 0, "late provenance must not resurrect a deleted conversation");
   } finally { db.close(); }

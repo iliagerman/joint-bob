@@ -517,6 +517,10 @@ elements.showDoneConversations.addEventListener("change", () => {
   state.showDoneConversations = elements.showDoneConversations.checked;
   renderSessions();
 });
+elements.showScheduledConversations.addEventListener("change", () => {
+  state.showScheduledConversations = elements.showScheduledConversations.checked;
+  renderSessions();
+});
 classificationFilter.onChange((values) => {
   state.classificationFilters = values;
   renderSessions();

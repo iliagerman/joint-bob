@@ -119,6 +119,7 @@ export const state = {
   twinNodeIds: [],
   // Conversations the user has closed out are hidden until this is switched on.
   showDoneConversations: false,
+  showScheduledConversations: false,
   conversationLabels: [],
   conversationCommands: null,
   watchSocket: null,

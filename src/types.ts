@@ -87,6 +87,8 @@ export interface AgentRunSummary {
 
 export interface SessionSummary {
   cronTaskId?: string;
+  silentReviewFrom?: string;
+  silentReviewUntil?: string;
   usage?: import("./usage-types.js").UsageTotals;
   id: string;
   path: string;

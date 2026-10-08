@@ -31,6 +31,8 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     f.model.value = "claude|sonnet"; f.model.dispatchEvent(new Event("change", { bubbles: true }));
     f.reasoning.value = "high"; f.timezone.value = "UTC"; f.enabled.checked = false;
     if (f.pauseOnFailure.checked) throw Error("Pause on failure must default off");
+    if (!f.markForReview.checked) throw Error("Review must default on");
+    f.markForReview.checked = false;
     f.pauseOnFailure.checked = true;
     if (document.querySelector("#cronWeekdayLabel").hidden || document.querySelector("#cronTimeLabel").hidden || !document.querySelector("#cronIntervalLabel").hidden) throw Error("Weekly controls incorrect");
     if (f.engine.disabled || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Project execution settings unavailable");
@@ -38,11 +40,12 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   })()`), true);
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Project browser cron") && document.querySelector("#cronList").textContent.includes("New conversation") && document.querySelector("#cronList").textContent.includes("sonnet") && document.querySelector("#cronList").textContent.includes("high") && document.querySelector("#cronList").textContent.includes("Paused"));
   assert.equal(await page.getByTestId("cron-run").isVisible(), true, "Paused schedules need a Run now action");
+  assert.match(await page.locator("#cronList").innerText(), /REVIEW\s+Silent/);
   await page.locator('[data-testid="cron-edit"]').click();
   assert.equal(await page.getByTestId("cron-form").isVisible(), true, "Edit schedule should open the editor");
   assert.equal(await page.evaluate(`(() => {
     const form = document.querySelector("#cronForm"), f = form.elements;
-    if (f.frequency.value !== "weekly" || f.timezone.value !== "UTC" || f.enabled.checked || !f.pauseOnFailure.checked) throw Error("Saved schedule not restored");
+    if (f.frequency.value !== "weekly" || f.timezone.value !== "UTC" || f.enabled.checked || !f.pauseOnFailure.checked || f.markForReview.checked) throw Error("Saved schedule not restored");
     if (f.engine.value !== "claude" || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Saved execution settings not restored");
     f.name.value = "Edited project cron"; f.frequency.value = "daily";
     f.frequency.dispatchEvent(new Event("change", { bubbles: true }));
@@ -90,6 +93,9 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   })()`), true, "Edited task must retain run days, start time and quiet hours");
   await page.getByTestId("cron-cancel").click();
   await page.locator("#cronClose").click();
+  assert.equal(await page.getByTestId("show-scheduled-conversations-toggle").isChecked(), false);
+  assert.equal(await page.locator("#sessionList .list-row", { hasText: "Short one" }).count(), 0, "Scheduled conversation hidden by default");
+  await page.getByTestId("show-scheduled-conversations-toggle").check();
   await page.locator('[data-testid="chats-filter-cron-button"]').click();
   await page.waitForFunction(() => document.querySelectorAll("#sessionList .list-row").length === 1 && document.querySelector("#sessionList .list-row").textContent.includes("Short one"));
   await page.locator("#sessionList .list-row", { hasText: "Short one" }).click();
@@ -97,6 +103,9 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   assert.deepEqual(await page.locator("#messages .message.user .message-content").allTextContents(), ["Single short line."], "A person's own messages must stay visible in a scheduled conversation");
   assert.deepEqual(await page.locator("#messages .message.assistant .message-content").allTextContents(), ["Understood."], "Scheduled transcripts should show only final reports");
   await page.goto(node.url);
+  await page.waitForFunction(() => document.querySelector("[data-filter-count=cron]").textContent === "0");
+  await page.locator("#projectList .list-row", { hasText: "Internal Assistant" }).locator("button").first().click();
+  await page.getByTestId("show-scheduled-conversations-toggle").check();
   await page.waitForFunction(() => document.querySelector("[data-filter-count=cron]").textContent === "1");
   await page.locator('[aria-label="Actions for Internal Assistant"]').click();
   await page.locator('[data-testid="project-cron-button"]').click();

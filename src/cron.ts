@@ -31,7 +31,7 @@ export const cronInputSchema = z.object({
   engine: z.string().refine(isHarnessId, "Harness ID is invalid")
     .refine(id => listDiscoveredHarnesses().some(adapter => adapter.id === id && adapter.runtime), "Harness is not registered on this node"),
   model: cronModelSchema.nullable().optional(), reasoning: reasoningSchema.optional(),
-  sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(), pauseOnFailure: z.boolean().default(false),
+  sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(), pauseOnFailure: z.boolean().default(false), markForReview: z.boolean().default(true),
   schedule: scheduleSchema,
 }).strict().superRefine((input, context) => {
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === input.engine);
@@ -110,6 +110,10 @@ export class CronStore {
   }
   history(id: string): CronRun[] {
     return this.db.prepare("SELECT id, task_id AS taskId, due_at AS dueAt, status, error, session_id AS sessionId, finished_at AS finishedAt FROM cron_runs WHERE task_id = ? ORDER BY due_at DESC LIMIT 100").all(id) as unknown as CronRun[];
+  }
+  taskForRun(runId: string, sessionId: string): CronTask | null {
+    const run = this.db.prepare("SELECT task_id FROM cron_runs WHERE id = ? AND session_id = ? AND status IN ('waiting', 'running')").get(runId, sessionId) as { task_id: string } | undefined;
+    return run ? this.get(run.task_id) : null;
   }
   create(input: CronInput, now = Date.now(), id: string = randomUUID()): CronTask {
     const data = cronInputSchema.parse(input);

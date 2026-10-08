@@ -31,6 +31,7 @@ import { persistTaskAttachments, promptTextWithAttachments } from "./chat.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
 import { conversationTranscriptPayload, scheduledReportMessages } from "../conversation-segments.js";
 import { isScheduledPromptText } from "../scheduled-prompt.js";
+import { silentScheduledReview } from "./scheduled-review.js";
 import { socketMessageSchema } from "./schemas.js";
 import { claimConversationLocally, describeConversationOwner, type ForeignConversationOwner, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { flags } from "./state.js";
@@ -342,6 +343,8 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       activeDifficulty = { ...difficulty, occurredAt: startedAt, startedAt };
       saveDifficulty(activeDifficulty, origin);
       const text = `${connection.handoffContext ?? ""}${attachments.text}`;
+      const finishSilentReview = queued.requestId && isScheduledPromptText(queued.promptText)
+        ? await silentScheduledReview(connection.project, connection.engine, connection.shared.session.id, queued.requestId) : undefined;
       await connection.shared.session.prompt({ text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
         armAutoCompactAfterPrompt(connection.shared.session);
         if (claimed) return;
@@ -353,6 +356,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
         refreshHarnessPromptQueue(connection);
       } });
       if (!claimed) throw new Error("Harness did not start the queued prompt");
+      if (finishSilentReview) await finishSilentReview();
       if (!queued.systemEventId) publish(connection, { type: "promptCompleted", queueId: queued.id });
     } catch (error) {
       // An automatic completion may have crossed the harness start boundary even

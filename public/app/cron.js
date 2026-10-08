@@ -74,7 +74,7 @@ async function refreshTasks() {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const execution = [["Repeat", repeat], ["Start time", task.schedule.frequency === "hourly" && task.schedule.startHour === undefined ? `At minute ${task.schedule.minute} (legacy UTC interval)` : `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`],
       ["Run on days", task.schedule.days ? task.schedule.days.map(day => days[day]).join(", ") : "Every eligible day"],
-      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"]];
+      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"], ["Review", task.markForReview === false ? "Silent" : "Mark for review"]];
     const entries = task.enabled
       ? [["Next run", new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone })], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
       : [["Status", "Paused"], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]];
@@ -192,6 +192,7 @@ function editTask(task) {
   if (task) {
     field("enabled").checked = task.enabled;
     field("pauseOnFailure").checked = task.pauseOnFailure;
+    field("markForReview").checked = task.markForReview !== false;
     field("frequency").value = task.schedule.frequency;
     field("weekday").value = task.schedule.weekday;
     field("intervalHours").value = task.schedule.intervalHours ?? 1;
@@ -234,7 +235,7 @@ form.addEventListener("submit", async event => {
       ownerNodeId: field("ownerNodeId").value, engine: field("engine").value,
       model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,
       sessionId: session?.engine === field("engine").value ? session.id : null, enabled: field("enabled").checked,
-      pauseOnFailure: field("pauseOnFailure").checked,
+      pauseOnFailure: field("pauseOnFailure").checked, markForReview: field("markForReview").checked,
       schedule: { frequency: field("frequency").value, intervalMinutes: field("frequency").value === "minutely" ? Number(field("intervalMinutes").value) : undefined,
         intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined,
         hour, minute, startHour: field("frequency").value === "hourly" ? hour : undefined,

@@ -305,6 +305,8 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
     if (record?.taskId && !session.taskId) session.taskId = record.taskId;
     if (record?.cronTaskId) session.cronTaskId = record.cronTaskId;
+    if (record?.silentReviewFrom) session.silentReviewFrom = record.silentReviewFrom;
+    if (record?.silentReviewUntil) session.silentReviewUntil = record.silentReviewUntil;
   }
   // A harness can intentionally omit an unstarted transcript. Its record must
   // not turn that existing transcript back into a visible draft.
@@ -326,6 +328,8 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       draft: true,
       ...(record.taskId ? { taskId: record.taskId } : {}),
       ...(record.cronTaskId ? { cronTaskId: record.cronTaskId } : {}),
+      ...(record.silentReviewFrom ? { silentReviewFrom: record.silentReviewFrom } : {}),
+      ...(record.silentReviewUntil ? { silentReviewUntil: record.silentReviewUntil } : {}),
     });
   }
   const seen = new Set<string>();

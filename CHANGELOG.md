@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a scheduled-task option to skip review for completed runs, and hid scheduled conversations from the chat list behind a "Show scheduled" toggle.
+
 ## 2.55.1 — 2026-10-08
 
 - Fixed story generation, which 2.55.0 refused on every request with "API error: 403".

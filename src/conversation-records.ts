@@ -16,6 +16,10 @@ export interface ConversationRecord {
   originNodeId: string;
   taskId: string | null;
   cronTaskId?: string;
+  /** Last reviewable activity before the silent run(s), or epoch for a new conversation. */
+  silentReviewFrom?: string;
+  /** Last transcript activity covered by those silent runs. */
+  silentReviewUntil?: string;
   /** Logical conversation this segment belongs to; absent means the session is its own conversation. */
   conversationId?: string;
   /** Position in the conversation; segment 0 is the first harness to own it. */
@@ -39,6 +43,7 @@ function createConversationRecordTables(db: DatabaseSync): void {
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '', task_id TEXT,
     conversation_id TEXT, segment_index INTEGER NOT NULL DEFAULT 0, cron_task_id TEXT,
+    silent_review_from TEXT, silent_review_until TEXT,
     PRIMARY KEY (project_id, engine, session_id)
   ); CREATE TABLE IF NOT EXISTS conversation_record_tombstones (
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -51,6 +56,8 @@ export function ensureConversationRecordSchema(db: DatabaseSync): void {
   const records = db.prepare("PRAGMA table_info(conversation_records)").all() as unknown as Array<{ name: string }>;
   if (!records.some((column) => column.name === "origin_node_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN origin_node_id TEXT NOT NULL DEFAULT ''");
   if (!records.some((column) => column.name === "cron_task_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN cron_task_id TEXT");
+  if (!records.some((column) => column.name === "silent_review_from")) db.exec("ALTER TABLE conversation_records ADD COLUMN silent_review_from TEXT");
+  if (!records.some((column) => column.name === "silent_review_until")) db.exec("ALTER TABLE conversation_records ADD COLUMN silent_review_until TEXT");
   if (!records.some((column) => column.name === "task_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN task_id TEXT");
   if (!records.some((column) => column.name === "conversation_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN conversation_id TEXT");
   if (!records.some((column) => column.name === "segment_index")) db.exec("ALTER TABLE conversation_records ADD COLUMN segment_index INTEGER NOT NULL DEFAULT 0");
@@ -120,6 +127,8 @@ function row(record: Record<string, unknown>): ConversationRecord {
     projectId: String(record.project_id), engine: record.engine as ConversationEngine, sessionId: String(record.session_id), createdAt: String(record.created_at), updatedAt: String(record.updated_at), originNodeId: String(record.origin_node_id),
     taskId: record.task_id === null || record.task_id === undefined ? null : String(record.task_id),
     ...(record.cron_task_id ? { cronTaskId: String(record.cron_task_id) } : {}),
+    ...(record.silent_review_from ? { silentReviewFrom: String(record.silent_review_from) } : {}),
+    ...(record.silent_review_until ? { silentReviewUntil: String(record.silent_review_until) } : {}),
     ...(conversationId ? { conversationId, segmentIndex: Number(record.segment_index ?? 0) } : {}),
   };
 }
@@ -133,6 +142,22 @@ export async function markCronConversation(projectId: string, engine: Conversati
   try {
     db.prepare("UPDATE conversation_records SET cron_task_id = ?, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND engine = ? AND session_id = ?").run(cronTaskId, record.updatedAt, originNodeId, projectId, engine, sessionId);
     publish(db, "upsert", projectId, engine, sessionId, record, record.updatedAt, originNodeId);
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
+export async function markSilentScheduledRun(projectId: string, engine: ConversationEngine, sessionId: string, from: string, until: string, originNodeId: string): Promise<void> {
+  const db = await database();
+  const existing = selectRecord(db, projectId, engine, sessionId);
+  if (!existing) throw new Error("Scheduled conversation record not found");
+  const updatedAt = new Date().toISOString();
+  const record = { ...existing, silentReviewFrom: from, silentReviewUntil: until, updatedAt, originNodeId };
+  if (!validSilentReviewBoundary(record)) throw new Error("Invalid silent review boundary");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE conversation_records SET silent_review_from = ?, silent_review_until = ?, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND engine = ? AND session_id = ?")
+      .run(from, until, updatedAt, originNodeId, projectId, engine, sessionId);
+    publish(db, "upsert", projectId, engine, sessionId, record, updatedAt, originNodeId);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
@@ -237,11 +262,19 @@ function resolveProjectAlias(db: DatabaseSync, projectId: string): string {
   return (db.prepare("SELECT project_id FROM project_aliases WHERE alias_id = ?").get(projectId) as { project_id: string } | undefined)?.project_id ?? projectId;
 }
 
+function validSilentReviewBoundary(record: ConversationRecord): boolean {
+  const { silentReviewFrom: from, silentReviewUntil: until } = record;
+  if (from === undefined && until === undefined) return true;
+  const timestamp = (value: unknown): value is string => typeof value === "string"
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value));
+  return timestamp(from) && timestamp(until) && from <= until;
+}
+
 function payloadFor(event: ReplicationEvent): ConversationRecordPayload {
   const value = event.payload as Partial<ConversationRecordPayload>;
   if (event.entityType !== "conversation.record" || !["upsert", "delete"].includes(event.operation) || !value || typeof value !== "object" || Array.isArray(value)
     || typeof value.projectId !== "string" || !isHarnessId(value.engine) || typeof value.sessionId !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || value.originNodeId !== event.originNodeId || event.entityKey !== `${value.projectId}:${value.engine}:${value.sessionId}` || (event.operation === "upsert") !== Boolean(value.record)) throw new Error("Malformed conversation record replication payload");
-  if (value.record && (value.record.projectId !== value.projectId || value.record.engine !== value.engine || value.record.sessionId !== value.sessionId || value.record.updatedAt !== value.updatedAt || value.record.originNodeId !== value.originNodeId || typeof value.record.createdAt !== "string" || (value.record.cronTaskId !== undefined && typeof value.record.cronTaskId !== "string") || (value.record.taskId !== undefined && value.record.taskId !== null && typeof value.record.taskId !== "string") || (value.record.conversationId !== undefined && typeof value.record.conversationId !== "string") || (value.record.segmentIndex !== undefined && typeof value.record.segmentIndex !== "number"))) throw new Error("Malformed conversation record replication payload");
+  if (value.record && (value.record.projectId !== value.projectId || value.record.engine !== value.engine || value.record.sessionId !== value.sessionId || value.record.updatedAt !== value.updatedAt || value.record.originNodeId !== value.originNodeId || typeof value.record.createdAt !== "string" || (value.record.cronTaskId !== undefined && typeof value.record.cronTaskId !== "string") || !validSilentReviewBoundary(value.record) || (value.record.taskId !== undefined && value.record.taskId !== null && typeof value.record.taskId !== "string") || (value.record.conversationId !== undefined && typeof value.record.conversationId !== "string") || (value.record.segmentIndex !== undefined && typeof value.record.segmentIndex !== "number"))) throw new Error("Malformed conversation record replication payload");
   return value as ConversationRecordPayload;
 }
 
@@ -257,6 +290,8 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
     // Scheduling is historical provenance. Concurrent transcript discovery must
     // not erase it, but a late marker must never recreate a deleted record.
     if (payload.record?.cronTaskId) db.prepare("UPDATE conversation_records SET cron_task_id = ? WHERE project_id = ? AND engine = ? AND session_id = ? AND cron_task_id IS NULL").run(payload.record.cronTaskId, projectId, payload.engine, payload.sessionId);
+    if (payload.record?.silentReviewUntil && payload.record.silentReviewFrom) db.prepare("UPDATE conversation_records SET silent_review_from = ?, silent_review_until = ? WHERE project_id = ? AND engine = ? AND session_id = ? AND (silent_review_until IS NULL OR silent_review_until < ?)")
+      .run(payload.record.silentReviewFrom, payload.record.silentReviewUntil, projectId, payload.engine, payload.sessionId, payload.record.silentReviewUntil);
     return;
   }
   // Releases before the sub-agent fix still send these; they are never conversations.
@@ -276,7 +311,7 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
     db.prepare("INSERT INTO conversation_record_tombstones (project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id").run(projectId, payload.engine, payload.sessionId, payload.updatedAt, payload.originNodeId);
     return;
   }
-  db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id, conversation_id, segment_index, cron_task_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET created_at = excluded.created_at, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id, task_id = excluded.task_id, conversation_id = excluded.conversation_id, segment_index = excluded.segment_index, cron_task_id = COALESCE(excluded.cron_task_id, conversation_records.cron_task_id)").run(projectId, payload.engine, payload.sessionId, payload.record.createdAt, payload.updatedAt, payload.originNodeId, payload.record.taskId ?? null, payload.record.conversationId ?? null, payload.record.segmentIndex ?? 0, payload.record.cronTaskId ?? null);
+  db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id, conversation_id, segment_index, cron_task_id, silent_review_from, silent_review_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET created_at = excluded.created_at, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id, task_id = excluded.task_id, conversation_id = excluded.conversation_id, segment_index = excluded.segment_index, cron_task_id = COALESCE(excluded.cron_task_id, conversation_records.cron_task_id), silent_review_from = CASE WHEN excluded.silent_review_until > COALESCE(conversation_records.silent_review_until, '') THEN excluded.silent_review_from ELSE conversation_records.silent_review_from END, silent_review_until = CASE WHEN excluded.silent_review_until > COALESCE(conversation_records.silent_review_until, '') THEN excluded.silent_review_until ELSE conversation_records.silent_review_until END").run(projectId, payload.engine, payload.sessionId, payload.record.createdAt, payload.updatedAt, payload.originNodeId, payload.record.taskId ?? null, payload.record.conversationId ?? null, payload.record.segmentIndex ?? 0, payload.record.cronTaskId ?? null, payload.record.silentReviewFrom ?? null, payload.record.silentReviewUntil ?? null);
   db.prepare("DELETE FROM conversation_record_tombstones WHERE project_id = ? AND engine = ? AND session_id = ?").run(projectId, payload.engine, payload.sessionId);
 }
 

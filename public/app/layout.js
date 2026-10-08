@@ -126,7 +126,8 @@ function isDoneConversation(session) {
 
 /** Done conversations are out of sight — and out of the counts — until the reader asks for them. */
 function isVisible(session) {
-  return state.showDoneConversations || !isDoneConversation(session);
+  return (state.showDoneConversations || !isDoneConversation(session))
+    && (state.showScheduledConversations || !session.cronTaskId);
 }
 
 function matchesClassification(session) {

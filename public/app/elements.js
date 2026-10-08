@@ -356,6 +356,7 @@ export const elements = {
   taskReviewModelInput: document.querySelector("#taskReviewModelInput"),
   chatFilters: document.querySelector("#chatFilters"),
   showDoneConversations: document.querySelector("#showDoneConversations"),
+  showScheduledConversations: document.querySelector("#showScheduledConversations"),
   folderPickerDialog: document.querySelector("#folderPickerDialog"),
   folderPickerTitle: document.querySelector("#folderPickerTitle"),
   folderPickerParentButton: document.querySelector("#folderPickerParentButton"),

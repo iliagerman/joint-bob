@@ -19,6 +19,8 @@ interface ConversationStateInput {
   sessionId: string;
   updatedAt?: string;
   running: boolean;
+  silentReviewFrom?: string;
+  silentReviewUntil?: string;
 }
 
 interface ConversationStateRow {
@@ -187,7 +189,12 @@ export function syncConversationReviewDetails(userId: string, username: string, 
     const initializedAt = tracking?.initialized_at ?? now;
     if (!tracking) statements.insertTracking.run(userId, projectId, initializedAt);
     for (const session of sessions) {
-      const observedAt = activityTime(session.updatedAt, now);
+      const latestAt = activityTime(session.updatedAt, now);
+      // Silent runs leave the previous reviewable activity in place. This works
+      // even if a viewer polled mid-run or first saw the conversation afterward.
+      const observedAt = session.silentReviewFrom && session.silentReviewUntil
+        && latestAt > session.silentReviewFrom && latestAt <= session.silentReviewUntil
+        ? session.silentReviewFrom : latestAt;
       const remoteReviewedAt = remote.get(`${session.engine}\n${session.sessionId}`);
       const row = statements.select.get(userId, projectId, session.path) as unknown as ConversationStateRow | undefined;
       if (!row) {
