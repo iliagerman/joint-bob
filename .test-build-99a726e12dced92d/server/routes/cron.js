@@ -1,0 +1,118 @@
+import { z } from "zod";
+import { getClusterNode } from "../../cluster.js";
+import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
+import { cronInputSchema, cronRunSchema, cronStore } from "../../cron.js";
+import { ensureConversationRecord, markCronConversation } from "../../conversation-records.js";
+import { broadcastToProject } from "../realtime.js";
+import { getProject } from "../../store.js";
+import { cronConversationReady } from "../cron.js";
+import { sendError } from "../http-auth.js";
+import { registeredHarnessIdSchema } from "../schemas.js";
+import { app } from "../state.js";
+import { peerSnapshot, staleSnapshotReason } from "../peer-snapshots.js";
+const commandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("list"), projectId: z.string().min(1) }).strict(),
+  z.object({ action: z.literal("ready"), projectId: z.string().min(1), sessionId: z.string().min(1), engine: registeredHarnessIdSchema }).strict(),
+  z.object({ action: z.literal("create"), input: cronInputSchema }).strict(),
+  z.object({ action: z.literal("install"), id: z.string().uuid(), input: cronInputSchema, runs: z.array(cronRunSchema).max(100) }).strict(),
+  z.object({ action: z.literal("update"), id: z.string().uuid(), input: cronInputSchema }).strict(),
+  z.object({ action: z.literal("run"), id: z.string().uuid() }).strict(),
+  z.object({ action: z.literal("delete"), id: z.string().uuid() }).strict(),
+  z.object({ action: z.literal("history"), id: z.string().uuid() }).strict()
+]);
+async function routeCommand(nodeId, command, timeoutMs = 15e3) {
+  if (nodeId === (await getClusterNode()).id) return manageCron(command);
+  const peer = await getRuntimePeer(nodeId);
+  if (!peer) throw new Error("Scheduled task owner is unavailable");
+  const reply = await runtimeFetch(`${peer.url}/api/cluster/cron`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(command),
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  const body = await reply.json();
+  if (!reply.ok) throw new Error(body.error || `Scheduled task owner returned ${reply.status}`);
+  return body;
+}
+async function savedTask(task) {
+  if (task.sessionId) {
+    await ensureConversationRecord(task.projectId, task.engine, task.sessionId, task.ownerNodeId);
+    await markCronConversation(task.projectId, task.engine, task.sessionId, task.id, task.ownerNodeId);
+    broadcastToProject(task.projectId, { type: "sessionsChanged" });
+  }
+  return { task };
+}
+async function manageCron(command) {
+  const store = cronStore();
+  const local = await getClusterNode();
+  if (command.action === "list") {
+    const project2 = await getProject(command.projectId);
+    return { tasks: project2 ? store.list(project2.id) : [] };
+  }
+  if (command.action === "ready") return { ready: await cronConversationReady(command.projectId, command.sessionId, command.engine) };
+  if (command.action === "history") return { runs: store.history(command.id) };
+  if (command.action === "run") return { task: store.runNow(command.id) };
+  if (command.action === "delete") {
+    store.delete(command.id);
+    return { ok: true };
+  }
+  const project = await getProject(command.input.projectId);
+  if (!project) throw new Error("Project is not mapped on the execution node");
+  command.input.projectId = project.id;
+  if (command.input.sessionId) await cronConversationReady(command.input.projectId, command.input.sessionId, command.input.engine);
+  if (command.action === "create" || command.action === "install") {
+    if (command.input.ownerNodeId !== local.id) throw new Error("Task must be stored on its execution owner");
+    return savedTask(command.action === "create" ? store.create(command.input) : store.install(command.id, command.input, command.runs));
+  }
+  const previous = store.get(command.id);
+  if (!previous) throw new Error("Scheduled task not found");
+  if (store.active(command.id) && command.input.ownerNodeId !== previous.ownerNodeId) throw new Error("Wait for the scheduled run to finish before changing its execution node");
+  if (command.input.ownerNodeId === local.id) return savedTask(store.update(command.id, command.input));
+  const { id, nextRun, lastRun, ...input } = previous;
+  store.update(id, { ...input, enabled: false });
+  await routeCommand(command.input.ownerNodeId, { action: "install", id, input: { ...command.input, enabled: false }, runs: store.history(id) });
+  store.delete(id);
+  return routeCommand(command.input.ownerNodeId, { action: "update", id, input: command.input });
+}
+app.post("/api/cluster/cron", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) {
+      sendError(response, 401, "Unauthorized");
+      return;
+    }
+    response.json(await manageCron(commandSchema.parse(request.body)));
+  } catch (error) {
+    next(error);
+  }
+});
+app.post("/api/cron", async (request, response, next) => {
+  try {
+    const payload = z.object({ nodeId: z.string().uuid(), command: commandSchema }).strict().parse(request.body);
+    if (payload.command.action === "install") {
+      sendError(response, 403, "Task installation is reserved for owner transfer");
+      return;
+    }
+    response.json(await routeCommand(payload.nodeId, payload.command));
+  } catch (error) {
+    next(error);
+  }
+});
+app.get("/api/projects/:projectId/cron", async (request, response, next) => {
+  try {
+    const local = await getClusterNode();
+    const nodes = [local, ...await listRuntimePeers(request.params.projectId)];
+    const command = { action: "list", projectId: request.params.projectId };
+    const results = await Promise.all(nodes.map(async (node) => {
+      try {
+        if (node.id === local.id) return { nodeId: node.id, ...await routeCommand(node.id, command, 3e3) };
+        const remote = await peerSnapshot(`cron:${request.params.projectId}`, node.id, async () => await routeCommand(node.id, command, 3e3));
+        return { nodeId: node.id, ...remote.value, ...remote.fresh ? {} : { error: staleSnapshotReason(remote.fetchedAt) } };
+      } catch (error) {
+        return { nodeId: node.id, tasks: [], error: error instanceof Error ? error.message : String(error) };
+      }
+    }));
+    response.json({ tasks: results.flatMap((result) => result.tasks), errors: results.filter((result) => "error" in result) });
+  } catch (error) {
+    next(error);
+  }
+});

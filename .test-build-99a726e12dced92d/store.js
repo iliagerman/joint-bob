@@ -1,0 +1,842 @@
+import { inheritWorkspaceSharing } from "./selected-sharing.js";
+import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
+import { resolveDataDirectory } from "./data-directory.js";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { nanoid } from "nanoid";
+import { ensureWorkspaceSecretsMigration, rekeySecretAssignments } from "./secrets-migration.js";
+import { getClusterNode } from "./cluster.js";
+import {
+  applyResourcePolicy,
+  ensureResourceSharingSchema,
+  registerLocalSharingResource,
+  ResourceSharingError,
+  hasCurrentResourcePolicyContext
+} from "./cluster-sharing.js";
+import { resourceClusterIds } from "./cluster-sharing-policy.js";
+import {
+  ensureProjectMetadataSchema,
+  projectMetadataEnvelopeSchema,
+  projectMetadataVisible,
+  recordProjectMetadataReceipt,
+  storedProjectMetadata,
+  validateProjectMetadataVersion
+} from "./cluster-project-metadata.js";
+class WorkspaceError extends Error {
+}
+const reservedWorkspaceIds = /* @__PURE__ */ new Set(["projects", "tickets"]);
+const dataDir = resolveDataDirectory();
+const legacyStorePath = path.join(dataDir, "projects.json");
+const databasePath = path.join(dataDir, "node.db");
+let database = null;
+let databaseInitialization = null;
+let localNodeId = "";
+function slug(value) {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+}
+function generatedSyncFolderId(project) {
+  return `joint-bob-${slug(project.name)}-${project.id}`;
+}
+function rowToProject(db, row) {
+  const locationRows = db.prepare(`
+    SELECT node_id AS nodeId, path
+    FROM project_locations
+    WHERE project_id = ?
+    ORDER BY node_id
+  `).all(row.id);
+  const locations = locationRows.map((location) => ({ nodeId: location.nodeId, path: location.path }));
+  const sharing = db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind='project' AND resource_id=?").get(row.id);
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.workspace_id,
+    ...row.color ? { color: row.color } : {},
+    path: row.path,
+    ...row.mac_path ? { macPath: row.mac_path } : {},
+    ...row.sync_folder_id ? { syncFolderId: row.sync_folder_id } : {},
+    ...locations.length ? { locations } : {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...sharing ? {
+      ownerNodeId: sharing.owner_node_id,
+      locallyOwned: sharing.owner_node_id === localNodeId,
+      clusterIds: resourceClusterIds(db, localNodeId, "project", row.id)
+    } : {}
+  };
+}
+function saveProjectLocations(db, project, sourceNodeId) {
+  const locations = [...project.locations ?? []];
+  if (sourceNodeId) locations.push({ nodeId: sourceNodeId, path: project.path });
+  const save = db.prepare(`
+    INSERT INTO project_locations (project_id, node_id, path)
+    VALUES (?, ?, ?)
+    ON CONFLICT(project_id, node_id) DO UPDATE SET path = excluded.path
+  `);
+  for (const location of locations) save.run(project.id, location.nodeId, path.resolve(location.path));
+}
+function projectValues(project) {
+  return [
+    project.id,
+    project.name,
+    project.type ?? "personal",
+    project.color ?? null,
+    project.path,
+    project.macPath ?? null,
+    project.syncFolderId ?? null,
+    project.createdAt,
+    project.updatedAt
+  ];
+}
+function saveProject(db, project) {
+  db.prepare(`
+    INSERT INTO projects (id, name, workspace_id, color, path, mac_path, sync_folder_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      workspace_id = excluded.workspace_id,
+      color = excluded.color,
+      path = excluded.path,
+      mac_path = excluded.mac_path,
+      sync_folder_id = excluded.sync_folder_id,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at
+  `).run(...projectValues(project));
+}
+function saveNewLocalProject(db, project) {
+  db.exec("SAVEPOINT project_create");
+  try {
+    saveProject(db, project);
+    registerLocalSharingResource(db, localNodeId, { kind: "project", id: project.id });
+    inheritWorkspaceSharing(db, localNodeId, project.id, project.type ?? "personal");
+    db.exec("RELEASE project_create");
+  } catch (error) {
+    db.exec("ROLLBACK TO project_create; RELEASE project_create");
+    throw error;
+  }
+}
+function resolveProjectId(db, id) {
+  const project = db.prepare("SELECT id FROM projects WHERE id = ?").get(id);
+  if (project) return project.id;
+  const alias = db.prepare("SELECT project_id FROM project_aliases WHERE alias_id = ?").get(id);
+  if (!alias) return void 0;
+  return db.prepare("SELECT id FROM projects WHERE id = ?").get(alias.project_id)?.id;
+}
+function tableExists(db, name) {
+  return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
+}
+function tableHasColumn(db, table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((entry) => entry.name === column);
+}
+function compareVersion(left, right) {
+  return left.updated_at === right.updated_at ? left.origin_node_id.localeCompare(right.origin_node_id) : left.updated_at.localeCompare(right.updated_at);
+}
+function rekeyTaskTombstones(db, aliasId, projectId, hasTasks, migratedTaskIds) {
+  if (!tableExists(db, "task_tombstones")) return;
+  const aliases = db.prepare("SELECT task_id, updated_at, origin_node_id FROM task_tombstones WHERE project_id = ?").all(aliasId);
+  const aliasByTaskId = new Map(aliases.map((alias) => [alias.task_id, alias]));
+  const taskIds = /* @__PURE__ */ new Set([...migratedTaskIds, ...aliasByTaskId.keys()]);
+  const findTombstone = db.prepare("SELECT updated_at, origin_node_id FROM task_tombstones WHERE project_id = ? AND task_id = ?");
+  const findTask = hasTasks ? db.prepare("SELECT updated_at, origin_node_id FROM tasks WHERE project_id = ? AND id = ?") : void 0;
+  const deleteTombstone = db.prepare("DELETE FROM task_tombstones WHERE project_id = ? AND task_id = ?");
+  const saveTombstone = db.prepare("INSERT INTO task_tombstones (project_id, task_id, updated_at, origin_node_id) VALUES (?, ?, ?, ?) ON CONFLICT(project_id, task_id) DO UPDATE SET updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id");
+  const deleteTask = hasTasks ? db.prepare("DELETE FROM tasks WHERE project_id = ? AND id = ?") : void 0;
+  for (const taskId of taskIds) {
+    const alias = aliasByTaskId.get(taskId);
+    const task = findTask?.get(projectId, taskId);
+    const canonical = findTombstone.get(projectId, taskId);
+    const winner = [task, canonical, alias].filter((state) => Boolean(state)).reduce((current, state) => compareVersion(state, current) > 0 ? state : current);
+    if (winner === task) {
+      deleteTombstone.run(projectId, taskId);
+      if (alias) deleteTombstone.run(aliasId, taskId);
+      continue;
+    }
+    deleteTask?.run(projectId, taskId);
+    saveTombstone.run(projectId, taskId, winner.updated_at, winner.origin_node_id);
+    if (alias) deleteTombstone.run(aliasId, taskId);
+  }
+}
+function rekeyTasks(db, aliasId, projectId) {
+  const hasTasks = tableExists(db, "tasks");
+  const migratedTaskIds = hasTasks ? db.prepare("SELECT id FROM tasks WHERE project_id = ?").all(aliasId).map((task) => task.id) : [];
+  if (hasTasks) db.prepare("UPDATE tasks SET project_id = ? WHERE project_id = ?").run(projectId, aliasId);
+  rekeyTaskTombstones(db, aliasId, projectId, hasTasks, migratedTaskIds);
+}
+function rekeyTaskHandoffs(db, aliasId, projectId) {
+  if (!tableExists(db, "task_handoffs")) return;
+  const conflicts = db.prepare(`
+    SELECT alias.handoff_id AS alias_handoff_id, alias.task_id, alias.updated_at AS alias_updated_at,
+      canonical.handoff_id AS canonical_handoff_id, canonical.updated_at AS canonical_updated_at
+    FROM task_handoffs alias
+    JOIN task_handoffs canonical ON canonical.project_id = ?
+      AND canonical.task_id = alias.task_id
+      AND canonical.destination_node_id = alias.destination_node_id
+      AND canonical.direction = 'outgoing'
+      AND canonical.status IN ('pending', 'prepared')
+    WHERE alias.project_id = ?
+      AND alias.direction = 'outgoing'
+      AND alias.status IN ('pending', 'prepared')
+  `).all(projectId, aliasId);
+  const abort = db.prepare("UPDATE task_handoffs SET status = 'aborted' WHERE handoff_id = ?");
+  const moveActiveHandoff = tableExists(db, "tasks") ? db.prepare("UPDATE tasks SET active_handoff_id = ? WHERE project_id = ? AND id = ? AND active_handoff_id = ?") : void 0;
+  for (const conflict of conflicts) {
+    const alias = { updated_at: conflict.alias_updated_at, origin_node_id: conflict.alias_handoff_id };
+    const canonical = { updated_at: conflict.canonical_updated_at, origin_node_id: conflict.canonical_handoff_id };
+    const winner = compareVersion(alias, canonical) > 0 ? conflict.alias_handoff_id : conflict.canonical_handoff_id;
+    const loser = winner === conflict.alias_handoff_id ? conflict.canonical_handoff_id : conflict.alias_handoff_id;
+    abort.run(loser);
+    moveActiveHandoff?.run(winner, projectId, conflict.task_id, loser);
+  }
+  db.prepare("UPDATE task_handoffs SET project_id = ? WHERE project_id = ?").run(projectId, aliasId);
+}
+function rekeyProjectNames(db, aliasId, projectId) {
+  const hasOverrides = tableExists(db, "name_overrides");
+  const hasTombstones = tableExists(db, "name_override_tombstones");
+  if (!hasOverrides && !hasTombstones) return;
+  const states = [];
+  if (hasOverrides) states.push(...db.prepare("SELECT name, updated_at, origin_node_id FROM name_overrides WHERE scope = 'projects' AND key IN (?, ?)").all(aliasId, projectId).map((state) => ({ ...state, kind: "override" })));
+  if (hasTombstones) states.push(...db.prepare("SELECT updated_at, origin_node_id FROM name_override_tombstones WHERE scope = 'projects' AND key IN (?, ?)").all(aliasId, projectId).map((state) => ({ ...state, kind: "tombstone" })));
+  if (!states.length) return;
+  const winner = states.reduce((current, state) => compareVersion(state, current) > 0 ? state : current);
+  if (hasOverrides) db.prepare("DELETE FROM name_overrides WHERE scope = 'projects' AND key IN (?, ?)").run(aliasId, projectId);
+  if (hasTombstones) db.prepare("DELETE FROM name_override_tombstones WHERE scope = 'projects' AND key IN (?, ?)").run(aliasId, projectId);
+  if (winner.kind === "override") db.prepare("INSERT INTO name_overrides (scope, key, name, updated_at, origin_node_id) VALUES ('projects', ?, ?, ?, ?)").run(projectId, winner.name, winner.updated_at, winner.origin_node_id);
+  else db.prepare("INSERT INTO name_override_tombstones (scope, key, updated_at, origin_node_id) VALUES ('projects', ?, ?, ?)").run(projectId, winner.updated_at, winner.origin_node_id);
+}
+function rekeyProjectQueue(db, aliasId, projectId) {
+  if (!tableExists(db, "queued_prompts")) return;
+  const prefixLength = aliasId.length + 1;
+  for (const table of ["queued_prompts", "queued_prompt_tombstones"]) {
+    db.prepare(`UPDATE ${table} SET queue_key = ? || substr(queue_key, ?)
+      WHERE substr(queue_key, 1, ?) = ?`).run(projectId, prefixLength, prefixLength, `${aliasId}:`);
+  }
+  for (const table of ["queued_prompt_sequences", "queued_prompt_settings"]) {
+    const rows = db.prepare(`SELECT * FROM ${table} WHERE substr(queue_key, 1, ?) = ?`).all(prefixLength, `${aliasId}:`);
+    for (const row of rows) {
+      const key = projectId + String(row.queue_key).slice(aliasId.length);
+      if (table === "queued_prompt_sequences") {
+        db.prepare(`INSERT INTO queued_prompt_sequences VALUES (?, ?) ON CONFLICT(queue_key)
+          DO UPDATE SET sequence = MAX(sequence, excluded.sequence)`).run(key, row.sequence);
+      } else {
+        db.prepare(`INSERT INTO queued_prompt_settings VALUES (?, ?, ?) ON CONFLICT(queue_key)
+          DO UPDATE SET sequence = excluded.sequence, settings = excluded.settings
+          WHERE excluded.sequence > sequence`).run(key, row.sequence, row.settings);
+      }
+    }
+    db.prepare(`DELETE FROM ${table} WHERE substr(queue_key, 1, ?) = ?`).run(prefixLength, `${aliasId}:`);
+  }
+}
+function rekeyProjectState(db, aliasId, projectId) {
+  rekeyTasks(db, aliasId, projectId);
+  rekeyTaskHandoffs(db, aliasId, projectId);
+  rekeyProjectNames(db, aliasId, projectId);
+  rekeySecretAssignments(db, aliasId, projectId);
+  rekeyProjectQueue(db, aliasId, projectId);
+}
+function saveProjectAlias(db, aliasId, projectId) {
+  if (aliasId === projectId) return;
+  if (db.prepare("SELECT id FROM projects WHERE id = ?").get(aliasId)) throw new Error("Project alias cannot replace a canonical project ID");
+  if (!db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId)) throw new Error("Project alias target must be a canonical project");
+  db.prepare(`
+    INSERT INTO project_aliases (alias_id, project_id, created_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(alias_id) DO UPDATE SET project_id = excluded.project_id
+  `).run(aliasId, projectId, (/* @__PURE__ */ new Date()).toISOString());
+  rekeyProjectState(db, aliasId, projectId);
+}
+async function migrateLegacyProjects(db) {
+  const count = db.prepare("SELECT COUNT(*) AS count FROM projects").get();
+  if (count.count > 0) return;
+  let legacy;
+  try {
+    legacy = JSON.parse(await fs.readFile(legacyStorePath, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  db.exec("BEGIN");
+  try {
+    for (const project of legacy.projects ?? []) saveProject(db, project);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+function migrateWorkspaceSchema(db) {
+  if (tableExists(db, "project_types") && !tableExists(db, "workspaces")) db.exec("ALTER TABLE project_types RENAME TO workspaces");
+  if (tableExists(db, "projects") && tableHasColumn(db, "projects", "project_type") && !tableHasColumn(db, "projects", "workspace_id")) {
+    db.exec("ALTER TABLE projects RENAME COLUMN project_type TO workspace_id");
+  }
+}
+function dropWorkspaceCheckConstraint(db) {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'").get();
+  if (!row || !/CHECK\s*\(\s*workspace_id/i.test(row.sql)) return;
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(`
+        CREATE TABLE projects_rebuilt (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          workspace_id TEXT NOT NULL DEFAULT 'personal',
+          path TEXT NOT NULL UNIQUE,
+          mac_path TEXT,
+          sync_folder_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO projects_rebuilt (id, name, workspace_id, path, mac_path, sync_folder_id, created_at, updated_at)
+          SELECT id, name, workspace_id, path, mac_path, sync_folder_id, created_at, updated_at FROM projects;
+        DROP TABLE projects;
+        ALTER TABLE projects_rebuilt RENAME TO projects;
+        CREATE UNIQUE INDEX IF NOT EXISTS projects_sync_folder_id
+          ON projects(sync_folder_id) WHERE sync_folder_id IS NOT NULL;
+      `);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+const legacyGitHubTables = [
+  "github_accounts",
+  "github_project_auth",
+  "github_auth_migrations",
+  "github_legacy_file_migrations",
+  "github_account_tombstones",
+  "github_project_auth_tombstones",
+  "github_credential_events",
+  "github_credential_deliveries",
+  "github_credential_inbox"
+];
+function dropLegacyGitHubSchema(db) {
+  if (tableHasColumn(db, "workspaces", "github_group")) db.exec("ALTER TABLE workspaces DROP COLUMN github_group");
+  for (const table of legacyGitHubTables) db.exec(`DROP TABLE IF EXISTS ${table}`);
+}
+function seedTestWorkspaces(db) {
+  if (process.env.JOINT_BOB_TEST_DEFAULT_WORKSPACES !== "1") return;
+  if (db.prepare("SELECT COUNT(*) AS total FROM workspaces").get().total > 0) return;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const seed = db.prepare("INSERT INTO workspaces (id, label, created_at, updated_at) VALUES (?, ?, ?, ?)");
+  seed.run("personal", "Personal", now, now);
+  seed.run("work", "Work", now, now);
+}
+async function projectDatabase() {
+  if (database) return database;
+  databaseInitialization ??= initializeProjectDatabase().catch((error) => {
+    databaseInitialization = null;
+    throw error;
+  });
+  return databaseInitialization;
+}
+async function initializeProjectDatabase() {
+  await fs.mkdir(dataDir, { recursive: true, mode: 448 });
+  const db = new DatabaseSync(databasePath);
+  try {
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    migrateWorkspaceSchema(db);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT 'personal',
+        color TEXT,
+        path TEXT NOT NULL UNIQUE,
+        mac_path TEXT,
+        sync_folder_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS projects_sync_folder_id
+        ON projects(sync_folder_id) WHERE sync_folder_id IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS project_locations (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        node_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        PRIMARY KEY (project_id, node_id)
+      );
+      CREATE TABLE IF NOT EXISTS project_aliases (
+        alias_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS project_aliases_project_id ON project_aliases(project_id);
+      CREATE TABLE IF NOT EXISTS workspaces (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    if (!tableHasColumn(db, "projects", "workspace_id")) {
+      db.exec("ALTER TABLE projects ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'personal'");
+    }
+    dropWorkspaceCheckConstraint(db);
+    seedTestWorkspaces(db);
+    if (!tableHasColumn(db, "projects", "color")) {
+      db.exec("ALTER TABLE projects ADD COLUMN color TEXT");
+    }
+    ensureWorkspaceSecretsMigration(db);
+    dropLegacyGitHubSchema(db);
+    await migrateLegacyProjects(db);
+    ensureResourceSharingSchema(db);
+    mergeAllTwinWorkspaceCopies(db);
+    localNodeId = (await getClusterNode()).id;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+  database = db;
+  return db;
+}
+async function listProjects() {
+  const db = await projectDatabase();
+  const rows = db.prepare("SELECT * FROM projects ORDER BY updated_at DESC").all();
+  return rows.filter((row) => projectMetadataVisible(db, localNodeId, row.id)).map((row) => rowToProject(db, row));
+}
+async function canonicalProjectId(projectId) {
+  return resolveProjectId(await projectDatabase(), projectId);
+}
+function applyProjectResourcePolicyInDatabase(db, localNodeId2, senderNodeId, input) {
+  ensureResourceSharingSchema(db);
+  if (input.body.kind !== "project") throw new ResourceSharingError("Invalid project policy", 400);
+  const resourceId = input.body.resourceId;
+  const canonical = resolveProjectId(db, resourceId);
+  const hadOwnership = Boolean(db.prepare(
+    "SELECT 1 FROM sharing_resource_owners WHERE kind='project' AND resource_id=?"
+  ).get(resourceId));
+  applyResourcePolicy(db, localNodeId2, senderNodeId, input);
+  if (input.body.operation === "upsert" && canonical && (canonical !== resourceId || !hadOwnership)) {
+    throw new ResourceSharingError("Project identity requires adoption", 409);
+  }
+}
+async function applyProjectResourcePolicy(localNodeId2, senderNodeId, input) {
+  const db = await projectDatabase();
+  db.exec("SAVEPOINT project_policy_receive");
+  try {
+    applyProjectResourcePolicyInDatabase(db, localNodeId2, senderNodeId, input);
+    db.exec("RELEASE project_policy_receive");
+  } catch (error) {
+    db.exec("ROLLBACK TO project_policy_receive; RELEASE project_policy_receive");
+    throw error;
+  }
+}
+function replicaWorkspace(db, owner) {
+  ensureProjectMetadataSchema(db);
+  const workspaceId = `shared-${createHash("sha256").update(owner).digest("hex").slice(0, 24)}`;
+  const registry = db.prepare("SELECT owner_node_id FROM cluster_v2_project_workspaces WHERE workspace_id=?").get(workspaceId);
+  if (registry && registry.owner_node_id !== owner) throw new ResourceSharingError("Shared workspace owner conflict", 409);
+  const workspace = db.prepare("SELECT id FROM workspaces WHERE id=?").get(workspaceId);
+  if (workspace && !registry) throw new ResourceSharingError("Shared workspace identity conflict", 409);
+  if (!workspace) {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    db.prepare("INSERT INTO workspaces(id,label,created_at,updated_at) VALUES(?,?,?,?)").run(workspaceId, "Shared projects", now, now);
+    if (!registry) db.prepare("INSERT INTO cluster_v2_project_workspaces(workspace_id,owner_node_id) VALUES(?,?)").run(workspaceId, owner);
+  }
+  return workspaceId;
+}
+function isActiveTwin(db, nodeId) {
+  return tableExists(db, "cluster_v2_twin_relationships") && Boolean(db.prepare("SELECT 1 FROM cluster_v2_twin_relationships WHERE peer_node_id=? AND status='active'").get(nodeId));
+}
+function mergeTwinWorkspaceCopies(db, owner) {
+  const copies = db.prepare("SELECT source_workspace_id,workspace_id FROM cluster_v2_shared_workspaces WHERE owner_node_id=? AND workspace_id<>source_workspace_id").all(owner);
+  for (const copy of copies) {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    db.prepare("INSERT INTO workspaces(id,label,created_at,updated_at) SELECT ?,label,?,? FROM workspaces WHERE id=? ON CONFLICT(id) DO NOTHING").run(copy.source_workspace_id, now, now, copy.workspace_id);
+    db.prepare("UPDATE projects SET workspace_id=? WHERE workspace_id=?").run(copy.source_workspace_id, copy.workspace_id);
+    db.prepare("UPDATE OR IGNORE secret_assignments SET scope_id=? WHERE scope_type='workspace' AND scope_id=?").run(copy.source_workspace_id, copy.workspace_id);
+    db.prepare("DELETE FROM secret_assignments WHERE scope_type='workspace' AND scope_id=?").run(copy.workspace_id);
+    db.prepare("UPDATE cluster_v2_shared_workspaces SET workspace_id=? WHERE owner_node_id=? AND source_workspace_id=?").run(copy.source_workspace_id, owner, copy.source_workspace_id);
+    db.prepare("DELETE FROM workspaces WHERE id=?").run(copy.workspace_id);
+  }
+}
+function mergeAllTwinWorkspaceCopies(db) {
+  if (!tableExists(db, "cluster_v2_shared_workspaces")) return;
+  const owners = db.prepare("SELECT DISTINCT owner_node_id FROM cluster_v2_shared_workspaces WHERE workspace_id<>source_workspace_id").all();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const { owner_node_id } of owners) if (isActiveTwin(db, owner_node_id)) mergeTwinWorkspaceCopies(db, owner_node_id);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+function incomingWorkspace(db, envelope) {
+  const workspace = envelope.metadata.workspace, body = envelope.statement.body;
+  if (!workspace) return replicaWorkspace(db, body.ownerNodeId);
+  const merged = body.context.kind === "twin" || isActiveTwin(db, body.ownerNodeId);
+  const id = merged ? workspace.id : `shared-${createHash("sha256").update(`${body.ownerNodeId}\0${workspace.id}`).digest("hex").slice(0, 24)}`;
+  if (reservedWorkspaceIds.has(id)) throw new ResourceSharingError("Shared workspace ID is reserved", 409);
+  const mapping = db.prepare("SELECT workspace_id FROM cluster_v2_shared_workspaces WHERE owner_node_id=? AND source_workspace_id=?").get(body.ownerNodeId, workspace.id);
+  if (!merged && db.prepare("SELECT 1 FROM workspaces WHERE id=?").get(id) && mapping?.workspace_id !== id) throw new ResourceSharingError("Shared workspace identity conflict", 409);
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  db.prepare(`INSERT INTO workspaces(id,label,created_at,updated_at) VALUES(?,?,?,?)
+    ON CONFLICT(id) DO NOTHING`).run(id, workspace.label, now, now);
+  db.prepare("INSERT OR REPLACE INTO cluster_v2_shared_workspaces VALUES(?,?,?)").run(body.ownerNodeId, workspace.id, id);
+  return id;
+}
+function saveIncomingProject(db, envelope, managedHome) {
+  const body = envelope.statement.body;
+  const row = db.prepare("SELECT * FROM projects WHERE id=?").get(body.resourceId);
+  const workspaceId = incomingWorkspace(db, envelope);
+  if (tableExists(db, "name_overrides")) db.prepare("UPDATE name_overrides SET name=?,updated_at=? WHERE scope='projects' AND key=? AND origin_node_id=? AND updated_at<=?").run(envelope.metadata.name, envelope.metadata.updatedAt, body.resourceId, body.ownerNodeId, envelope.metadata.updatedAt);
+  if (row) {
+    saveProject(db, {
+      ...rowToProject(db, row),
+      name: envelope.metadata.name,
+      type: workspaceId,
+      ...envelope.metadata.syncFolderId ? { syncFolderId: envelope.metadata.syncFolderId } : {},
+      ...envelope.metadata.color ? { color: envelope.metadata.color } : { color: void 0 },
+      createdAt: envelope.metadata.createdAt,
+      updatedAt: envelope.metadata.updatedAt
+    });
+    return;
+  }
+  const digest = createHash("sha256").update(`${body.ownerNodeId}\0${body.resourceId}`).digest("hex");
+  const replicaPath = path.join(managedHome, workspaceId, "projects", digest);
+  if (db.prepare("SELECT 1 FROM projects WHERE path=? AND id<>?").get(replicaPath, body.resourceId)) {
+    throw new ResourceSharingError("Project path conflict", 409);
+  }
+  saveProject(db, {
+    id: body.resourceId,
+    name: envelope.metadata.name,
+    type: workspaceId,
+    ...envelope.metadata.color ? { color: envelope.metadata.color } : {},
+    path: replicaPath,
+    ...envelope.metadata.syncFolderId ? { syncFolderId: envelope.metadata.syncFolderId } : {},
+    createdAt: envelope.metadata.createdAt,
+    updatedAt: envelope.metadata.updatedAt
+  });
+}
+async function applyProjectMetadata(localNodeId2, senderNodeId, input, managedHome) {
+  const envelope = projectMetadataEnvelopeSchema.parse(input);
+  const body = envelope.statement.body;
+  if (body.kind !== "project" || body.operation !== "upsert") throw new ResourceSharingError("Invalid project metadata policy", 400);
+  if (senderNodeId !== body.ownerNodeId || body.writerNodeId !== body.ownerNodeId) {
+    throw new ResourceSharingError("Only original owner may send project metadata", 403);
+  }
+  const db = await projectDatabase();
+  db.exec("SAVEPOINT project_metadata_receive");
+  try {
+    applyProjectResourcePolicyInDatabase(db, localNodeId2, senderNodeId, envelope.statement);
+    if (!hasCurrentResourcePolicyContext(db, localNodeId2, envelope.statement)) {
+      throw new ResourceSharingError("Unauthorized project metadata context", 403);
+    }
+    if (isActiveTwin(db, body.ownerNodeId)) mergeTwinWorkspaceCopies(db, body.ownerNodeId);
+    const isNewer = validateProjectMetadataVersion(db, envelope);
+    const nativeProject = db.prepare("SELECT 1 FROM projects WHERE id=?").get(body.resourceId);
+    if (isNewer) saveIncomingProject(db, envelope, managedHome);
+    else if (!nativeProject) {
+      const metadata = storedProjectMetadata(db, body.ownerNodeId, body.resourceId);
+      if (!metadata) throw new Error("Stored project metadata is missing");
+      saveIncomingProject(db, { ...envelope, metadata }, managedHome);
+    }
+    recordProjectMetadataReceipt(db, envelope);
+    db.exec("RELEASE project_metadata_receive");
+  } catch (error) {
+    db.exec("ROLLBACK TO project_metadata_receive; RELEASE project_metadata_receive");
+    throw error;
+  }
+}
+async function projectAliasIds(projectId) {
+  const db = await projectDatabase();
+  const canonicalId = resolveProjectId(db, projectId);
+  if (!canonicalId) return [];
+  return db.prepare("SELECT alias_id FROM project_aliases WHERE project_id = ? ORDER BY alias_id").all(canonicalId).map((row) => row.alias_id);
+}
+async function registerProjectAliases(projectId, aliasIds) {
+  const db = await projectDatabase();
+  const canonicalId = resolveProjectId(db, projectId);
+  if (!canonicalId) throw new Error("Project not found");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const aliasId of [...new Set(aliasIds)].sort()) {
+      if (aliasId !== canonicalId) saveProjectAlias(db, aliasId, canonicalId);
+      if (aliasId !== canonicalId && db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'secret_assignments'").get()) {
+        db.prepare("INSERT OR IGNORE INTO secret_assignments (scope_type, scope_id, account_id) SELECT 'project', ?, account_id FROM secret_assignments WHERE scope_type = 'project' AND scope_id = ?").run(canonicalId, aliasId);
+        db.prepare("DELETE FROM secret_assignments WHERE scope_type = 'project' AND scope_id = ?").run(aliasId);
+      }
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+async function getProject(projectId) {
+  const db = await projectDatabase();
+  const canonicalId = resolveProjectId(db, projectId);
+  if (!canonicalId) return void 0;
+  const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(canonicalId);
+  if (!row) return void 0;
+  if (!projectMetadataVisible(db, localNodeId, row.id)) return void 0;
+  return rowToProject(db, row);
+}
+async function addProject(name, folderPath, options = {}) {
+  const resolvedPath = path.resolve(folderPath);
+  await fs.mkdir(resolvedPath, { recursive: true });
+  const info = await fs.stat(resolvedPath);
+  if (!info.isDirectory()) throw new Error("Project path must be a directory");
+  const db = await projectDatabase();
+  const row = db.prepare("SELECT * FROM projects WHERE path = ?").get(resolvedPath);
+  if (row) {
+    const duplicate = rowToProject(db, row);
+    const requestedMacPath = options.macPath ? path.resolve(options.macPath) : void 0;
+    if (requestedMacPath && duplicate.macPath !== requestedMacPath || options.type && duplicate.type !== options.type) {
+      if (requestedMacPath) duplicate.macPath = requestedMacPath;
+      if (options.type) duplicate.type = options.type;
+      duplicate.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+      saveProject(db, duplicate);
+    }
+    return duplicate;
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const projectName = name.trim() || path.basename(resolvedPath) || resolvedPath;
+  const id = nanoid(10);
+  const configuredRemotePath = options.macPath;
+  const project = {
+    id,
+    name: projectName,
+    type: options.type ?? "personal",
+    path: resolvedPath,
+    ...options.color ? { color: options.color } : {},
+    ...configuredRemotePath ? { macPath: path.resolve(configuredRemotePath) } : {},
+    ...options.synced ? { syncFolderId: options.syncFolderId ?? generatedSyncFolderId({ id, name: projectName }) } : {},
+    createdAt: now,
+    updatedAt: now
+  };
+  saveNewLocalProject(db, project);
+  return project;
+}
+async function importProject(project, localPath, sourceNodeId) {
+  const db = await projectDatabase();
+  const resolvedLocalPath = localPath ? path.resolve(localPath) : null;
+  const incomingId = resolveProjectId(db, project.id) ?? project.id;
+  const existingRow = db.prepare(`
+    SELECT * FROM projects
+    WHERE id = ?
+      OR (sync_folder_id IS NOT NULL AND sync_folder_id = ?)
+      OR (? IS NOT NULL AND path = ?)
+  `).get(incomingId, project.syncFolderId ?? null, resolvedLocalPath, resolvedLocalPath);
+  if (existingRow) {
+    const existing = rowToProject(db, existingRow);
+    existing.name = project.name;
+    existing.type = project.type ?? existing.type ?? "personal";
+    if (project.color) existing.color = project.color;
+    else delete existing.color;
+    if (!existing.macPath || existing.macPath === path.resolve(project.path)) {
+      existing.macPath = path.resolve(project.macPath ?? project.path);
+    }
+    existing.syncFolderId = project.syncFolderId ?? existing.syncFolderId;
+    existing.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      saveProject(db, existing);
+      saveProjectLocations(db, { ...project, id: existing.id }, sourceNodeId);
+      saveProjectAlias(db, project.id, existing.id);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    return await getProject(existing.id);
+  }
+  if (!localPath) throw new Error(`Project ${project.name} requires a local folder mapping`);
+  if (db.prepare("SELECT 1 FROM project_aliases WHERE alias_id = ?").get(project.id)) throw new Error("Project ID is already an alias");
+  const resolvedPath = path.resolve(localPath);
+  await fs.mkdir(resolvedPath, { recursive: true });
+  const info = await fs.stat(resolvedPath);
+  if (!info.isDirectory()) throw new Error("Local project mapping must be a directory");
+  const imported = {
+    ...project,
+    path: resolvedPath,
+    macPath: path.resolve(project.macPath ?? project.path),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    saveProject(db, imported);
+    saveProjectLocations(db, imported, sourceNodeId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return await getProject(imported.id);
+}
+async function renameProject(projectId, name) {
+  const project = await getProject(projectId);
+  if (!project) throw new Error("Project not found");
+  project.name = name.trim();
+  project.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  saveProject(await projectDatabase(), project);
+  return project;
+}
+async function updateProjectColor(projectId, color) {
+  const project = await getProject(projectId);
+  if (!project) throw new Error("Project not found");
+  if (color) project.color = color;
+  else delete project.color;
+  project.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  saveProject(await projectDatabase(), project);
+  return project;
+}
+async function updateProjectWorkspaceAndPath(projectId, workspaceId, folderPath) {
+  const db = await projectDatabase();
+  const canonicalId = resolveProjectId(db, projectId);
+  if (!canonicalId) throw new Error("Project not found");
+  const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(canonicalId);
+  const project = rowToProject(db, row);
+  const nextPath = path.resolve(folderPath);
+  const updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE projects SET workspace_id = ?, path = ?, updated_at = ? WHERE id = ?").run(workspaceId, nextPath, updatedAt, canonicalId);
+    db.prepare("UPDATE project_locations SET path = ? WHERE project_id = ? AND path = ?").run(nextPath, canonicalId, project.path);
+    inheritWorkspaceSharing(db, localNodeId, canonicalId, workspaceId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return await getProject(canonicalId);
+}
+async function updateProjectMacPath(projectId, macPath) {
+  const project = await getProject(projectId);
+  if (!project) throw new Error("Project not found");
+  project.macPath = path.resolve(macPath);
+  project.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  saveProject(await projectDatabase(), project);
+  return project;
+}
+async function updateProjectSyncFolderId(projectId, syncFolderId) {
+  const project = await getProject(projectId);
+  if (!project) throw new Error("Project not found");
+  project.syncFolderId = syncFolderId;
+  project.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  saveProject(await projectDatabase(), project);
+  return project;
+}
+async function removeProject(projectId) {
+  const db = await projectDatabase();
+  let ownedAccountIds = [];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const canonicalId = resolveProjectId(db, projectId);
+    if (!canonicalId) {
+      db.exec("COMMIT");
+      return;
+    }
+    const aliasIds = db.prepare("SELECT alias_id FROM project_aliases WHERE project_id = ?").all(canonicalId).map((row) => row.alias_id);
+    const projectIds = [canonicalId, ...aliasIds];
+    const placeholders = projectIds.map(() => "?").join(", ");
+    if (tableExists(db, "tasks") && db.prepare(`SELECT 1 FROM tasks WHERE project_id IN (${placeholders}) AND (execution_state = 'running' OR (lease_owner_node_id IS NOT NULL AND lease_expires_at > ?))`).get(...projectIds, (/* @__PURE__ */ new Date()).toISOString())) throw new Error("Wait for task agents to finish before deleting project");
+    if (tableExists(db, "task_handoffs")) {
+      if (db.prepare("SELECT 1 FROM task_handoffs WHERE project_id = ? AND status IN ('pending', 'prepared')").get(canonicalId)) throw new Error("Settle task handoffs before deleting project");
+      const unacknowledgedCommitted = tableHasColumn(db, "task_handoffs", "acknowledged_at") ? db.prepare("SELECT 1 FROM task_handoffs WHERE project_id = ? AND status = 'committed' AND acknowledged_at IS NULL").get(canonicalId) : db.prepare("SELECT 1 FROM task_handoffs WHERE project_id = ? AND status = 'committed'").get(canonicalId);
+      if (unacknowledgedCommitted) throw new Error("Wait for task handoff settlement before deleting project");
+    }
+    if (tableExists(db, "tasks")) db.prepare(`DELETE FROM tasks WHERE project_id IN (${placeholders})`).run(...projectIds);
+    if (tableExists(db, "task_tombstones")) db.prepare(`DELETE FROM task_tombstones WHERE project_id IN (${placeholders})`).run(...projectIds);
+    if (tableExists(db, "task_migrations")) db.prepare(`DELETE FROM task_migrations WHERE project_id IN (${placeholders})`).run(...projectIds);
+    if (tableExists(db, "task_handoffs")) db.prepare(`DELETE FROM task_handoffs WHERE project_id IN (${placeholders}) AND (status = 'aborted' OR (direction = 'outgoing' AND status = 'committed'))`).run(...projectIds);
+    if (tableExists(db, "name_overrides")) db.prepare(`DELETE FROM name_overrides WHERE scope = 'projects' AND key IN (${placeholders})`).run(...projectIds);
+    if (tableExists(db, "name_override_tombstones")) db.prepare(`DELETE FROM name_override_tombstones WHERE scope = 'projects' AND key IN (${placeholders})`).run(...projectIds);
+    db.prepare(`DELETE FROM secret_assignments WHERE scope_type = 'project' AND scope_id IN (${placeholders})`).run(...projectIds);
+    ownedAccountIds = db.prepare(`SELECT id FROM secret_accounts WHERE project_id IN (${placeholders})`).all(...projectIds).map((row) => row.id);
+    db.prepare(`DELETE FROM secret_assignments WHERE account_id IN (SELECT id FROM secret_accounts WHERE project_id IN (${placeholders}))`).run(...projectIds);
+    db.prepare(`DELETE FROM secret_accounts WHERE project_id IN (${placeholders})`).run(...projectIds);
+    db.prepare("DELETE FROM projects WHERE id = ?").run(canonicalId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  for (const id of ownedAccountIds) await fs.rm(path.join(resolveDataDirectory(), "secret-files", id), { recursive: true, force: true });
+}
+async function touchProject(projectId) {
+  const db = await projectDatabase();
+  const canonicalId = resolveProjectId(db, projectId);
+  if (canonicalId) db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run((/* @__PURE__ */ new Date()).toISOString(), canonicalId);
+}
+function workspaceIdFromLabel(label) {
+  return label.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-._]+|[-._]+$/g, "");
+}
+async function listWorkspaces() {
+  const db = await projectDatabase();
+  const rows = db.prepare("SELECT id, label FROM workspaces ORDER BY created_at, id").all();
+  const sharedTable = db.prepare("SELECT 1 FROM sqlite_master WHERE name='cluster_v2_shared_workspaces'").get();
+  const endpointTable = db.prepare("SELECT 1 FROM sqlite_master WHERE name='cluster_v2_peer_endpoints'").get();
+  const owner = sharedTable ? db.prepare("SELECT owner_node_id FROM cluster_v2_shared_workspaces WHERE workspace_id=? AND workspace_id<>source_workspace_id LIMIT 1") : void 0;
+  const name = endpointTable ? db.prepare("SELECT name FROM cluster_v2_peer_endpoints WHERE node_id=? LIMIT 1") : void 0;
+  return rows.map((row) => {
+    const nodeId = owner?.get(row.id)?.owner_node_id;
+    if (!nodeId) return { id: row.id, label: row.label };
+    return { id: row.id, label: row.label, source: { nodeId, name: name?.get(nodeId)?.name ?? nodeId } };
+  });
+}
+async function saveWorkspace(input) {
+  const db = await projectDatabase();
+  const label = input.label.trim();
+  if (!label || label.length > 40) throw new WorkspaceError("Workspace name must be 1 to 40 characters");
+  const id = workspaceIdFromLabel(input.id?.trim() || label);
+  if (!id) throw new WorkspaceError("Workspace name must contain a letter or a number");
+  if (reservedWorkspaceIds.has(id)) throw new WorkspaceError(`"${id}" is reserved by the managed workspace`);
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  db.prepare(`
+    INSERT INTO workspaces (id, label, created_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      label = excluded.label,
+      updated_at = excluded.updated_at
+  `).run(id, label, now, now);
+  return { id, label };
+}
+async function deleteWorkspace(workspaceId) {
+  const db = await projectDatabase();
+  ensureProjectMetadataSchema(db);
+  const used = db.prepare("SELECT COUNT(*) AS total FROM projects WHERE workspace_id = ?").get(workspaceId);
+  if (used.total > 0) throw new WorkspaceError("Move or delete this workspace's projects before deleting it");
+  const remaining = db.prepare("SELECT COUNT(*) AS total FROM workspaces").get();
+  if (remaining.total <= 1) throw new WorkspaceError("Keep at least one workspace");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM secret_assignments WHERE scope_type = 'workspace' AND scope_id = ?").run(workspaceId);
+    db.prepare("DELETE FROM cluster_v2_project_workspaces WHERE workspace_id = ?").run(workspaceId);
+    db.prepare("DELETE FROM cluster_v2_shared_workspaces WHERE workspace_id = ?").run(workspaceId);
+    db.prepare("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+export {
+  WorkspaceError,
+  addProject,
+  applyProjectMetadata,
+  applyProjectResourcePolicy,
+  canonicalProjectId,
+  deleteWorkspace,
+  getProject,
+  importProject,
+  listProjects,
+  listWorkspaces,
+  projectAliasIds,
+  registerProjectAliases,
+  removeProject,
+  renameProject,
+  saveWorkspace,
+  touchProject,
+  updateProjectColor,
+  updateProjectMacPath,
+  updateProjectSyncFolderId,
+  updateProjectWorkspaceAndPath,
+  workspaceIdFromLabel
+};

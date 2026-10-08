@@ -227,7 +227,7 @@ test("worktree changes list edits, additions and deletions, never local files, a
   try {
     const worktree = await createProjectWorktree(project, { name: "Changes", createdBy: { engine: "claude", conversationId: "c1" } }, worktrees);
     assert.deepEqual(worktree.createdBy, { engine: "claude", conversationId: "c1" });
-    assert.deepEqual(await worktreeChanges(project.id, worktree.id, worktrees), { gitBase: null, writes: [], deletes: [] });
+    assert.deepEqual(await worktreeChanges(project.id, worktree.id, worktrees), { gitBase: null, writes: [], deletes: [], uncommittedPaths: [] });
     await writeFile(path.join(worktree.path, "src/index.ts"), "export const value = 2;\n");
     await writeFile(path.join(worktree.path, "src/run.sh"), "#!/bin/sh\n", { mode: 0o755 });
     await rm(path.join(worktree.path, "src/remove.ts"));
@@ -240,6 +240,7 @@ test("worktree changes list edits, additions and deletions, never local files, a
       ["src/run.sh", "#!/bin/sh\n", true],
     ]);
     assert.deepEqual(changes.deletes, ["src/remove.ts"]);
+    assert.deepEqual(changes.uncommittedPaths, []);
 
     const pullRequest = { number: 7, url: "https://github.com/o/r/pull/7", branch: "joint-bob/changes-1", base: "main", baseCommit: "a".repeat(40) };
     assert.deepEqual((await recordWorktreePullRequest(project.id, worktree.id, pullRequest, worktrees)).pullRequest, pullRequest);
@@ -247,6 +248,79 @@ test("worktree changes list edits, additions and deletions, never local files, a
 
     await writeFile(path.join(worktree.path, ".joint-bob-baseline/manifest.json"), "{\"version\":1,\"files\":{}}\n");
     await assert.rejects(worktreeChanges(project.id, worktree.id, worktrees), /baseline changed/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function fixtureWithGit(): Promise<{ root: string; worktrees: string; project: ProjectRecord }> {
+  const { root, worktrees, project } = await fixture();
+  const { execSync } = await import("node:child_process");
+  // Initialize git repo, commit some files, then add uncommitted changes
+  execSync("git init -b main && git config user.email test@test.com && git config user.name Test", { cwd: project.path });
+  execSync("git add src/index.ts README.md && git commit -m initial", { cwd: project.path });
+  return { root, worktrees, project };
+}
+
+test("creating a worktree captures uncommitted changes in base.patch that syncs between machines", async () => {
+  const { root, worktrees, project } = await fixtureWithGit();
+  const { execSync } = await import("node:child_process");
+  try {
+    // Add uncommitted changes to a tracked file
+    await writeFile(path.join(project.path, "src/index.ts"), "export const value = 99;\n");
+
+    const worktree = await createProjectWorktree(project, { name: "With Patch" }, worktrees);
+
+    // Verify base.patch exists and contains the uncommitted changes
+    const patchPath = path.join(worktree.path, WORKTREE_META_DIR, "base.patch");
+    assert.ok(await exists(patchPath), "base.patch should exist");
+    const patch = await readFile(patchPath, "utf8");
+    assert.ok(patch.includes("src/index.ts"), "patch should mention changed file");
+    assert.ok(patch.includes("export const value = 99"), "patch should contain new content");
+
+    // Verify gitBase is set to the commit, not the dirty state
+    const head = execSync("git rev-parse HEAD", { cwd: project.path, encoding: "utf8" }).trim();
+    const changes = await worktreeChanges(project.id, worktree.id, worktrees);
+    assert.equal(changes.gitBase, head);
+
+    // base.patch is inside WORKTREE_META_DIR which syncs via Syncthing
+    // The file exists in the worktree folder that is shared
+    assert.ok(await exists(path.join(worktree.path, WORKTREE_META_DIR)));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("worktreeChanges reports uncommittedPaths when agent edits files that had uncommitted changes at creation", async () => {
+  const { root, worktrees, project } = await fixtureWithGit();
+  try {
+    // Add uncommitted changes to src/index.ts
+    await writeFile(path.join(project.path, "src/index.ts"), "export const value = 99;\n");
+
+    const worktree = await createProjectWorktree(project, { name: "Dirty Base" }, worktrees);
+
+    // Agent edits the same file that had uncommitted changes
+    await writeFile(path.join(worktree.path, "src/index.ts"), "export const value = 100;\n");
+
+    const changes = await worktreeChanges(project.id, worktree.id, worktrees);
+    assert.deepEqual(changes.uncommittedPaths, ["src/index.ts"], "should report file that had uncommitted changes");
+
+    // Agent edits a different file (README.md was committed)
+    await writeFile(path.join(worktree.path, "README.md"), "# Updated\n");
+    const changes2 = await worktreeChanges(project.id, worktree.id, worktrees);
+    assert.deepEqual(changes2.uncommittedPaths, ["src/index.ts"], "should still only report the uncommitted file");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("worktreeChanges returns empty uncommittedPaths when no base.patch exists (non-git project)", async () => {
+  const { root, worktrees, project } = await fixture();
+  try {
+    const worktree = await createProjectWorktree(project, { name: "No Git" }, worktrees);
+    await writeFile(path.join(worktree.path, "src/index.ts"), "export const value = 2;\n");
+    const changes = await worktreeChanges(project.id, worktree.id, worktrees);
+    assert.deepEqual(changes.uncommittedPaths, []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
