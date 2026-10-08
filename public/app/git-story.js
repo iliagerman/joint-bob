@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, apiLines } from "./api.js";
 import { openDiffDialog } from "./git-diff-view.js";
 import { h, s } from "./git-story-dom.js";
 import { diagramLegend, mountStoryDiagram } from "./git-story-diagram.js";
@@ -24,9 +24,8 @@ const story = {
   // Picking commits from history instead of explaining the conversation.
   picking: false,
   pick: { tab: "pushes", pushes: null, history: null, error: "", selected: new Map(), typed: "", typedError: "", adding: false },
-  // Stream progress
-  streamProgress: 0,
-  streamSections: {},
+  // The facts and sections received so far while a story is being written.
+  draft: null,
 };
 
 const PICK_LIMIT = 20;
@@ -76,24 +75,25 @@ export function resetStory(ctx) {
   story.pages = {};
   story.picking = false;
   story.pick = { tab: "pushes", pushes: null, history: null, error: "", selected: new Map(), typed: "", typedError: "", adding: false };
+  story.draft = null;
 }
 
 export function storyCommitCount() { return story.commits.length; }
 export function storyIsFresh() { return Boolean(story.latest?.freshness.fresh); }
 export function storyHasSaved() { return Boolean(story.latest); }
 export function storyPicking() { return story.picking; }
-export function storyFromCommits() { return story.latest?.saved.sources.kind === "commits"; }
+export function storyFromCommits() { return shown()?.saved.sources?.kind === "commits"; }
 /** The commits to explain on Generate: picked ones, or the shown commits story's own when regenerating it. */
 export function storyCommitsToExplain() {
   if (story.picking) return [...story.pick.selected.keys()];
-  return storyFromCommits() && story.state !== "empty" ? story.latest.saved.sources.commits : null;
+  return story.latest?.saved.sources.kind === "commits" && story.state !== "empty" ? story.latest.saved.sources.commits : null;
 }
 export function storyHidesScope() { return story.picking || storyFromCommits(); }
 
 /** Label and status text for the shared reviewer bar while the Story tab is open. */
 export function storyChrome() {
   const freshness = story.latest?.freshness;
-  if (story.state === "writing") return { button: "Writing…", disabled: true, status: "Writing the story. The reviewer reads but never edits. This can take a few minutes." };
+  if (story.state === "writing") return { button: "Writing…", disabled: true, status: "Writing the story. Each section opens as soon as the reviewer finishes it. The reviewer reads but never edits." };
   if (story.state === "loading" || story.state === "idle") return { button: "Generate story", disabled: true, status: "Loading the saved story…" };
   if (story.picking && story.state !== "rejected") {
     const count = story.pick.selected.size;
@@ -137,83 +137,82 @@ export async function generateStory(payload) {
   const request = ++story.request;
   story.state = "writing";
   story.error = "";
-  story.streamProgress = 0;
-  story.streamSections = {};
+  story.draft = { facts: null, patches: [], sources: null, story: {}, checking: false };
+  story.section = "overview";
+  story.phase = 0;
+  story.example = 0;
+  story.step = 0;
+  story.pages = {};
   changed();
+  let finished = false;
   try {
-    const url = story.ctx.apiUrl("story-stream");
-    const response = await fetch(url, { method: "POST", body: JSON.stringify(payload) });
-
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("No response body");
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const chunk = JSON.parse(line.slice(6));
-            if (request !== story.request) return;
-
-            if (chunk.error) {
-              story.state = "rejected";
-              story.error = chunk.error;
-              changed();
-              return;
-            }
-
-            if (chunk.section === "complete") {
-              // Full story is complete
-              story.latest = {
-                thread: chunk.thread,
-                saved: chunk.saved,
-                freshness: chunk.freshness,
-              };
-              story.state = "ready";
-              story.picking = false;
-              story.section = "overview";
-              story.phase = 0;
-              story.example = 0;
-              story.step = 0;
-              story.pages = {};
-              changed();
-              return;
-            }
-
-            if (chunk.section && chunk.section !== "complete") {
-              story.streamProgress = chunk.progress || 0;
-              story.streamSections = story.streamSections || {};
-              story.streamSections[chunk.section] = chunk.data;
-              changed();
-            } else if (chunk.section === "complete") {
-              story.streamProgress = 100;
-              changed();
-            }
-          } catch (e) {
-            console.error("Failed to parse chunk:", line, e);
-          }
-        }
-      }
-    }
+    await apiLines(story.ctx.apiUrl("story"), { method: "POST", body: JSON.stringify(payload) }, (line) => {
+      if (request !== story.request) return;
+      if (line.type === "error") throw new Error(line.error);
+      if (line.type === "facts") Object.assign(story.draft, { facts: line.facts, patches: line.patches, sources: line.sources });
+      else if (line.type === "section") {
+        if (line.section === "title") Object.assign(story.draft.story, line.data);
+        else story.draft.story[line.section] = line.data;
+      } else if (line.type === "checking") story.draft.checking = true;
+      else if (line.type === "done") {
+        finished = true;
+        // The reader keeps the section and page they were on.
+        story.latest = { thread: line.thread, saved: line.saved, freshness: line.freshness };
+        story.state = "ready";
+        story.picking = false;
+        story.draft = null;
+      } else return;
+      changed();
+    });
+    if (request === story.request && !finished) throw new Error("The connection closed before the story finished. If the reviewer completed it, it is saved; reopen the Story tab to check.");
   } catch (error) {
     if (request !== story.request) return;
     story.state = "rejected";
     story.error = error.message;
+    story.draft = null;
     changed();
   }
+}
+
+// Sections a reader can open while the story is being written, and what each one needs.
+const DRAFT_PARTS = ["overview", "diagram", "timeline", "examples", "implementation"];
+const SECTION_NEEDS = { overview: ["overview"], conversation: ["timeline"], examples: ["diagram", "examples"], implementation: ["implementation"] };
+
+/** The story on screen: the saved one, or the parts written so far. */
+function shown() {
+  if (story.state !== "writing" || !story.draft) return story.latest;
+  const { facts, patches, sources, story: written } = story.draft;
+  return { saved: { facts, patches, sources, story: written } };
+}
+
+function sectionReady(id) {
+  if (story.state !== "writing") return true;
+  if (id === "conversation" && storyFromCommits()) return true;
+  return SECTION_NEEDS[id].every((part) => story.draft.story[part]);
+}
+
+function draftPercent() {
+  const written = DRAFT_PARTS.filter((part) => story.draft.story[part]).length;
+  return story.draft.checking ? 95 : Math.round((written / DRAFT_PARTS.length) * 90);
+}
+
+function progressBar(percent) {
+  return h("span", { class: "gs-progress", role: "progressbar", "aria-label": "Story progress", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(percent) },
+    h("span", { style: `width:${percent}%` }));
+}
+
+function draftBanner() {
+  const written = DRAFT_PARTS.filter((part) => story.draft.story[part]).length;
+  const percent = draftPercent();
+  return h("div", { class: "gs-banner is-writing", role: "status", "data-testid": "git-story-progress" },
+    h("span", { class: "git-review-spinner", "aria-hidden": "true" }),
+    h("b", {}, story.draft.checking ? "Checking" : "Writing"),
+    h("span", {}, story.draft.checking
+      ? "Every part is written. The server is checking each file, turn and diagram step before it saves the story."
+      : `${written} of ${DRAFT_PARTS.length} parts written. Open sections now; the rest fill in as the reviewer writes them.`),
+    h("span", { class: "gs-spacer" }),
+    progressBar(percent),
+    h("span", { class: "gs-muted gs-small" }, `${percent}%`));
 }
 
 /* ---- Paging: rows per page come from the height the list gets ---- */
@@ -271,11 +270,11 @@ function pagedList(box, key, items, heightOf, renderItem, noun, continuedHeader,
 /* ---- Links out of the story ---- */
 
 function fileFact(path) {
-  return story.latest?.saved.facts.files.find((file) => file.path === path);
+  return shown()?.saved.facts.files.find((file) => file.path === path);
 }
 
 function showDiff(path) {
-  const { saved } = story.latest;
+  const { saved } = shown();
   const file = fileFact(path);
   const commits = new Map(saved.facts.commits.map((commit) => [commit.shortHash, commit]));
   openDiffDialog({
@@ -299,7 +298,7 @@ const normalize = (text) => text.replace(/\s+/g, " ").trim();
 
 // Chat bubbles carry no message id, so the turn's user bubble is found by its text.
 function revealTurn(n) {
-  const turn = story.latest.saved.facts.turns.find((item) => item.n === n);
+  const turn = shown().saved.facts.turns.find((item) => item.n === n);
   const needle = normalize(turn?.user ?? "").slice(0, 80);
   const bubble = needle && [...document.querySelectorAll("#messages .message.user .message-content")].find((content) => normalize(content.textContent).includes(needle))?.closest(".message");
   if (!bubble) { toast(`Turn ${n} is not loaded in the chat. Scroll up in the conversation to load earlier messages.`, 6000); return; }
@@ -316,7 +315,12 @@ export function renderStory() {
   if (!container || container.hidden) return;
   container.replaceChildren();
   if (story.state === "idle" || story.state === "loading") { container.append(loadingPanel("Loading the saved story…")); return; }
-  if (story.state === "writing") { container.append(writingPanel()); return; }
+  if (story.state === "writing") {
+    if (!story.draft?.facts || !story.draft.story.title || !story.draft.story.overview) { container.append(writingPanel()); return; }
+    container.append(draftBanner(), storyHead(), storyBody());
+    renderSection();
+    return;
+  }
   if (story.state === "rejected") { container.append(errorPanel("Story rejected", story.error, true)); return; }
   if (story.picking) { renderPicker(container); return; }
   if (story.state === "empty") { container.append(emptyPanel()); return; }
@@ -333,21 +337,14 @@ function loadingPanel(message) {
 }
 
 function writingPanel() {
-  const sections = ["overview", "diagram", "timeline", "examples", "implementation"];
-  const completed = sections.filter((s) => story.streamSections[s]).length;
-  const progress = story.streamProgress || 0;
-
+  const percent = story.draft ? draftPercent() : 0;
+  const part = (id, label) => h("li", { class: story.draft?.story[id] ? "is-done" : "" }, h("span", { "aria-hidden": "true" }, story.draft?.story[id] ? "✓" : "·"), label);
   return h("div", { class: "gs-state" }, h("div", { class: "gs-state-card", "data-testid": "git-story-writing" },
     h("div", { class: "git-review-loading-head" }, h("span", { class: "git-review-spinner", "aria-hidden": "true" }), h("h3", {}, "Writing the story")),
     h("p", {}, story.picking ? "The reviewer reads the picked commits in a separate session with every tool turned off. Then the server checks every file and diagram step the story mentions." : "The reviewer reads this conversation and its changes in a separate session with every tool turned off. Then the server checks every file, turn and diagram step the story mentions."),
-    h("div", { class: "gs-progress-container" },
-      h("div", { class: "gs-progress-bar", "aria-valuenow": String(progress), "aria-valuemin": "0", "aria-valuemax": "100", style: `--progress: ${progress}%` }),
-      h("span", { class: "gs-progress-text" }, `${progress}%`)),
-    sections.map((section) =>
-      h("div", { class: `gs-progress-section${story.streamSections[section] ? " is-complete" : ""}` },
-        h("span", { class: story.streamSections[section] ? "gs-progress-icon" : "gs-progress-spinner" }, story.streamSections[section] ? "✓" : "…"),
-        h("span", {}, section.charAt(0).toUpperCase() + section.slice(1)))),
-    h("p", { class: "gs-state-note" }, "Nothing is posted to the chat while this runs. You can close the Git view; the story is saved when it finishes.")));
+    h("div", { class: "gs-progress-row" }, progressBar(percent), h("span", { class: "gs-muted gs-small" }, story.draft?.facts ? `${percent}%` : "Reading the changes…")),
+    h("ul", { class: "gs-progress-list" }, part("overview", "Overview"), part("diagram", "Flow diagram"), part("timeline", storyFromCommits() ? "Commits" : "Conversation"), part("examples", "Examples"), part("implementation", "Implementation")),
+    h("p", { class: "gs-state-note" }, "The story opens as soon as its first section is written. Nothing is posted to the chat. You can close the Git view; the story is saved when it finishes.")));
 }
 
 function emptyPanel() {
@@ -394,12 +391,14 @@ function outdatedBanner(freshness) {
 }
 
 function storyHead() {
-  const { saved, thread, freshness } = story.latest;
+  const { saved } = shown();
+  const { thread, freshness } = story.latest ?? {};
+  const draft = story.state === "writing";
   const { facts } = saved;
   const pending = facts.files.filter((file) => file.where.includes("pending")).length;
   return h("header", { class: "gs-head" },
     h("div", { class: "gs-title" }, h("span", { class: "gs-pill is-accent" }, saved.story.kind), h("h3", { "data-testid": "git-story-title" }, saved.story.title)),
-    h("div", { class: "gs-actions" },
+    draft ? h("div", { class: "gs-actions" }, h("span", { class: "gs-pill is-info" }, "Being written")) : h("div", { class: "gs-actions" },
       h("span", { class: freshness.fresh ? "gs-pill is-accent" : "gs-pill is-amber" }, freshness.fresh ? "Fresh" : "Outdated"),
       storyFromCommits() && story.ctx.conversationId ? h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-explain-conversation", onclick: () => story.ctx.generate({ conversation: true }) }, "Explain this conversation") : null,
       h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-pick", onclick: openPicker }, "Explain other commits"),
@@ -411,7 +410,7 @@ function storyHead() {
       storyFromCommits() ? `${plural(facts.commits.length, "picked commit")}` : `${plural(facts.commits.length, "commit")} + ${plural(pending, "pending file")}`,
       facts.conversation ? ` · ${facts.turns.length} turns` : "",
       facts.omitted?.length ? h("span", { class: "gs-del", "data-testid": "git-story-omitted", title: `The reviewer saw only line counts for: ${facts.omitted.join(", ")}` }, ` · ${plural(facts.omitted.length, "diff")} too large to read`) : "",
-      ` · ${thread.harnessId} · ${thread.modelId} · ${thread.thinkingLevel} · written ${relativeTime(thread.createdAt)}`));
+      draft ? " · not checked yet" : ` · ${thread.harnessId} · ${thread.modelId} · ${thread.thinkingLevel} · written ${relativeTime(thread.createdAt)}`));
 }
 
 function storySections() {
@@ -432,8 +431,11 @@ function storyBody() {
         renderStory();
         document.getElementById(`gitStoryRail-${story.section}`)?.focus();
       },
-    }, h("span", { class: "gs-rail-num" }, String(index + 1)), h("span", {}, h("b", {}, section.title), h("small", {}, section.sub)))),
-    h("p", { class: "gs-rail-foot" }, `Read only. Nothing here was posted to the chat. Saved until ${new Date(story.latest.thread.expiresAt).toLocaleDateString()}.`));
+    }, h("span", { class: "gs-rail-num" }, sectionReady(section.id) ? String(index + 1) : h("span", { class: "git-review-spinner", "aria-hidden": "true" })),
+      h("span", {}, h("b", {}, section.title), h("small", {}, sectionReady(section.id) ? section.sub : "Being written…")))),
+    h("p", { class: "gs-rail-foot" }, story.state === "writing"
+      ? "Sections open as the reviewer finishes them. The server checks the whole story before saving it."
+      : `Read only. Nothing here was posted to the chat. Saved until ${new Date(story.latest.thread.expiresAt).toLocaleDateString()}.`));
   return h("div", { class: "gs-body" }, rail, h("section", { class: "gs-section", id: "gitStorySection", role: "tabpanel", "aria-labelledby": `gitStoryRail-${story.section}`, "data-testid": "git-story-panel" }));
 }
 
@@ -441,13 +443,24 @@ function renderSection() {
   const section = story.ctx.container.querySelector("#gitStorySection");
   if (!section) return;
   section.replaceChildren();
+  if (!sectionReady(story.section)) {
+    const title = storySections().find((item) => item.id === story.section).title;
+    section.append(sectionHead(title), pendingBlock(`The reviewer is still writing ${title.toLowerCase()}. It opens here when it is done.`));
+    return;
+  }
   ({ overview: renderOverview, conversation: renderConversation, examples: renderExamples, implementation: renderImplementation })[story.section](section);
 }
 
 export function refitStory() {
   if (!story.ctx?.container || story.ctx.container.hidden) return;
   if (story.picking && story.state !== "writing" && story.state !== "rejected") renderStory();
-  else if (story.state === "ready") renderSection();
+  else if (story.state === "ready" || story.ctx.container.querySelector("#gitStorySection")) renderSection();
+}
+
+function pendingBlock(message) {
+  return h("div", { class: "git-review-loading", role: "status", "data-testid": "git-story-pending" },
+    h("div", { class: "git-review-loading-head" }, h("span", { class: "git-review-spinner", "aria-hidden": "true" }), h("span", {}, message)),
+    [1, 2, 3].map(() => h("span", { class: "git-review-skeleton", "aria-hidden": "true" })));
 }
 
 function sectionHead(title, hint) {
@@ -455,28 +468,28 @@ function sectionHead(title, hint) {
 }
 
 function renderOverview(section) {
-  const { overview, diagram } = story.latest.saved.story;
+  const { overview, diagram } = shown().saved.story;
   const card = (label, body) => h("div", { class: "gs-card" }, h("p", { class: "gs-label" }, label), body);
   const canvas = h("div", { class: "gs-canvas" });
-  const wrap = h("div", { class: "gs-diagram" }, canvas, diagramLegend(diagram));
+  const wrap = diagram ? h("div", { class: "gs-diagram" }, canvas, diagramLegend(diagram)) : null;
   section.append(
     h("div", { class: "gs-explain" },
       card("What changed", h("p", {}, overview.what)),
       card("Why", h("p", {}, overview.why)),
       card("What you will notice", h("ul", {}, overview.notice.map((text) => h("li", {}, text))))),
     overview.unchanged ? h("p", { class: "gs-unchanged" }, overview.unchanged) : null,
-    sectionHead("How it flows", "Click a step to see what it does and which files implement it."),
-    wrap);
-  mountStoryDiagram(wrap, canvas, diagram, { fileLine });
+    sectionHead("How it flows", diagram ? "Click a step to see what it does and which files implement it." : ""),
+    diagram ? wrap : pendingBlock("The reviewer is drawing the flow diagram."));
+  if (diagram) mountStoryDiagram(wrap, canvas, diagram, { fileLine });
 }
 
 function phaseFiles(phase) {
-  const { turns } = story.latest.saved.facts;
+  const { turns } = shown().saved.facts;
   return [...new Set(phase.turns.flatMap((n) => turns.find((turn) => turn.n === n)?.paths ?? []))];
 }
 
 function phaseCommits(phase) {
-  return story.latest.saved.facts.commits.filter((commit) => phase.turns.includes(commit.turn));
+  return shown().saved.facts.commits.filter((commit) => phase.turns.includes(commit.turn));
 }
 
 function selectPhase(index) {
@@ -486,7 +499,7 @@ function selectPhase(index) {
 }
 
 function renderCommitsSection(section) {
-  const { facts } = story.latest.saved;
+  const { facts } = shown().saved;
   const box = h("div", { class: "gs-paged gs-impl" });
   section.append(sectionHead("Commits in this story", `${plural(facts.commits.length, "commit")}, oldest first. There is no conversation behind this story.`), box);
   pagedList(box, "story-commits", facts.commits, () => 44, (commit) => h("div", { class: "gs-check-row gs-commit-row", "data-testid": "git-story-commit" },
@@ -496,7 +509,7 @@ function renderCommitsSection(section) {
 }
 
 function renderConversation(section) {
-  const { saved } = story.latest;
+  const { saved } = shown();
   const { facts, story: written } = saved;
   if (saved.sources.kind === "commits") { renderCommitsSection(section); return; }
   if (!facts.conversation || !written.timeline.length) {
@@ -523,7 +536,7 @@ function renderConversation(section) {
 }
 
 function drawStrip(box) {
-  const { facts, story: written } = story.latest.saved;
+  const { facts, story: written } = shown().saved;
   const width = box.clientWidth;
   const height = box.clientHeight;
   const turns = facts.turns;
@@ -575,7 +588,7 @@ function phaseRow({ phase, index }) {
   if (files.length) chips.push(h("span", { class: "gs-pill" }, `${files.length} file${files.length === 1 ? "" : "s"}`));
   for (const commit of commits.slice(0, 2)) chips.push(h("span", { class: "gs-where" }, commit.shortHash));
   if (phase.pivot) chips.push(h("span", { class: "gs-pill is-amber" }, "Changed direction"));
-  const firstTurn = story.latest.saved.facts.turns.find((turn) => turn.n === phase.turns[0]);
+  const firstTurn = shown().saved.facts.turns.find((turn) => turn.n === phase.turns[0]);
   return h("button", {
     class: `gs-phase-row${index === story.phase ? " is-active" : ""}${phase.quiet ? " is-quiet" : ""}`, type: "button", "data-testid": "git-story-phase",
     "aria-current": index === story.phase ? "step" : null, onclick: () => { story.phase = index; renderSection(); },
@@ -585,8 +598,8 @@ function phaseRow({ phase, index }) {
 }
 
 function fillPhaseDetail(detail) {
-  const phase = story.latest.saved.story.timeline[story.phase];
-  const facts = story.latest.saved.facts;
+  const phase = shown().saved.story.timeline[story.phase];
+  const facts = shown().saved.facts;
   const firstTurn = facts.turns.find((turn) => turn.n === phase.turns[0]);
   const files = phaseFiles(phase);
   const commits = phaseCommits(phase);
@@ -620,7 +633,7 @@ function traceFor(example, stepIndex) {
 }
 
 function renderExamples(section) {
-  const { examples, diagram } = story.latest.saved.story;
+  const { examples, diagram } = shown().saved.story;
   story.example = Math.min(story.example, examples.length - 1);
   story.step = Math.min(story.step, examples[story.example].steps.length - 1);
   const canvas = h("div", { class: "gs-canvas", style: "bottom:0" });
@@ -642,7 +655,7 @@ function scenarioRow({ example, index }) {
 }
 
 function fillScenario(box) {
-  const example = story.latest.saved.story.examples[story.example];
+  const example = shown().saved.story.examples[story.example];
   const step = example.steps[story.step];
   const go = (index) => { story.step = index; renderSection(); };
   box.replaceChildren(
@@ -664,7 +677,7 @@ function fillScenario(box) {
 }
 
 function renderImplementation(section) {
-  const { facts, story: written } = story.latest.saved;
+  const { facts, story: written } = shown().saved;
   const impl = written.implementation;
   const tabs = [
     { id: "components", label: "Components", count: facts.files.length },
@@ -688,7 +701,7 @@ function renderImplementation(section) {
 }
 
 function fillComponents(box) {
-  const { files } = story.latest.saved.facts;
+  const { files } = shown().saved.facts;
   const items = [];
   for (const area of [...new Set(files.map((file) => file.area))]) {
     const inArea = files.filter((file) => file.area === area);
@@ -702,7 +715,7 @@ function fillComponents(box) {
 function componentRow(item) {
   if (item.type === "group") return h("div", { class: "gs-group-row" }, item.area, h("small", {}, item.continued ? "continued" : `${item.count} file${item.count === 1 ? "" : "s"} · +${item.add} −${item.del}`));
   const { file } = item;
-  const what = story.latest.saved.story.implementation.what[file.path] ?? "";
+  const what = shown().saved.story.implementation.what[file.path] ?? "";
   return h("div", { class: "gs-file-row", "data-testid": "git-story-file" },
     h("span", { class: `git-review-kind is-${file.kind}` }, file.kind),
     h("code", { title: file.path }, file.path),
@@ -713,7 +726,7 @@ function componentRow(item) {
 }
 
 function fillDecisions(box) {
-  const { decisions } = story.latest.saved.story.implementation;
+  const { decisions } = shown().saved.story.implementation;
   box.replaceChildren();
   if (!decisions.length) { box.append(h("p", { class: "gs-muted" }, "The reviewer recorded no decisions.")); return; }
   const rows = h("div", { class: "gs-paged-rows" });

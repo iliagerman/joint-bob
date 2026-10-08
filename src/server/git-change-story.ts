@@ -5,12 +5,13 @@ import type { HarnessId, ProjectRecord } from "../types.js";
 import { buildTurns, loadConversationMessages, type ConversationTurn } from "./conversation-turns.js";
 import { pendingReviewDiff } from "./git-review-guide.js";
 import { runGitReview } from "./git-review-run.js";
+import { createTopLevelFieldScanner } from "./story-json-scanner.js";
 
 /** The question text that marks a review thread as a saved change story. */
 export const CHANGE_STORY_MARKER = "Generated change story";
 
-export const STORY_DIFF_LIMIT = 70_000;
-export const STORY_INPUT_LIMIT = 115_000;
+const STORY_DIFF_LIMIT = 70_000;
+const STORY_INPUT_LIMIT = 115_000;
 const DIGEST_LIMIT = 24_000;
 const COMMIT_LIMIT = 20;
 
@@ -18,7 +19,7 @@ const words = (max: number) => z.string().trim().min(1).max(max);
 const optionalWords = (max: number) => z.string().trim().max(max).default("");
 const NODE_KINDS = ["action", "decision", "process", "model", "store", "source", "error"] as const;
 
-export const storySchema = z.object({
+const storySchema = z.object({
   kind: z.enum(["Feature", "Fix", "Refactor", "Tests", "Docs", "Chore"]),
   title: words(120),
   overview: z.object({
@@ -271,7 +272,7 @@ export function turnDigest(turns: ConversationTurn[], facts: StoryFacts): string
   return turns.map((turn) => render(turn, 80)).join("\n\n").slice(-DIGEST_LIMIT);
 }
 
-export const STORY_INSTRUCTIONS = `You write a change story: an explanation of code changes for a developer who has not read the code. Read the conversation digest and the diff, then return ONLY one JSON object, no prose and no code fences:
+const STORY_INSTRUCTIONS = `You write a change story: an explanation of code changes for a developer who has not read the code. Read the conversation digest and the diff, then return ONLY one JSON object, no prose and no code fences:
 {"kind":"Feature"|"Fix"|"Refactor"|"Tests"|"Docs"|"Chore","title":string,
  "overview":{"what":string,"why":string,"notice":[string],"unchanged":string},
  "diagram":{"lanes":[{"id":string,"label":string}],"nodes":[{"id":string,"lane":string,"kind":"action"|"decision"|"process"|"model"|"store"|"source"|"error","label":string,"sub":string,"text":string,"files":[path]}],"edges":[{"from":id,"to":id,"label":string,"style":"solid"|"dashed"|"bad"}]},
@@ -295,12 +296,40 @@ export interface GenerateChangeStoryInput {
   provider: string;
   modelId: string;
   thinkingLevel: string;
+  /** Reports the facts as soon as they are read, then each story section the moment the reviewer finishes it. */
+  onProgress?: (event: StoryProgress) => void;
+}
+
+export const STORY_SECTIONS = ["title", "overview", "diagram", "timeline", "examples", "implementation"] as const;
+export type StorySection = typeof STORY_SECTIONS[number];
+export type StoryProgress =
+  | { type: "facts"; facts: StoryFacts; patches: StoryPatch[]; sources: StorySources }
+  | { type: "section"; section: StorySection; data: unknown }
+  | { type: "checking" };
+
+// Sections arrive unchecked; the whole story is still validated before it is saved.
+function sectionScanner(report: (section: StorySection, data: unknown) => void) {
+  const head: { kind?: unknown; title?: unknown } = {};
+  return createTopLevelFieldScanner((key, value) => {
+    if (key === "kind" || key === "title") {
+      head[key] = value;
+      const parsed = storySchema.pick({ kind: true, title: true }).safeParse(head);
+      if (parsed.success) report("title", parsed.data);
+      return;
+    }
+    if (!(STORY_SECTIONS as readonly string[]).includes(key)) return;
+    const parsed = storySchema.shape[key as Exclude<StorySection, "title">].safeParse(value);
+    if (parsed.success) report(key as StorySection, parsed.data);
+  });
 }
 
 export async function generateChangeStory(input: GenerateChangeStoryInput): Promise<SavedChangeStory & { diff: string }> {
   const { project, cwd, conversationId, sources } = input;
   const collected = await collectStorySources(project, cwd, conversationId, sources);
   const { facts, patches } = collected;
+  const report = (event: StoryProgress) => { try { input.onProgress?.(event); } catch { /* a closed client must not stop the story */ } };
+  report({ type: "facts", facts, patches, sources });
+  const scan = input.onProgress ? sectionScanner((section, data) => report({ type: "section", section, data })) : undefined;
   const diff = patches.map((patch) => `# ${patch.source === "pending" ? "Pending, not committed" : `Commit ${patch.source}`}\n${patch.patch}`).join("\n");
   const commits = facts.commits.map((commit) => `${commit.shortHash}${commit.turn ? ` (turn ${commit.turn})` : ""}${commit.date ? ` ${commit.date}` : ""}: ${commit.subject}${commit.body ? `\n  ${commit.body.replace(/\n/g, "\n  ")}` : ""}`).join("\n");
   const prompt = [
@@ -317,7 +346,9 @@ export async function generateChangeStory(input: GenerateChangeStoryInput): Prom
   const result = await runGitReview({
     projectId: project.id, cwd, harnessId: input.harnessId, provider: input.provider, modelId: input.modelId, thinkingLevel: input.thinkingLevel,
     selection: { scope: "worktree" }, question: "", diff: prompt, instructions: STORY_INSTRUCTIONS,
+    onText: scan,
   });
+  report({ type: "checking" });
   let parsed: unknown;
   try { parsed = parseJson(result.answer); } catch { throw new GitReviewError(422, "Story rejected. The reviewer did not return valid JSON."); }
   const checked = storySchema.safeParse(parsed);

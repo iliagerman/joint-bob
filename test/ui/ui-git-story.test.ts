@@ -170,6 +170,75 @@ test("Story tab writes a story out of band, explains it in four sections, and op
   assert.equal(await page.getByTestId("git-review-generate").innerText(), "Generate review comments");
 });
 
+test("Story tab opens each section while the reviewer is still writing the rest", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  // The story route streams JSON lines; the test pushes each line when it wants the next state.
+  // A string, not a function: the test compiler would add helpers the page does not have.
+  await page.addInitScript(`
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (!new URL(String(input), location.href).pathname.endsWith("/git/story")) return realFetch(input, init);
+      window.storyHeaders = Object.fromEntries(new Headers(init && init.headers).entries());
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({ start(controller) {
+        window.storyStream = { push: (line) => controller.enqueue(encoder.encode(JSON.stringify(line) + "\\n")), end: () => controller.close() };
+      } });
+      return Promise.resolve(new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }));
+    };
+  `);
+  await page.route("**/api/projects/*/git/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/status")) return route.fulfill({ json: status });
+    if (url.pathname.endsWith("/scope")) return route.fulfill({ json: { paths: ["app.ts", "app.test.ts"], lastHarness: "claude" } });
+    if (url.pathname.endsWith("/guide-latest")) return route.fulfill({ json: { latest: null } });
+    if (url.pathname.endsWith("/story-latest")) return route.fulfill({ json: { latest: null, commits: [{ shortHash: "abc1234", subject: "feat: greet" }] } });
+    return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
+  });
+  const push = (...lines: unknown[]) => page.evaluate((items) => {
+    const win = window as unknown as { storyStream: { push: (line: unknown) => void } };
+    for (const line of items) win.storyStream.push(line);
+  }, lines);
+  const section = (name: string, data: unknown) => ({ type: "section", section: name, data });
+  await mockReviewers(page);
+  await openGit(page, environment, node.url);
+  await page.getByTestId("git-review-tab-story").click();
+  await page.getByTestId("git-story-generate").click();
+  await page.getByTestId("git-story-writing").waitFor();
+  await page.waitForFunction(() => Boolean((window as unknown as { storyStream?: unknown }).storyStream));
+  const headers = await page.evaluate(() => (window as unknown as { storyHeaders: Record<string, string> }).storyHeaders);
+  assert.ok(headers["x-csrf-token"], "the streamed request carries the CSRF token");
+  assert.match(headers.accept, /application\/x-ndjson/);
+  assert.match(await page.getByTestId("git-story-writing").innerText(), /Reading the changes/);
+
+  await push({ type: "facts", facts, patches, sources: saved.sources }, section("title", { kind: written.kind, title: written.title }), section("overview", written.overview));
+  await page.getByTestId("git-story-progress").waitFor();
+  assert.equal(await page.getByTestId("git-story-title").innerText(), "Greeting with an empty-name error");
+  assert.match(await page.getByTestId("git-story-progress").innerText(), /1 of 5 parts written/);
+  assert.match(await page.getByTestId("git-story-panel").innerText(), /The page greets the user by name\.[\s\S]*drawing the flow diagram/);
+  assert.match(await page.getByTestId("git-story-section-implementation").innerText(), /Being written/);
+  await page.getByTestId("git-story-section-implementation").click();
+  await page.getByTestId("git-story-panel").getByTestId("git-story-pending").waitFor();
+
+  await push(section("diagram", written.diagram), section("timeline", written.timeline), section("examples", written.examples));
+  await page.getByTestId("git-story-section-examples").click();
+  await page.getByTestId("git-story-step").first().waitFor();
+  assert.match(await page.getByTestId("git-story-progress").innerText(), /4 of 5 parts written/);
+
+  await page.getByTestId("git-story-section-implementation").click();
+  await push(section("implementation", written.implementation));
+  await page.getByTestId("git-story-file").first().waitFor();
+  assert.equal(await page.getByTestId("git-story-file").count(), 2);
+  await push({ type: "checking" });
+  await page.getByTestId("git-story-progress").filter({ hasText: "Checking" }).waitFor();
+
+  await push({ type: "done", thread, saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } });
+  await page.evaluate(() => (window as unknown as { storyStream: { end: () => void } }).storyStream.end());
+  await page.getByTestId("git-story-progress").waitFor({ state: "detached" });
+  assert.equal(await page.getByTestId("git-story-file").count(), 2, "the reader stays on the section they were reading");
+  assert.equal(await page.getByTestId("git-review-generate").innerText(), "Regenerate story");
+  assert.equal(await page.getByTestId("git-review-story-dot").isVisible(), true);
+});
+
 test("Story tab marks a saved story outdated and offers Regenerate", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await page.route("**/api/projects/*/git/**", async (route) => {

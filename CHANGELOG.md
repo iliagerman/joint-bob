@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.55.1 — 2026-10-08
+
+- Fixed story generation, which 2.55.0 refused on every request with "API error: 403".
+- Story sections opened as soon as the reviewer finished writing each one, with a progress bar and per-section status showing which sections were still being written.
+
 ## 2.55.0 — 2026-10-07
 
 - Story generation displays real-time progress as sections complete, eliminating the wait for full explanations.

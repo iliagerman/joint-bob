@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { gitPushHistory } from "../src/git-review.js";
 import { buildTurns, commitHashesIn } from "../src/server/conversation-turns.js";
 import { checkStory, fileArea, fitPatches, lineCounts, sourcesFromTurns, turnDigest, type ChangeStory } from "../src/server/git-change-story.js";
+import { createTopLevelFieldScanner } from "../src/server/story-json-scanner.js";
 
 const git = promisify(execFile);
 
@@ -45,6 +46,21 @@ test("turns split at user messages and collect commit hashes from git output onl
   assert.equal(turns[0].at, "2026-10-05T10:00:00.000Z");
   assert.match(turns[0].assistant, /Committed app.ts/);
   assert.deepEqual(commitHashesIn("[detached HEAD (root-commit) abcdef1] x"), ["abcdef1"]);
+});
+
+test("the scanner reports each top-level field once, as soon as the model finishes writing it", () => {
+  const written = { ...story(), overview: { what: 'Braces { and ] and "quotes" stay text.', why: "Back\\slash \\\" escapes.", notice: ["a,b"], unchanged: "" }, count: 3, flag: true };
+  const text = `\`\`\`json\n${JSON.stringify(written, null, 2)}\n\`\`\``;
+  const seen: Array<[string, unknown]> = [];
+  const scan = createTopLevelFieldScanner((key, value) => seen.push([key, value]));
+  const overviewEnds = text.indexOf('"diagram"');
+  for (let end = 1; end <= text.length; end += 7) {
+    scan(text.slice(0, end));
+    if (end < overviewEnds) assert.ok(!seen.some(([key]) => key === "diagram"), "the diagram is not reported before it is written");
+  }
+  scan(text);
+  assert.deepEqual(seen.map(([key]) => key), ["kind", "title", "overview", "diagram", "timeline", "examples", "implementation", "count", "flag"]);
+  assert.deepEqual(Object.fromEntries(seen), written);
 });
 
 test("a valid story passes and every unknown reference is rejected by name", () => {
