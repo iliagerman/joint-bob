@@ -2,6 +2,7 @@ import { loadWorktrees } from "./worktrees.js";
 import { harnessIdFromPath, harnessLabel } from "../harness-metadata.js";
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
+import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
@@ -611,6 +612,9 @@ function scheduleAgentRunPoll() {
 
 /** Server "something changed" notices and the loader each one re-runs. Both sockets share it. */
 const INVALIDATION_HANDLERS = {
+  cronChanged: () => {
+    if (state.activeProjectId) loadHiddenCronTasks(state.activeProjectId).catch((error) => console.warn("Could not load scheduled task visibility", error));
+  },
   sessionsChanged: () => {
     refreshSessionsQuietly();
     // A worktree that arrived by sync has no notice of its own; the list refresh picks it up.
@@ -660,6 +664,11 @@ async function refreshSessionSnapshot(projectId) {
     if (state.activeProjectId !== projectId) return;
     const newlyNeedsReview = body.sessions.some((session) => session.reviewState === "needs_review" && previousStates.get(session.path) !== "needs_review");
     state.sessions = body.sessions;
+    if (body.sessions.some((session) => session.cronTaskId && !state.knownCronTaskIds.has(session.cronTaskId))) {
+      try { await loadHiddenCronTasks(projectId); }
+      catch (error) { console.warn("Could not load scheduled task visibility", error); }
+      if (state.activeProjectId !== projectId) return;
+    }
     const nowRunning = state.sessions.filter((session) => session.running).map((session) => session.path);
     if (nowRunning.length !== previouslyRunning.size || nowRunning.some((path) => !previouslyRunning.has(path))) scheduleRunningRefresh();
     const activeSession = state.sessions.find((session) => session.id === state.activeSessionId || session.path === state.activeSessionPath);

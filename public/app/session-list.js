@@ -68,6 +68,8 @@ export function renderSessions() {
     button.disabled = newSessionDisabled || !state.harnesses.find(({ id }) => id === button.dataset.harnessId).ready;
   }
   renderClassificationFilter();
+  elements.showDoneConversations.checked = state.showDoneConversations;
+  elements.showScheduledConversations.checked = state.showScheduledConversations;
   updateChatFilterCounts();
   elements.markAllReviewedButton.disabled = !project || !reviewableSessions().length;
 
@@ -515,13 +517,22 @@ for (const button of elements.chatFilters.querySelectorAll("button[data-filter]"
 }
 syncChatFilterChips();
 elements.sessionSearchInput.addEventListener("input", () => renderSessions());
+function saveProjectVisibility() {
+  if (!state.activeProjectId) return;
+  state.projectConversationVisibility = {
+    ...state.projectConversationVisibility,
+    [state.activeProjectId]: { done: state.showDoneConversations, scheduled: state.showScheduledConversations },
+  };
+  if (state.preferencesLoaded) savePreferencesInBackground({ projectConversationVisibility: state.projectConversationVisibility });
+  renderSessions();
+}
 elements.showDoneConversations.addEventListener("change", () => {
   state.showDoneConversations = elements.showDoneConversations.checked;
-  renderSessions();
+  saveProjectVisibility();
 });
 elements.showScheduledConversations.addEventListener("change", () => {
   state.showScheduledConversations = elements.showScheduledConversations.checked;
-  renderSessions();
+  saveProjectVisibility();
 });
 classificationFilter.onChange((values) => {
   state.classificationFilters = values;

@@ -120,6 +120,9 @@ export const state = {
   // Conversations the user has closed out are hidden until this is switched on.
   showDoneConversations: false,
   showScheduledConversations: false,
+  projectConversationVisibility: {},
+  hiddenCronTaskIds: new Set(),
+  knownCronTaskIds: new Set(),
   conversationLabels: [],
   conversationCommands: null,
   watchSocket: null,

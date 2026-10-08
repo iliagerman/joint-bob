@@ -86,6 +86,7 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   })()`), true);
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Conversation browser cron") && document.querySelector("#cronList").textContent.includes("Existing conversation") && document.querySelector("#cronList").textContent.includes("Every 2 hours") && document.querySelector("#cronList").textContent.includes("Mon, Tue, Wed, Thu, Fri") && document.querySelector("#cronList").textContent.includes("18:00–08:00") && document.querySelector("#cronList").textContent.includes("08:00") && document.querySelector("#cronList").textContent.includes("high") && document.querySelector("#cronList").textContent.includes("Paused"));
   await page.getByTestId("cron-edit").click();
+  assert.equal(await page.getByTestId("cron-hide-from-history").isChecked(), false, "Schedules default to visible history");
   assert.equal(await page.evaluate(`(() => {
     const f = document.querySelector("#cronForm").elements;
     return f.time.value === "08:00" && f.intervalHours.value === "2" && f.quietEnabled.checked && f.quietStart.value === "18:00" && f.quietEnd.value === "08:00" &&
@@ -102,11 +103,22 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   await page.locator("#messages .message.assistant", { hasText: "Understood." }).waitFor();
   assert.deepEqual(await page.locator("#messages .message.user .message-content").allTextContents(), ["Single short line."], "A person's own messages must stay visible in a scheduled conversation");
   assert.deepEqual(await page.locator("#messages .message.assistant .message-content").allTextContents(), ["Understood."], "Scheduled transcripts should show only final reports");
+  await page.locator('[aria-label="Actions for Internal Assistant"]').click();
+  await page.getByTestId("project-cron-button").click();
+  await page.locator("#cronList .cron-task", { hasText: "Conversation browser cron" }).getByTestId("cron-edit").click();
+  await page.getByTestId("cron-hide-from-history").check();
+  await page.getByTestId("cron-save").click();
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Conversation historyHidden"));
+  await page.getByTestId("cron-close").click();
+  assert.equal(await page.locator("#sessionList .list-row", { hasText: "Short one" }).count(), 0, "Task-level hide wins over Show scheduled and Cron chip");
+  assert.equal(await page.locator('[data-filter-count="cron"]').textContent(), "0", "Hidden task excluded from counts");
   await page.goto(node.url);
   await page.waitForFunction(() => document.querySelector("[data-filter-count=cron]").textContent === "0");
   await page.locator("#projectList .list-row", { hasText: "Internal Assistant" }).locator("button").first().click();
-  await page.getByTestId("show-scheduled-conversations-toggle").check();
-  await page.waitForFunction(() => document.querySelector("[data-filter-count=cron]").textContent === "1");
+  assert.equal(await page.getByTestId("show-scheduled-conversations-toggle").isChecked(), true, "Project setting survives reload");
+  await page.locator("#sessionList .session-card").first().waitFor();
+  assert.equal(await page.locator("#sessionList .list-row", { hasText: "Short one" }).count(), 0, "Hidden schedule survives reload");
+  assert.equal(await page.locator('[data-filter-count="cron"]').textContent(), "0");
   await page.locator('[aria-label="Actions for Internal Assistant"]').click();
   await page.locator('[data-testid="project-cron-button"]').click();
   await page.waitForFunction(() => document.querySelectorAll("#cronList .cron-task").length === 2);

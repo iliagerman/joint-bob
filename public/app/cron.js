@@ -1,6 +1,7 @@
 import { harnessIdFromPath, harnessOption } from "../harness-metadata.js";
 import { api } from "./api.js";
 import { state } from "./state.js";
+import { renderSessions } from "./session-list.js";
 import { confirmAction, toast } from "./shell.js";
 
 const dialog = document.querySelector("#cronDialog");
@@ -43,8 +44,18 @@ export async function openScheduledTasks(projectId, session = null) {
   await refreshTasks();
 }
 
+export async function loadHiddenCronTasks(projectId) {
+  const body = await api(`/api/projects/${encodeURIComponent(projectId)}/cron`);
+  if (state.activeProjectId === projectId) {
+    state.hiddenCronTaskIds = new Set(body.tasks.filter((task) => task.hideFromHistory).map((task) => task.id));
+    state.knownCronTaskIds = new Set([...body.tasks.map((task) => task.id), ...state.sessions.map((session) => session.cronTaskId).filter(Boolean)]);
+    renderSessions();
+  }
+  return body;
+}
+
 async function refreshTasks() {
-  const body = await api(`/api/projects/${encodeURIComponent(context.projectId)}/cron`);
+  const body = await loadHiddenCronTasks(context.projectId);
   errorText.textContent = body.errors.map(error => `${error.nodeId}: ${error.error}`).join("\n");
   const list = document.querySelector("#cronList");
   list.replaceChildren();
@@ -74,7 +85,7 @@ async function refreshTasks() {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const execution = [["Repeat", repeat], ["Start time", task.schedule.frequency === "hourly" && task.schedule.startHour === undefined ? `At minute ${task.schedule.minute} (legacy UTC interval)` : `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`],
       ["Run on days", task.schedule.days ? task.schedule.days.map(day => days[day]).join(", ") : "Every eligible day"],
-      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"], ["Review", task.markForReview === false ? "Silent" : "Mark for review"]];
+      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"], ["Review", task.markForReview === false ? "Silent" : "Mark for review"], ["Conversation history", task.hideFromHistory ? "Hidden" : "Visible when Show scheduled is on"]];
     const entries = task.enabled
       ? [["Next run", new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone })], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
       : [["Status", "Paused"], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]];
@@ -193,6 +204,7 @@ function editTask(task) {
     field("enabled").checked = task.enabled;
     field("pauseOnFailure").checked = task.pauseOnFailure;
     field("markForReview").checked = task.markForReview !== false;
+    field("hideFromHistory").checked = task.hideFromHistory === true;
     field("frequency").value = task.schedule.frequency;
     field("weekday").value = task.schedule.weekday;
     field("intervalHours").value = task.schedule.intervalHours ?? 1;
@@ -236,6 +248,7 @@ form.addEventListener("submit", async event => {
       model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,
       sessionId: session?.engine === field("engine").value ? session.id : null, enabled: field("enabled").checked,
       pauseOnFailure: field("pauseOnFailure").checked, markForReview: field("markForReview").checked,
+      hideFromHistory: field("hideFromHistory").checked,
       schedule: { frequency: field("frequency").value, intervalMinutes: field("frequency").value === "minutely" ? Number(field("intervalMinutes").value) : undefined,
         intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined,
         hour, minute, startHour: field("frequency").value === "hourly" ? hour : undefined,

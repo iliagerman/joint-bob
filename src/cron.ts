@@ -31,7 +31,7 @@ export const cronInputSchema = z.object({
   engine: z.string().refine(isHarnessId, "Harness ID is invalid")
     .refine(id => listDiscoveredHarnesses().some(adapter => adapter.id === id && adapter.runtime), "Harness is not registered on this node"),
   model: cronModelSchema.nullable().optional(), reasoning: reasoningSchema.optional(),
-  sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(), pauseOnFailure: z.boolean().default(false), markForReview: z.boolean().default(true),
+  sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(), pauseOnFailure: z.boolean().default(false), markForReview: z.boolean().default(true), hideFromHistory: z.boolean().default(false),
   schedule: scheduleSchema,
 }).strict().superRefine((input, context) => {
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === input.engine);

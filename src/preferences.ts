@@ -304,6 +304,8 @@ export interface UserPreferences {
   canvasKeymap: CanvasKeymapPreference;
   /** Per conversation, the newest message time (epoch ms) the reader has viewed. */
   conversationLastRead: Record<string, number>;
+  /** Conversation-list visibility per project. Missing entries use the hidden defaults. */
+  projectConversationVisibility: Record<string, { done: boolean; scheduled: boolean }>;
   /** Default Git reviewer; null means choose from the conversation's last harness. */
   gitReviewer: GitReviewerPreference | null;
 }
@@ -336,6 +338,7 @@ interface PreferenceRow {
   git_reviewer: string;
   canvas_keymap: string;
   conversation_last_read: string;
+  project_conversation_visibility: string;
 }
 
 const dataDir = resolveDataDirectory();
@@ -384,6 +387,7 @@ function preferencesDatabase(): DatabaseSync {
   if (!columns.some((column) => column.name === "canvas_keymap")) database.exec("ALTER TABLE user_preferences ADD COLUMN canvas_keymap TEXT NOT NULL DEFAULT '{\"modifiers\":[\"meta\",\"shift\"],\"recentPane\":\"E\",\"focusPane\":\"G\",\"paneSearch\":\"F\"}'");
   if (!columns.some((column) => column.name === "conversation_last_read")) database.exec("ALTER TABLE user_preferences ADD COLUMN conversation_last_read TEXT NOT NULL DEFAULT '{}'");
   if (!columns.some((column) => column.name === "git_reviewer")) database.exec("ALTER TABLE user_preferences ADD COLUMN git_reviewer TEXT NOT NULL DEFAULT 'null'");
+  if (!columns.some((column) => column.name === "project_conversation_visibility")) database.exec("ALTER TABLE user_preferences ADD COLUMN project_conversation_visibility TEXT NOT NULL DEFAULT '{}'");
   return database;
 }
 
@@ -638,6 +642,20 @@ export function migrateLegacyCanvasLayout(parsed: unknown): CanvasLayoutPreferen
   return normalizeCanvasLayoutPreference({ version: 5, rows, focusedPaneId: typeof legacy.focusedPaneId === "string" ? legacy.focusedPaneId : null });
 }
 
+function parseProjectConversationVisibility(value: string): UserPreferences["projectConversationVisibility"] {
+  try {
+    const entries = JSON.parse(value);
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) return {};
+    const result: UserPreferences["projectConversationVisibility"] = {};
+    for (const [id, setting] of Object.entries(entries)) {
+      if (id.length > 240 || !setting || typeof setting !== "object" || Array.isArray(setting)) continue;
+      const candidate = setting as { done?: unknown; scheduled?: unknown };
+      if (typeof candidate.done === "boolean" && typeof candidate.scheduled === "boolean") result[id] = { done: candidate.done, scheduled: candidate.scheduled };
+    }
+    return result;
+  } catch { return {}; }
+}
+
 function preferencesFromRow(row: PreferenceRow): UserPreferences {
   return {
     theme: row.theme,
@@ -659,6 +677,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     canvasLayout: parseCanvasLayout(row.canvas_layout),
     canvasKeymap: parseCanvasKeymap(row.canvas_keymap),
     conversationLastRead: parseConversationLastRead(row.conversation_last_read),
+    projectConversationVisibility: parseProjectConversationVisibility(row.project_conversation_visibility),
     gitReviewer: JSON.parse(row.git_reviewer) as GitReviewerPreference | null,
   };
 }
@@ -668,7 +687,7 @@ function currentPreferences(userId: string): UserPreferences {
     SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
       pinned_project_ids, pinned_session_paths, focus_ui_enabled, projects_panel_collapsed, chats_panel_collapsed,
-      last_seen_version, canvas_layout, canvas_keymap, conversation_last_read, git_reviewer
+      last_seen_version, canvas_layout, canvas_keymap, conversation_last_read, project_conversation_visibility, git_reviewer
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -714,6 +733,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["canvasLayout", "canvas_layout", (value) => JSON.stringify(value as CanvasLayoutPreference)],
     ["canvasKeymap", "canvas_keymap", (value) => JSON.stringify(value as CanvasKeymapPreference)],
     ["conversationLastRead", "conversation_last_read", (value) => JSON.stringify(boundConversationLastRead(value as Record<string, number>))],
+    ["projectConversationVisibility", "project_conversation_visibility", (value) => JSON.stringify(value)],
     ["gitReviewer", "git_reviewer", (value) => JSON.stringify(value)],
   ];
   for (const [property, column, serialize] of fields) {

@@ -1,4 +1,5 @@
 import { loadWorktrees } from "./worktrees.js";
+import { loadHiddenCronTasks } from "./cron.js";
 import { api, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { loadHarnesses, loadSessionNodes, setComposerEnabled } from "./chat-controls.js";
@@ -145,6 +146,11 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   }
   showConversations();
   state.activeProjectId = projectId;
+  const visibility = state.projectConversationVisibility[projectId] || {};
+  state.showDoneConversations = visibility.done === true;
+  state.showScheduledConversations = visibility.scheduled === true;
+  state.hiddenCronTaskIds = new Set();
+  state.knownCronTaskIds = new Set();
   state.skills = [];
   state.skillsLoading = false;
   state.skillsProjectId = null;
@@ -192,6 +198,11 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   if (state.activeProjectId !== projectId) return;
   const renderStarted = performance.now();
   state.sessions = body.sessions;
+  if (body.sessions.some((session) => session.cronTaskId)) {
+    try { await loadHiddenCronTasks(projectId); }
+    catch (error) { console.warn("Could not load scheduled task visibility", error); }
+  }
+  if (state.activeProjectId !== projectId) return;
   if (shouldRender) renderProjects();
   renderSessions();
   const ready = performance.now();

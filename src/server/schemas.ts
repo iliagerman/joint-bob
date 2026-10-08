@@ -542,6 +542,8 @@ export const userPreferencesSchema = z.object({
   canvasKeymap: canvasKeymapPreferenceSchema.optional(),
   conversationLastRead: z.record(z.string().min(1).max(200), z.number().int().nonnegative())
     .refine((marks) => Object.keys(marks).length <= 400, "Too many conversation read marks").optional(),
+  projectConversationVisibility: z.record(z.string().min(1).max(240), z.object({ done: z.boolean(), scheduled: z.boolean() }).strict())
+    .refine((projects) => Object.keys(projects).length <= 400, "Too many project visibility settings").optional(),
   gitReviewer: z.object({
     harnessId: registeredHarnessIdSchema,
     provider: z.string().trim().min(1).max(200).optional(),

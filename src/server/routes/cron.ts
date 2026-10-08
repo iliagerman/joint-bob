@@ -37,6 +37,7 @@ async function routeCommand(nodeId: string, command: Command, timeoutMs = 15000)
 }
 
 async function savedTask(task: CronTask): Promise<{ task: CronTask }> {
+  broadcastToProject(task.projectId, { type: "cronChanged" });
   if (task.sessionId) {
     await ensureConversationRecord(task.projectId, task.engine, task.sessionId, task.ownerNodeId);
     await markCronConversation(task.projectId, task.engine, task.sessionId, task.id, task.ownerNodeId);
@@ -55,7 +56,12 @@ async function manageCron(command: Command): Promise<unknown> {
   if (command.action === "ready") return { ready: await cronConversationReady(command.projectId, command.sessionId, command.engine) };
   if (command.action === "history") return { runs: store.history(command.id) };
   if (command.action === "run") return { task: store.runNow(command.id) };
-  if (command.action === "delete") { store.delete(command.id); return { ok: true }; }
+  if (command.action === "delete") {
+    const task = store.get(command.id);
+    store.delete(command.id);
+    if (task) broadcastToProject(task.projectId, { type: "cronChanged" });
+    return { ok: true };
+  }
   const project = await getProject(command.input.projectId);
   if (!project) throw new Error("Project is not mapped on the execution node");
   command.input.projectId = project.id;
