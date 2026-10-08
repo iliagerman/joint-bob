@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.60.0 — 2026-10-08
 
-- Chat toolbar icons now share one size, and hovering over one shows its name almost at once instead of after a long wait.
+- Added a Tasks icon to the chat action row, and chat toolbar icons now share one size with their names appearing in a quick tooltip instead of the slow native one.
 
 ## 2.59.1 — 2026-10-08
 
