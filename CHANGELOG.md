@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.58.0 — 2026-10-08
 
-- Chat toolbar actions were turned into icons, with each name shown on hover and the full labels kept in the dropdown menu.
+- Chat toolbar actions were turned into icons, with each action's name shown as a tooltip on hover; dropdown menu items kept their labels beside the icon.
 
 ## 2.57.0 — 2026-10-08
 
