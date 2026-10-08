@@ -50,26 +50,32 @@ async function enroll(db:DatabaseSync,local:string,peer:string,device:string,ids
  db.prepare("DELETE FROM cluster_v2_file_enrollments WHERE peer_id=? AND project_id IS NULL").run(peer);
  const save=db.prepare("INSERT OR REPLACE INTO cluster_v2_file_enrollments VALUES(?,?,?,?)");
  const accepted:string[]=[];
+ const skipped:Array<{id:string;name:string;error:string}>=[];
  for(const id of ids){
   if(!mayShareProject(db,local,peer,id))continue;
   const project=await getProject(id);if(!project)continue;
-  const folder=project.syncFolderId??`joint-bob-project-${createHash('sha256').update(id).digest('hex')}`;
-  await mkdir(project.path,{recursive:true});
-  await ensureSharedProjectFolder(folder,project.name,project.path,device);
-  db.prepare("DELETE FROM cluster_v2_file_enrollments WHERE peer_id=? AND project_id=? AND folder_id<>?").run(peer,id,folder);
-  if(!project.syncFolderId)await updateProjectSyncFolderId(id,folder);
-  save.run(peer,device,folder,id);accepted.push(id);
-  const ticketPath=path.dirname(expectedTaskWorkspacePath(id,'sharing'));
-  await mkdir(ticketPath,{recursive:true});
-  const ticketFolder=projectTicketSyncFolderId(id);
-  await ensureSharedProjectFolder(ticketFolder,`${project.name} tickets`,ticketPath,device);
-  save.run(peer,device,ticketFolder,id);
-  const worktreePath=projectWorktreeRoot(id);
-  await mkdir(worktreePath,{recursive:true});
-  const worktreeFolder=projectWorktreeSyncFolderId(id);
-  await ensureSharedProjectFolder(worktreeFolder,`${project.name} worktrees`,worktreePath,device);
-  save.run(peer,device,worktreeFolder,id);
+  try{
+   const folder=project.syncFolderId??`joint-bob-project-${createHash('sha256').update(id).digest('hex')}`;
+   await mkdir(project.path,{recursive:true});
+   await ensureSharedProjectFolder(folder,project.name,project.path,device);
+   db.prepare("DELETE FROM cluster_v2_file_enrollments WHERE peer_id=? AND project_id=? AND folder_id<>?").run(peer,id,folder);
+   if(!project.syncFolderId)await updateProjectSyncFolderId(id,folder);
+   save.run(peer,device,folder,id);accepted.push(id);
+   const ticketPath=path.dirname(expectedTaskWorkspacePath(id,'sharing'));
+   await mkdir(ticketPath,{recursive:true});
+   const ticketFolder=projectTicketSyncFolderId(id);
+   await ensureSharedProjectFolder(ticketFolder,`${project.name} tickets`,ticketPath,device);
+   save.run(peer,device,ticketFolder,id);
+   const worktreePath=projectWorktreeRoot(id);
+   await mkdir(worktreePath,{recursive:true});
+   const worktreeFolder=projectWorktreeSyncFolderId(id);
+   await ensureSharedProjectFolder(worktreeFolder,`${project.name} worktrees`,worktreePath,device);
+   save.run(peer,device,worktreeFolder,id);
+  }catch(error){
+   skipped.push({id,name:project.name,error:error instanceof Error?error.message:String(error)});
+  }
  }
+ if(skipped.length)console.warn(`File enrollment skipped ${skipped.length} project(s) for peer ${peer.slice(0,8)}:`,skipped.map(s=>`${s.name}: ${s.error}`).join("; "));
  db.prepare("DELETE FROM cluster_v2_file_errors WHERE peer_id=?").run(peer);
  return accepted;
 }

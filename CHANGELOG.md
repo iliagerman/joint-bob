@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.62.4 — 2026-10-08
+
+- Sharing a project's files with a peer no longer stops for the whole batch when one project fails to set up; the other projects still sync and the failed one is logged.
+
 ## 2.62.3 — 2026-10-08
 
 - Finished worktrees whose pull request was merged are now removed only when their local files match the merged code, and a kept worktree shows the reason next to its conversation group.
