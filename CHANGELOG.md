@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Finished worktrees whose pull request was merged are now removed only when their local files match the merged code, and a kept worktree shows the reason next to its conversation group.
+
 ## 2.62.2 — 2026-10-08
 
 - Moved the new scheduled task action into the dialog footer as a plus button, so it stays visible while scrolling.

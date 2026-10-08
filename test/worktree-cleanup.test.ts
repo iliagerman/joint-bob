@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +8,7 @@ import test from "node:test";
 import { ensureConversationRecord } from "../src/conversation-records.js";
 import { holdEndedRun, releaseEndedRun } from "../src/conversation-runtime.js";
 import { setSessionDone } from "../src/names.js";
-import { createProjectWorktree, markWorktreeConversation } from "../src/project-worktrees.js";
+import { createProjectWorktree, markWorktreeConversation, recordWorktreePullRequest } from "../src/project-worktrees.js";
 import { cleanupDoneWorktrees } from "../src/server/worktree-cleanup.js";
 import { addProject } from "../src/store.js";
 
@@ -70,6 +71,64 @@ test("reopened conversations and missing done marks keep the folder", async (con
   await markWorktreeConversation(project.id, worktree.id, "pi", randomUUID());
   assert.deepEqual((await cleanupDoneWorktrees(project)).deletedWorktreeIds, []);
   await access(worktree.path);
+});
+
+test("cleanup removes already-done PR worktrees only after verifying merged contents", async (context) => {
+  const { project, worktree, sessionId } = await fixture(context);
+  process.env.GH_TOKEN = "fixture-token";
+  execFileSync("git", ["init", "-q", project.path]);
+  execFileSync("git", ["-C", project.path, "remote", "add", "origin", "https://github.com/o/r.git"]);
+  const base = "a".repeat(40);
+  const head = "b".repeat(40);
+  const content = "export const value = 2;\n";
+  const blob = (text: string) => createHash("sha1").update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest("hex");
+  await recordWorktreePullRequest(project.id, worktree.id, { number: 12, url: "https://github.com/o/r/pull/12", branch: "joint-bob/finished", base: "main", baseCommit: base });
+  await writeFile(path.join(worktree.path, "index.ts"), content);
+  await setSessionDone(sessionId, true);
+  let merged = false;
+  let duringCheck: (() => Promise<void>) | undefined;
+  let inaccessible = false;
+  const calls: string[] = [];
+  context.mock.method(globalThis, "fetch", async (url: string, init: RequestInit = {}) => {
+    assert.equal(init.method, "GET", "cleanup must never mutate GitHub");
+    const route = url.replace("https://api.github.com/repos/o/r", "");
+    calls.push(route);
+    if (inaccessible) return Response.json({}, { status: 403 });
+    if (route === "/pulls/12") await duringCheck?.();
+    if (route === "/pulls/12") return Response.json({ merged, html_url: "https://github.com/o/r/pull/12", head: { ref: "joint-bob/finished", sha: head }, base: { ref: "main" } });
+    if (route.startsWith("/git/commits/")) return Response.json({ tree: { sha: route.endsWith(base) ? base : head } });
+    if (route.startsWith("/git/trees/")) return Response.json({ truncated: false, tree: [{ path: "index.ts", type: "blob", mode: "100644", sha: blob(route.includes(base) ? "export const value = 1;\n" : content) }] });
+    throw new Error(`Unexpected GitHub route: ${route}`);
+  });
+  assert.deepEqual((await cleanupDoneWorktrees(project)).deletedWorktreeIds, [], "an open PR is not enough");
+  merged = true;
+  await writeFile(path.join(worktree.path, "index.ts"), "export const value = 3;\n");
+  assert.deepEqual((await cleanupDoneWorktrees(project)).deletedWorktreeIds, [], "edits after the PR must survive");
+  await access(worktree.path);
+  await writeFile(path.join(worktree.path, "index.ts"), "export const value = 1;\n");
+  assert.deepEqual((await cleanupDoneWorktrees(project)).deletedWorktreeIds, [], "a post-PR revert to the baseline is also an edit");
+  await writeFile(path.join(worktree.path, "index.ts"), content);
+  inaccessible = true;
+  assert.match((await cleanupDoneWorktrees(project)).retainedWorktrees[worktree.id], /could not be completed/);
+  inaccessible = false;
+  duringCheck = () => writeFile(path.join(worktree.path, "index.ts"), "new edit during verification\n");
+  assert.match((await cleanupDoneWorktrees(project)).retainedWorktrees[worktree.id], /changed while cleanup/);
+  await writeFile(path.join(worktree.path, "index.ts"), content);
+  duringCheck = () => setSessionDone(sessionId, false);
+  assert.deepEqual((await cleanupDoneWorktrees(project)).deletedWorktreeIds, [], "reopening during verification keeps the worktree");
+  await setSessionDone(sessionId, true);
+  const switched = randomUUID();
+  duringCheck = async () => {
+    await ensureConversationRecord(project.id, "claude", switched, "fixture-node", undefined, { conversationId: sessionId, segmentIndex: 1 });
+    holdEndedRun("claude", switched, false);
+  };
+  try {
+    assert.match((await cleanupDoneWorktrees(project)).retainedWorktrees[worktree.id], /still running/, "a harness switched during verification is protected");
+  } finally { releaseEndedRun("claude", switched); }
+  duringCheck = undefined;
+  assert.deepEqual((await cleanupDoneWorktrees(project)).deletedWorktreeIds, [worktree.id], "a merged PR replaces the stale baseline check");
+  assert.ok(calls.includes("/pulls/12"));
+  await assert.rejects(access(worktree.path), { code: "ENOENT" });
 });
 
 test("a damaged baseline cannot delete files or prevent saving done", async (context) => {

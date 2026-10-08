@@ -470,6 +470,13 @@ async function toggleSessionDone(session) {
     body: JSON.stringify({ sessionId: session.conversationId || session.id, engine: sessionEngine(session), done }),
   });
   session.doneAt = done ? new Date().toISOString() : undefined;
+  if (state.activeProjectId === projectId) {
+    // A list refresh during cleanup may have replaced the row's session object.
+    for (const current of state.sessions) {
+      if ((current.conversationId || current.id) === (session.conversationId || session.id)) current.doneAt = session.doneAt;
+    }
+    state.worktreeCleanupReasons = result.retainedWorktrees || {};
+  }
   const deleted = result.deletedWorktreeIds?.length;
   if (deleted && state.activeProjectId === projectId) await loadWorktrees();
   renderSessions();

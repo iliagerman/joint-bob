@@ -34,8 +34,11 @@ function cleanupFinishedWorktrees(projectId) {
   if (Date.now() < (cleanupAfter.get(projectId) || 0)) return;
   cleanupAfter.set(projectId, Infinity);
   void api(worktreesUrl(projectId, "/cleanup"), { method: "POST", body: "{}" })
-    .then(async ({ deletedWorktreeIds }) => {
-      if (deletedWorktreeIds.length && state.activeProjectId === projectId) await loadWorktrees();
+    .then(async ({ deletedWorktreeIds, retainedWorktrees }) => {
+      if (state.activeProjectId !== projectId) return;
+      state.worktreeCleanupReasons = retainedWorktrees;
+      renderSessions();
+      if (deletedWorktreeIds.length) await loadWorktrees();
     })
     .catch((error) => console.warn("Could not clean up finished worktrees", error))
     .finally(() => cleanupAfter.set(projectId, Date.now() + 60_000));
@@ -113,6 +116,7 @@ export function worktreeSectionHeader(worktree, count) {
   total.className = "worktree-section-count";
   total.dataset.testid = "worktree-section-count";
   total.textContent = String(count);
+  total.title = `${count} visible conversations`;
   toggle.append(caret, worktreeGlyph(), name, total);
   toggle.addEventListener("click", () => {
     if (collapsed) state.collapsedWorktreeIds.delete(worktree.id);
@@ -131,6 +135,14 @@ export function worktreeSectionHeader(worktree, count) {
     openRowMenu(menu, worktreeMenuItems(worktree), `[data-worktree-id="${CSS.escape(worktree.id)}"] [data-testid="worktree-menu-button"]`);
   });
   header.append(toggle, menu);
+  const reason = state.worktreeCleanupReasons[worktree.id];
+  if (reason) {
+    const note = document.createElement("span");
+    note.className = "worktree-cleanup-note";
+    note.dataset.testid = "worktree-cleanup-note";
+    note.textContent = reason.replace(/^Worktree kept:/, "Kept:");
+    header.append(note);
+  }
   return header;
 }
 

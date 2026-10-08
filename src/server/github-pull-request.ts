@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { GitReviewError } from "../git-review.js";
 import type { WorktreeChanges, WorktreePullRequest } from "../project-worktrees.js";
@@ -39,6 +40,45 @@ async function remoteMergeBase(projectPath: string, commit: string, base: string
     const value = (await exec("git", ["-C", projectPath, "merge-base", commit, `refs/remotes/origin/${base}`], { timeout: 10_000 })).stdout.trim();
     return COMMIT.test(value) ? value : null;
   } catch { return null; }
+}
+
+interface GitTreeEntry { path: string; type: string; mode: string; sha: string }
+
+/** A merged flag alone cannot authorize deleting later local edits. Match the
+ * current changes to the published tree, including deletions and executable bits. */
+export async function worktreePullRequestMerged(projectPath: string, pullRequest: WorktreePullRequest, changes: WorktreeChanges, credentials: GithubCredentials, request: typeof fetch = fetch): Promise<boolean> {
+  const { owner, repo, host } = await githubRepository(projectPath, credentials, request);
+  if (pullRequest.url !== `https://github.com/${owner}/${repo}/pull/${pullRequest.number}` || !COMMIT.test(pullRequest.baseCommit)) return false;
+  const token = credentials.tokenFor({ owner, host });
+  const call = (route: string) => githubRequest(`/repos/${owner}/${repo}`, token, request, route);
+  const pull = await call(`/pulls/${pullRequest.number}`) as { merged?: boolean; html_url?: string; head?: { ref?: string; sha?: string }; base?: { ref?: string } };
+  if (pull.merged !== true || pull.html_url !== pullRequest.url || pull.head?.ref !== pullRequest.branch || pull.base?.ref !== pullRequest.base || !COMMIT.test(pull.head?.sha ?? "")) return false;
+  const tree = async (commit: string) => {
+    const detail = await call(`/git/commits/${commit}`) as { tree?: { sha?: string } };
+    if (!COMMIT.test(detail.tree?.sha ?? "")) return null;
+    const listing = await call(`/git/trees/${detail.tree!.sha}?recursive=1`) as { truncated?: boolean; tree?: GitTreeEntry[] };
+    if (listing.truncated !== false || !Array.isArray(listing.tree)) return null;
+    return new Map(listing.tree.filter((entry) => entry.type !== "tree").map((entry) => [entry.path, entry]));
+  };
+  const [base, head] = await Promise.all([tree(pullRequest.baseCommit), tree(pull.head!.sha!)]);
+  if (!base || !head) return false;
+  const writes = new Set(changes.writes.map((file) => file.path));
+  const deletes = new Set(changes.deletes);
+  for (const file of changes.writes) {
+    const entry = head.get(file.path);
+    const sha = createHash("sha1").update(`blob ${file.content.length}\0`).update(file.content).digest("hex");
+    if (entry?.type !== "blob" || entry.sha !== sha || entry.mode !== (file.executable ? "100755" : "100644")) return false;
+  }
+  if (changes.deletes.some((file) => head.has(file))) return false;
+  // Also reject files reverted to the original baseline after publishing: they
+  // vanish from local changes but are still part of the PR's published diff.
+  for (const file of new Set([...base.keys(), ...head.keys()])) {
+    const before = base.get(file);
+    const after = head.get(file);
+    if (before?.sha === after?.sha && before?.mode === after?.mode && before?.type === after?.type) continue;
+    if (after ? !writes.has(file) : !deletes.has(file)) return false;
+  }
+  return true;
 }
 
 /** Commits the worktree's changes on a new branch through the GitHub API and opens (or updates) its pull

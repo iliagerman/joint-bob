@@ -3,10 +3,13 @@ import { listConversationRecords } from "../conversation-records.js";
 import { conversationWorkActive } from "../conversation-work.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { conversationLeaseRunning } from "../conversation-runtime.js";
+import { githubAccountFor } from "../github-credentials.js";
+import { genericSecretEnvironment, githubAccountsForProject } from "../secrets.js";
 import { sessionDoneOverrides } from "../names.js";
-import { deleteProjectWorktree, worktreeChanges, worktreeConversationIndex } from "../project-worktrees.js";
+import { deleteProjectWorktree, worktreeChanges, worktreeConversationIndex, type WorktreeChanges } from "../project-worktrees.js";
 import { isHarnessId, type ProjectRecord } from "../types.js";
 import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
+import { worktreePullRequestMerged } from "./github-pull-request.js";
 import { assertProjectEditable, ProjectLockedError } from "./projects.js";
 import { broadcastToProject } from "./realtime.js";
 
@@ -16,6 +19,13 @@ interface CleanupResult {
 }
 
 const pending = new Map<string, Promise<CleanupResult>>();
+
+function sameChanges(left: WorktreeChanges, right: WorktreeChanges): boolean {
+  return JSON.stringify(left.deletes) === JSON.stringify(right.deletes) && left.writes.length === right.writes.length && left.writes.every((file, index) => {
+    const other = right.writes[index];
+    return file.path === other.path && file.executable === other.executable && file.content.equals(other.content);
+  });
+}
 
 /** Reconcile persisted done marks, not the filtered or capped conversation list. Never remove a newly created empty worktree. */
 export async function cleanupDoneWorktrees(project: ProjectRecord): Promise<CleanupResult> {
@@ -46,26 +56,51 @@ async function cleanup(project: ProjectRecord): Promise<CleanupResult> {
       // A harness switch can leave only the original segment's worktree marker.
       const conversations = new Set(group.map((member) => member.conversationId));
       const segments = [...group, ...records.filter((record) => conversations.has(record.conversationId ?? record.sessionId))];
-      const background = [...readActiveBackgroundTaskIdentities(resolveDataDirectory())].map(backgroundTaskConversationId);
-      if (background.some((id) => conversations.has(id)) || segments.some(({ engine, sessionId }) => {
+      const running = () => [...readActiveBackgroundTaskIdentities(resolveDataDirectory())].map(backgroundTaskConversationId).some((id) => conversations.has(id)) || segments.some(({ engine, sessionId }) => {
         if (!isHarnessId(engine)) return true;
         const session = findHarnessSession(project.id, engine, sessionId);
         return Boolean(session && harnessSessionBusy(session)) || conversationWorkActive(engine, sessionId) || conversationLeaseRunning(engine, sessionId);
-      })) {
+      });
+      if (running()) {
         result.retainedWorktrees[worktree.id] = "Worktree kept: a conversation is still running";
         continue;
       }
       const changes = await worktreeChanges(project.id, worktree.id);
-      if (changes.writes.length || changes.deletes.length) {
-        result.retainedWorktrees[worktree.id] = "Worktree kept: unmerged changes remain";
+      let merged = !changes.writes.length && !changes.deletes.length;
+      if (worktree.pullRequest) {
+        const member = group[0];
+        if (!isHarnessId(member.engine)) continue;
+        const conversation = { engine: member.engine, sessionId: member.sessionId };
+        const accounts = githubAccountsForProject(project.id, conversation);
+        const fallback = genericSecretEnvironment(project.id, conversation).GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+        merged = await worktreePullRequestMerged(project.path, worktree.pullRequest, changes, {
+          tokenFor: (repository) => githubAccountFor(accounts, repository)?.token ?? fallback,
+          sshHosts: accounts.filter((account) => account.sshKey).map((account) => account.sshHost),
+        });
+      }
+      if (!merged) {
+        result.retainedWorktrees[worktree.id] = worktree.pullRequest
+          ? "Worktree kept: local changes are not verified as merged"
+          : "Worktree kept: unmerged changes remain";
         continue;
       }
-      // Done can be cleared or another conversation started while files are being checked.
+      // GitHub verification can take seconds. Recheck files after it returns,
+      // then refresh membership, done marks and activity before deleting anything.
+      if (!sameChanges(changes, await worktreeChanges(project.id, worktree.id))) {
+        result.retainedWorktrees[worktree.id] = "Worktree kept: changed while cleanup was checking";
+        continue;
+      }
+      await assertProjectEditable(project);
       const current = await worktreeConversationIndex(project.id);
+      segments.push(...(await listConversationRecords(project.id)).filter((record) => conversations.has(record.conversationId ?? record.sessionId)));
       const currentDone = await sessionDoneOverrides();
       const keys = [...index].filter(([, candidate]) => candidate.id === worktree.id).map(([key]) => key).sort();
       const currentKeys = [...current].filter(([, candidate]) => candidate.id === worktree.id).map(([key]) => key).sort();
       if (JSON.stringify(keys) !== JSON.stringify(currentKeys) || !group.every((member) => currentDone[member.conversationId])) continue;
+      if (running()) {
+        result.retainedWorktrees[worktree.id] = "Worktree kept: a conversation is still running";
+        continue;
+      }
       await deleteProjectWorktree(project.id, worktree.id);
       result.deletedWorktreeIds.push(worktree.id);
     } catch (error) {

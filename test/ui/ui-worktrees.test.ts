@@ -320,10 +320,37 @@ test("marking the last conversation done removes its worktree header and folder"
   const worktree = await onlyWorktreePath();
   const row = page.locator("#sessionList .list-row.active");
   await row.getByTestId("session-menu-button").click();
+  const marked = page.waitForResponse((response) => response.url().endsWith("/sessions/done") && response.request().method() === "PUT");
   await page.getByTestId("session-done-button").click();
+  const result = await (await marked).json();
+  assert.deepEqual(result.deletedWorktreeIds, [path.basename(worktree)], JSON.stringify(result));
   await page.getByTestId("worktree-section").waitFor({ state: "detached", timeout: 20_000 });
   assert.equal(await exists(worktree), false, "the folder is deleted, not merely hidden");
   await page.reload({ waitUntil: "domcontentloaded" });
   await openProject();
   assert.equal(await page.getByTestId("worktree-section").count(), 0, "no zero-count header returns after reload");
+});
+
+test("a retained zero-count worktree explains why its files were kept, including after reload", async () => {
+  await page.getByTestId("session-create-button").click();
+  await page.locator("#newSessionNameDialog[open]").waitFor();
+  await page.getByTestId("new-session-name-input").fill("Unpublished changes");
+  await page.getByTestId("new-session-name-start-button").click();
+  const section = page.getByTestId("worktree-section").filter({ hasText: "Unpublished changes" });
+  await section.waitFor({ timeout: 60_000 });
+  const worktree = await onlyWorktreePath();
+  await writeFile(path.join(worktree, "unfinished.txt"), "This must survive marking done.\n");
+  await page.locator("#sessionList .list-row.active").getByTestId("session-menu-button").click();
+  await page.getByTestId("session-done-button").click();
+  await section.getByTestId("worktree-cleanup-note").waitFor({ timeout: 20_000 });
+  await section.getByTestId("worktree-section-count").filter({ hasText: /^0$/ }).waitFor({ timeout: 20_000 });
+  assert.equal(await section.getByTestId("worktree-section-count").innerText(), "0");
+  assert.equal(await section.getByTestId("worktree-cleanup-note").innerText(), "Kept: unmerged changes remain");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await openProject();
+  await section.getByTestId("worktree-cleanup-note").waitFor({ timeout: 20_000 });
+  assert.equal(await readFile(path.join(worktree, "unfinished.txt"), "utf8"), "This must survive marking done.\n");
+  await page.setViewportSize({ width: 1160, height: 900 });
+  const fits = await section.evaluate((element) => element.scrollWidth <= element.clientWidth + 1);
+  assert.ok(fits, "retention reason does not overflow the narrow conversation column");
 });

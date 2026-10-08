@@ -143,6 +143,7 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   if (state.activeProjectId !== projectId) {
     state.classificationFilters.clear();
     state.worktrees = [];
+    state.worktreeCleanupReasons = {};
   }
   showConversations();
   state.activeProjectId = projectId;
