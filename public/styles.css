@@ -1785,7 +1785,8 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .cron-day-options input { width: 16px; height: 16px; min-width: 16px; padding: 0; accent-color: var(--ink); }
 #cronDays[hidden], #cronQuietTimes[hidden] { display: none; }
 .cron-help { margin: 0 !important; padding: 10px 12px; border-radius: 8px; background: var(--field); }
-#cronNew { justify-self: start; }
+#cronNew { margin-right: auto; min-width: 40px; width: 40px; min-height: 40px; }
+#cronNew svg { width: 18px; height: 18px; }
 
 .automation-card { width: min(900px, calc(100vw - 24px)); }
 #automationError { margin: 0; color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1824,8 +1825,7 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   .cron-schedule-grid { grid-template-columns: minmax(0, 1fr); }
   .cron-task-actions { margin-left: 0; }
   .cron-task-actions .ghost { min-height: 40px; padding-inline: 10px; }
-  #cronNew { width: 100%; }
-  #cronFooter > button { flex: 1 1 0; }
+  #cronFooter > button:not(#cronNew) { flex: 1 1 0; }
 }
 
 /* Wide enough to read a transcript in; the chat host owns its own scroll so the

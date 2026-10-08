@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.62.2 — 2026-10-08
+
+- Moved the new scheduled task action into the dialog footer as a plus button, so it stays visible while scrolling.
+
 ## 2.62.1 — 2026-10-08
 
 - Fixed conversations that loaded before the worktree list being filed under the project folder, and worktree groups no longer wait for finished-worktree cleanup before they appear.

@@ -2080,7 +2080,6 @@
         <p id="cronError" role="alert"></p>
         <div id="cronListView">
           <div id="cronList" class="cron-list" data-testid="cron-list"></div>
-          <button id="cronNew" class="primary" type="button" data-testid="cron-new">New scheduled task</button>
         </div>
         <form id="cronForm" data-testid="cron-form" hidden>
           <div class="cron-form-heading">
@@ -2127,7 +2126,7 @@
         </form>
         </div>
         <div id="cronFormActions" class="dialog-actions" hidden><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" form="cronForm" data-testid="cron-save">Save task</button></div>
-        <div id="cronFooter" class="dialog-actions"><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh</button><button id="cronClose" class="primary" type="button" data-testid="cron-close">Close</button></div>
+        <div id="cronFooter" class="dialog-actions"><button id="cronNew" class="ghost icon-button" type="button" aria-label="New scheduled task" title="New scheduled task" data-testid="cron-new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh</button><button id="cronClose" class="primary" type="button" data-testid="cron-close">Close</button></div>
       </section>
     </dialog>
     <div class="row-menu" id="rowMenu" popover="auto" aria-label="Conversation actions" data-testid="session-row-menu"></div>

@@ -160,8 +160,18 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   const listLayout = await actionLayout("#cronBody", "#cronFooter");
   assert.ok(listLayout.scrolls, `Task list should scroll inside dialog: ${JSON.stringify(listLayout)}`);
   assert.ok(listLayout.footerVisible, `Refresh and Close must remain visible: ${JSON.stringify(listLayout)}`);
+  const newTaskButton = await page.getByTestId("cron-new").evaluate(button => {
+    const footer = document.querySelector("#cronFooter")!;
+    const bounds = button.getBoundingClientRect();
+    const refresh = document.querySelector("#cronRefresh")!.getBoundingClientRect();
+    return { inFooter: button.parentElement === footer, iconOnly: !button.textContent?.trim() && !!button.querySelector("svg"),
+      label: button.getAttribute("aria-label"), leftOfRefresh: bounds.right < refresh.left, width: bounds.width };
+  });
+  assert.ok(newTaskButton.inFooter && newTaskButton.iconOnly && newTaskButton.label === "New scheduled task"
+    && newTaskButton.leftOfRefresh && newTaskButton.width <= 48, `New task is a labelled icon beside footer actions: ${JSON.stringify(newTaskButton)}`);
   await page.locator("#cronBody").evaluate(element => { element.scrollTop = element.scrollHeight; });
   assert.ok((await actionLayout("#cronBody", "#cronFooter")).footerVisible, "List footer must remain visible after scrolling");
+  assert.equal(await page.getByTestId("cron-new").isVisible(), true, "New task remains visible after scrolling");
 
   await page.getByTestId("cron-edit").click();
   const mobileDialog = await page.evaluate(() => {
