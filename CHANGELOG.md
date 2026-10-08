@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Worktrees now keep the uncommitted edits they were created with and sync them to other machines, and pull requests warn when the agent changes those files.
+
 ## 2.56.0 — 2026-10-08
 
 - Added a scheduled-task option to skip review for completed runs, and hid scheduled conversations from the chat list behind a "Show scheduled" toggle.

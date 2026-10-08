@@ -64,7 +64,12 @@ export async function openWorktreePullRequest(input: WorktreePullRequestInput, c
   const branch = previous?.branch ?? (input.previous ? `${input.branchName}-${Date.now().toString(36)}` : input.branchName);
   assertBranch(branch, "Pull request branch");
 
-  let warning: string | undefined;
+  const warnings: string[] = [];
+  // Warn if the PR touches files that had uncommitted changes at worktree creation
+  if (input.changes.uncommittedPaths?.length) {
+    warnings.push(`These files had uncommitted edits when the worktree was created and were changed by the agent: ${input.changes.uncommittedPaths.join(", ")}. Review them carefully to avoid including unfinished work.`);
+  }
+
   let baseCommit = previous?.baseCommit;
   if (!baseCommit && input.changes.gitBase) {
     for (const candidate of [input.changes.gitBase, await remoteMergeBase(input.projectPath, input.changes.gitBase, base)]) {
@@ -75,8 +80,9 @@ export async function openWorktreePullRequest(input: WorktreePullRequestInput, c
   }
   if (!baseCommit) {
     baseCommit = (await call(`/git/ref/heads/${refRoute(base)}`) as { object: { sha: string } }).object.sha;
-    warning = `The project's commit from when the worktree was created is not on GitHub, so the changed files were written on top of ${base}. Check the diff for lines it reverts.`;
+    warnings.push(`The project's commit from when the worktree was created is not on GitHub, so the changed files were written on top of ${base}. Check the diff for lines it reverts.`);
   }
+  const warning = warnings.length ? warnings.join("\n\n") : undefined;
   const baseTree = (await call(`/git/commits/${baseCommit}`) as { tree: { sha: string } }).tree.sha;
   const listing = await call(`/git/trees/${baseTree}?recursive=1`) as { truncated?: boolean; tree?: Array<{ path: string; type: string }> };
   // A file the worktree copied from uncommitted work has nothing to delete on GitHub.

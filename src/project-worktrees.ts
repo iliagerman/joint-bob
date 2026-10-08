@@ -211,6 +211,29 @@ async function gitHead(projectPath: string): Promise<string | null> {
   } catch { return null; }
 }
 
+/** Captures uncommitted changes (staged and unstaged) as a unified diff, for syncing to other machines. */
+async function gitDiff(projectPath: string): Promise<string | null> {
+  try {
+    const diff = (await exec("git", ["-C", projectPath, "diff", "HEAD"], { timeout: 30_000 })).stdout;
+    return diff.trim() || null;
+  } catch { return null; }
+}
+
+/** Extracts file paths from a unified diff. Returns paths like "src/file.ts". */
+function parseDiffPaths(diff: string): string[] {
+  const paths = new Set<string>();
+  for (const line of diff.split("\n")) {
+    // Match "diff --git a/path b/path" or "+++ b/path" or "--- a/path"
+    const gitDiffMatch = /^diff --git a\/(.+?) b\//.exec(line);
+    if (gitDiffMatch) { paths.add(gitDiffMatch[1]); continue; }
+    const plusMatch = /^\+\+\+ b\/(.+)$/.exec(line);
+    if (plusMatch && plusMatch[1] !== "/dev/null") { paths.add(plusMatch[1]); continue; }
+    const minusMatch = /^--- a\/(.+)$/.exec(line);
+    if (minusMatch && minusMatch[1] !== "/dev/null") paths.add(minusMatch[1]);
+  }
+  return [...paths].sort();
+}
+
 async function lstatOrNull(file: string): Promise<Stats | null> {
   try { return await fs.lstat(file); }
   catch (error) {
@@ -266,11 +289,14 @@ export async function createProjectWorktree(project: ProjectRecord, input: { nam
   const staging = path.join(path.dirname(worktree), `.creating-${id}`);
   try {
     const gitBase = await gitHead(source);
+    const uncommittedDiff = await gitDiff(source);
     await fs.cp(source, staging, { recursive: true, force: false, errorOnExist: true, filter: (entry) => copyCandidate(source, entry) });
     await ensureWorktreeLocalFiles(source, staging);
     const baselineDigest = await captureBaseline(staging, worktreePathAllowed, [WORKTREE_META_DIR]);
     const metadata: WorktreeMetadata = { version: 1, id, name, color, createdAt: new Date().toISOString(), createdByNodeId: node.id, baselineDigest, lastMergedAt: null, gitBase, createdBy: input.createdBy ?? null, pullRequest: null };
     await writeAtomic(metadataFile(staging), `${JSON.stringify(metadata, null, 2)}\n`);
+    // Write base.patch if there were uncommitted changes - this syncs to other machines
+    if (uncommittedDiff) await writeAtomic(path.join(staging, WORKTREE_META_DIR, "base.patch"), uncommittedDiff);
     await fs.rename(staging, worktree);
     await registerLocalPath(worktree, node.id);
     announce(project.id);
@@ -430,7 +456,19 @@ async function mergeLocked(project: ProjectRecord, worktreeId: string, root: str
 
 
 export interface WorktreeFileChange { path: string; content: Buffer; executable: boolean }
-export interface WorktreeChanges { gitBase: string | null; writes: WorktreeFileChange[]; deletes: string[] }
+export interface WorktreeChanges { gitBase: string | null; writes: WorktreeFileChange[]; deletes: string[]; uncommittedPaths: string[] }
+
+/** Reads the base.patch file if it exists and returns the paths that had uncommitted changes. */
+async function readUncommittedPaths(worktree: string): Promise<Set<string>> {
+  const patchFile = path.join(worktree, WORKTREE_META_DIR, "base.patch");
+  try {
+    const patch = await fs.readFile(patchFile, "utf8");
+    return new Set(parseDiffPaths(patch));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+    throw error;
+  }
+}
 
 /** Everything the worktree changed since it was copied (or last merged), for a pull request. */
 export async function worktreeChanges(projectId: string, worktreeId: string, root = worktreeRoot()): Promise<WorktreeChanges> {
@@ -454,7 +492,12 @@ export async function worktreeChanges(projectId: string, worktreeId: string, roo
     writes.push({ path: relative, content, executable });
   }
   const deletes = Object.entries(baseline.manifest.files).filter(([file, entry]) => !("symlink" in entry) && !present.has(file)).map(([file]) => file).sort();
-  return { gitBase: metadata.gitBase ?? null, writes, deletes };
+  // Find which changed files had uncommitted edits at creation
+  const uncommittedAtCreation = await readUncommittedPaths(worktree);
+  const changedPaths = new Set([...writes.map((w) => w.path), ...deletes]);
+  const uncommittedPaths = [...changedPaths].filter((p) => uncommittedAtCreation.has(p)).sort();
+
+  return { gitBase: metadata.gitBase ?? null, writes, deletes, uncommittedPaths };
 }
 
 export async function recordWorktreePullRequest(projectId: string, worktreeId: string, pullRequest: WorktreePullRequest, root = worktreeRoot()): Promise<ProjectWorktree> {
