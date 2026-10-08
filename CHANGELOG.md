@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.63.0 — 2026-10-08
 
-- Added creating, reopening, and merging GitHub pull requests from the pull request tab, and an action that explains any pull request in the Story tab.
+- Added creating GitHub pull requests, including drafts, from the pull request tab.
+- Added reopening closed pull requests and merging open ones by merge, squash, or rebase from the pull request tab, each after a confirmation.
+- Added an "Explain this PR" action on pull requests and a PR number or URL field in the Story tab that writes a story from a pull request's description and GitHub diff.
+- Pull request details now show when a pull request is merged or a draft.
+- Story tab headers show the pull request a story came from.
 
 ## 2.62.5 — 2026-10-08
 
