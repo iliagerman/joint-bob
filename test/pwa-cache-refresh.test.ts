@@ -61,4 +61,9 @@ test("an updated worker refreshes open clients and keeps checking while the app 
   assert.match(app, /setInterval\([^;]*updateServiceWorker/s);
   assert.match(worker, /clients\.matchAll\(\{ type: "window"/);
   assert.match(worker, /client\.navigate\(client\.url\)/);
+  // A window returning from the background checks at once instead of waiting for a throttled timer.
+  assert.match(app, /visibilitychange[\s\S]*?updateServiceWorker\(registration\)/);
+  // The page reloads itself when a new worker takes over, for browsers that miss client.navigate.
+  assert.match(app, /addEventListener\("controllerchange"[\s\S]*?location\.reload\(\)/);
+  assert.match(app, /hadController/);
 });
