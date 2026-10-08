@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.61.1 — 2026-10-08
 
-- Fixed the installed app staying on an old version after an update: it now checks for updates as soon as you switch back to it and reloads itself into the new version, or asks you to reload after sending if you are in the middle of typing a message.
+- Fixed the installed app staying on an old version after an update: it now checks for updates as soon as you switch back to it and reloads itself into the new version, or asks you to reload if you are in the middle of typing a message.
 
 ## 2.61.0 — 2026-10-08
 
