@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.62.1 — 2026-10-08
 
 - Fixed conversations that loaded before the worktree list being filed under the project folder, and worktree groups no longer wait for finished-worktree cleanup before they appear.
 
