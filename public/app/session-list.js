@@ -15,7 +15,7 @@ import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { openSecretScope } from "./secrets.js";
 import { openConversationClassificationDialog, openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
 import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
-import { loadWorktrees, worktreeBadge, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
+import { loadWorktrees, otherWorktreesSection, worktreeBadge, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
 import { confirmAction, enableNotifications, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
@@ -52,6 +52,8 @@ export function renderSessions() {
   keepListScroll(elements.sessionList);
   // A background refresh must not leave a menu floating over rows that just moved.
   queueMicrotask(refreshRowMenuAnchor);
+  const otherWorktrees = elements.sessionList.querySelector(".other-worktrees");
+  const otherWorktreesOpen = otherWorktrees?.dataset.projectId === state.activeProjectId && otherWorktrees.open;
   elements.sessionList.replaceChildren();
   renderChatSessionControls();
   syncChatDoneButton();
@@ -97,13 +99,18 @@ export function renderSessions() {
 
   const list = elements.sessionList;
   list.append(worktreesHeading());
+  const emptyWorktrees = [];
   for (const worktree of worktrees.values()) {
     const group = worktreeRows.get(worktree.id) || [];
-    if (!group.length && (narrowed || state.chatFilters.size)) continue;
+    if (!group.length) {
+      if (!narrowed && !state.chatFilters.size) emptyWorktrees.push(worktree);
+      continue;
+    }
     list.append(worktreeSectionHeader(worktree, group.filter((row) => row.depth === 0).length));
     if (state.collapsedWorktreeIds.has(worktree.id)) continue;
     for (const row of group) list.append(sessionRow(row, sessionIsActive(row.session)));
   }
+  if (emptyWorktrees.length) list.append(otherWorktreesSection(emptyWorktrees, otherWorktreesOpen));
   if (state.sessions.length === 0 || sessions.length === 0) {
     const empty = document.createElement("p");
     empty.className = "muted";

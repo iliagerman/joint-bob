@@ -193,6 +193,53 @@ test("conversation badges still have matching groups while the worktree listing 
   }
 });
 
+test("a late worktree listing keeps empty groups collapsed without moving visible conversations", async () => {
+  const empty = await page.evaluate(async () => {
+    const { api } = await import("/app/api.js");
+    const { state } = await import("/app/state.js");
+    return (await api(`/api/projects/${state.activeProjectId}/worktrees`, { method: "POST", body: JSON.stringify({ name: "Empty worktree", color: "amber" }) })).worktree;
+  });
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/projects/*/worktrees", async (request) => { await pending; await request.continue(); });
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await openProject();
+    const row = page.locator("#sessionList .list-row", { hasText: CONVERSATION_NAME });
+    await row.waitFor();
+    assert.equal(await page.getByTestId("worktree-section").count(), 1, "initial groups come from conversations");
+    release();
+    await page.waitForFunction(async (id) => (await import("/app/state.js")).state.worktrees.some((worktree) => worktree.id === id), empty.id);
+    assert.equal(await page.locator("#sessionList > [data-testid='worktree-section']").count(), 1, "the late listing must not insert an empty top-level group");
+    const section = page.getByTestId("worktree-section").filter({ hasText: "Empty worktree" });
+    assert.equal(await section.isVisible(), false);
+    const toggle = page.getByTestId("other-worktrees-toggle");
+    assert.equal(await toggle.innerText(), "Other worktrees (1)");
+    await toggle.click();
+    await section.waitFor();
+    await page.evaluate(async () => {
+      await (await import("/app/worktrees.js")).loadWorktrees();
+      (await import("/app/session-list.js")).renderSessions();
+    });
+    assert.equal(await section.isVisible(), true, "refresh preserves an explicitly expanded section");
+    await section.getByTestId("worktree-menu-button").click();
+    await page.getByTestId("worktree-menu-new-conversation").waitFor();
+    await page.keyboard.press("Escape");
+    await toggle.click();
+    assert.equal(await section.isVisible(), false);
+    assert.equal(await row.isVisible(), true, "occupied groups stay visible");
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+    await page.evaluate(async (id) => {
+      const { api } = await import("/app/api.js");
+      const { state } = await import("/app/state.js");
+      await api(`/api/projects/${state.activeProjectId}/worktrees/${id}`, { method: "DELETE" });
+      await (await import("/app/worktrees.js")).loadWorktrees();
+    }, empty.id);
+  }
+});
+
 test("long worktree headers and conversation cards fit the column without horizontal scrolling", async () => {
   try {
     for (const width of [1440, 1024, 390, 320]) {
@@ -331,7 +378,7 @@ test("marking the last conversation done removes its worktree header and folder"
   assert.equal(await page.getByTestId("worktree-section").count(), 0, "no zero-count header returns after reload");
 });
 
-test("a retained zero-count worktree explains why its files were kept, including after reload", async () => {
+test("retained worktrees stay collapsed after reload and return to normal groups with Show done", async () => {
   await page.getByTestId("session-create-button").click();
   await page.locator("#newSessionNameDialog[open]").waitFor();
   await page.getByTestId("new-session-name-input").fill("Unpublished changes");
@@ -342,15 +389,28 @@ test("a retained zero-count worktree explains why its files were kept, including
   await writeFile(path.join(worktree, "unfinished.txt"), "This must survive marking done.\n");
   await page.locator("#sessionList .list-row.active").getByTestId("session-menu-button").click();
   await page.getByTestId("session-done-button").click();
+  await page.getByTestId("other-worktrees-toggle").waitFor();
+  assert.equal(await section.isVisible(), false, "retained files do not leave an empty group in the main list");
+  await page.getByTestId("other-worktrees-toggle").click();
+  await section.waitFor();
   await section.getByTestId("worktree-cleanup-note").waitFor({ timeout: 20_000 });
-  await section.getByTestId("worktree-section-count").filter({ hasText: /^0$/ }).waitFor({ timeout: 20_000 });
-  assert.equal(await section.getByTestId("worktree-section-count").innerText(), "0");
   assert.equal(await section.getByTestId("worktree-cleanup-note").innerText(), "Kept: unmerged changes remain");
+  assert.equal(await section.getByTestId("worktree-section-count").innerText(), "0");
   await page.reload({ waitUntil: "domcontentloaded" });
   await openProject();
+  await page.getByTestId("other-worktrees-toggle").waitFor();
+  assert.equal(await section.isVisible(), false, "empty groups stay collapsed after reload");
+  await page.getByTestId("other-worktrees-toggle").click();
+  await section.waitFor();
   await section.getByTestId("worktree-cleanup-note").waitFor({ timeout: 20_000 });
   assert.equal(await readFile(path.join(worktree, "unfinished.txt"), "utf8"), "This must survive marking done.\n");
   await page.setViewportSize({ width: 1160, height: 900 });
   const fits = await section.evaluate((element) => element.scrollWidth <= element.clientWidth + 1);
-  assert.ok(fits, "retention reason does not overflow the narrow conversation column");
+  assert.ok(fits, "an expanded Other worktrees section fits the conversation column");
+  await page.getByTestId("show-done-conversations-toggle").check();
+  await page.waitForFunction(() => document.querySelector("#sessionList > [data-testid='worktree-section'] [data-testid='worktree-section-count']")?.textContent === "1");
+  assert.equal(await page.getByTestId("other-worktrees-toggle").count(), 0, "showing its done conversation restores the normal worktree group");
+  await page.getByTestId("show-done-conversations-toggle").uncheck();
+  await page.getByTestId("other-worktrees-toggle").waitFor();
+  assert.equal(await section.isVisible(), false, "hiding done conversations does not leave a zero-count header behind");
 });
