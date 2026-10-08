@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Worktrees with no visible conversations now stay in a collapsed Other worktrees section instead of filling the list after reload. Their actions remain available, and newly created worktrees open immediately.
+
 ## 2.62.4 — 2026-10-08
 
 - Sharing a project's files with a peer no longer stops for the whole batch when one project fails to set up; the other projects still sync and the failed one is logged.

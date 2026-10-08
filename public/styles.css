@@ -4106,6 +4106,8 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .worktree-add-button { order: 1; padding: 2px 8px; min-height: 0; font-size: 12px; letter-spacing: normal; text-transform: none; }
 .worktree-section-header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0 2px; border-left: 3px solid var(--worktree-hue); border-radius: 6px; background: color-mix(in srgb, var(--worktree-hue) 12%, transparent); }
 .worktree-cleanup-note { flex-basis: 100%; padding: 0 8px 6px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.other-worktrees > summary { padding: 6px 2px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.other-worktrees > p { margin: 4px 2px; color: var(--muted); font-size: 11px; }
 .worktree-section-toggle { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; min-height: 30px; padding: 4px 8px; border: 0; background: none; color: var(--heading); font: inherit; font-size: 12.5px; font-weight: 600; text-align: left; cursor: pointer; }
 .worktree-section-caret { width: 10px; flex: none; color: var(--muted); }
 .worktree-section-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
