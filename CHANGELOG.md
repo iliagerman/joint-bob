@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.57.0 — 2026-10-08
 
-- Worktrees now keep the uncommitted edits they were created with and sync them to other machines, and pull requests warn when the agent changes those files.
+- Added keeping the uncommitted edits each worktree was created with, syncing them to other machines, and a warning on pull requests that change those files.
 
 ## 2.56.0 — 2026-10-08
 
