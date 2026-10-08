@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.61.0 — 2026-10-08
 
-- Changed the default model routing to sort requests into six task types, so multi-file coding now runs on Sonnet and debugging and planning on Opus.
+- Rebuilt the default model routing around six task types (questions, terminal and git work, simple edits, multi-file coding, debugging, and planning), each sent to a model matched to that task: Haiku, Sonnet and Opus on Claude, and GPT-6 Luna, Sol and Astra on Pi.
 
 ## 2.60.0 — 2026-10-08
 
