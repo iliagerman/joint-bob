@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.59.0 — 2026-10-08
 
-- Added a per-task option to hide a scheduled task's conversations from history, and each project now remembers its own "Show done" and "Show scheduled" settings across reloads.
+- Added a per-task option to hide a scheduled task's conversations from history, and each project remembered its own "Show done" and "Show scheduled" settings across reloads.
 
 ## 2.58.0 — 2026-10-08
 
