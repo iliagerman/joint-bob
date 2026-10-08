@@ -732,6 +732,8 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .conversation-tabs button.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / 0.16); }
 .conversation-list-pane { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .conversation-list-pane[hidden] { display: none; }
+/* Long worktree names must not size the list's implicit grid column. */
+.session-list { grid-template-columns: minmax(0, 1fr); }
 .quick-notes-section { display: flex; flex-direction: column; flex: 1; min-height: 0; background: color-mix(in srgb, var(--field) 28%, transparent); }
 .quick-notes-section .section-title { min-height: 34px; margin-top: 10px; gap: 6px; }
 .quick-notes-filter { width: min(150px, 45%); min-height: 28px; margin-left: auto; padding: 3px 24px 3px 7px; font-size: 11px; }
@@ -2396,17 +2398,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 
 /* ---- Desktop: persistent columns, no bottom nav ---- */
 @media (min-width: 1024px) {
-  body:not(.focus-ui):not(.canvas-pane-mode) { overflow-y: auto; }
-  body:not(.focus-ui):not(.canvas-pane-mode) .shell { height: auto; min-height: 100dvh; align-items: start; }
-  body:not(.focus-ui):not(.canvas-pane-mode) #chatsPanel { height: auto; min-height: calc(100dvh - 20px); overflow: visible; }
-  body:not(.focus-ui):not(.canvas-pane-mode) #conversationListPane,
-  body:not(.focus-ui):not(.canvas-pane-mode) #sessionList { flex: 0 0 auto; }
-  body:not(.focus-ui):not(.canvas-pane-mode) #sessionList { overflow-y: visible; }
-  body:not(.focus-ui):not(.canvas-pane-mode) :is(#projectsPanel, #chatPanel, #boardPanel, #canvasPanel) {
-    position: sticky;
-    top: 10px;
-    height: calc(100dvh - 20px);
-  }
   .shell {
     display: grid;
     --col-projects: clamp(274px, 18vw, 320px);

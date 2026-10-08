@@ -4,7 +4,7 @@
 // and delete it everywhere.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
@@ -12,7 +12,7 @@ import { type Browser, type BrowserContext, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { projectNamed, seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 
-const WORKTREE_NAME = "Slice 4";
+const WORKTREE_NAME = "audit-suppressed-ticket-confirmation-loop-20261008";
 const CONVERSATION_NAME = "Inbox mock replacement";
 const SESSION_ID = "worktree-inbox-conversation";
 
@@ -103,7 +103,8 @@ test("a worktree is created from the conversation list as a code-only copy", asy
 
   const worktree = await onlyWorktreePath();
   assert.equal(await readFile(path.join(worktree, "src", "inbox.ts"), "utf8"), "export const inbox = 'mock';\n");
-  assert.equal(await exists(path.join(worktree, "node_modules")), false, "packages never enter a worktree");
+  assert.ok((await lstat(path.join(worktree, "node_modules"))).isSymbolicLink(), "dependencies are linked, not copied");
+  assert.equal(await realpath(path.join(worktree, "node_modules")), await realpath(path.join(project.path, "node_modules")));
   assert.equal(await section.getAttribute("data-worktree-color"), "teal", "the first worktree gets a vivid colour, not slate");
   assert.equal((await section.getByTestId("worktree-section-count").innerText()).trim(), "0");
 });
@@ -138,6 +139,40 @@ test("a conversation that ran in the worktree is listed in the worktree's sub-se
   assert.equal(await page.getByTestId("worktree-section-toggle").first().getAttribute("aria-expanded"), "false");
   await page.getByTestId("worktree-section-toggle").first().click();
   await page.waitForFunction((expected) => document.querySelectorAll("#sessionList .list-row").length === expected, total);
+});
+
+test("long worktree headers and conversation cards fit the column without horizontal scrolling", async () => {
+  try {
+    for (const width of [1440, 1024, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      const geometry = await page.evaluate(() => {
+        const list = document.querySelector<HTMLElement>("#sessionList")!;
+        const bounds = list.getBoundingClientRect();
+        const name = list.querySelector<HTMLElement>(".worktree-section-name")!;
+        const items = [...list.querySelectorAll(".worktree-section-header, .session-card, .worktree-section-count, .worktree-section-menu, .row-action-button")];
+        return {
+          width: list.clientWidth,
+          scrollWidth: list.scrollWidth,
+          nameWidth: name.clientWidth,
+          nameScrollWidth: name.scrollWidth,
+          overflowing: items.filter((item) => {
+            const box = item.getBoundingClientRect();
+            return box.left < bounds.left || box.right > bounds.left + list.clientWidth;
+          }).map((item) => item.className),
+        };
+      });
+      assert.ok(geometry.nameScrollWidth > 250, "fixture name must be wider than a narrow column");
+      assert.ok(geometry.scrollWidth <= geometry.width, `at ${width}px, list must fit: ${JSON.stringify(geometry)}`);
+      assert.deepEqual(geometry.overflowing, [], `at ${width}px, cards and actions must stay inside the column`);
+      assert.ok(geometry.nameWidth > 0 && geometry.nameWidth < geometry.nameScrollWidth, `at ${width}px, only the long name should truncate`);
+      await page.getByTestId("worktree-menu-button").first().click();
+      await page.getByTestId("worktree-menu-new-conversation").waitFor();
+      await page.keyboard.press("Escape");
+    }
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
 });
 
 test("starting a conversation from the worktree menu runs it in the worktree", async () => {

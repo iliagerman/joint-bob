@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed long worktree names pushing conversation cards past the edge of the list, and the desktop conversation list now scrolls inside its own column again while the chat stays in place.
+
 ## 2.61.1 — 2026-10-08
 
 - Fixed the installed app staying on an old version after an update: it now checks for updates as soon as you switch back to it and reloads itself into the new version, or asks you to reload if you are in the middle of typing a message.
