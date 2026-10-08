@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.59.1 — 2026-10-08
 
-- Fixed the desktop conversation list, which scrolled inside its own column; it now scrolls with the page while the chat column stays in place.
+- Fixed the desktop conversation list, which scrolled inside its own column; it now scrolls with the page while the chat stays in place.
 
 ## 2.59.0 — 2026-10-08
 
