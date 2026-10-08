@@ -2396,6 +2396,17 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 
 /* ---- Desktop: persistent columns, no bottom nav ---- */
 @media (min-width: 1024px) {
+  body:not(.focus-ui):not(.canvas-pane-mode) { overflow-y: auto; }
+  body:not(.focus-ui):not(.canvas-pane-mode) .shell { height: auto; min-height: 100dvh; align-items: start; }
+  body:not(.focus-ui):not(.canvas-pane-mode) #chatsPanel { height: auto; min-height: calc(100dvh - 20px); overflow: visible; }
+  body:not(.focus-ui):not(.canvas-pane-mode) #conversationListPane,
+  body:not(.focus-ui):not(.canvas-pane-mode) #sessionList { flex: 0 0 auto; }
+  body:not(.focus-ui):not(.canvas-pane-mode) #sessionList { overflow-y: visible; }
+  body:not(.focus-ui):not(.canvas-pane-mode) :is(#projectsPanel, #chatPanel, #boardPanel, #canvasPanel) {
+    position: sticky;
+    top: 10px;
+    height: calc(100dvh - 20px);
+  }
   .shell {
     display: grid;
     --col-projects: clamp(274px, 18vw, 320px);
