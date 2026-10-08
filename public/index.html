@@ -2068,7 +2068,7 @@
       </section>
     </dialog>
 
-    <!-- Scheduled tasks use the same bounded, scrolling card as every other app dialog. -->
+    <!-- Scheduled tasks keep actions visible while the list or editor scrolls. -->
     <dialog id="cronDialog" aria-labelledby="cronHeading" data-testid="cron-dialog">
       <section class="dialog-card cron-card">
         <div class="dialog-heading" tabindex="-1">
@@ -2076,6 +2076,7 @@
           <h2 id="cronHeading">Scheduled tasks</h2>
           <p id="cronContext"></p>
         </div>
+        <div id="cronBody" class="cron-body">
         <p id="cronError" role="alert"></p>
         <div id="cronListView">
           <div id="cronList" class="cron-list" data-testid="cron-list"></div>
@@ -2123,8 +2124,9 @@
           <label class="checkbox-row"><input name="markForReview" type="checkbox" checked data-testid="cron-mark-for-review">Mark completed runs for review</label>
           <label class="checkbox-row"><input name="hideFromHistory" type="checkbox" data-testid="cron-hide-from-history">Hide this task's conversations from history, even when Show scheduled is on</label>
           <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Failed runs retry at the next scheduled time unless pause on failure is selected.</p>
-          <div class="dialog-actions"><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" data-testid="cron-save">Save task</button></div>
         </form>
+        </div>
+        <div id="cronFormActions" class="dialog-actions" hidden><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" form="cronForm" data-testid="cron-save">Save task</button></div>
         <div id="cronFooter" class="dialog-actions"><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh</button><button id="cronClose" class="primary" type="button" data-testid="cron-close">Close</button></div>
       </section>
     </dialog>

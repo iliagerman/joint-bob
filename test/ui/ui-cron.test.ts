@@ -122,6 +122,14 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   await page.locator('[aria-label="Actions for Internal Assistant"]').click();
   await page.locator('[data-testid="project-cron-button"]').click();
   await page.waitForFunction(() => document.querySelectorAll("#cronList .cron-task").length === 2);
+  const desktopActions = await page.evaluate(() => {
+    const body = document.querySelector<HTMLElement>("#cronBody")!;
+    const footer = document.querySelector<HTMLElement>("#cronFooter")!;
+    const card = document.querySelector<HTMLElement>("#cronDialog > .dialog-card")!;
+    return { scrolls: body.scrollHeight > body.clientHeight, footerBottom: footer.getBoundingClientRect().bottom, cardBottom: card.getBoundingClientRect().bottom };
+  });
+  assert.ok(desktopActions.scrolls && desktopActions.footerBottom <= desktopActions.cardBottom && desktopActions.footerBottom <= 900,
+    `Desktop task list must scroll with actions visible: ${JSON.stringify(desktopActions)}`);
   await page.locator("#cronList .cron-task", { hasText: "Edited project cron" }).getByTestId("cron-delete").click();
   await page.locator('#confirmDialog[open]').waitFor();
   await page.locator("#confirmAcceptButton").click();
@@ -140,6 +148,20 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   });
   assert.ok(mobileTask?.withinCard, `Mobile scheduled task escaped its card: ${JSON.stringify(mobileTask)}`);
   assert.ok(mobileTask.actionHeights.every(height => height >= 40), `Mobile task actions need touch targets: ${JSON.stringify(mobileTask.actionHeights)}`);
+  const actionLayout = async (contentSelector: string, actionsSelector: string) => page.evaluate(({ contentSelector, actionsSelector }) => {
+    const content = document.querySelector<HTMLElement>(contentSelector)!;
+    const actions = document.querySelector<HTMLElement>(actionsSelector)!;
+    const card = document.querySelector<HTMLElement>("#cronDialog > .dialog-card")!;
+    const footer = actions.getBoundingClientRect();
+    const bounds = card.getBoundingClientRect();
+    return { scrolls: content.scrollHeight > content.clientHeight, scrollTop: content.scrollTop,
+      footerVisible: footer.top >= bounds.top && footer.bottom <= bounds.bottom && footer.bottom <= innerHeight };
+  }, { contentSelector, actionsSelector });
+  const listLayout = await actionLayout("#cronBody", "#cronFooter");
+  assert.ok(listLayout.scrolls, `Task list should scroll inside dialog: ${JSON.stringify(listLayout)}`);
+  assert.ok(listLayout.footerVisible, `Refresh and Close must remain visible: ${JSON.stringify(listLayout)}`);
+  await page.locator("#cronBody").evaluate(element => { element.scrollTop = element.scrollHeight; });
+  assert.ok((await actionLayout("#cronBody", "#cronFooter")).footerVisible, "List footer must remain visible after scrolling");
 
   await page.getByTestId("cron-edit").click();
   const mobileDialog = await page.evaluate(() => {
@@ -152,10 +174,12 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   });
   assert.ok(mobileDialog, "Mobile schedule editor should keep the standard dialog card");
   assert.ok(mobileDialog.left >= 8 && mobileDialog.right <= 382 && mobileDialog.top >= 8 && mobileDialog.bottom <= 492, `Mobile dialog escaped viewport: ${JSON.stringify(mobileDialog)}`);
-  assert.equal(mobileDialog.overflowY, "auto");
-  assert.equal(mobileDialog.scrolls, true, "Long schedule editor should scroll inside the dialog");
-  await page.getByTestId("cron-save").scrollIntoViewIfNeeded();
-  assert.equal(await page.getByTestId("cron-save").isVisible(), true, "Save action should remain reachable on a short mobile viewport");
+  assert.equal(mobileDialog.overflowY, "hidden");
+  const formLayout = await actionLayout("#cronBody", "#cronFormActions");
+  assert.ok(formLayout.scrolls && formLayout.footerVisible, `Editor scrolls while Cancel and Save remain visible: ${JSON.stringify(formLayout)}`);
+  await page.locator("#cronBody").evaluate(element => { element.scrollTop = element.scrollHeight; });
+  const scrolledForm = await actionLayout("#cronBody", "#cronFormActions");
+  assert.ok(scrolledForm.scrollTop > 0 && scrolledForm.footerVisible, `Editor footer remains visible after scrolling: ${JSON.stringify(scrolledForm)}`);
 });
 
 test("minute interval schedules save and reopen with their cadence", { timeout: 180_000 }, async (t) => {

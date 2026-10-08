@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.61.3 — 2026-10-08
+
+- Scheduled task dialogs keep their action buttons visible while the task list or editor scrolls.
+
 ## 2.61.2 — 2026-10-08
 
 - Fixed long worktree names pushing conversation cards past the edge of the list, and the desktop conversation list now scrolls inside its own column again while the chat stays in place.

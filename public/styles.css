@@ -1756,7 +1756,9 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   .by-the-way-card { width: 100vw; height: 100dvh; border: 0; border-radius: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
 }
 
-.cron-card { width: min(680px, calc(100vw - 24px)); }
+.cron-card { width: min(680px, calc(100vw - 24px)); display: flex; flex-direction: column; overflow: hidden; }
+.cron-card > .dialog-heading, .cron-card > .dialog-actions { flex: 0 0 auto; }
+.cron-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 14px; }
 #cronError:empty { display: none; }
 #cronError { margin: 0; color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
 #cronListView, #cronForm { display: grid; gap: 14px; min-width: 0; }

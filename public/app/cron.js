@@ -10,6 +10,8 @@ const field = name => form.elements.namedItem(name);
 const errorText = document.querySelector("#cronError");
 const listView = document.querySelector("#cronListView");
 const footer = document.querySelector("#cronFooter");
+const formActions = document.querySelector("#cronFormActions");
+const body = document.querySelector("#cronBody");
 let context;
 let editing = null;
 let availableHarnesses = [];
@@ -139,7 +141,8 @@ function showList() {
   form.hidden = true;
   listView.hidden = false;
   footer.hidden = false;
-  dialog.querySelector(".cron-card").scrollTo(0, 0);
+  formActions.hidden = true;
+  body.scrollTo(0, 0);
 }
 function showLoading() {
   const list = document.querySelector("#cronList");
@@ -194,8 +197,9 @@ function editTask(task) {
   form.hidden = false;
   listView.hidden = true;
   footer.hidden = true;
+  formActions.hidden = false;
   document.querySelector("#cronFormTitle").textContent = task ? "Edit scheduled task" : "New scheduled task";
-  dialog.querySelector(".cron-card").scrollTo(0, 0);
+  body.scrollTo(0, 0);
   field("timezone").value = task ? task.schedule.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone;
   for (const name of ["name", "prompt", "ownerNodeId"]) if (task) field(name).value = task[name];
   field("engine").value = selectedEngine;
@@ -232,7 +236,7 @@ function showScheduleFields() {
 }
 form.addEventListener("submit", async event => {
   event.preventDefault();
-  const submit = form.querySelector('[type="submit"]');
+  const submit = formActions.querySelector('[type="submit"]');
   if (submit.disabled) return;
   submit.disabled = true; errorText.textContent = "";
   try {
