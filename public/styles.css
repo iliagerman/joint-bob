@@ -2428,6 +2428,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
     padding: 0 6px;
     line-height: var(--control-line);
   }
+  /* Icon actions keep one square size whether or not they carry a shortcut badge. */
+  .chat-toolbar button:is(.chat-action, .background-tasks-trigger, #chatFilesButton) { min-height: 34px; min-width: 34px; padding: 0; line-height: normal; }
+  .chat-toolbar button.background-tasks-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+  .chat-toolbar button.background-tasks-trigger:has(.background-tasks-badge:not([hidden])) { padding-inline: 8px; }
   .mobile-nav { display: none; }
   .back-button { display: none; }
   /* `.shell` declares these custom properties, so the override has to land on
@@ -2501,8 +2505,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
     padding-inline: 6px;
   }
   /* Scoped to the toolbar so it outranks the desktop hide rule further down the file. */
-  .chat-toolbar .background-tasks-icon { display: block; }
-  .background-tasks-label { display: none; }
   .model-button { width: 100%; max-width: none; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-more { grid-column: 5; grid-row: 1; position: relative; display: block; align-self: end; }
   .chat-more > summary { display: inline-flex; align-items: center; justify-content: center; list-style: none; cursor: pointer; }
@@ -3530,8 +3532,8 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 
 /* Background task history */
 .background-tasks-trigger { position: relative; }
-/* Desktop keeps the word; the icon only comes out on the narrow toolbar. */
-.background-tasks-icon { display: none; }
+/* Tasks is an icon like the other chat actions; focus mode brings the word back. */
+.background-tasks-label { display: none; }
 .background-tasks-badge { min-width: 1.25rem; padding: 0 .3rem; border-radius: 999px; background: var(--danger); color: white; font-size: .72rem; text-align: center; }
 .background-tasks-dialog { padding: 0; }
 /* Flex, not the shared grid: a grid stretched the header, overview and footer
@@ -4124,3 +4126,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .session-card[data-color][data-worktree-color] { box-shadow: inset 3px 0 0 var(--project-hue), inset -3px 0 0 var(--worktree-hue); }
 .session-card[data-color][data-worktree-color].active { box-shadow: inset 4px 0 0 var(--project-hue), inset -4px 0 0 var(--worktree-hue), var(--raise); }
 .session-worktree-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 9.5px; border-radius: 4px; padding: 2px 6px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; color: var(--heading); background: color-mix(in srgb, var(--worktree-hue) 22%, transparent); }
+
+/* Shown at once on hover in place of the slow native title tooltip (quick-tooltips.js). */
+.quick-tooltip { position: fixed; z-index: 1000; max-width: 280px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-ctl); background: var(--header); color: var(--text); font-size: 12px; line-height: 1.35; box-shadow: var(--shadow-soft); pointer-events: none; }
+.quick-tooltip[hidden] { display: none; }

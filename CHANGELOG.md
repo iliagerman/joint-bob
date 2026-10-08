@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Chat toolbar icons now share one size, and hovering over one shows its name almost at once instead of after a long wait.
+
 ## 2.59.1 — 2026-10-08
 
 - Fixed the desktop conversation list, which scrolled inside its own column; it now scrolls with the page while the chat stays in place.

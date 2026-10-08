@@ -263,6 +263,32 @@ test("the chat toolbar splits its controls across two rows and hangs the badges 
     `the actions sit on their own row (${actionLine}) below the controls (${controlLine})`);
 });
 
+test("the chat toolbar icons share one size and name themselves on hover at once", async () => {
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  await page.locator("#modelButton:enabled").waitFor();
+  await page.setViewportSize({ width: 1800, height: 900 });
+
+  const sizes = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("#chatToolbar :is(.chat-action, #backgroundTasksButton)")]
+    .filter((button) => button.getBoundingClientRect().height > 0)
+    .map((button) => ({ id: button.id, width: Math.round(button.getBoundingClientRect().width), height: Math.round(button.getBoundingClientRect().height) })));
+  assert.ok(sizes.length >= 10, `the action row shows its icons, saw ${JSON.stringify(sizes)}`);
+  assert.ok(sizes.every((size) => size.width === sizes[0].width && size.height === sizes[0].height),
+    `every action icon is the same size, got ${JSON.stringify(sizes)}`);
+  assert.equal(await page.locator("#backgroundTasksButton .background-tasks-icon").isVisible(), true, "Tasks shows an icon");
+  assert.equal(await page.locator("#backgroundTasksButton .background-tasks-label").isVisible(), false, "Tasks hides its word");
+
+  const tooltip = page.locator(".quick-tooltip");
+  await page.locator("#chatGitButton").hover();
+  await tooltip.waitFor({ state: "visible", timeout: 600 });
+  assert.equal(await tooltip.innerText(), "Git");
+  assert.equal(await page.locator("#chatGitButton").getAttribute("title"), null, "the native tooltip is held back while ours shows");
+  await page.mouse.move(5, 895);
+  await tooltip.waitFor({ state: "hidden" });
+  assert.equal(await page.locator("#chatGitButton").getAttribute("title"), "Git", "the title comes back once the pointer leaves");
+  await page.setViewportSize({ width: 1440, height: 900 });
+});
+
 test("the composer shortcut puts the cursor in the message box", async () => {
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();

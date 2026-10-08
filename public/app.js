@@ -42,6 +42,7 @@ import "./app/workspaces.js";
 import "./app/session-identity.js";
 import "./app/session-rows.js";
 import "./app/icons.js";
+import "./app/quick-tooltips.js";
 import "./app/row-menu.js";
 import "./app/project-list.js";
 import "./app/reviews.js";
