@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Marking the last conversation in a worktree done now deletes that worktree when it has no unmerged changes or running work, and finished worktrees from earlier versions are cleaned up when the list opens.
+
 ## 2.61.3 — 2026-10-08
 
 - Scheduled task dialogs keep their action buttons visible while the task list or editor scrolls.

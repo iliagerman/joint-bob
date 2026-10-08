@@ -1,4 +1,5 @@
 import path from "node:path";
+import { cleanupDoneWorktrees } from "../worktree-cleanup.js";
 import { z } from 'zod';
 import type { AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
@@ -224,8 +225,12 @@ app.put("/api/projects/:projectId/sessions/done", async (request, response, next
     const payload = sessionDoneSchema.parse(request.body);
     // Like classification, a conversation can be closed out before its transcript exists.
     await setSessionDone(payload.sessionId, payload.done);
+    const cleanup = payload.done ? await cleanupDoneWorktrees(project).catch((error) => {
+      console.warn("Done worktree cleanup failed", error);
+      return undefined;
+    }) : undefined;
     broadcastToProject(project.id, { type: "sessionsChanged" });
-    response.json({ ok: true });
+    response.json({ ok: true, ...cleanup });
   } catch (error) {
     next(error);
   }

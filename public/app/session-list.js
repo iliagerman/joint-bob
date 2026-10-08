@@ -15,7 +15,7 @@ import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { openSecretScope } from "./secrets.js";
 import { openConversationClassificationDialog, openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
 import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
-import { worktreeBadge, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
+import { loadWorktrees, worktreeBadge, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
 import { confirmAction, enableNotifications, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
@@ -459,13 +459,17 @@ async function forkSessionFromRow(session) {
 /** Closing a conversation out is list housekeeping, so it works on read-only rows too. */
 async function toggleSessionDone(session) {
   const done = !session.doneAt;
-  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/done`, {
+  const projectId = state.activeProjectId;
+  const result = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/done`, {
     method: "PUT",
     body: JSON.stringify({ sessionId: session.conversationId || session.id, engine: sessionEngine(session), done }),
   });
   session.doneAt = done ? new Date().toISOString() : undefined;
+  const deleted = result.deletedWorktreeIds?.length;
+  if (deleted && state.activeProjectId === projectId) await loadWorktrees();
   renderSessions();
-  toast(done ? "Conversation marked done" : "Conversation reopened");
+  const retained = result.retainedWorktrees?.[session.worktree?.id];
+  toast(retained || (deleted ? "Conversation marked done; empty worktrees deleted" : done ? "Conversation marked done" : "Conversation reopened"));
 }
 
 async function toggleSessionReviewNotifications(session) {

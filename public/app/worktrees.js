@@ -18,7 +18,7 @@ export async function loadWorktrees() {
   const projectId = state.activeProjectId;
   if (!projectId || state.canvasPaneMode) return;
   const generation = ++loadGeneration;
-  const { worktrees } = await api(worktreesUrl(projectId));
+  const { worktrees } = await api(worktreesUrl(projectId, "/cleanup"), { method: "POST", body: "{}" });
   if (generation !== loadGeneration || state.activeProjectId !== projectId) return;
   const changed = JSON.stringify(worktrees) !== JSON.stringify(state.worktrees);
   state.worktrees = worktrees;

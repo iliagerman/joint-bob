@@ -3,6 +3,7 @@ import { z } from "zod";
 import { GitReviewError } from "../../git-review.js";
 import { createProjectWorktree, deleteProjectWorktree, listProjectWorktrees, mergeProjectWorktree, ProjectWorktreeError, updateProjectWorktree } from "../../project-worktrees.js";
 import type { WorktreeAgentIdentity } from "../../worktree-agent.js";
+import { cleanupDoneWorktrees } from "../worktree-cleanup.js";
 import { getProject } from "../../store.js";
 import { PROJECT_COLORS } from "../../types.js";
 import { sendError } from "../http-auth.js";
@@ -26,6 +27,17 @@ app.get("/api/projects/:projectId/worktrees", async (request, response, next) =>
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     response.json({ worktrees: await listProjectWorktrees(project.id) });
+  } catch (error) { fail(response, next, error); }
+});
+
+// Opening the list also reconciles done marks saved before this feature existed.
+// Keep deletion on a CSRF-protected mutation, not the read-only GET endpoint.
+app.post("/api/projects/:projectId/worktrees/cleanup", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const cleanup = await cleanupDoneWorktrees(project);
+    response.json({ ...cleanup, worktrees: await listProjectWorktrees(project.id) });
   } catch (error) { fail(response, next, error); }
 });
 

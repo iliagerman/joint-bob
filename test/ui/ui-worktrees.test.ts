@@ -263,3 +263,15 @@ test("with the setting on, each new conversation starts in a worktree of its own
   const worktree = await onlyWorktreePath();
   assert.equal(await readFile(path.join(worktree, "src", "inbox.ts"), "utf8"), "export const inbox = 'real';\n", "the worktree copies the project as it is now");
 });
+
+test("marking the last conversation done removes its worktree header and folder", async () => {
+  const worktree = await onlyWorktreePath();
+  const row = page.locator("#sessionList .list-row.active");
+  await row.getByTestId("session-menu-button").click();
+  await page.getByTestId("session-done-button").click();
+  await page.getByTestId("worktree-section").waitFor({ state: "detached", timeout: 20_000 });
+  assert.equal(await exists(worktree), false, "the folder is deleted, not merely hidden");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await openProject();
+  assert.equal(await page.getByTestId("worktree-section").count(), 0, "no zero-count header returns after reload");
+});
