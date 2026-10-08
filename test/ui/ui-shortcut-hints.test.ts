@@ -213,13 +213,10 @@ test("the chat toolbar splits its controls across two rows and hangs the badges 
         .map((selector) => bar.querySelector(selector)!.getBoundingClientRect())
         .map((box) => Math.round((box.top + box.bottom) / 2 * 10) / 10),
       actions: ["#openTerminalButton", "#openBrowserButton", "#notifyButton", "#addToCanvasButton", "#renameSessionButton", "#chatCronButton"]
-        .map((selector) => [...bar.querySelector(selector)!.childNodes]
-          .find((child) => child.nodeType === Node.TEXT_NODE && child.textContent!.trim()))
-        .map((text) => {
-          if (!text) return null;
-          const range = document.createRange();
-          range.selectNode(text);
-          const box = range.getBoundingClientRect();
+        .map((selector) => bar.querySelector(`${selector} .chat-toolbar-icon`))
+        .map((icon) => {
+          if (!icon) return null;
+          const box = icon.getBoundingClientRect();
           return Math.round((box.top + box.bottom) / 2 * 10) / 10;
         }),
       // The trailing actions must stay inside the toolbar box instead of riding off the panel edge.

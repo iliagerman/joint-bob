@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Chat toolbar actions were turned into icons, with each name shown on hover and the full labels kept in the dropdown menu.
+
 ## 2.57.0 — 2026-10-08
 
 - Added keeping the uncommitted edits each worktree was created with, syncing them to other machines, and a warning on pull requests that change those files.

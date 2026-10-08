@@ -121,13 +121,13 @@ export function renderChatSessionControls() {
   const terminalNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
   const terminalRefused = terminalNode?.terminal === false && terminalNode.online;
   elements.openTerminalButton.disabled = !state.activeProjectId || !terminalNode?.online || !terminalNode.mapped || terminalRefused || conversationIsReadOnly();
-  elements.openTerminalButton.title = terminalRefused
+  elements.openTerminalButton.title = "Terminal — " + (terminalRefused
     ? `${terminalNode.name} does not allow terminal access from this node`
     : terminalNode
     ? activeTicket
       ? `Open this ticket's folder in Terminal on ${terminalNode.name}`
       : `Open the project folder in Terminal on ${terminalNode.name}`
-    : "Select an execution node first";
+    : "Select an execution node first");
   renderTaskBacklink();
 }
 

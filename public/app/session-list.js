@@ -414,10 +414,12 @@ elements.chatDoneButton.addEventListener("click", () => {
 /** The one label has to say what the click will do, on whichever conversation is open. */
 function syncChatDoneButton() {
   const session = activeChatSession();
-  elements.chatDoneButton.textContent = session?.doneAt ? "Mark not done" : "Mark done";
+  const label = session?.doneAt ? "Mark not done" : "Mark done";
+  elements.chatDoneButton.querySelector(".chat-action-label").textContent = label;
+  elements.chatDoneButton.setAttribute("aria-label", label);
   elements.chatDoneButton.title = session?.doneAt
-    ? "Put it back in the active list"
-    : "Hide it from the list until you ask for done conversations";
+    ? `${label} — put it back in the active list`
+    : `${label} — hide it from the list until you ask for done conversations`;
   elements.chatDoneButton.disabled = !session;
 }
 

@@ -1286,6 +1286,11 @@ select.chat-toolbar-control {
    into the toolbar needs the content box flattened too. */
 .chat-more::details-content { display: contents; content-visibility: visible; }
 .chat-more > summary { display: none; }
+/* The inline action row shows icons only; the name lives in the tooltip and aria-label,
+   and the dropdown layouts below bring the label back beside the icon. */
+.chat-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 34px; padding: 0; }
+.chat-action[hidden] { display: none; }
+.chat-action-label { display: none; }
 /* No inner scroll area — the dialog card is the single scroll region. */
 .model-dialog-list { display: grid; gap: 4px; min-width: 0; }
 .model-dialog-group { color: var(--muted); font-size: 10px; margin-top: 8px; }
@@ -2507,6 +2512,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
     box-shadow: var(--shadow-soft);
   }
   .chat-more-actions > button { width: 100%; text-align: left; }
+  .chat-more-actions > .chat-action { justify-content: flex-start; padding: 0 12px; }
+  .chat-more-actions .chat-action-label { display: inline; }
   :root { --read: 15px; --read-leading: 1.68; --measure: none; }
   .mobile-nav { bottom: max(8px, env(safe-area-inset-bottom)); }
   /* 52px of reserved lane on the right so no header control lands under the fixed app menu. */
