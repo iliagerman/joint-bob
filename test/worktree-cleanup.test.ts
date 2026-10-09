@@ -141,7 +141,7 @@ test("a damaged baseline cannot delete files or prevent saving done", async (con
   await access(worktree.path);
 });
 
-test("a worktree with no conversations is removed after ten minutes unless it has unmerged changes", async (context) => {
+test("a worktree with no conversations is removed after ten minutes, with or without edits", async (context) => {
   const { project } = await fixture(context);
   const clean = await createProjectWorktree(project, { name: "abandoned" });
   const edited = await createProjectWorktree(project, { name: "abandoned with edits" });
@@ -150,8 +150,7 @@ test("a worktree with no conversations is removed after ten minutes unless it ha
   const now = Date.now();
   context.mock.method(Date, "now", () => now + 11 * 60_000);
   const result = await cleanupDoneWorktrees(project);
-  assert.deepEqual(result.deletedWorktreeIds, [clean.id]);
-  assert.match(result.retainedWorktrees[edited.id], /unmerged changes remain/);
+  assert.deepEqual(new Set(result.deletedWorktreeIds), new Set([clean.id, edited.id]));
   await assert.rejects(access(clean.path), { code: "ENOENT" });
-  await access(edited.path);
+  await assert.rejects(access(edited.path), { code: "ENOENT" });
 });

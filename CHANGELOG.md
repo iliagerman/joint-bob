@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Removed project worktrees with no conversation ten minutes after they were created, even when they had unmerged changes or a pull request.
+
 ## 2.65.0 — 2026-10-09
 
 - Removed project worktrees that never got a conversation ten minutes after they were created, keeping any that still have unmerged changes.
