@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Removed project worktrees that never got a conversation ten minutes after they were created, keeping any that still have unmerged changes.
+
 ## 2.64.0 — 2026-10-09
 
 - Added relays, so a machine without a public address can be reached by its cluster peers and your phone through a machine that has one; direct addresses and Tailscale are still tried first.

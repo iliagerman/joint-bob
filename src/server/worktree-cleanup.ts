@@ -6,7 +6,7 @@ import { conversationLeaseRunning } from "../conversation-runtime.js";
 import { githubAccountFor } from "../github-credentials.js";
 import { genericSecretEnvironment, githubAccountsForProject } from "../secrets.js";
 import { sessionDoneOverrides } from "../names.js";
-import { deleteProjectWorktree, worktreeChanges, worktreeConversationIndex, type WorktreeChanges } from "../project-worktrees.js";
+import { deleteProjectWorktree, listProjectWorktrees, worktreeChanges, worktreeConversationIndex, type WorktreeChanges } from "../project-worktrees.js";
 import { isHarnessId, type ProjectRecord } from "../types.js";
 import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
 import { worktreePullRequestMerged } from "./github-pull-request.js";
@@ -18,6 +18,9 @@ interface CleanupResult {
   retainedWorktrees: Record<string, string>;
 }
 
+/** A worktree nobody has started a conversation in is removed once it is this old. */
+const EMPTY_WORKTREE_GRACE_MS = 10 * 60_000;
+
 const pending = new Map<string, Promise<CleanupResult>>();
 
 function sameChanges(left: WorktreeChanges, right: WorktreeChanges): boolean {
@@ -27,7 +30,7 @@ function sameChanges(left: WorktreeChanges, right: WorktreeChanges): boolean {
   });
 }
 
-/** Reconcile persisted done marks, not the filtered or capped conversation list. Never remove a newly created empty worktree. */
+/** Reconcile persisted done marks, not the filtered or capped conversation list. A worktree without conversations goes after the grace period. */
 export async function cleanupDoneWorktrees(project: ProjectRecord): Promise<CleanupResult> {
   const existing = pending.get(project.id);
   if (existing) return existing;
@@ -111,9 +114,50 @@ async function cleanup(project: ProjectRecord): Promise<CleanupResult> {
       if (!(error instanceof ProjectLockedError)) console.warn(`Worktree cleanup failed for ${worktree.id}`, error);
     }
   }
+  await cleanupEmptyWorktrees(project, result);
   if (result.deletedWorktreeIds.length) {
     broadcastToProject(project.id, { type: "worktreesChanged" });
     broadcastToProject(project.id, { type: "sessionsChanged" });
   }
   return result;
+}
+
+/** Worktrees with no conversation: same merge verification as above, but only after the grace period. */
+async function cleanupEmptyWorktrees(project: ProjectRecord, result: CleanupResult): Promise<void> {
+  const hasConversations = async (worktreeId: string) => [...(await worktreeConversationIndex(project.id)).values()].some(({ id }) => id === worktreeId);
+  for (const worktree of await listProjectWorktrees(project.id)) {
+    if (Date.now() - Date.parse(worktree.createdAt) < EMPTY_WORKTREE_GRACE_MS || await hasConversations(worktree.id)) continue;
+    try {
+      await assertProjectEditable(project);
+      const changes = await worktreeChanges(project.id, worktree.id);
+      let merged = !changes.writes.length && !changes.deletes.length;
+      if (worktree.pullRequest) {
+        const accounts = githubAccountsForProject(project.id);
+        const fallback = genericSecretEnvironment(project.id).GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+        merged = await worktreePullRequestMerged(project.path, worktree.pullRequest, changes, {
+          tokenFor: (repository) => githubAccountFor(accounts, repository)?.token ?? fallback,
+          sshHosts: accounts.filter((account) => account.sshKey).map((account) => account.sshHost),
+        });
+      }
+      if (!merged) {
+        result.retainedWorktrees[worktree.id] = worktree.pullRequest
+          ? "Worktree kept: local changes are not verified as merged"
+          : "Worktree kept: unmerged changes remain";
+        continue;
+      }
+      if (!sameChanges(changes, await worktreeChanges(project.id, worktree.id))) {
+        result.retainedWorktrees[worktree.id] = "Worktree kept: changed while cleanup was checking";
+        continue;
+      }
+      await assertProjectEditable(project);
+      if (await hasConversations(worktree.id)) continue;
+      await deleteProjectWorktree(project.id, worktree.id);
+      result.deletedWorktreeIds.push(worktree.id);
+    } catch (error) {
+      result.retainedWorktrees[worktree.id] = error instanceof ProjectLockedError
+        ? "Worktree kept: project is locked on another machine"
+        : "Worktree kept: cleanup could not be completed";
+      if (!(error instanceof ProjectLockedError)) console.warn(`Worktree cleanup failed for ${worktree.id}`, error);
+    }
+  }
 }
