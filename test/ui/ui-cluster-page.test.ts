@@ -242,6 +242,17 @@ test("cluster page lists clusters, finds nodes fuzzily, splits what you get from
     await page.locator("#sessionList").getByText("No matching conversations.", { exact: true }).waitFor();
     await conversationFilter.choose();
     assert.equal(await sessionsList.count(), total);
+
+    await openClusterSettings(page);
+    await page.getByTestId("cluster-item").filter({ hasText: "Research" }).click();
+    assert.equal(await page.getByTestId("cluster-leave-button").isDisabled(), true, "manager cannot leave while members remain");
+    await page.getByTestId("cluster-delete-button").click();
+    await page.getByTestId("confirm-cancel-button").click();
+    assert.equal(await page.getByTestId("cluster-item").count(), 2, "cancel preserves cluster");
+    await page.getByTestId("cluster-delete-button").click();
+    await page.getByTestId("confirm-accept-button").click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="cluster-item"]').length === 1);
+    await waitFor(async () => (await api<{ clusters: Array<{ id: string }> }>(nodeB, sessionB, "GET", "/clusters")).body.clusters.every((cluster) => cluster.id !== research) || undefined, "remote node leaves deleted cluster");
     assert.deepEqual(pageErrors, []);
   } finally {
     if (browser) await browser.close();

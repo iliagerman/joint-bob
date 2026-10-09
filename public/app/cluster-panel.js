@@ -234,6 +234,12 @@ function headerActions(cluster) {
   }
   leave.addEventListener("click", () => leaveCluster().catch((error) => toast(error.message)));
   actions.append(inviteButton, leave);
+  if (cluster.originalNodeId === data.localNodeId && cluster.members.length > 1) {
+    const close = text("button", "Delete cluster", "ghost compact danger"); close.type = "button";
+    close.dataset.testid = "cluster-delete-button";
+    close.addEventListener("click", () => closeCluster().catch((error) => toast(error.message)));
+    actions.append(close);
+  }
   return actions;
 }
 
@@ -498,6 +504,18 @@ async function joinCluster() {
   elements.clusterJoinLinkInput.value = "";
   showForm(joinForm, joinReveal, false);
   await afterMembershipChange(result.snapshot.body.clusterId); toast("Cluster membership added");
+}
+
+async function closeCluster() {
+  const cluster = selectedCluster();
+  if (!await confirmAction({ eyebrow: "Delete cluster", title: `Delete ${cluster.name}?`,
+    message: `All ${cluster.members.length} nodes leave this cluster. Shared resources stop syncing; local copies remain. This cannot be undone.`,
+    confirmLabel: "Delete cluster", destructive: true })) return;
+  if (selectedClusterId !== cluster.id) return;
+  await api(`/api/clusters/${cluster.id}/close`, { method: "POST", body: JSON.stringify({ expectedEpoch: cluster.managerEpoch }) });
+  selectedClusterId = null;
+  await afterMembershipChange(null);
+  toast("Cluster deleted");
 }
 
 async function leaveCluster() {

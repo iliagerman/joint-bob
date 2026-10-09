@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { getClusterNode } from "../../cluster.js";
 import { pinnedClusterPublicKey } from "../../cluster-identity.js";
-import { applyMembershipSnapshot, createMembershipCluster, createMembershipInvitation, getMembershipSnapshot, removeMembershipMember, updateMembershipDescriptor, type MembershipInvitation, type SignedMembershipSnapshot } from "../../cluster-membership.js";
+import { applyMembershipSnapshot, closeMembershipCluster, createMembershipCluster, createMembershipInvitation, getMembershipSnapshot, removeMembershipMember, updateMembershipDescriptor, type MembershipInvitation, type SignedMembershipSnapshot } from "../../cluster-membership.js";
 import { verifyClusterMessage } from "../../cluster-identity.js";
 import { getSharingCluster, listSharingClusterMembers, listSharingMemberships, setAutoShareProjects } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
@@ -105,6 +105,24 @@ app.post("/api/clusters/:clusterId/leave", handler(async (request, response) => 
   await remove(request, response, local.id);
 }));
 app.delete("/api/clusters/:clusterId/members/:nodeId", handler((request, response) => remove(request, response, uuid.parse(request.params.nodeId))));
+
+app.post("/api/clusters/:clusterId/close", handler(async (request, response) => {
+  localOnly(response);
+  const clusterId = uuid.parse(request.params.clusterId), { expectedEpoch } = epochSchema.parse(request.body);
+  const local = await getClusterNode(), db = await clusterV2Database(), state = getSharingCluster(db, clusterId);
+  if (state.originalNodeId !== local.id) throw new ClusterV2HttpError(403, "Only the cluster owner may close it");
+  const manager = clusterManager(db, clusterId);
+  const snapshot = manager === local.id ? closeMembershipCluster(db, local.id, local.id, clusterId, expectedEpoch)
+    : (await signedPost<{ snapshot: SignedMembershipSnapshot }>(db, local.id, manager, clusterId, "/api/cluster/v2/membership/close", { clusterId, expectedEpoch })).snapshot;
+  if (manager !== local.id) applyMembershipSnapshot(db, local.id, snapshot);
+  response.json({ snapshot });
+}));
+
+app.post("/api/cluster/v2/membership/close", handler(async (request, response) => {
+  const actor = machineOnly(response), payload = invitationRequestSchema.parse(request.body);
+  const local = await getClusterNode(), db = await clusterV2Database();
+  response.json({ snapshot: closeMembershipCluster(db, local.id, actor, payload.clusterId, payload.expectedEpoch) });
+}));
 
 app.post("/api/cluster/v2/membership/invitations", handler(async (request, response) => {
   const actor = machineOnly(response), payload = invitationRequestSchema.parse(request.body), local = await getClusterNode(), db = await clusterV2Database();
