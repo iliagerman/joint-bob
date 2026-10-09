@@ -171,7 +171,7 @@ test("the owner can close phone sign-in to other users: they get a wrong-passwor
 });
 
 /** Opens the app's WebSocket through a phone gateway channel and reports the close frame the server sends, if any. */
-async function gatewaySocket(target: string, cookie: string): Promise<{ closeReason: () => string | undefined }> {
+async function gatewaySocket(target: string, cookie: string): Promise<{ closeReason: () => string | undefined; close: () => void }> {
   const { server } = await import("../src/server/state.js");
   await import("../src/server/routes/core.js");
   await import("../src/server/chat-socket.js");
@@ -192,6 +192,7 @@ async function gatewaySocket(target: string, cookie: string): Promise<{ closeRea
   }
   assert.match(received.toString("latin1"), /^HTTP\/1\.1 101 /, "the socket opens through the gateway");
   return {
+    close: () => { stream.destroy(); },
     closeReason: () => {
       // Server frames are unmasked: opcode, length, payload. A close frame carries a 2-byte code, then the reason.
       let offset = received.indexOf("\r\n\r\n") + 4;
@@ -218,12 +219,15 @@ test("turning off other users' phone sign-in closes their open phone sockets at 
   const admin = db.prepare("SELECT password_hash, password_salt FROM users WHERE username='relay-admin'").get() as { password_hash: Uint8Array; password_salt: Uint8Array };
   upsertReplicatedUser({ username: "phone-visitor", passwordHash: Buffer.from(admin.password_hash), passwordSalt: Buffer.from(admin.password_salt), homeNodeId: randomUUID() });
   const project = await addProject("relay-socket", path.join(root, "relay-socket"));
+  const sockets: Array<{ close: () => void }> = [];
   setPhonePolicyDatabase(db);
   try {
     const visitor = authenticate("phone-visitor", "relay-admin-password-1") as { id: string };
     const owner = authenticate("relay-admin", "relay-admin-password-1") as { id: string };
     const visiting = await gatewaySocket(`/ws?projectId=${project.id}`, `${gatewaySessionCookieName}=${visitor.id}`);
+    sockets.push(visiting);
     const local = await gatewaySocket(`/ws?projectId=${project.id}`, `${gatewaySessionCookieName}=${owner.id}`);
+    sockets.push(local);
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.equal(visiting.closeReason(), undefined, "the socket stays open while the owner allows it");
     setOtherUsersMayUsePhone(db, false);
@@ -232,6 +236,10 @@ test("turning off other users' phone sign-in closes their open phone sockets at 
     assert.equal(visiting.closeReason(), "Phone sign-in for other users is off");
     assert.equal(local.closeReason(), undefined, "the machine's own users keep their phone sockets");
   } finally {
+    for (const socket of sockets) socket.close();
+    // The project socket started the session watcher. On Linux its recursive fs.watch keeps the
+    // test process alive even when unref'd, so the file would never finish.
+    (await import("../src/server/chat.js")).sessionWatcher.close();
     setOtherUsersMayUsePhone(db, true);
     setPhonePolicyDatabase(undefined);
   }
