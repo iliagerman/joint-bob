@@ -224,10 +224,13 @@ export function flushSharedTranscripts():Promise<void>{
 export function sharedTranscriptStatus(db:DatabaseSync,local:string,peer:string):{pending:number;error?:string}{
  ensureSchema(db);
  const projects=sharedProjectIds(db,local,peer);
- const errors=db.prepare('SELECT project_id,error FROM cluster_v2_transcript_errors WHERE peer_id=?').all(peer) as unknown as Array<{project_id:string;error:string}>;
- const failure=errors.find(error=>projects.includes(error.project_id));
+ const errors=db.prepare(`SELECT e.project_id,p.name,e.error FROM cluster_v2_transcript_errors e
+  LEFT JOIN projects p ON p.id=e.project_id WHERE e.peer_id=? ORDER BY p.name,e.project_id`).all(peer) as unknown as Array<{project_id:string;name:string|null;error:string}>;
+ const failures=errors.filter(error=>projects.includes(error.project_id));
  const pending=projects.filter(id=>!db.prepare('SELECT 1 FROM cluster_v2_transcript_progress WHERE peer_id=? AND project_id=?').get(peer,id)).length;
- return {pending,...(failure?{error:failure.error}:{})};
+ const details=failures.slice(0,10).map(row=>`${row.name??row.project_id}: ${row.error}`);
+ if(failures.length>10)details.push(`And ${failures.length-10} more projects.`);
+ return {pending,...(failures.length?{error:`Conversation history sync failed:\n${details.join('\n')}`}:{})};
 }
 /** Each inventory makes the peer build that project's full conversation catalog, and the
     administration flush runs every 2 s: pulling on every flush kept a large project's

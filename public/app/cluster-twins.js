@@ -48,6 +48,19 @@ export function syncLabel(data) {
   return data.state === "ready" && data.pendingDeliveries === 0 ? "Up to date" : "Syncing";
 }
 
+/** Visible in every twin view, not only a hover title or the machine's Twins tab. */
+export function twinSyncProblem(status, onChange) {
+  if (syncLabel(status) !== "Error") return document.createDocumentFragment();
+  const box = document.createElement("div"); box.className = "cluster-sync-problem";
+  box.dataset.testid = "twin-sync-problem"; box.setAttribute("role", "status");
+  const reason = status.readError ? `Could not check synchronization: ${status.readError}`
+    : status.error || "The twin reported a synchronization error without details. Check its sync status for more information.";
+  box.append(text("strong", "Synchronization needs attention"), text("p", reason),
+    text("p", "Sync retries automatically. Keep both nodes online. Conflicting histories are kept for review; unpairing does not repair them.", "cluster-muted"),
+    button("Check again", "twin-sync-check", "ghost compact", () => onChange()));
+  return box;
+}
+
 /** Loads relationships, requests and each twin's sync state. Returns a signature that changes when any of them does. */
 export async function refreshTwins() {
   const [{ relationships }, { requests }] = await Promise.all([api("/api/twins"), api("/api/twins/requests")]);
@@ -191,12 +204,12 @@ export function renderTwinSection(container, clusters, onChange) {
     const reach = twins.inventory?.remote.find((item) => item.peerId === nodeId);
     const status = twins.status.get(relationship.relationshipId);
     const row = nodeRow({ name, url: reach?.url || "", status: !reach ? "Checking…" : reach.reachable ? "Connected" : `Not connected — ${reach.error}`, state: !reach ? "checking" : reach.reachable ? "online" : "offline" });
-    const sync = text("p", `${syncLabel(status)} · ${status?.projectCount ?? 0} twin-shared projects${status?.error || status?.readError ? ` · ${status.error || status.readError}` : ""}`, "cluster-twin-sync");
+    const sync = text("p", `${syncLabel(status)} · ${status?.projectCount ?? 0} twin-shared projects`, "cluster-twin-sync");
     sync.dataset.testid = "twin-sharing-status"; sync.setAttribute("role", "status");
     const actions = document.createElement("div"); actions.className = "cluster-node-actions";
     actions.append(button("Unpair", "twin-unpair", "ghost compact", () => unpair(relationship, name, onChange)),
       button("Machine lost…", "sharing-twin-lost", "ghost compact danger", () => declareLost(relationship, name, onChange)));
-    row.append(sync, twinSharingControls(relationship, status, clusters, onChange), actions);
+    row.append(sync, twinSyncProblem(status, onChange), twinSharingControls(relationship, status, clusters, onChange), actions);
     rows.push(row);
   }
   container.replaceChildren(...rows);
