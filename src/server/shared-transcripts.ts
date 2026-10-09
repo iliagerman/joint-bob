@@ -42,7 +42,11 @@ async function fileHash(file:string,info:{mtimeMs:number;size:number}):Promise<s
  const db=await clusterV2Database();ensureSchema(db);
  const row=hashCache.get(file)??(db.prepare('SELECT mtime_ms mtimeMs,size,hash FROM transcript_hashes WHERE file=?').get(file) as {mtimeMs:number;size:number;hash:string}|undefined);
  if(row&&row.mtimeMs===info.mtimeMs&&row.size===info.size){hashCache.set(file,row);return row.hash;}
- const hash=createHash('sha256');for await(const chunk of createReadStream(file))hash.update(chunk);
+ // Transcripts can grow between stat and the read. Hash exactly that snapshot's
+ // prefix, so the advertised size and digest always describe the same bytes.
+ const hash=createHash('sha256');let bytes=0;
+ if(info.size>0)for await(const chunk of createReadStream(file,{start:0,end:info.size-1})){bytes+=chunk.length;hash.update(chunk);}
+ if(bytes!==info.size)throw new Error('Transcript changed during hashing');
  const digest=hash.digest('hex');hashCache.set(file,{mtimeMs:info.mtimeMs,size:info.size,hash:digest});
  db.prepare('INSERT INTO transcript_hashes VALUES(?,?,?,?) ON CONFLICT(file) DO UPDATE SET mtime_ms=excluded.mtime_ms,size=excluded.size,hash=excluded.hash').run(file,info.mtimeMs,info.size,digest);
  return digest;
@@ -92,9 +96,9 @@ export async function sharedTranscriptInventory(peer:string,projectId:string,onl
  }
  return entries;
 }
-async function peerGet(peer:PeerEndpoint,target:string):Promise<Response>{
+async function peerGet(peer:PeerEndpoint,target:string,headers:Record<string,string>={}):Promise<Response>{
  const db=await clusterV2Database(),local=await getClusterNode();
- const response=await fetchPeer(db,peer.nodeId,new URL(target,peer.url),{redirect:'error',signal:AbortSignal.timeout(30000),headers:{Authorization:signClusterRequest(db,local.id,peer.nodeId,'GET',target,Buffer.alloc(0))}});
+ const response=await fetchPeer(db,peer.nodeId,new URL(target,peer.url),{redirect:'error',signal:AbortSignal.timeout(30000),headers:{...headers,Authorization:signClusterRequest(db,local.id,peer.nodeId,'GET',target,Buffer.alloc(0))}});
  if(!response.ok)throw new Error(`Transcript request rejected (${response.status})`);return response;
 }
 async function safeParent(root:string,destination:string):Promise<void>{
@@ -141,10 +145,17 @@ async function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:
  if(existing&&receipt?.path===destination&&receipt.hash===entry.hash&&localHash===entry.hash)return;
  await safeParent(root,destination);
  const target='/api/cluster/v2/transcripts/file?'+new URLSearchParams({projectId,engine:entry.engine,sessionId:entry.sessionId});
- const response=await peerGet(peer,target);if(!response.body)throw new Error('Empty transcript response');
+ // sendFile already supports Range, including on older peers. Later appends
+ // belong to the next inventory; an empty snapshot needs no download.
+ let source:Readable=Readable.from([]);
+ if(entry.size>0){
+  const response=await peerGet(peer,target,{Range:`bytes=0-${entry.size-1}`});
+  if(!response.body)throw new Error('Empty transcript response');
+  source=Readable.fromWeb(response.body as never);
+ }
  const temporary=`${destination}.${randomUUID()}.tmp`,hash=createHash('sha256');let bytes=0;
  try{
-  await pipeline(Readable.fromWeb(response.body as never),new Transform({transform(chunk,_encoding,callback){bytes+=chunk.length;if(bytes>entry.size){callback(new Error('Transcript exceeds advertised size'));return;}hash.update(chunk);callback(null,chunk);}}),createWriteStream(temporary,{flags:'wx',mode:0o600}));
+  await pipeline(source,new Transform({transform(chunk,_encoding,callback){bytes+=chunk.length;if(bytes>entry.size){callback(new Error('Transcript exceeds advertised size'));return;}hash.update(chunk);callback(null,chunk);}}),createWriteStream(temporary,{flags:'wx',mode:0o600}));
   if(bytes!==entry.size||hash.digest('hex')!==entry.hash)throw new Error('Transcript changed during transfer');
   // A local copy changed since the last receipt may contain unsent work. Repair
   // truncated copies, but never overwrite divergent bytes without review.
