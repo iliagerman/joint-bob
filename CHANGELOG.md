@@ -3,9 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.64.0 — 2026-10-09
 
-- Added relays, so a machine without a public address can reach its cluster and your phone can sign in to it through a machine that has one.
+- Added relays, so a machine without a public address can be reached by its cluster peers and your phone through a machine that has one; direct addresses and Tailscale are still tried first.
+- Added relay serving in Settings > Relay, where you can issue tokens or approve access requests with pairing codes, name machines, set usage caps, review an audit log, and limit relay use to your own machines.
+- Added remembering of the relay that last worked for each peer in Settings > Cluster > Relays, so it is tried first and another relay takes over automatically when it goes away.
+- Relayed machine connections are end-to-end encrypted, so a relay only forwards traffic it cannot read, and a long-polling fallback keeps them working where WebSockets are blocked.
+- Added phone sign-in at a relay's address with two-factor authentication, and each relay lists the phone addresses that work now, each with a QR code.
+- Machines can close phone sign-in to other machines' users, which also disconnects those users' open phone sessions.
+- File sync can use a relay as a tunnel before public relays are tried.
+- Traffic through a relay carries only machine routes and never counts as local, so existing sharing rules still apply.
 
 ## 2.63.0 — 2026-10-08
 
