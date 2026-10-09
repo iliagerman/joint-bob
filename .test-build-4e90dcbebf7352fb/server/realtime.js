@@ -1,0 +1,206 @@
+import { randomUUID } from "node:crypto";
+import { visibleTaskMessages } from "../background-task-messages.js";
+import { usernameForUser } from "../auth.js";
+import { getClusterNode } from "../cluster.js";
+import { claimConversationNotification, conversationNotifications, finishConversationNotification, notificationConversationId } from "../conversation-notifications.js";
+import { listPushSubscriberUserIds, notifyConversationReview, reviewNotificationBody } from "../push.js";
+import { replicationInvalidations } from "../replication.js";
+import { getHarness, refreshHarnessSessions } from "../harnesses.js";
+import { getProject } from "../store.js";
+import { listPendingUpdateRecoveries, saveUpdateRecoveries } from "../update-recovery.js";
+import { UpdateRefusalError } from "../updater.js";
+import { harnessChatConnections, drainHarnessPromptQueue } from "./harness-chat.js";
+import { disposeHarnessSession, harnessSessionBusy, harnessSessions, refreshHarnessTranscripts, sendHarnessStatus } from "./harness-sessions.js";
+import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
+import { flushReplicationOutbox } from "./maintenance.js";
+import { flags, server, watchClients, webSocketServer } from "./state.js";
+import { harnessTaskRuns } from "./task-runs.js";
+let updateRestartTimer;
+server.on("close", () => {
+  clearTimeout(updateRestartTimer);
+  for (const shared of [...harnessSessions.values()]) if (!harnessSessionBusy(shared)) disposeHarnessSession(shared);
+});
+function chatErrorMessage(error) {
+  const message = error instanceof Error ? error.message : "Command failed";
+  return /already processing/i.test(message) ? "Agent is still working on your previous message. Wait for it to finish or press Stop, then send again." : message;
+}
+function send(socket, payload) {
+  if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(payload));
+}
+function broadcast(session, payload) {
+  for (const client of session.clients) send(client, payload);
+}
+function parseSessionPath(value) {
+  return !value || value === "new" || value.endsWith(":new") ? void 0 : value;
+}
+function sessionKey(cwd, sessionPath) {
+  return `${cwd}
+${sessionPath ?? "new"}`;
+}
+async function reloadSharedSkills() {
+  let reloaded = 0;
+  let skipped = 0;
+  const failed = [];
+  for (const shared of harnessSessions.values()) {
+    if (harnessSessionBusy(shared)) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await shared.session.reload();
+      sendHarnessStatus(shared);
+      broadcast(shared, { type: "tools", supported: true, tools: shared.session.tools() });
+      reloaded += 1;
+    } catch (error) {
+      failed.push({ sessionId: shared.session.id, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      const connection = [...harnessChatConnections].find((candidate) => candidate.shared === shared);
+      if (connection) await drainHarnessPromptQueue(connection);
+    }
+  }
+  return { reloaded, skipped, failed };
+}
+function broadcastToProject(projectId, payload) {
+  const sockets = new Set(watchClients.get(projectId) ?? []);
+  for (const session of harnessSessions.values()) if (session.projectId === projectId) for (const client of session.clients) sockets.add(client);
+  for (const socket of sockets) send(socket, payload);
+}
+function broadcastToAllClients(payload) {
+  const sockets = /* @__PURE__ */ new Set();
+  for (const clients of watchClients.values()) for (const client of clients) sockets.add(client);
+  for (const session of harnessSessions.values()) for (const client of session.clients) sockets.add(client);
+  for (const socket of sockets) send(socket, payload);
+}
+function broadcastSessionsChangedToAllProjects() {
+  broadcastToAllClients({ type: "sessionsChanged" });
+}
+function wakeQueuedConversations() {
+  for (const connection of harnessChatConnections) void drainHarnessPromptQueue(connection).catch((error) => send(connection.socket, { type: "error", error: chatErrorMessage(error) }));
+}
+function broadcastReplicationInvalidations(events) {
+  for (const type of replicationInvalidations(events)) broadcastToAllClients({ type });
+}
+const REVIEW_NOTIFICATION_QUIET_MS = 1e4;
+const reviewNotificationTimers = /* @__PURE__ */ new Map();
+async function notifyPendingReviews(projectId) {
+  const userIds = await listPushSubscriberUserIds(projectId);
+  if (!userIds.length) return;
+  const project = await getProject(projectId);
+  if (!project) return;
+  const local = await getClusterNode();
+  for (const userId of userIds) {
+    const username = usernameForUser(userId);
+    if (!username) continue;
+    const sessions = await listProjectSessionsWithReviewState(project, userId, username);
+    const preferences = conversationNotifications(username, projectId);
+    for (const session of sessions.filter((candidate) => candidate.reviewState === "needs_review" && !candidate.running && candidate.updatedAt)) {
+      const conversationId = notificationConversationId(session);
+      const preference = preferences.get(conversationId);
+      if (!preference?.enabled) continue;
+      if (session.executionNodeId ? session.executionNodeId !== local.id : preference.originNodeId !== local.id) continue;
+      if (!claimConversationNotification(username, projectId, conversationId, session.updatedAt)) continue;
+      let delivered = false;
+      try {
+        const messages = await getHarness(session.harnessId).sessions.loadMessages(project, session.path).catch(() => []);
+        const visible = visibleTaskMessages(messages);
+        if (messages.length && visible.at(-1) !== messages.at(-1)) continue;
+        delivered = await notifyConversationReview(userId, projectId, conversationId, session.title || project.name, reviewNotificationBody(visible));
+      } finally {
+        finishConversationNotification(username, projectId, conversationId, session.updatedAt, delivered, local.id);
+        if (delivered) flushReplicationOutbox().catch((error) => console.warn("Notification delivery flush failed", error));
+      }
+    }
+  }
+}
+function scheduleReviewNotifications(projectId) {
+  const pending = reviewNotificationTimers.get(projectId);
+  if (pending) clearTimeout(pending);
+  const timer = setTimeout(() => {
+    reviewNotificationTimers.delete(projectId);
+    notifyPendingReviews(projectId).catch((error) => console.warn("Review notification failed", error));
+  }, REVIEW_NOTIFICATION_QUIET_MS);
+  timer.unref();
+  reviewNotificationTimers.set(projectId, timer);
+}
+function handleSessionChange(projectId, changedFiles) {
+  refreshHarnessSessions(projectId, changedFiles).then(() => broadcastToProject(projectId, { type: "sessionsChanged" })).catch((error) => console.warn("Conversation catalog refresh failed", error));
+  refreshHarnessTranscripts(projectId, changedFiles);
+  scheduleReviewNotifications(projectId);
+}
+function updateRecoveryRecord(values) {
+  if (!values.sessionId || !values.sessionPath) throw new Error("Active run has no durable session identity");
+  return { ...values, id: randomUUID(), createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+function activeUpdateRecoveries() {
+  const active = [];
+  const taskByShared = new Map([...harnessTaskRuns.values()].map((run) => [run.shared, run]));
+  for (const shared of harnessSessions.values()) {
+    if (!harnessSessionBusy(shared)) continue;
+    const task = taskByShared.get(shared);
+    if (task?.kind === "merge") continue;
+    const settings = shared.session.settings();
+    active.push({ shared, record: updateRecoveryRecord({
+      kind: task ? "task" : "chat",
+      engine: shared.engine,
+      projectId: shared.projectId,
+      cwd: shared.cwd,
+      sessionId: shared.session.id,
+      sessionPath: shared.session.file ?? "",
+      taskId: task?.taskId ?? null,
+      phase: task?.phase ?? null,
+      queuedPrompts: shared.session.queuedPrompts(),
+      settings,
+      model: settings.modelId || null,
+      effort: settings.reasoning || null
+    }) });
+  }
+  return active;
+}
+function broadcastUpdatePreparing() {
+  for (const client of webSocketServer.clients) send(client, { type: "updatePreparing", message: "Updating... Work will resume automatically." });
+}
+function prepareForUpdate() {
+  if (!flags.updatePreparation) flags.updatePreparation = performUpdatePreparation();
+  return flags.updatePreparation;
+}
+async function performUpdatePreparation() {
+  flags.updatePreparing = true;
+  broadcastUpdatePreparing();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  let active;
+  try {
+    if ((await listPendingUpdateRecoveries()).length) throw new UpdateRefusalError("Interrupted work is still recovering; wait before updating again");
+    active = activeUpdateRecoveries();
+    await saveUpdateRecoveries(active.map(({ record }) => record));
+  } catch (error) {
+    flags.updatePreparing = false;
+    flags.updatePreparation = null;
+    for (const client of webSocketServer.clients) client.close(1012, "Update preparation failed; reconnecting");
+    throw error;
+  }
+  const busySessions = [...harnessSessions.values()].filter(harnessSessionBusy);
+  updateRestartTimer = setTimeout(() => {
+    console.error("Prepared update was not activated after 180 seconds; restarting to recover interrupted work");
+    process.exit(1);
+  }, 18e4);
+  updateRestartTimer.unref();
+  await Promise.all(busySessions.map(({ session }) => session.stopForUpdate()));
+  return active.length;
+}
+export {
+  broadcast,
+  broadcastReplicationInvalidations,
+  broadcastSessionsChangedToAllProjects,
+  broadcastToAllClients,
+  broadcastToProject,
+  chatErrorMessage,
+  handleSessionChange,
+  notifyPendingReviews,
+  parseSessionPath,
+  prepareForUpdate,
+  reloadSharedSkills,
+  scheduleReviewNotifications,
+  send,
+  sessionKey,
+  wakeQueuedConversations
+};
