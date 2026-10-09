@@ -2,7 +2,7 @@ import { api } from "./api.js";
 import { loadClusterDirectory } from "./cluster-filters.js";
 import { MAP_PAGE_SIZE, clusterProjectCounts, nodeAvatar, renderClusterMap, renderNodeStrip, searchClusters, visibleClusters } from "./cluster-canvas.js";
 import { renderClusterSharing } from "./cluster-sharing.js";
-import { activeTwin, badge, declareLost, memberTwinControls, refreshTwinInventory, refreshTwins, renderTwinLink, renderTwinRequests, renderTwinSection, syncLabel, twinName, twinNodeIds, twins, unpair } from "./cluster-twins.js";
+import { activeTwin, badge, declareLost, memberTwinControls, refreshTwinInventory, refreshTwins, renderTwinLink, renderTwinRequests, renderTwinSection, syncLabel, twinName, twinNodeIds, twinSyncProblem, twins, unpair } from "./cluster-twins.js";
 import { elements } from "./elements.js";
 import { refreshProjectsQuietly } from "./project-selection.js";
 import { displayNodeUrl } from "./relay-ui.js";
@@ -177,6 +177,8 @@ function memberRow(cluster, member, matched, onChange) {
   const name = document.createElement("strong"); name.append(open, badges);
   who.append(name, text("small", displayNodeUrl(member.url) || member.nodeId));
   row.append(nodeAvatar(member, { local, manager, twin: twinNodeIds().includes(member.nodeId) }), who, actions);
+  const relationship = activeTwin(member.nodeId);
+  if (relationship) row.append(twinSyncProblem(twins.status.get(relationship.relationshipId), onChange));
   return row;
 }
 
@@ -318,7 +320,7 @@ function renderNodeView(nodeId) {
   const twinTitle = document.createElement("h4"); twinTitle.className = "cluster-section-title";
   twinTitle.append(text("span", "Twin"));
   const twinNote = text("p", relationship ? "Twins copy everything they own to each other." : "Twins copy everything they own to each other, including credentials. Pair only machines you own.", "cluster-muted");
-  nodeView.replaceChildren(back, head, clustersTitle, list, twinTitle, twinNote, actions);
+  nodeView.replaceChildren(back, head, twinSyncProblem(relationship && twins.status.get(relationship.relationshipId), onTwinChange), clustersTitle, list, twinTitle, twinNote, actions);
 }
 
 function renderMachineHead() {

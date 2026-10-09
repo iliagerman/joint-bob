@@ -144,7 +144,7 @@ test("cluster sharing is one selection for the whole cluster, and twin states, r
     assert.deepEqual(calls, []);
     await homeRow.getByTestId("twin-enable-sharing").click();
     await page.getByTestId("confirm-accept-button").click();
-    await homeRow.getByTestId("twin-sharing-status").getByText("Peer unavailable", { exact: false }).waitFor();
+    await homeRow.getByTestId("twin-sync-problem").getByText("Peer unavailable", { exact: false }).waitFor();
     assert.deepEqual(calls.splice(0), [`sharing:${homeserver}`]);
     assert.equal(await homeRow.getByTestId("twin-sharing-owner").count(), 0, "an established owner cannot be reassigned on retry");
     assert.match(await homeRow.getByTestId("twin-sharing-status").innerText(), /^Error/);
@@ -155,7 +155,7 @@ test("cluster sharing is one selection for the whole cluster, and twin states, r
     twin = { ...twin, state: "ready", pendingDeliveries: 0 };
     await homeRow.getByTestId("twin-sharing-status").getByText("Up to date", { exact: false }).waitFor({ timeout: 10_000 });
     failRead = true;
-    await homeRow.getByTestId("twin-sharing-status").getByText("Status service unavailable", { exact: false }).waitFor({ timeout: 10_000 });
+    await homeRow.getByTestId("twin-sync-problem").getByText("Status service unavailable", { exact: false }).waitFor({ timeout: 10_000 });
     await showClusterNodes();
     assert.equal(await page.getByTestId(`cluster-member-sync-${homeserver}`).innerText(), "Error");
     failRead = false;
