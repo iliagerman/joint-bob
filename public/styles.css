@@ -4132,10 +4132,11 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .quick-tooltip { position: fixed; z-index: 1000; max-width: 280px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-ctl); background: var(--header); color: var(--text); font-size: 12px; line-height: 1.35; box-shadow: var(--shadow-soft); pointer-events: none; }
 .quick-tooltip[hidden] { display: none; }
 
-/* ---- Relays: Settings → Relay (serving) and Settings → Cluster → Relays (memberships) ---- */
+/* ---- Relays: Settings → Relay (joined relays and serving) ---- */
 /* The Relay panel is a fixed column like Resources: each list takes the height left over and
    relay-ui.js sizes its pages to it, so the lists page instead of scrolling. Only the serving
-   form, which is not a list, may scroll on a short screen. */
+   form and the joined relays (cards paged three at a time, one of which may show a QR code)
+   may scroll on a short screen. */
 .settings-panel.relay-panel { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
 .relay-panel > * { flex: none; }
 .relay-panel > .relay-section { flex: 1 1 0; min-height: 0; }
@@ -4184,10 +4185,10 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .relay-panel .ghost.danger, .relays-section .ghost.danger { border-color: color-mix(in srgb, var(--danger) 40%, transparent); color: var(--danger); }
 .relay-panel .ghost.danger[data-armed="true"], .relays-section .ghost.danger[data-armed="true"] { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 
-/* Cluster → Relays: one card per relay, three to a page. */
-.relays-section { display: grid; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); min-width: 0; }
+/* Relay → Joined relays: one card per relay, three to a page. */
+.relays-section { min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 3px; }
 .relays-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px; }
-.relays-head h3 { margin: 0 0 2px; font-size: 15px; }
+.relays-head .settings-hint { flex: 1; margin: 0; }
 .relays-add-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .relays-add-choice { display: grid; align-content: start; gap: 8px; min-width: 0; }
 .relays-list { display: grid; gap: 8px; }

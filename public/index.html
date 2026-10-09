@@ -934,16 +934,32 @@
             </aside>
           </div>
           </div>
-          <section class="relays-section" id="clusterRelays" aria-labelledby="clusterRelaysTitle" data-testid="cluster-relays-section">
+        </section>
+
+        <section class="settings-panel relay-panel" id="settingsPanel-relay" role="tabpanel" aria-labelledby="settingsTab-relay" tabindex="0" data-testid="settingsPanel-relay" hidden>
+          <div class="relay-head">
+            <p class="settings-hint">Relay actions apply immediately. They do not require Save settings. Serving is off by default, and this machine stays a normal working machine either way.</p>
+            <button class="ghost compact" type="button" id="relayRefreshButton" data-testid="relay-refresh-button">Refresh</button>
+          </div>
+          <p class="settings-hint relay-inline-status" id="relayStatus" role="status" data-testid="relay-load-status"></p>
+          <div class="relay-summary" id="relaySummary" data-testid="relay-summary" hidden>
+            <span class="cluster-badge" id="relaySummaryState" data-testid="relay-summary-state">Off</span>
+            <span>Fingerprint <code id="relayFingerprint" data-testid="relay-serving-fingerprint"></code></span>
+            <button class="ghost compact" type="button" id="relayFingerprintCopy" data-testid="relay-fingerprint-copy-button" disabled>Copy</button>
+            <span class="cluster-muted" id="relayCounts" data-testid="relay-counts"></span>
+          </div>
+          <div class="settings-subtabs relay-tabs" id="relayTabs" role="tablist" aria-label="Relay sections">
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-joined" data-relay-tab="joined" data-testid="relay-tab-joined" aria-controls="relayJoinedSection" aria-selected="true">Joined relays</button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-serving" data-relay-tab="serving" data-testid="relay-tab-serving" aria-controls="relayServingSection" aria-selected="false">Serving</button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-machines" data-relay-tab="machines" data-testid="relay-tab-machines" aria-controls="relayMachinesSection" aria-selected="false">Machines <span class="cluster-tab-count"></span></button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-tokens" data-relay-tab="tokens" data-testid="relay-tab-tokens" aria-controls="relayTokensSection" aria-selected="false">Tokens</button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-audit" data-relay-tab="audit" data-testid="relay-tab-audit" aria-controls="relayAuditSection" aria-selected="false">Audit log</button>
+          </div>
+
+          <section class="relay-section relays-section" id="relayJoinedSection" role="tabpanel" aria-labelledby="relayTab-joined" data-testid="relay-joined-section">
             <div class="relays-head">
-              <div>
-                <h3 id="clusterRelaysTitle">Relays</h3>
-                <p class="cluster-muted">A relay lets machines reach each other, and your phone reach this machine, without a public address. Direct connections and Tailscale keep working.</p>
-              </div>
-              <div class="cluster-list-actions">
-                <button class="ghost compact" type="button" id="relaysAddReveal" data-testid="relays-add-reveal" aria-expanded="false" aria-controls="relaysAddForm">Add relay</button>
-                <button class="ghost compact" type="button" id="relaysRefresh" data-testid="relays-refresh-button">Refresh</button>
-              </div>
+              <p class="settings-hint">Relays this machine has joined. A relay lets machines reach each other, and your phone reach this machine, without a public address. Direct connections and Tailscale keep working.</p>
+              <button class="ghost compact" type="button" id="relaysAddReveal" data-testid="relays-add-reveal" aria-expanded="false" aria-controls="relaysAddForm">Add relay</button>
             </div>
             <p class="cluster-muted" id="relaysAddress" data-testid="relays-address"></p>
             <div class="relay-switch">
@@ -967,28 +983,8 @@
             <div class="relays-list" id="relaysList" data-testid="relays-list"></div>
             <div class="relay-pager" id="relaysPager" data-testid="relays-pager" hidden></div>
           </section>
-        </section>
 
-        <section class="settings-panel relay-panel" id="settingsPanel-relay" role="tabpanel" aria-labelledby="settingsTab-relay" tabindex="0" data-testid="settingsPanel-relay" hidden>
-          <div class="relay-head">
-            <p class="settings-hint">Relay actions apply immediately. They do not require Save settings. Serving is off by default, and this machine stays a normal working machine either way.</p>
-            <button class="ghost compact" type="button" id="relayRefreshButton" data-testid="relay-refresh-button">Refresh</button>
-          </div>
-          <p class="settings-hint relay-inline-status" id="relayStatus" role="status" data-testid="relay-load-status"></p>
-          <div class="relay-summary" data-testid="relay-summary">
-            <span class="cluster-badge" id="relaySummaryState" data-testid="relay-summary-state">Off</span>
-            <span>Fingerprint <code id="relayFingerprint" data-testid="relay-serving-fingerprint"></code></span>
-            <button class="ghost compact" type="button" id="relayFingerprintCopy" data-testid="relay-fingerprint-copy-button" disabled>Copy</button>
-            <span class="cluster-muted" id="relayCounts" data-testid="relay-counts"></span>
-          </div>
-          <div class="settings-subtabs relay-tabs" id="relayTabs" role="tablist" aria-label="Relay sections">
-            <button class="settings-subtab" type="button" role="tab" id="relayTab-serving" data-relay-tab="serving" data-testid="relay-tab-serving" aria-controls="relayServingSection" aria-selected="true">Serving</button>
-            <button class="settings-subtab" type="button" role="tab" id="relayTab-machines" data-relay-tab="machines" data-testid="relay-tab-machines" aria-controls="relayMachinesSection" aria-selected="false">Machines <span class="cluster-tab-count"></span></button>
-            <button class="settings-subtab" type="button" role="tab" id="relayTab-tokens" data-relay-tab="tokens" data-testid="relay-tab-tokens" aria-controls="relayTokensSection" aria-selected="false">Tokens</button>
-            <button class="settings-subtab" type="button" role="tab" id="relayTab-audit" data-relay-tab="audit" data-testid="relay-tab-audit" aria-controls="relayAuditSection" aria-selected="false">Audit log</button>
-          </div>
-
-          <section class="relay-section relay-form-section" id="relayServingSection" role="tabpanel" aria-labelledby="relayTab-serving" data-testid="relay-serving-section">
+          <section class="relay-section relay-form-section" id="relayServingSection" role="tabpanel" aria-labelledby="relayTab-serving" data-testid="relay-serving-section" hidden>
             <label class="checkbox-row"><input type="checkbox" id="relayEnabled" data-testid="relay-enabled-toggle" /> Serve as a relay</label>
             <p class="settings-hint">Machines you admit can reach each other, and your phone can reach them, through this machine. It needs a public HTTPS address and a wildcard name, like *.relay.example.com.</p>
             <div class="relay-form">

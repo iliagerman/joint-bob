@@ -1,5 +1,5 @@
 // Browser suite for the relay screens: Settings → Relay (this machine as a relay) and
-// Settings → Cluster → Relays (this machine's memberships). It drives a real Chrome against a
+// Settings → Relay → Joined relays (this machine's memberships). It drives a real Chrome against a
 // seeded node, turns relay serving on with a loopback address, creates tokens, and checks that
 // the lists page instead of scrolling, secrets are shown once, and errors stay inline.
 //
@@ -110,6 +110,12 @@ test("the Relay tab sits right after Cluster and starts with serving off", async
 
   await page.getByTestId("settings-tab-relay").click();
   await page.getByTestId("settingsPanel-relay").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("relay-tab-joined").getAttribute("aria-selected"), "true", "the joined relays open first");
+  await page.getByTestId("relay-joined-section").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("relay-summary").isVisible(), false, "the serving summary stays on the serving sections");
+  assert.equal(await page.getByTestId("relay-serving-section").isVisible(), false);
+  await page.getByTestId("relay-tab-serving").click();
+  await page.getByTestId("relay-serving-section").waitFor({ state: "visible" });
   await page.getByTestId("relay-summary-state").filter({ hasText: "Off" }).waitFor();
   assert.equal(await page.getByTestId("relay-enabled-toggle").isChecked(), false, "serving is off by default");
   assert.equal(await page.getByTestId("relay-check-button").isDisabled(), true, "the DNS and TLS check waits for serving to be on");
@@ -319,9 +325,13 @@ test("the audit log lists what the operator did", async () => {
   assert.equal(scrollable, false, "the audit list does not scroll");
 });
 
-test("Cluster → Relays shows this machine's relay with its phone access", async () => {
+test("Relay → Joined relays shows this machine's relay with its phone access", async () => {
   await openSettingsTab("cluster");
+  assert.equal(await page.locator('#settingsPanel-cluster [data-testid="relays-add-reveal"], #settingsPanel-cluster [data-testid="relays-list"]').count(), 0, "joining relays moved out of the Cluster tab");
+  await openSettingsTab("relay");
+  await page.getByTestId("relay-tab-joined").click();
   await page.getByTestId("relay-local-card").waitFor();
+  assert.equal(await page.getByTestId("relay-summary").isVisible(), false);
   assert.equal(await page.getByTestId("relay-local-title").innerText(), "This machine's relay");
   const phoneAddress = `http://${RENAMED}.localhost:${node.port}`;
   const card = page.getByTestId("relay-local-card");
@@ -342,7 +352,7 @@ test("Cluster → Relays shows this machine's relay with its phone access", asyn
   assert.equal(await page.getByTestId("relay-phone-signin-toggle").isChecked(), true, "phone sign-in is on by default");
   assert.equal(await page.getByTestId("relay-mfa-hint").innerText(), "Phone sign-in through a relay needs two-factor authentication. Set it up under Account.", "an account without two-factor sign-in is told why");
   await page.getByTestId("relay-local-card").scrollIntoViewIfNeeded();
-  await shot("cluster-relays");
+  await shot("joined-relays");
 });
 
 test("a phone address opens as a QR code to scan", async () => {
@@ -364,7 +374,7 @@ test("a phone address opens as a QR code to scan", async () => {
   const box = await figure.locator("svg").boundingBox();
   assert.ok(box && box.width >= 160 && box.width === box.height, "the code is large enough to scan and square");
   await figure.scrollIntoViewIfNeeded();
-  await shot("cluster-relays-qr");
+  await shot("joined-relays-qr");
   await card.getByTestId("relay-phone-entry-qr").click();
   await figure.waitFor({ state: "detached" });
   assert.equal(await card.getByTestId("relay-phone-entry-qr").innerText(), "QR code");
@@ -385,12 +395,12 @@ test("the phone sign-in switch saves at once", async () => {
   await page.getByTestId("relay-local-card").getByTestId("relay-phone-entry").waitFor();
 });
 
-test("the other-users phone switch sits in the Relays section and round-trips", async () => {
+test("the other-users phone switch sits in Joined relays and round-trips", async () => {
   const before = await api<{ otherUsersPhoneSignIn: boolean }>(node, session, "GET", "/relays");
   const toggle = page.getByTestId("relays-other-users-toggle");
   assert.equal(await toggle.isChecked(), before.body.otherUsersPhoneSignIn, "the switch shows the saved rule");
-  assert.match(await page.getByTestId("cluster-relays-section").innerText(), /Let other users sign in to this machine from a phone/);
-  assert.match(await page.getByTestId("cluster-relays-section").innerText(), /Other users are accounts whose home is another machine in your clusters\. Turning this off also ends their open phone sessions\./);
+  assert.match(await page.getByTestId("relay-joined-section").innerText(), /Let other users sign in to this machine from a phone/);
+  assert.match(await page.getByTestId("relay-joined-section").innerText(), /Other users are accounts whose home is another machine in your clusters\. Turning this off also ends their open phone sessions\./);
   const flipped = !before.body.otherUsersPhoneSignIn;
   const saved = page.waitForResponse((response) => response.url().endsWith("/api/relays/settings") && response.request().method() === "PUT");
   await toggle.setChecked(flipped);

@@ -1,5 +1,5 @@
-// Pieces shared by the two relay screens: Settings → Relay (this machine as a relay) and
-// Settings → Cluster → Relays (this machine's memberships). Plain DOM helpers, a two-click
+// Pieces shared by the two relay screens in Settings → Relay: Serving (this machine as a relay)
+// and Joined relays (this machine's memberships). Plain DOM helpers, a two-click
 // button for destructive actions, and a list that pages to the height it is given.
 import { toast } from "./shell.js";
 

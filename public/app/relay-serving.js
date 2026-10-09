@@ -1,7 +1,9 @@
-// Settings → Relay: this machine as a relay. A serving form, the machines admitted to it,
-// the tokens that admit new ones, and an audit log. Every action applies at once and none of
-// them needs Save settings. The lists page to the height they are given instead of scrolling.
+// Settings → Relay. Joined relays (the relays this machine uses, in relay-memberships.js) and
+// this machine as a relay: a serving form, the machines admitted to it, the tokens that admit
+// new ones, and an audit log. Every action applies at once and none of them needs Save
+// settings. The lists page to the height they are given instead of scrolling.
 import { api } from "./api.js";
+import { loadRelayMemberships } from "./relay-memberships.js";
 import { copyText, createFittedList, formatBytes, formatWhen, makeBadge, makeButton, makeNode, makeTwoStepButton, shortFingerprint, showStatus } from "./relay-ui.js";
 
 const byId = (id) => document.getElementById(id);
@@ -23,7 +25,8 @@ const tokenLink = byId("relayTokenLink");
 
 const STATUS_LABEL = { pending: "Waiting for approval", admitted: "Admitted", suspended: "Suspended" };
 let serving = null;
-let activeTab = "serving";
+/** Most machines join relays; few serve one, so the joined relays open first. */
+let activeTab = "joined";
 let machineFilter = "all";
 
 // ---- summary and serving form ----
@@ -377,6 +380,7 @@ const audit = createFittedList({
 // ---- tabs and loading ----
 
 const sections = {
+  joined: { section: byId("relayJoinedSection"), load: loadRelayMemberships },
   serving: { section: byId("relayServingSection"), load: async () => {} },
   machines: { section: byId("relayMachinesSection"), load: refreshMachines },
   tokens: { section: byId("relayTokensSection"), load: async () => { try { await tokens.reload(); } catch (error) { showStatus(tokensStatus, `Could not load tokens: ${error.message}`, "error"); } } },
@@ -387,6 +391,8 @@ function showRelayTab(name) {
   activeTab = name;
   for (const tab of tabs.querySelectorAll("[data-relay-tab]")) tab.setAttribute("aria-selected", String(tab.dataset.relayTab === name));
   for (const [key, { section }] of Object.entries(sections)) section.hidden = key !== name;
+  // The summary describes this machine as a relay, so it belongs to the serving sections only.
+  byId("relaySummary").hidden = name === "joined";
   void sections[name].load();
 }
 

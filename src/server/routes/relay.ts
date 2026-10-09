@@ -1,4 +1,4 @@
-// Settings → Relay (serving) and Settings → Cluster → Relays (memberships). RELAY-PLAN.md §4.7–4.8.
+// Settings → Relay: joined relays (memberships) and serving. RELAY-PLAN.md §4.7–4.8.
 import { randomBytes } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import type { DatabaseSync } from "node:sqlite";
@@ -285,6 +285,6 @@ app.get("/enroll", (_request, response) => {
   response.type("html").set("Cache-Control", "no-store").send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Add this machine to a relay</title><body style="font-family:system-ui;margin:3rem auto;max-width:34rem;padding:0 1rem">
 <h1>Add a machine to this relay</h1><p>This link admits one machine. On the machine you want to add, open Joint Bob, go to
-<b>Settings → Cluster → Relays</b>, choose <b>Add relay</b>, and paste the whole link there.</p>
+<b>Settings → Relay → Joined relays</b>, choose <b>Add relay</b>, and paste the whole link there.</p>
 <p>Do not share the link more widely: anyone with it can add a machine until it is used or expires.</p></body>`);
 });

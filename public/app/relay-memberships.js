@@ -1,6 +1,6 @@
-// Settings → Cluster → Relays: the relays this machine belongs to, and the relay it serves
+// Settings → Relay → Joined relays: the relays this machine belongs to, and the relay it serves
 // itself. Adding a relay, leaving one and switching phone sign-in all apply at once. Nothing
-// polls: the list reloads when the tab opens, after each action, and when Refresh is pressed.
+// polls: the list reloads when the sub-tab opens, after each action, and when Refresh is pressed.
 import { api } from "./api.js";
 import { qrSvg } from "./qr.js";
 import { copyText, isRelayOnlyUrl, makeBadge, makeButton, makeNode, makeTwoStepButton, shortFingerprint, showStatus } from "./relay-ui.js";
@@ -14,7 +14,7 @@ const STATUS_LABEL = {
 const STATUS_KIND = { admitted: "ok", pending: "twin", suspended: "error", revoked: "error", denied: "error" };
 
 const byId = (id) => document.getElementById(id);
-const section = byId("clusterRelays");
+const section = byId("relayJoinedSection");
 const status = byId("relaysStatus");
 const list = byId("relaysList");
 const pager = byId("relaysPager");
@@ -268,7 +268,6 @@ addReveal.addEventListener("click", () => showAddForm(addForm.hidden));
 byId("relaysAddCancel").addEventListener("click", () => { showAddForm(false); addReveal.focus(); });
 byId("relaysLinkButton").addEventListener("click", submitLink);
 byId("relaysRequestButton").addEventListener("click", submitRequest);
-byId("relaysRefresh").addEventListener("click", () => { showStatus(status, ""); void loadRelayMemberships(); });
 addForm.addEventListener("keydown", (event) => {
   if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); showAddForm(false); addReveal.focus(); return; }
   if (event.key !== "Enter" || !event.target.matches("input")) return;

@@ -121,7 +121,7 @@ The **Relay** tab is visible only to the machine's admin and off by default. Its
 
 All of this runs in the same Joint Bob server process, with endpoints under `/api/relay/v1/*`, the `/join` and `/enroll` landing pages, and the phone gateway for `*.<relay-domain>`. The relay node gets a relay name on its own relay too, so a phone reaches it the same way as any other machine.
 
-### 4.8 Machine side (Settings → Cluster → Relays)
+### 4.8 Machine side (Settings → Relay → Joined relays)
 
 - **Add relay**, either by pasting a token link (admitted immediately) or by entering a relay origin and choosing **Request access**.
   - Request access shows the relay's fingerprint and the pairing code.

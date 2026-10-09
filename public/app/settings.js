@@ -5,7 +5,6 @@ import { fillShortcutSettings } from "./shortcut-settings.js";
 import { loadSkills } from "./composer-dialogs.js";
 import { showSignedOut } from "./auth.js";
 import { loadClusterPanel } from "./cluster-panel.js";
-import { loadRelayMemberships } from "./relay-memberships.js";
 import { loadRelayServing } from "./relay-serving.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
@@ -106,7 +105,6 @@ function selectSettingsTab(requested) {
   if (elements.settingsTabsSelect) elements.settingsTabsSelect.value = name;
   if (name === "cluster" || name === "browser") void loadBrowserStatus();
   if (name === "browser") void loadBrowserProfileDirectory();
-  if (name === "cluster" && !state.isRemoteLogin) void loadRelayMemberships();
   if (name === "relay") void loadRelayServing();
   if (name === "notifications") { void loadNtfyServicesPanel(); void loadErrorReportingSettings(); }
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });

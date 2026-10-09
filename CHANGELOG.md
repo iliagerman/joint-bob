@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Moved joined relays from Settings > Cluster into Settings > Relay, so all relay settings are in one tab.
+
 ## 2.66.2 — 2026-10-09
 
 - Show twin synchronization failures directly in cluster member rows, the node inspector, and the machine's Twins tab, with a read-only status refresh and recovery guidance.
