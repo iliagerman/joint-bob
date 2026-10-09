@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.67.0 — 2026-10-09
 
-- Moved joined relays from Settings > Cluster into Settings > Relay, so all relay settings are in one tab.
+- Moved joined relays from Settings > Cluster to a new Joined relays tab in Settings > Relay, so all relay settings are in one place.
 
 ## 2.66.2 — 2026-10-09
 
