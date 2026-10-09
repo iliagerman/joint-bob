@@ -15,6 +15,7 @@ import { listProjectMetadataDeliveries } from "../cluster-project-metadata.js";
 import { resumeSharedProjectFolder } from "../syncthing.js";
 import { ensureTwinHttpSchema, pendingTwinDeliveries, bootstrapOwnedTwinPolicies } from "./twins.js";
 import { peerSnapshot, staleSnapshotReason } from "./peer-snapshots.js";
+import { peerFetch } from "../relay/transport.js";
 
 export const adoptionInventorySchema = z.array(z.object({id:z.string().min(1).max(300),ownerNodeId:z.string().uuid().nullable()}).strict()).max(10000);
 export type AdoptionInventory = z.infer<typeof adoptionInventorySchema>;
@@ -147,8 +148,8 @@ async function coordinateTwinSharing(db:DatabaseSync,local:string,peer:string,re
   scheduleTwinSharing(db,relationshipId);
   const target="/api/cluster/v2/twins/sharing",body=Buffer.from(JSON.stringify({relationshipId,ownerNodeId:owner,projects:adoptionInventory(db)}));
   let response: Response;
-  try{response=await fetch(new URL(target,endpoint.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10000),body,
-    headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local,peer,"POST",target,body)}});}
+  try{response=await peerFetch(new URL(target,endpoint.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10000),body,
+    headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local,peer,"POST",target,body)}}, peer);}
   catch{throw new ClusterV2HttpError(503,"Twin peer is unavailable");}
   if(!response.ok) throw new ClusterV2HttpError(response.status,"Twin sharing request rejected");
   const inventory=adoptionInventorySchema.parse((await response.json() as {projects:unknown}).projects);

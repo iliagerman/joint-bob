@@ -8,6 +8,7 @@ import {
   resourcePolicyDeliveryIsCurrent, type SignedResourcePolicy,
 } from "../cluster-sharing.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
+import { peerFetch } from "../relay/transport.js";
 
 const acknowledgementSchema = z.object({ operationId: z.string().uuid() }).strict();
 const target = "/api/cluster/v2/resources/policy";
@@ -33,11 +34,11 @@ export async function flushResourcePolicyDeliveries(): Promise<void> {
     }
     const request = policyRequest(db, local.id, delivery.peerId, delivery.statement);
     try {
-      const response = await fetch(request.url, {
+      const response = await peerFetch(request.url, {
         method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000),
         body: new Uint8Array(request.body),
         headers: { "Content-Type": "application/json", Authorization: request.authorization },
-      });
+      }, delivery.peerId);
       if (!response.ok) {
         console.warn(`Resource policy delivery ${delivery.operationId} to ${delivery.peerId} failed (${response.status})`);
         continue;

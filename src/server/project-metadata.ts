@@ -10,6 +10,7 @@ import {
 import { resourcePolicyDeliveryIsCurrent } from "../cluster-sharing.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { listProjects } from "../store.js";
+import { peerFetch } from "../relay/transport.js";
 
 const acknowledgementSchema = z.object({
   operationId: z.string().uuid(), revision: z.number().int().safe().positive(),
@@ -34,9 +35,9 @@ export async function flushProjectMetadataDeliveries(): Promise<void> {
     if (!resourcePolicyDeliveryIsCurrent(db, local.id, delivery.statement)) continue;
     const request = requestFor(db, local.id, delivery);
     try {
-      const response = await fetch(request.url, { method: "POST", redirect: "error",
+      const response = await peerFetch(request.url, { method: "POST", redirect: "error",
         signal: AbortSignal.timeout(10_000), body: new Uint8Array(request.body),
-        headers: { "Content-Type": "application/json", Authorization: request.authorization } });
+        headers: { "Content-Type": "application/json", Authorization: request.authorization } }, delivery.peerId);
       if (!response.ok) {
         console.warn(`Project metadata delivery ${delivery.statement.body.operationId} to ${delivery.peerId} failed (${response.status})`);
         continue;

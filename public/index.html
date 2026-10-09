@@ -599,6 +599,7 @@
           <option value="commands">Commands</option>
           <option value="secrets">Secrets</option>
           <option value="cluster">Cluster</option>
+          <option value="relay" data-requires-settings>Relay</option>
           <option value="browser">Browser</option>
           <option value="workspaces">Workspaces</option>
           <option value="engines">Harnesses</option>
@@ -619,6 +620,7 @@
           <button class="settings-tab" type="button" data-settings-tab="commands" role="tab" id="settingsTab-commands" aria-controls="settingsPanel-commands" aria-selected="false" tabindex="-1" data-testid="settings-tab-commands">Commands</button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
+          <button class="settings-tab" type="button" data-settings-tab="relay" role="tab" id="settingsTab-relay" aria-controls="settingsPanel-relay" aria-selected="false" tabindex="-1" data-requires-settings data-testid="settings-tab-relay">Relay</button>
           <button class="settings-tab" type="button" data-settings-tab="browser" role="tab" id="settingsTab-browser" aria-controls="settingsPanel-browser" aria-selected="false" tabindex="-1" data-testid="settings-tab-browser">Browser</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Harnesses</button>
@@ -932,6 +934,123 @@
             </aside>
           </div>
           </div>
+          <section class="relays-section" id="clusterRelays" aria-labelledby="clusterRelaysTitle" data-testid="cluster-relays-section">
+            <div class="relays-head">
+              <div>
+                <h3 id="clusterRelaysTitle">Relays</h3>
+                <p class="cluster-muted">A relay lets machines reach each other, and your phone reach this machine, without a public address. Direct connections and Tailscale keep working.</p>
+              </div>
+              <div class="cluster-list-actions">
+                <button class="ghost compact" type="button" id="relaysAddReveal" data-testid="relays-add-reveal" aria-expanded="false" aria-controls="relaysAddForm">Add relay</button>
+                <button class="ghost compact" type="button" id="relaysRefresh" data-testid="relays-refresh-button">Refresh</button>
+              </div>
+            </div>
+            <p class="cluster-muted" id="relaysAddress" data-testid="relays-address"></p>
+            <div class="relay-switch">
+              <label class="checkbox-row"><input type="checkbox" id="relaysOtherUsers" data-testid="relays-other-users-toggle" /> Let other users sign in to this machine from a phone</label>
+              <p class="settings-hint">Other users are accounts whose home is another machine in your clusters. Turning this off also ends their open phone sessions.</p>
+            </div>
+            <div class="cluster-create-row" id="relaysAddForm" data-testid="relays-add-form" hidden>
+              <div class="relays-add-choices">
+                <div class="relays-add-choice">
+                  <label>Paste a relay link<input id="relaysLinkInput" type="url" spellcheck="false" autocomplete="off" placeholder="https://relay.example.com/enroll#…" data-testid="relays-link-input" /></label>
+                  <div class="cluster-form-actions"><button class="primary compact" type="button" id="relaysLinkButton" data-testid="relays-link-button">Add relay</button></div>
+                </div>
+                <div class="relays-add-choice">
+                  <label>Or enter a relay address<input id="relaysOriginInput" type="url" spellcheck="false" autocomplete="off" placeholder="https://relay.example.com" data-testid="relays-origin-input" /></label>
+                  <div class="cluster-form-actions"><button class="ghost compact" type="button" id="relaysRequestButton" data-testid="relays-request-button">Request access</button></div>
+                </div>
+              </div>
+              <div class="cluster-form-actions"><button class="ghost compact" type="button" id="relaysAddCancel" data-testid="relays-add-cancel">Cancel</button></div>
+            </div>
+            <p class="cluster-muted relay-inline-status" id="relaysStatus" role="status" data-testid="relays-status"></p>
+            <div class="relays-list" id="relaysList" data-testid="relays-list"></div>
+            <div class="relay-pager" id="relaysPager" data-testid="relays-pager" hidden></div>
+          </section>
+        </section>
+
+        <section class="settings-panel relay-panel" id="settingsPanel-relay" role="tabpanel" aria-labelledby="settingsTab-relay" tabindex="0" data-testid="settingsPanel-relay" hidden>
+          <div class="relay-head">
+            <p class="settings-hint">Relay actions apply immediately. They do not require Save settings. Serving is off by default, and this machine stays a normal working machine either way.</p>
+            <button class="ghost compact" type="button" id="relayRefreshButton" data-testid="relay-refresh-button">Refresh</button>
+          </div>
+          <p class="settings-hint relay-inline-status" id="relayStatus" role="status" data-testid="relay-load-status"></p>
+          <div class="relay-summary" data-testid="relay-summary">
+            <span class="cluster-badge" id="relaySummaryState" data-testid="relay-summary-state">Off</span>
+            <span>Fingerprint <code id="relayFingerprint" data-testid="relay-serving-fingerprint"></code></span>
+            <button class="ghost compact" type="button" id="relayFingerprintCopy" data-testid="relay-fingerprint-copy-button" disabled>Copy</button>
+            <span class="cluster-muted" id="relayCounts" data-testid="relay-counts"></span>
+          </div>
+          <div class="settings-subtabs relay-tabs" id="relayTabs" role="tablist" aria-label="Relay sections">
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-serving" data-relay-tab="serving" data-testid="relay-tab-serving" aria-controls="relayServingSection" aria-selected="true">Serving</button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-machines" data-relay-tab="machines" data-testid="relay-tab-machines" aria-controls="relayMachinesSection" aria-selected="false">Machines <span class="cluster-tab-count"></span></button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-tokens" data-relay-tab="tokens" data-testid="relay-tab-tokens" aria-controls="relayTokensSection" aria-selected="false">Tokens</button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-audit" data-relay-tab="audit" data-testid="relay-tab-audit" aria-controls="relayAuditSection" aria-selected="false">Audit log</button>
+          </div>
+
+          <section class="relay-section relay-form-section" id="relayServingSection" role="tabpanel" aria-labelledby="relayTab-serving" data-testid="relay-serving-section">
+            <label class="checkbox-row"><input type="checkbox" id="relayEnabled" data-testid="relay-enabled-toggle" /> Serve as a relay</label>
+            <p class="settings-hint">Machines you admit can reach each other, and your phone can reach them, through this machine. It needs a public HTTPS address and a wildcard name, like *.relay.example.com.</p>
+            <div class="relay-form">
+              <label>Public address<input id="relayOrigin" type="url" autocomplete="off" spellcheck="false" placeholder="https://relay.example.com" data-testid="relay-origin-input" /></label>
+              <label>Environment label<input id="relayEnvironment" autocomplete="off" maxlength="40" placeholder="prod" data-testid="relay-environment-input" /></label>
+              <label>Max machines<input id="relayMaxMachines" type="number" min="1" max="10000" step="1" value="50" data-testid="relay-max-machines-input" /></label>
+              <label>Monthly allowance per machine, GB<input id="relayMonthlyCapGb" type="number" min="0" step="any" value="0" data-testid="relay-monthly-cap-input" /></label>
+              <label>Alert ntfy topic<input id="relayAlertTopic" autocomplete="off" spellcheck="false" maxlength="64" placeholder="Optional" data-testid="relay-alert-topic-input" /></label>
+            </div>
+            <label class="checkbox-row"><input type="checkbox" id="relayRequestsEnabled" data-testid="relay-requests-toggle" /> Accept access requests</label>
+            <p class="settings-hint">A machine can ask to join and you approve it after checking its pairing code. Turn this off to admit machines by token only. 0 GB means no cap. The alert topic hears when a machine passes its allowance.</p>
+            <label class="checkbox-row"><input type="checkbox" id="relayOwnMachinesOnly" data-testid="relay-own-machines-only-toggle" /> Only my own machines can use this relay</label>
+            <p class="settings-hint">Your own machines are this machine's twins. Other machines are disconnected and refused.</p>
+            <div class="github-group-actions">
+              <button class="primary compact" type="button" id="relayServingSave" data-testid="relay-serving-save-button">Save</button>
+              <button class="ghost compact" type="button" id="relayCheckButton" data-testid="relay-check-button" disabled>Check DNS and TLS</button>
+            </div>
+            <p class="settings-hint relay-inline-status" id="relayServingStatus" role="status" data-testid="relay-serving-status"></p>
+            <p class="settings-hint" id="relayCheckHint" data-testid="relay-check-hint">Turn serving on and save to check DNS and TLS.</p>
+            <ul class="relay-check-list" id="relayCheckResults" data-testid="relay-check-results"></ul>
+          </section>
+
+          <section class="relay-section" id="relayMachinesSection" role="tabpanel" aria-labelledby="relayTab-machines" data-testid="relay-machines-section" hidden>
+            <div class="settings-subtabs relay-filter" id="relayMachineFilter" role="group" aria-label="Show machines">
+              <button class="settings-subtab" type="button" data-machine-filter="all" aria-pressed="true" data-testid="relay-machines-filter-all">All</button>
+              <button class="settings-subtab" type="button" data-machine-filter="pending" aria-pressed="false" data-testid="relay-machines-filter-pending">Pending</button>
+              <button class="settings-subtab" type="button" data-machine-filter="admitted" aria-pressed="false" data-testid="relay-machines-filter-admitted">Admitted</button>
+              <button class="settings-subtab" type="button" data-machine-filter="suspended" aria-pressed="false" data-testid="relay-machines-filter-suspended">Suspended</button>
+            </div>
+            <p class="settings-hint relay-inline-status" id="relayMachinesStatus" role="status" data-testid="relay-machines-status"></p>
+            <div class="relay-list" id="relayMachinesList" data-testid="relay-machines-list"></div>
+            <div class="relay-pager" id="relayMachinesPager" data-testid="relay-machines-pager" hidden></div>
+          </section>
+
+          <section class="relay-section" id="relayTokensSection" role="tabpanel" aria-labelledby="relayTab-tokens" data-testid="relay-tokens-section" hidden>
+            <div class="relay-token-form" id="relayTokenForm">
+              <label>Label<input id="relayTokenLabel" autocomplete="off" maxlength="80" placeholder="Office Mac" data-testid="relay-token-label-input" /></label>
+              <label>Uses<input id="relayTokenUses" type="number" min="1" max="1000" step="1" value="1" data-testid="relay-token-uses-input" /></label>
+              <label>Expires in, hours<input id="relayTokenHours" type="number" min="0.25" max="2160" step="any" value="24" data-testid="relay-token-hours-input" /></label>
+              <label>Suggested name<input id="relayTokenName" autocomplete="off" spellcheck="false" maxlength="63" placeholder="Optional, like office-mac" data-testid="relay-token-name-input" /></label>
+              <button class="primary compact" type="button" id="relayTokenCreate" data-testid="relay-token-create-button" disabled>Create token</button>
+            </div>
+            <div class="relay-reveal" id="relayTokenReveal" data-testid="relay-token-reveal" hidden>
+              <label>Relay link
+                <div class="cluster-token-row">
+                  <input id="relayTokenLink" spellcheck="false" readonly aria-readonly="true" autocomplete="off" data-testid="relay-token-link-input" />
+                  <button class="ghost compact" type="button" id="relayTokenCopy" data-testid="relay-token-copy-button">Copy link</button>
+                </div>
+              </label>
+              <p class="settings-hint">Shown once. Send it to the machine's owner; it adds one machine.</p>
+              <button class="ghost compact" type="button" id="relayTokenDismiss" data-testid="relay-token-dismiss-button">Done</button>
+            </div>
+            <p class="settings-hint relay-inline-status" id="relayTokensStatus" role="status" data-testid="relay-tokens-status"></p>
+            <div class="relay-list" id="relayTokensList" data-testid="relay-tokens-list"></div>
+            <div class="relay-pager" id="relayTokensPager" data-testid="relay-tokens-pager" hidden></div>
+          </section>
+
+          <section class="relay-section" id="relayAuditSection" role="tabpanel" aria-labelledby="relayTab-audit" data-testid="relay-audit-section" hidden>
+            <p class="settings-hint relay-inline-status" id="relayAuditStatus" role="status" data-testid="relay-audit-status"></p>
+            <div class="relay-list" id="relayAuditList" data-testid="relay-audit-list"></div>
+            <div class="relay-pager" id="relayAuditPager" data-testid="relay-audit-pager" hidden></div>
+          </section>
         </section>
 
         <section class="settings-panel" id="settingsPanel-browser" role="tabpanel" aria-labelledby="settingsTab-browser" tabindex="0" hidden>

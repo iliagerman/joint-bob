@@ -172,6 +172,7 @@ export const state = {
   completionSound: "chime",
   authenticated: false,
   username: "",
+  isRemoteLogin: false,
   setupRequired: false,
   mustChangePassword: false,
   lastTurnStartedAt: 0,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import WebSocket from "ws";
-import { authSessionEvents, sessionCookieName, sessionForId } from "../auth.js";
+import { authSessionEvents, sessionCookieNameFor, sessionForId } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSocket } from "./runtime-peers.js";
 import { clusterPeerMayAccessProject, peerMayOpenTerminal } from "./cluster-helpers.js";
@@ -29,6 +29,9 @@ import { ownerPeer } from "./task-handoff.js";
 import { measureOperation, traceOperation } from "./performance-diagnostics.js";
 import { projectAdditionalPaths } from "./session-scope.js";
 import { mergeReservations, taskCwd, taskHandoffContext, taskTerminalCounts } from "./task-runs.js";
+import { relayPeerOf, relayTransportOf } from "../relay/stream.js";
+import { peerWebSocket } from "../relay/transport.js";
+import { onPhonePolicyChanged, otherUsersMayUsePhone } from "../relay/phone-policy.js";
 
 /** A worktree that arrived through sync has no `.env` or dependency links on this node yet. */
 async function provisionWorktree(projectPath: string, worktreePath: string): Promise<void> {
@@ -58,11 +61,18 @@ async function directSessionForOpen(project: ProjectRecord, sessionPath: string,
   return findHarnessSession(project, request.engine, sessionPath, sessionId);
 }
 
-const authenticatedSockets = new Map<WebSocket, string>();
+/** Browser sockets by login session; `otherUserPhone` marks another machine's user signed in through the phone gateway. */
+const authenticatedSockets = new Map<WebSocket, { sessionId: string; otherUserPhone: boolean }>();
 authSessionEvents.on("revoked", (sessionIds: string[]) => {
   const revoked = new Set(sessionIds);
-  for (const [socket, sessionId] of authenticatedSockets) {
-    if (revoked.has(sessionId)) socket.close(1008, "Login session revoked");
+  for (const [socket, entry] of authenticatedSockets) {
+    if (revoked.has(entry.sessionId)) socket.close(1008, "Login session revoked");
+  }
+});
+onPhonePolicyChanged((allowed) => {
+  if (allowed) return;
+  for (const [socket, entry] of authenticatedSockets) {
+    if (entry.otherUserPhone) socket.close(1008, "Phone sign-in for other users is off");
   }
 });
 
@@ -84,15 +94,19 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   if(authorization){
     try{signedPeer=await signedSocketPeer(url.pathname+url.search,authorization);}
     catch{socket.close(1008,'Unauthorized');return;}
-  }
+    // A relay channel carries sockets only from the machine it proved (RELAY-PLAN.md §4.10 rule 4).
+    const transport=relayTransportOf(request.socket),channelPeer=relayPeerOf(request.socket);
+    if(transport==='gateway'||(channelPeer&&channelPeer.nodeId!==signedPeer)){socket.close(1008,'Unauthorized');return;}
+  }else if(relayTransportOf(request.socket)==='peer'){socket.close(1008,'Unauthorized');return;}
   const browserMachineId = signedPeer;
   const machineAuthenticated = Boolean(signedPeer);
   const origin = request.headers.origin;
-  const cookiePrefix = `${sessionCookieName}=`;
+  const cookiePrefix = `${sessionCookieNameFor(relayTransportOf(request.socket) === "gateway")}=`;
   const session = sessionForId(request.headers.cookie?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith(cookiePrefix))?.slice(cookiePrefix.length));
   let browserAuthenticated = false;
   try {
-    browserAuthenticated = Boolean(host && typeof origin === "string" && new URL(origin).host === host && session && !session.mustChangePassword);
+    browserAuthenticated = Boolean(host && typeof origin === "string" && new URL(origin).host === host && session && !session.mustChangePassword
+      && !(session.isRemoteLogin && relayTransportOf(request.socket) === "gateway" && !otherUsersMayUsePhone()));
   } catch {
     browserAuthenticated = false;
   }
@@ -102,7 +116,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   }
 
   if (!machineAuthenticated && session) {
-    authenticatedSockets.set(socket, session.id);
+    authenticatedSockets.set(socket, { sessionId: session.id, otherUserPhone: session.isRemoteLogin && relayTransportOf(request.socket) === "gateway" });
     socket.once("close", () => authenticatedSockets.delete(socket));
   }
 
@@ -181,7 +195,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
     if (requestedSessionId) ownerUrl.searchParams.set("sessionId", requestedSessionId);
     // A terminal socket must stay a terminal socket on the owner, not become a session.
     if (url.searchParams.get("mode") === "terminal") ownerUrl.searchParams.set("mode", "terminal");
-    proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }));
+    proxySocket(socket, peerWebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }, peer.id));
     return;
   }
   const requestedNodeId = url.searchParams.get("nodeId");
@@ -208,7 +222,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       }
       ownerUrl.searchParams.delete("nodeId");
       ownerUrl.searchParams.set("nodeSession", "1");
-      proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }));
+      proxySocket(socket, peerWebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }, peer.id));
       return;
     }
   }

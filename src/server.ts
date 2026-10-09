@@ -25,6 +25,7 @@ import { clusterWorkAllowed, flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
 import { startBrowserMonitors, stopBrowserMonitors } from "./server/browser-monitors.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
+import { startRelay, stopRelay } from "./relay/index.js";
 import "./server/schemas.js";
 import "./server/http-auth.js";
 import "./server/task-handoff.js";
@@ -63,6 +64,7 @@ import "./server/routes/project-files.js";
 import "./server/routes/git-review.js";
 import "./server/routes/search.js";
 import "./server/routes/usage.js";
+import "./server/routes/relay.js";
 import "./server/routes/updates.js";
 export { app, createApp, server } from "./server/state.js";
 
@@ -75,6 +77,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (stopping) return;
     stopping = true;
     server.close();
+    stopRelay();
     const timeout = setTimeout(() => process.exit(0), 8000); timeout.unref();
     stopBrowserMonitors();
     void closeBrowserRuntime().catch(error => console.warn("Browser shutdown failed", error)).finally(() => process.exit(0));
@@ -124,6 +127,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
     void startQuickNoteScheduler().catch(error => console.error("Quick note recovery failed; scheduler not started", error));
     void startBrowserMonitors().catch(error => console.error("Browser monitor startup failed", error));
+    // Relays connect out at once: a machine without a direct URL is reachable only through them.
+    void startRelay().catch(error => console.error("Relay startup failed", error));
     // Cluster work waits for startup reconciliation: run alongside it, it kept a restarting
     // node too busy to become ready within its release health check.
     const flushClusterWork = (): void => {

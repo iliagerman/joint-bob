@@ -19,6 +19,7 @@ import { scopedSkillDirectory, scopedSkillParent, writeScopedSkillIndex } from "
 import { mayShareProject } from "./sharing-files.js";
 import { sendError } from "./http-auth.js";
 import { app } from "./state.js";
+import { peerFetch } from "../relay/transport.js";
 
 const nameSchema = z.string().min(1).max(200).refine((value) => { try { validateSkillName(value); return true; } catch { return false; } });
 const conversationGrantSchema = z.object({ projectId: z.string().min(1).max(200), conversationId: z.string().min(1).max(300) }).strict();
@@ -222,10 +223,10 @@ async function signedSkillPost(db: DatabaseSync, local: string, peer: string, cl
   requirePeer(db, local, peer, cluster);
   const descriptor = db.prepare("SELECT url FROM cluster_v2_membership_nodes WHERE cluster_id=? AND node_id=?").get(cluster, peer) as { url: string };
   const body = Buffer.from(JSON.stringify(payload));
-  const response = await fetch(new URL(target, descriptor.url), {
+  const response = await peerFetch(new URL(target, descriptor.url), {
     method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), body,
     headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, local, peer, "POST", target, body) },
-  });
+  }, peer);
   // An owner on an older release has no scoped manifest, so it grants nothing scoped.
   if (missingOk && response.status === 404) { await response.body?.cancel(); return null; }
   if (!response.ok) { await response.body?.cancel(); throw failure(`Cluster peer request failed (${response.status})`, 503); }

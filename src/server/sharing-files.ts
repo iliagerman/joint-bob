@@ -15,6 +15,8 @@ import { expectedTaskWorkspacePath, projectTicketSyncFolderId, TICKET_WORKSPACE_
 import { replicationPeers } from "./replication-v2.js";
 import { projectWorktreeRoot, projectWorktreeSyncFolderId } from "../project-worktrees.js";
 import { WORKTREE_FOLDER_PREFIX } from "../worktree-filters.js";
+import { peerFetch } from "../relay/transport.js";
+import { notifyRelayPeersChanged } from "../relay/events.js";
 
 const deviceId=z.string().regex(/^[A-Z2-7]{7}(?:-[A-Z2-7]{7}){7}$/);
 export const fileEnrollmentSchema=z.object({deviceId,projects:z.array(z.string().min(1).max(300)).max(10000),
@@ -45,6 +47,10 @@ export function sharedProjectIds(db:DatabaseSync,local:string,peer:string):strin
 }
 async function enroll(db:DatabaseSync,local:string,peer:string,device:string,ids:string[]):Promise<string[]> {
  ensureSchema(db);
+ // Whatever this enrollment changes, relay-reached peers get their Syncthing tunnels re-planned.
+ try{return await enrollFiles(db,local,peer,device,ids);}finally{notifyRelayPeersChanged();}
+}
+async function enrollFiles(db:DatabaseSync,local:string,peer:string,device:string,ids:string[]):Promise<string[]> {
  await ensureSyncthingDevice(device,peer);
  await removeSyncthingDevices([device],[TICKET_WORKSPACE_FOLDER_ID,...listHarnessSyncFolders().map(folder=>folder.id)]);
  db.prepare("DELETE FROM cluster_v2_file_enrollments WHERE peer_id=? AND project_id IS NULL").run(peer);
@@ -94,6 +100,7 @@ async function revokeFiles(db:DatabaseSync,local:string):Promise<void>{
   if(row.project_id&&mayShareProject(db,local,row.peer_id,row.project_id))continue;
   await removeSyncthingDevices([row.device_id],[row.folder_id]);
   db.prepare("DELETE FROM cluster_v2_file_enrollments WHERE peer_id=? AND folder_id=?").run(row.peer_id,row.folder_id);
+  notifyRelayPeersChanged();
  }
 }
 export async function sharingFilesStatus(db:DatabaseSync,local:string,peer:string):Promise<{ready:boolean;error?:string}>{
@@ -117,8 +124,8 @@ export async function flushSharingFiles():Promise<void>{
   if(!device)throw new Error("Syncthing is not configured on this node");
   const projects=sharedProjectIds(db,local.id,peer.nodeId);
   const target="/api/cluster/v2/files/enroll",body=Buffer.from(JSON.stringify({deviceId:device,projects,locations:projectLocations(db,projects)}));
-  const response=await fetch(new URL(target,peer.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10000),body,
-   headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local.id,peer.nodeId,"POST",target,body)}});
+  const response=await peerFetch(new URL(target,peer.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10000),body,
+   headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local.id,peer.nodeId,"POST",target,body)}}, peer.nodeId);
   if(!response.ok)throw new Error(`File enrollment rejected (${response.status})`);
   const payload=fileEnrollmentSchema.parse(await response.json());
   receiveLocations(db,local.id,peer.nodeId,payload.locations);

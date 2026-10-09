@@ -37,7 +37,8 @@ const clusterUrlSchema = z.string().url().max(500)
   .transform(canonicalClusterUrl);
 export const clusterNodeSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  url: clusterUrlSchema,
+  // Empty for a machine that is reachable only through relays (RELAY-PLAN.md §4.8).
+  url: z.union([z.literal(""), clusterUrlSchema]),
 });
 const replicationEventSchema = z.object({
   id: z.string().uuid(),

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { DatabaseSync } from "node:sqlite";
+import { peerFetch } from "../relay/transport.js";
 
 /**
  * An offline peer (a sleeping laptop, a Tailscale host that drops packets) makes every
@@ -60,7 +61,7 @@ function lastSeenAt(db: DatabaseSync, peerId: string): string | null {
 export async function fetchPeer(db: DatabaseSync, peerId: string, input: string | URL, init: RequestInit): Promise<Response> {
   if (optionalReads.getStore() && !peerReachable(peerId, lastSeenAt(db, peerId))) throw new PeerUnreachableError(peerId);
   try {
-    const response = await fetch(input, init);
+    const response = await peerFetch(input, init, peerId);
     markPeerReachable(peerId);
     return response;
   } catch (error) {

@@ -10,8 +10,9 @@ import { applyTwinCertificate, applyTwinRevocation, confirmTwinAcceptance, creat
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { localMembershipDescriptor } from "./cluster-v2.js";
-import { clusterRequestRawBody, isClusterOriginUrl } from "./http-auth.js";
+import { clusterRequestRawBody, isClusterOriginUrl, assertRelayChannelSender } from "./http-auth.js";
 import { flushTwinSharing, scheduleTwinSharing } from './twin-sharing.js';
+import { peerFetch } from "../relay/transport.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const endpointSchema = z.object({ nodeId: uuid, name: z.string().trim().min(1).max(80), url: z.string().transform((value, context) => {
@@ -90,7 +91,7 @@ export async function acceptTwinHttpLink(link: unknown): Promise<{relationshipId
   });
   const target = "/api/cluster/v2/twins/confirm", body = Buffer.from(JSON.stringify({ acceptance, acceptor: local, secret: wrapper.invitation.secret }));
   let response: globalThis.Response;
-  try { response = await fetch(new URL(target, wrapper.endpoint.url), { method:"POST", redirect:"error", signal:AbortSignal.timeout(10_000), body, headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local.nodeId,wrapper.endpoint.nodeId,"POST",target,body)} }); }
+  try { response = await peerFetch(new URL(target, wrapper.endpoint.url), { method:"POST", redirect:"error", signal:AbortSignal.timeout(10_000), body, headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local.nodeId,wrapper.endpoint.nodeId,"POST",target,body)} }, wrapper.endpoint.nodeId); }
   catch { throw new ClusterV2HttpError(503, "Twin peer is unavailable"); }
   if (!response.ok) throw new ClusterV2HttpError(response.status >= 400 && response.status < 500 ? response.status : 503, `Twin peer request failed (${response.status})`);
   let certificate: TwinCertificate;
@@ -113,6 +114,7 @@ export async function confirmTwinHttp(request: Request, response: Response, next
       pinClusterPublicKey(db, payload.acceptance.body.acceptor.nodeId, payload.acceptance.body.acceptor.publicKey);
       const sender = verifyClusterRequest(db, local.id, request.method, request.originalUrl, raw, request.header("authorization"));
       if (sender !== payload.acceptance.body.acceptor.nodeId || sender !== payload.acceptor.nodeId) throw new ClusterV2HttpError(401, "Unauthorized");
+      assertRelayChannelSender(request, sender);
       const proof = db.prepare("SELECT endpoint FROM cluster_v2_twin_endpoint_invitations WHERE relationship_id=?").get(payload.acceptance.body.relationshipId) as {endpoint:string}|undefined;
       if (!proof) throw new ClusterV2HttpError(404, "Unknown twin relationship");
       const result = confirmTwinAcceptance(db, local.id, payload.acceptance, payload.secret);
@@ -156,7 +158,7 @@ export async function flushTwinDeliveries():Promise<void> {
   for(const row of rows) try {
     const endpoint=peerEndpoint(db,"twin",row.relationship_id,row.peer_id), target=`/api/cluster/v2/twins/${row.kind}`;
     const body=Buffer.from(JSON.stringify({[row.kind]:JSON.parse(row.payload)}));
-    const result=await fetch(new URL(target,endpoint.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10_000),body,headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local.id,row.peer_id,"POST",target,body)}});
+    const result=await peerFetch(new URL(target,endpoint.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10_000),body,headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local.id,row.peer_id,"POST",target,body)}}, endpoint.nodeId);
     if(!result.ok) throw new ClusterV2HttpError(result.status,"Twin delivery rejected");
     db.prepare("DELETE FROM cluster_v2_twin_deliveries WHERE relationship_id=? AND peer_id=? AND kind=?").run(row.relationship_id,row.peer_id,row.kind);
   } catch(error) { const status=error instanceof ClusterV2HttpError?error.statusCode:500; console.warn(`Twin ${row.kind} delivery to ${row.peer_id} failed (${status})`); }

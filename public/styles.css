@@ -4128,3 +4128,80 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 /* Shown at once on hover in place of the slow native title tooltip (quick-tooltips.js). */
 .quick-tooltip { position: fixed; z-index: 1000; max-width: 280px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-ctl); background: var(--header); color: var(--text); font-size: 12px; line-height: 1.35; box-shadow: var(--shadow-soft); pointer-events: none; }
 .quick-tooltip[hidden] { display: none; }
+
+/* ---- Relays: Settings → Relay (serving) and Settings → Cluster → Relays (memberships) ---- */
+/* The Relay panel is a fixed column like Resources: each list takes the height left over and
+   relay-ui.js sizes its pages to it, so the lists page instead of scrolling. Only the serving
+   form, which is not a list, may scroll on a short screen. */
+.settings-panel.relay-panel { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.relay-panel > * { flex: none; }
+.relay-panel > .relay-section { flex: 1 1 0; min-height: 0; }
+.relay-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.relay-head .settings-hint { flex: 1; }
+.relay-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); font-size: 12.5px; }
+.relay-summary code, .relay-address { font: 11.5px var(--mono); overflow-wrap: anywhere; }
+.relay-section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.relay-section > * { flex: none; }
+.relay-section > .relay-list { flex: 1 1 0; min-height: 0; }
+.relay-form-section { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 3px; }
+.relay-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; }
+.relay-form input { width: 100%; }
+.relay-token-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr) auto; gap: 10px; align-items: end; }
+.relay-token-form input { width: 100%; }
+.relay-list { display: grid; gap: 6px; align-content: start; overflow: hidden; min-width: 0; }
+.relay-pager { display: flex; justify-content: center; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.relay-inline-status { margin: 0; }
+.relay-inline-status:empty { display: none; }
+.relay-inline-status[data-state="error"] { color: var(--danger); }
+.relay-inline-status[data-state="ok"] { color: var(--live); }
+.relay-empty { margin: 4px 0; color: var(--muted); font-size: 12.5px; }
+.relay-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.relay-row-compact { padding: 5px 12px; }
+.relay-row-main { display: grid; flex: 1; gap: 3px; min-width: 0; }
+.relay-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.relay-row-name { font-size: 13.5px; overflow-wrap: anywhere; }
+.relay-row-meta { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.relay-row-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.relay-row-actions .primary.compact { min-height: 34px; }
+.relay-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); }
+.relay-dot[data-online="true"] { background: var(--live); box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 22%, transparent); }
+.relay-code { padding: 2px 0; color: var(--text); font: 600 26px/1.1 var(--mono); letter-spacing: 0.16em; }
+.relay-rename { display: flex; align-items: center; gap: 6px; }
+.relay-rename input { min-height: 32px; }
+.relay-check-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.relay-check-list:empty { display: none; }
+.relay-check-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: 13px; }
+.relay-check-row[data-ok="true"] .relay-check-mark { color: var(--live); }
+.relay-check-row[data-ok="false"] .relay-check-mark, .relay-check-error { color: var(--danger); }
+.relay-check-error { font-size: 12px; overflow-wrap: anywhere; }
+.relay-reveal { display: grid; gap: 8px; padding: 10px 12px; border: 1px dashed var(--accent); border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.relay-reveal button { justify-self: start; }
+.relay-reveal input { width: 100%; font-family: var(--mono); }
+.relay-panel .ghost { border-color: var(--line-strong); }
+.relay-panel .ghost.danger, .relays-section .ghost.danger { border-color: color-mix(in srgb, var(--danger) 40%, transparent); color: var(--danger); }
+.relay-panel .ghost.danger[data-armed="true"], .relays-section .ghost.danger[data-armed="true"] { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+/* Cluster → Relays: one card per relay, three to a page. */
+.relays-section { display: grid; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); min-width: 0; }
+.relays-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px; }
+.relays-head h3 { margin: 0 0 2px; font-size: 15px; }
+.relays-add-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.relays-add-choice { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.relays-list { display: grid; gap: 8px; }
+.relay-card { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--panel); }
+.relay-card-title { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.relay-card .relay-row-actions { justify-content: flex-start; }
+.relay-error { margin: 0; color: var(--danger); font-size: 12.5px; overflow-wrap: anywhere; }
+.relay-switch { display: grid; gap: 4px; }
+.relay-phone-access { display: grid; gap: 4px; min-width: 0; }
+.relay-phone-entry { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; padding: 3px 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
+.relay-phone-entry-label { min-width: 9ch; font-size: 12.5px; font-weight: 600; }
+.relay-phone-entry-link { color: var(--accent); font: 11.5px var(--mono); overflow-wrap: anywhere; }
+.relay-phone-qr { display: grid; justify-items: center; gap: 4px; margin: 0; }
+.relay-phone-qr svg { width: 192px; height: 192px; }
+.relay-phone-pager { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+@media (max-width: 720px) {
+  .relays-add-choices, .relay-token-form { grid-template-columns: minmax(0, 1fr); }
+  .relay-row { flex-wrap: wrap; }
+  .relay-row-actions { justify-content: flex-start; }
+}

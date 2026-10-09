@@ -12,7 +12,7 @@ import { getSharingCluster } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { flushV2MembershipOutbox, mapV2Error } from "./cluster-v2.js";
-import { clusterRequestRawBody } from "./http-auth.js";
+import { clusterRequestRawBody, assertRelayChannelSender } from "./http-auth.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { flushTwinDeliveries } from "./twins.js";
 import { flushTwinSharing } from './twin-sharing.js';
@@ -24,6 +24,7 @@ import { flushSharedTranscripts } from "./shared-transcripts.js";
 import { syncSharedQuickNotes } from "./shared-quick-notes.js";
 import { flushTwinCredentials } from "./replication-v2.js";
 import { flushResourcePolicyDeliveries } from "./resource-policy.js";
+import { peerFetch } from "../relay/transport.js";
 
 const certificatePayloadSchema = z.object({ certificate: managerTransferCertificateSchema }).strict();
 type ManagerStep =
@@ -83,8 +84,8 @@ export async function flushV2ClusterAdministration(): Promise<void> {
 
 async function post(db: DatabaseSync, sender: string, peer: string, url: string, target: string, payload: unknown): Promise<globalThis.Response> {
   const body = Buffer.from(JSON.stringify(payload));
-  return fetch(new URL(target, url), { method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), body,
-    headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, sender, peer, "POST", target, body) } });
+  return peerFetch(new URL(target, url), { method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), body,
+    headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, sender, peer, "POST", target, body) } }, peer);
 }
 
 async function deliverStep(db: DatabaseSync, sender: string, step: {cluster_id:string;transfer_id:string;step:"offer"|"acceptance";peer_id:string;url:string;payload:string}): Promise<void> {
@@ -158,6 +159,7 @@ export async function receiveManagerCertificate(request: Request, response: Resp
       }
       const sender = verifyClusterRequest(db, local.id, request.method, request.originalUrl, raw, request.header("authorization"));
       if (sender !== offer.body.fromNodeId && sender !== offer.body.toNodeId) throw new ClusterV2HttpError(403, "Forbidden");
+      assertRelayChannelSender(request, sender);
       db.exec("RELEASE manager_certificate_http"); response.json({ ok: true });
     } catch (error) { db.exec("ROLLBACK TO manager_certificate_http; RELEASE manager_certificate_http"); throw error; }
   } catch (error) { mapV2Error(error, response, next); }

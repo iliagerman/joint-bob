@@ -363,6 +363,38 @@ export async function ensureSyncthingDevice(deviceId: string, name: string): Pro
   });
 }
 
+/**
+ * Changes where Syncthing dials a device, given its current addresses. Relay tunnels add or
+ * remove only their own loopback address and keep everything else (RELAY-PLAN.md §4.9).
+ * Returns false when Syncthing or the device is not configured.
+ */
+export async function updateSyncthingDeviceAddresses(deviceId: string, change: (current: string[]) => string[]): Promise<boolean> {
+  if (!await connection()) return false;
+  const devices = await request<SyncthingDevice[]>("/rest/config/devices");
+  const device = devices.find((item) => item.deviceID === deviceId);
+  if (!device) return false;
+  const current = device.addresses?.length ? device.addresses : ["dynamic"];
+  const next = change(current);
+  const addresses = next.length ? next : ["dynamic"];
+  if (current.length === addresses.length && current.every((address, index) => address === addresses[index])) return true;
+  await request<void>(`/rest/config/devices/${encodeURIComponent(deviceId)}`, { method: "PATCH", body: JSON.stringify({ addresses }) });
+  return true;
+}
+
+/** The local TCP port Syncthing accepts device connections on. */
+export async function syncthingListenPort(): Promise<number> {
+  if (await connection()) {
+    try {
+      const status = await request<{ connectionServiceStatus?: Record<string, unknown> }>("/rest/system/status");
+      for (const address of Object.keys(status.connectionServiceStatus ?? {})) {
+        const match = /^tcp\d?:\/\/[^/]*:(\d+)$/.exec(address);
+        if (match) return Number(match[1]);
+      }
+    } catch { /* fall back to Syncthing's default */ }
+  }
+  return 22000;
+}
+
 export async function removeSyncthingDevices(deviceIds: string[], folderIds: string[]): Promise<void> {
   if (!deviceIds.length || !folderIds.length || !await connection()) return;
   const removed = new Set(deviceIds);

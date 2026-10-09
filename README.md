@@ -28,6 +28,7 @@ Pick the smallest setup that fits your use case:
 | One remote computer or EC2 instance | Yes | Tailscale Serve HTTPS | Optional later |
 | Multiple computers, including EC2 | Yes | Tailscale Serve HTTPS on every node | Yes, recommended |
 | Multiple computers without Tailscale | No | Your private network and trusted HTTPS reverse proxy on every node | Yes |
+| Multiple computers through a Joint Bob relay | No | One machine with a public HTTPS address relays for the others; phones use `https://<name>.<relay-domain>` | Yes |
 | Temporary EC2 smoke test | No | Operator-restricted self-signed HTTPS | Test only |
 
 For one local node, install and use the local URL. For a remote node without Tailscale, keep port `8787` closed to the network and use an SSH tunnel. A cluster needs a stable HTTPS origin for every node. Changes travel through two hubs per cluster, but handing a conversation or ticket to another machine calls it directly, so every node of a cluster should reach every other node.
@@ -200,6 +201,22 @@ ssh -L 8787:127.0.0.1:8787 <ssh-host>
 For multiple nodes without Tailscale, provide each node with a stable HTTPS origin such as `https://bob-node-1.internal.example`. Every node must be able to reach every other node at its configured origin. Certificates must be trusted by the browsers and Node.js runtimes that connect to them. Each reverse proxy must forward HTTP, WebSocket upgrades, the original `Host`, and HTTPS origin information to `http://127.0.0.1:8787`.
 
 Cluster URLs must be HTTPS origins with no path, query, username, or password. Loopback HTTP is accepted for local use only. Do not use self-signed certificates for a persistent cluster unless every connecting browser and Node.js runtime explicitly trusts your private certificate authority.
+
+## Access through a Joint Bob relay
+
+Any Joint Bob machine with a public HTTPS address can relay for other machines, so they need no Tailscale, open port or public URL of their own. The relay is also a normal working machine. Machines can belong to several relays, for example one per environment. See [RELAY-PLAN.md](RELAY-PLAN.md) for the design.
+
+**Run a relay.** On the machine with the public address, open **Settings > Relay**, turn serving on, enter its public origin (for example `https://relay.example.com`) and save. Put a TLS reverse proxy such as Caddy in front of Joint Bob for both `relay.example.com` and `*.relay.example.com`; the wildcard certificate needs a DNS-01 challenge. Forward WebSocket upgrades and the original `Host` header. **Check DNS and TLS** confirms that both names reach the relay.
+
+**Add a machine.** Either create a token under **Settings > Relay** and send the one-time link to the machine's owner, who pastes it in **Settings > Cluster > Relays > Add relay**; or enter the relay's address there and choose **Request access**. The machine then shows a six-digit pairing code, and the operator approves the request in **Settings > Relay** only if the codes match. A machine without a direct URL clears its URL in **Settings > Cluster** and is reached through its relays from then on.
+
+**What the relay can see.** Traffic between machines is encrypted end to end with the Noise protocol, bound to each machine's cluster key; the relay only sees which machines talk, when, and how much. Being on the same relay grants nothing: clusters and twins alone decide what is shared and who may sign in, exactly as with direct URLs. Machines that can reach each other directly keep doing so and use the relay only when the direct path fails. Files sync through the relay too, and through Syncthing's public relays only when no other path works.
+
+**Relay choice is automatic.** When several relays can reach a machine, the one that worked last is tried first and the others take over if it is gone. There is nothing to configure per cluster.
+
+**Only your machines.** A relay can be limited to its owner's machines (its twins) with one switch in **Settings > Relay**.
+
+**Phones.** Every machine on a relay gets a name, and a phone signs in to it at `https://<name>.<relay-domain>` with that machine's own account. **Settings > Cluster > Relays** lists the phone addresses that work on each relay: this machine, the relay itself, and your other machines there. Each one can be shown as a QR code to scan with the phone's camera. A switch there decides whether other users (accounts whose home is another machine) may sign in to this machine from a phone. Phone sign-in through a relay requires two-factor authentication, is on by default, and can be turned off per relay in **Settings > Cluster > Relays**. Failed phone sign-ins are throttled on their own and never lock you out of local or Tailscale sign-in. The relay ends TLS for phone traffic, so its operator could read those sessions. Tailscale access keeps working unchanged.
 
 ## Clusters, sharing, and twins
 

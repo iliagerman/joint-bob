@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added relays, so a machine without a public address can reach its cluster and your phone can sign in to it through a machine that has one.
+
 ## 2.63.0 — 2026-10-08
 
 - Added creating GitHub pull requests, including drafts, from the pull request tab.

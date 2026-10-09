@@ -5,6 +5,8 @@ import { fillShortcutSettings } from "./shortcut-settings.js";
 import { loadSkills } from "./composer-dialogs.js";
 import { showSignedOut } from "./auth.js";
 import { loadClusterPanel } from "./cluster-panel.js";
+import { loadRelayMemberships } from "./relay-memberships.js";
+import { loadRelayServing } from "./relay-serving.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadNtfyServicesPanel } from "./ntfy.js";
@@ -88,10 +90,12 @@ function renderClientLogs() {
 }
 
 // These panels guard their own loading and do not depend on Save settings.
-const ownLoading = (panel) => panel.id === "settingsPanel-cluster" || panel.id === "settingsPanel-browser";
+const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-browser"].includes(panel.id);
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
-function selectSettingsTab(name) {
+function selectSettingsTab(requested) {
+  // A tab hidden from this account, like Relay for a replicated user, falls back to Account.
+  const name = elements.settingsTabs.some((tab) => tab.dataset.settingsTab === requested && !tab.hidden) ? requested : "account";
   elements.settingsForm.dataset.tab = name;
   for (const tab of elements.settingsTabs) {
     const selected = tab.dataset.settingsTab === name;
@@ -102,11 +106,23 @@ function selectSettingsTab(name) {
   if (elements.settingsTabsSelect) elements.settingsTabsSelect.value = name;
   if (name === "cluster" || name === "browser") void loadBrowserStatus();
   if (name === "browser") void loadBrowserProfileDirectory();
+  if (name === "cluster" && !state.isRemoteLogin) void loadRelayMemberships();
+  if (name === "relay") void loadRelayServing();
   if (name === "notifications") { void loadNtfyServicesPanel(); void loadErrorReportingSettings(); }
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
+}
+
+/** Hides the tabs a replicated user cannot use. Their only feature is `conversations`, so settings tabs go. */
+export function syncSettingsAccess() {
+  const allowed = !state.isRemoteLogin;
+  for (const node of document.querySelectorAll("[data-requires-settings]")) {
+    node.hidden = !allowed;
+    if (node instanceof HTMLOptionElement) node.disabled = !allowed;
+  }
+  if (!allowed && elements.settingsForm.dataset.tab === "relay") selectSettingsTab("account");
 }
 
 let runtimeDefaults;
@@ -458,8 +474,9 @@ for (const tab of elements.settingsTabs) {
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
     if (!step) return;
     event.preventDefault();
-    const index = elements.settingsTabs.indexOf(tab);
-    const next = elements.settingsTabs[(index + step + elements.settingsTabs.length) % elements.settingsTabs.length];
+    const visible = elements.settingsTabs.filter((item) => !item.hidden);
+    const index = visible.indexOf(tab);
+    const next = visible[(index + step + visible.length) % visible.length];
     selectSettingsTab(next.dataset.settingsTab);
     next.focus();
   });

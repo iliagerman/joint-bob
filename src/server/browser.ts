@@ -16,6 +16,7 @@ import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
 import { broadcastToProject, wakeQueuedConversations } from "./realtime.js";
 import { isPeerUnreachable } from "./peer-availability.js";
 import { peerSnapshot, staleSnapshotReason } from "./peer-snapshots.js";
+import { peerWebSocket } from "../relay/transport.js";
 
 export class BrowserRequestError extends Error { constructor(public status: number, message: string) { super(message); } }
 let runtime: BrowserRuntime | undefined;
@@ -689,7 +690,7 @@ export async function attachBrowserViewer(socket: WebSocket, url: URL, actor: Br
     if (!peer) throw Error("Browser node unavailable");
     const remote = new URL("/ws", peer.url); remote.protocol = remote.protocol === "https:" ? "wss:" : "ws:";
     remote.search = new URLSearchParams({ mode: "browser", browserSessionId: id, controllerId: actor.kind === "human" ? actor.id : "agent" }).toString();
-    const upstream = new WebSocket(remote, { headers: await runtimeSocketHeaders(peer.id,remote), handshakeTimeout: 10000, maxPayload: 32 * 1024 * 1024 });
+    const upstream = peerWebSocket(remote, { headers: await runtimeSocketHeaders(peer.id,remote), handshakeTimeout: 10000, maxPayload: 32 * 1024 * 1024 }, peer.id);
     const queued: Buffer[] = []; let queuedBytes = 0;
     socket.on("message", data => {
       const buffer = Buffer.from(data as Buffer);

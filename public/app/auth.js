@@ -11,7 +11,7 @@ import { renderProjects } from "./project-list.js";
 import { renderQuickNotes } from "./quick-notes.js";
 import { loadProjects, startProjectSyncPolling } from "./project-selection.js";
 import { renderSessions } from "./session-list.js";
-import { showWhatsNew } from "./settings.js";
+import { showWhatsNew, syncSettingsAccess } from "./settings.js";
 import { setTheme, syncNotifyButton, updateInstallButton } from "./shell.js";
 import { syncShortcutHints } from "./shortcut-hints.js";
 import { closeSocket, closeWatchSocket } from "./socket.js";
@@ -117,6 +117,9 @@ function applyAuthStatus(status) {
   elements.loginUsernameInput.required = true;
   state.authenticated = status.authenticated;
   state.username = status.username || "";
+  // A replicated user has only the conversations feature, so settings-only tabs are hidden.
+  state.isRemoteLogin = status.isRemoteLogin === true;
+  syncSettingsAccess();
   state.setupRequired = status.setupRequired === true;
   state.mustChangePassword = status.mustChangePassword === true;
   state.csrfToken = status.csrfToken || "";

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { SignedMembershipSnapshot } from "./cluster-membership.js";
+import { notifyRelayPeersChanged } from "./relay/events.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const endpointSchema = z.object({
@@ -44,6 +45,7 @@ export function recordPeerEndpoint(db: DatabaseSync, context: PeerEndpointContex
   db.prepare(`INSERT INTO cluster_v2_peer_endpoints(context_kind,context_id,node_id,name,url)
     VALUES(?,?,?,?,?) ON CONFLICT(context_kind,context_id,node_id) DO UPDATE SET
     name=excluded.name,url=excluded.url`).run(kind, id, endpoint.nodeId, endpoint.name, endpoint.url);
+  notifyRelayPeersChanged();
 }
 
 export function recordSignedPeerSeen(db:DatabaseSync,nodeId:string,now=new Date().toISOString()):void {

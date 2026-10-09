@@ -5,6 +5,7 @@ import { renderClusterSharing } from "./cluster-sharing.js";
 import { activeTwin, badge, declareLost, memberTwinControls, refreshTwinInventory, refreshTwins, renderTwinLink, renderTwinRequests, renderTwinSection, syncLabel, twinName, twinNodeIds, twins, unpair } from "./cluster-twins.js";
 import { elements } from "./elements.js";
 import { refreshProjectsQuietly } from "./project-selection.js";
+import { displayNodeUrl } from "./relay-ui.js";
 import { confirmAction, toast } from "./shell.js";
 
 /**
@@ -174,7 +175,7 @@ function memberRow(cluster, member, matched, onChange) {
   open.type = "button"; open.dataset.testid = `cluster-member-open-${member.nodeId}`;
   open.addEventListener("click", () => (local ? selectMachine() : selectNode(member.nodeId)));
   const name = document.createElement("strong"); name.append(open, badges);
-  who.append(name, text("small", member.url || member.nodeId));
+  who.append(name, text("small", displayNodeUrl(member.url) || member.nodeId));
   row.append(nodeAvatar(member, { local, manager, twin: twinNodeIds().includes(member.nodeId) }), who, actions);
   return row;
 }
@@ -272,7 +273,7 @@ function renderNodeView(nodeId) {
   const identity = document.createElement("div"); identity.className = "cluster-member-who";
   const title = text("h3", name);
   const state = reachability(nodeId);
-  identity.append(title, text("small", nodeUrl(nodeId) || nodeId));
+  identity.append(title, text("small", displayNodeUrl(nodeUrl(nodeId)) || nodeId));
   if (relationship) {
     const status = twins.status.get(relationship.relationshipId);
     const badges = document.createElement("span"); badges.className = "cluster-badges";
@@ -317,7 +318,7 @@ function renderNodeView(nodeId) {
 function renderMachineHead() {
   const avatar = nodeAvatar({ nodeId: data.localNodeId, name: data.localNode.name }, { local: true }); avatar.dataset.large = "true";
   const identity = document.createElement("div"); identity.className = "cluster-member-who";
-  identity.append(text("h3", data.localNode.name || "This machine"), text("small", data.localNode.url || data.localNodeId || ""), badge("This machine", "you"));
+  identity.append(text("h3", data.localNode.name || "This machine"), text("small", displayNodeUrl(data.localNode.url) || data.localNodeId || ""), badge("This machine", "you"));
   machineHead.replaceChildren(avatar, identity);
   setTabCount(machineTabs, "data-machine-tab", "twins", twinNodeIds().length);
 }

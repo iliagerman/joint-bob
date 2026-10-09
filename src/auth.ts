@@ -192,11 +192,21 @@ function recordLoginAttempt(db: DatabaseSync, username: string): void {
   db.prepare("INSERT INTO login_attempts (username, attempted_at) VALUES (?, ?)").run(username.toLowerCase(), new Date().toISOString());
 }
 
-function isRateLimited(username: string): boolean {
+function isRateLimited(username: string, limit = 5): boolean {
   const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   const count = authDatabase().prepare("SELECT COUNT(*) AS count FROM login_attempts WHERE username = ? AND attempted_at >= ?")
     .get(username.toLowerCase(), cutoff) as { count: number };
-  return count.count >= 5;
+  return count.count >= limit;
+}
+
+/** A sign-in attempt's own throttle buckets and rules. Phone sign-in through a relay uses
+    separate buckets, so attempts from the internet never lock the owner out locally, and it
+    requires MFA without revealing whether a password was right (RELAY-PLAN.md §6 M2). */
+export interface AuthenticateOptions {
+  throttle?: Array<{ key: string; limit: number }>;
+  requireMfa?: boolean;
+  /** Refuse users whose home is another machine, with the same answer as a wrong password. */
+  homeUsersOnly?: boolean;
 }
 
 export function authenticationStatus(session?: AuthSession): AuthStatus {
@@ -214,19 +224,21 @@ export function authenticationStatus(session?: AuthSession): AuthStatus {
   return { authenticated: false, setupRequired: userCount(authDatabase()) === 0 };
 }
 
-export function authenticate(username: string, password: string): AuthSession | MfaLoginChallenge {
+export function authenticate(username: string, password: string, options: AuthenticateOptions = {}): AuthSession | MfaLoginChallenge {
   ensureConfiguredAdministrator();
   const db = authDatabase();
   const normalizedUsername = username.trim();
   const row = parseUser(db.prepare("SELECT * FROM users WHERE username = ?").get(normalizedUsername) as UserRow | undefined);
-  if (isRateLimited(normalizedUsername)) {
+  const buckets = options.throttle ?? [{ key: normalizedUsername, limit: 5 }];
+  if (buckets.some((bucket) => isRateLimited(bucket.key, bucket.limit))) {
     appendAuditEvent(db, { eventType: "auth.login.rate_limited", actorType: "system", entityType: "auth.login", details: { knownUser: Boolean(row) } });
     throw new Error("Too many login attempts. Try again in 15 minutes");
   }
-  if (!row || !timingSafeEqual(passwordDigest(password, row.password_salt), row.password_hash)) {
+  const passwordMatches = Boolean(row && timingSafeEqual(passwordDigest(password, row.password_salt), row.password_hash));
+  if (!row || !passwordMatches || (options.requireMfa && !mfaStatus(row.id).enabled) || (options.homeUsersOnly && row.home_node_id !== null)) {
     db.exec("BEGIN");
     try {
-      recordLoginAttempt(db, normalizedUsername);
+      for (const bucket of buckets) recordLoginAttempt(db, bucket.key);
       appendAuditEvent(db, { eventType: "auth.login.failed", actorType: "system", entityType: "auth.login", details: { knownUser: Boolean(row) } });
       db.exec("COMMIT");
     } catch (error) {
@@ -237,7 +249,7 @@ export function authenticate(username: string, password: string): AuthSession | 
   }
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.prepare("DELETE FROM login_attempts WHERE username = ?").run(normalizedUsername.toLowerCase());
+    for (const bucket of buckets) db.prepare("DELETE FROM login_attempts WHERE username = ?").run(bucket.key.toLowerCase());
     if (mfaStatus(row.id).enabled) {
       checkMfaRateLimit(row.id);
       const challenge = randomBytes(32).toString("base64url");
@@ -509,12 +521,21 @@ export const sessionCookieName = process.env.JOINT_BOB_SESSION_COOKIE ?? "mb_ses
 // impossible to sign into there. Development sets this; production never does.
 const secureAttribute = process.env.JOINT_BOB_INSECURE_COOKIE === "1" ? "" : " Secure;";
 
-export function sessionCookieValue(session: AuthSession): string {
-  return `${sessionCookieName}=${session.id}; Path=/; HttpOnly;${secureAttribute} SameSite=Strict; Max-Age=${Math.floor(sessionLifetimeMs / 1000)}`;
+/** Phone sessions through a relay gateway use a `__Host-` cookie. Every machine on a relay is
+    a sibling name under the relay's domain, and browsers refuse to let a sibling set or shadow
+    a `__Host-` cookie (RELAY-PLAN.md §6 M2). It is always Secure, as the prefix requires. */
+export const gatewaySessionCookieName = `__Host-${sessionCookieName}`;
+
+export function sessionCookieNameFor(gateway: boolean): string { return gateway ? gatewaySessionCookieName : sessionCookieName; }
+
+export function sessionCookieValue(session: AuthSession, gateway = false): string {
+  const secure = gateway ? " Secure;" : secureAttribute;
+  return `${sessionCookieNameFor(gateway)}=${session.id}; Path=/; HttpOnly;${secure} SameSite=Strict; Max-Age=${Math.floor(sessionLifetimeMs / 1000)}`;
 }
 
-export function clearSessionCookieValue(): string {
-  return `${sessionCookieName}=; Path=/; HttpOnly;${secureAttribute} SameSite=Strict; Max-Age=0`;
+export function clearSessionCookieValue(gateway = false): string {
+  const secure = gateway ? " Secure;" : secureAttribute;
+  return `${sessionCookieNameFor(gateway)}=; Path=/; HttpOnly;${secure} SameSite=Strict; Max-Age=0`;
 }
 
 // ============================================================================

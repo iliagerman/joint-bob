@@ -1,5 +1,6 @@
 import { execFile } from "../subprocess.js";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -97,10 +98,25 @@ app.use("/api", performanceDiagnostics.middleware);
 export function createApp(): express.Express {
   return app;
 }
-export const server = createServer(app);
+/** Handlers that may take a request before Express sees it (the relay's phone gateway). */
+export const requestInterceptors: Array<(request: IncomingMessage, response: ServerResponse) => boolean> = [];
+/** Handlers that may take a WebSocket upgrade before the app socket at /ws (relay connections). */
+export const upgradeHandlers: Array<(request: IncomingMessage, socket: Duplex, head: Buffer) => boolean> = [];
+export const server = createServer((request, response) => {
+  for (const intercept of requestInterceptors) if (intercept(request, response)) return;
+  app(request, response);
+});
 server.on("listening", performanceDiagnostics.start);
 server.on("close", () => { void performanceDiagnostics.stop(); });
-export const webSocketServer = new WebSocketServer({ server, path: "/ws" });
+export const webSocketServer = new WebSocketServer({ noServer: true });
+server.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+  for (const handle of upgradeHandlers) if (handle(request, socket, head)) return;
+  if (new URL(request.url ?? "/", "http://localhost").pathname !== "/ws") {
+    socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    return;
+  }
+  webSocketServer.handleUpgrade(request, socket, head, (client) => webSocketServer.emit("connection", client, request));
+});
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 export const publicDir = path.resolve(dirname, "../../public");
 export const codemirrorDir = path.resolve(dirname, "../../node_modules/codemirror");

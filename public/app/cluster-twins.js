@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { displayNodeUrl } from "./relay-ui.js";
 import { confirmAction, toast } from "./shell.js";
 
 /**
@@ -205,7 +206,7 @@ function nodeRow({ name, url, status, state }) {
   const row = document.createElement("div"); row.className = "cluster-node"; row.dataset.testid = "cluster-node-row"; row.dataset.state = state;
   const dot = document.createElement("span"); dot.className = "cluster-node-dot";
   const identity = document.createElement("div"); identity.className = "cluster-node-identity";
-  identity.append(text("strong", name), text("span", url, "cluster-node-url"));
+  identity.append(text("strong", name), text("span", displayNodeUrl(url), "cluster-node-url"));
   const label = text("span", status, "cluster-node-status"); label.dataset.testid = "cluster-node-status";
   row.append(dot, identity, label);
   return row;

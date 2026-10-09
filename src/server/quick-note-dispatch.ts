@@ -25,6 +25,7 @@ import { getProjectLock } from "../project-locks.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
 import { flags, server } from "./state.js";
+import { peerWebSocket } from "../relay/transport.js";
 
 /**
  * Server-side dispatch for quick notes. The browser is never involved: this
@@ -179,7 +180,7 @@ async function launchPromptOverSocket(note: QuickNote, sessionId: string, target
   let outcomeResolve!: (outcome: "completed" | "failed" | "abandoned") => void;
   const accepted = new Promise<void>((resolve, reject) => { acceptResolve = resolve; acceptReject = reject; });
   const settled = new Promise<"completed" | "failed" | "abandoned">(resolve => { outcomeResolve = resolve; });
-  const socket = new WebSocket(url, { headers: await runtimeSocketHeaders(target.nodeId,url) });
+  const socket = peerWebSocket(url, { headers: await runtimeSocketHeaders(target.nodeId,url) }, target.nodeId);
   const reservationKey = `${note.projectId}:${sessionId}`;
 
   const cancelQueuedPromptIfPending = (): void => {

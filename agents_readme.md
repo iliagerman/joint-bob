@@ -24,6 +24,7 @@ Ask the human to choose one option before running commands:
 4. **Multiple nodes with Tailscale.** Install every node, configure Tailscale Serve on every node, then pair them. This is the recommended cluster route.
 5. **Multiple nodes without Tailscale.** Use an existing private network and a trusted HTTPS reverse proxy for every node, then pair them.
 6. **Temporary EC2 smoke test.** Use `scripts/ec2-smoke-test.sh` to provision, test, and destroy an isolated test instance. This is not a persistent deployment.
+7. **Multiple nodes through a Joint Bob relay.** One node with a public HTTPS address (for example an EC2 or Lightsail instance behind Caddy) turns on **Settings > Relay**; the other nodes need no Tailscale or public URL and join it from **Settings > Cluster > Relays**. See "Access through a Joint Bob relay" in README.md.
 
 If the human wants a persistent EC2 node but has no instance yet, explain that this repository only contains Terraform for the temporary smoke test. Ask them to provide an existing supported Linux instance or separately approve and define persistent AWS infrastructure work.
 
@@ -47,6 +48,12 @@ For Tailscale routes, also ask:
 
 - Is Tailscale installed and signed in on every target?
 - Which tailnet HTTPS port should Tailscale Serve use: `8443`, `443`, or `10000`?
+
+For a relay route, also ask:
+
+- Which node has the public HTTPS address, and what is its origin (for example `https://relay.example.com`)?
+- Can its DNS hold a wildcard record (`*.relay.example.com`) for phone access, and which DNS provider issues the DNS-01 challenge for the wildcard certificate?
+- Should the other machines join with one-time tokens or by requesting access?
 
 For a cluster without Tailscale, also ask:
 

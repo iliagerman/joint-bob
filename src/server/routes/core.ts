@@ -4,7 +4,7 @@ import { dispatchSignedRuntime, twinRuntimeGuard } from "../runtime-peers.js";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { authenticate, authenticationStatus, AuthError, type AuthSession, type MfaLoginChallenge, beginMfaSetup, cancelMfaSetup, changePassword, clearSessionCookieValue, completeMfaLogin, confirmMfaSetup, createAdministrator, listLoginSessions, manageMfa, mfaStatus, revokeSession, revokeUserSession, sessionCookieName, sessionCookieValue, sessionForId } from "../../auth.js";
+import { authenticate, authenticationStatus, AuthError, type AuthSession, type MfaLoginChallenge, beginMfaSetup, cancelMfaSetup, changePassword, clearSessionCookieValue, completeMfaLogin, sessionCookieNameFor, confirmMfaSetup, createAdministrator, listLoginSessions, manageMfa, mfaStatus, revokeSession, revokeUserSession, sessionCookieValue, sessionForId } from "../../auth.js";
 import { appVersion } from "../../changelog.js";
 import { captureClusterRawBody, clusterBodyParserError, rejectEncodedClusterBody, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
 import { loginSchema, passwordChangeSchema } from "../schemas.js";
@@ -12,9 +12,27 @@ import { app, clusterWorkAllowed, codemirrorDir, flags, publicDir } from "../sta
 import { receiveUserReplication, redeemV2Membership } from "../cluster-v2.js";
 import { receiveManagerCertificate } from "../cluster-manager.js";
 import { confirmTwinHttp } from "../twins.js";
+import { relayTransportOf } from "../../relay/stream.js";
+import { otherUsersMayUsePhone } from "../../relay/phone-policy.js";
 
 app.use(securityHeaders);
 app.set("trust proxy", 1);
+// The phone gateway serves this machine's UI to a person. Machine endpoints, first-run
+// setup and update preparation stay unreachable through it (RELAY-PLAN.md §6 M2).
+// A machine channel through a relay carries only signed machine traffic, so being on the
+// same relay never exposes this machine's UI or sign-in to another machine (§4.10 rule 1).
+app.use((request, response, next) => {
+  const transport = relayTransportOf(request.socket);
+  if (!transport) { next(); return; }
+  // Express matches routes case-insensitively, so compare lowercase.
+  const pathname = request.path.toLowerCase().replace(/\/+$/, "");
+  const machineRoute = pathname === "/api/cluster/v2" || pathname.startsWith("/api/cluster/v2/");
+  const refused = transport === "gateway"
+    ? machineRoute || pathname === "/api/auth/setup" || pathname === "/api/update/prepare" || /^\/api\/[^/]+\/agent$/.test(pathname)
+    : !machineRoute && pathname !== "/api/health";
+  if (refused) { sendError(response, 404, "Not found"); return; }
+  next();
+});
 // Browsers request /favicon.ico regardless of the <link rel="icon"> tags; without
 // this the path falls through to the SPA and the tab gets HTML instead of an image.
 app.get("/favicon.ico", (_request, response) => {
@@ -59,7 +77,10 @@ app.post("/api/cluster/v2/twins/confirm", confirmTwinHttp);
 app.post("/api/cluster/v2/user-replication", receiveUserReplication);
 
 app.get("/api/auth/status", (request, response) => {
-  response.json(authenticationStatus(sessionForId(requestCookie(request, sessionCookieName))));
+  const session = sessionForId(requestCookie(request, sessionCookieNameFor(viaGateway(request))));
+  // A phone session of another user counts as signed out once the owner closes phone sign-in to other users.
+  const blocked = session?.isRemoteLogin && viaGateway(request) && !otherUsersMayUsePhone();
+  response.json(authenticationStatus(blocked ? undefined : session));
 });
 
 app.get("/api/health", (_request, response) => {
@@ -77,9 +98,11 @@ app.get("/api/health", (_request, response) => {
   response.json({ status: "ok", version, release });
 });
 
-function sendLogin(response: Response, result: AuthSession | MfaLoginChallenge): void {
+function viaGateway(request: Request): boolean { return relayTransportOf(request.socket) === "gateway"; }
+
+function sendLogin(request: Request, response: Response, result: AuthSession | MfaLoginChallenge): void {
   if ("mfaRequired" in result) { response.json(result); return; }
-  response.setHeader("Set-Cookie", sessionCookieValue(result));
+  response.setHeader("Set-Cookie", sessionCookieValue(result, viaGateway(request)));
   response.json({ mustChangePassword: result.mustChangePassword, csrfToken: result.csrfToken, username: result.username });
 }
 
@@ -103,7 +126,7 @@ app.post("/api/auth/setup", (request, response, next) => {
     }
     createAdministrator(payload.username, payload.password, false);
     const session = authenticate(payload.username, payload.password);
-    sendLogin(response.status(201), session);
+    sendLogin(request, response.status(201), session);
   } catch (error) {
     if (error instanceof z.ZodError) {
       sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
@@ -116,8 +139,19 @@ app.post("/api/auth/setup", (request, response, next) => {
 app.post("/api/auth/login", (request, response, next) => {
   try {
     const payload = loginSchema.parse(request.body);
-    const session = authenticate(payload.username, payload.password);
-    sendLogin(response, session);
+    // Through a relay's phone gateway, MFA is required (D14) and attempts are throttled per
+    // phone address and per account apart from local sign-in, so the internet cannot lock
+    // the owner out of Tailscale or local access.
+    const gateway = viaGateway(request);
+    const user = payload.username.trim().toLowerCase();
+    const session = gateway
+      ? authenticate(payload.username, payload.password, {
+        requireMfa: true,
+        homeUsersOnly: !otherUsersMayUsePhone(),
+        throttle: [{ key: `gateway:${request.socket.remoteAddress ?? "unknown"}:${user}`, limit: 5 }, { key: `gateway:${user}`, limit: 50 }],
+      })
+      : authenticate(payload.username, payload.password);
+    sendLogin(request, response, session);
   } catch (error) {
     if (error instanceof z.ZodError) {
       sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
@@ -125,7 +159,10 @@ app.post("/api/auth/login", (request, response, next) => {
     }
     if (error instanceof AuthError) { sendError(response, error.statusCode, error.message); return; }
     if (error instanceof Error && ["Invalid username or password", "Too many login attempts. Try again in 15 minutes"].includes(error.message)) {
-      sendError(response, 401, error.message);
+      // The same answer whether the password or the missing MFA was the reason.
+      sendError(response, 401, viaGateway(request) && error.message === "Invalid username or password"
+        ? "Invalid username or password. Signing in from a phone through a relay also needs two-factor authentication on this machine."
+        : error.message);
       return;
     }
     next(error);
@@ -135,7 +172,7 @@ app.post("/api/auth/login", (request, response, next) => {
 app.post("/api/auth/login/mfa", (request, response, next) => {
   try {
     const payload = mfaLoginSchema.parse(request.body);
-    sendLogin(response, completeMfaLogin(payload.challenge, payload.code));
+    sendLogin(request, response, completeMfaLogin(payload.challenge, payload.code));
   } catch (error) { authError(error, request, response, next); }
 });
 
@@ -186,10 +223,10 @@ app.post("/api/auth/change-password", (request, response, next) => {
   }
 });
 
-app.post("/api/auth/logout", (_request, response) => {
+app.post("/api/auth/logout", (request, response) => {
   const session = response.locals.authSession as AuthSession;
   revokeSession(session.id);
-  response.setHeader("Set-Cookie", clearSessionCookieValue());
+  response.setHeader("Set-Cookie", clearSessionCookieValue(viaGateway(request)));
   response.status(204).send();
 });
 
@@ -204,6 +241,6 @@ app.delete("/api/auth/sessions/:sessionId", (request, response) => {
     sendError(response, 404, "Login session not found");
     return;
   }
-  if (request.params.sessionId === session.id) response.setHeader("Set-Cookie", clearSessionCookieValue());
+  if (request.params.sessionId === session.id) response.setHeader("Set-Cookie", clearSessionCookieValue(viaGateway(request)));
   response.status(204).send();
 });

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { NextFunction, Request, Response } from "express";
-import { type AuthSession, sessionCookieName, sessionForId } from "../auth.js";
+import { type AuthSession, sessionCookieNameFor, sessionForId } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
 import { browserAgentIdentity } from "../browser-agent.js";
 import { backgroundTaskAgentIdentity } from "../background-task-agent.js";
@@ -11,6 +11,8 @@ import { ClusterProtocolError, verifyClusterRequest } from "../cluster-protocol.
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { Feature, hasFeature, type FeatureKey } from "../features.js";
+import { relayPeerOf, relayTransportOf } from "../relay/stream.js";
+import { otherUsersMayUsePhone } from "../relay/phone-policy.js";
 
 const clusterRawBodies = new WeakMap<IncomingMessage, Buffer>();
 
@@ -106,7 +108,11 @@ async function requireClusterV2Auth(request: Request, response: Response, next: 
     const database = await clusterV2Database();
     const identity = getOrCreateClusterIdentity(database, node.id);
     pinClusterPublicKey(database, node.id, identity.publicKey);
+    // Machines never sign requests through a phone gateway, and a relay channel carries
+    // requests only from the machine it proved at its handshake (RELAY-PLAN.md §4.10 rule 4).
+    if (relayTransportOf(request.socket) === "gateway") throw new ClusterProtocolError("Machine requests do not use the phone gateway");
     const sender = verifyClusterRequest(database, node.id, request.method, request.originalUrl, captured, request.header("authorization"));
+    assertRelayChannelSender(request, sender);
     response.locals.machineAuth = true;
     response.locals.machineNodeId = sender;
     response.locals.machineProtocol = 2;
@@ -118,12 +124,21 @@ async function requireClusterV2Auth(request: Request, response: Response, next: 
   }
 }
 
+/** RELAY-PLAN.md §4.10 rule 4, for machine endpoints that verify their own signature before the
+    auth gate: over a relay, the signer must be the machine the channel proved, and never a phone. */
+export function assertRelayChannelSender(request: Request, sender: string): void {
+  if (relayTransportOf(request.socket) === "gateway") throw new ClusterProtocolError("Machine requests do not use the phone gateway");
+  const channelPeer = relayPeerOf(request.socket);
+  if (channelPeer && channelPeer.nodeId !== sender) throw new ClusterProtocolError("Request signer differs from the relay channel's machine");
+}
+
 export async function requireHttpAuth(request: Request, response: Response, next: NextFunction): Promise<void> {
   if (isClusterV2Url(`/api${request.path}`)) {
     await requireClusterV2Auth(request, response, next);
     return;
   }
-  const token = bearerToken(request);
+  // Agent capability tokens are for agents on this machine; they are never accepted through a relay.
+  const token = relayTransportOf(request.socket) ? undefined : bearerToken(request);
   if (request.path === "/browser/agent" && request.method === "POST" && token) {
     const identity = browserAgentIdentity(token);
     if (identity) { response.locals.browserAgent = identity; response.locals.browserAgentToken = token; next(); return; }
@@ -140,9 +155,14 @@ export async function requireHttpAuth(request: Request, response: Response, next
     const identity = worktreeAgentIdentity(token);
     if (identity) { response.locals.worktreeAgent = identity; next(); return; }
   }
-  const session = sessionForId(requestCookie(request, sessionCookieName));
+  const session = sessionForId(requestCookie(request, sessionCookieNameFor(relayTransportOf(request.socket) === "gateway")));
   if (!session) {
     sendError(response, 401, "Unauthorized");
+    return;
+  }
+  // A machine owner can close phone sign-in to other users; their open phone sessions stop working too.
+  if (session.isRemoteLogin && relayTransportOf(request.socket) === "gateway" && !otherUsersMayUsePhone()) {
+    sendError(response, 403, "This machine does not accept other users' sign-ins from a phone");
     return;
   }
   response.locals.authSession = session;
