@@ -804,6 +804,8 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .list-filter-row .searchable-select-trigger { min-height: 32px; padding: 6px 28px 6px 10px; background-position: right 9px center; font-size: 12px; }
 .list-filter-row .searchable-select-trigger:not(.empty) { border-color: color-mix(in srgb, var(--hue, var(--accent)) 42%, transparent); color: var(--text); }
 .list-filter-row .searchable-select-popover { min-width: 220px; }
+/* The right-hand filter opens leftward, so its wider list stays inside the lane instead of scrolling it sideways. */
+.list-filter-row > :last-child:not(:first-child) .searchable-select-popover { left: auto; width: max(100%, 220px); }
 .classification-filter { font-size: 12px; }
 .done-filter { display: flex; align-items: center; gap: 6px; margin: 4px 12px 2px; font-size: 12px; color: var(--muted); }
 .done-filter input { width: 14px; height: 14px; margin: 0; flex: 0 0 auto; }

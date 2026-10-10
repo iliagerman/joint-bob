@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the right-hand list filter dropdowns so they open inside their column instead of scrolling the list sideways.
+
 ## 2.68.3 — 2026-10-10
 
 - Scheduled-task runs no longer use up the conversation list's 50-row limit, so a task that runs often no longer hides your ordinary conversations from history.
