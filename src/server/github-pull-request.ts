@@ -96,7 +96,7 @@ export async function openWorktreePullRequest(input: WorktreePullRequestInput, c
   let previous = input.previous;
   if (previous) {
     const pull = await call(`/pulls/${previous.number}`) as { state?: string; merged?: boolean };
-    if (pull.merged) throw new GitReviewError(409, `Pull request #${previous.number} was already merged; create a new worktree for further changes`);
+    if (pull.merged) throw new GitReviewError(409, `Pull request #${previous.number} was already merged, so this worktree cannot open another; tell the user, who decides whether further changes get a new worktree`);
     if (pull.state !== "open") previous = null;
   }
   const base = previous?.base ?? input.base ?? (await call("") as { default_branch: string }).default_branch;

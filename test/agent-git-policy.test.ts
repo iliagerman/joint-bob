@@ -46,6 +46,7 @@ test("agent git refuses branch and worktree creation but allows everyday command
       const result = guarded(repo, args);
       assert.equal(result.status, 1, `expected refusal for git ${args.join(" ")}: ${result.stdout}${result.stderr}`);
       assert.match(result.stderr, /Joint Bob: agents may not create git branches or worktrees/);
+      assert.match(result.stderr, /Keep working in this folder\..*create one only when they ask/);
     }
     assert.equal(git("branch", "--list").includes("feature"), false);
 
@@ -81,4 +82,24 @@ test("every agent environment puts the git guard first on PATH and explains the 
   const policy = agentCapabilityInstructionFiles().find((file) => file.path === "/virtual/JOINT_BOB_GIT.md");
   assert.match(policy?.content ?? "", /never create git branches or git worktrees/);
   assert.match(policy?.content ?? "", /Joint Bob worktree/);
+});
+
+// Agents read "when a task needs isolation, create one" and "one issue per worktree" as standing
+// orders and made worktrees nobody asked for, with "start each new conversation in its own
+// worktree" switched off. A worktree is the user's call; the agent's default is the folder it runs in.
+test("agent instructions leave creating worktrees to the user's request", () => {
+  const files = agentCapabilityInstructionFiles();
+  const content = (file: string) => files.find((candidate) => candidate.path === file)?.content ?? "";
+  const worktrees = content("/virtual/JOINT_BOB_WORKTREES.md");
+  const policy = content("/virtual/JOINT_BOB_GIT.md");
+  assert.match(worktrees, /Work where this conversation runs/);
+  assert.match(worktrees, /Run create or start only when the user's request asks for a worktree, never on your own initiative/);
+  assert.match(worktrees, /uncommitted changes in the project folder, or a wish for isolation is not such a request/);
+  for (const command of ["create", "start"]) assert.match(worktrees, new RegExp(`^- ${command} [^\\n]*: only when the user asked for a worktree\\.`, "m"));
+  assert.match(policy, /only when the user asks for a worktree/);
+  for (const text of [worktrees, policy]) {
+    assert.doesNotMatch(text, /When a task needs isolation, create one/);
+    assert.doesNotMatch(text, /^One issue per worktree\./m);
+    assert.doesNotMatch(text, /Isolated work happens in Joint Bob worktrees/);
+  }
 });

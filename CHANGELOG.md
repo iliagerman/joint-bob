@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added webhooks in Settings: each gets a secret URL that, when another service calls it, adds the call to a chosen conversation or starts a new conversation in a project, and the recent calls are listed beside it.
+- Agents no longer create worktrees on their own for big, risky, or multi-issue tasks; they keep working in the conversation's folder and create a worktree only when you ask for one.
 
 ## 2.69.0 — 2026-10-10
 

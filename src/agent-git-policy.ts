@@ -7,7 +7,7 @@ export const agentGitPolicyInstructions = `# Joint Bob git policy
 
 Agents never create git branches or git worktrees. The \`git\` on PATH refuses \`git branch <new>\`, \`git branch -m/-M/-c/-C\`, \`git checkout -b/-B/--orphan\`, \`git switch -c/-C/--orphan\`, \`git stash branch\` and \`git worktree add/move\`, including through aliases and tools that call git. Do not work around it with another git binary, a different branch name, or a copied repository.
 
-Isolated work happens in Joint Bob worktrees. A Joint Bob worktree is a synced copy of the project's code and text that every node sharing the project receives, shown in its own color in the conversation list. When a task needs isolation, create one with the Joint Bob worktree CLI (see Joint Bob worktrees) or ask the user to create one from the project's Worktrees section. Inside a worktree, edit files in place; it has no \`.git\`, and its changes return through a pull request opened with the worktree CLI, or through Merge to project when the user does it.
+A refused command is not a reason to isolate the work some other way: keep working in the folder this conversation runs in. Isolation is a Joint Bob worktree, a synced copy of the project's code and text that every node sharing the project receives, shown in its own color in the conversation list, and whether work gets one is the user's decision. Create one with the Joint Bob worktree CLI only when the user asks for a worktree (see Joint Bob worktrees). When a task cannot be done without a new branch, tell the user it needs a worktree; they create one from the project's Worktrees section or ask you to. Inside a worktree, edit files in place; it has no \`.git\`, and its changes return through a pull request opened with the worktree CLI, or through Merge to project when the user does it.
 
 Committing, pushing an existing branch, switching to an existing branch, and read-only commands are allowed.`;
 
@@ -29,7 +29,7 @@ if [ -z "$real" ]; then echo "git: command not found" >&2; exit 127; fi
 
 refuse() {
   echo "Joint Bob: agents may not create git branches or worktrees ($1)." >&2
-  echo "Ask the user to create a Joint Bob worktree for this project and continue in a conversation started inside it." >&2
+  echo "Keep working in this folder. If the task cannot be done without a branch, tell the user it needs a Joint Bob worktree; create one only when they ask." >&2
   exit 1
 }
 
