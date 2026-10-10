@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
+import { projectMetadataVisible } from "../cluster-project-metadata.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import type { PeerEndpoint } from "../cluster-peer-endpoints.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
@@ -164,11 +165,13 @@ async function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:
    if(existing.size>entry.size)return;
   }
   if(existing){const current=await stat(destination);if(current.size!==existing.size||current.mtimeMs!==existing.mtimeMs)throw new Error('Local transcript changed during transfer');}
-  await sharedTranscriptProject(peer.nodeId,projectId);
   // A peer that has not heard of a deletion yet may still offer the conversation, and a
-  // deletion may arrive while its transcript downloads.
+  // deletion may arrive while its transcript downloads or while tombstones are read.
   if((await deletedConversationKeys(projectId)).has(`${entry.engine}:${entry.sessionId}`))return;
+  await sharedTranscriptProject(peer.nodeId,projectId);
   await rename(temporary,destination);
+  // Rename yields to other requests; a deletion may have committed while it ran.
+  await sharedTranscriptProject(peer.nodeId,projectId);
   db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_receipts VALUES(?,?,?,?,?,?)').run(peer.nodeId,projectId,entry.engine,entry.sessionId,destination,entry.hash);
   clearHarnessSessionCache(projectId);
  }finally{await rm(temporary,{force:true});}
@@ -223,7 +226,13 @@ export function flushSharedTranscripts():Promise<void>{
 }
 export function sharedTranscriptStatus(db:DatabaseSync,local:string,peer:string):{pending:number;error?:string}{
  ensureSchema(db);
- const projects=sharedProjectIds(db,local,peer);
+ const projects=sharedProjectIds(db,local,peer).filter(id=>db.prepare('SELECT 1 FROM projects WHERE id=?').get(id)&&projectMetadataVisible(db,local,id));
+ // Keep policy/history markers, but discard local sync state for ineligible rows.
+ const eligible=new Set(projects);
+ for(const table of ['cluster_v2_transcript_errors','cluster_v2_transcript_progress']){
+  const rows=db.prepare(`SELECT project_id FROM ${table} WHERE peer_id=?`).all(peer) as Array<{project_id:string}>;
+  for(const row of rows)if(!eligible.has(row.project_id))db.prepare(`DELETE FROM ${table} WHERE peer_id=? AND project_id=?`).run(peer,row.project_id);
+ }
  const errors=db.prepare(`SELECT e.project_id,p.name,e.error FROM cluster_v2_transcript_errors e
   LEFT JOIN projects p ON p.id=e.project_id WHERE e.peer_id=? ORDER BY p.name,e.project_id`).all(peer) as unknown as Array<{project_id:string;name:string|null;error:string}>;
  const failures=errors.filter(error=>projects.includes(error.project_id));
@@ -240,6 +249,7 @@ const pulledAt=new Map<string,number>();
 export function resetSharedTranscriptPulls():void{pulledAt.clear();}
 async function runSharedTranscripts():Promise<void>{
  const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);
+ const eligible=async(peer:string,id:string)=>mayShareProject(db,local.id,peer,id)&&Boolean(await getProject(id));
  for(const peer of replicationPeers(db,local.id))for(const projectId of sharedProjectIds(db,local.id,peer.nodeId))try{
   if(!await getProject(projectId))continue;
   const key=`${peer.nodeId}\n${projectId}`;
@@ -252,7 +262,9 @@ async function runSharedTranscripts():Promise<void>{
   let failure:unknown;
   for(const entry of payload.entries)try{await receiveTranscript(db,peer,projectId,entry);}catch(error){failure??=error;if(isPeerUnreachable(error))break;}
   if(failure)throw failure;
-  db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=?').run(peer.nodeId,projectId);
-  db.prepare('INSERT OR IGNORE INTO cluster_v2_transcript_progress VALUES(?,?)').run(peer.nodeId,projectId);
- }catch(error){db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_errors VALUES(?,?,?)').run(peer.nodeId,projectId,error instanceof Error?error.message:'Transcript transfer failed');}
+  if(await eligible(peer.nodeId,projectId)){
+   db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=?').run(peer.nodeId,projectId);
+   db.prepare('INSERT OR IGNORE INTO cluster_v2_transcript_progress VALUES(?,?)').run(peer.nodeId,projectId);
+  }
+ }catch(error){if(await eligible(peer.nodeId,projectId))db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_errors VALUES(?,?,?)').run(peer.nodeId,projectId,error instanceof Error?error.message:'Transcript transfer failed');}
 }
