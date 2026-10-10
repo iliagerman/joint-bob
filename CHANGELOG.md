@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.68.3 — 2026-10-10
+
+- Scheduled-task runs no longer use up the conversation list's 50-row limit, so a task that runs often no longer hides your ordinary conversations from history.
+
 ## 2.68.2 — 2026-10-10
 
 - Marking a worktree's last conversation done now removes the worktree right away, without checking whether it was merged, so the action is faster and finished worktrees no longer linger.
