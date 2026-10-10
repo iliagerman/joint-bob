@@ -9,7 +9,7 @@ import { ensureConversationRecord } from "../src/conversation-records.js";
 import { holdEndedRun, releaseEndedRun } from "../src/conversation-runtime.js";
 import { setSessionDone } from "../src/names.js";
 import { createProjectWorktree, markWorktreeConversation, recordWorktreePullRequest } from "../src/project-worktrees.js";
-import { cleanupDoneWorktrees } from "../src/server/worktree-cleanup.js";
+import { cleanupDoneWorktrees, sweepWorktrees } from "../src/server/worktree-cleanup.js";
 import { addProject } from "../src/store.js";
 
 async function fixture(context: test.TestContext) {
@@ -153,4 +153,26 @@ test("a worktree with no conversations is removed after ten minutes, with or wit
   assert.deepEqual(new Set(result.deletedWorktreeIds), new Set([clean.id, edited.id]));
   await assert.rejects(access(clean.path), { code: "ENOENT" });
   await assert.rejects(access(edited.path), { code: "ENOENT" });
+});
+
+test("the periodic sweep removes finished worktrees even with unmerged edits or a pull request", async (context) => {
+  const { project, worktree, sessionId } = await fixture(context);
+  await writeFile(path.join(worktree.path, "index.ts"), "export const value = 2;\n");
+  await recordWorktreePullRequest(project.id, worktree.id, { number: 7, url: "https://github.com/o/r/pull/7", branch: "joint-bob/open", base: "main", baseCommit: "a".repeat(40) });
+  await setSessionDone(sessionId, true);
+  assert.match((await cleanupDoneWorktrees(project)).retainedWorktrees[worktree.id], /kept/i, "marking done still checks for unmerged work");
+  await access(worktree.path);
+  assert.ok((await sweepWorktrees()).includes(worktree.id));
+  await assert.rejects(access(worktree.path), { code: "ENOENT" });
+});
+
+test("the periodic sweep keeps a worktree with an undone or running conversation", async (context) => {
+  const { project, worktree, sessionId } = await fixture(context);
+  assert.deepEqual(await sweepWorktrees(), [], "an undone conversation keeps it");
+  await setSessionDone(sessionId, true);
+  holdEndedRun("pi", sessionId, false);
+  try { assert.deepEqual(await sweepWorktrees(), [], "running work keeps it"); }
+  finally { releaseEndedRun("pi", sessionId); }
+  await access(worktree.path);
+  assert.deepEqual(await sweepWorktrees(), [worktree.id]);
 });

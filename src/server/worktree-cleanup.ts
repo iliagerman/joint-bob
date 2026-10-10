@@ -7,6 +7,7 @@ import { githubAccountFor } from "../github-credentials.js";
 import { genericSecretEnvironment, githubAccountsForProject } from "../secrets.js";
 import { sessionDoneOverrides } from "../names.js";
 import { deleteProjectWorktree, listProjectWorktrees, worktreeChanges, worktreeConversationIndex, type WorktreeChanges } from "../project-worktrees.js";
+import { listProjects } from "../store.js";
 import { isHarnessId, type ProjectRecord } from "../types.js";
 import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
 import { worktreePullRequestMerged } from "./github-pull-request.js";
@@ -31,16 +32,27 @@ function sameChanges(left: WorktreeChanges, right: WorktreeChanges): boolean {
 }
 
 /** Reconcile persisted done marks, not the filtered or capped conversation list. A worktree without conversations goes after the grace period. */
-export async function cleanupDoneWorktrees(project: ProjectRecord): Promise<CleanupResult> {
-  const existing = pending.get(project.id);
+export async function cleanupDoneWorktrees(project: ProjectRecord, discardUnmerged = false): Promise<CleanupResult> {
+  const key = `${project.id}:${discardUnmerged}`;
+  const existing = pending.get(key);
   if (existing) return existing;
-  const operation = cleanup(project);
-  pending.set(project.id, operation);
+  const operation = cleanup(project, discardUnmerged);
+  pending.set(key, operation);
   try { return await operation; }
-  finally { pending.delete(project.id); }
+  finally { pending.delete(key); }
 }
 
-async function cleanup(project: ProjectRecord): Promise<CleanupResult> {
+/** Periodic node housekeeping: every worktree without an undone conversation goes, pull requests and unmerged edits included. */
+export async function sweepWorktrees(): Promise<string[]> {
+  const deleted: string[] = [];
+  for (const project of await listProjects()) {
+    try { deleted.push(...(await cleanupDoneWorktrees(project, true)).deletedWorktreeIds); }
+    catch (error) { console.warn(`Worktree sweep failed for ${project.id}`, error); }
+  }
+  return deleted;
+}
+
+async function cleanup(project: ProjectRecord, discardUnmerged: boolean): Promise<CleanupResult> {
   const result: CleanupResult = { deletedWorktreeIds: [], retainedWorktrees: {} };
   const [index, records, done] = await Promise.all([
     worktreeConversationIndex(project.id), listConversationRecords(project.id), sessionDoneOverrides(),
@@ -68,30 +80,32 @@ async function cleanup(project: ProjectRecord): Promise<CleanupResult> {
         result.retainedWorktrees[worktree.id] = "Worktree kept: a conversation is still running";
         continue;
       }
-      const changes = await worktreeChanges(project.id, worktree.id);
-      let merged = !changes.writes.length && !changes.deletes.length;
-      if (worktree.pullRequest) {
-        const member = group[0];
-        if (!isHarnessId(member.engine)) continue;
-        const conversation = { engine: member.engine, sessionId: member.sessionId };
-        const accounts = githubAccountsForProject(project.id, conversation);
-        const fallback = genericSecretEnvironment(project.id, conversation).GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
-        merged = await worktreePullRequestMerged(project.path, worktree.pullRequest, changes, {
-          tokenFor: (repository) => githubAccountFor(accounts, repository)?.token ?? fallback,
-          sshHosts: accounts.filter((account) => account.sshKey).map((account) => account.sshHost),
-        });
-      }
-      if (!merged) {
-        result.retainedWorktrees[worktree.id] = worktree.pullRequest
-          ? "Worktree kept: local changes are not verified as merged"
-          : "Worktree kept: unmerged changes remain";
-        continue;
-      }
-      // GitHub verification can take seconds. Recheck files after it returns,
-      // then refresh membership, done marks and activity before deleting anything.
-      if (!sameChanges(changes, await worktreeChanges(project.id, worktree.id))) {
-        result.retainedWorktrees[worktree.id] = "Worktree kept: changed while cleanup was checking";
-        continue;
+      if (!discardUnmerged) {
+        const changes = await worktreeChanges(project.id, worktree.id);
+        let merged = !changes.writes.length && !changes.deletes.length;
+        if (worktree.pullRequest) {
+          const member = group[0];
+          if (!isHarnessId(member.engine)) continue;
+          const conversation = { engine: member.engine, sessionId: member.sessionId };
+          const accounts = githubAccountsForProject(project.id, conversation);
+          const fallback = genericSecretEnvironment(project.id, conversation).GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+          merged = await worktreePullRequestMerged(project.path, worktree.pullRequest, changes, {
+            tokenFor: (repository) => githubAccountFor(accounts, repository)?.token ?? fallback,
+            sshHosts: accounts.filter((account) => account.sshKey).map((account) => account.sshHost),
+          });
+        }
+        if (!merged) {
+          result.retainedWorktrees[worktree.id] = worktree.pullRequest
+            ? "Worktree kept: local changes are not verified as merged"
+            : "Worktree kept: unmerged changes remain";
+          continue;
+        }
+        // GitHub verification can take seconds. Recheck files after it returns,
+        // then refresh membership, done marks and activity before deleting anything.
+        if (!sameChanges(changes, await worktreeChanges(project.id, worktree.id))) {
+          result.retainedWorktrees[worktree.id] = "Worktree kept: changed while cleanup was checking";
+          continue;
+        }
       }
       await assertProjectEditable(project);
       const current = await worktreeConversationIndex(project.id);

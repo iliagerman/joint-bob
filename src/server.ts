@@ -55,6 +55,7 @@ import "./server/routes/resources.js";
 import "./server/routes/quick-notes.js";
 import { cleanupAbandonedByTheWayConversations } from "./server/routes/sessions.js";
 import { sweepConversationRetention } from "./server/conversation-retention.js";
+import { sweepWorktrees } from "./server/worktree-cleanup.js";
 import { startCronScheduler } from "./server/cron.js";
 import { startQuickNoteScheduler } from "./server/quick-note-dispatch.js";
 import "./server/routes/cron.js";
@@ -167,6 +168,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const sweepRetention = (): void => { sweepConversationRetention().catch((error) => console.warn("Conversation retention sweep failed", error)); };
     setTimeout(sweepRetention, 5 * 60_000).unref();
     setInterval(sweepRetention, 60 * 60_000).unref();
+    // Worktrees without an undone conversation are removed every half hour.
+    const sweepWorktreeFolders = (): void => { sweepWorktrees().catch((error) => console.warn("Worktree sweep failed", error)); };
+    setTimeout(sweepWorktreeFolders, 5 * 60_000).unref();
+    setInterval(sweepWorktreeFolders, 30 * 60_000).unref();
     setInterval(() => {
       void initializeStartupReadiness();
       sweepRuntimeLeases();
