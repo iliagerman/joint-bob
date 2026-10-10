@@ -1238,8 +1238,9 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 /* The actions wrap to a second row rather than being clipped by the panel edge. */
 .chat-toolbar { overflow: visible; flex-wrap: wrap; row-gap: 8px; }
 .panel-toolbar[hidden], .chat-toolbar[hidden] { display: none; }
-/* The action buttons move as one group: beside the selects when there is room, otherwise as a block on the next row. */
-.chat-toolbar-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+/* The action buttons move as one group: beside the selects when there is room, otherwise as a block on the next row.
+   A panel narrower than the group wraps the buttons inside it rather than letting them run past the edge. */
+.chat-toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: 0 0 auto; max-width: 100%; }
 .chat-session-controls { display: flex; align-items: end; gap: 8px; flex: 0 0 auto; }
 .chat-control { display: grid; gap: 4px; flex: 0 0 auto; }
 .chat-control > span {
@@ -2429,7 +2430,26 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* Icon actions keep one square size whether or not they carry a shortcut badge. */
   .chat-toolbar button:is(.chat-action, .background-tasks-trigger, #chatFilesButton) { min-height: 34px; min-width: 34px; padding: 0; line-height: normal; }
   .chat-toolbar button.background-tasks-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
-  .chat-toolbar button.background-tasks-trigger:has(.background-tasks-badge:not([hidden])) { padding-inline: 8px; }
+  /* Nothing in the toolbar takes its width from its own text. The model name, the
+     reasoning picker and the task count all change while an agent works, and a
+     toolbar sized from them re-wrapped its action row each time, which moved the
+     whole conversation up and down. Each control gets a width from this list, so
+     where the actions sit depends on the panel's width alone. Focus mode moves the
+     toolbar out of the panel and lays it out itself. */
+  #chatPanel > .chat-toolbar .chat-session-controls { display: contents; }
+  #chatPanel > .chat-toolbar .chat-control { grid-template-columns: minmax(0, 1fr); flex: var(--control-grow, 1) 1 var(--control-basis); min-width: 0; max-width: var(--control-max); }
+  #chatPanel > .chat-toolbar .chat-control > span { white-space: nowrap; }
+  #chatPanel > .chat-toolbar .chat-toolbar-control { width: 100%; min-width: 0; max-width: none; }
+  /* Node and model names are the long ones, so spare room goes to them first. */
+  #chatPanel > .chat-toolbar .chat-control[for="chatNodeSelect"] { --control-basis: 116px; --control-max: 170px; --control-grow: 3; }
+  #chatPanel > .chat-toolbar .chat-control[for="chatHarnessSelect"] { --control-basis: 80px; --control-max: 120px; }
+  #chatPanel > .chat-toolbar .chat-model-control { --control-basis: 140px; --control-max: 220px; --control-grow: 3; }
+  #chatPanel > .chat-toolbar .chat-mode-control { --control-basis: 92px; --control-max: 132px; }
+  /* A model without reasoning levels leaves the picker's place empty rather than closing
+     the gap; `!important` because the global `[hidden]` rule carries one. */
+  #chatPanel > .chat-toolbar .chat-mode-control[hidden] { display: grid !important; visibility: hidden; }
+  /* The count sits on the button's corner, as the running count does, and takes no room. */
+  #chatPanel > .chat-toolbar .background-tasks-badge { position: absolute; top: -3px; right: -3px; display: grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; font-size: 10px; font-weight: 650; line-height: 1; }
   .mobile-nav { display: none; }
   .back-button { display: none; }
   /* `.shell` declares these custom properties, so the override has to land on

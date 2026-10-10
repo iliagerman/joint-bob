@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Agents no longer create a worktree when a refused git command suggests one; they keep working in the conversation's folder and create a worktree only when you ask.
+- Fixed the chat toolbar shifting the conversation up and down whenever the model name, reasoning level, or running task count changed; in narrow panels its buttons now wrap within the panel instead of running past the edge.
 
 ## 2.70.0 — 2026-10-10
 
