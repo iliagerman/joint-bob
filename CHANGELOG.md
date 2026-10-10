@@ -3,11 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.70.0 — 2026-10-10
 
-- Added webhooks in Settings: each gets a secret URL that, when another service calls it, adds the call to a chosen conversation or starts a new conversation in a project, and the recent calls are listed beside it.
-- Agents no longer create worktrees on their own for big, risky, or multi-issue tasks; they keep working in the conversation's folder and create a worktree only when you ask for one.
-- Added a Webhooks tab in Settings where you create, edit, turn off, re-address, and delete webhooks and check their recent calls, with each change applied right away.
+- Added webhooks, managed in a new Webhooks tab in Settings: each gets a secret URL that, when another service calls it, adds the call to a chosen conversation or starts a new conversation in a chosen project.
+- Agents no longer create worktrees on their own; they work in the conversation's folder and create a worktree only when you ask for one.
 
 ## 2.69.0 — 2026-10-10
 
