@@ -10,11 +10,12 @@ import {
   revokeTwinHttp,
 } from "../twins.js";
 import { app } from "../state.js";
+import type { HarnessId } from "../../types.js";
 import { declareTwinLost, receiveSuccession, successionNoticeSchema } from "../succession.js";
 import { peerEndpoint, recordPeerEndpoint } from "../../cluster-peer-endpoints.js";
 import { disconnectRevokedRuntimeSockets } from '../runtime-peers.js';
 import { receiveScopedCredentials } from "../scoped-credentials.js";
-import { sharedTranscriptFile, sharedTranscriptInventory, transcriptQuery } from "../shared-transcripts.js";
+import { acceptOwnerTranscript, sharedTranscriptFile, sharedTranscriptInventory, transcriptQuery } from "../shared-transcripts.js";
 import { receiveFileEnrollment } from "../sharing-files.js";
 import { isTrustedTwin } from "../../cluster-sharing-policy.js";
 import { receiveSecretCredentialEvents, type SecretCredentialEvent } from "../../secret-replication.js";
@@ -80,6 +81,20 @@ app.post("/api/twins/:relationshipId/sharing",handler(async(request,response)=>{
   localOnly(response);
   const payload=z.object({ownerNodeId:uuid,confirmOwnedData:z.literal(true)}).strict().parse(request.body);
   response.json(await completeTwinSharing(uuid.parse(request.params.relationshipId),payload.ownerNodeId));
+}));
+/** Settles a conversation both twins continued by taking its owner's history. This machine's
+    version is saved first; see acceptOwnerTranscript. */
+app.post("/api/twins/:relationshipId/transcript-conflicts/accept",handler(async(request,response)=>{
+  localOnly(response);
+  const payload=z.object({projectId:z.string().min(1).max(300),engine:z.string().min(1).max(80),sessionId:z.string().min(1).max(300),confirmReplaceLocal:z.literal(true)}).strict().parse(request.body);
+  const db=await clusterV2Database(),local=await getClusterNode(),peer=sharingTwin(db,local.id,uuid.parse(request.params.relationshipId));
+  // A conversation open here still holds the history being replaced, and a running one is writing to it.
+  const {disposeHarnessSession,findHarnessSession,harnessSessionBusy}=await import("../harness-sessions.js");
+  const live=findHarnessSession(payload.projectId,payload.engine as HarnessId,payload.sessionId);
+  if(live&&harnessSessionBusy(live))throw new ClusterV2HttpError(409,"This conversation is running on this machine; stop it first");
+  const result=await acceptOwnerTranscript(peer,payload.projectId,payload.engine,payload.sessionId);
+  if(live)disposeHarnessSession(live);
+  response.json(result);
 }));
 app.post('/api/cluster/v2/twins/sharing-coordinate',handler(async(request,response)=>{
   const sender=machineOnly(response),local=await getClusterNode(),db=await clusterV2Database();

@@ -12,6 +12,7 @@ import { flushSharedTranscripts, sharedTranscriptStatus } from "./shared-transcr
 import { mayReplicateEvent, signedPeerPost } from "./replication-v2.js";
 import { pendingEventsForPeer } from "../replication.js";
 import { listProjectMetadataDeliveries } from "../cluster-project-metadata.js";
+import { sessionTitleOverrides } from "../names.js";
 import { resumeSharedProjectFolder } from "../syncthing.js";
 import { ensureTwinHttpSchema, pendingTwinDeliveries, bootstrapOwnedTwinPolicies } from "./twins.js";
 import { peerSnapshot, staleSnapshotReason } from "./peer-snapshots.js";
@@ -91,8 +92,11 @@ export async function localTwinSharingStatus(db: DatabaseSync, local: string, re
   const job=db.prepare('SELECT error FROM cluster_v2_twin_sharing_jobs WHERE relationship_id=?').get(relationshipId) as {error:string|null}|undefined;
   if(job)pendingDeliveries++;
   const error=job?.error??row?.error??files.error??transcripts.error??events.error??secretError;
+  // A conversation both machines continued is listed by title, so it can be recognized and settled.
+  const titles=transcripts.conflicts?await sessionTitleOverrides():{};
+  const conflicts=transcripts.conflicts?.map(conflict=>({...conflict,...(titles[conflict.sessionId]?{title:titles[conflict.sessionId]}:{})}));
   return {state:error?"error":row&&files.ready&&!pendingDeliveries&&!missing.count?"ready":"pending",
-    initialized:Boolean(row||job),ownerNodeId:row?.owner_node_id??defaultTwinOwner(db,local,peer,relationshipId),projectCount,pendingDeliveries,...(error?{error}:{})};
+    initialized:Boolean(row||job),ownerNodeId:row?.owner_node_id??defaultTwinOwner(db,local,peer,relationshipId),projectCount,pendingDeliveries,...(error?{error}:{}),...(conflicts?{conflicts}:{})};
 }
 
 export async function twinSharingStatus(db:DatabaseSync,local:string,relationshipId:string){
