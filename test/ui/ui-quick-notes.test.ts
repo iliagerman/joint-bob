@@ -263,6 +263,15 @@ test("a note keeps its node, secrets, schedule, and images across save and reope
   await chip.waitFor();
   assert.match(await chip.innerText(), /pin\.png/, "the picked image previews before saving");
   assert.equal(await chip.getByTestId("attachment-thumbnail").count(), 1, "the chip shows the image bytes");
+  await page.getByTestId("quick-note-content-input").evaluate((el, b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const data = new DataTransfer();
+    data.items.add(new File([bytes], "pasted.png", { type: "image/png" }));
+    el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  }, NOTE_IMAGE.toString("base64"));
+  await page.waitForFunction(() => document.querySelectorAll("#quickNoteImageList .attachment-chip").length === 2);
+  await page.getByTestId("quick-note-image-list").locator(".attachment-chip").nth(1).getByRole("button").click();
+  await page.waitForFunction(() => document.querySelectorAll("#quickNoteImageList .attachment-chip").length === 1);
   await page.getByTestId("quick-note-save-button").click();
 
   const listed = await api<{ notes: Array<{ id: string; title: string; nodeId: string | null; secretAccountIds: string[]; scheduledAt: string | null; images: Array<{ kind: string; name: string; mimeType: string; data: string }> }> }>(
