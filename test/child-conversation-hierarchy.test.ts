@@ -48,6 +48,16 @@ test("the conversation limit counts top-level families instead of sub-agent rows
   );
 });
 
+test("scheduled runs do not use up the limit for other conversations", () => {
+  const runs = Array.from({ length: 5 }, (_, index) => ({ ...session(`run-${index}`), cronTaskId: "hourly" }));
+  const ordinary = [session("first"), session("second"), session("third")];
+
+  assert.deepEqual(
+    orderSessionFamilies([...runs, ...ordinary], 2).map((entry) => entry.id),
+    ["run-0", "run-1", "first", "second"],
+  );
+});
+
 test("the conversation list renders child lineage", async () => {
   const [app, styles, serviceWorker] = await Promise.all([
     appSource(),
