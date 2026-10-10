@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## 2.67.1 — 2026-10-10
+## 2.68.1 — 2026-10-10
 
 - Retire deleted projects through signed twin policy delivery, repair legacy owner orphans, and clear obsolete conversation-history sync errors without removing project files.
+
+## 2.68.0 — 2026-10-10
+
+- Removed finished worktrees automatically every 30 minutes on every machine, including ones with unmerged edits or open pull requests.
 
 ## 2.67.0 — 2026-10-09
 
