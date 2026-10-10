@@ -16,8 +16,8 @@ import { clusterV2Database } from "../src/cluster-v2-store.js";
 import { applyTwinCertificate, confirmTwinAcceptance, createTwinInvitation, prepareTwinAcceptance } from "../src/cluster-twins.js";
 import { ensureConversationRecord } from "../src/conversation-records.js";
 import { getHarness } from "../src/harnesses.js";
-import { catchUpSharedTranscript, sharedTranscriptInventory } from "../src/server/shared-transcripts.js";
-import { addProject } from "../src/store.js";
+import { catchUpSharedTranscript, flushSharedTranscripts, resetSharedTranscriptPulls, sharedTranscriptInventory } from "../src/server/shared-transcripts.js";
+import { addProject, removeProject } from "../src/store.js";
 
 const hash = (bytes: string): string => createHash("sha256").update(bytes).digest("hex");
 
@@ -59,6 +59,40 @@ test("transcript inventory hashes only the advertised bytes when the owner appen
   assert.equal(entries[0].size, Buffer.byteLength(f.content));
   assert.equal(entries[0].hash, hash(f.content), "the advertised hash must describe exactly the advertised size");
 });
+
+for (const fail of [false, true]) {
+  test(`deletion during held inventory cannot restore ${fail ? "failure" : "progress"}`, async (t) => {
+    const f = await fixture(t);
+    const app = express();
+    let entered!: () => void, release!: () => void;
+    const arrived = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    app.use((request, response, next) => {
+      try { assert.equal(verifyClusterRequest(f.remote, f.peer, "GET", request.originalUrl, Buffer.alloc(0), request.header("authorization")), f.local.id); next(); }
+      catch { response.sendStatus(401); }
+    });
+    app.get("/api/cluster/v2/transcripts", async (_request, response) => {
+      entered(); await gate;
+      if (fail) response.sendStatus(500);
+      else response.json({ entries: [] });
+    });
+    const server = createServer(app);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => { release(); server.closeAllConnections(); return new Promise<void>(resolve => server.close(() => resolve())); });
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    recordPeerEndpoint(f.db, { kind: "twin", id: f.relationshipId }, { nodeId: f.peer, name: "Held peer", url: `http://127.0.0.1:${address.port}` });
+    resetSharedTranscriptPulls();
+    const running = flushSharedTranscripts();
+    await arrived;
+    await removeProject(f.project.id);
+    release();
+    await running;
+    assert.equal(f.db.prepare("SELECT 1 FROM cluster_v2_transcript_errors WHERE project_id=?").get(f.project.id), undefined);
+    assert.equal(f.db.prepare("SELECT 1 FROM cluster_v2_transcript_progress WHERE project_id=?").get(f.project.id), undefined);
+    assert.equal(f.db.prepare("SELECT deleted FROM cluster_v2_resource_policy WHERE resource_id=?").get(f.project.id)?.deleted, 1);
+  });
+}
 
 for (const empty of [false, true]) {
   test(`a growing ${empty ? "empty" : "nonempty"} transcript syncs the advertised snapshot, then catches up`, async (t) => {

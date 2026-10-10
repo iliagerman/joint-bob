@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.67.1 — 2026-10-10
+
+- Retire deleted projects through signed twin policy delivery, repair legacy owner orphans, and clear obsolete conversation-history sync errors without removing project files.
+
 ## 2.67.0 — 2026-10-09
 
 - Moved joined relays from Settings > Cluster to a new Joined relays tab in Settings > Relay, so all relay settings are in one place.
