@@ -166,6 +166,32 @@ test("relay-only machines share exactly what their clusters allow, and the relay
     const relays = await api<{ relays: Array<{ id: string }> }>(a, sa, "GET", "/relays");
     assert.equal((await api(a, sa, "PATCH", `/relays/${relays.body.relays[0].id}`, { phoneSignIn: false })).status, 200);
     await eventually(async () => assert.equal((await throughGateway(r.port, host, "GET", "/api/auth/status")).status, 404));
+
+    // Webhooks need no phone sign-in: the relay hands the call to A on a webhook-only channel.
+    const hook = await api<{ webhook: { id: string }; secret: string; bases: Array<{ id: string; base: string }> }>(a, sa, "POST", "/webhooks", {
+      name: "Relay hook", target: { kind: "project", projectId: forX.id }, context: "Triage this.",
+    });
+    assert.equal(hook.status, 201, JSON.stringify(hook.body));
+    assert.match(hook.body.secret, /^[A-Za-z0-9_-]{43}$/, "the secret is 256 random bits");
+    assert.ok(hook.body.bases.some((base) => base.base === `http://localhost:${r.port}/hooks/${names.get(a.nodeId)}`), JSON.stringify(hook.body.bases));
+    const hookPath = `/hooks/${names.get(a.nodeId)}/${hook.body.secret}`;
+    const relayHost = `localhost:${r.port}`;
+    await eventually(async () => {
+      const call = await throughGateway(r.port, relayHost, "POST", hookPath, { action: "opened" });
+      assert.equal(call.status, 202, call.text);
+    });
+    assert.equal((await throughGateway(r.port, relayHost, "GET", hookPath)).status, 405, "webhooks accept POST only");
+    assert.equal((await throughGateway(r.port, relayHost, "POST", `/hooks/${names.get(a.nodeId)}/${hook.body.secret.slice(1)}x`, {})).status, 404, "a wrong secret finds nothing");
+    assert.equal((await throughGateway(r.port, relayHost, "POST", `/hooks/nobody/${hook.body.secret}`, {})).status, 404, "an unknown machine finds nothing");
+    await eventually(async () => {
+      const deliveries = await api<{ deliveries: Array<{ status: string }> }>(a, sa, "GET", `/webhooks/${hook.body.webhook.id}/deliveries`);
+      assert.ok(deliveries.body.deliveries.length >= 1, "the call was recorded");
+    });
+    const regenerated = await api<{ secret: string }>(a, sa, "POST", `/webhooks/${hook.body.webhook.id}/regenerate`, {});
+    assert.equal((await throughGateway(r.port, relayHost, "POST", hookPath, {})).status, 404, "the old address stops working");
+    assert.equal((await throughGateway(r.port, relayHost, "POST", `/hooks/${names.get(a.nodeId)}/${regenerated.body.secret}`, {})).status, 202);
+    assert.equal((await api(a, sa, "DELETE", `/webhooks/${hook.body.webhook.id}`)).status, 204);
+    assert.equal((await throughGateway(r.port, relayHost, "POST", `/hooks/${names.get(a.nodeId)}/${regenerated.body.secret}`, {})).status, 404, "a deleted webhook finds nothing");
   } finally {
     await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });
