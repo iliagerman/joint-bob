@@ -48,6 +48,30 @@ export function syncLabel(data) {
   return data.state === "ready" && data.pendingDeliveries === 0 ? "Up to date" : "Syncing";
 }
 
+const CONFLICTS_SHOWN = 5;
+/** One row per conversation both machines continued, with the way to settle it from this machine. */
+function transcriptConflicts(status, onChange) {
+  const conflicts = status.conflicts || [];
+  // Reported by the twin: it holds the other history, so only it can replace that history.
+  if (!conflicts.length) return /Divergent transcript requires review/.test(status.error || "") ? [text("p", "A conversation was continued on both machines. Settle it from the other machine's Settings, under Cluster.")] : [];
+  if (!status.relationshipId) return [];
+  const list = document.createElement("div"); list.className = "cluster-sync-conflicts"; list.dataset.testid = "twin-sync-conflicts";
+  list.append(text("p", `${conflicts.length === 1 ? "One conversation was" : `${conflicts.length} conversations were`} continued on both machines, so the two histories differ:`));
+  for (const conflict of conflicts.slice(0, CONFLICTS_SHOWN)) {
+    const name = conflict.title || `${conflict.engine} conversation ${conflict.sessionId.slice(0, 8)}`;
+    const row = document.createElement("div"); row.className = "cluster-sync-conflict"; row.dataset.testid = "twin-sync-conflict";
+    row.append(text("span", `${conflict.projectName || conflict.projectId}: ${name}`), button("Use the other machine's version", "twin-sync-conflict-accept", "ghost compact", async () => {
+      if (!await confirmAction({ eyebrow: "Twins", title: `Replace this machine's history of "${name}"?`, message: "The other machine owns this conversation, so its history replaces the one here. This machine's version is saved to a file first; nothing is deleted.", confirmLabel: "Use the other version" })) return;
+      const { saved } = await api(`/api/twins/${status.relationshipId}/transcript-conflicts/accept`, { method: "POST", body: JSON.stringify({ projectId: conflict.projectId, engine: conflict.engine, sessionId: conflict.sessionId, confirmReplaceLocal: true }) });
+      toast(`This machine's version was saved to ${saved}`);
+      await onChange();
+    }));
+    list.append(row);
+  }
+  if (conflicts.length > CONFLICTS_SHOWN) list.append(text("p", `And ${conflicts.length - CONFLICTS_SHOWN} more, shown as these are settled.`, "cluster-muted"));
+  return [list];
+}
+
 /** Visible in every twin view, not only a hover title or the machine's Twins tab. */
 export function twinSyncProblem(status, onChange) {
   if (syncLabel(status) !== "Error") return document.createDocumentFragment();
@@ -55,7 +79,7 @@ export function twinSyncProblem(status, onChange) {
   box.dataset.testid = "twin-sync-problem"; box.setAttribute("role", "status");
   const reason = status.readError ? `Could not check synchronization: ${status.readError}`
     : status.error || "The twin reported a synchronization error without details. Check its sync status for more information.";
-  box.append(text("strong", "Synchronization needs attention"), text("p", reason),
+  box.append(text("strong", "Synchronization needs attention"), text("p", reason), ...transcriptConflicts(status, onChange),
     text("p", "Sync retries automatically. Keep both nodes online. Conflicting histories are kept for review; unpairing does not repair them.", "cluster-muted"),
     button("Check again", "twin-sync-check", "ghost compact", () => onChange()));
   return box;
@@ -66,7 +90,7 @@ export async function refreshTwins() {
   const [{ relationships }, { requests }] = await Promise.all([api("/api/twins"), api("/api/twins/requests")]);
   twins.relationships = relationships; twins.requests = requests;
   await Promise.all(relationships.filter((item) => item.status === "active").map(async (item) => {
-    try { twins.status.set(item.relationshipId, await api(`/api/twins/${item.relationshipId}/sharing`)); }
+    try { twins.status.set(item.relationshipId, { ...await api(`/api/twins/${item.relationshipId}/sharing`), relationshipId: item.relationshipId }); }
     catch (error) { twins.status.set(item.relationshipId, { readError: error.message }); }
   }));
   return JSON.stringify([relationships.map(({ relationshipId, status }) => [relationshipId, status]),

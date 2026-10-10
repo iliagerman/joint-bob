@@ -50,6 +50,7 @@ async function enroll(db:DatabaseSync,local:string,peer:string,device:string,ids
  // Whatever this enrollment changes, relay-reached peers get their Syncthing tunnels re-planned.
  try{return await enrollFiles(db,local,peer,device,ids);}finally{notifyRelayPeersChanged();}
 }
+const reportedSkips=new Map<string,string>();
 async function enrollFiles(db:DatabaseSync,local:string,peer:string,device:string,ids:string[]):Promise<string[]> {
  await ensureSyncthingDevice(device,peer);
  await removeSyncthingDevices([device],[TICKET_WORKSPACE_FOLDER_ID,...listHarnessSyncFolders().map(folder=>folder.id)]);
@@ -81,7 +82,10 @@ async function enrollFiles(db:DatabaseSync,local:string,peer:string,device:strin
    skipped.push({id,name:project.name,error:error instanceof Error?error.message:String(error)});
   }
  }
- if(skipped.length)console.warn(`File enrollment skipped ${skipped.length} project(s) for peer ${peer.slice(0,8)}:`,skipped.map(s=>`${s.name}: ${s.error}`).join("; "));
+ // Enrollment repeats on every administration flush: the same skipped projects are reported once, not each time.
+ const report=skipped.map(s=>`${s.name}: ${s.error}`).join("; ");
+ if(report&&report!==reportedSkips.get(peer))console.warn(`File enrollment skipped ${skipped.length} project(s) for peer ${peer.slice(0,8)}:`,report);
+ reportedSkips.set(peer,report);
  db.prepare("DELETE FROM cluster_v2_file_errors WHERE peer_id=?").run(peer);
  return accepted;
 }

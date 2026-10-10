@@ -3393,6 +3393,8 @@ body.file-view { overflow: auto; }
 .cluster-sync-problem { display: grid; grid-column: 1 / -1; flex-basis: 100%; gap: 6px; min-width: 0; padding: 8px 10px; border-left: 2px solid var(--danger); background: color-mix(in srgb, var(--danger) 6%, var(--panel)); font-size: 12px; overflow-wrap: anywhere; }
 .cluster-sync-problem p { margin: 0; white-space: pre-wrap; }
 .cluster-sync-problem button { justify-self: start; }
+.cluster-sync-conflicts { display: grid; gap: 4px; }
+.cluster-sync-conflict { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .cluster-twin-link { margin-top: 8px; }
 .cluster-twin-link p { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
 

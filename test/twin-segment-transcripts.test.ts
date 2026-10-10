@@ -128,6 +128,24 @@ test("one transcript the twin cannot take does not hold back the rest of the pro
       assert.deepEqual(errors.map((row) => row.error), ["Divergent transcript requires review"], "the blocked conversation is still reported");
     });
     assert.match(await readFile(path.join(b.home, ".pi", "sessions", `${blocked}.jsonl`), "utf8"), /Local edit/, "the divergent local copy is left alone");
+
+    // The twin names the conversation and settles it on request: the owner's history is
+    // installed and the twin's own version is saved to a file.
+    const sharing = `/twins/${invitation.body.relationshipId}/sharing`;
+    // Seeded demo conversations differ between the two nodes as well, so only this project's are compared.
+    const conflicts = async (): Promise<Array<{ engine: string; sessionId: string }>> => ((await api<{ conflicts?: Array<{ projectId: string; engine: string; sessionId: string }> }>(right, sb, "GET", sharing)).body.conflicts ?? [])
+      .filter((conflict) => conflict.projectId === projectId).map(({ engine, sessionId }) => ({ engine, sessionId }));
+    assert.deepEqual(await conflicts(), [{ engine: "pi", sessionId: blocked }]);
+    const settle = { projectId, engine: "pi", sessionId: blocked };
+    assert.equal((await api(right, sb, "POST", `/twins/${invitation.body.relationshipId}/transcript-conflicts/accept`, settle)).status, 400, "replacing local history needs explicit confirmation");
+    const settled = await api<{ saved: string }>(right, sb, "POST", `/twins/${invitation.body.relationshipId}/transcript-conflicts/accept`, { ...settle, confirmReplaceLocal: true });
+    assert.equal(settled.status, 200);
+    assert.match(await readFile(path.join(b.home, ".pi", "sessions", `${blocked}.jsonl`), "utf8"), /Newest turn/, "the owner's history is installed");
+    assert.match(await readFile(settled.body.saved, "utf8"), /Local edit/, "the twin's own version is saved first");
+    await eventually(async () => {
+      assert.deepEqual(query(right, "SELECT error FROM cluster_v2_transcript_errors WHERE project_id=?", projectId), [], "the project no longer reports the conversation");
+      assert.deepEqual(await conflicts(), []);
+    });
   } finally {
     await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });

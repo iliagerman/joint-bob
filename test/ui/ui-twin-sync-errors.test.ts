@@ -31,11 +31,18 @@ test("twin failures are readable in the member list, node inspector and machine 
     page.on("pageerror", error => pageErrors.push(error.message));
     let error: string | undefined = "Conversation history sync failed:\nContigos: aborted\nDak-Live: Cluster peer is unreachable";
     let readError = false, reads = 0, mutations = 0;
+    let conflicts: Array<Record<string, string>> = [];
+    const accepted: unknown[] = [];
+    await page.route(`**/api/twins/${relationshipId}/transcript-conflicts/accept`, async route => {
+      accepted.push(route.request().postDataJSON());
+      conflicts = []; error = "Conversation history sync failed:\nDak-Live: Cluster peer is unreachable";
+      await route.fulfill({ status: 200, json: { saved: "/data/transcript-conflicts/pi-4204caea.local.jsonl" } });
+    });
     await page.route(`**/api/twins/${relationshipId}/sharing`, async route => {
       if (route.request().method() !== "GET") { mutations++; await route.continue(); return; }
       reads++;
       await route.fulfill({ status: readError ? 503 : 200, json: readError ? { error: "Peer status unavailable" } : {
-        initialized: true, state: error ? "error" : "ready", projectCount: 3, pendingDeliveries: 0, ownerNodeId: local.nodeId, ...(error ? { error } : {}),
+        initialized: true, state: error ? "error" : "ready", projectCount: 3, pendingDeliveries: 0, ownerNodeId: local.nodeId, ...(error ? { error } : {}), ...(conflicts.length ? { conflicts } : {}),
       } });
     });
     await page.goto(local.url);
@@ -74,6 +81,28 @@ test("twin failures are readable in the member list, node inspector and machine 
     await problem.getByText(error, { exact: true }).waitFor();
     assert.equal(await problem.locator("img").count(), 0, "peer error strings remain plain text");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, "long errors fit a phone");
+
+    // A conversation both machines continued is named, and settled from here only on request.
+    error = "Conversation history sync failed:\nContigos: Divergent transcript requires review";
+    conflicts = [{ projectId: "contigos", projectName: "Contigos", engine: "pi", sessionId: "4204caea-3988-41a1-a149-c5c13a82c8e0", detectedAt: "2026-10-10T18:00:00.000Z", title: "Morning briefing" }];
+    await problem.getByRole("button", { name: "Check again" }).click();
+    const conflict = problem.getByTestId("twin-sync-conflict");
+    await conflict.getByText("Contigos: Morning briefing", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, "conflict rows fit a phone");
+    await conflict.getByTestId("twin-sync-conflict-accept").click();
+    await page.getByTestId("confirm-cancel-button").click();
+    assert.deepEqual(accepted, [], "nothing is replaced without confirmation");
+    await conflict.getByTestId("twin-sync-conflict-accept").click();
+    await page.getByTestId("confirm-accept-button").click();
+    await problem.getByText(/Dak-Live: Cluster peer is unreachable/).waitFor();
+    assert.equal(await problem.getByTestId("twin-sync-conflict").count(), 0, "a settled conversation leaves the list");
+    assert.deepEqual(accepted, [{ projectId: "contigos", engine: "pi", sessionId: "4204caea-3988-41a1-a149-c5c13a82c8e0", confirmReplaceLocal: true }]);
+
+    // A conflict the twin reports is settled on the twin; this machine only says so.
+    error = "Conversation history sync failed:\nContigos: Divergent transcript requires review";
+    await problem.getByRole("button", { name: "Check again" }).click();
+    await problem.getByText("A conversation was continued on both machines. Settle it from the other machine's Settings, under Cluster.", { exact: true }).waitFor();
+    assert.equal(await problem.getByTestId("twin-sync-conflict-accept").count(), 0);
 
     readError = true;
     await problem.getByRole("button", { name: "Check again" }).click();
