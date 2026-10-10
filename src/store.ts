@@ -8,7 +8,7 @@ import { nanoid } from "nanoid";
 import { ensureWorkspaceSecretsMigration, rekeySecretAssignments } from "./secrets-migration.js";
 import { getClusterNode } from "./cluster.js";
 import {
-  applyResourcePolicy, ensureResourceSharingSchema, registerLocalSharingResource,
+  applyResourcePolicy, deleteSharedResource, ensureResourceSharingSchema, registerLocalSharingResource,
   ResourceSharingError, hasCurrentResourcePolicyContext, type SignedResourcePolicy,
 } from "./cluster-sharing.js";
 import { resourceClusterIds } from "./cluster-sharing-policy.js";
@@ -465,6 +465,14 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
     ensureResourceSharingSchema(db);
     mergeAllTwinWorkspaceCopies(db);
     localNodeId = (await getClusterNode()).id;
+    // Older deletions removed the native row but left a live owner policy behind.
+    // Only the original owner can retire it; remote metadata may still be in transit.
+    const orphaned = db.prepare(`SELECT p.resource_id id,p.generation FROM cluster_v2_resource_policy p
+      JOIN sharing_resource_owners o ON o.kind=p.kind AND o.resource_id=p.resource_id
+      LEFT JOIN projects r ON r.id=p.resource_id
+      WHERE p.kind='project' AND p.deleted=0 AND p.owner_node_id=? AND o.owner_node_id=? AND r.id IS NULL`)
+      .all(localNodeId, localNodeId) as Array<{ id: string; generation: number }>;
+    for (const row of orphaned) deleteSharedResource(db, localNodeId, "project", row.id, row.generation);
   } catch (error) {
     db.close();
     throw error;
@@ -860,7 +868,15 @@ export async function removeProject(projectId: string): Promise<void> {
     ownedAccountIds = (db.prepare(`SELECT id FROM secret_accounts WHERE project_id IN (${placeholders})`).all(...projectIds) as Array<{ id: string }>).map((row) => row.id);
     db.prepare(`DELETE FROM secret_assignments WHERE account_id IN (SELECT id FROM secret_accounts WHERE project_id IN (${placeholders}))`).run(...projectIds);
     db.prepare(`DELETE FROM secret_accounts WHERE project_id IN (${placeholders})`).run(...projectIds);
+    const policy = db.prepare("SELECT owner_node_id,generation,deleted FROM cluster_v2_resource_policy WHERE kind='project' AND resource_id=?")
+      .get(canonicalId) as { owner_node_id: string; generation: number; deleted: number } | undefined;
+    // A replica may remove its local row, but it cannot sign an owner-wide deletion.
+    if (policy?.owner_node_id === localNodeId && !policy.deleted) {
+      deleteSharedResource(db, localNodeId, "project", canonicalId, policy.generation);
+    }
     db.prepare("DELETE FROM projects WHERE id = ?").run(canonicalId);
+    if (tableExists(db, "cluster_v2_transcript_errors")) db.prepare("DELETE FROM cluster_v2_transcript_errors WHERE project_id=?").run(canonicalId);
+    if (tableExists(db, "cluster_v2_transcript_progress")) db.prepare("DELETE FROM cluster_v2_transcript_progress WHERE project_id=?").run(canonicalId);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
