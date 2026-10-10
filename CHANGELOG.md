@@ -3,11 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.71.0 — 2026-10-10
 
-- Agents no longer create a worktree when a refused git command suggests one; they keep working in the conversation's folder and create a worktree only when you ask.
-- Fixed the chat toolbar shifting the conversation up and down whenever the model name, reasoning level, or running task count changed; in narrow panels its buttons now wrap within the panel instead of running past the edge.
 - Added pasting images straight into a quick note, which attaches them the same way choosing an image file does.
+- Fixed the chat toolbar shifting the conversation up and down when the model, reasoning level, or running task count changed; in narrow panels its buttons now wrap instead of running past the edge.
+- Agents no longer create a worktree when a refused git command suggests one; they keep working in the conversation's folder and create a worktree only when you ask.
 
 ## 2.70.0 — 2026-10-10
 
