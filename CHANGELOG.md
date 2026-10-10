@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.68.2 — 2026-10-10
 
-- Changed finished worktrees to be removed as soon as their last conversation is marked done, even with unmerged edits or an open pull request, instead of waiting for a merge check.
+- Marking a worktree's last conversation done now removes the worktree right away, without checking whether it was merged, so the action is faster and finished worktrees no longer linger.
 
 ## 2.68.1 — 2026-10-10
 
