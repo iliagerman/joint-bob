@@ -66,6 +66,7 @@ import "./server/routes/git-review.js";
 import "./server/routes/search.js";
 import "./server/routes/usage.js";
 import "./server/routes/relay.js";
+import "./server/routes/webhooks.js";
 import "./server/routes/updates.js";
 export { app, createApp, server } from "./server/state.js";
 

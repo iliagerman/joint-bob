@@ -10,6 +10,8 @@ export interface IncomingChannel {
   fromKey: string;
   kind: ChannelKind;
   clientIp?: string;
+  /** A gateway channel that carries one webhook delivery, not a phone session. */
+  purpose?: "webhook";
 }
 
 export interface HubOptions {

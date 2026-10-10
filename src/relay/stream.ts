@@ -40,6 +40,8 @@ export class RelayStream extends Duplex {
   relayPeer: RemoteRelayIdentity | undefined;
   /** A phone's address, on gateway channels only. */
   remoteAddress: string | undefined;
+  /** A gateway channel opened for a webhook delivery: only `/hooks/` requests may use it. */
+  webhookOnly = false;
   readonly remotePort = undefined;
   readonly remoteFamily = undefined;
   readonly localAddress = undefined;
@@ -274,6 +276,10 @@ function chain(first: (() => void) | undefined, second: () => void): () => void 
 /** True for connections that arrived through a relay. They are never local traffic. */
 export function relayTransportOf(socket: unknown): ChannelKind | undefined {
   return socket instanceof RelayStream ? socket.relayTransport : undefined;
+}
+
+export function isWebhookOnlyChannel(socket: unknown): boolean {
+  return socket instanceof RelayStream && socket.relayTransport === "gateway" && socket.webhookOnly;
 }
 
 export function relayPeerOf(socket: unknown): RemoteRelayIdentity | undefined {

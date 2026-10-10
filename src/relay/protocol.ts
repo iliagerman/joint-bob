@@ -46,7 +46,7 @@ export type ControlMessage =
   | { t: "open"; ref: number; to: string; kind: Exclude<ChannelKind, "gateway"> }
   | { t: "opened"; ref: number; channel: number }
   | { t: "open-failed"; ref: number; error: string }
-  | { t: "incoming"; channel: number; from: string; fromKey: string; kind: ChannelKind; clientIp?: string }
+  | { t: "incoming"; channel: number; from: string; fromKey: string; kind: ChannelKind; clientIp?: string; purpose?: "webhook" }
   | { t: "reject"; channel: number; reason: string };
 
 export function encodeControl(message: ControlMessage): Buffer {

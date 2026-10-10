@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added webhooks in Settings: each gets a secret URL that, when another service calls it, adds the call to a chosen conversation or starts a new conversation in a project, and the recent calls are listed beside it.
+
 ## 2.69.0 — 2026-10-10
 
 - Added emoji icons for conversation labels, which show in place of the label's name in lists and filters; you can type an icon or have an agent pick one in Settings.

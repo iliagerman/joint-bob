@@ -503,12 +503,14 @@ export class RelayRuntime extends EventEmitter {
   /** Decides about a channel another machine (or the relay's phone gateway) opened to this one. */
   acceptIncoming(incoming: IncomingChannel, membershipId: string): RelayStream | string {
     if (incoming.kind === "gateway") {
+      const webhook = incoming.purpose === "webhook";
       const phone = membershipId === LOCAL_RELAY_ID ? this.relayServer.enabled && this.relayServer.localPhoneSignIn() : membership(this.db, membershipId)?.phoneSignIn === true;
-      if (!phone) return "Phone sign-in is off on this machine";
+      if (!phone && !webhook) return "Phone sign-in is off on this machine";
       const expected = membershipId === LOCAL_RELAY_ID ? this.nodeId : this.connections.get(membershipId)?.relayNodeId;
       if (expected && incoming.from !== expected) return "Gateway channels come only from the relay";
       const stream = new RelayStream("gateway", undefined);
       stream.remoteAddress = typeof incoming.clientIp === "string" ? incoming.clientIp.slice(0, 64) : undefined;
+      stream.webhookOnly = webhook;
       stream.once("relay-ready", () => this.httpServer.emit("connection", stream));
       return stream;
     }

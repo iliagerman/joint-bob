@@ -38,6 +38,8 @@ const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const MAX_UNAUTHENTICATED_PER_IP = 16;
 const MAX_WATCHED = 10_000;
 const REQUESTS_PER_HOUR = 5;
+const WEBHOOKS_PER_MINUTE = 120;
+const WEBHOOK_MAX_BODY = 256 * 1024;
 const USAGE_FLUSH_BYTES = 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-connection", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"]);
@@ -645,12 +647,12 @@ export class RelayServer {
     else this.gatewayByIp.set(clientIp, count);
   }
 
-  private openGatewayStream(target: Session, clientIp: string): RelayStream {
+  private openGatewayStream(target: Session, clientIp: string, purpose?: "webhook"): RelayStream {
     const { session, hub } = this.gateway();
     const id = this.openChannel(session, target, "gateway");
     const stream = new RelayStream("gateway", undefined);
     stream.once("close", () => this.releaseGatewayRequest(clientIp));
-    target.deliver(encodeControl({ t: "incoming", channel: id, from: this.nodeId, fromKey: this.publicKey, kind: "gateway", clientIp }));
+    target.deliver(encodeControl({ t: "incoming", channel: id, from: this.nodeId, fromKey: this.publicKey, kind: "gateway", clientIp, ...(purpose ? { purpose } : {}) }));
     hub.adopt(stream, id);
     return stream;
   }
@@ -660,6 +662,8 @@ export class RelayServer {
     if (relayTransportOf(request.socket)) return false;
     const label = this.gatewayLabel(request);
     if (!label) {
+      const hook = this.webhookRoute(request);
+      if (hook) { this.handleWebhook(request, response, hook); return true; }
       if (new URL(request.url ?? "/", "http://relay").pathname !== POLL_PATH) return false;
       if (!this.enabled) { response.writeHead(404).end(); return true; }
       this.polls.handle(request, response);
@@ -671,9 +675,59 @@ export class RelayServer {
     if (problem) { response.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" }).end(problem); return true; }
     const clientIp = clientAddress(request);
     if (!this.admitGatewayRequest(clientIp)) { response.writeHead(429, { "Content-Type": "text/plain; charset=utf-8", "Retry-After": "5" }).end("Too many requests"); return true; }
-    const stream = this.openGatewayStream(target, clientIp);
+    this.proxyRequest(request, response, this.openGatewayStream(target, clientIp), request.url, clientIp);
+    return true;
+  }
+
+  // ------------------------------------------------------------ webhooks
+
+  /** `/hooks/<machine name>/<secret>` on the relay's own host, or undefined for any other request. */
+  private webhookRoute(request: IncomingMessage): { name: string; secret: string } | undefined {
+    if (!this.enabled) return undefined;
+    const relayHost = new URL(this.origin).host.toLowerCase();
+    if (String(request.headers.host ?? "").toLowerCase() !== relayHost) return undefined;
+    const match = /^\/hooks\/([a-z0-9-]{1,63})\/([A-Za-z0-9_-]{20,128})$/.exec((request.url ?? "").split("?", 1)[0]);
+    return match ? { name: match[1], secret: match[2] } : undefined;
+  }
+
+  private readonly webhookLog = new Map<string, number[]>();
+
+  /** At most this many webhook calls per minute reach one machine through this relay. */
+  private webhookAllowed(nodeId: string): boolean {
+    const cutoff = Date.now() - 60_000;
+    const recent = (this.webhookLog.get(nodeId) ?? []).filter((at) => at > cutoff);
+    if (recent.length >= WEBHOOKS_PER_MINUTE) { this.webhookLog.set(nodeId, recent); return false; }
+    recent.push(Date.now());
+    this.webhookLog.set(nodeId, recent);
+    if (this.webhookLog.size > MAX_WATCHED) this.webhookLog.clear();
+    return true;
+  }
+
+  /**
+   * Hands one webhook call to the machine that owns the URL. The relay never reads the secret's
+   * meaning: the machine looks the secret up itself and answers 404 for any it does not know.
+   * Phone sign-in is not needed, but the channel is marked so the machine serves only `/hooks/`.
+   */
+  private handleWebhook(request: IncomingMessage, response: ServerResponse, hook: { name: string; secret: string }): void {
+    const plain = (status: number, text: string, headers: Record<string, string> = {}): void => { response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", ...headers }).end(text); };
+    if (request.method !== "POST") { plain(405, "Webhooks accept POST only", { Allow: "POST" }); return; }
+    const machine = relayMachineByName(this.db, hook.name);
+    if (!machine || machine.status !== "admitted" || !this.servesMachine(machine.nodeId)) { plain(404, "Not found"); return; }
+    const length = Number(request.headers["content-length"] ?? 0);
+    if (Number.isFinite(length) && length > WEBHOOK_MAX_BODY) { plain(413, "Payload too large"); return; }
+    const target = this.sessions.get(machine.nodeId);
+    if (!target || target.kind === "gateway") { plain(503, "The machine is offline; try again later", { "Retry-After": "60" }); return; }
+    const problem = this.channelProblem(target, "gateway");
+    if (problem) { plain(503, problem, { "Retry-After": "30" }); return; }
+    const clientIp = clientAddress(request);
+    if (!this.webhookAllowed(machine.nodeId) || !this.admitGatewayRequest(clientIp)) { plain(429, "Too many requests", { "Retry-After": "30" }); return; }
+    this.proxyRequest(request, response, this.openGatewayStream(target, clientIp, "webhook"), `/hooks/${hook.secret}`, clientIp, WEBHOOK_MAX_BODY);
+  }
+
+  /** Pipes a request through an open gateway stream and the machine's answer back. */
+  private proxyRequest(request: IncomingMessage, response: ServerResponse, stream: RelayStream, path: string | undefined, clientIp: string, maxBody?: number): void {
     const proxied = http.request({
-      method: request.method, path: request.url, headers: forwardedHeaders(request.rawHeaders, clientIp, this.origin),
+      method: request.method, path, headers: forwardedHeaders(request.rawHeaders, clientIp, this.origin),
       createConnection: () => stream as unknown as import("node:net").Socket,
     });
     proxied.on("response", (answer) => {
@@ -697,8 +751,18 @@ export class RelayServer {
       else response.destroy();
     });
     response.on("close", () => { if (!response.writableFinished) proxied.destroy(); });
+    if (maxBody !== undefined) {
+      // A sender that lied about, or left out, Content-Length is cut off at the cap.
+      let received = 0;
+      request.on("data", (chunk: Buffer) => {
+        received += chunk.length;
+        if (received <= maxBody) return;
+        request.unpipe(proxied);
+        proxied.destroy();
+        if (!response.headersSent) response.writeHead(413, { "Content-Type": "text/plain; charset=utf-8", Connection: "close" }).end("Payload too large");
+      });
+    }
     request.pipe(proxied);
-    return true;
   }
 
   private handleGatewayUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): boolean {
