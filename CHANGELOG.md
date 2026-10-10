@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.68.6 — 2026-10-10
+
+- Fixed the chat toolbar always pushing its action buttons onto a second row; they now share the model and reasoning dropdowns' row when there is room and drop below as a group when there is not.
+
 ## 2.68.5 — 2026-10-10
 
 - Project worktrees that no conversation has started in are removed 30 minutes after they were created, instead of 10, and are kept while anything inside them changed in the last 30 minutes.
