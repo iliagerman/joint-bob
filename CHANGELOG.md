@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.68.0 — 2026-10-10
 
-- Removed finished worktrees automatically every half hour, including ones with unmerged edits or open pull requests.
+- Removed finished worktrees automatically every 30 minutes on every machine, including ones with unmerged edits or open pull requests.
 
 ## 2.67.0 — 2026-10-09
 
