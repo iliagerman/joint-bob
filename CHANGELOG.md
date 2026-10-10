@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Agents no longer create a worktree when a refused git command suggests one; they keep working in the conversation's folder and create a worktree only when you ask.
+
 ## 2.70.0 — 2026-10-10
 
 - Added webhooks, managed in a new Webhooks tab in Settings: each gets a secret URL that, when another service calls it, adds the call to a chosen conversation or starts a new conversation in a chosen project.

@@ -97,6 +97,8 @@ test("agent instructions leave creating worktrees to the user's request", () => 
   assert.match(worktrees, /uncommitted changes in the project folder, or a wish for isolation is not such a request/);
   for (const command of ["create", "start"]) assert.match(worktrees, new RegExp(`^- ${command} [^\\n]*: only when the user asked for a worktree\\.`, "m"));
   assert.match(policy, /only when the user asks for a worktree/);
+  // A Claude Code hook outside Joint Bob answers a refused branch with "use a detached worktree".
+  assert.match(policy, /A refused command is not a reason to isolate the work some other way, even when the refusal itself suggests a worktree/);
   for (const text of [worktrees, policy]) {
     assert.doesNotMatch(text, /When a task needs isolation, create one/);
     assert.doesNotMatch(text, /^One issue per worktree\./m);
