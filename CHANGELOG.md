@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed finished worktrees to be removed as soon as their last conversation is marked done, even with unmerged edits or an open pull request, instead of waiting for a merge check.
+
 ## 2.68.1 — 2026-10-10
 
 - Retire deleted projects through signed twin policy delivery, repair legacy owner orphans, and clear obsolete conversation-history sync errors without removing project files.

@@ -6,7 +6,7 @@ import test from "node:test";
 import type { SessionSummary } from "../src/types.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SignedIn } from "./dev-nodes.js";
 
-test("marking the last worktree conversation done deletes only a clean, idle worktree", async () => {
+test("marking the last worktree conversation done deletes the worktree, clean or not", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-worktree-done-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
@@ -32,9 +32,9 @@ test("marking the last worktree conversation done deletes only a clean, idle wor
     await mkdir(dirtyMarkers, { recursive: true });
     await writeFile(path.join(dirtyMarkers, `${first.harnessId}--${first.id}.json`), "{}\n");
     await writeFile(path.join(dirty.path, "unfinished.txt"), "keep this\n");
-    const retained = await done(first);
-    assert.match(retained.body.retainedWorktrees[dirty.id] ?? "", /unmerged changes/);
-    await access(dirty.path);
+    const removed = await done(first);
+    assert.deepEqual(removed.body.deletedWorktreeIds, [dirty.id], "unmerged edits do not keep a finished worktree");
+    await assert.rejects(access(dirty.path), { code: "ENOENT" });
 
     // Simulate worktrees whose done marks predate this feature: a GET stays read-only,
     // and opening the list's cleanup mutation reconciles those persisted marks.
@@ -47,7 +47,7 @@ test("marking the last worktree conversation done deletes only a clean, idle wor
     const cleanup = await api<{ deletedWorktreeIds: string[]; worktrees: Array<{ id: string }> }>(node, auth, "POST", `/projects/${project.id}/worktrees/cleanup`, {});
     assert.equal(cleanup.status, 200);
     assert.deepEqual(cleanup.body.deletedWorktreeIds, [old.id]);
-    assert.deepEqual(new Set(cleanup.body.worktrees.map(({ id }) => id)), new Set([dirty.id, empty.id]));
+    assert.deepEqual(new Set(cleanup.body.worktrees.map(({ id }) => id)), new Set([empty.id]));
     await assert.rejects(access(old.path), { code: "ENOENT" });
     assert.equal((await api(node, auth, "POST", "/projects/missing/worktrees/cleanup", {})).status, 404);
   } finally {
