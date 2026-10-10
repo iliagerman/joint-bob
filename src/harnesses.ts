@@ -233,12 +233,17 @@ export function orderSessionFamilies(sessions: SessionSummary[], rootLimit = Inf
     ordered.push(session);
     for (const child of children.get(session.path) ?? []) append(child);
   };
-  for (const root of roots.slice(0, rootLimit)) append(root);
+  // Scheduled runs stay hidden until the reader asks for them, so they draw on their own
+  // allowance; an hourly task would otherwise push every other conversation out of the list.
+  const kept = { ordinary: 0, scheduled: 0 };
+  for (const root of roots) {
+    if (kept[root.cronTaskId ? "scheduled" : "ordinary"]++ < rootLimit) append(root);
+  }
   return ordered;
 }
 
-/** Lists every registered harness through the shared catalog, then applies Joint Bob metadata. */
-export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = [], pinnedSessionIds: string[] = []): Promise<SessionSummary[]> {
+/** Lists harness sessions with metadata. The UI caps root families; sync passes Infinity. */
+export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = [], pinnedSessionIds: string[] = [], rootLimit = 50): Promise<SessionSummary[]> {
   const [overrides, colors, classifications, doneMarks, initialSessions, records] = await Promise.all([
     sessionTitleOverrides(),
     sessionColorOverrides(),
@@ -389,5 +394,5 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     ...ordered.filter(isPinned),
     ...ordered.filter((session) => !isPinned(session) && !session.doneAt),
     ...ordered.filter((session) => !isPinned(session) && session.doneAt),
-  ], 50);
+  ], rootLimit);
 }
