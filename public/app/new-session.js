@@ -156,7 +156,7 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
     state.harnesses.length ? undefined : loadHarnesses(),
   ]);
   if (state.activeProjectId !== projectId) return;
-  classification.reset(settings.conversationLabels);
+  classification.reset(settings.conversationLabels, null, settings.conversationLabelIcons);
   newWorktreeByDefault = settings.newConversationWorktree === true;
   worktreeChosen = preselectedWorktreeId !== null;
   state.newSessionDraft = { sessionPath, defaultTitle, sourceTaskId, projectId: projectId || state.projects[0]?.id };

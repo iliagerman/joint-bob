@@ -905,6 +905,11 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   vertical-align: middle;
   overflow-wrap: anywhere;
 }
+.session-classification-icon {
+  padding: 1px 4px;
+  border-color: transparent;
+  font: 14px/1.2 system-ui, sans-serif;
+}
 .project-sync-status-synced { color: var(--live); }
 .project-sync-status-syncing { color: var(--accent); }
 .project-sync-status-paused { color: var(--amber); }
@@ -4211,3 +4216,9 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
   .relay-row { flex-wrap: wrap; }
   .relay-row-actions { justify-content: flex-start; }
 }
+
+/* A fixed height keeps the dialog from moving when the rows re-render on blur, which would swallow the click on Save. */
+.label-icons { display: grid; align-content: start; gap: 6px; height: 220px; margin: 0; padding: 8px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+.label-icon-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; gap: 8px; align-items: center; }
+.label-icon-name { overflow-wrap: anywhere; }
+.label-icon-input { text-align: center; font-size: 16px; }

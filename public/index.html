@@ -805,6 +805,16 @@
             <textarea id="settingsConversationLabels" rows="8" data-testid="settings-conversation-labels" aria-describedby="settingsLabelsHint"></textarea>
           </label>
           <p class="settings-hint" id="settingsLabelsHint">One label per line, up to 50 labels of 80 characters each. These choices are node-local. Other always allows free text. Changing this list does not change existing conversation classifications.</p>
+          <fieldset class="label-icons" id="settingsLabelIcons" data-testid="settings-label-icons">
+            <legend>Label icons</legend>
+          </fieldset>
+          <label>Agent that generates icons
+            <select id="settingsLabelIconHarness" data-testid="settings-label-icon-harness"></select>
+          </label>
+          <label id="settingsLabelIconModelLabel" hidden>Model
+            <select id="settingsLabelIconModel" data-testid="settings-label-icon-model"></select>
+          </label>
+          <p class="settings-hint">An icon replaces the label's text in lists and filters. Leave it empty to show the text. Generate asks the chosen agent and model for one emoji. Automatic uses the default agent on its default model.</p>
         </section>
 
         <section class="settings-panel" id="settingsPanel-conversations" role="tabpanel" aria-labelledby="settingsTab-conversations" tabindex="0" hidden>

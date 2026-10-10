@@ -13,6 +13,7 @@ import { syncRecentSessionActivity } from "./recents.js";
 import { openListedSession, reviewableSessions } from "./reviews.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { openSecretScope } from "./secrets.js";
+import { labelIcon, labelOptionText } from "./classification.js";
 import { openConversationClassificationDialog, openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
 import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
 import { loadWorktrees, otherWorktreesSection, worktreeBadge, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
@@ -32,7 +33,7 @@ function renderClassificationFilter() {
   for (const value of selected) if (value.startsWith("label:")) labels.add(value.slice(6));
   classificationFilter.setOptions([
     { value: "unclassified", label: "Unclassified" },
-    ...[...labels].sort((left, right) => left.localeCompare(right)).map((label) => ({ value: `label:${label}`, label })),
+    ...[...labels].sort((left, right) => left.localeCompare(right)).map((label) => ({ value: `label:${label}`, label: labelOptionText(label, state.conversationLabelIcons) })),
   ]);
   classificationFilter.setValues(selected);
 }
@@ -156,7 +157,15 @@ function sessionCard(session, sessionActive, sessionPinned, ticketTask) {
     const classification = document.createElement("span");
     classification.className = "session-classification";
     classification.dataset.testid = "session-classification";
-    classification.textContent = session.classification;
+    const icon = labelIcon(session.classification, state.conversationLabelIcons);
+    // An icon replaces the name visually; the name stays for assistive tech and hover.
+    classification.textContent = icon || session.classification;
+    if (icon) {
+      classification.classList.add("session-classification-icon");
+      classification.title = session.classification;
+      classification.setAttribute("role", "img");
+      classification.setAttribute("aria-label", session.classification);
+    }
     sessionName.append(classification);
   }
   button.append(sessionName, meta, usageBadge(session.usage, "session-usage-cost"));

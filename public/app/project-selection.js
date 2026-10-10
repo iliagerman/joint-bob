@@ -58,6 +58,7 @@ export async function loadProjects() {
   void loadClusterDirectory().catch((error) => console.warn("Could not load clusters for the list filters", error));
   void api("/api/settings").then((settings) => {
     state.conversationLabels = settings.conversationLabels;
+    state.conversationLabelIcons = settings.conversationLabelIcons;
     renderSessions();
   }).catch((error) => console.warn("Could not load conversation labels", error));
 

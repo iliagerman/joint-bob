@@ -35,6 +35,7 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
     await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-labels").click();
+    await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
     await page.getByTestId("settings-conversation-labels").fill("Research\nBug\nFeature\nPOC\nSupport");
     await page.getByTestId("settings-save-button").click();
     await page.locator("#settingsDialog").waitFor({ state: "hidden" });
@@ -56,7 +57,7 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
       assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")), "new-session-classification-select",
         "the step hands the cursor to its own first control");
       await select.selectOption(selection);
-      assert.deepEqual(await select.locator("option").allTextContents(), ["Unclassified", "Research", "Bug", "Feature", "POC", "Support", "Other…"]);
+      assert.deepEqual(await select.locator("option").allTextContents(), ["Unclassified", "🔬 Research", "🐞 Bug", "✨ Feature", "🧪 POC", "Support", "Other…"]);
       if (selection === "__other__") {
         await page.getByTestId("new-session-name-start-button").click();
         assert.equal(await page.getByTestId("new-session-name-dialog").isVisible(), true, "Other requires text");

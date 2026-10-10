@@ -1069,7 +1069,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     const generation = ++classificationGeneration;
     void api("/api/settings").then((settings) => {
       if (generation !== classificationGeneration) return;
-      classification.reset(settings.conversationLabels);
+      classification.reset(settings.conversationLabels, null, settings.conversationLabelIcons);
       classificationReady = true;
       renderPickerOptions();
     }).catch((error) => { pickerStatus.textContent = error.message; });

@@ -1,3 +1,14 @@
+/** The icon chosen for a label, or "" when it shows as text only. */
+export function labelIcon(name, icons) {
+  return icons?.[name] || "";
+}
+
+/** Option and filter text: the icon leads the name, so the choice stays readable. */
+export function labelOptionText(name, icons) {
+  const icon = labelIcon(name, icons);
+  return icon ? `${icon} ${name}` : name;
+}
+
 /** Native controls shared by the conversation dialog and the canvas picker. */
 export function classificationPicker(container, prefix) {
   const label = document.createElement("label");
@@ -27,9 +38,9 @@ export function classificationPicker(container, prefix) {
     needsOther() {
       return select.value === "__other__" && !other.value.trim();
     },
-    reset(labels, current = null) {
+    reset(labels, current = null, icons = {}) {
       select.disabled = !labels;
-      select.replaceChildren(new Option(labels ? "Unclassified" : "Loading labels…", ""), ...(labels || []).map((name) => new Option(name, name)), new Option("Other…", "__other__"));
+      select.replaceChildren(new Option(labels ? "Unclassified" : "Loading labels…", ""), ...(labels || []).map((name) => new Option(labelOptionText(name, icons), name)), new Option("Other…", "__other__"));
       const custom = current && !labels.includes(current);
       select.value = custom ? "__other__" : current || "";
       other.value = custom ? current : "";

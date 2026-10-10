@@ -125,6 +125,7 @@ export const state = {
   hiddenCronTaskIds: new Set(),
   knownCronTaskIds: new Set(),
   conversationLabels: [],
+  conversationLabelIcons: {},
   conversationCommands: null,
   watchSocket: null,
   watchProjectId: null,

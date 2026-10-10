@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## 2.68.6 — 2026-10-10
 
 - Fixed the chat toolbar always pushing its action buttons onto a second row; they now share the model and reasoning dropdowns' row when there is room and drop below as a group when there is not.
+- Added emoji icons for conversation labels, which show in place of the label's name in lists and filters; you can type an icon or have an agent pick one in Settings.
 
 ## 2.68.5 — 2026-10-10
 

@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { appendAuditEvent } from "./audit.js";
 import { resolveDataDirectory } from "./data-directory.js";
-import { conversationLabelsSchema, DEFAULT_CONVERSATION_LABELS } from "./conversation-labels.js";
+import { conversationLabelIconsSchema, conversationLabelsSchema, DEFAULT_CONVERSATION_LABEL_ICONS, DEFAULT_CONVERSATION_LABELS, iconsForLabels } from "./conversation-labels.js";
 import { conversationDefaultsSchema, type ConversationDefault } from "./harnesses/defaults.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime, detectExecutable, runtimeOverrides } from "./harnesses/runtime-configuration.js";
@@ -71,6 +71,13 @@ function syncCheck(defaults: Record<string, ConversationDefault>): SyncCheckSett
   return parsed.success ? parsed.data : defaultSyncCheck(defaults);
 }
 
+function labelIcons(): Record<string, string> {
+  const stored = setting("conversationLabelIcons");
+  if (!stored) return { ...DEFAULT_CONVERSATION_LABEL_ICONS };
+  const parsed = conversationLabelIconsSchema.safeParse(JSON.parse(stored.value));
+  return parsed.success ? parsed.data : { ...DEFAULT_CONVERSATION_LABEL_ICONS };
+}
+
 function validateSyncCheck(input: SyncCheckSettings): SyncCheckSettings {
   const parsed = syncCheckSchema.parse(input);
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === parsed.harnessId);
@@ -100,6 +107,7 @@ export interface SettingsInput {
   projects?: { homePath?: string; rootPath?: string; personalRootPath?: string; workRootPath?: string };
   resources?: ResourcePaths;
   conversationLabels?: string[];
+  conversationLabelIcons?: Record<string, string>;
   conversationHistoryDays?: number;
   conversationRetentionDays?: number;
   autoCompactThreshold?: number | null;
@@ -127,6 +135,7 @@ export interface SettingsResponse {
   projects: { homePath: string };
   resources: ResourcePaths;
   conversationLabels: string[];
+  conversationLabelIcons: Record<string, string>;
   conversationHistoryDays: number;
   conversationRetentionDays: number;
   autoCompactThreshold: number | null;
@@ -258,6 +267,7 @@ export function getSettings(): SettingsResponse {
     projects: { homePath: value("projects.homePath", defaultManagedHome()) },
     resources: readResourcePaths("resources."),
     conversationLabels: conversationLabelsSchema.parse(JSON.parse(value("conversationLabels", JSON.stringify(DEFAULT_CONVERSATION_LABELS)))),
+    conversationLabelIcons: labelIcons(),
     conversationHistoryDays: Number(value("conversationHistoryDays", "30")),
     conversationRetentionDays: Number(value("conversationRetentionDays", "40")),
     autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
@@ -358,6 +368,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const homePath = input.projects?.homePath ?? previous.projects.homePath;
   const resources = input.resources ? normalizeResourcePaths(input.resources) : previous.resources;
   const conversationLabels = conversationLabelsSchema.parse(input.conversationLabels ?? previous.conversationLabels);
+  const conversationLabelIcons = iconsForLabels(conversationLabels, conversationLabelIconsSchema.parse(input.conversationLabelIcons ?? previous.conversationLabelIcons));
   const conversationHistoryDays = input.conversationHistoryDays ?? previous.conversationHistoryDays;
   const conversationRetentionDays = input.conversationRetentionDays ?? previous.conversationRetentionDays;
   if (!Number.isInteger(conversationRetentionDays) || conversationRetentionDays < 1 || conversationRetentionDays > 3650) throw new Error("Conversation retention must be between 1 and 3650 days");
@@ -382,6 +393,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.homePath", path.resolve(homePath));
     save(db, "conversationLabels", JSON.stringify(conversationLabels));
+    save(db, "conversationLabelIcons", JSON.stringify(conversationLabelIcons));
     save(db, "conversationHistoryDays", String(conversationHistoryDays));
     save(db, "conversationRetentionDays", String(conversationRetentionDays));
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));

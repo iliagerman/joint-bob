@@ -5,7 +5,7 @@ import { z } from "zod";
 import { canonicalCanvasKeyToken } from "../canvas-keys.js";
 import { listHarnesses } from "../harnesses.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
-import { classificationSchema, conversationLabelsSchema } from "../conversation-labels.js";
+import { classificationSchema, conversationLabelIconsSchema, conversationLabelsSchema } from "../conversation-labels.js";
 import { CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal } from "../preferences.js";
 import { isHarnessId, PROJECT_COLORS } from "../types.js";
 import { canonicalClusterUrl, isClusterOriginUrl } from "./http-auth.js";
@@ -165,6 +165,8 @@ export const sessionTitleSchema = z.object({
   engine: registeredHarnessIdSchema,
   title: z.string().trim().max(200),
 });
+export const labelIconRequestSchema = z.object({ label: classificationSchema, harnessId: z.string().trim().min(1).max(100).optional(), provider: z.string().trim().max(200).optional(), modelId: z.string().trim().max(300).optional() }).strict();
+
 export const sessionClassificationSchema = z.object({
   sessionId: z.string().trim().min(1).max(240),
   engine: registeredHarnessIdSchema,
@@ -376,6 +378,7 @@ export const settingsSchema = z.object({
   }).optional(),
   resources: resourcePathsSchema.optional(),
   conversationLabels: conversationLabelsSchema.optional(),
+  conversationLabelIcons: conversationLabelIconsSchema.optional(),
   conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
   conversationRetentionDays: z.number().int().min(1).max(3650).optional(),
   autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),

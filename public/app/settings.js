@@ -21,6 +21,7 @@ import { createSearchableSelect } from "./searchable-select.js";
 import { refreshSessionsQuietly } from "./socket.js";
 import { loadWorkspaces } from "./workspaces.js";
 import { loadGitReviewerSettings } from "./git-reviewer-options.js";
+import { labelIconsValue, loadLabelIcons } from "./label-icons.js";
 
 /** Compares two "major.minor.patch" strings; anything else never counts as newer. */
 function isNewerVersion(candidate, baseline) {
@@ -355,6 +356,7 @@ async function loadSettings() {
   elements.settingsRestartMessage.textContent = "";
   elements.settingsProjectHome.value = settings.projects.homePath;
   document.querySelector("#settingsConversationLabels").value = settings.conversationLabels.join("\n");
+  loadLabelIcons(settings.conversationLabelIcons);
   document.querySelector("#settingsConversationHistoryDays").value = settings.conversationHistoryDays;
   document.querySelector("#settingsConversationRetentionDays").value = settings.conversationRetentionDays;
   elements.settingsAutoCompactEnabled.checked = settings.autoCompactThreshold !== null;
@@ -405,6 +407,7 @@ async function saveSettings(event) {
       projects: { homePath: elements.settingsProjectHome.value.trim() },
       resources: resourceFieldsValue(globalResourceFields),
       conversationLabels: document.querySelector("#settingsConversationLabels").value.split("\n").map((label) => label.trim()).filter(Boolean),
+      conversationLabelIcons: labelIconsValue(),
       conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
       conversationRetentionDays: Number(document.querySelector("#settingsConversationRetentionDays").value),
       autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
@@ -421,6 +424,7 @@ async function saveSettings(event) {
     }),
   });
   state.conversationLabels = saved.conversationLabels;
+  state.conversationLabelIcons = saved.conversationLabelIcons;
   if (state.activeProjectId) await refreshSessionsQuietly();
   else renderSessions();
   const restartRequired = harnessDescriptors.filter(({ id }) => saved.restartRequired[id]).map(({ label }) => `${label} configuration`);
