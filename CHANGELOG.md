@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.68.5 — 2026-10-10
+
+- Project worktrees that no conversation has started in are removed 30 minutes after they were created, instead of 10, and are kept while anything inside them changed in the last 30 minutes.
+
 ## 2.68.4 — 2026-10-10
 
 - Fixed the right-hand filter dropdowns in the conversation list so they open inside the list's lane instead of making the whole list scroll sideways.

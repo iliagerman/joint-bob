@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -91,18 +91,36 @@ test("a damaged baseline does not block removing a finished worktree", async (co
   await assert.rejects(access(worktree.path), { code: "ENOENT" });
 });
 
-test("a worktree with no conversations is removed after ten minutes, with or without edits", async (context) => {
+test("a worktree with no conversations is removed after thirty minutes, with or without edits", async (context) => {
   const { project } = await fixture(context);
   const clean = await createProjectWorktree(project, { name: "abandoned" });
   const edited = await createProjectWorktree(project, { name: "abandoned with edits" });
   await writeFile(path.join(edited.path, "index.ts"), "export const value = 2;\n");
   assert.deepEqual((await cleanupDoneWorktrees(project)).deletedWorktreeIds, [], "a new worktree stays");
   const now = Date.now();
-  context.mock.method(Date, "now", () => now + 11 * 60_000);
+  context.mock.method(Date, "now", () => now + 31 * 60_000);
   const result = await cleanupDoneWorktrees(project);
   assert.deepEqual(new Set(result.deletedWorktreeIds), new Set([clean.id, edited.id]));
   await assert.rejects(access(clean.path), { code: "ENOENT" });
   await assert.rejects(access(edited.path), { code: "ENOENT" });
+});
+
+test("an empty worktree changed within the last thirty minutes is kept until it has been quiet", async (context) => {
+  const { project } = await fixture(context);
+  const worktree = await createProjectWorktree(project, { name: "active without conversation" });
+  const created = Date.now();
+  let clock = created + 31 * 60_000;
+  context.mock.method(Date, "now", () => clock);
+  const file = path.join(worktree.path, "index.ts");
+  await writeFile(file, "export const value = 2;\n");
+  await utimes(file, new Date(clock - 5 * 60_000), new Date(clock - 5 * 60_000));
+  const kept = await cleanupDoneWorktrees(project);
+  assert.deepEqual(kept.deletedWorktreeIds, []);
+  assert.equal(kept.retainedWorktrees[worktree.id], "Worktree kept: recent activity");
+  await access(worktree.path);
+  clock = created + 31 * 60_000 + 40 * 60_000;
+  assert.deepEqual((await cleanupDoneWorktrees(project)).deletedWorktreeIds, [worktree.id]);
+  await assert.rejects(access(worktree.path), { code: "ENOENT" });
 });
 
 test("the periodic sweep removes finished worktrees even with unmerged edits or a pull request", async (context) => {

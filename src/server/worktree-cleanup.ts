@@ -1,3 +1,5 @@
+import { lstat, readdir } from "node:fs/promises";
+import path from "node:path";
 import { backgroundTaskConversationId, readActiveBackgroundTaskIdentities } from "../background-tasks.js";
 import { listConversationRecords } from "../conversation-records.js";
 import { conversationWorkActive } from "../conversation-work.js";
@@ -7,7 +9,7 @@ import { sessionDoneOverrides } from "../names.js";
 import { deleteProjectWorktree, listProjectWorktrees, worktreeConversationIndex } from "../project-worktrees.js";
 import { listProjects } from "../store.js";
 import { isHarnessId, type ProjectRecord } from "../types.js";
-import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
+import { findHarnessSession, harnessSessionBusy, harnessSessions } from "./harness-sessions.js";
 import { assertProjectEditable, ProjectLockedError } from "./projects.js";
 import { broadcastToProject } from "./realtime.js";
 
@@ -16,8 +18,8 @@ interface CleanupResult {
   retainedWorktrees: Record<string, string>;
 }
 
-/** A worktree nobody has started a conversation in is removed once it is this old. */
-const EMPTY_WORKTREE_GRACE_MS = 10 * 60_000;
+/** A worktree nobody has started a conversation in is removed once it is this old and nothing inside it has changed for as long. */
+const EMPTY_WORKTREE_GRACE_MS = 30 * 60_000;
 
 const pending = new Map<string, Promise<CleanupResult>>();
 
@@ -99,7 +101,7 @@ async function cleanup(project: ProjectRecord): Promise<CleanupResult> {
   return result;
 }
 
-/** Any worktree with no conversation is removed after the grace period, whether or not it has a pull request or unmerged changes. */
+/** Any worktree with no conversation is removed after the grace period, whether or not it has a pull request or unmerged changes, unless it is in use. */
 async function cleanupEmptyWorktrees(project: ProjectRecord, result: CleanupResult): Promise<void> {
   const hasConversations = async (worktreeId: string) => [...(await worktreeConversationIndex(project.id)).values()].some(({ id }) => id === worktreeId);
   for (const worktree of await listProjectWorktrees(project.id)) {
@@ -107,6 +109,10 @@ async function cleanupEmptyWorktrees(project: ProjectRecord, result: CleanupResu
     try {
       await assertProjectEditable(project);
       if (await hasConversations(worktree.id)) continue;
+      if (await worktreeInUse(worktree.path)) {
+        result.retainedWorktrees[worktree.id] = "Worktree kept: recent activity";
+        continue;
+      }
       await deleteProjectWorktree(project.id, worktree.id);
       result.deletedWorktreeIds.push(worktree.id);
     } catch (error) {
@@ -116,4 +122,26 @@ async function cleanupEmptyWorktrees(project: ProjectRecord, result: CleanupResu
       if (!(error instanceof ProjectLockedError)) console.warn(`Worktree cleanup failed for ${worktree.id}`, error);
     }
   }
+}
+
+/** A harness session open in the folder, or any change inside it within the grace period, means someone is still working there. */
+async function worktreeInUse(worktreePath: string): Promise<boolean> {
+  const prefix = `${worktreePath}${path.sep}`;
+  if ([...harnessSessions.values()].some(({ cwd }) => cwd === worktreePath || cwd.startsWith(prefix))) return true;
+  return changedSince(worktreePath, Date.now() - EMPTY_WORKTREE_GRACE_MS);
+}
+
+async function changedSince(dir: string, since: number): Promise<boolean> {
+  let entries;
+  try { entries = await readdir(dir, { withFileTypes: true }); }
+  catch { return false; }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    let info;
+    try { info = await lstat(full); }
+    catch { continue; }
+    if (info.mtimeMs >= since) return true;
+    if (entry.isDirectory() && await changedSince(full, since)) return true;
+  }
+  return false;
 }
