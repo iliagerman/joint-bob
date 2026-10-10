@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.68.4 — 2026-10-10
 
-- Fixed the right-hand list filter dropdowns so they open inside their column instead of scrolling the list sideways.
+- Fixed the right-hand filter dropdowns in the conversation list so they open inside the list's lane instead of making the whole list scroll sideways.
 
 ## 2.68.3 — 2026-10-10
 
