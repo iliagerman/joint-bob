@@ -905,10 +905,20 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   vertical-align: middle;
   overflow-wrap: anywhere;
 }
-.session-classification-icon {
-  padding: 1px 4px;
+/* The last title word and its label wrap together; `.session-card span` would clamp this span, so it resets that. */
+.session-card .session-title-tail { display: inline; -webkit-line-clamp: none; overflow: visible; white-space: nowrap; }
+/* `.session-card span` makes spans clamped line boxes; a label badge must stay inline beside the title. */
+.session-card .session-classification {
+  display: inline-block;
+  -webkit-line-clamp: none;
+  overflow: visible;
+  vertical-align: baseline;
+}
+.session-card .session-classification-icon {
+  padding: 0 4px;
   border-color: transparent;
-  font: 14px/1.2 system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.35;
 }
 .project-sync-status-synced { color: var(--live); }
 .project-sync-status-syncing { color: var(--accent); }

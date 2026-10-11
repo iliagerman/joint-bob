@@ -141,7 +141,8 @@ function sessionCard(session, sessionActive, sessionPinned, ticketTask) {
   if (session.color) button.dataset.color = session.color;
   if (session.worktree) button.dataset.worktreeColor = session.worktree.color;
   const sessionName = document.createElement("strong");
-  sessionName.textContent = shortSessionTitle(session);
+  const title = shortSessionTitle(session);
+  sessionName.textContent = title;
   const meta = document.createElement("span");
   meta.textContent = formatDate(session.updatedAt || session.createdAt);
   const agentId = sessionAgentId(session);
@@ -166,7 +167,12 @@ function sessionCard(session, sessionActive, sessionPinned, ticketTask) {
       classification.setAttribute("role", "img");
       classification.setAttribute("aria-label", session.classification);
     }
-    sessionName.append(classification);
+    // The last word and its label wrap as one piece, so a full-width title never leaves the label alone on a row.
+    const cut = title.lastIndexOf(" ") + 1;
+    const tail = document.createElement("span");
+    tail.className = "session-title-tail";
+    tail.append(title.slice(cut), classification);
+    sessionName.replaceChildren(title.slice(0, cut), tail);
   }
   button.append(sessionName, meta, usageBadge(session.usage, "session-usage-cost"));
   const displayState = sessionDisplayState(session);
