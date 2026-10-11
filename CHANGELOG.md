@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.71.1 — 2026-10-11
 
-- Fixed the offline app cache leaving out the conversation label icon script, so label icons work when the app loads from its cache.
+- Fixed label icons not showing when the app opens offline from its cache.
 
 ## 2.71.0 — 2026-10-10
 
