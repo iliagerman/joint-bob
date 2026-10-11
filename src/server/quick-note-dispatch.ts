@@ -71,7 +71,7 @@ export function planQuickNoteLaunches(notes: QuickNotePlanCandidate[], queue: Qu
     within each project (including harness-switched conversations). */
 export async function runningConversationCounts(): Promise<Map<string, number>> {
   const running = new Map<string, Set<string>>();
-  const projects = await projectsWithSharedNames(false);
+  const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
   await Promise.all(projects.map(async (project) => {
     const sessions = await listProjectSessionsWithReviewState(project, "", "");
     running.set(project.id, new Set(sessions.filter(session => session.running).map(session => `${project.id}:${session.conversationId ?? session.id}`)));

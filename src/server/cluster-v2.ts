@@ -16,6 +16,7 @@ import { listDifficultyClassifiers } from "../classifiers/registry.js";
 import { applyUserReplication } from "../user-replication.js";
 import { advertisedNodeUrl } from "../relay/index.js";
 import { peerFetch } from "../relay/transport.js";
+import { fetchPeer, PeerUnreachableError, whilePeerOptional } from "./peer-availability.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const origin = z.string().transform((value, context) => {
@@ -213,10 +214,12 @@ export async function flushV2MembershipOutbox(): Promise<void> {
       try {
         const target = "/api/cluster/v2/membership/snapshot";
         const body = Buffer.from(JSON.stringify({ snapshot: delivery.snapshot }));
-        const response = await peerFetch(new URL(target, delivery.url), {
+        // The delivery stays queued, so a peer known to be down is asked once per backoff
+        // window instead of on every flush, each of which waited out its connection attempt.
+        const response = await whilePeerOptional(() => fetchPeer(db, delivery.peerId, new URL(target, delivery.url), {
           method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), body,
           headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, local.id, delivery.peerId, "POST", target, body) },
-        }, delivery.peerId);
+        }));
         if (!response.ok) throw new ClusterV2HttpError(response.status, "Membership delivery rejected");
         for (const pending of deliveries) {
           if (pending.clusterId === delivery.clusterId && pending.peerId === delivery.peerId && pending.revision <= delivery.revision) {
@@ -224,6 +227,7 @@ export async function flushV2MembershipOutbox(): Promise<void> {
           }
         }
       } catch (error) {
+        if (error instanceof PeerUnreachableError) continue;
         const status = error instanceof ClusterV2HttpError ? error.statusCode : 500;
         console.warn(`V2 membership delivery to ${delivery.peerId} failed (${status})`);
       }

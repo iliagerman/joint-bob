@@ -10,7 +10,7 @@ import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { clearHarnessSessionCache, listHarnessSyncFolders } from "../harnesses.js";
 import { getProject, updateProjectSyncFolderId } from "../store.js";
-import { ensureSyncthingDevice, ensureSharedProjectFolder, removeSyncthingDevices, pauseSyncthingFolders, syncthingDeviceId, syncthingPeerCaughtUp } from "../syncthing.js";
+import { ensureSyncthingDevice, ensureSharedProjectFolder, removeSyncthingDevices, pauseSyncthingFolders, syncthingConnectionGeneration, syncthingDeviceId, syncthingPeerCaughtUp } from "../syncthing.js";
 import { expectedTaskWorkspacePath, projectTicketSyncFolderId, TICKET_WORKSPACE_FOLDER_ID } from "../task-workspaces.js";
 import { replicationPeers } from "./replication-v2.js";
 import { projectWorktreeRoot, projectWorktreeSyncFolderId } from "../project-worktrees.js";
@@ -96,6 +96,8 @@ export async function receiveFileEnrollment(peer:string,input:unknown){
  const device=await syncthingDeviceId();if(!device)throw new ClusterV2HttpError(409,"Syncthing is not configured on this node");
  receiveLocations(db,local.id,peer,payload.locations);
  const projects=await enroll(db,local.id,peer,payload.deviceId,payload.projects);
+ // The peer answers again, so this node's own failed enrollment with it need not wait out its retry.
+ retries.delete(peer);
  return {deviceId:device,projects,locations:projectLocations(db,projects)};
 }
 async function revokeFiles(db:DatabaseSync,local:string):Promise<void>{
@@ -119,14 +121,32 @@ export async function sharingFilesStatus(db:DatabaseSync,local:string,peer:strin
  catch(error){return {ready:false,error:error instanceof Error?error.message:"Syncthing status unavailable"};}
 }
 
+// Enrolling asks the peer and then walks every shared folder through Syncthing's REST API on
+// both machines. The administration flush runs every few seconds, so repeating it there cost
+// hundreds of requests a cycle with nothing to change. Each peer is enrolled again only when
+// what would be sent differs from what it last accepted, or a failed attempt is due a retry.
+const RETRY_MS=15_000,MAX_RETRY_MS=5*60_000;
+const enrolled=new Map<string,string>();
+const retries=new Map<string,{count:number;state:string;at:number}>();
+function enrollmentState(db:DatabaseSync,projects:string[]):string{
+ const lookup=db.prepare("SELECT id,name,path,sync_folder_id FROM projects WHERE id=?");
+ return JSON.stringify([syncthingConnectionGeneration(),projects.map(id=>lookup.get(id))]);
+}
+
 export async function flushSharingFiles():Promise<void>{
  const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);
  await revokeFiles(db,local.id);
+ const peers=replicationPeers(db,local.id),now=Date.now();
+ for(const known of [enrolled,retries])for(const peerId of known.keys())if(!peers.some(peer=>peer.nodeId===peerId))known.delete(peerId);
+ const due=peers.flatMap(peer=>{
+  const projects=sharedProjectIds(db,local.id,peer.nodeId),state=enrollmentState(db,projects),retry=retries.get(peer.nodeId);
+  return enrolled.get(peer.nodeId)===state||(retry?.state===state&&retry.at>now)?[]:[{peer,projects,state}];
+ });
+ if(!due.length)return;
  const device=await syncthingDeviceId();
  if(device)await pauseSyncthingFolders([TICKET_WORKSPACE_FOLDER_ID,...listHarnessSyncFolders().map(folder=>folder.id)]);
- for(const peer of replicationPeers(db,local.id))try{
+ for(const {peer,projects,state} of due)try{
   if(!device)throw new Error("Syncthing is not configured on this node");
-  const projects=sharedProjectIds(db,local.id,peer.nodeId);
   const target="/api/cluster/v2/files/enroll",body=Buffer.from(JSON.stringify({deviceId:device,projects,locations:projectLocations(db,projects)}));
   const response=await peerFetch(new URL(target,peer.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10000),body,
    headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local.id,peer.nodeId,"POST",target,body)}}, peer.nodeId);
@@ -134,5 +154,11 @@ export async function flushSharingFiles():Promise<void>{
   const payload=fileEnrollmentSchema.parse(await response.json());
   receiveLocations(db,local.id,peer.nodeId,payload.locations);
   await enroll(db,local.id,peer.nodeId,payload.deviceId,payload.projects);
- }catch(error){db.prepare("INSERT OR REPLACE INTO cluster_v2_file_errors VALUES(?,?)").run(peer.nodeId,error instanceof Error?error.message:"File enrollment failed");}
+  enrolled.set(peer.nodeId,state);retries.delete(peer.nodeId);
+ }catch(error){
+  enrolled.delete(peer.nodeId);
+  const count=(retries.get(peer.nodeId)?.count??0)+1;
+  retries.set(peer.nodeId,{count,state,at:Date.now()+Math.min(MAX_RETRY_MS,RETRY_MS*2**(count-1))});
+  db.prepare("INSERT OR REPLACE INTO cluster_v2_file_errors VALUES(?,?)").run(peer.nodeId,error instanceof Error?error.message:"File enrollment failed");
+ }
 }

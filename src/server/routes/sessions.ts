@@ -581,7 +581,7 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
 app.get("/api/reviews/pending", async (_request, response, next) => {
   try {
     const authSession = response.locals.authSession as AuthSession;
-    const projects = await projectsWithSharedNames(false);
+    const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
     const groups = await Promise.all(projects.map(async (project) => {
       const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
       return {
@@ -608,7 +608,7 @@ app.get("/api/reviews/pending", async (_request, response, next) => {
 app.get("/api/running", async (_request, response, next) => {
   try {
     const authSession = response.locals.authSession as AuthSession;
-    const projects = await projectsWithSharedNames(false);
+    const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
     const groups = await Promise.all(projects.map(async (project) => {
       const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
       return {

@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Fixed scheduled tasks that ask for a worktree not getting one: each run that needs it now gets a fresh worktree, as the task asks.
+- Fixed idle nodes repeating the same work every few seconds: file sharing with a twin, retries for folders that cannot be watched, and deliveries to an unreachable node now wait out a backoff instead of retrying on every cycle, and conversation lists no longer compute usage for rows they do not show.
 
 ## 2.72.0 — 2026-10-11
 

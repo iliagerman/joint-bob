@@ -218,9 +218,14 @@ async function request<T>(pathname: string, init: RequestInit = {}): Promise<T> 
   return body ? JSON.parse(body) as T : undefined as T;
 }
 
+let connectionGeneration = 0;
 export function resetSyncthingConnection(): void {
   connectionPromise = undefined;
+  connectionGeneration += 1;
 }
+
+/** Changes whenever this node is pointed at a different Syncthing, so work done against the old one is redone. */
+export function syncthingConnectionGeneration(): number { return connectionGeneration; }
 
 export async function syncthingDeviceId(): Promise<string | undefined> {
   if (!await connection()) return undefined;

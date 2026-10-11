@@ -8,7 +8,7 @@ import {
   resourcePolicyDeliveryIsCurrent, type SignedResourcePolicy,
 } from "../cluster-sharing.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { peerFetch } from "../relay/transport.js";
+import { fetchPeer, PeerUnreachableError, whilePeerOptional } from "./peer-availability.js";
 
 const acknowledgementSchema = z.object({ operationId: z.string().uuid() }).strict();
 const target = "/api/cluster/v2/resources/policy";
@@ -34,11 +34,12 @@ export async function flushResourcePolicyDeliveries(): Promise<void> {
     }
     const request = policyRequest(db, local.id, delivery.peerId, delivery.statement);
     try {
-      const response = await peerFetch(request.url, {
+      // The delivery stays queued, so a peer known to be down is asked once per backoff window.
+      const response = await whilePeerOptional(() => fetchPeer(db, delivery.peerId, request.url, {
         method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000),
         body: new Uint8Array(request.body),
         headers: { "Content-Type": "application/json", Authorization: request.authorization },
-      }, delivery.peerId);
+      }));
       if (!response.ok) {
         console.warn(`Resource policy delivery ${delivery.operationId} to ${delivery.peerId} failed (${response.status})`);
         continue;
@@ -48,8 +49,8 @@ export async function flushResourcePolicyDeliveries(): Promise<void> {
         console.warn(`Resource policy delivery ${delivery.operationId} to ${delivery.peerId} returned mismatched acknowledgement`);
         continue;
       }
-    } catch {
-      console.warn(`Resource policy delivery ${delivery.operationId} to ${delivery.peerId} failed (network/response)`);
+    } catch (error) {
+      if (!(error instanceof PeerUnreachableError)) console.warn(`Resource policy delivery ${delivery.operationId} to ${delivery.peerId} failed (network/response)`);
       continue;
     }
     acknowledgeResourcePolicyDelivery(db, delivery.operationId, delivery.peerId);

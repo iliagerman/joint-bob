@@ -378,9 +378,6 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     return {
       ...face,
       conversationId,
-      usage: face.readOnly
-        ? usageTotals({ projectIds: [project.id], projectId: project.id, sessionId: face.id })
-        : conversationUsage(project.id, conversationId),
       ...(segments.some(({ session }) => session.cronTaskId) ? { cronTaskId: segments.find(({ session }) => session.cronTaskId)!.session.cronTaskId } : {}),
       ...(segmentViews ? { segments: segmentViews } : {}),
       // A switched conversation keeps the title of its first real segment; a fresh
@@ -395,9 +392,15 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
 
   // Closed-out conversations sink below the live ones so the 50-row cap spends its
   // room on work that is still moving. Pins still outrank everything.
+  // Usage is a ledger query per conversation, so only the rows that survive the cap get one.
   return orderSessionFamilies([
     ...ordered.filter(isPinned),
     ...ordered.filter((session) => !isPinned(session) && !session.doneAt),
     ...ordered.filter((session) => !isPinned(session) && session.doneAt),
-  ], 50);
+  ], 50).map((session) => ({
+    ...session,
+    usage: session.readOnly
+      ? usageTotals({ projectIds: [project.id], projectId: project.id, sessionId: session.id })
+      : conversationUsage(project.id, session.conversationId ?? session.id),
+  }));
 }

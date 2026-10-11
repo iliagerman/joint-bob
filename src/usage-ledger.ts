@@ -121,8 +121,19 @@ export function saveDifficulty(raw: UsageDifficulty, originNodeId: string): void
     throw error;
   }
 }
+// A listing asks for one total per conversation in a single synchronous run, and every
+// total starts by resolving project aliases. Nothing else runs until that run returns, so
+// the alias table is read once per run rather than once per conversation.
+let aliasPass: { db: DatabaseSync; rows: Array<{ alias_id: string; project_id: string }> | null } | undefined;
+function projectAliases(db: DatabaseSync): Array<{ alias_id: string; project_id: string }> | null {
+  if (aliasPass?.db === db) return aliasPass.rows;
+  const exists = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_aliases'").get());
+  aliasPass = { db, rows: exists ? db.prepare("SELECT alias_id,project_id FROM project_aliases").all() as Array<{ alias_id: string; project_id: string }> : null };
+  queueMicrotask(() => { aliasPass = undefined; });
+  return aliasPass.rows;
+}
 function hasAliases(db: DatabaseSync): boolean {
-  return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_aliases'").get());
+  return projectAliases(db) !== null;
 }
 function canonicalProject(db: DatabaseSync, alias: string): string {
   return hasAliases(db) ? `COALESCE((SELECT project_id FROM project_aliases WHERE alias_id=${alias}.project_id),${alias}.project_id)` : `${alias}.project_id`;
@@ -134,8 +145,8 @@ function canonicalProject(db: DatabaseSync, alias: string): string {
  */
 function rawProjectIds(db: DatabaseSync, filters: UsageFilters): string[] {
   const projectIds = filters.projectId ? filters.projectIds.filter((id) => id === filters.projectId) : filters.projectIds;
-  if (!projectIds.length || !hasAliases(db)) return projectIds;
-  const aliases = db.prepare("SELECT alias_id,project_id FROM project_aliases").all() as Array<{ alias_id: string; project_id: string }>;
+  const aliases = projectIds.length ? projectAliases(db) : null;
+  if (!aliases) return projectIds;
   const aliased = new Set(aliases.map((row) => row.alias_id));
   return [...new Set([...projectIds.filter((id) => !aliased.has(id)), ...aliases.filter((row) => projectIds.includes(row.project_id)).map((row) => row.alias_id)])];
 }
