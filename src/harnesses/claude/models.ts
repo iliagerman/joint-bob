@@ -1,3 +1,5 @@
+import { claudeSubscriptionEnvironment, runtimeExec } from "../../account-runtime.js";
+import { resolveDataDirectory } from "../../data-directory.js";
 import os from "node:os";
 import { claudeConfigPath } from "../../claude-service.js";
 import { getSettings } from "../../settings.js";
@@ -53,10 +55,12 @@ export function claudeModelLabel(id: string): string {
 async function queryClaudeModels(executable: string): Promise<ClaudeModel[]> {
   const configPath = claudeConfigPath();
   const output = await new Promise<string>((resolve, reject) => {
+    // Never in the shared temp folder: the CLI reads settings from where it starts.
+    const launch = runtimeExec(executable, ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"], { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() });
     const child = execFile(
-      executable,
-      ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"],
-      { cwd: os.tmpdir(), env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) }, timeout: 20_000, maxBuffer: 8 * 1024 * 1024 },
+      launch.command,
+      launch.args,
+      { cwd: resolveDataDirectory(), env: launch.env, timeout: 20_000, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => (error ? reject(error) : resolve(String(stdout))),
     );
     // A CLI that exits before reading its input breaks the pipe; the callback already reports that run.

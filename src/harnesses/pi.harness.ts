@@ -1,4 +1,5 @@
 import os from "node:os";
+import { runtimeHome } from "../account-runtime.js";
 import path from "node:path";
 import { piConversationDefault } from "./pi.defaults.js";
 import { defineHarness } from "./contract.js";
@@ -17,7 +18,7 @@ function isWithin(filePath: string, root: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(filePath));
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
-function piSessionsRoot(): string { return configuredRuntime("pi", configuration.defaults(os.homedir())).sessionPath; }
+function piSessionsRoot(): string { return configuredRuntime("pi", configuration.defaults(runtimeHome())).sessionPath; }
 function hasHarnessPrefix(sessionPath: string): boolean { return /^[a-z][a-z0-9-]*:/.test(sessionPath); }
 function projectCwds(project: import("../session-paths.js").SessionProjectPaths): string[] { return [...new Set([project.path, ...(project.macPath ? [project.macPath] : []), ...(project.locations ?? []).map((location) => location.path), ...(project.additionalPaths ?? [])].map((cwd) => path.resolve(cwd)))]; }
 function sessionDir(cwd: string): string { const safe = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`; return path.join(piSessionsRoot(), safe); }

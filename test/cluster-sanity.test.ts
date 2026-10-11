@@ -159,7 +159,7 @@ test("scheduled conversation keeps its active run isolated while edits apply to 
     assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
     assert.equal(resumed.body.task.enabled, true, "a previous conversation run must not block edits or resume");
     publishPiRuntime(runtimeDb, runtime, false);
-    assert.equal((await api(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "delete", id } })).status, 200);
+    assert.equal((await api(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "delete", id, projectId: project.id } })).status, 200);
   } finally { publishPiRuntime(runtimeDb, runtime, false); runtimeDb.close(); db.close(); }
 });
 
@@ -1357,13 +1357,14 @@ test("chat ntfy sends use the replicated conversation destination on another nod
     assert.equal(click.searchParams.get("sessionId"), id);
     assert.equal(click.searchParams.has("sessionPath"), false);
     const deliveryDeadline = Date.now() + 30_000;
+    const account = (await api<{ accountId: string }>(nodeA, sessionA, "GET", "/auth/status")).body.accountId;
     let delivered = false;
     while (!delivered && Date.now() < deliveryDeadline) {
       const db = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
       try {
         const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'conversation_notification_deliveries'").get();
         assert.ok(exists, "conversation_notification_deliveries table is missing");
-        delivered = Boolean(db.prepare("SELECT 1 FROM conversation_notification_deliveries WHERE username = ? COLLATE NOCASE AND conversation_id = ? AND delivered_at >= ?").get(environment.username, id, activity));
+        delivered = Boolean(db.prepare("SELECT 1 FROM conversation_notification_deliveries WHERE username = ? COLLATE NOCASE AND conversation_id = ? AND delivered_at >= ?").get(account, id, activity));
       } finally { db.close(); }
       if (!delivered) await new Promise((resolve) => setTimeout(resolve, 100));
     }

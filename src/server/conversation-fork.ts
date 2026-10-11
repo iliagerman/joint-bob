@@ -1,3 +1,5 @@
+import { confinedToRuntime, currentRuntime } from "../account-runtime.js";
+import { withProjectRuntime } from "../project-runtime.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -26,7 +28,12 @@ function isWithin(filePath: string, root: string): boolean {
  * The fork uses the existing project directory, like a new conversation.
  * Listing through the viewer's scope reuses their cached catalog and finds pinned or
  * recent conversations past the history window; a different scope forces a full rescan. */
-export async function forkLocalConversation(sourceProject: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix = "[F]", viewer = { userId: "", username: "" }, destination: ProjectRecord = sourceProject): Promise<SessionSummary> {
+/** A fork is written where the project's agents read it: its runtime account's home. */
+export function forkLocalConversation(sourceProject: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix = "[F]", viewer = { userId: "", username: "" }, destination: ProjectRecord = sourceProject): Promise<SessionSummary> {
+  return withProjectRuntime(destination.id, () => forkInRuntime(sourceProject, engine, sessionId, titlePrefix, viewer, destination));
+}
+
+async function forkInRuntime(sourceProject: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix: string, viewer: { userId: string; username: string }, destination: ProjectRecord): Promise<SessionSummary> {
   const project = sourceProject;
   await assertProjectEditable(project);
   if (destination.id !== project.id) await assertProjectEditable(destination);
@@ -59,7 +66,7 @@ export async function forkLocalConversation(sourceProject: ProjectRecord, engine
     const result = snapshot({ project: destination, sessionId: target.sessionId, sessionPath: target.path, newSessionId: id, title, timestamp, draft: Boolean(target.draft), live: findHarnessSession(project.id, target.engine, target.sessionId)?.session });
     const root = adapter.sync.transcriptRoot();
     for (const file of result.files) {
-      if (!isWithin(file.destination, root)) throw new HarnessForkError(409, "Fork transcript is outside the configured transcript root");
+      if (!isWithin(file.destination, root) || !confinedToRuntime(currentRuntime(), file.destination)) throw new HarnessForkError(409, "Fork transcript is outside the configured transcript root");
       files.push(file);
     }
     return { engine: target.engine, sessionId: id, path: result.sessionPath, ...(result.sessionPath.startsWith("draft:") ? { draft: true } : {}) };

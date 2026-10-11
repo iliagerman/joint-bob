@@ -1,4 +1,6 @@
 import { createReadStream } from "node:fs";
+import { actingAccount, asNode } from "../account-context.js";
+import { projectVisible } from "../store.js";
 import { Readable } from "node:stream";
 import WebSocket from "ws";
 import { z } from "zod";
@@ -283,6 +285,27 @@ async function normalizeGrant(grant: z.infer<typeof browserProfileGrantInputSche
   return value;
 }
 
+/** Whether the person acting may see a browser of this project: their own projects' browsers,
+    and for the admin also the browsers this machine runs for projects it doesn't hold. */
+async function actorSeesBrowserProject(projectId: string): Promise<boolean> {
+  const account = actingAccount();
+  if (!account || await projectVisible(projectId)) return true;
+  return account.role === "admin" && !account.isRemoteLogin && !await asNode(() => getProject(projectId));
+}
+async function visibleSessions(sessions: BrowserSessionView[], actor: BrowserActor): Promise<BrowserSessionView[]> {
+  if (actor.kind !== "human") return sessions;
+  const kept = await Promise.all(sessions.map(async session => await actorSeesBrowserProject(session.projectId) ? session : null));
+  return kept.filter((session): session is BrowserSessionView => Boolean(session));
+}
+/** A person reaches only the browsers of projects they can see, wherever those browsers run. */
+async function assertActorSeesSession(id: string, nodeId: string, actor: BrowserActor): Promise<void> {
+  if (!actingAccount() || actor.kind !== "human") return;
+  const held = nodeId === (await getClusterNode()).id
+    ? await browserRuntime().get(id)
+    : (await (await peerRequest(nodeId, "operation", { operation: "get", args: { id }, actor }, 5000)).json() as { session: BrowserSessionView }).session;
+  if (!await actorSeesBrowserProject(held.projectId)) throw new BrowserRequestError(404, "Browser session not found");
+}
+
 export async function localBrowserOperation(input: BrowserOperation, actor: BrowserActor, machineNodeId?: string, agentIdentity?: z.infer<typeof browserIdentitySchema>): Promise<unknown> {
   const operation = browserOperationSchema.parse(input);
   const local = await getClusterNode();
@@ -294,7 +317,8 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
   const callerNodeId = machineNodeId ?? local.id;
   // Only this machine and its twins change a profile, and only a profile shared with them.
   const assertManager = async (profile: BrowserProfile): Promise<void> => {
-    if (!machineNodeId) return;
+    // A person on this node manages only profiles of projects they can see.
+    if (!machineNodeId) { if (!await projectVisible(profile.projectId)) throw new BrowserRequestError(404, "Browser profile not found"); return; }
     if (actor.kind !== "human" || !trustedTwin(db, local.id, machineNodeId) || !(await reachingGrants(service.profileGrants(profile.id), machineNodeId, null)).length)
       throw new BrowserRequestError(403, "Only this profile's machine and its twins can manage it");
   };
@@ -327,6 +351,7 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
   const assertAgentSession = async (id: string, exemptClose = false): Promise<BrowserSessionView> => {
     const session = await service.get(id);
     if (machineNodeId && !(await relayedSessionAllowed(machineNodeId, session))) throw new BrowserRequestError(403, notSharedWithNode);
+    if (!machineNodeId && actor.kind === "human" && !await actorSeesBrowserProject(session.projectId)) throw new BrowserRequestError(404, "Browser session not found");
     if (agentIdentity) {
       if (session.projectId !== agentIdentity.projectId || session.conversationId !== agentIdentity.conversationId)
         throw new BrowserRequestError(403, "Browser is not attached to this conversation");
@@ -371,7 +396,7 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
       const redacted = sessions.map(session => actor.kind === "agent" && session.profileId && !service.profileUsable(session.profileId, service.sessionAccess(session))
         ? { ...session, tabs: [], activePageId: null, loginRequest: null, downloads: [], fileChooser: false, fileChooserRequest: null, dialog: null, accessRevoked: true }
         : session);
-      const allowed = machineNodeId ? await Promise.all(redacted.map(async session => await relayedSessionAllowed(machineNodeId, session) ? session : null)) : redacted;
+      const allowed = await Promise.all(redacted.map(async session => (machineNodeId ? await relayedSessionAllowed(machineNodeId, session) : actor.kind !== "human" || await actorSeesBrowserProject(session.projectId)) ? session : null));
       return { sessions: allowed.filter(Boolean) };
     }
     case "get": { const session = await assertAgentSession(operation.args.id); return { session: view(session) }; }
@@ -404,6 +429,7 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
     }
     case "profileAccess": {
       const profile = service.profile(operation.args.id);
+      if (!machineNodeId && !await projectVisible(profile.projectId)) throw new BrowserRequestError(404, "Browser profile not found");
       // Management is bound to the actual profile: the caller must reach it through
       // its home project or a grant, not through an arbitrary shared project id.
       assertManageable(profile, operation.args.projectId, operation.args.conversationId);
@@ -419,6 +445,7 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
       const projectIds = machineNodeId ? new Set(operation.args.projectIds) : null;
       const entries = [];
       for (const profile of service.allProfiles()) {
+        if (!machineNodeId && !await projectVisible(profile.projectId)) continue;
         const grants = profile.grants ?? [];
         const reaching = machineNodeId ? await reachingGrants(grants, machineNodeId, projectIds) : grants;
         // A profile nobody shared with the caller's machine stays invisible there, twins included.
@@ -462,6 +489,8 @@ export function requireCompleteDiscovery(discovery: BrowserDiscovery) {
 }
 export async function browserOperation(input: BrowserOperation, actor: BrowserActor, nodeId?: string, identity?: z.infer<typeof browserIdentitySchema>): Promise<unknown> {
   const operation = browserOperationSchema.parse(input);
+  // A person names only projects they can see, whichever machine the browser runs on.
+  if (actor.kind === "human" && actingAccount() && "projectId" in operation.args && operation.args.projectId && !await projectVisible(operation.args.projectId)) throw new BrowserRequestError(404, "Project not found");
   if (operation.operation === "list" && !nodeId) return discoverBrowsers(operation, actor, identity);
   if (operation.operation === "start") {
     const result = await startBrowser(operation, actor, nodeId, identity);
@@ -469,6 +498,11 @@ export async function browserOperation(input: BrowserOperation, actor: BrowserAc
     return result;
   }
   if (!nodeId && (operation.operation === "get" || operation.operation === "command" || operation.operation === "forget")) nodeId = await browserSessionOwner(operation.args.id, actor, identity);
+  if (nodeId && (operation.operation === "get" || operation.operation === "command" || operation.operation === "forget")) await assertActorSeesSession(operation.args.id, nodeId, actor);
+  if (operation.operation === "list" && nodeId && nodeId !== (await getClusterNode()).id) {
+    const listed = await (await peerRequest(nodeId, "operation", { ...operation, actor, identity })).json() as { sessions: BrowserSessionView[] };
+    return { ...listed, sessions: await visibleSessions(listed.sessions, actor) };
+  }
   if (!nodeId || idSchema.parse(nodeId) === (await getClusterNode()).id) {
     const result = await localBrowserOperation(operation, actor, undefined, actor.kind === "agent" ? identity : undefined);
     if (operation.operation === "forget") broadcastToProject((result as { projectId: string }).projectId, { type: "browserSessionsChanged" });
@@ -494,7 +528,7 @@ async function discoverBrowsers(operation: Extract<BrowserOperation, { operation
       const remote = await peerSnapshot(`browser:${JSON.stringify([operation, actor, identity ?? null])}`, peer.id,
         async () => await (await peerRequest(peer.id, "operation", { ...operation, actor, identity }, 5000)).json() as { sessions: BrowserSessionView[] },
         { unreachable: browserPeerUnreachable });
-      result.sessions.push(...remote.value.sessions.map(session => ({ ...session, nodeId: peer.id })));
+      result.sessions.push(...(await visibleSessions(remote.value.sessions, actor)).map(session => ({ ...session, nodeId: peer.id })));
       if (!remote.fresh) result.unavailableNodes.push({ nodeId: peer.id, reason: staleSnapshotReason(remote.fetchedAt) });
     } catch (error) {
       if (error instanceof BrowserRequestError && ((error.status === 403 && /Project is not shared/.test(error.message)) || (error.status === 404 && /Project not found/.test(error.message)))) return;
@@ -667,9 +701,11 @@ export async function browserDownload(id: string, downloadId: string, nodeId: st
   idSchema.parse(id); idSchema.parse(downloadId);
   if (idSchema.parse(nodeId) === (await getClusterNode()).id) {
     if (identity) await authorizeBrowserAgent({ operation: "get", args: { id } }, identity);
+    else await assertActorSeesSession(id, nodeId, { kind: "human", id: "download" });
     const file = await browserRuntime().download(id, downloadId);
     return { stream: createReadStream(file.path), name: file.name };
   }
+  if (!identity) await assertActorSeesSession(id, nodeId, { kind: "human", id: "download" });
   const response = await peerRequest(nodeId, "download", { id, downloadId, identity }, 120000);
   if (!response.body) throw new BrowserRequestError(502, "Browser download has no content");
   return { stream: Readable.fromWeb(response.body as import("node:stream/web").ReadableStream<Uint8Array>), name: decodeURIComponent(response.headers.get("x-browser-filename") || "download") };
@@ -685,6 +721,7 @@ export async function attachBrowserViewer(socket: WebSocket, url: URL, actor: Br
       await browserRuntime().attachViewer(id, socket, actor, true); return;
     }
     const nodeId = idSchema.optional().parse(url.searchParams.get("nodeId") ?? undefined) ?? await browserSessionOwner(id, actor);
+    await assertActorSeesSession(id, nodeId, actor);
     if (nodeId === (await getClusterNode()).id) { await browserRuntime().attachViewer(id, socket, actor, false); return; }
     const peer = await getRuntimePeer(nodeId);
     if (!peer) throw Error("Browser node unavailable");

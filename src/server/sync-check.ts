@@ -1,4 +1,5 @@
 import { internalSessionId } from "../internal-sessions.js";
+import { asNode } from "../account-context.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { getClusterNode } from "../cluster.js";
@@ -262,7 +263,12 @@ async function checkFolders(projects: ProjectRecord[], now: number): Promise<Syn
 }
 
 /** One pass of the background sync check. Quiet by design: it logs only what it could not fix. */
+/** Checks every project on the node, whoever asked. */
 export async function runSyncCheck(now = Date.now()): Promise<SyncCheckStatus> {
+  return asNode(() => syncCheckEveryProject(now));
+}
+
+async function syncCheckEveryProject(now: number): Promise<SyncCheckStatus> {
   const settings = getSettings().syncCheck;
   if (!settings.enabled || checkInProgress || !flags.startupReady || flags.updatePreparing) return syncCheckStatus();
   checkInProgress = true;

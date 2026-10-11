@@ -69,12 +69,21 @@ function auditDatabase(): DatabaseSync {
   return database;
 }
 
-export async function listAuditEvents(limit: number): Promise<AuditEventRecord[]> {
+export function recordAuditEvent(input: AuditEventInput): AuditEventRecord {
+  return appendAuditEvent(auditDatabase(), input);
+}
+
+/** `viewerUserId` limits the log to what that person may see: node events and their own,
+    never another user's sign-ins or activity. */
+export async function listAuditEvents(limit: number, viewerUserId?: string): Promise<AuditEventRecord[]> {
   const boundedLimit = Math.max(1, Math.min(200, limit));
+  const scoped = viewerUserId !== undefined;
   const rows = auditDatabase().prepare(`
     SELECT id, event_type, actor_type, actor_id, entity_type, entity_id, details, created_at
-    FROM audit_events ORDER BY created_at DESC, id DESC LIMIT ?
-  `).all(boundedLimit) as unknown as Array<{
+    FROM audit_events
+    WHERE ? = 0 OR (NOT (actor_type = 'user' AND actor_id IS NOT ?) AND NOT (entity_type = 'user' AND entity_id IS NOT NULL AND entity_id IS NOT ?))
+    ORDER BY created_at DESC, id DESC LIMIT ?
+  `).all(scoped ? 1 : 0, viewerUserId ?? null, viewerUserId ?? null, boundedLimit) as unknown as Array<{
     id: string; event_type: string; actor_type: AuditEventInput["actorType"]; actor_id: string | null;
     entity_type: string; entity_id: string | null; details: string; created_at: string;
   }>;

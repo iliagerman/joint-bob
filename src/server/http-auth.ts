@@ -11,6 +11,8 @@ import { ClusterProtocolError, verifyClusterRequest } from "../cluster-protocol.
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { Feature, hasFeature, type FeatureKey } from "../features.js";
+import { isAdministrationPath, isNodeBlocked } from "../node-blocks.js";
+import { actingAccountFromSession, runAsAccount } from "../account-context.js";
 import { relayPeerOf, relayTransportOf } from "../relay/stream.js";
 import { otherUsersMayUsePhone } from "../relay/phone-policy.js";
 
@@ -112,6 +114,10 @@ async function requireClusterV2Auth(request: Request, response: Response, next: 
     // requests only from the machine it proved at its handshake (RELAY-PLAN.md §4.10 rule 4).
     if (relayTransportOf(request.socket) === "gateway") throw new ClusterProtocolError("Machine requests do not use the phone gateway");
     const sender = verifyClusterRequest(database, node.id, request.method, request.originalUrl, captured, request.header("authorization"));
+    if (isNodeBlocked(database, node.id, sender) && !isAdministrationPath(request.originalUrl)) {
+      sendError(response, 403, "This node doesn't accept connections from yours");
+      return;
+    }
     assertRelayChannelSender(request, sender);
     response.locals.machineAuth = true;
     response.locals.machineNodeId = sender;
@@ -133,6 +139,13 @@ export function assertRelayChannelSender(request: Request, sender: string): void
 }
 
 export async function requireHttpAuth(request: Request, response: Response, next: NextFunction): Promise<void> {
+  // A live request from a node one of our people signed in to, already checked (live-link.ts).
+  if (response.locals.liveRelay && response.locals.authSession) {
+    // Only a project's own routes; never the routes nodes and sign-ins use.
+    if (!/^\/projects\/[^/]+(\/|$)/i.test(request.path)) { sendError(response, 404, "Not found"); return; }
+    runAsAccount(actingAccountFromSession(response.locals.authSession as AuthSession), next);
+    return;
+  }
   if (isClusterV2Url(`/api${request.path}`)) {
     await requireClusterV2Auth(request, response, next);
     return;
@@ -143,9 +156,9 @@ export async function requireHttpAuth(request: Request, response: Response, next
     const identity = browserAgentIdentity(token);
     if (identity) { response.locals.browserAgent = identity; response.locals.browserAgentToken = token; next(); return; }
   }
-  if (request.path === "/background-tasks/agent" && request.method === "POST" && token) {
+  if ((request.path === "/background-tasks/agent" || request.path === "/background-tasks/relay") && request.method === "POST" && token) {
     const identity = backgroundTaskAgentIdentity(token);
-    if (identity) { response.locals.taskAgent = identity; next(); return; }
+    if (identity) { response.locals.taskAgent = identity; response.locals.taskAgentToken = token; next(); return; }
   }
   if (request.path === "/ntfy/agent" && request.method === "POST" && token) {
     const identity = ntfyAgentIdentity(token);
@@ -170,11 +183,12 @@ export async function requireHttpAuth(request: Request, response: Response, next
     sendError(response, 403, "Change the initial password before using the application");
     return;
   }
-  next();
+  // Everything downstream of this request acts for the signed-in person.
+  runAsAccount(actingAccountFromSession(session), next);
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent) {
     next();
     return;
   }

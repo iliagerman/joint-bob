@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { currentRuntime, runtimeExec, spawnInRuntime, usingServiceRuntime } from "../../account-runtime.js";
 import { execFile, spawn } from "../../subprocess.js";
 import { access } from "node:fs/promises";
 import path from "node:path";
@@ -156,8 +157,11 @@ class KiroSession implements HarnessSession {
   async preflight(): Promise<void> {
     const settings = runtimeSettings();
     const env = await this.environment();
-    await execute(settings.executable || "kiro-cli", ["--version"], { cwd: this.options.cwd, env, timeout: 5_000 });
-    await execute(settings.executable || "kiro-cli", ["whoami"], { cwd: this.options.cwd, env, timeout: 5_000 });
+    // Kiro reads the folder it starts in, so these run as the project's account like the turn.
+    for (const args of [["--version"], ["whoami"]]) {
+      const launch = runtimeExec(settings.executable || "kiro-cli", args, env);
+      await execute(launch.command, launch.args, { cwd: usingServiceRuntime() ? this.options.cwd : undefined, env: launch.env, timeout: 5_000 });
+    }
   }
 
   private async environment(): Promise<NodeJS.ProcessEnv> {
@@ -232,7 +236,7 @@ class KiroSession implements HarnessSession {
     if (this.trustedTools === undefined) args.push("--trust-all-tools");
     else args.push(`--trust-tools=${this.trustedTools.join(",")}`);
     if (this.model.modelId !== "default") args.push("--model", this.model.modelId);
-    this.child = spawn(settings.executable || "kiro-cli", args, {
+    this.child = spawnInRuntime(currentRuntime(), settings.executable || "kiro-cli", args, {
       cwd: this.options.cwd,
       env,
       detached: process.platform !== "win32",
@@ -661,7 +665,8 @@ const runtime: HarnessRuntime = {
     try {
       await access(settings.configPath);
       if (executable.includes("/") || executable.includes("\\")) await access(executable);
-      await execute(executable, ["--version"], { cwd, env: { ...process.env, ...env, KIRO_HOME: settings.configPath }, timeout: 5_000 });
+      const launch = runtimeExec(executable, ["--version"], { ...process.env, ...env, KIRO_HOME: settings.configPath });
+      await execute(launch.command, launch.args, { cwd: usingServiceRuntime() ? cwd : undefined, env: launch.env, timeout: 5_000 });
       return [];
     } catch (error) {
       return [`Kiro executable unavailable: ${error instanceof Error ? error.message : String(error)}`];

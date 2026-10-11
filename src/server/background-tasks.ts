@@ -103,6 +103,15 @@ function supervisorError(error: unknown): TaskRequestError {
   return new TaskRequestError(503, "Background task supervisor is unavailable");
 }
 
+/** A task of a person's project runs as their OS account; the service can't signal it alone. */
+async function stopAccountProcesses(projectId: string, groupId: unknown): Promise<void> {
+  const { multiUserEnabled } = await import("../account-runtime.js");
+  if (!multiUserEnabled()) return;
+  const [{ runtimeForProject }, { stopRuntimeTaskGroup }] = await Promise.all([import("../project-runtime.js"), import("./task-relay.js")]);
+  const runtime = await runtimeForProject(projectId).catch(() => undefined);
+  if (runtime) await stopRuntimeTaskGroup(runtime, groupId);
+}
+
 export async function localBackgroundTaskOperation(commandInput: BackgroundTaskCommand, callerNodeId?: string): Promise<unknown> {
   const command = backgroundTaskCommandSchema.parse(commandInput);
   const { identities } = await projectScope(command, callerNodeId);
@@ -140,6 +149,7 @@ export async function localBackgroundTaskOperation(commandInput: BackgroundTaskC
         action: command.action === "get" ? "task" : "stop",
         id: command.id,
       });
+      if (command.action === "stop") await stopAccountProcesses(command.projectId, value.pid);
       return publicTask(value, node);
     }
     const result = await supervisorRequest(data, {
@@ -165,7 +175,11 @@ export async function stopConversationBackgroundTasks(conversationId: string, ti
   const data = resolveDataDirectory();
   const deadline = Date.now() + timeoutMs;
   for (const id of readActiveConversationTaskIds(data, conversationId)) {
-    try { await supervisorRequest(data, { action: "stop", id }); }
+    try {
+      const stopped = await supervisorRequest<{ identity?: string; pid?: unknown }>(data, { action: "stop", id });
+      const projectId = (() => { try { return (JSON.parse(stopped.identity ?? "[]") as string[])[0]; } catch { return undefined; } })();
+      if (projectId) await stopAccountProcesses(projectId, stopped.pid);
+    }
     catch (error) { console.warn(`Could not stop background task ${id} before transfer`, error); }
   }
   while (readActiveConversationTaskIds(data, conversationId).length) {
@@ -193,6 +207,8 @@ export async function routeBackgroundTaskOperation(nodeId: string, commandInput:
   const command = backgroundTaskCommandSchema.parse(commandInput);
   const local = await getClusterNode();
   if (nodeId === local.id) return localBackgroundTaskOperation(command);
+  // The caller must see the project here before anything is asked of another node.
+  if (!await getProject(command.projectId)) throw new TaskRequestError(404, "Project not found");
   const peer = await getRuntimePeer(nodeId);
   if (!peer) throw new TaskRequestError(404, "Cluster node not found");
   try {

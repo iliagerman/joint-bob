@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { resourceOwner } from "../ownership.js";
+import { attachMessageAuthors, authoredPromptText, recordMessageAuthor, type MessageAuthor } from "../message-authors.js";
 import { internalTaskPrompt } from "../background-task-messages.js";
 import { stat, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -42,12 +44,15 @@ import { attachHarnessClient, compactHarnessSession, detachHarnessClient, dispos
 export interface HarnessChatConnection {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
   shared: SharedHarnessSession; handoffContext: string | null; accountIds: string[]; readOnly: boolean; conversationId: string;
+  /** Who writes on this socket; prompts queued here carry it. */
+  author?: MessageAuthor;
 }
 
 export interface AttachOptions {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId; sessionId: string;
   sessionPath?: string; accountIds: string[]; readOnly: boolean; ownership: ForeignConversationOwner | null;
   listedSessions?: SessionSummary[]; handoffContext: string | null; autoStartPrompt: string | null;
+  author?: MessageAuthor;
 }
 
 export const harnessChatConnections = new Set<HarnessChatConnection>();
@@ -59,6 +64,11 @@ const startingIds = new Set<string>();
 // Keyed by conversation, not session object: a reopened session must not retry a
 // compaction that already ran or failed since the last prompt.
 const autoCompacted = new Set<string>();
+
+/** Whose conversation this is: its project's owner, whose own settings drive it. */
+export function conversationOwner(connection: Pick<HarnessChatConnection, "project">): string | undefined {
+  return resourceOwner("project", connection.project.id);
+}
 
 export function armAutoCompactAfterPrompt(session: HarnessSession): void { autoCompacted.delete(session.id); }
 
@@ -134,7 +144,7 @@ export function refreshHarnessPromptQueue(connection: HarnessChatConnection): vo
   const prompts = listQueuedPrompts(queueKey(connection)).filter((prompt) => !prompt.systemEventId && !startingIds.has(prompt.id));
   publish(connection, { type: "queuedPrompts", prompts: prompts.map((prompt) => {
     const images = new Set(prompt.images.map(({ path: imagePath }) => imagePath));
-    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, timestamp: prompt.createdAt, scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
+    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, timestamp: prompt.createdAt, ...(prompt.author ? { author: prompt.author } : {}), scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
   }) });
   publish(connection, { type: "queueUpdate", pending: prompts.length });
 }
@@ -187,9 +197,9 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   const promptText = promptTextWithAttachments(message, imageAttachments, fileAttachments);
   const suffix = absolute.length ? `Attached: ${absolute.map(({ name }) => name).join(", ")}` : "";
   const displayText = [message.trim(), suffix].filter(Boolean).join("\n\n");
-  const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { requestId, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
+  const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { requestId, author: connection.author, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
   markHarnessInput(connection.shared);
-  publish(connection, { type: "userMessage", text: displayText, timestamp: queued.createdAt, scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
+  publish(connection, { type: "userMessage", text: displayText, timestamp: queued.createdAt, ...(queued.author ? { author: queued.author } : {}), scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
   refreshHarnessPromptQueue(connection);
   void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
 }
@@ -223,7 +233,7 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   const result = (status: string, extra: Partial<UsageDifficulty> = {}): UsageDifficulty => ({ ...base, status, ...extra });
   if (queued.systemEventId) return result("internal");
   let policy: StoredRoutingConfig | null = null;
-  try { policy = activeRoutingConfig(routingConfigDatabase()); }
+  try { policy = activeRoutingConfig(routingConfigDatabase(), conversationOwner(connection)); }
   catch (error) { console.warn("Routing configuration resolution failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error"); }
   if (!policy) return result("disabled");
   const key = queueKey(connection);
@@ -342,7 +352,9 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       const startedAt = new Date().toISOString();
       activeDifficulty = { ...difficulty, occurredAt: startedAt, startedAt };
       saveDifficulty(activeDifficulty, origin);
-      const text = `${connection.handoffContext ?? ""}${attachments.text}`;
+      // Once a second person writes, the agent sees who wrote each prompt.
+      const authored = queued.systemEventId ? attachments.text : authoredPromptText(connection.project.id, connection.conversationId, attachments.text, queued.author);
+      const text = `${connection.handoffContext ?? ""}${authored}`;
       const finishSilentReview = queued.requestId && isScheduledPromptText(queued.promptText)
         ? await silentScheduledReview(connection.project, connection.engine, connection.shared.session.id, queued.requestId) : undefined;
       await connection.shared.session.prompt({ text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
@@ -350,6 +362,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
         if (claimed) return;
         claimed = claimQueuedPrompt(queued.id, currentSettings(connection));
         if (!claimed) throw new Error("Queued prompt was changed before start");
+        if (queued.author && !queued.systemEventId) recordMessageAuthor(connection.project.id, connection.conversationId, authored, queued.author, origin!);
         connection.handoffContext = null;
         connection.shared.scheduledTurn = isScheduledPromptText(queued.promptText);
         if (!queued.systemEventId) publish(connection, { type: "promptStarted", queueId: queued.id, scheduled: connection.shared.scheduledTurn });
@@ -520,7 +533,7 @@ async function switchHarness(connection: HarnessChatConnection, engine: HarnessI
     drives this conversation here, which classifier won, and whether this node's own
     configuration may be edited from the model dialog. */
 async function routingClientState(connection: HarnessChatConnection, localNodeId: string): Promise<{ active: boolean; mode: "auto" | "manual"; classifierId?: string; configId?: string; editable?: boolean; warning?: string } | null> {
-  const config = activeRoutingConfig(routingConfigDatabase());
+  const config = activeRoutingConfig(routingConfigDatabase(), conversationOwner(connection));
   if (!config) return null;
   return {
     active: true,
@@ -547,7 +560,7 @@ export function broadcastRoutingMode(): void {
 
 /** An explicit model or reasoning pick ends classifier control of the conversation. */
 function markRoutingManual(connection: HarnessChatConnection): void {
-  if (!activeRoutingConfig(routingConfigDatabase())) return;
+  if (!activeRoutingConfig(routingConfigDatabase(), conversationOwner(connection))) return;
   if (readRoutingState(queueKey(connection)).mode === "manual") return;
   setRoutingMode(queueKey(connection), "manual");
   publishRoutingMode(connection);
@@ -595,7 +608,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
   if (message.type === "setTools") { if (!message.toolNames) throw new Error("Tools are required"); await connection.shared.session.setTools(message.toolNames); recordQueueSettings(queueKey(connection), currentSettings(connection)); send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); sendHarnessStatus(connection.shared); return true; }
   if (message.type === "setModel") {
     if (message.modelId === "bob-auto") {
-      if (!activeRoutingConfig(routingConfigDatabase())) throw new Error("Prompt routing is not active on this node");
+      if (!activeRoutingConfig(routingConfigDatabase(), conversationOwner(connection))) throw new Error("Prompt routing is not active on this node");
       setRoutingMode(queueKey(connection), "auto");
       publishRoutingMode(connection);
       sendHarnessStatus(connection.shared);
@@ -735,7 +748,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const conversationId = record?.conversationId ?? options.sessionId;
   const runtimeWasOpen = Boolean(options.sessionId && findHarnessSession(options.project.id, options.engine, options.sessionId));
   const shared = await measureOperation("chat.open.runtime", () => openHarnessSession(options.engine, { projectId: options.project.id, cwd: options.cwd, sessionId: options.sessionId, sessionPath: options.sessionPath, conversationId, accountIds: options.accountIds }));
-  const connection: HarnessChatConnection = { socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId };
+  const connection: HarnessChatConnection = { socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId, author: options.author };
   const local = await getClusterNode();
   if (!record && !options.readOnly) record = await ensureConversationRecord(options.project.id, options.engine, options.sessionId, local.id, options.taskId ?? undefined, { conversationId, segmentIndex: 0 });
   const saved = readQueueSettings(queueKey(connection));
@@ -746,7 +759,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const scheduled = Boolean(record?.cronTaskId);
   const beforeLiveTurn = historyBeforeLiveTurn(transcript.messages, shared);
   const turnFailures = listTurnFailures(options.engine, shared.session.id);
-  const history = withTurnFailures(beforeLiveTurn, turnFailures);
+  const history = withTurnFailures(attachMessageAuthors(options.project.id, conversationId, beforeLiveTurn), turnFailures);
   const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
   // Every step that can add or drop messages, so a client seeing a transcript shrink or change can name the step.
   const diagnostics = {

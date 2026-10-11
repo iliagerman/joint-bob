@@ -194,7 +194,7 @@ test("chat provides independent harness and session selectors", async () => {
 });
 
 test("Pi resume overrides a synchronized session's source cwd", async () => {
-  const source = await readFile("src/pi-service.ts", "utf8");
+  const source = await readFile("src/pi-session-core.ts", "utf8");
 
-  assert.match(source, /SessionManager\.open\(options\.sessionPath, piSessionPath\(\), options\.cwd\)/);
+  assert.match(source, /SessionManager\.open\(inputs\.sessionPath, inputs\.sessionRoot, inputs\.cwd\)/);
 });

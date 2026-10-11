@@ -6,6 +6,9 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { replicationInvalidations } from "../src/replication.ts";
 
+/** People are keyed by account id; legacy usernames are translated on receipt. */
+const ILIA = "0123456789abcdef0123456789abcdef";
+
 async function freshRecents(dataDir: string) {
   process.env.PI_WEB_DATA_DIR = dataDir;
   try {
@@ -31,15 +34,15 @@ test("recent upserts and deletes publish stable per-conversation events", async 
   try {
     createNode(dataDir);
     const recents = await freshRecents(dataDir);
-    recents.setUserRecentSession("ilia", recent(), "node-a");
-    recents.removeUserRecentSession("ilia", { projectId: "project-1", engine: "pi", sessionId: "session-1" }, "node-a");
-    assert.deepEqual(recents.listUserRecentSessions("ilia"), []);
+    recents.setUserRecentSession(ILIA, recent(), "node-a");
+    recents.removeUserRecentSession(ILIA, { projectId: "project-1", engine: "pi", sessionId: "session-1" }, "node-a");
+    assert.deepEqual(recents.listUserRecentSessions(ILIA), []);
     assert.deepEqual(recents.listUserRecentSessions("other"), []);
     const db = new DatabaseSync(path.join(dataDir, "node.db"), { readOnly: true });
     const events = db.prepare("SELECT entity_type, entity_key, operation, payload FROM replication_outbox ORDER BY rowid").all() as Array<{ entity_type: string; entity_key: string; operation: string; payload: string }>;
     assert.deepEqual(events.map(({ entity_type, entity_key, operation }) => ({ entity_type, entity_key, operation })), [
-      { entity_type: "user.recent", entity_key: "ilia:project-1:pi:session-1", operation: "upsert" },
-      { entity_type: "user.recent", entity_key: "ilia:project-1:pi:session-1", operation: "delete" },
+      { entity_type: "user.recent", entity_key: `${ILIA}:project-1:pi:session-1`, operation: "upsert" },
+      { entity_type: "user.recent", entity_key: `${ILIA}:project-1:pi:session-1`, operation: "delete" },
     ]);
     assert.equal((JSON.parse(events[0].payload) as { recent: unknown }).recent !== null, true);
   } finally { await rm(dataDir, { recursive: true, force: true }); }
@@ -51,12 +54,12 @@ test("re-reporting a recent with unchanged or older activity publishes nothing",
     createNode(dataDir);
     const recents = await freshRecents(dataDir);
     const reported = { ...recent(), updatedAt: "2026-09-02T12:30:00.000Z" };
-    assert.equal(recents.setUserRecentSession("ilia", reported, "node-a").changed, true);
-    assert.equal(recents.setUserRecentSession("ilia", reported, "node-a").changed, false, "the same row again");
-    const older = recents.setUserRecentSession("ilia", { ...reported, updatedAt: "2026-09-02T12:10:00.000Z" }, "node-a");
+    assert.equal(recents.setUserRecentSession(ILIA, reported, "node-a").changed, true);
+    assert.equal(recents.setUserRecentSession(ILIA, reported, "node-a").changed, false, "the same row again");
+    const older = recents.setUserRecentSession(ILIA, { ...reported, updatedAt: "2026-09-02T12:10:00.000Z" }, "node-a");
     assert.equal(older.changed, false, "a browser listing the conversation behind the stored activity");
     assert.equal(older.recentSessions[0].updatedAt, "2026-09-02T12:30:00.000Z");
-    const newer = recents.setUserRecentSession("ilia", { ...reported, updatedAt: "2026-09-02T12:45:00.000Z" }, "node-a");
+    const newer = recents.setUserRecentSession(ILIA, { ...reported, updatedAt: "2026-09-02T12:45:00.000Z" }, "node-a");
     assert.equal(newer.changed, true);
     assert.equal(newer.recentSessions[0].updatedAt, "2026-09-02T12:45:00.000Z");
     const db = new DatabaseSync(path.join(dataDir, "node.db"), { readOnly: true });
@@ -71,13 +74,13 @@ test("recent paths are stored relative to the node home and legacy absolute rows
     createNode(dataDir);
     const recents = await freshRecents(dataDir);
     const absolute = path.join(os.homedir(), ".pi", "agent", "sessions", "session-1.jsonl");
-    recents.setUserRecentSession("ilia", { ...recent(), sessionPath: absolute }, "node-a");
-    assert.equal(recents.listUserRecentSessions("ilia")[0].sessionPath, "~/.pi/agent/sessions/session-1.jsonl");
+    recents.setUserRecentSession(ILIA, { ...recent(), sessionPath: absolute }, "node-a");
+    assert.equal(recents.listUserRecentSessions(ILIA)[0].sessionPath, "~/.pi/agent/sessions/session-1.jsonl");
     const db = new DatabaseSync(path.join(dataDir, "node.db"));
     const payload = JSON.parse((db.prepare("SELECT payload FROM replication_outbox WHERE entity_type = 'user.recent'").get() as { payload: string }).payload);
     assert.equal(payload.recent.sessionPath, "~/.pi/agent/sessions/session-1.jsonl");
     db.prepare("UPDATE user_recent_sessions SET session_path = ?").run(absolute);
-    assert.equal(recents.listUserRecentSessions("ilia")[0].sessionPath, "~/.pi/agent/sessions/session-1.jsonl");
+    assert.equal(recents.listUserRecentSessions(ILIA)[0].sessionPath, "~/.pi/agent/sessions/session-1.jsonl");
     assert.equal((db.prepare("SELECT session_path FROM user_recent_sessions").get() as { session_path: string }).session_path, "~/.pi/agent/sessions/session-1.jsonl");
     db.close();
   } finally { await rm(dataDir, { recursive: true, force: true }); }
@@ -94,15 +97,15 @@ test("recent replication resolves aliases and converges out-of-order stamps", as
     db.close();
     const { receiveReplicationBatch } = await import(`../src/replication.ts?recents=${Date.now()}`);
     const event = (id: string, operation: "upsert" | "delete", updatedAt: string, originNodeId = "node-b") => ({
-      id, originNodeId, entityType: "user.recent", entityKey: "ilia:remote:pi:session-1", operation, createdAt: updatedAt,
-      payload: { username: "ilia", projectId: "remote", engine: "pi", sessionId: "session-1", recent: operation === "upsert" ? recent("remote", "session-1", updatedAt) : null, updatedAt, originNodeId },
+      id, originNodeId, entityType: "user.recent", entityKey: `${ILIA}:remote:pi:session-1`, operation, createdAt: updatedAt,
+      payload: { username: ILIA, projectId: "remote", engine: "pi", sessionId: "session-1", recent: operation === "upsert" ? recent("remote", "session-1", updatedAt) : null, updatedAt, originNodeId },
     });
     await receiveReplicationBatch({ events: [event("00000000-0000-4000-8000-000000000001", "delete", "2026-09-02T12:00:00.000Z")] });
     await receiveReplicationBatch({ events: [event("00000000-0000-4000-8000-000000000002", "upsert", "2026-09-02T11:00:00.000Z")] });
     const recents = await freshRecents(dataDir);
-    assert.deepEqual(recents.listUserRecentSessions("ilia"), []);
+    assert.deepEqual(recents.listUserRecentSessions(ILIA), []);
     await receiveReplicationBatch({ events: [event("00000000-0000-4000-8000-000000000003", "upsert", "2026-09-02T13:00:00.000Z")] });
-    assert.deepEqual(recents.listUserRecentSessions("ilia").map((entry: { projectId: string }) => entry.projectId), ["local"]);
+    assert.deepEqual(recents.listUserRecentSessions(ILIA).map((entry: { projectId: string }) => entry.projectId), ["local"]);
     await assert.rejects(() => receiveReplicationBatch({ events: [{ ...event("00000000-0000-4000-8000-000000000004", "upsert", "2026-09-02T14:00:00.000Z"), entityKey: "wrong" }] }), /Malformed recent session replication payload/);
   } finally { if (previous === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previous; await rm(dataDir, { recursive: true, force: true }); }
 });
@@ -115,8 +118,8 @@ test("same-conversation upserts converge monotonic data and operation stamps", a
     const laterOpen = { ...recent("project-1", "session-1", "2026-09-02T14:00:00.000Z"), sessionPath: "/later.jsonl", title: "Later opening" };
     const activityRefresh = { ...recent("project-1", "session-1", "2026-09-02T12:00:00.000Z"), sessionPath: "/older.jsonl", title: "Older opening", updatedAt: "2026-09-02T16:00:00.000Z" };
     const event = (id: string, originNodeId: string, updatedAt: string, value: typeof laterOpen) => ({
-      id, originNodeId, entityType: "user.recent", entityKey: "ilia:project-1:pi:session-1", operation: "upsert", createdAt: updatedAt,
-      payload: { username: "ilia", projectId: "project-1", engine: "pi", sessionId: "session-1", recent: value, updatedAt, originNodeId },
+      id, originNodeId, entityType: "user.recent", entityKey: `${ILIA}:project-1:pi:session-1`, operation: "upsert", createdAt: updatedAt,
+      payload: { username: ILIA, projectId: "project-1", engine: "pi", sessionId: "session-1", recent: value, updatedAt, originNodeId },
     });
     const opening = event("00000000-0000-4000-8000-000000000011", "node-a", "2026-09-02T13:00:00.000Z", laterOpen);
     const activity = event("00000000-0000-4000-8000-000000000012", "node-b", "2026-09-02T15:00:00.000Z", activityRefresh);
@@ -155,9 +158,9 @@ test("different recents merge and legacy migration publishes stable rows once", 
   try {
     createNode(dataDir);
     const recents = await freshRecents(dataDir);
-    recents.setUserRecentSession("ilia", recent("project-1", "older", "2026-09-02T11:00:00.000Z"), "node-a");
-    recents.setUserRecentSession("ilia", recent("project-1", "newer", "2026-09-02T12:00:00.000Z"), "node-a");
-    assert.deepEqual(recents.listUserRecentSessions("ilia").map((entry: { sessionId: string }) => entry.sessionId), ["newer", "older"]);
+    recents.setUserRecentSession(ILIA, recent("project-1", "older", "2026-09-02T11:00:00.000Z"), "node-a");
+    recents.setUserRecentSession(ILIA, recent("project-1", "newer", "2026-09-02T12:00:00.000Z"), "node-a");
+    assert.deepEqual(recents.listUserRecentSessions(ILIA).map((entry: { sessionId: string }) => entry.sessionId), ["newer", "older"]);
     const newestLegacy = { ...recent("project-2", "legacy", "2021-01-01T00:00:00.000Z"), title: "Newest legacy" };
     const olderLegacy = { ...recent("project-2", "legacy", "2020-01-01T00:00:00.000Z"), title: "Older legacy" };
     recents.migrateLegacyRecentSessions("other", [newestLegacy, olderLegacy], "node-a");

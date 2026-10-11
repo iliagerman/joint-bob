@@ -1,4 +1,9 @@
+import { forwardRoamingEdit, HomeOfflineError, roamingPreferences } from "../roaming.js";
 import { projectAdditionalPaths } from "../session-scope.js";
+import { assertProjectFolderAllowed, ProjectFolderError, projectHomeFor } from "../../project-runtime.js";
+import { actingAccount } from "../../account-context.js";
+import { isNodeAdmin } from "../admin.js";
+import { personalSettings, terminalAccessSettings, updatePersonalSettings, updateTerminalAccessSettings } from "../../settings.js";
 import path from "node:path";
 import { runSyncCheck, syncCheckStatus } from "../sync-check.js";
 import { z } from "zod";
@@ -25,7 +30,7 @@ import { generateLabelIcon } from "../label-icon.js";
 import { app } from "../state.js";
 
 // Block settings access for replicated users
-app.use("/api/settings", requireFeature(Feature.SETTINGS));
+// Settings are shaped by role: the admin sees the node's, everyone else only their own.
 
 app.get("/api/preferences", (_request, response) => {
   const session = response.locals.authSession as AuthSession;
@@ -51,8 +56,8 @@ app.get("/api/recents", async (_request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
     const local = await getClusterNode();
-    migrateLegacyRecentSessions(session.username, stableLegacyRecents(readLegacyRecentSessions(session.userId)), local.id);
-    response.json({ recentSessions: listUserRecentSessions(session.username) });
+    migrateLegacyRecentSessions(session.accountId, stableLegacyRecents(readLegacyRecentSessions(session.userId)), local.id);
+    response.json({ recentSessions: listUserRecentSessions(session.accountId) });
   } catch (error) { next(error); }
 });
 
@@ -63,9 +68,9 @@ app.put("/api/recents", async (request, response, next) => {
     const project = await getProject(entry.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const local = await getClusterNode();
-    const { recentSessions, changed } = setUserRecentSession(session.username, { ...entry, projectId: project.id }, local.id);
+    const { recentSessions, changed } = setUserRecentSession(session.accountId, { ...entry, projectId: project.id }, local.id);
     response.json({ recentSessions });
-    if (changed) broadcastToAllClients({ type: "recentsChanged" });
+    if (changed) broadcastToAllClients({ type: "recentsChanged" }, (response.locals.authSession as AuthSession).accountId);
   } catch (error) { next(error); }
 });
 
@@ -75,14 +80,14 @@ app.delete("/api/recents", async (request, response, next) => {
     const target = recentSessionIdentitySchema.parse(request.body);
     const project = await getProject(target.projectId);
     const local = await getClusterNode();
-    response.json({ recentSessions: removeUserRecentSession(session.username, { ...target, projectId: project?.id ?? target.projectId }, local.id) });
-    broadcastToAllClients({ type: "recentsChanged" });
+    response.json({ recentSessions: removeUserRecentSession(session.accountId, { ...target, projectId: project?.id ?? target.projectId }, local.id) });
+    broadcastToAllClients({ type: "recentsChanged" }, (response.locals.authSession as AuthSession).accountId);
   } catch (error) { next(error); }
 });
 
 app.get("/api/pins", (_request, response) => {
   const session = response.locals.authSession as AuthSession;
-  response.json(listUserPins(session.username));
+  response.json(listUserPins(session.accountId));
 });
 
 app.put("/api/pins", async (request, response, next) => {
@@ -105,8 +110,8 @@ app.put("/api/pins", async (request, response, next) => {
     const target = payload.kind === "project"
       ? { kind: payload.kind, projectId } as const
       : { kind: payload.kind, projectId, engine: payload.engine, sessionId: payload.sessionId } as const;
-    const pins = setUserPin(session.username, target, payload.pinned, local.id);
-    broadcastToAllClients({ type: "pinsChanged" });
+    const pins = setUserPin(session.accountId, target, payload.pinned, local.id);
+    broadcastToAllClients({ type: "pinsChanged" }, (response.locals.authSession as AuthSession).accountId);
     response.json(pins);
   } catch (error) {
     next(error);
@@ -123,7 +128,7 @@ const canvasShortcutTargetSchema = z.object({
 
 app.get("/api/canvas/shortcuts", (_request, response) => {
   const session = response.locals.authSession as AuthSession;
-  response.json({ shortcuts: listCanvasShortcuts(session.username) });
+  response.json({ shortcuts: listCanvasShortcuts(session.accountId) });
 });
 
 app.put("/api/canvas/shortcuts/:binding", async (request, response, next) => {
@@ -131,8 +136,8 @@ app.put("/api/canvas/shortcuts/:binding", async (request, response, next) => {
     const session = response.locals.authSession as AuthSession;
     const target = canvasShortcutTargetSchema.parse(request.body);
     const local = await getClusterNode();
-    const shortcuts = setCanvasShortcut(session.username, request.params.binding, target, local.id);
-    broadcastToAllClients({ type: "shortcutsChanged" });
+    const shortcuts = setCanvasShortcut(session.accountId, request.params.binding, target, local.id);
+    broadcastToAllClients({ type: "shortcutsChanged" }, (response.locals.authSession as AuthSession).accountId);
     response.json({ shortcuts });
   } catch (error) {
     if (error instanceof Error && /canvas binding/i.test(error.message)) {
@@ -150,8 +155,8 @@ app.post("/api/canvas/shortcuts/release", async (request, response, next) => {
     const session = response.locals.authSession as AuthSession;
     const target = canvasShortcutTargetSchema.parse(request.body);
     const local = await getClusterNode();
-    const shortcuts = releaseCanvasShortcuts(session.username, [target], local.id);
-    broadcastToAllClients({ type: "shortcutsChanged" });
+    const shortcuts = releaseCanvasShortcuts(session.accountId, [target], local.id);
+    broadcastToAllClients({ type: "shortcutsChanged" }, (response.locals.authSession as AuthSession).accountId);
     response.json({ shortcuts });
   } catch (error) {
     next(error);
@@ -162,8 +167,8 @@ app.delete("/api/canvas/shortcuts/:binding", async (request, response, next) => 
   try {
     const session = response.locals.authSession as AuthSession;
     const local = await getClusterNode();
-    const shortcuts = clearCanvasShortcut(session.username, request.params.binding, local.id);
-    broadcastToAllClients({ type: "shortcutsChanged" });
+    const shortcuts = clearCanvasShortcut(session.accountId, request.params.binding, local.id);
+    broadcastToAllClients({ type: "shortcutsChanged" }, (response.locals.authSession as AuthSession).accountId);
     response.json({ shortcuts });
   } catch (error) {
     if (error instanceof Error && /canvas binding/i.test(error.message)) {
@@ -222,7 +227,7 @@ function canvasLayoutExceedsLimits(value: unknown): boolean {
   return false;
 }
 
-app.put("/api/preferences", (request, response, next) => {
+app.put("/api/preferences", async (request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
     if (canvasLayoutExceedsLimits((request.body as { canvasLayout?: unknown }).canvasLayout)) {
@@ -234,8 +239,15 @@ app.put("/api/preferences", (request, response, next) => {
     const update: Partial<UserPreferences> = preferences;
     if (canvasKeymap) update.canvasKeymap = normalizeCanvasKeymapPreference(canvasKeymap);
     if (canvasLayout) update.canvasLayout = normalizeCanvasLayoutPreference(canvasLayout);
+    // A visitor's travelling preferences (theme, sounds, keymap…) change at home first.
+    if (session.isRemoteLogin) {
+      const current = getUserPreferences(session.userId) as unknown as Record<string, unknown>;
+      const changed = Object.fromEntries(Object.keys(roamingPreferences.shape).filter((key) => key in update && JSON.stringify((update as Record<string, unknown>)[key]) !== JSON.stringify(current[key])).map((key) => [key, (update as Record<string, unknown>)[key]]));
+      if (Object.keys(changed).length) await forwardRoamingEdit(session.accountId, { preferences: changed });
+    }
     response.json(updateUserPreferences(session.userId, update));
   } catch (error) {
+    if (error instanceof HomeOfflineError) { sendError(response, error.statusCode, error.message); return; }
     next(error);
   }
 });
@@ -243,7 +255,8 @@ app.put("/api/preferences", (request, response, next) => {
 app.get("/api/audit", async (request, response, next) => {
   try {
     const { limit } = auditQuerySchema.parse(request.query);
-    response.json({ events: await listAuditEvents(limit) });
+    // Even the admin sees node events and their own, not other people's activity.
+    response.json({ events: await listAuditEvents(limit, (response.locals.authSession as AuthSession).userId) });
   } catch (error) {
     if (error instanceof z.ZodError) {
       sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
@@ -277,7 +290,60 @@ app.post("/api/settings/skills/reload", async (_request, response, next) => {
 });
 
 app.get("/api/settings", (_request, response) => {
-  response.json(getSettings());
+  if (isNodeAdmin(response.locals.authSession as AuthSession)) { response.json(getSettings()); return; }
+  response.json(personalSettingsView());
+});
+
+/** What a member or visitor sees of settings: their own values, and where their projects go. */
+function personalSettingsView(): Record<string, unknown> {
+  return { ...personalSettings(), projects: { homePath: projectHomeFor(actingAccount(), getSettings().projects.homePath) } };
+}
+
+const personalSettingsSchema = z.object({
+  conversationLabels: z.array(z.string()).optional(),
+  conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
+  autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
+  digestAttachments: z.boolean().optional(),
+  showProjectsOnOtherNodes: z.boolean().optional(),
+  conversationCommands: z.unknown().optional(),
+  conversationDefaults: z.unknown().optional(),
+}).strict();
+
+app.put("/api/settings/personal", async (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const input = personalSettingsSchema.parse(request.body) as Parameters<typeof updatePersonalSettings>[0];
+    // A visitor's settings belong to their home node; the edit goes there first.
+    if (session.isRemoteLogin) await forwardRoamingEdit(session.accountId, { settings: input as Record<string, unknown> });
+    else updatePersonalSettings(input, undefined, session.userId);
+    response.json(isNodeAdmin(session) ? getSettings() : personalSettingsView());
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
+    if (error instanceof HomeOfflineError) { sendError(response, error.statusCode, error.message); return; }
+    next(error);
+  }
+});
+
+const terminalPolicySchema = z.object({
+  mode: z.enum(["off", "admin", "everyone", "selected"]).optional(),
+  accounts: z.array(z.string().regex(/^[0-9a-f]{32}$/)).max(1000).optional(),
+  maxPerUser: z.number().int().min(1).max(20).optional(),
+  idleMinutes: z.number().int().min(1).max(1440).optional(),
+  dismissNotice: z.boolean().optional(),
+}).strict();
+
+app.get("/api/terminal-policy", (_request, response) => {
+  response.json(terminalAccessSettings());
+});
+
+app.put("/api/terminal-policy", (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    response.json(updateTerminalAccessSettings(terminalPolicySchema.parse(request.body), session.userId));
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
+    next(error);
+  }
 });
 
 app.get("/api/settings/sync-check", (_request, response) => {
@@ -360,8 +426,11 @@ app.put("/api/projects/:projectId/resource-paths", async (request, response, nex
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const payload = z.object({ resources: resourcePathsSchema }).strict().parse(request.body);
     const session = response.locals.authSession as AuthSession;
+    // The node reads these folders with its own rights, so they stay inside the person's home.
+    for (const entry of Object.values(payload.resources).flat()) await assertProjectFolderAllowed(actingAccount(), entry);
     response.json({ resources: updateProjectResourcePaths(project.id, payload.resources, session.userId) });
   } catch (error) {
+    if (error instanceof ProjectFolderError) { sendError(response, 400, error.message); return; }
     if (error instanceof z.ZodError || error instanceof Error && error.message.includes("Resource paths")) { sendError(response, 400, error instanceof Error ? error.message : "Invalid resource paths"); return; }
     next(error);
   }

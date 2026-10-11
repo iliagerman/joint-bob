@@ -10,6 +10,7 @@ import {
 } from "../background-tasks.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
+import { relayTaskControl } from "../task-relay.js";
 
 function route(handler: (request: Request, response: Response) => Promise<void>) {
   return (request: Request, response: Response, _next: NextFunction) => {
@@ -81,6 +82,19 @@ app.post("/api/background-tasks/agent", route(async (request, response) => {
   const command = backgroundTaskCommandSchema.parse({ ...operation, projectId: identity.projectId, conversationId: identity.conversationId });
   response.json(await (nodeId ? routeBackgroundTaskOperation(nodeId, command) : localBackgroundTaskOperation(command)));
 }));
+
+// Raw supervisor requests from an agent under a person's OS account (see task-relay.ts).
+app.post("/api/background-tasks/relay", (request, response) => {
+  response.setHeader("Cache-Control", "no-store");
+  const identity = response.locals.taskAgent as { projectId: string; conversationId: string } | undefined;
+  const token = response.locals.taskAgentToken as string | undefined;
+  if (!identity || !token || response.locals.authSession || response.locals.machineAuth) { response.status(401).json({ error: "Task agent authentication required" }); return; }
+  relayTaskControl(identity, token, request.body).then((result) => response.json({ result }), (error: unknown) => {
+    const status = error instanceof TaskRequestError ? error.status : error instanceof z.ZodError ? 400
+      : typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 503;
+    response.status(status).json({ error: error instanceof z.ZodError ? "Invalid background task request" : error instanceof Error ? error.message : "Background task request failed" });
+  });
+});
 
 app.post("/api/cluster/background-tasks", route(async (request, response) => {
   const caller = machine(response);

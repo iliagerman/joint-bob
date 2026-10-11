@@ -1,4 +1,5 @@
 import os from "node:os";
+import { runtimeHome } from "../account-runtime.js";
 import path from "node:path";
 import { claudeConversationDefault } from "./claude.defaults.js";
 import { defineHarness } from "./contract.js";
@@ -11,7 +12,7 @@ const configuration: HarnessConfiguration = {
   update: { type: "npm", packageName: "@anthropic-ai/claude-code", binaryName: "claude" },
   restartFields: ["executable", "configPath"],
 };
-function claudeProjectsRoot(): string { return configuredRuntime("claude", configuration.defaults(os.homedir())).sessionPath; }
+function claudeProjectsRoot(): string { return configuredRuntime("claude", configuration.defaults(runtimeHome())).sessionPath; }
 function projectCwds(project: import("../session-paths.js").SessionProjectPaths): string[] { return [...new Set([project.path, ...(project.macPath ? [project.macPath] : []), ...(project.locations ?? []).map((location) => location.path), ...(project.additionalPaths ?? [])].map((cwd) => path.resolve(cwd)))]; }
 function projectDir(cwd: string): string { return path.join(claudeProjectsRoot(), cwd.replace(/^\//, "-").replace(/[\s_.\/]+/g, "-")); }
 function watchDirs(project: import("../session-paths.js").SessionProjectPaths): string[] {

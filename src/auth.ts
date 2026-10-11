@@ -1,3 +1,4 @@
+import { ACCOUNT_KEY_COLUMNS } from "./account-keys.js";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { hostname } from "node:os";
@@ -9,6 +10,8 @@ import { nanoid } from "nanoid";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
 import { decryptSecretValue, encryptSecretValue } from "./secrets.js";
 import { generateTotpSecret, verifyTotp } from "./totp.js";
+import { accountIdFor, canonicalLocalHome, normalizeEmail, validEmail, type AccountRole } from "./accounts.js";
+import { save, settingsDatabase } from "./settings-store.js";
 
 export class AuthError extends Error {
   constructor(public readonly statusCode: number, message: string) { super(message); }
@@ -26,6 +29,11 @@ export interface AuthStatus {
   mustChangePassword?: boolean;
   csrfToken?: string;
   username?: string;
+  email?: string | null;
+  accountId?: string;
+  role?: AccountRole | null;
+  /** Signed in, but this account has no email yet: the client asks for one. */
+  needsEmail?: boolean;
   /** True when the user is logged into a node that is not their home node. */
   isRemoteLogin?: boolean;
 }
@@ -34,12 +42,19 @@ export interface AuthSession {
   id: string;
   userId: string;
   username: string;
+  /** Cluster-stable identity of the person; empty only before the node has an identity. */
+  accountId: string;
+  email: string | null;
+  /** Local accounts are admin or member; replicated accounts have no role here. */
+  role: AccountRole | null;
   csrfToken: string;
   mustChangePassword: boolean;
   /** True when the user is logged into a node that is not their home node. */
   isRemoteLogin: boolean;
   /** The node ID where this user account originates. Null for the home user. */
   homeNodeId: string | null;
+  /** A request another node relays for this person (live-link.ts): never the admin's powers. */
+  live?: boolean;
 }
 
 export interface LoginSessionSummary {
@@ -55,6 +70,11 @@ interface UserRow {
   password_salt: Buffer;
   must_change_password: number;
   home_node_id: string | null;
+  email: string | null;
+  role: AccountRole | null;
+  remote_mfa: number;
+  account_id: string | null;
+  disabled: number;
 }
 
 interface SessionRow {
@@ -65,6 +85,9 @@ interface SessionRow {
   must_change_password: number;
   is_remote_login: number;
   home_node_id: string | null;
+  email: string | null;
+  role: AccountRole | null;
+  account_id: string | null;
 }
 
 const dataDir = resolveDataDirectory();
@@ -136,14 +159,114 @@ function ensureReplicatedUserSchema(db: DatabaseSync): void {
   if (!sessionColumns.some((column) => column.name === "is_remote_login")) {
     db.exec("ALTER TABLE login_sessions ADD COLUMN is_remote_login INTEGER NOT NULL DEFAULT 0");
   }
+  if (!userColumns.some((column) => column.name === "email")) db.exec("ALTER TABLE users ADD COLUMN email TEXT");
+  if (!userColumns.some((column) => column.name === "role")) db.exec("ALTER TABLE users ADD COLUMN role TEXT");
+  if (!userColumns.some((column) => column.name === "remote_mfa")) db.exec("ALTER TABLE users ADD COLUMN remote_mfa INTEGER NOT NULL DEFAULT 0");
+  if (!userColumns.some((column) => column.name === "account_id")) db.exec("ALTER TABLE users ADD COLUMN account_id TEXT");
+  if (!userColumns.some((column) => column.name === "disabled")) db.exec("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0");
+  // A visitor's clusters as their home node states them: the shared projects they may see here.
+  if (!userColumns.some((column) => column.name === "remote_clusters")) db.exec("ALTER TABLE users ADD COLUMN remote_clusters TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email COLLATE NOCASE) WHERE email IS NOT NULL");
+  // Before roles existed a node had one local user, so whoever is local and unroled is its admin.
+  db.exec("UPDATE users SET role = 'admin' WHERE home_node_id IS NULL AND role IS NULL AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')");
+}
+
+/** The node's own id, read from the same database. Empty before the node has an identity. */
+function localNodeId(db: DatabaseSync): string {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cluster_node'").get()) return "";
+  return (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id ?? "";
+}
+
+/** A local user's id follows the current twin pairing at once; the stored copy only tells
+    `refreshLocalAccountIds` which rows to move. A visitor's id is the one its home stated. */
+function accountIdForRow(db: DatabaseSync, row: { username: string; home_node_id: string | null; account_id?: string | null }): string {
+  if (row.home_node_id === null) {
+    const home = canonicalLocalHome(db);
+    return home ? accountIdFor(home, row.username) : "";
+  }
+  return row.account_id || accountIdFor(row.home_node_id, row.username);
+}
+
+/** Stores each local user's account id, and reports the ones that changed (twins were
+    paired or unpaired), so their per-person rows can move to the new id. */
+export function refreshLocalAccountIds(): Array<{ from: string; to: string }> {
+  const db = authDatabase();
+  const home = canonicalLocalHome(db);
+  if (!home) return [];
+  const changes: Array<{ from: string; to: string }> = [];
+  const rows = db.prepare("SELECT id, username, account_id FROM users WHERE home_node_id IS NULL").all() as unknown as Array<{ id: string; username: string; account_id: string | null }>;
+  for (const row of rows) {
+    const next = accountIdFor(home, row.username);
+    if (row.account_id === next) continue;
+    db.prepare("UPDATE users SET account_id = ? WHERE id = ?").run(next, row.id);
+    changes.push({ from: row.account_id ?? row.username, to: next });
+  }
+  return changes;
+}
+
+/** The account id of this node's own user called `username`, if there is one. */
+export function localAccountIdForUsername(username: string): string | undefined {
+  const db = authDatabase();
+  const row = db.prepare("SELECT username, home_node_id, account_id FROM users WHERE username = ? COLLATE NOCASE AND home_node_id IS NULL").get(username) as { username: string; home_node_id: null; account_id: string | null } | undefined;
+  return row ? accountIdForRow(db, row) || undefined : undefined;
+}
+
+function checkedEmail(email: string): string {
+  const normalized = normalizeEmail(email);
+  if (!validEmail(normalized)) throw new AuthError(400, "Enter a valid email address");
+  return normalized;
+}
+
+function emailTaken(db: DatabaseSync, email: string, exceptUserId?: string): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND id IS NOT ?").get(email, exceptUserId ?? null));
 }
 
 function passwordDigest(password: string, salt: Buffer): Buffer {
   return scryptSync(password, salt, 64);
 }
 
+/**
+ * Proof that a person really signed in on another node. That node holds their sign-in
+ * record, so only something made from the password itself tells a sign-in from a claim:
+ * a second digest of it, which the node can make only while it has the password in hand.
+ * The home node keeps a digest of that proof, and nothing of it is replicated.
+ */
+function ensureRoamingProofSchema(db: DatabaseSync): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS roaming_sign_in_verifiers (user_id TEXT PRIMARY KEY, verifier TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS visitor_sign_in_proofs (user_id TEXT PRIMARY KEY, proof TEXT NOT NULL);`);
+}
+function roamingProof(password: string, salt: Buffer): string {
+  return scryptSync(password, Buffer.concat([Buffer.from("joint-bob-roaming:"), salt]), 32).toString("hex");
+}
+function rememberRoamingProof(db: DatabaseSync, user: { id: string; home_node_id: string | null }, password: string, salt: Buffer): void {
+  ensureRoamingProofSchema(db);
+  const proof = roamingProof(password, salt);
+  if (user.home_node_id === null) db.prepare("INSERT INTO roaming_sign_in_verifiers (user_id, verifier) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET verifier = excluded.verifier").run(user.id, digest(proof));
+  else db.prepare("INSERT INTO visitor_sign_in_proofs (user_id, proof) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET proof = excluded.proof").run(user.id, proof);
+}
+/** On the node a visitor signed in to: the proof of it, for their home node. */
+export function visitorSignInProof(userId: string): string | undefined {
+  const db = authDatabase();
+  ensureRoamingProofSchema(db);
+  return (db.prepare("SELECT proof FROM visitor_sign_in_proofs WHERE user_id = ?").get(userId) as { proof: string } | undefined)?.proof;
+}
+export function forgetVisitorSignInProof(userId: string): void {
+  const db = authDatabase();
+  ensureRoamingProofSchema(db);
+  db.prepare("DELETE FROM visitor_sign_in_proofs WHERE user_id = ?").run(userId);
+}
+/** At home: whether another node's proof shows this person signed in there. */
+export function roamingProofValid(userId: string, proof: string): boolean {
+  const db = authDatabase();
+  ensureRoamingProofSchema(db);
+  const stored = (db.prepare("SELECT verifier FROM roaming_sign_in_verifiers WHERE user_id = ?").get(userId) as { verifier: string } | undefined)?.verifier;
+  const offered = digest(proof);
+  return Boolean(stored) && stored!.length === offered.length && timingSafeEqual(Buffer.from(stored!), Buffer.from(offered));
+}
+
 function validUsername(username: string): boolean {
-  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$/.test(username);
+  // A name shaped like an account id would be taken for one where older rows are read.
+  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$/.test(username) && !/^[0-9a-f]{32}$/i.test(username);
 }
 
 function validPassword(password: string): boolean {
@@ -154,32 +277,200 @@ function userCount(db: DatabaseSync): number {
   return (db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
 }
 
-function configuredAdministrator(): { username: string; password: string } | undefined {
+function configuredAdministrator(): { username: string; password: string; email?: string } | undefined {
   const username = (process.env.JOINT_BOB_ADMIN_USERNAME ?? process.env.MASTER_BOB_ADMIN_USERNAME)?.trim();
   const password = process.env.JOINT_BOB_INITIAL_PASSWORD ?? process.env.MASTER_BOB_INITIAL_PASSWORD;
+  const email = process.env.JOINT_BOB_ADMIN_EMAIL?.trim() || undefined;
   if (!username || !password) return undefined;
   if (!validUsername(username)) throw new Error("JOINT_BOB_ADMIN_USERNAME must be 3-80 letters, numbers, dots, underscores, or hyphens");
   if (!validPassword(password)) throw new Error("JOINT_BOB_INITIAL_PASSWORD must be at least 16 characters");
-  return { username, password };
+  return { username, password, email };
 }
 
-export function createAdministrator(username: string, password: string, mustChangePassword = true): void {
+export function createAdministrator(username: string, password: string, mustChangePassword = true, email?: string): void {
   if (!validUsername(username)) throw new Error("Username must be 3-80 letters, numbers, dots, underscores, or hyphens");
   if (!validPassword(password)) throw new Error("Password must be 16-200 characters");
   const db = authDatabase();
   if (userCount(db) !== 0) throw new Error("An administrator already exists");
+  insertLocalUser(db, username, password, mustChangePassword, email === undefined ? null : checkedEmail(email), "admin");
+  // A node that starts with the terminal off has nothing to be told about it.
+  save(settingsDatabase(), "terminalAccess.noticeDismissed", "true");
+}
+
+export interface LocalUserRecord {
+  userId: string;
+  accountId: string;
+  username: string;
+  email: string | null;
+  role: AccountRole;
+  disabled: boolean;
+  createdAt: string;
+}
+
+/** Member usernames also name the member's OS account, so they are lowercase and short. */
+export function validMemberUsername(username: string): boolean {
+  // Cluster and visitor OS accounts, and the self-test's, use these names.
+  return /^[a-z][a-z0-9_-]{2,27}$/.test(username) && !/^[cv][0-9a-f]{12}$/.test(username) && !username.startsWith("zzjbselftest");
+}
+
+/** The admin adds a member. The member signs in once with the returned one-time password
+    and must replace it; nobody, the admin included, can read or reset it afterwards. */
+export function createLocalUser(input: { username: string; email: string }, actorId?: string): { user: LocalUserRecord; oneTimePassword: string } {
+  if (!validMemberUsername(input.username)) throw new AuthError(400, "Username must be 3-28 lowercase letters, numbers, underscores or hyphens, starting with a letter");
+  const db = authDatabase();
+  const email = checkedEmail(input.email);
+  const oneTimePassword = randomBytes(18).toString("base64url");
+  // A person of this node comes before a visitor's record: one holding the same name or email
+  // gives way, with the copy of theirs this node kept.
+  const visitors = db.prepare("SELECT username, home_node_id FROM users WHERE home_node_id IS NOT NULL AND (username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE)").all(input.username, email) as unknown as Array<{ username: string; home_node_id: string }>;
+  for (const visitor of visitors) deleteReplicatedUser(visitor.home_node_id, visitor.username);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const userId = insertLocalUser(db, input.username, oneTimePassword, true, email, "member");
+    appendAuditEvent(db, { eventType: "auth.user.created", actorType: actorId ? "user" : "system", actorId, entityType: "user", entityId: userId });
+    db.exec("COMMIT");
+    return { user: localUser(userId)!, oneTimePassword };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function localUser(userId: string): LocalUserRecord | undefined {
+  return listLocalUsers().find((user) => user.userId === userId);
+}
+
+/** Accounts only: no sign-in history, sessions or activity of anyone. */
+export function listLocalUsers(): LocalUserRecord[] {
+  const db = authDatabase();
+  const rows = db.prepare("SELECT id, username, home_node_id, account_id, email, role, disabled, created_at FROM users WHERE home_node_id IS NULL ORDER BY created_at, username").all() as unknown as Array<{ id: string; username: string; home_node_id: null; account_id: string | null; email: string | null; role: AccountRole | null; disabled: number; created_at: string }>;
+  return rows.map((row) => ({ userId: row.id, accountId: accountIdForRow(db, row), username: row.username, email: row.email, role: row.role ?? "member", disabled: row.disabled === 1, createdAt: row.created_at }));
+}
+
+function endSessions(db: DatabaseSync, userId: string): string[] {
+  const ids = (db.prepare("SELECT id FROM login_sessions WHERE user_id = ?").all(userId) as unknown as Array<{ id: string }>).map((row) => row.id);
+  db.prepare("DELETE FROM login_sessions WHERE user_id = ?").run(userId);
+  return ids;
+}
+
+/** The admin turns a member off or on again. A disabled member is signed out everywhere here. */
+export function setLocalUserDisabled(userId: string, disabled: boolean, actorId?: string): LocalUserRecord {
+  const db = authDatabase();
+  const user = localUser(userId);
+  if (!user) throw new AuthError(404, "User not found");
+  if (user.role === "admin") throw new AuthError(409, "Transfer the admin role before disabling this account");
+  let ended: string[] = [];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE users SET disabled = ?, updated_at = ? WHERE id = ?").run(disabled ? 1 : 0, new Date().toISOString(), userId);
+    if (disabled) ended = endSessions(db, userId);
+    appendAuditEvent(db, { eventType: disabled ? "auth.user.disabled" : "auth.user.enabled", actorType: actorId ? "user" : "system", actorId, entityType: "user", entityId: userId });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  if (ended.length) authSessionEvents.emit("revoked", ended);
+  return localUser(userId)!;
+}
+
+/** Removes the account itself; the caller removes everything the account owned first. */
+export function deleteLocalUser(userId: string, actorId?: string): void {
+  const db = authDatabase();
+  const user = localUser(userId);
+  if (!user) throw new AuthError(404, "User not found");
+  if (user.role === "admin") throw new AuthError(409, "The admin account can't be deleted");
+  let ended: string[] = [];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    ended = endSessions(db, userId);
+    for (const table of ["user_mfa", "mfa_recovery_codes", "mfa_login_challenges", "mfa_enrollments"]) {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
+    }
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'admin_transfers'").get()) db.prepare("DELETE FROM admin_transfers WHERE to_user_id = ?").run(userId);
+    db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+    appendAuditEvent(db, { eventType: "auth.user.deleted", actorType: actorId ? "user" : "system", actorId, entityType: "user", entityId: userId });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  if (ended.length) authSessionEvents.emit("revoked", ended);
+}
+
+function ensureAdminTransferSchema(db: DatabaseSync): void {
+  db.exec("CREATE TABLE IF NOT EXISTS admin_transfers (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), to_user_id TEXT NOT NULL, offered_by TEXT NOT NULL, offered_at TEXT NOT NULL)");
+}
+
+/** The admin offers the role to a member; nothing changes until the member accepts. */
+export function offerAdminTransfer(toUserId: string, actorId: string): void {
+  const db = authDatabase();
+  ensureAdminTransferSchema(db);
+  const user = localUser(toUserId);
+  // Only the admin gives the role away, whatever route the call came through.
+  if (localUser(actorId)?.role !== "admin") throw new AuthError(404, "Not found");
+  if (!user || user.disabled || user.role === "admin") throw new AuthError(404, "User not found");
+  db.prepare("INSERT INTO admin_transfers (singleton, to_user_id, offered_by, offered_at) VALUES (1, ?, ?, ?) ON CONFLICT(singleton) DO UPDATE SET to_user_id = excluded.to_user_id, offered_by = excluded.offered_by, offered_at = excluded.offered_at")
+    .run(toUserId, actorId, new Date().toISOString());
+  appendAuditEvent(db, { eventType: "auth.admin_transfer.offered", actorType: "user", actorId, entityType: "user", entityId: toUserId });
+}
+
+export function cancelAdminTransfer(actorId: string): void {
+  const db = authDatabase();
+  ensureAdminTransferSchema(db);
+  if (localUser(actorId)?.role !== "admin") throw new AuthError(404, "Not found");
+  db.prepare("DELETE FROM admin_transfers").run();
+  appendAuditEvent(db, { eventType: "auth.admin_transfer.cancelled", actorType: "user", actorId, entityType: "user" });
+}
+
+export function pendingAdminTransfer(): { toUserId: string; offeredAt: string } | undefined {
+  const db = authDatabase();
+  ensureAdminTransferSchema(db);
+  const row = db.prepare("SELECT to_user_id, offered_at FROM admin_transfers WHERE singleton = 1").get() as { to_user_id: string; offered_at: string } | undefined;
+  return row ? { toUserId: row.to_user_id, offeredAt: row.offered_at } : undefined;
+}
+
+/** The member takes the role. `beforeSwap` runs first, so everything the old admin owned
+    implicitly is written down as theirs before the role moves. */
+export function acceptAdminTransfer(session: AuthSession, beforeSwap: (oldAdminAccountId: string) => void): void {
+  const db = authDatabase();
+  ensureAdminTransferSchema(db);
+  const pending = pendingAdminTransfer();
+  if (!pending || pending.toUserId !== session.userId || session.isRemoteLogin) throw new AuthError(404, "No admin role is offered to you");
+  const oldAdmin = listLocalUsers().find((user) => user.role === "admin");
+  if (!oldAdmin) throw new AuthError(409, "This node has no admin to take over from");
+  // Its writes use other connections to the same database, so it runs before this one locks it.
+  beforeSwap(oldAdmin.accountId);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE users SET role = 'member' WHERE id = ?").run(oldAdmin.userId);
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(session.userId);
+    db.prepare("DELETE FROM admin_transfers").run();
+    appendAuditEvent(db, { eventType: "auth.admin_transfer.accepted", actorType: "user", actorId: session.userId, entityType: "user", entityId: session.userId });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function insertLocalUser(db: DatabaseSync, username: string, password: string, mustChangePassword: boolean, email: string | null, role: AccountRole): string {
+  if (email && emailTaken(db, email)) throw new AuthError(409, "That email is already used on this node");
+  if (db.prepare("SELECT 1 FROM users WHERE username = ? COLLATE NOCASE").get(username)) throw new AuthError(409, "That username is already used on this node");
   const now = new Date().toISOString();
   const salt = randomBytes(16);
+  const id = nanoid(18);
   db.prepare(`
-    INSERT INTO users (id, username, password_hash, password_salt, must_change_password, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(nanoid(18), username, passwordDigest(password, salt), salt, mustChangePassword ? 1 : 0, now, now);
+    INSERT INTO users (id, username, password_hash, password_salt, must_change_password, email, role, account_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, username, passwordDigest(password, salt), salt, mustChangePassword ? 1 : 0, email, role, accountIdForRow(db, { username, home_node_id: null }) || null, now, now);
+  return id;
 }
 
 function ensureConfiguredAdministrator(): void {
   if (userCount(authDatabase()) !== 0) return;
   const administrator = configuredAdministrator();
-  if (administrator) createAdministrator(administrator.username, administrator.password);
+  if (administrator) createAdministrator(administrator.username, administrator.password, true, administrator.email);
 }
 
 function parseUser(row: UserRow | undefined): UserRow | undefined {
@@ -218,6 +509,10 @@ export function authenticationStatus(session?: AuthSession): AuthStatus {
       mustChangePassword: session.mustChangePassword,
       csrfToken: session.csrfToken,
       username: session.username,
+      email: session.email,
+      accountId: session.accountId,
+      role: session.role,
+      needsEmail: !session.isRemoteLogin && !session.email,
       isRemoteLogin: session.isRemoteLogin,
     };
   }
@@ -228,7 +523,8 @@ export function authenticate(username: string, password: string, options: Authen
   ensureConfiguredAdministrator();
   const db = authDatabase();
   const normalizedUsername = username.trim();
-  const row = parseUser(db.prepare("SELECT * FROM users WHERE username = ?").get(normalizedUsername) as UserRow | undefined);
+  // Either the username or the email signs in; both are unique on a node.
+  const row = parseUser(db.prepare("SELECT * FROM users WHERE username = ? OR (instr(?, '@') > 0 AND email = ? COLLATE NOCASE)").get(normalizedUsername, normalizedUsername, normalizedUsername) as UserRow | undefined);
   const buckets = options.throttle ?? [{ key: normalizedUsername, limit: 5 }];
   if (buckets.some((bucket) => isRateLimited(bucket.key, bucket.limit))) {
     appendAuditEvent(db, { eventType: "auth.login.rate_limited", actorType: "system", entityType: "auth.login", details: { knownUser: Boolean(row) } });
@@ -247,6 +543,11 @@ export function authenticate(username: string, password: string, options: Authen
     }
     throw new Error("Invalid username or password");
   }
+  if (row.disabled === 1) throw new AuthError(403, "This account is disabled");
+  if (row.home_node_id !== null && row.remote_mfa === 1) {
+    throw new AuthError(403, "This account uses two-factor sign-in, which works only on its home node for now");
+  }
+  rememberRoamingProof(db, row, password, row.password_salt);
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const bucket of buckets) db.prepare("DELETE FROM login_attempts WHERE username = ?").run(bucket.key.toLowerCase());
@@ -276,7 +577,7 @@ function createLoginSession(db: DatabaseSync, row: UserRow): AuthSession {
   db.prepare("INSERT INTO login_sessions (id, user_id, csrf_token, expires_at, created_at, is_remote_login) VALUES (?, ?, ?, ?, ?, ?)")
     .run(id, row.id, csrfToken, new Date(now.getTime() + sessionLifetimeMs).toISOString(), now.toISOString(), isRemoteLogin ? 1 : 0);
   appendAuditEvent(db, { eventType: "auth.login.succeeded", actorType: "user", actorId: row.id, entityType: "user", entityId: row.id, details: { isRemoteLogin } });
-  return { id, userId: row.id, username: row.username, csrfToken, mustChangePassword: row.must_change_password === 1, isRemoteLogin, homeNodeId: row.home_node_id };
+  return { id, userId: row.id, username: row.username, accountId: accountIdForRow(db, row), email: row.email, role: row.role, csrfToken, mustChangePassword: row.must_change_password === 1, isRemoteLogin, homeNodeId: row.home_node_id };
 }
 
 export function sessionForId(sessionId: string | undefined): AuthSession | undefined {
@@ -285,15 +586,18 @@ export function sessionForId(sessionId: string | undefined): AuthSession | undef
   authDatabase().prepare("DELETE FROM login_sessions WHERE expires_at <= ?").run(now);
   const row = authDatabase().prepare(`
     SELECT login_sessions.id, login_sessions.user_id, users.username, login_sessions.csrf_token,
-      users.must_change_password, login_sessions.is_remote_login, users.home_node_id
+      users.must_change_password, login_sessions.is_remote_login, users.home_node_id, users.email, users.role, users.account_id
     FROM login_sessions JOIN users ON users.id = login_sessions.user_id
-    WHERE login_sessions.id = ? AND login_sessions.expires_at > ?
+    WHERE login_sessions.id = ? AND login_sessions.expires_at > ? AND users.disabled = 0
   `).get(sessionId, now) as SessionRow | undefined;
   if (!row) return undefined;
   return {
     id: row.id,
     userId: row.user_id,
     username: row.username,
+    accountId: accountIdForRow(authDatabase(), row),
+    email: row.email,
+    role: row.role,
     csrfToken: row.csrf_token,
     mustChangePassword: row.must_change_password === 1,
     isRemoteLogin: row.is_remote_login === 1,
@@ -310,6 +614,31 @@ export function userIdForUsername(username: string): string | undefined {
   return (authDatabase().prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE").get(username) as { id: string } | undefined)?.id;
 }
 
+/** The account a node-local user id belongs to: the key per-person data is stored under. */
+export function accountIdForUser(userId: string): string | undefined {
+  const db = authDatabase();
+  const row = db.prepare("SELECT username, home_node_id, account_id FROM users WHERE id = ?").get(userId) as { username: string; home_node_id: string | null; account_id: string | null } | undefined;
+  const account = row ? accountIdForRow(db, row) : "";
+  return account || undefined;
+}
+
+export function userIdForAccount(accountId: string): string | undefined {
+  const db = authDatabase();
+  const rows = db.prepare("SELECT id, username, home_node_id, account_id FROM users").all() as unknown as Array<{ id: string; username: string; home_node_id: string | null; account_id: string | null }>;
+  return rows.find((row) => accountIdForRow(db, row) === accountId)?.id;
+}
+
+/** Sets the signed-in account's own email. Replicated accounts change theirs at home. */
+export function setOwnEmail(session: AuthSession, email: string): string {
+  if (session.isRemoteLogin) throw new AuthError(403, "Change your email on your home node");
+  const db = authDatabase();
+  const normalized = checkedEmail(email);
+  if (emailTaken(db, normalized, session.userId)) throw new AuthError(409, "That email is already used on this node");
+  db.prepare("UPDATE users SET email = ?, updated_at = ? WHERE id = ?").run(normalized, new Date().toISOString(), session.userId);
+  appendAuditEvent(db, { eventType: "auth.email.changed", actorType: "user", actorId: session.userId, entityType: "user", entityId: session.userId });
+  return normalized;
+}
+
 export function changePassword(session: AuthSession, currentPassword: string, newPassword: string): void {
   if (!validPassword(newPassword)) throw new Error("New password must be 16-200 characters");
   const row = authDatabase().prepare("SELECT * FROM users WHERE id = ?").get(session.userId) as UserRow | undefined;
@@ -323,6 +652,7 @@ export function changePassword(session: AuthSession, currentPassword: string, ne
     db.prepare(`
       UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 0, updated_at = ? WHERE id = ?
     `).run(passwordDigest(newPassword, salt), salt, new Date().toISOString(), session.userId);
+    rememberRoamingProof(db, row, newPassword, salt);
     db.prepare("DELETE FROM mfa_login_challenges WHERE user_id = ?").run(session.userId);
     db.prepare("DELETE FROM mfa_enrollments WHERE user_id = ?").run(session.userId);
     appendAuditEvent(db, { eventType: "auth.password.changed", actorType: "user", actorId: session.userId, entityType: "user", entityId: session.userId });
@@ -544,12 +874,16 @@ export function clearSessionCookieValue(gateway = false): string {
 
 export interface ReplicatedUserInput {
   username: string;
+  email: string | null;
   passwordHash: Buffer;
   passwordSalt: Buffer;
   homeNodeId: string;
-  mfaSecretEncrypted?: string | null;
-  mfaLastUsedStep?: number;
-  mfaRecoveryCodes?: string[];
+  /** Stated by the home node: its twins share one id for the same person. */
+  accountId: string;
+  /** The home node requires a second factor; this node can't verify it, so it refuses sign-in. */
+  mfaRequired: boolean;
+  /** The clusters, shared with this node, that the person joined at home. */
+  clusterIds?: string[];
 }
 
 export interface ReplicatedUserRecord {
@@ -563,67 +897,34 @@ export interface ReplicatedUserRecord {
 /** Creates or updates a replicated user from another node. */
 export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUserRecord {
   if (!validUsername(input.username)) throw new Error("Invalid username for replicated user");
+  const email = input.email == null ? null : normalizeEmail(input.email);
+  if (email !== null && !validEmail(email)) throw new Error("Invalid email for replicated user");
   const db = authDatabase();
   const now = new Date().toISOString();
 
   db.exec("BEGIN IMMEDIATE");
   try {
     const existing = db.prepare("SELECT id, home_node_id FROM users WHERE username = ? COLLATE NOCASE").get(input.username) as { id: string; home_node_id: string | null } | undefined;
-
+    if (existing && existing.home_node_id === null) throw new Error("Cannot overwrite the home user with a replicated user");
+    if (existing && existing.home_node_id !== input.homeNodeId) throw new Error("Username conflict: replicated user from different home node");
+    if (email !== null && emailTaken(db, email, existing?.id)) throw new Error("Email conflict: another account on this node uses that email");
+    // The account id is the other node's statement. It may never be the id of a person of
+    // this node, nor one another account here already answers to.
+    if (input.accountId) {
+      if (!/^[0-9a-f]{32}$/.test(input.accountId)) throw new Error("Invalid account id for replicated user");
+      if (listLocalUsers().some((user) => user.accountId === input.accountId)) throw new Error("Account conflict: that account belongs to a person of this node");
+      if (db.prepare("SELECT 1 FROM users WHERE account_id = ? AND id IS NOT ?").get(input.accountId, existing?.id ?? null)) throw new Error("Account conflict: another account here already has that id");
+    }
+    const id = existing?.id ?? nanoid(18);
     if (existing) {
-      if (existing.home_node_id === null) {
-        throw new Error("Cannot overwrite the home user with a replicated user");
-      }
-      if (existing.home_node_id !== input.homeNodeId) {
-        throw new Error("Username conflict: replicated user from different home node");
-      }
-      db.prepare(`
-        UPDATE users SET password_hash = ?, password_salt = ?, updated_at = ?
-        WHERE id = ?
-      `).run(input.passwordHash, input.passwordSalt, now, existing.id);
-
-      if (input.mfaSecretEncrypted !== undefined) {
-        if (input.mfaSecretEncrypted === null) {
-          db.prepare("DELETE FROM user_mfa WHERE user_id = ?").run(existing.id);
-          db.prepare("DELETE FROM mfa_recovery_codes WHERE user_id = ?").run(existing.id);
-        } else {
-          db.prepare(`
-            INSERT INTO user_mfa (user_id, secret_encrypted, last_used_step) VALUES (?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET secret_encrypted = excluded.secret_encrypted, last_used_step = excluded.last_used_step
-          `).run(existing.id, input.mfaSecretEncrypted, input.mfaLastUsedStep ?? 0);
-          if (input.mfaRecoveryCodes) {
-            db.prepare("DELETE FROM mfa_recovery_codes WHERE user_id = ?").run(existing.id);
-            const insertCode = db.prepare("INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (?, ?)");
-            for (const codeHash of input.mfaRecoveryCodes) {
-              insertCode.run(existing.id, codeHash);
-            }
-          }
-        }
-      }
-
-      db.exec("COMMIT");
-      appendAuditEvent(db, { eventType: "auth.replicated_user.updated", actorType: "system", entityType: "user", entityId: existing.id, details: { homeNodeId: input.homeNodeId } });
-      return { id: existing.id, username: input.username, homeNodeId: input.homeNodeId, createdAt: now, updatedAt: now };
+      db.prepare("UPDATE users SET password_hash = ?, password_salt = ?, email = ?, remote_mfa = ?, account_id = ?, remote_clusters = ?, updated_at = ? WHERE id = ?")
+        .run(input.passwordHash, input.passwordSalt, email, input.mfaRequired ? 1 : 0, input.accountId ?? null, JSON.stringify(input.clusterIds ?? []), now, id);
+    } else {
+      db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, must_change_password, home_node_id, email, remote_mfa, account_id, remote_clusters, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.username, input.passwordHash, input.passwordSalt, input.homeNodeId, email, input.mfaRequired ? 1 : 0, input.accountId ?? null, JSON.stringify(input.clusterIds ?? []), now, now);
     }
-
-    const id = nanoid(18);
-    db.prepare(`
-      INSERT INTO users (id, username, password_hash, password_salt, must_change_password, home_node_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 0, ?, ?, ?)
-    `).run(id, input.username, input.passwordHash, input.passwordSalt, input.homeNodeId, now, now);
-
-    if (input.mfaSecretEncrypted) {
-      db.prepare("INSERT INTO user_mfa (user_id, secret_encrypted, last_used_step) VALUES (?, ?, ?)").run(id, input.mfaSecretEncrypted, input.mfaLastUsedStep ?? 0);
-      if (input.mfaRecoveryCodes) {
-        const insertCode = db.prepare("INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (?, ?)");
-        for (const codeHash of input.mfaRecoveryCodes) {
-          insertCode.run(id, codeHash);
-        }
-      }
-    }
-
+    appendAuditEvent(db, { eventType: existing ? "auth.replicated_user.updated" : "auth.replicated_user.created", actorType: "system", entityType: "user", entityId: id, details: { homeNodeId: input.homeNodeId } });
     db.exec("COMMIT");
-    appendAuditEvent(db, { eventType: "auth.replicated_user.created", actorType: "system", entityType: "user", entityId: id, details: { homeNodeId: input.homeNodeId } });
     return { id, username: input.username, homeNodeId: input.homeNodeId, createdAt: now, updatedAt: now };
   } catch (error) {
     db.exec("ROLLBACK");
@@ -631,17 +932,52 @@ export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUser
   }
 }
 
+/** A visitor here by account id: their local user row and the node they call home. */
+export function replicatedUserByAccount(accountId: string): { userId: string; username: string; homeNodeId: string } | undefined {
+  const row = authDatabase().prepare("SELECT id, username, home_node_id FROM users WHERE account_id = ? AND home_node_id IS NOT NULL").get(accountId) as { id: string; username: string; home_node_id: string } | undefined;
+  return row ? { userId: row.id, username: row.username, homeNodeId: row.home_node_id } : undefined;
+}
+
+/** Signs a visitor out here, as "Forget this node" asks; their sign-in record stays. */
+export function endVisitorSessions(userId: string): void {
+  const db = authDatabase();
+  const visitor = db.prepare("SELECT 1 FROM users WHERE id = ? AND home_node_id IS NOT NULL").get(userId);
+  const ended = visitor ? endSessions(db, userId) : [];
+  if (ended.length) authSessionEvents.emit("revoked", ended);
+}
+
+/** The clusters a visitor joined at home, as their home node last stated them. */
+export function visitorClusterIds(accountId: string): string[] {
+  const row = authDatabase().prepare("SELECT remote_clusters FROM users WHERE account_id = ? AND home_node_id IS NOT NULL").get(accountId) as { remote_clusters: string | null } | undefined;
+  try { const ids = JSON.parse(row?.remote_clusters ?? "[]") as unknown; return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : []; } catch { return []; }
+}
+
 /** Removes a replicated user and all their sessions. */
 export function deleteReplicatedUser(homeNodeId: string, username: string): boolean {
   const db = authDatabase();
-  const user = db.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE AND home_node_id = ?").get(username, homeNodeId) as { id: string } | undefined;
+  const user = db.prepare("SELECT id, account_id FROM users WHERE username = ? COLLATE NOCASE AND home_node_id = ?").get(username, homeNodeId) as { id: string; account_id: string | null } | undefined;
   if (!user) return false;
 
+  let revoked: string[] = [];
   db.exec("BEGIN IMMEDIATE");
   try {
+    const ended = (db.prepare("SELECT id FROM login_sessions WHERE user_id = ?").all(user.id) as unknown as Array<{ id: string }>).map((session) => session.id);
     db.prepare("DELETE FROM login_sessions WHERE user_id = ?").run(user.id);
     db.prepare("DELETE FROM users WHERE id = ?").run(user.id);
+    ensureRoamingProofSchema(db);
+    db.prepare("DELETE FROM visitor_sign_in_proofs WHERE user_id = ?").run(user.id);
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_preferences'").get()) db.prepare("DELETE FROM user_preferences WHERE user_id = ?").run(user.id);
+    revoked = ended;
+    // Their copy here goes with them: every per-person row and their roaming profile.
+    if (user.account_id) {
+      const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as unknown as Array<{ name: string }>).map((row) => row.name));
+      for (const [table, column] of [...ACCOUNT_KEY_COLUMNS, ["visitor_profiles", "account_id"] as [string, string]]) {
+        if (tables.has(table)) db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).run(user.account_id);
+      }
+    }
     db.exec("COMMIT");
+    // Open pages and sockets of theirs end now, not at their next request.
+    if (revoked.length) authSessionEvents.emit("revoked", revoked);
     appendAuditEvent(db, { eventType: "auth.replicated_user.deleted", actorType: "system", entityType: "user", entityId: user.id, details: { homeNodeId } });
     return true;
   } catch (error) {
@@ -666,21 +1002,22 @@ export function listReplicatedUsers(): ReplicatedUserRecord[] {
   }));
 }
 
-/** Gets the home user's credentials for replication to other nodes. */
-export function getHomeUserForReplication(): { username: string; passwordHash: Buffer; passwordSalt: Buffer; mfaSecretEncrypted: string | null; mfaLastUsedStep: number; mfaRecoveryCodes: string[] } | undefined {
+export interface LocalAccountCredentials {
+  accountId: string;
+  username: string;
+  email: string | null;
+  passwordHash: Buffer;
+  passwordSalt: Buffer;
+  mfaEnabled: boolean;
+  updatedAt: string;
+}
+
+/** Every local account's sign-in record, for the nodes it may sign in to. MFA secrets are
+    encrypted with this node's key and never travel; a peer only learns MFA is required. */
+export function localAccountsForReplication(): LocalAccountCredentials[] {
   const db = authDatabase();
-  const user = db.prepare("SELECT id, username, password_hash, password_salt FROM users WHERE home_node_id IS NULL").get() as { id: string; username: string; password_hash: Buffer; password_salt: Buffer } | undefined;
-  if (!user) return undefined;
-
-  const mfa = db.prepare("SELECT secret_encrypted, last_used_step FROM user_mfa WHERE user_id = ?").get(user.id) as { secret_encrypted: string; last_used_step: number } | undefined;
-  const recoveryCodes = mfa ? (db.prepare("SELECT code_hash FROM mfa_recovery_codes WHERE user_id = ?").all(user.id) as unknown as Array<{ code_hash: string }>).map((row) => row.code_hash) : [];
-
-  return {
-    username: user.username,
-    passwordHash: user.password_hash,
-    passwordSalt: user.password_salt,
-    mfaSecretEncrypted: mfa?.secret_encrypted ?? null,
-    mfaLastUsedStep: mfa?.last_used_step ?? 0,
-    mfaRecoveryCodes: recoveryCodes,
-  };
+  const rows = db.prepare(`SELECT users.username, users.email, users.password_hash, users.password_salt, users.updated_at, users.account_id, users.home_node_id,
+      EXISTS (SELECT 1 FROM user_mfa WHERE user_mfa.user_id = users.id) AS mfa
+    FROM users WHERE home_node_id IS NULL ORDER BY username`).all() as unknown as Array<{ username: string; email: string | null; password_hash: Uint8Array; password_salt: Uint8Array; updated_at: string; mfa: number; account_id: string | null; home_node_id: null }>;
+  return rows.map((row) => ({ accountId: accountIdForRow(db, row), username: row.username, email: row.email, passwordHash: Buffer.from(row.password_hash), passwordSalt: Buffer.from(row.password_salt), mfaEnabled: row.mfa === 1, updatedAt: row.updated_at }));
 }

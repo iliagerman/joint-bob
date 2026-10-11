@@ -33,6 +33,12 @@ function db(): DatabaseSync {
 
 function hash(token: string): string { return createHash("sha256").update(token).digest("hex"); }
 
+/** A deleted conversation's (or project's) agents hold nothing any more. */
+export function revokeBrowserAgentTokens(projectId: string, conversationId?: string): void {
+  if (conversationId) db().prepare("DELETE FROM browser_agent_tokens WHERE project_id = ? AND conversation_id = ?").run(projectId, conversationId);
+  else db().prepare("DELETE FROM browser_agent_tokens WHERE project_id = ?").run(projectId);
+}
+
 /** Call once when composing an agent environment, not once per shell command. */
 export function browserAgentEnvironment(projectId: string, engine: HarnessId, conversationId: string, credentials: WebsiteCredentialAccount[] = []): NodeJS.ProcessEnv {
   if (!projectId || !conversationId) throw new Error("Browser agent requires a project and conversation identity");

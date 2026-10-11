@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { isNodeAdmin } from "./node-admin.js";
 import { createMultiSelect } from "./multi-select.js";
 import { state } from "./state.js";
 
@@ -42,7 +43,7 @@ function syncOptions() {
 
 /** Loads memberships and twins for the filters. A cluster that is gone drops out of the filters. */
 export async function loadClusterDirectory() {
-  const [{ node }, { clusters }, { relationships }] = await Promise.all([api("/api/cluster/node"), api("/api/clusters"), api("/api/twins")]);
+  const [{ node }, { clusters }, { relationships }] = await Promise.all([api("/api/cluster/node"), api("/api/clusters"), isNodeAdmin() ? api("/api/twins") : { relationships: [] }]);
   state.localNodeId = node.id;
   state.clusters = clusters;
   state.twinNodeIds = relationships.filter((relationship) => relationship.status === "active").map((relationship) => relationship.peer.nodeId);

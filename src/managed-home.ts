@@ -27,8 +27,10 @@ function managedFolderName(value: string, fallback: string): string {
     .replace(/^[._-]+|[._-]+$/g, "") || fallback;
 }
 
+/** A member's workspace id carries their name ("noam--personal"); its folder doesn't, since
+    each person's projects live in their own home. */
 export function managedWorkspaceFolderName(workspaceId: WorkspaceId): string {
-  return managedFolderName(workspaceId, "personal");
+  return managedFolderName(workspaceId.replace(/^[a-z][a-z0-9_-]*?--/, ""), "personal");
 }
 
 export function managedWorkspaceRoot(homePath: string, workspaceId: WorkspaceId): string {

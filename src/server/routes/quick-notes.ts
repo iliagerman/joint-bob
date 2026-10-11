@@ -1,13 +1,29 @@
 import { z } from "zod";
 import { authorizeQuickNotePeer, forwardQuickNote, listSharedQuickNotes, offeredQuickNotes, sharedQuickNote } from "../shared-quick-notes.js";
 import { mapV2Error } from "../cluster-v2.js";
-import { getProject } from "../../store.js";
+import { secretHiddenFromActor } from "../../secrets.js";
+import { getProject, projectVisible } from "../../store.js";
+import { NotFoundError } from "../../not-found.js";
 import { getClusterNode } from "../../cluster.js";
 import { createQuickNote, deleteQuickNote, getQuickNote, getQuickNoteQueue, listAllQuickNotes, listQuickNotes, moveQuickNote, setQuickNoteQueue, updateQuickNote } from "../../quick-notes.js";
 import { launchQuickNote, prepareQuickNoteConversation, QuickNoteLaunchError } from "../quick-note-dispatch.js";
 import { sendError } from "../http-auth.js";
 import { quickNotePrepareSchema, quickNoteQueueSchema, quickNoteSchema } from "../schemas.js";
 import { app } from "../state.js";
+
+/** A note in a project the caller can't see is answered as if it didn't exist, and is never
+    looked for on another node either. */
+async function visibleLocalNote(noteId: string): Promise<ReturnType<typeof getQuickNote>> {
+  const note = getQuickNote(noteId);
+  if (note && !await projectVisible(note.projectId)) throw new NotFoundError("Quick note not found");
+  return note;
+}
+
+async function visibleNotes<T extends { projectId: string }>(notes: T[]): Promise<T[]> {
+  const visible = new Map<string, boolean>();
+  for (const note of notes) if (!visible.has(note.projectId)) visible.set(note.projectId, await projectVisible(note.projectId));
+  return notes.filter((note) => visible.get(note.projectId));
+}
 
 const moveSchema = z.object({ targetId: z.string().min(1).max(120) }).strict();
 const noteOrder = (a: { position: number; createdAt: string; id: string }, b: { position: number; createdAt: string; id: string }) =>
@@ -16,10 +32,11 @@ const noteOrder = (a: { position: number; createdAt: string; id: string }, b: { 
 app.post("/api/quick-notes/:noteId/move", async (request, response, next) => {
   try {
     const input = moveSchema.parse(request.body);
-    if (!getQuickNote(request.params.noteId)) {
+    if (!await visibleLocalNote(request.params.noteId)) {
       response.json(await forwardQuickNote(request.params.noteId, "move", input));
       return;
     }
+    await visibleLocalNote(input.targetId);
     try { moveQuickNote(request.params.noteId, input.targetId); }
     catch (error) { sendError(response, 409, (error as Error).message); return; }
     response.json({ ok: true });
@@ -55,7 +72,7 @@ app.put("/api/quick-notes/queue", async (request, response, next) => {
 
 app.get("/api/quick-notes", async (_request, response, next) => {
   try {
-    response.json({ notes: [...listAllQuickNotes(), ...await listSharedQuickNotes()].sort(noteOrder) });
+    response.json({ notes: (await visibleNotes([...listAllQuickNotes(), ...await listSharedQuickNotes()])).sort(noteOrder) });
   } catch (error) {
     next(error);
   }
@@ -64,8 +81,8 @@ app.get("/api/quick-notes", async (_request, response, next) => {
 // Registered after the fixed /queue path so it cannot swallow it.
 app.get("/api/quick-notes/:noteId", async (request, response, next) => {
   try {
-    const note = getQuickNote(request.params.noteId) ?? (await sharedQuickNote(request.params.noteId))?.note;
-    if (!note) { sendError(response, 404, "Quick note not found"); return; }
+    const note = await visibleLocalNote(request.params.noteId) ?? (await sharedQuickNote(request.params.noteId))?.note;
+    if (!note || !await projectVisible(note.projectId)) { sendError(response, 404, "Quick note not found"); return; }
     response.json({ note });
   } catch (error) {
     mapV2Error(error, response, next);
@@ -77,6 +94,8 @@ app.post("/api/quick-notes", async (request, response, next) => {
     const payload = quickNoteSchema.parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
+    // A note carries only secrets its writer may use: the queue starts it later, as the node.
+    if ((payload.secretAccountIds ?? []).some(secretHiddenFromActor)) { sendError(response, 404, "Secret account not found"); return; }
     response.status(201).json({ note: createQuickNote({ ...payload, projectId: project.id }) });
   } catch (error) {
     next(error);
@@ -85,7 +104,7 @@ app.post("/api/quick-notes", async (request, response, next) => {
 
 app.patch("/api/quick-notes/:noteId", async (request, response, next) => {
   try {
-    const existing = getQuickNote(request.params.noteId);
+    const existing = await visibleLocalNote(request.params.noteId);
     if (!existing) {
       response.json(await forwardQuickNote(request.params.noteId, "edit", request.body));
       return;
@@ -94,6 +113,8 @@ app.patch("/api/quick-notes/:noteId", async (request, response, next) => {
     const payload = quickNoteSchema.parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
+    // A note carries only secrets its writer may use: the queue starts it later, as the node.
+    if ((payload.secretAccountIds ?? []).some(secretHiddenFromActor)) { sendError(response, 404, "Secret account not found"); return; }
     response.json({ note: updateQuickNote(request.params.noteId, { ...payload, projectId: project.id }) });
   } catch (error) {
     mapV2Error(error, response, next);
@@ -102,7 +123,7 @@ app.patch("/api/quick-notes/:noteId", async (request, response, next) => {
 
 app.delete("/api/quick-notes/:noteId", async (request, response, next) => {
   try {
-    if (!getQuickNote(request.params.noteId)) await forwardQuickNote(request.params.noteId, "delete");
+    if (!await visibleLocalNote(request.params.noteId)) await forwardQuickNote(request.params.noteId, "delete");
     else deleteQuickNote(request.params.noteId);
     response.status(204).send();
   } catch (error) {
@@ -113,7 +134,7 @@ app.delete("/api/quick-notes/:noteId", async (request, response, next) => {
 /** Manual start of a saved note: one accepted launch, no duplicate turns. */
 app.post("/api/quick-notes/:noteId/start", async (request, response, next) => {
   try {
-    if (!getQuickNote(request.params.noteId)) {
+    if (!await visibleLocalNote(request.params.noteId)) {
       response.json(await forwardQuickNote(request.params.noteId, "start"));
       return;
     }

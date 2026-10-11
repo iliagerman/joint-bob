@@ -1,4 +1,6 @@
+import { withProjectRuntime } from "../project-runtime.js";
 import { listProjectWorktrees } from "../project-worktrees.js";
+import { asNode } from "../account-context.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -62,7 +64,11 @@ export async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string)
   return false;
 }
 
-async function assertTaskSessionReady(projectId:string, task:TaskRecord, syncStatusChecked = false): Promise<void> {
+function assertTaskSessionReady(projectId:string, task:TaskRecord, syncStatusChecked = false): Promise<void> {
+  return withProjectRuntime(projectId, () => assertTaskSessionReadyNow(projectId, task, syncStatusChecked));
+}
+
+async function assertTaskSessionReadyNow(projectId:string, task:TaskRecord, syncStatusChecked: boolean): Promise<void> {
   const sessionPath=task.sessionPath!;
   const session = resolveLocalSessionPath(sessionPath);
   const adapter = getHarness(session.engine);
@@ -202,7 +208,7 @@ async function localWorkspaceId(candidate: string | undefined): Promise<string> 
 export async function assertManagedHomeChangeAllowed(nextHomePath: string): Promise<void> {
   const currentHomePath = getSettings().projects.homePath;
   if (path.resolve(currentHomePath) === path.resolve(nextHomePath)) return;
-  for (const project of await listProjects()) {
+  for (const project of await asNode(() => listProjects())) {
     if ((await listTasks(project.id)).some((task) => task.worktreePath && !task.worktreeBranch)) {
       throw new TaskWorkspaceError("Archive or delete board cards before changing the Joint Bob home folder");
     }

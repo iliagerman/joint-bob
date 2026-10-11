@@ -3,6 +3,20 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Accounts now require email addresses and support signing in by email; node admins can block specific nodes from connecting.
+- Node administrators can invite members to sign in with their own accounts; terminal access and settings are managed separately by role.
+- User messages now show who wrote them by email; multi-user conversations attribute each message to its author and persist the attribution across reloads.
+- Each member now has their own projects, secrets, workspaces, and settings; admins manage accounts and can transfer the admin role from the Users tab.
+- Agents, shells, and terminals now run in separate OS accounts when multi-user mode is enabled, providing process and network isolation.
+- Members can now join clusters independently and visit cluster nodes; their settings, preferences, and pins follow them there.
+- Your projects appeared on the other nodes you signed in to, marked “At home”, while they kept running on your home node; you could hide any one project or turn this off in Settings.
+- Conversations started in a worktree on another machine now appear under that worktree right away, before its files finish syncing; until they arrive, the worktree shows a note in place of its menu, and renames and deletions reach those conversations too.
+- Walled off the people sharing one node from each other, so no member could see another member's conversations, projects, or secrets on that node.
+- Fixed member accounts arriving from another node failing to save when they had no email or account ID, and conversation transfers and push subscription moves refusing members whose account name differed from their sign-in name.
+- Fixed the focus border of the field you are editing being clipped at the left and right edges of the scheduled task editor.
+
 ## 2.72.3 — 2026-10-11
 
 - Fixed the focus border of the field you are editing being clipped at the left and right edges of the scheduled task editor.

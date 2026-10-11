@@ -43,7 +43,7 @@ test("browser monitor API enforces authentication, scope, and validation", async
     const project = await addProject("Monitor fixture", path.join(resolveDataDirectory(), "project"));
     const other = await addProject("Other fixture", path.join(resolveDataDirectory(), "other-project"));
     const node = await getClusterNode();
-    const setup = await fetch(`${base}/api/auth/setup`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "owner", password: "owner-selected-password" }) });
+    const setup = await fetch(`${base}/api/auth/setup`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "owner", email: "owner@example.test", password: "owner-selected-password" }) });
     assert.equal(setup.status, 201);
     const setupBody = await setup.json() as { csrfToken: string };
     const cookie = sessionCookie(setup);

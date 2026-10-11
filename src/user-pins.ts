@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
@@ -153,4 +154,22 @@ function pinPayload(event: ReplicationEvent): PinPayload {
 export function applyUserPinEvent(db: DatabaseSync, event: ReplicationEvent): void {
   ensureUserPinSchema(db);
   applyPin(db, pinPayload(event));
+}
+
+/** Every pin of `username` as the events that recreate it, for their roaming profile. */
+export function userPinEvents(username: string): ReplicationEvent[] {
+  const rows = pinDatabase().prepare("SELECT kind, project_id, engine, session_id, pinned, updated_at, origin_node_id FROM user_pins WHERE username = ? ORDER BY updated_at DESC LIMIT 500")
+    .all(username) as unknown as Array<{ kind: UserPinTarget["kind"]; project_id: string; engine: string; session_id: string; pinned: number; updated_at: string; origin_node_id: string }>;
+  return rows.map((row) => {
+    const target: UserPinTarget = row.kind === "conversation"
+      ? { kind: "conversation", projectId: row.project_id, engine: row.engine as ConversationEngine, sessionId: row.session_id }
+      : { kind: "project", projectId: row.project_id };
+    const payload: PinPayload = { username, ...target, pinned: row.pinned === 1, updatedAt: row.updated_at, originNodeId: row.origin_node_id };
+    return { id: randomUUID(), originNodeId: row.origin_node_id, entityType: "user.pin", entityKey: entityKey(username, target), operation: row.pinned === 1 ? "upsert" : "delete", payload, createdAt: row.updated_at };
+  });
+}
+
+/** Forgets a visitor's pins on this node. */
+export function deleteUserPins(username: string): void {
+  pinDatabase().prepare("DELETE FROM user_pins WHERE username = ?").run(username);
 }

@@ -1,4 +1,13 @@
+import { isTrustedTwin } from "../cluster-sharing-policy.js";
+import { clusterV2Database } from "../cluster-v2-store.js";
 import { randomUUID } from "node:crypto";
+import { projectFolderConfined, runtimeForProject } from "../project-runtime.js";
+import { liveSocketSession, relayLiveSocket } from "./live-link.js";
+import { multiUserEnabled, runInRuntime, type RuntimeAccount } from "../account-runtime.js";
+import { decodeAuthor, encodeAuthor, type MessageAuthor } from "../message-authors.js";
+import { actingAccountFromSession, asNode, runAsAccount, type ActingAccount } from "../account-context.js";
+import { claimTerminal } from "./terminal-policy.js";
+import { terminalAccessSettings } from "../settings.js";
 import type { IncomingMessage } from "node:http";
 import WebSocket from "ws";
 import { authSessionEvents, sessionCookieNameFor, sessionForId } from "../auth.js";
@@ -24,7 +33,7 @@ import { attachBrowserViewer } from "./browser.js";
 import { broadcastToProject, send } from "./realtime.js";
 import { socketSecretAccountIdsSchema, socketTaskIdSchema } from "./schemas.js";
 import { type ForeignConversationOwner, openConversationOwnership } from "./sessions-helpers.js";
-import { watchClients, webSocketServer } from "./state.js";
+import { socketAccounts, watchClients, webSocketServer } from "./state.js";
 import { ownerPeer } from "./task-handoff.js";
 import { measureOperation, traceOperation } from "./performance-diagnostics.js";
 import { projectAdditionalPaths } from "./session-scope.js";
@@ -63,6 +72,12 @@ async function directSessionForOpen(project: ProjectRecord, sessionPath: string,
 
 /** Browser sockets by login session; `otherUserPhone` marks another machine's user signed in through the phone gateway. */
 const authenticatedSockets = new Map<WebSocket, { sessionId: string; otherUserPhone: boolean }>();
+
+/** A terminal relayed by a peer counts against that peer while the node allows terminals at all. */
+function peerTerminalAccount(peerId: string): ActingAccount | undefined {
+  if (terminalAccessSettings().mode === "off") return undefined;
+  return { accountId: `peer:${peerId}`, username: "", role: "admin", isRemoteLogin: false, homeNodeId: peerId };
+}
 authSessionEvents.on("revoked", (sessionIds: string[]) => {
   const revoked = new Set(sessionIds);
   for (const [socket, entry] of authenticatedSockets) {
@@ -115,6 +130,75 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
     return;
   }
 
+  // Who is writing: the signed-in person, or the person a peer relays, named in the signed URL.
+  const author: MessageAuthor | undefined = session && !session.mustChangePassword
+    ? { accountId: session.accountId, email: session.email, username: session.username, homeNodeId: session.homeNodeId }
+    : signedPeer ? await peerAuthor(signedPeer, decodeAuthor(url.searchParams.get("author"))) : undefined;
+  // Everything the socket does for its project resolves paths and starts processes as the
+  // project's OS account (multi-user mode); without the mode this is the service itself.
+  const runtime = await socketRuntime(url.searchParams.get("projectId"));
+  if (runtime === "unconfined") { socket.close(1008, "This project's folder is outside its owner's home"); return; }
+  const inRuntime = <T>(work: () => T): T => runtime ? runInRuntime(runtime, work) : work();
+  // One of our people, on a node they signed in to, opening one of their own projects live.
+  const liveAccount = signedPeer ? url.searchParams.get("liveAccount") : null;
+  if (signedPeer && liveAccount) {
+    const live = await liveSocketSession(signedPeer, liveAccount, url.searchParams.get("projectId") ?? "");
+    if (!live || browserMode) { socket.close(1008, "Not found"); return; }
+    const account = actingAccountFromSession(live);
+    socketAccounts.set(socket, account);
+    const emit = socket.emit.bind(socket) as (...args: unknown[]) => boolean;
+    // The link is checked again before each thing the person sends: once they forget that
+    // node, hide the project or stop showing their projects, the socket ends.
+    let checked: Promise<unknown> = Promise.resolve();
+    const projectId = url.searchParams.get("projectId") ?? "";
+    (socket as unknown as { emit: (...args: unknown[]) => boolean }).emit = (...args) => {
+      if (args[0] !== "message") return runAsAccount(account, () => inRuntime(() => emit(...args)));
+      checked = checked.then(async () => {
+        if (!await liveSocketSession(signedPeer, liveAccount, projectId)) { socket.close(1008, "Not found"); return; }
+        runAsAccount(account, () => inRuntime(() => emit(...args)));
+      }).catch(() => socket.close(1011, "Not available"));
+      return true;
+    };
+    const liveAuthor: MessageAuthor = { accountId: live.accountId, email: live.email, username: live.username, homeNodeId: null };
+    await runAsAccount(account, () => inRuntime(() => handleBrowserConnection(socket, request, url, live, liveAuthor, undefined, browserMode, undefined)));
+    return;
+  }
+  // A browser's socket acts for its person from here on, including every message it sends.
+  if (!machineAuthenticated && session) {
+    const account = actingAccountFromSession(session);
+    socketAccounts.set(socket, account);
+    const emit = socket.emit.bind(socket) as (...args: unknown[]) => boolean;
+    (socket as unknown as { emit: (...args: unknown[]) => boolean }).emit = (...args) => runAsAccount(account, () => inRuntime(() => emit(...args)));
+    await runAsAccount(account, () => inRuntime(() => handleBrowserConnection(socket, request, url, session, author, signedPeer, browserMode, browserMachineId)));
+    return;
+  }
+  if (runtime) {
+    const emit = socket.emit.bind(socket) as (...args: unknown[]) => boolean;
+    (socket as unknown as { emit: (...args: unknown[]) => boolean }).emit = (...args) => inRuntime(() => emit(...args));
+  }
+  await inRuntime(() => handleBrowserConnection(socket, request, url, session, author, signedPeer, browserMode, browserMachineId));
+}
+
+/** An author a peer relays is one of that peer's people unless it names another home, so
+    nobody arriving through a peer is recorded as a person of this node. A twin is this
+    node's own second machine: its people are this node's. */
+async function peerAuthor(peer: string, author: MessageAuthor | undefined): Promise<MessageAuthor | undefined> {
+  if (!author || author.homeNodeId) return author;
+  const db = await clusterV2Database(), local = await getClusterNode();
+  return isTrustedTwin(db, local.id, peer) ? author : { ...author, homeNodeId: peer };
+}
+
+async function socketRuntime(projectId: string | null): Promise<RuntimeAccount | "unconfined" | undefined> {
+  if (!projectId || !multiUserEnabled()) return undefined;
+  const runtime = await runtimeForProject(projectId).catch(() => undefined);
+  if (!runtime) return undefined;
+  const project = await asNode(() => getProject(projectId));
+  return project && !await projectFolderConfined(runtime, project.path, project.id) ? "unconfined" : runtime;
+}
+
+async function handleBrowserConnection(socket: WebSocket, request: IncomingMessage, url: URL, session: ReturnType<typeof sessionForId>, author: MessageAuthor | undefined, signedPeer: string | undefined, browserMode: string | null, browserMachineId: string | undefined): Promise<void> {
+  const machineAuthenticated = Boolean(signedPeer);
+  const browserAuthenticated = !machineAuthenticated && Boolean(session);
   if (!machineAuthenticated && session) {
     authenticatedSockets.set(socket, { sessionId: session.id, otherUserPhone: session.isRemoteLogin && relayTransportOf(request.socket) === "gateway" });
     socket.once("close", () => authenticatedSockets.delete(socket));
@@ -130,6 +214,8 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   const projectId = url.searchParams.get("projectId") ?? "";
   const project = await getProject(projectId);
   if (!project) {
+    // A visitor's own project at home: the socket goes there, live (live-link.ts).
+    if (session?.isRemoteLogin && session.homeNodeId && !signedPeer) { await relayLiveSocket(socket, url, session, author); return; }
     socket.close(1008, "Project not found");
     return;
   }
@@ -195,6 +281,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
     if (requestedSessionId) ownerUrl.searchParams.set("sessionId", requestedSessionId);
     // A terminal socket must stay a terminal socket on the owner, not become a session.
     if (url.searchParams.get("mode") === "terminal") ownerUrl.searchParams.set("mode", "terminal");
+    if (author) ownerUrl.searchParams.set("author", encodeAuthor(author));
     proxySocket(socket, peerWebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }, peer.id));
     return;
   }
@@ -222,6 +309,8 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       }
       ownerUrl.searchParams.delete("nodeId");
       ownerUrl.searchParams.set("nodeSession", "1");
+      if (author) ownerUrl.searchParams.set("author", encodeAuthor(author));
+      else ownerUrl.searchParams.delete("author");
       proxySocket(socket, peerWebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }, peer.id));
       return;
     }
@@ -276,8 +365,16 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       socket.close(1008, "Worktree is not synchronized on this node");
       return;
     }
+    // The admin decides who may open a terminal here; a peer relays only while it's on at all.
+    const terminalAccount = session ? actingAccountFromSession(session) : signedPeer ? peerTerminalAccount(signedPeer) : undefined;
+    const claim = claimTerminal(terminalAccount, socket, project.id);
+    if (!claim.ok) {
+      socket.send(JSON.stringify({ type: "terminalError", error: claim.reason }));
+      socket.close(4031, claim.reason);
+      return;
+    }
     if (terminalWorktree) await provisionWorktree(project.path, terminalWorktree.path);
-    attachTerminalSession(socket, task ? taskCwd(project, task) : terminalWorktree?.path ?? project.path, local.id);
+    attachTerminalSession(socket, task ? taskCwd(project, task) : terminalWorktree?.path ?? project.path, local.id, undefined, claim.idleMinutes, await runtimeForProject(project.id));
     return;
   }
 
@@ -434,7 +531,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       socket, project, taskId: task?.id ?? null, cwd, engine: sessionRequest.engine,
       sessionId: ownershipSessionId, sessionPath: sessionRequest.sessionPath,
       accountIds: secretAccountIds, readOnly: conversationReadOnly, ownership: foreignOwner,
-      listedSessions, handoffContext: spinOffContext,
+      listedSessions, handoffContext: spinOffContext, author,
       autoStartPrompt: refreshSessionsAfterReady && !sessionRequest.draft && !worktree && startCommand.enabled ? startCommand.prompt : null,
     });
     if (refreshSessionsAfterReady) broadcastToProject(project.id, { type: "sessionsChanged" });

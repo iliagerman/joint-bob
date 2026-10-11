@@ -1,20 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { visibleTaskMessages } from "../background-task-messages.js";
 import WebSocket from "ws";
-import { usernameForUser } from "../auth.js";
+import { accountIdForUser } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
 import { claimConversationNotification, conversationNotifications, finishConversationNotification, notificationConversationId } from "../conversation-notifications.js";
 import { listPushSubscriberUserIds, notifyConversationReview, reviewNotificationBody } from "../push.js";
 import { type ReplicationBatch, replicationInvalidations } from "../replication.js";
 import { getHarness, refreshHarnessSessions } from "../harnesses.js";
-import { getProject } from "../store.js";
+import { getProject, projectVisible } from "../store.js";
 import { listPendingUpdateRecoveries, saveUpdateRecoveries, type UpdateRecoveryRecord } from "../update-recovery.js";
 import { UpdateRefusalError } from "../updater.js";
 import { harnessChatConnections, drainHarnessPromptQueue } from "./harness-chat.js";
 import { disposeHarnessSession, harnessSessionBusy, harnessSessions, refreshHarnessTranscripts, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
 import { flushReplicationOutbox } from "./maintenance.js";
-import { flags, server, watchClients, webSocketServer } from "./state.js";
+import { flags, server, socketAccounts, watchClients, webSocketServer } from "./state.js";
 import { harnessTaskRuns } from "./task-runs.js";
 
 let updateRestartTimer: NodeJS.Timeout | undefined;
@@ -58,11 +58,32 @@ export function broadcastToProject(projectId: string, payload: unknown): void {
   for (const session of harnessSessions.values()) if (session.projectId === projectId) for (const client of session.clients) sockets.add(client);
   for (const socket of sockets) send(socket, payload);
 }
-export function broadcastToAllClients(payload: unknown): void {
+/** `accountId` limits an event to one person's sockets: their pins, recents and shortcuts
+    are nobody else's business, not even that they changed. */
+export function broadcastToAllClients(payload: unknown, accountId?: string): void {
   const sockets = new Set<WebSocket>();
   for (const clients of watchClients.values()) for (const client of clients) sockets.add(client);
   for (const session of harnessSessions.values()) for (const client of session.clients) sockets.add(client);
-  for (const socket of sockets) send(socket, payload);
+  for (const socket of sockets) if (!accountId || socketAccounts.get(socket)?.accountId === accountId) send(socket, payload);
+}
+/**
+ * The open pages of the people who can see a project, as it is now: who to tell that the
+ * project list changed. Asked before a delete, it still names them afterwards. Nobody else
+ * learns that anything happened.
+ */
+export async function projectAudience(projectId: string): Promise<(payload: unknown) => void> {
+  const sockets = new Set<WebSocket>();
+  for (const clients of watchClients.values()) for (const client of clients) sockets.add(client);
+  for (const session of harnessSessions.values()) for (const client of session.clients) sockets.add(client);
+  const sees = new Map<string, boolean>();
+  const audience: WebSocket[] = [];
+  for (const socket of sockets) {
+    const account = socketAccounts.get(socket);
+    if (!account) { audience.push(socket); continue; } // A peer's socket: the node's own business.
+    if (!sees.has(account.accountId)) sees.set(account.accountId, await projectVisible(projectId, account));
+    if (sees.get(account.accountId)) audience.push(socket);
+  }
+  return (payload) => { for (const socket of audience) send(socket, payload); };
 }
 export function broadcastSessionsChangedToAllProjects(): void { broadcastToAllClients({ type: "sessionsChanged" }); }
 export function wakeQueuedConversations(): void {
@@ -80,7 +101,7 @@ export async function notifyPendingReviews(projectId: string): Promise<void> {
   if (!project) return;
   const local = await getClusterNode();
   for (const userId of userIds) {
-    const username = usernameForUser(userId);
+    const username = accountIdForUser(userId);
     if (!username) continue;
     const sessions = await listProjectSessionsWithReviewState(project, userId, username);
     const preferences = conversationNotifications(username, projectId);
@@ -145,7 +166,7 @@ function activeUpdateRecoveries(): Array<{ record: UpdateRecoveryRecord; shared:
 }
 
 function broadcastUpdatePreparing(): void {
-  for (const client of webSocketServer.clients) send(client, { type: "updatePreparing", message: "Updating... Work will resume automatically." });
+  for (const client of webSocketServer.clients) send(client, { type: "updatePreparing", message: "Joint Bob is restarting. Work will resume automatically." });
 }
 export function prepareForUpdate(): Promise<number> {
   if (!flags.updatePreparation) flags.updatePreparation = performUpdatePreparation();

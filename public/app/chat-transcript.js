@@ -545,7 +545,16 @@ function assistantAttribution(attribution) {
 // `read` is the known receipt state: a replayed user message already reached
 // the agent, and a replayed assistant message older than the watermark was
 // already seen.
-export function appendMessage(role, text, timestamp = true, attachments = [], read = false, attribution = undefined) {
+/** The person who wrote a user message, shown by their email, which is unique. */
+function messageAuthor(author) {
+  const name = document.createElement("span");
+  name.className = "message-author";
+  name.dataset.testid = "message-author";
+  name.textContent = author.email || author.username;
+  return name;
+}
+
+export function appendMessage(role, text, timestamp = true, attachments = [], read = false, attribution = undefined, author = undefined) {
   elements.messages.querySelector(".empty-state")?.remove();
   if (role === "user") pendingRoutingConfidence = null;
   const presentation = role === "user" ? transcriptMessagePresentation(text, attachments) : { text, attachments: [] };
@@ -561,6 +570,7 @@ export function appendMessage(role, text, timestamp = true, attachments = [], re
     const at = timestamp === true ? new Date() : timestamp;
     const meta = document.createElement("div");
     meta.className = "message-meta";
+    if (role === "user" && author) meta.append(messageAuthor(author));
     if (at) {
       meta.append(messageTimestamp(at));
       latestMessageAt = Math.max(latestMessageAt, at.getTime());
@@ -964,7 +974,7 @@ function appendTranscript(messages, segments, conversationStartedAt) {
     const engine = segments?.[segment]?.engine || state.engine;
     const currentSegment = !segments?.length || segment === segments.length - 1;
     const attribution = role === "assistant" ? message.attribution || (currentSegment ? undefined : { harnessId: engine }) : undefined;
-    markPendingReview(appendMessage(role, message.text, recorded, [], read, attribution), recorded);
+    markPendingReview(appendMessage(role, message.text, recorded, [], read, attribution, role === "user" ? message.author : undefined), recorded);
   }
   // A freshly switched segment has no messages yet, but its seam still shows
   // where the conversation changed harness.

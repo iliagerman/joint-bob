@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { isNodeAdmin } from "./node-admin.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { syncBrowserButton } from "./browser.js";
 import { clearThinkingBubble } from "./chat-transcript.js";
@@ -120,8 +121,13 @@ export function renderChatSessionControls() {
 
   const terminalNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
   const terminalRefused = terminalNode?.terminal === false && terminalNode.online;
+  // This node's terminal is the admin's to turn on. A member who may not use it never sees it.
+  const localTerminalOff = terminalRefused && terminalNode.local;
+  elements.openTerminalButton.hidden = Boolean(localTerminalOff && !isNodeAdmin());
   elements.openTerminalButton.disabled = !state.activeProjectId || !terminalNode?.online || !terminalNode.mapped || terminalRefused || conversationIsReadOnly();
-  elements.openTerminalButton.title = "Terminal — " + (terminalRefused
+  elements.openTerminalButton.title = localTerminalOff
+    ? "Terminal is off on this node. Turn it on in Settings → Node."
+    : "Terminal — " + (terminalRefused
     ? `${terminalNode.name} does not allow terminal access from this node`
     : terminalNode
     ? activeTicket
@@ -226,6 +232,10 @@ export async function loadSessionNodes(projectId, targetNodeId) {
   if (state.preferencesLoaded && state.activeNodeId !== previousNodeId) savePreferencesInBackground({ activeNodeId: state.activeNodeId });
   renderSessions();
 }
+// A changed terminal policy shows up on the button without a reload.
+document.addEventListener("terminalPolicyChanged", () => {
+  if (state.activeProjectId) void loadSessionNodes(state.activeProjectId).then(renderChatSessionControls).catch(() => undefined);
+});
 elements.chatNodeSelect.addEventListener("change", async () => {
   const destination = state.sessionNodes.find((node) => node.id === elements.chatNodeSelect.value);
   if (!destination) { toast("Destination node was not found"); return; }

@@ -1,3 +1,4 @@
+import { claudeSubscriptionEnvironment, runtimeExec } from "../../account-runtime.js";
 import { execFile } from "../../subprocess.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFile, access } from "node:fs/promises";
@@ -371,7 +372,8 @@ const runtime: HarnessRuntime = {
     try {
       await access(settings.configPath);
       if (executable.includes("/") || executable.includes("\\")) await access(executable);
-      await execute(executable, ["--version"], { env: { ...process.env, ...env }, timeout: 5_000 });
+      const launch = runtimeExec(executable, ["--version"], { ...process.env, ...env });
+      await execute(launch.command, launch.args, { env: launch.env, timeout: 5_000 });
       return [];
     } catch (error) {
       return [`Claude executable unavailable: ${error instanceof Error ? error.message : String(error)}`];
@@ -382,7 +384,8 @@ const runtime: HarnessRuntime = {
     const configPath = claudeConfigPath();
     // `claude auth status` exits non-zero when no account or API provider is configured.
     try {
-      await execute(getSettings().runtimes.claude.executable || "claude", ["auth", "status"], { env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) }, timeout: 5_000 });
+      const launch = runtimeExec(getSettings().runtimes.claude.executable || "claude", ["auth", "status"], { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() });
+      await execute(launch.command, launch.args, { env: launch.env, timeout: 5_000 });
       return [];
     } catch {
       return ["Claude is not signed in on this node"];

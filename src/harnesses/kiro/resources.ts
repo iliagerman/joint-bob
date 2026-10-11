@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { nodeMcpServersApply, runtimeHome } from "../../account-runtime.js";
+import { adminAccountId } from "../../ownership.js";
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -149,7 +151,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   if (enabledTools !== undefined && (!Array.isArray(enabledTools) || enabledTools.some((name) => typeof name !== "string" || !kiroToolCategories.includes(name)))) {
     throw new Error("Unknown Kiro tool");
   }
-  const runtime = configuredRuntime("kiro", defaults(os.homedir()));
+  const runtime = configuredRuntime("kiro", defaults(runtimeHome()));
   const name = `joint-bob-${options.sessionId}`;
   const agents = path.join(runtime.configPath, "agents");
   await mkdir(agents, { recursive: true, mode: 0o700 });
@@ -186,7 +188,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
     resources: skills,
     tools: enabledTools === undefined ? ["*"] : [...enabledTools],
     allowedTools: [],
-    mcpServers: await readMcpConfig(resources.mcpConfig),
+    mcpServers: nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(resources.mcpConfig) : {},
     includeMcpJson: true,
   };
   const file = path.join(agents, `${name}.json`);

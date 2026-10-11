@@ -1,3 +1,5 @@
+import { nodeMcpServersApply } from "./account-runtime.js";
+import { adminAccountId } from "./ownership.js";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
@@ -729,7 +731,7 @@ export function claudeAgentResourceArgs(root?: string, configured?: ScopedResour
   for (const plugin of claudePluginSources(configuredPaths(configured, "plugins"))) args.push("--plugin-dir", plugin);
   const generated = generatedResourcePlugin(paths, configured);
   if (generated) args.push("--plugin-dir", generated);
-  if (existsSync(paths.mcpConfig)) args.push("--mcp-config", paths.mcpConfig);
+  if (nodeMcpServersApply(adminAccountId()) && existsSync(paths.mcpConfig)) args.push("--mcp-config", paths.mcpConfig);
   const instructions = generatedInstructionFile(paths, configured, extraInstructions);
   if (existsSync(instructions)) args.push("--append-system-prompt-file", instructions);
   return args;

@@ -5,11 +5,14 @@ import { ensureResourceSharingSchema, getResourcePolicyState, ResourceSharingErr
 import { listResourceShares, listSharingClusterMembers, resourceOwner } from "../../cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { canonicalProjectId, getProject } from "../../store.js";
+import { canonicalProjectId, getProject, listProjects } from "../../store.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
 import { disconnectRevokedRuntimeSockets } from '../runtime-peers.js';
-import { clusterSharingView, updateClusterSelection } from "../../selected-sharing.js";
+import { clusterSharingView, updateClusterSelection, type SharingScope } from "../../selected-sharing.js";
+import { actingAccount } from "../../account-context.js";
+import { accountInCluster } from "../../cluster-accounts.js";
+import { actorOwns, memberOwnedIds } from "../../ownership.js";
 import { mayShareProject } from "../sharing-files.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
@@ -24,6 +27,13 @@ function localOnly(response: Response): void {
 }
 async function requireActive(response: Response): Promise<void> {
   localOnly(response);
+  if (actingAccount()?.isRemoteLogin) throw new ClusterV2HttpError(404, "Not found");
+}
+
+/** A person shares only what they own, and only into clusters they joined. */
+function personScope(): SharingScope | undefined {
+  const account = actingAccount();
+  return account ? { accountId: account.accountId } : undefined;
 }
 function route(action: (request: Request, response: Response) => Promise<void>) {
   return (request: Request, response: Response, next: NextFunction): void => {
@@ -70,10 +80,16 @@ app.get("/api/clusters/:clusterId/sharing", route(async (request, response) => {
   await requireActive(response);
   const db = await clusterV2Database(), local = (await getClusterNode()).id;
   const clusterId = uuid.parse(request.params.clusterId);
-  const selection = clusterSharingView(db, local, clusterId);
+  const selection = clusterSharingView(db, local, clusterId, personScope());
   const members = listSharingClusterMembers(db, clusterId);
-  const projects = db.prepare(`SELECT p.id, o.owner_node_id ownerNodeId FROM projects p
-    JOIN sharing_resource_owners o ON o.kind='project' AND o.resource_id=p.id`).all() as unknown as Array<{ id: string; ownerNodeId: string }>;
+  // A person sees their own projects here and what they may see of others'; the admin sees
+  // everything but other people's.
+  const account = actingAccount();
+  const visible = new Set((await listProjects()).map((project) => project.id));
+  const others = account?.role === "admin" ? memberOwnedIds("project") : new Set<string>();
+  const projects = (db.prepare(`SELECT p.id, o.owner_node_id ownerNodeId FROM projects p
+    JOIN sharing_resource_owners o ON o.kind='project' AND o.resource_id=p.id`).all() as unknown as Array<{ id: string; ownerNodeId: string }>)
+    .filter((project) => !account || (account.role === "admin" ? !others.has(project.id) : visible.has(project.id)));
   const projectAccess = projects.map(project => ({ ...project,
     authorizedNodeIds: members.filter(member => mayShareProject(db, local, member.nodeId, project.id)).map(member => member.nodeId),
   }));
@@ -85,7 +101,7 @@ app.put("/api/clusters/:clusterId/sharing", route(async (request, response) => {
   const selection = z.object({ projectIds: z.array(z.string().min(1).max(300)).max(10000),
     workspaceIds: z.array(z.string().min(1).max(300)).max(10000), confirmOwnedData: z.literal(true) }).strict().parse(request.body);
   const result=updateClusterSelection(await clusterV2Database(), (await getClusterNode()).id,
-    uuid.parse(request.params.clusterId), selection.projectIds, selection.workspaceIds);
+    uuid.parse(request.params.clusterId), selection.projectIds, selection.workspaceIds, personScope());
   await disconnectRevokedRuntimeSockets();response.json(result);
 }));
 
@@ -99,6 +115,10 @@ app.put("/api/sharing/project/:resourceId", route(async (request, response) => {
   const context = await policyProject(request, response);
   if (!context) return;
   if (resourceOwner(context.db, "project", context.id) !== context.local.id) throw new ClusterV2HttpError(403, "Only the original owner may change sharing");
+  const account = actingAccount();
+  if (account && !actorOwns("project", context.id, account)) throw new ClusterV2HttpError(403, "Only the original owner may change sharing");
+  const current = new Set(listResourceShares(context.db, "project", context.id).map((share) => share.clusterId));
+  if (account && payload.shares.some((share) => !current.has(share.clusterId) && !accountInCluster(context.db, account.accountId, share.clusterId))) throw new ClusterV2HttpError(403, "Share only into clusters you joined");
   const state = getResourcePolicyState(context.db, "project", context.id);
   if (state.deleted) throw new ClusterV2HttpError(409, "Resource is deleted");
   updateResourceSharing(context.db, context.local.id, "project", context.id, payload.expectedGeneration, payload.shares);
@@ -121,7 +141,9 @@ app.post("/api/clusters/:clusterId/share-all-projects", route(async (request, re
       WHERE p.kind='project' AND p.owner_node_id=? AND p.deleted=0 ORDER BY p.resource_id`)
       .all(local.id) as unknown as Array<{ id: string; generation: number }>;
     let shared = 0;
+    const account = actingAccount();
     for (const row of rows) {
+      if (account && !actorOwns("project", row.id, account)) continue;
       const shares = listResourceShares(db, "project", row.id);
       if (shares.some((share) => share.clusterId === clusterId)) continue;
       updateResourceSharing(db, local.id, "project", row.id, row.generation, [...shares, { clusterId, projectId: null }]);

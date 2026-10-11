@@ -6,6 +6,7 @@ import { z } from "zod";
 import { resolveDataDirectory } from "./data-directory.js";
 import { isHarnessId } from "./types.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
+import { messageAuthorSchema, type MessageAuthor } from "./message-author-schema.js";
 
 export const queuedSettingsSchema = z.object({
   harnessId: z.string().refine(isHarnessId).optional(),
@@ -19,9 +20,10 @@ const promptSchema = z.object({
   id: z.string().uuid(), requestId: z.string().uuid().optional(), systemEventId: z.string().uuid().optional(), dispatchState: z.enum(["pending", "starting"]).default("pending"), promptText: z.string(), displayText: z.string(),
   messageText: z.string().nullable(), promptSuffix: z.string().nullable(), displaySuffix: z.string().nullable(),
   attachmentPaths: z.array(z.string()), images: z.array(z.object({ path: z.string(), mimeType: z.string().min(1) }).strict()).default([]), settings: queuedSettingsSchema.nullable(), revision: z.number().int().positive(),
+  author: messageAuthorSchema.optional(),
 });
 export type QueuedPrompt = z.infer<typeof promptSchema>;
-interface Metadata { requestId?: string; systemEventId?: string; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
+interface Metadata { requestId?: string; systemEventId?: string; author?: MessageAuthor; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
 export type SystemPromptState = "pending" | "starting" | "consumed" | "missing";
 interface Row { id: string; queue_key: string; prompt: string; created_at: string; sequence: number; revision: number; origin_node_id: string }
 export interface QueuedPromptRef { id: string; revision: number }

@@ -1,4 +1,5 @@
 import os from "node:os";
+import { runtimeExec, runtimeHome } from "./account-runtime.js";
 import { promisify } from "node:util";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime } from "./harnesses/runtime-configuration.js";
@@ -24,9 +25,10 @@ export async function detectHarnessSubscription(harness: { id: string; label: st
   const base = { harnessId: harness.id, planName: null, authMethod: null, price: null, source: "harness auth status", checkedAt } as const;
   if (harness.id !== "claude" || !harness.configuration) return { ...base, status: "unsupported", message: "Harness does not expose subscription plan or billed price" };
   try {
-    const runtime = configuredRuntime(harness.id, harness.configuration.defaults(os.homedir()));
-    const result = await execute(runtime.executable, ["auth", "status", "--json"], {
-      env: { ...process.env, CLAUDE_CONFIG_DIR: runtime.configPath }, timeout: 5_000, maxBuffer: 64 * 1024,
+    const runtime = configuredRuntime(harness.id, harness.configuration.defaults(runtimeHome()));
+    const launch = runtimeExec(runtime.executable, ["auth", "status", "--json"], { ...process.env, CLAUDE_CONFIG_DIR: runtime.configPath });
+    const result = await execute(launch.command, launch.args, {
+      env: launch.env, timeout: 5_000, maxBuffer: 64 * 1024,
     });
     const parsed: unknown = JSON.parse(String(result.stdout));
     if (!parsed || typeof parsed !== "object") throw new Error("invalid");

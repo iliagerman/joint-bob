@@ -1,4 +1,5 @@
 import { failUnobservedConversationWork, recordConversationWork } from "./conversation-work.js";
+import { claudeSubscriptionEnvironment, currentRuntime, spawnInRuntime } from "./account-runtime.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { isInternalSession } from "./internal-sessions.js";
 import { randomUUID } from "node:crypto";
@@ -552,10 +553,10 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();
   trustWorkspace(options.cwd);
-  const child = spawn(settings.executable || "claude", args, {
+  const child = spawnInRuntime(currentRuntime(), settings.executable || "claude", args, {
     detached: process.platform !== "win32",
     cwd: options.cwd,
-    env: { ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) },
+    env: { ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() },
     stdio: ["pipe", "pipe", "pipe"],
   });
   child.stdin.write(options.prompt);

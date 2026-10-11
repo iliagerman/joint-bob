@@ -1,0 +1,240 @@
+#!/bin/sh
+# Joint Bob multi-user helper. Installed root-owned at /usr/local/libexec/joint-bob-userctl
+# and allowed to the Joint Bob service account through one sudoers rule. It manages only
+# accounts named jb-<name> in group jointbob-users, and does exactly these things:
+#   version                      prints the helper protocol version
+#   create <name>                creates the account and its home
+#   delete <name>                removes the account and its home
+#   home <name>                  prints the account's home
+#   run <name> <cwd> -- cmd...   runs a command as the account, in <cwd>
+#   kill <name> <signal> <pid>   signals a process (or -pgid) the account owns
+#   killgroup <name> <signal> <pgid>  signals the account's processes in a process group
+#   repair <name>                gives the service account access to the home again
+#   ports-sync                   reapplies the local port rules for every account (Linux)
+set -eu
+umask 022
+# The command an account runs gets Joint Bob's PATH; the helper itself uses only the system's.
+CALLER_PATH=${PATH:-/usr/bin:/bin}
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+CONFIG=/etc/joint-bob/userctl.conf
+GROUP=jointbob-users
+PROTOCOL=2
+
+die() { printf 'joint-bob-userctl: %s\n' "$1" >&2; exit "${2:-2}"; }
+
+[ "$(id -u)" = 0 ] || die "must run as root through sudo"
+[ -r "$CONFIG" ] || die "not installed: $CONFIG is missing"
+SERVICE_USER=$(sed -n 's/^SERVICE_USER=\([a-z_][a-z0-9_.-]*\)$/\1/p' "$CONFIG" | head -n 1)
+[ -n "$SERVICE_USER" ] || die "SERVICE_USER is not configured"
+OS=$(uname -s)
+
+valid_name() {
+  case "$1" in
+    ''|*[!a-z0-9_-]*) return 1 ;;
+  esac
+  case "$1" in
+    [a-z]*) ;;
+    *) return 1 ;;
+  esac
+  [ "${#1}" -ge 3 ] && [ "${#1}" -le 28 ]
+}
+
+account() {
+  valid_name "$1" || die "invalid account name"
+  printf 'jb-%s' "$1"
+}
+
+home_of() {
+  if [ "$OS" = Darwin ]; then printf '/Users/%s' "$1"; else printf '/home/%s' "$1"; fi
+}
+
+exists() { id -u "$1" >/dev/null 2>&1; }
+
+member() {
+  if [ "$OS" = Darwin ]; then dseditgroup -o checkmember -m "$1" "$GROUP" >/dev/null 2>&1
+  else id -nG "$1" 2>/dev/null | tr ' ' '\n' | grep -qx "$GROUP"; fi
+}
+
+require_managed() {
+  exists "$1" || die "no such account" 3
+  member "$1" || die "account is not managed by Joint Bob" 3
+}
+
+grant_service() {
+  user=$1; home=$2
+  if [ "$OS" = Darwin ]; then
+    # macOS ACLs grant regardless of mode bits; the account's own entry covers files the service writes there.
+    rights="list,add_file,search,add_subdirectory,delete_child,read,write,append,execute,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit"
+    chmod -R +a "user:$SERVICE_USER allow $rights" "$home"
+    chmod -R +a "user:$user allow $rights" "$home"
+  else
+    setfacl -R -m "u:$SERVICE_USER:rwX,d:u:$SERVICE_USER:rwX,d:u:$user:rwX,m::rwX,d:m::rwX" "$home"
+  fi
+}
+
+next_uid() {
+  # macOS: the first free id from 600, outside the range interactive users get.
+  uid=600
+  while dscl . -list /Users UniqueID | awk '{print $2}' | grep -qx "$uid"; do uid=$((uid + 1)); done
+  printf '%s' "$uid"
+}
+
+create() {
+  user=$(account "$1"); home=$(home_of "$user")
+  if exists "$user"; then require_managed "$user"; grant_service "$user" "$home"; printf '%s\n' "$home"; return; fi
+  if [ "$OS" = Darwin ]; then
+    uid=$(next_uid)
+    dseditgroup -o read "$GROUP" >/dev/null 2>&1 || dseditgroup -o create "$GROUP"
+    dscl . -create "/Users/$user"
+    dscl . -create "/Users/$user" UserShell /bin/zsh
+    dscl . -create "/Users/$user" RealName "Joint Bob $1"
+    dscl . -create "/Users/$user" UniqueID "$uid"
+    dscl . -create "/Users/$user" PrimaryGroupID 20
+    dscl . -create "/Users/$user" NFSHomeDirectory "$home"
+    dscl . -create "/Users/$user" IsHidden 1
+    dscl . -create "/Users/$user" Password '*'
+    dseditgroup -o edit -a "$user" -t user "$GROUP"
+    mkdir -p "$home"
+    chown "$user":staff "$home"
+    # staff holds every person on the Mac, so the home is private and the service reaches it by ACL.
+    chmod 0700 "$home"
+  else
+    getent group "$GROUP" >/dev/null || groupadd "$GROUP"
+    getent group "$user" >/dev/null || groupadd "$user"
+    useradd --create-home --home-dir "$home" --shell /bin/bash --gid "$user" --groups "$GROUP" --comment "Joint Bob $1" "$user"
+  fi
+  [ "$OS" = Darwin ] || chmod 0750 "$home"
+  mkdir -p "$home/.tmp" "$home/JointBob"
+  chown "$user" "$home/.tmp" "$home/JointBob"
+  chmod 0700 "$home/.tmp"
+  grant_service "$user" "$home"
+  ensure_slice "$user"
+  ports_sync
+  printf '%s\n' "$home"
+}
+
+slice_of() { printf 'jointbob-u%s.slice' "$(id -u "$1")"; }
+
+# Linux: each account's processes run in its own slice, which the port rules name. A slice
+# that exists before any process runs keeps its cgroup, so the rules can resolve it.
+ensure_slice() {
+  [ "$OS" = Linux ] && command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] || return 0
+  slice=$(slice_of "$1")
+  [ -f "/etc/systemd/system/$slice" ] || printf '[Unit]\nDescription=Joint Bob account %s\n\n[Slice]\n' "$1" >"/etc/systemd/system/$slice"
+  systemctl daemon-reload
+  systemctl start "$slice"
+}
+
+delete() {
+  user=$(account "$1")
+  exists "$user" || return 0
+  require_managed "$user"
+  pkill -KILL -u "$user" 2>/dev/null || true
+  home=$(home_of "$user")
+  if [ "$OS" = Linux ] && command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    slice=$(slice_of "$user")
+    systemctl stop "$slice" 2>/dev/null || true
+    rm -f "/etc/systemd/system/$slice"
+    systemctl daemon-reload
+  fi
+  if [ "$OS" = Darwin ]; then
+    dscl . -delete "/Users/$user"
+    rm -rf "$home"
+  else
+    userdel --remove "$user" 2>/dev/null || userdel "$user"
+    rm -rf "$home"
+    getent group "$user" >/dev/null && groupdel "$user" || true
+  fi
+  ports_sync
+}
+
+run_as() {
+  user=$(account "$1"); shift
+  require_managed "$user"
+  cwd=$1; shift
+  case "$cwd" in /*) ;; *) die "working directory must be absolute" ;; esac
+  [ "${1:-}" = -- ] || die "expected -- before the command"
+  shift
+  [ "$#" -gt 0 ] || die "missing command"
+  home=$(home_of "$user")
+  # The environment comes from Joint Bob (sudo -E); identity, home and temp are the account's.
+  # A per-account systemd slice lets the local port rules tell accounts apart (Linux).
+  if [ "$OS" != Darwin ] && command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    exec systemd-run --quiet --scope --collect --slice="$(slice_of "$user")" --uid="$user" --gid="$user" -- \
+      /usr/bin/env PATH="$CALLER_PATH" HOME="$home" USER="$user" LOGNAME="$user" TMPDIR="$home/.tmp" \
+      /bin/sh -c 'umask 007; cd "$1" || exit 126; shift; exec "$@"' sh "$cwd" "$@"
+  fi
+  exec sudo -E -H -u "$user" -- /usr/bin/env PATH="$CALLER_PATH" HOME="$home" USER="$user" LOGNAME="$user" TMPDIR="$home/.tmp" \
+    /bin/sh -c 'umask 007; cd "$1" || exit 126; shift; exec "$@"' sh "$cwd" "$@"
+}
+
+signal() {
+  user=$(account "$1"); sig=$2; pid=$3
+  require_managed "$user"
+  case "$sig" in TERM|KILL|INT|HUP|STOP|CONT|USR1|USR2|QUIT) ;; *) die "unsupported signal" ;; esac
+  case "$pid" in -[0-9]*|[0-9]*) ;; *) die "invalid process id" ;; esac
+  target=${pid#-}
+  owner=$(ps -o user= -p "$target" 2>/dev/null | tr -d ' ')
+  [ "$owner" = "$user" ] || die "process is not owned by the account" 4
+  kill -s "$sig" -- "$pid"
+}
+
+# A supervised task's group is led by the service's worker; only the account's members go.
+signal_group() {
+  user=$(account "$1"); sig=$2; group=$3
+  require_managed "$user"
+  case "$sig" in TERM|KILL|INT|HUP) ;; *) die "unsupported signal" ;; esac
+  case "$group" in ''|*[!0-9]*) die "invalid process group" ;; esac
+  [ "$group" -gt 1 ] || die "invalid process group"
+  pkill "-$sig" -g "$group" -u "$user" || [ "$?" = 1 ]
+}
+
+ports_sync() {
+  # Linux only: a process of one account can't reach a loopback port another account's
+  # process listens on. Packets leaving an account are marked with its uid; on the way in,
+  # a socket in another account's slice refuses any marked packet that isn't its own.
+  [ "$OS" = Linux ] || return 0
+  command -v nft >/dev/null 2>&1 || return 0
+  rules=$(mktemp)
+  {
+    printf 'table inet jointbob\ndelete table inet jointbob\ntable inet jointbob {\n'
+    printf '  chain output { type filter hook output priority 0; policy accept;\n'
+    getent group "$GROUP" | cut -d: -f4 | tr ',' '\n' | while read -r user; do
+      [ -n "$user" ] || continue
+      uid=$(id -u "$user" 2>/dev/null) || continue
+      printf '    oifname "lo" meta skuid %s meta mark set %s\n' "$uid" "$uid"
+    done
+    printf '  }\n  chain input { type filter hook input priority 0; policy accept;\n'
+    getent group "$GROUP" | cut -d: -f4 | tr ',' '\n' | while read -r user; do
+      [ -n "$user" ] || continue
+      uid=$(id -u "$user" 2>/dev/null) || continue
+      [ -d "/sys/fs/cgroup/jointbob.slice/jointbob-u$uid.slice" ] || continue
+      # The level counts from the kernel's root cgroup: 2 on a host, deeper inside a
+      # container. A rule at a level that isn't the slice's never matches, so each is listed.
+      for level in 2 3 4 5 6 7 8; do
+        printf '    iifname "lo" meta mark != 0 meta mark != %s socket cgroupv2 level %s "jointbob.slice/jointbob-u%s.slice" drop\n' "$uid" "$level" "$uid"
+      done
+    done
+    printf '  }\n}\n'
+  } >"$rules"
+  nft -f "$rules" || { rm -f "$rules"; die "could not apply the local port rules" 5; }
+  rm -f "$rules"
+}
+
+command=${1:-}
+[ -n "$command" ] || die "missing command"
+shift
+case "$command" in
+  version) printf '%s\n' "$PROTOCOL" ;;
+  create) [ "$#" = 1 ] || die "usage: create <name>"; create "$1" ;;
+  delete) [ "$#" = 1 ] || die "usage: delete <name>"; delete "$1" ;;
+  home) [ "$#" = 1 ] || die "usage: home <name>"; user=$(account "$1"); require_managed "$user"; home_of "$user"; printf '\n' ;;
+  run) [ "$#" -ge 4 ] || die "usage: run <name> <cwd> -- command..."; run_as "$@" ;;
+  kill) [ "$#" = 3 ] || die "usage: kill <name> <signal> <pid>"; signal "$1" "$2" "$3" ;;
+  killgroup) [ "$#" = 3 ] || die "usage: killgroup <name> <signal> <pgid>"; signal_group "$1" "$2" "$3" ;;
+  repair) [ "$#" = 1 ] || die "usage: repair <name>"; user=$(account "$1"); require_managed "$user"; grant_service "$user" "$(home_of "$user")" ;;
+  ports-sync) ports_sync ;;
+  *) die "unknown command" ;;
+esac

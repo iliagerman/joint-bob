@@ -32,7 +32,7 @@ Hiding things in the UI is therefore not isolation. **The wall needs a separate 
 ## 3. Design
 
 ### 3.1 Identity
-- **Every account has an `accountId`**, a random UUID created with the user that never changes. It's the key for ownership, replication and message authors. Accounts created before this change get a deterministic id, `sha256(homeNodeId + ":" + username)`, so every node computes the same one without coordinating.
+- **Every account has an `accountId`**, derived as `sha256(home + username)`. It's the key for ownership, replication and message authors. For a local user, `home` is the lowest node id among this node and its twins, so a person's twin machines share one account. Pairing or unpairing twins moves that person's rows to the new id. A visitor's id is the one its home node states in the sign-in record. (Built in phase 1.)
 - **Every user has an email.** It's required when the admin creates a user and is unique, case-insensitively, on the node and in everything replicated to it. A replicated user whose email belongs to a different account is rejected, as usernames are today. After the upgrade, the existing home user is asked for an email at their next sign-in.
 - **The UI shows the email** wherever it shows a person: the Users tab, message authors, cluster member lists and My nodes. Sign-in accepts either the email or the username.
 - Local accounts have `users.role` set to `admin` or `member`. Replicated accounts have no local role.
@@ -125,6 +125,24 @@ Users signed in from other nodes get the same wall on the node they visit.
 
 A full backup is taken first, and the move refuses to start while any turn is running. Single-user nodes that never enable multi-user mode are untouched.
 
+**How it's built (phase 4):**
+- `joint-bob-userctl` can also `killgroup` (stop an account's processes in a group the service leads, for stopping tasks) and `repair`, and it reapplies the port rules on every account change. `just install-multi-user` installs it; Users → Run self-test proves the wall, and Users → Turn on multi-user mode moves the admin.
+- Every process runs as its project's account. A person's project runs as their account, a twin's as the admin's, a cluster's as that cluster's own account (`jb-c<id>`), and a visitor's as one named by account id (`jb-v<id>`), so it never shares a local person's account. Cluster and visitor accounts are made on first use. Every `:projectId` route and project socket resolves harness paths in that account.
+- Agents under an account can't open the supervisor socket or the node database. Their shell commands and `joint-bob-task` go through a relay, `POST /api/background-tasks/relay`, with their own scoped token. The supervisor still checks that scope, and the server only rewrites a start to run as the project's account.
+- The Pi worker never gets a sign-in file. It reads the node's sign-ins through the server, which refreshes them under its own lock first, so no account refreshes (and so rotates) a login, and none can replace or remove one. Its session hooks are pinned to the session and conversation they first named.
+- Claude reaches accounts through a long-lived token from `claude setup-token`, which the admin saves once in Users. Copying the node's login would refresh it in one account and sign out the rest.
+- **The service is never a confused deputy.** The server reads people's folders with the service's rights, so:
+  - A person's project folder must be inside their own home. The admin may also use the node's projects folder, and their account is then given that folder.
+  - A project folder that has become a link out of its owner's home is refused on every route and socket.
+  - Transcript roots, transcript files and forks count only while their real path stays inside the account's home.
+  - The service's data folder is never a project.
+
+**Known limits:**
+- Kiro and Codex sign-ins aren't shared with accounts yet; people's Kiro runs aren't signed in.
+- Symlink confinement is checked before reading, so a swap in the instant between the check and the read isn't caught.
+- Stopping a task signals everything it left in its process group, through a shell that runs as the account. A process that ignores the signal, or that left the group, stays until the account is deleted. A stop from the Tasks panel or an agent also forces it out after 5 seconds; a stop at the task's lifetime limit doesn't.
+- On macOS, process-argument and port isolation are reported as self-test warnings: macOS hides other users' arguments itself, and `pf` rules aren't installed yet.
+
 ### 3.6 Per-user resources
 | Resource | Today | Plan |
 |---|---|---|
@@ -160,7 +178,7 @@ A full backup is taken first, and the move refuses to start while any turn is ru
 
 On top of the scope:
 - **Keyed by account.** Every per-user row and event uses `(homeNodeId, username)`, so two different "noam"s never share data. Existing rows move to the node's current home user.
-- **Minimal payloads.** Account events carry ids, timestamps and setting values only, with no conversation titles, file paths or prompt text. The receiving node shows titles from records it's already allowed to see.
+- **Payloads (revised while building phase 1).** Account events keep their current fields. The titles they carry belong to conversations in projects already shared with the receiving node, and keying by account keeps each person's rows private to that person.
 - **Dropped when the receiver can't see the target.** A pin or recent pointing at a conversation the receiving node can't reach isn't sent.
 - **Older peers.** For peers on the old version, the sender adds the legacy fields only for peers in the same cluster, and stops once every peer has upgraded.
 
@@ -198,6 +216,19 @@ On top of the scope:
 **The wall holds on the visited node too.** That node's local users and admin can't see your profile, your sessions or what you do there.
 
 **My nodes** (new page): every node in your clusters, each with a status: home, signed in, can sign in, or not available. It has a **Forget this node** button. "Not available" covers both offline and blocked, and says no more.
+
+**How it's built (phase 6):**
+- Every cluster route that names a cluster answers 404 to a person who didn't join it. Creating or joining a cluster records the person. Joining one the node is already in needs a valid invitation and no network join. Leaving takes the person and their projects out, and the node leaves with its last person.
+- The cluster sharing page lists only the person's own projects and workspaces. Saving it changes only their part of the selection. A project is shared only into clusters its owner joined.
+- A sign-in record goes to a node only when the person joined a cluster that node is in, and it names those clusters. A visitor sees the projects shared into those clusters.
+- On a visitor's sign-in, the node asks their home node for their profile (`/api/cluster/v2/accounts/signed-in`). The home records the node and sends a signed profile: settings, travelling preferences (theme, sounds, keymap, panels, focus, Git reviewer), pins and recents. It re-sends the profile whenever it changes.
+- A visitor's settings and preferences edits go home first, and fail with "read-only" while home can't be reached. Their pins and recents go home as account events, which now travel only between the person's twins, home and the nodes they signed in to.
+- My nodes (Settings → Account) shows every node of the person's clusters. Forget this node, leaving the shared clusters, a block or deleting the account removes the copy there and signs them out.
+
+**Known limits:**
+- The profile doesn't carry canvas shortcuts, ntfy servers, skills, MCP definitions or secret metadata yet.
+- A received project doesn't show which person owns it.
+- Review marks and notification choices made while visiting reach home, but not the person's other visited nodes or home's twins.
 
 ### 3.10 Blocking nodes
 - **Admin-only setting: Blocked nodes.** The admin picks any node from the clusters this node's users belong to. The default is none. Blocking doesn't remove anyone from a cluster, and the other members are unaffected.
@@ -241,6 +272,20 @@ Signed in on another node, you see all your own projects, not only the shared on
 - **Offline.** If your home node is offline, these projects are listed as "home offline" and can't be opened. Nothing is held on the visited node that could show stale content.
 - **The wall.** The relay is server code on the visited node. That node's users and admin get no view of it in the app, its logs carry no content, and the trust boundary for someone with `sudo` there is the same as in open question 8.
 - **Sharing is unchanged.** Other people still see only what you share into a cluster.
+
+**How it's built (phase 7):**
+- On the visited node, any API request or socket of a visitor that names a project the node doesn't have is relayed to their home. The project id can be in the path, the query or the body. The relay goes to `/api/cluster/v2/live/<account>/…`, signed by the visited node with the account in the signed path. Answers stream back with `Cache-Control: no-store`, and nothing is written.
+- At home the request runs through the same routes as there, as that person. Home answers only while all of these hold:
+  - the person is signed in on that node, and it's in one of their clusters
+  - neither node blocks the other
+  - the person shows their projects on other nodes
+  - every project the request names is theirs, local, not hidden, and not already shared with that node
+- Project and workspace lists on the visited node add the visitor's live projects, marked "At home". With home offline they show a note instead, and opening one answers 503.
+- Sockets are relayed the same way. A live socket can't be a terminal or a browser viewer.
+
+**Known limits:**
+- A relayed request may take up to two minutes; a longer one fails rather than hang.
+- Lists that span projects, like search, Tasks and usage, show the visited node's projects only.
 
 ## 4. Phases
 

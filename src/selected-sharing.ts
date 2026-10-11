@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { ensureResourceSharingSchema, getResourcePolicyState, registerLocalSharingResource, ResourceSharingError, updateResourceSharing } from "./cluster-sharing.js";
 import { ensureProjectMetadataSchema } from "./cluster-project-metadata.js";
 import { listResourceShares } from "./cluster-sharing-policy.js";
+import { resourceOwner } from "./ownership.js";
 
 export function ensureSelectedSharingSchema(db: DatabaseSync): void {
   ensureResourceSharingSchema(db);
@@ -13,17 +14,26 @@ export function ensureSelectedSharingSchema(db: DatabaseSync): void {
       cluster_id TEXT NOT NULL,project_id TEXT NOT NULL,PRIMARY KEY(cluster_id,project_id))`);
 }
 
-export function clusterSharingView(db: DatabaseSync, local: string, clusterId: string) {
+/** Whose selection this is. Each person on the node shares only what they own; without one
+    (the node itself) the selection covers everything the node owns. */
+export interface SharingScope { accountId: string }
+const owns = (db: DatabaseSync, kind: "project" | "workspace", id: string, scope?: SharingScope) => !scope || resourceOwner(kind, id, db) === scope.accountId;
+
+export function clusterSharingView(db: DatabaseSync, local: string, clusterId: string, scope?: SharingScope) {
   ensureSelectedSharingSchema(db);
   if (!db.prepare("SELECT 1 FROM sharing_memberships WHERE cluster_id=? AND node_id=?").get(clusterId, local)) {
     throw new ResourceSharingError("Local node is not a cluster member", 403);
   }
-  const projects = db.prepare(`SELECT p.id,p.name,p.workspace_id workspaceId FROM projects p
+  const projects = (db.prepare(`SELECT p.id,p.name,p.workspace_id workspaceId FROM projects p
     LEFT JOIN sharing_resource_owners o ON o.kind='project' AND o.resource_id=p.id
-    WHERE o.owner_node_id IS NULL OR o.owner_node_id=? ORDER BY p.name,p.id`).all(local) as unknown as Array<{id:string;name:string;workspaceId:string}>;
-  const workspaces = db.prepare(`SELECT w.id,w.label FROM workspaces w WHERE NOT EXISTS
-    (SELECT 1 FROM cluster_v2_project_workspaces r WHERE r.workspace_id=w.id) ORDER BY w.label,w.id`).all() as unknown as Array<{id:string;label:string}>;
-  const selections = db.prepare("SELECT kind,resource_id id FROM cluster_v2_share_selections WHERE cluster_id=? ORDER BY resource_id").all(clusterId) as unknown as Array<{kind:string;id:string}>;
+    WHERE o.owner_node_id IS NULL OR o.owner_node_id=? ORDER BY p.name,p.id`).all(local) as unknown as Array<{id:string;name:string;workspaceId:string}>)
+    .filter((project) => owns(db, "project", project.id, scope));
+  const workspaces = (db.prepare(`SELECT w.id,w.label FROM workspaces w WHERE NOT EXISTS
+    (SELECT 1 FROM cluster_v2_project_workspaces r WHERE r.workspace_id=w.id) ORDER BY w.label,w.id`).all() as unknown as Array<{id:string;label:string}>)
+    .filter((workspace) => owns(db, "workspace", workspace.id, scope));
+  const mine = new Set([...projects.map((project) => `project:${project.id}`), ...workspaces.map((workspace) => `workspace:${workspace.id}`)]);
+  const selections = (db.prepare("SELECT kind,resource_id id FROM cluster_v2_share_selections WHERE cluster_id=? ORDER BY resource_id").all(clusterId) as unknown as Array<{kind:string;id:string}>)
+    .filter((selection) => !scope || mine.has(`${selection.kind}:${selection.id}`));
   const pending = db.prepare("SELECT count(*) count FROM cluster_v2_resource_deliveries WHERE context_kind='cluster' AND context_id=?").get(clusterId) as {count:number};
   const workspaceIds=selections.filter(s=>s.kind==='workspace').map(s=>s.id);
   const projectIds=new Set(selections.filter(s=>s.kind==='project').map(s=>s.id));
@@ -56,8 +66,8 @@ export function inheritWorkspaceSharing(db: DatabaseSync, local: string, project
   if(changed)updateResourceSharing(db,local,"project",projectId,state.generation,shares);
 }
 
-export function updateClusterSelection(db: DatabaseSync, local: string, clusterId: string, projectIds: string[], workspaceIds: string[]) {
-  const view = clusterSharingView(db,local,clusterId);
+export function updateClusterSelection(db: DatabaseSync, local: string, clusterId: string, projectIds: string[], workspaceIds: string[], scope?: SharingScope) {
+  const view = clusterSharingView(db,local,clusterId,scope);
   if (projectIds.some(id=>!view.projects.some(p=>p.id===id)) || workspaceIds.some(id=>!view.workspaces.some(w=>w.id===id))) {
     throw new ResourceSharingError("Selection must contain local-owned projects and local workspaces",403);
   }
@@ -65,8 +75,16 @@ export function updateClusterSelection(db: DatabaseSync, local: string, clusterI
   try {
     db.prepare("INSERT OR IGNORE INTO sharing_explicit_project_selections VALUES(?)").run(clusterId);
     db.prepare("UPDATE sharing_memberships SET auto_share_projects=0 WHERE cluster_id=? AND node_id=?").run(clusterId,local);
-    db.prepare("DELETE FROM cluster_v2_share_selections WHERE cluster_id=?").run(clusterId);
-    db.prepare('DELETE FROM cluster_v2_workspace_inherited_shares WHERE cluster_id=?').run(clusterId);
+    // Only this person's part of the selection changes; everyone else's stays as it is.
+    const removeSelection = db.prepare("DELETE FROM cluster_v2_share_selections WHERE cluster_id=? AND kind=? AND resource_id=?");
+    const removeInherited = db.prepare('DELETE FROM cluster_v2_workspace_inherited_shares WHERE cluster_id=? AND project_id=?');
+    if (!scope) {
+      db.prepare("DELETE FROM cluster_v2_share_selections WHERE cluster_id=?").run(clusterId);
+      db.prepare('DELETE FROM cluster_v2_workspace_inherited_shares WHERE cluster_id=?').run(clusterId);
+    } else {
+      for (const project of view.projects) { removeSelection.run(clusterId, "project", project.id); removeInherited.run(clusterId, project.id); }
+      for (const workspace of view.workspaces) removeSelection.run(clusterId, "workspace", workspace.id);
+    }
     const insert = db.prepare("INSERT INTO cluster_v2_share_selections VALUES(?,?,?)");
     for (const id of new Set(projectIds)) insert.run(clusterId,'project',id);
     for (const id of new Set(workspaceIds)) insert.run(clusterId,'workspace',id);
@@ -86,4 +104,9 @@ export function updateClusterSelection(db: DatabaseSync, local: string, clusterI
     db.exec("RELEASE cluster_selection");
   } catch (error) { db.exec("ROLLBACK TO cluster_selection; RELEASE cluster_selection"); throw error; }
   return clusterSharingView(db,local,clusterId);
+}
+
+/** A person leaving a cluster takes their projects out of it; the rest of the node's stay. */
+export function unshareOwnedProjects(db: DatabaseSync, local: string, clusterId: string, accountId: string): void {
+  updateClusterSelection(db, local, clusterId, [], [], { accountId });
 }

@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { ownedByAdmin } from "./ownership.js";
 import { notifyRelayPeersChanged } from "./relay/events.js";
 
 export type SharedResourceKind = "project" | "ticket" | "secret";
@@ -328,7 +329,9 @@ export function shareAllOwnedProjects(db: DatabaseSync, clusterId: string, actor
 export function mayReceiveResource(db: DatabaseSync, recipientNodeId: string, kind: SharedResourceKind, resourceId: string, projectId?: string): boolean {
   validateUuid(recipientNodeId, "Recipient node ID"); validateResource(kind, resourceId); if (projectId !== undefined) validateResourceId(projectId);
   const policy = policyResource(db, kind, resourceId); const owner = ownerOrThrow(db, policy.kind, policy.id);
-  if (recipientNodeId === owner || isTrustedTwin(db, recipientNodeId, owner)) return true;
+  if (recipientNodeId === owner) return true;
+  // Twins are the admin's own machines: they get the admin's things, never a member's.
+  if (isTrustedTwin(db, recipientNodeId, owner)) return twinMayReceive(db, owner, policy.kind, policy.id, projectId);
   const rows = db.prepare(`SELECT s.cluster_id,s.project_id FROM sharing_resource_shares s JOIN sharing_memberships om ON om.cluster_id=s.cluster_id AND om.node_id=?
     JOIN sharing_memberships rm ON rm.cluster_id=s.cluster_id AND rm.node_id=? WHERE s.kind=? AND s.resource_id=?`).all(owner, recipientNodeId, policy.kind, policy.id) as unknown as ShareRow[];
   return rows.some((row) => policy.kind !== "secret" || row.project_id === "" || (projectId === row.project_id && activeProjectShare(db, recipientNodeId, row.cluster_id, row.project_id)));
@@ -341,4 +344,16 @@ export function resourceClusterIds(db: DatabaseSync, nodeId: string, kind: Share
     (s.project_id='' OR EXISTS (SELECT 1 FROM sharing_resource_shares p JOIN sharing_resource_owners po ON po.kind='project' AND po.resource_id=p.resource_id
       JOIN sharing_memberships pom ON pom.cluster_id=p.cluster_id AND pom.node_id=po.owner_node_id WHERE p.kind='project' AND p.resource_id=s.project_id AND p.cluster_id=s.cluster_id)) ORDER BY s.cluster_id`).all(owner, nodeId, policy.kind, policy.id) as unknown as IdRow[];
   return rows.map((row) => row.cluster_id);
+}
+
+function twinMayReceive(db: DatabaseSync, owner: string, kind: SharedResourceKind, resourceId: string, projectId?: string): boolean {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cluster_node'").get()) return true;
+  const local = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
+  if (owner !== local || !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'resource_account_owners'").get()) return true;
+  if (kind === "project") return ownedByAdmin("project", resourceId, db);
+  if (kind === "secret") {
+    const row = db.prepare("SELECT project_id FROM secret_accounts WHERE id = ?").get(resourceId) as { project_id: string | null } | undefined;
+    return row?.project_id ? ownedByAdmin("project", row.project_id, db) : ownedByAdmin("secret", resourceId, db);
+  }
+  return projectId === undefined || ownedByAdmin("project", projectId, db);
 }

@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { requestSupervisor } from "./supervisor-client.mjs";
+import { requestSupervisor, requestTaskControl } from "./supervisor-client.mjs";
 
 // Every harness shell command runs through the supervisor so the Tasks view can
 // list it, stream its output, and stop it. The shell itself always waits for the
@@ -37,8 +38,42 @@ function registry(dataDirectory) {
     throw error;
   }
 }
-function setState(db, id, state, until) {
+export function setShellState(db, id, state, until) {
   db.prepare("INSERT INTO supervised_shell_calls VALUES(?,?,?) ON CONFLICT(task_id) DO UPDATE SET state=excluded.state,foreground_until=excluded.foreground_until").run(id, state, until);
+}
+export function renewShellLease(db, id, until) {
+  db.prepare("UPDATE supervised_shell_calls SET foreground_until=? WHERE task_id=?").run(until, id);
+}
+export function openShellRegistry(dataDirectory) { return registry(dataDirectory); }
+/* The service's agents reach the supervisor socket and node database directly. An agent
+   running as a person's OS account can do neither, so the server relays both for it, and
+   the shell's exit code passes through that account's own temp folder. */
+function backend(env) {
+  if (typeof env?.JOINT_BOB_TASK_SOCKET !== "string" || !env.JOINT_BOB_TASK_SOCKET) {
+    if (typeof env?.JOINT_BOB_TASK_RELAY !== "string" || typeof env?.JOINT_BOB_TASK_TOKEN !== "string" || !env.JOINT_BOB_TASK_TOKEN) throw new Error("Joint Bob shell supervision is unavailable");
+    const request = (body, timeout = 2000) => requestTaskControl(env, body, timeout);
+    const exits = path.join(os.tmpdir(), "joint-bob-shell-exits");
+    mkdirSync(exits, { recursive: true, mode: 0o700 });
+    return {
+      request,
+      setState: (id, state, until) => request({ action: "shell-state", id, state, until }),
+      renew: (id, until) => request({ action: "shell-lease", id, until }),
+      exits,
+      workerEnv: { JOINT_BOB_SHELL_EXITS: exits },
+      close: () => {},
+    };
+  }
+  const dataDirectory = stateDirectory(env?.JOINT_BOB_TASK_DATA_DIR);
+  if (typeof env?.JOINT_BOB_TASK_TOKEN !== "string" || !env.JOINT_BOB_TASK_TOKEN) throw new Error("Joint Bob shell supervision is unavailable");
+  const db = registry(dataDirectory);
+  return {
+    request: (body, timeout = 2000) => requestSupervisor(env.JOINT_BOB_TASK_SOCKET, env.JOINT_BOB_TASK_TOKEN, body, timeout),
+    setState: async (id, state, until) => setShellState(db, id, state, until),
+    renew: async (id, until) => renewShellLease(db, id, until),
+    exits: path.join(dataDirectory, "shell-exits"),
+    workerEnv: {},
+    close: () => db.close(),
+  };
 }
 function validateArgs(args) {
   if (!Array.isArray(args) || args.length > 256 || args.some(value => typeof value !== "string" || value.includes("\0"))) throw new Error("Invalid supervised shell arguments");
@@ -63,12 +98,10 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
   const limit = timeoutMs === undefined ? shellTimeoutMs(env?.JOINT_BOB_SHELL_TIMEOUT_MS) : shellTimeoutMs(timeoutMs);
   if (timeoutMs !== undefined && limit === undefined) throw new RangeError("Invalid supervised shell time limit");
   if (signal?.aborted) throw new Error("Shell command aborted");
-  const dataDirectory = stateDirectory(env?.JOINT_BOB_TASK_DATA_DIR);
-  if (typeof env?.JOINT_BOB_TASK_SOCKET !== "string" || typeof env?.JOINT_BOB_TASK_TOKEN !== "string" || !env.JOINT_BOB_TASK_TOKEN) throw new Error("Joint Bob shell supervision is unavailable");
   const realCwd = realpathSync(cwd);
+  const tasks = backend(env);
   const id = randomUUID();
-  const db = registry(dataDirectory);
-  const exitFile = path.join(dataDirectory, "shell-exits", id);
+  const exitFile = path.join(tasks.exits, id);
   // The worker records the shell's own exit code here the moment the shell ends;
   // the task itself stays alive while any background child it left keeps running.
   const shellExit = () => {
@@ -83,9 +116,9 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
   let offset = 0;
   let emitted = 0;
   let truncation = false;
-  const request = body => requestSupervisor(env.JOINT_BOB_TASK_SOCKET, env.JOINT_BOB_TASK_TOKEN, body, 2000);
-  const show = () => { if (!visible) { visible = true; setState(db, id, "background", Date.now() + LEASE_GRACE_MS); } };
-  const stop = () => { if (accepted && !stopSent) { stopSent = true; show(); void request({ action: "stop", id }).catch(() => {}); } };
+  const request = body => tasks.request(body);
+  const show = async () => { if (!visible) { visible = true; await tasks.setState(id, "background", Date.now() + LEASE_GRACE_MS); } };
+  const stop = () => { if (accepted && !stopSent) { stopSent = true; void show().catch(() => {}); void request({ action: "stop", id }).catch(() => {}); } };
   signal?.addEventListener("abort", stop, { once: true });
   const drain = async () => {
     const output = await request({ action: "output", id, offset, limit: 65536 });
@@ -98,16 +131,16 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
     return output.eof;
   };
   try {
-    setState(db, id, "foreground", Date.now() + VISIBILITY_MS + LEASE_GRACE_MS);
+    await tasks.setState(id, "foreground", Date.now() + VISIBILITY_MS + LEASE_GRACE_MS);
     try {
-      await request({
+      await tasks.request({
         action: "start", id, name: "Shell command", executable: process.execPath,
         args: ["--disable-warning=ExperimentalWarning", fileURLToPath(new URL("./supervised-shell-worker.mjs", import.meta.url)), ...args], cwd: realCwd,
-        env: { ...Object.fromEntries(Object.entries(env).filter(([, value]) => typeof value === "string")), JOINT_BOB_SUPERVISED_SHELL_ID: id },
-      });
+        env: { ...Object.fromEntries(Object.entries(env).filter(([, value]) => typeof value === "string")), ...tasks.workerEnv, JOINT_BOB_SUPERVISED_SHELL_ID: id },
+      }, 15000);
       accepted = true;
     } catch (error) {
-      setState(db, id, "background", 0);
+      await tasks.setState(id, "background", 0).catch(() => {});
       throw new Error(`Joint Bob could not confirm shell task ${id}; do not retry it (${error instanceof Error ? error.message : "supervisor request failed"})`);
     }
     const started = Date.now();
@@ -122,9 +155,9 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
     for (;;) {
       if (signal?.aborted) { stop(); throw new Error("Shell command aborted"); }
       const now = Date.now();
-      if (!visible && now >= visibleAt) show();
+      if (!visible && now >= visibleAt) await show();
       if (now >= renewAt) {
-        db.prepare("UPDATE supervised_shell_calls SET foreground_until=? WHERE task_id=?").run(now + LEASE_GRACE_MS, id);
+        await tasks.renew(id, now + LEASE_GRACE_MS);
         renewAt = now + VISIBILITY_MS;
       }
       if (!timedOut && now >= deadline) {
@@ -137,7 +170,7 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
       if (terminal.has(status.status)) {
         for (let count = 0; count < 4 && !(await drain()); count++) await pause(25);
         shellExit();
-        if (!visible) setState(db, id, "returned", 0);
+        if (!visible) await tasks.setState(id, "returned", 0);
         if (timedOut) return { exitCode: TIMEOUT_EXIT_CODE, taskId: id };
         return { exitCode: status.status === "stopped" ? 130 : (Number.isInteger(status.exitCode) ? status.exitCode : 1), taskId: id };
       }
@@ -148,7 +181,7 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
       if (Date.now() >= lingerAt) {
         // The shell is done but left children behind: hand back its result and
         // leave the lingering job visible in Tasks, where it can be inspected or stopped.
-        show();
+        await show();
         await drain();
         onData?.(Buffer.from(`\nJoint Bob task ${id} left a background process running. It stays tracked in Tasks; use the task CLI to inspect or stop it.\n`));
         return { exitCode: shellCode, taskId: id };
@@ -157,7 +190,8 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
     }
   } finally {
     signal?.removeEventListener("abort", stop);
-    try { db.prepare("UPDATE supervised_shell_calls SET foreground_until=0 WHERE task_id=?").run(id); }
-    finally { db.close(); }
+    try { await tasks.renew(id, 0); }
+    catch { /* the lease lapses on its own */ }
+    finally { tasks.close(); }
   }
 }

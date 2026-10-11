@@ -1,14 +1,15 @@
 import { fileURLToPath } from "node:url";
-import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
+import { browserAgentEnvironment, browserAgentInstructions, revokeBrowserAgentTokens } from "./browser-agent.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { isHarnessId, type HarnessId } from "./types.js";
 import { websiteCredentialSnapshot, type SecretConversation } from "./secrets.js";
 import { secretAgentEnvironment } from "./secret-agent.js";
-import { ntfyAgentEnvironment, ntfyAgentInstructions } from "./ntfy-agent.js";
+import { ntfyAgentEnvironment, ntfyAgentInstructions, revokeNtfyAgentTokens } from "./ntfy-agent.js";
 import { worktreeAgentEnvironment, worktreeAgentInstructions } from "./worktree-agent.js";
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 import { getSettings } from "./settings.js";
 import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-git-policy.js";
+import { multiUserEnabled } from "./account-runtime.js";
 
 export interface AgentCapabilityIdentity {
   projectId: string;
@@ -80,6 +81,10 @@ function taskEnvironment(identity: AgentCapabilityIdentity): NodeJS.ProcessEnv {
     JOINT_BOB_TASK_API: Number.isInteger(port) && port >= 1 && port <= 65535
       ? `http://127.0.0.1:${port}/api/background-tasks/agent`
       : undefined,
+    // Agents under a person's OS account can't open the socket; the server relays for them.
+    JOINT_BOB_TASK_RELAY: multiUserEnabled() && Number.isInteger(port) && port >= 1 && port <= 65535
+      ? `http://127.0.0.1:${port}/api/background-tasks/relay`
+      : undefined,
   };
   try {
     const control = readSupervisorControl(dataDirectory);
@@ -146,6 +151,12 @@ export function agentCapabilityEnvironment(projectId: string, engine: HarnessId,
   const identity = { projectId, engine, conversationId, secretConversation };
   validateCapabilities(identity);
   return Object.assign({}, ...agentCapabilities.map((capability) => capability.environment(identity)));
+}
+
+/** Ends the tokens handed to a deleted conversation's agents, or to all of a deleted project's. */
+export function revokeAgentCapabilities(projectId: string, conversationId?: string): void {
+  revokeBrowserAgentTokens(projectId, conversationId);
+  revokeNtfyAgentTokens(projectId, conversationId);
 }
 
 export function agentCapabilityInstructionFiles(): Array<{ path: string; content: string }> {

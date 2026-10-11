@@ -1,5 +1,6 @@
 import { watch, type FSWatcher } from "node:fs";
 import path from "node:path";
+import { multiUserEnabled, runInRuntime, serviceRuntime, type RuntimeAccount } from "./account-runtime.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { sessionCwds, type SessionProjectPaths } from "./harnesses/shared-paths.js";
 import type { ProjectRecord } from "./types.js";
@@ -9,7 +10,7 @@ const RESCAN_MS = 15_000;
 /** The longest a directory whose watcher keeps failing is left unwatched. */
 const MAX_RETRY_MS = 10 * 60_000;
 export type SessionChangeListener = (projectId: string, changedFiles: string[]) => void;
-interface WatchedProject { paths: SessionProjectPaths; directories: Set<string>; pendingFiles: Map<string, ReturnType<typeof listDiscoveredHarnesses>[number]>; needsFullRefresh: boolean; debounceTimer: NodeJS.Timeout | null; }
+interface WatchedProject { paths: SessionProjectPaths; directories: Set<string>; pendingFiles: Map<string, ReturnType<typeof listDiscoveredHarnesses>[number]>; needsFullRefresh: boolean; debounceTimer: NodeJS.Timeout | null; runtime: RuntimeAccount; }
 interface SharedWatch { watcher: FSWatcher; projects: Set<string>; openedAt: number; }
 
 export function sessionWatchDirs(project: SessionProjectPaths): string[] {
@@ -32,8 +33,13 @@ export class SessionWatcher {
     const watched = this.projects.get(project.id);
     const paths = { path: project.path, macPath: project.macPath, locations: project.locations, additionalPaths: "additionalPaths" in project ? project.additionalPaths as string[] | undefined : undefined };
     if (watched) watched.paths = paths;
-    else this.projects.set(project.id, { paths, directories: new Set(), pendingFiles: new Map(), needsFullRefresh: false, debounceTimer: null });
-    this.watchDirs(project.id);
+    else this.projects.set(project.id, { paths, directories: new Set(), pendingFiles: new Map(), needsFullRefresh: false, debounceTimer: null, runtime: serviceRuntime() });
+    if (!multiUserEnabled()) { this.watchDirs(project.id); return; }
+    // In multi-user mode a project's transcripts are in its runtime account's home.
+    void import("./project-runtime.js").then(({ runtimeForProject }) => runtimeForProject(project.id)).then((runtime) => {
+      const current = this.projects.get(project.id);
+      if (current) current.runtime = runtime;
+    }, () => undefined).finally(() => this.watchDirs(project.id));
   }
   removeProject(projectId: string): void {
     const project = this.projects.get(projectId); if (!project) return;
@@ -55,7 +61,7 @@ export class SessionWatcher {
 
   private watchDirs(projectId: string): void {
     const project = this.projects.get(projectId); if (!project) return;
-    const desired = new Set(sessionWatchDirs(project.paths));
+    const desired = new Set(runInRuntime(project.runtime, () => sessionWatchDirs(project.paths)));
     for (const dir of project.directories) if (!desired.has(dir)) this.unsubscribe(projectId, dir);
     for (const dir of desired) {
       if (project.directories.has(dir)) continue;
@@ -108,6 +114,10 @@ export class SessionWatcher {
   }
 
   private async flush(projectId: string, project: WatchedProject): Promise<void> {
+    await runInRuntime(project.runtime, () => this.flushPending(projectId, project));
+  }
+
+  private async flushPending(projectId: string, project: WatchedProject): Promise<void> {
     const fullRefresh = project.needsFullRefresh;
     const pending = [...project.pendingFiles];
     project.needsFullRefresh = false;
@@ -128,9 +138,9 @@ export class SessionWatcher {
     if (!name) project.needsFullRefresh = true;
     else {
       const file = path.join(dir, name);
-      const adapter = listDiscoveredHarnesses().find((candidate) => candidate.paths.ownsTranscript(file));
+      const adapter = runInRuntime(project.runtime, () => listDiscoveredHarnesses().find((candidate) => candidate.paths.ownsTranscript(file)));
       if (!adapter) return;
-      const canonicalFile = adapter.paths.canonicalTranscript?.(file) ?? file;
+      const canonicalFile = runInRuntime(project.runtime, () => adapter.paths.canonicalTranscript?.(file) ?? file);
       project.pendingFiles.set(canonicalFile, adapter);
     }
     if (this.projects.get(projectId) !== project) return;

@@ -90,6 +90,42 @@ export function requestSupervisor(socketPath, token, body, timeoutMs = 15000) {
     request.end(JSON.stringify(body));
   });
 }
+/** The relay URL an agent under its own OS account uses instead of the socket. */
+export function taskRelay(value) {
+  try {
+    const url = new URL(value);
+    const port = Number(url.port || "80");
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !Number.isInteger(port) || port < 1 || port > 65535
+      || url.pathname !== "/api/background-tasks/relay" || url.username || url.password || url.search || url.hash) throw new Error();
+    return url.href;
+  } catch {
+    throw new Error(UNAVAILABLE);
+  }
+}
+/**
+ * A supervisor request from an agent's environment. The service's own agents talk to the
+ * socket; an agent running as a person's OS account can't open it, so the server relays its
+ * requests with the same scoped token and the supervisor checks the scope either way.
+ */
+export async function requestTaskControl(env, body, timeoutMs = 15000) {
+  const token = env?.JOINT_BOB_TASK_TOKEN;
+  if (typeof token !== "string" || !token) throw new Error(UNAVAILABLE);
+  if (typeof env.JOINT_BOB_TASK_SOCKET === "string" && env.JOINT_BOB_TASK_SOCKET) return requestSupervisor(env.JOINT_BOB_TASK_SOCKET, token, body, timeoutMs);
+  const url = taskRelay(env.JOINT_BOB_TASK_RELAY);
+  let response;
+  try {
+    response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) {
+    throw new Error(`Supervisor request failed: ${error instanceof Error ? error.message : "relay unavailable"}`);
+  }
+  const text = await response.text();
+  if (text.length > 1024 * 1024) throw new Error("Supervisor response exceeds 1 MiB");
+  let value;
+  try { value = JSON.parse(text); } catch { throw new Error("Malformed supervisor response"); }
+  if (!value || typeof value !== "object" || (!("result" in value) && typeof value.error !== "string")) throw new Error("Malformed supervisor response");
+  if (!response.ok) { const error = new Error(value.error); error.status = response.status; throw error; }
+  return value.result;
+}
 export async function supervisorRequest(dataDirectory, body, options = {}) {
   const control = readSupervisorControl(dataDirectory);
   if (!control) throw new Error(UNAVAILABLE);

@@ -484,8 +484,12 @@
           <p id="loginMessage">Sign in to this node.</p>
         </div>
         <label id="loginUsernameLabel">
-          Username
+          <span id="loginUsernameText">Username or email</span>
           <input id="loginUsernameInput" name="username" autocomplete="username" required data-testid="login-username-input" />
+        </label>
+        <label id="loginEmailLabel" hidden>
+          Email
+          <input id="loginEmailInput" name="email" type="email" autocomplete="email" maxlength="254" data-testid="login-email-input" />
         </label>
         <label id="loginPasswordLabel">
           Password
@@ -607,11 +611,13 @@
           <option value="engines">Harnesses</option>
           <option value="git">Git</option>
           <option value="classifiers">Classifiers</option>
-          <option value="resources">Resources</option>
+          <option value="resources" data-admin-only>Resources</option>
           <option value="shortcuts">Shortcuts</option>
-          <option value="updates">Updates</option>
+          <option value="updates" data-admin-only>Updates</option>
           <option value="logs">Client logs</option>
           <option value="changelog">Changelog</option>
+          <option value="node" data-admin-only>Node</option>
+          <option value="users" data-admin-only>Users</option>
         </select>
 
         <div class="settings-tabs settings-tabs--sidebar" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
@@ -629,14 +635,101 @@
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Harnesses</button>
           <button class="settings-tab" type="button" data-settings-tab="git" role="tab" id="settingsTab-git" aria-controls="settingsPanel-git" aria-selected="false" tabindex="-1" data-testid="settings-tab-git">Git</button>
           <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers">Classifiers</button>
-          <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources">Resources</button>
+          <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources" data-admin-only>Resources</button>
           <button class="settings-tab" type="button" data-settings-tab="shortcuts" role="tab" id="settingsTab-shortcuts" aria-controls="settingsPanel-shortcuts" aria-selected="false" tabindex="-1" data-testid="settings-tab-shortcuts">Shortcuts</button>
-          <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates">Updates</button>
+          <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates" data-admin-only>Updates</button>
           <button class="settings-tab" type="button" data-settings-tab="logs" role="tab" id="settingsTab-logs" aria-controls="settingsPanel-logs" aria-selected="false" tabindex="-1" data-testid="settings-tab-logs">Client logs</button>
           <button class="settings-tab" type="button" data-settings-tab="changelog" role="tab" id="settingsTab-changelog" aria-controls="settingsPanel-changelog" aria-selected="false" tabindex="-1" data-testid="settings-tab-changelog">Changelog</button>
+          <button class="settings-tab" type="button" data-settings-tab="node" role="tab" id="settingsTab-node" aria-controls="settingsPanel-node" aria-selected="false" tabindex="-1" data-testid="settings-tab-node" data-admin-only>Node</button>
+          <button class="settings-tab" type="button" data-settings-tab="users" role="tab" id="settingsTab-users" aria-controls="settingsPanel-users" aria-selected="false" tabindex="-1" data-testid="settings-tab-users" data-admin-only>Users</button>
         </div>
 
+        <section class="settings-panel" id="settingsPanel-node" role="tabpanel" aria-labelledby="settingsTab-node" tabindex="0" data-testid="settings-panel-node" data-admin-only hidden>
+          <p class="settings-hint">Only you, the admin of this node, see this section.</p>
+          <fieldset class="phase-settings" data-testid="settings-terminal-policy">
+            <legend>Terminal</legend>
+            <label>Who may open a terminal on this node
+              <select id="terminalPolicyMode" data-testid="terminal-policy-mode">
+                <option value="off">Nobody</option>
+                <option value="admin">Only me</option>
+                <option value="everyone">Everyone on this node</option>
+                <option value="selected">People I choose</option>
+              </select>
+            </label>
+            <div class="terminal-policy-people" id="terminalPolicyPeople" data-testid="terminal-policy-people" hidden></div>
+            <div class="terminal-policy-limits">
+              <label>Open terminals per person
+                <input id="terminalPolicyMax" type="number" min="1" max="20" step="1" value="2" data-testid="terminal-policy-max" form="terminalPolicyForm" />
+              </label>
+              <label>Close an idle terminal after
+                <input id="terminalPolicyIdle" type="number" min="1" max="1440" step="1" value="30" data-testid="terminal-policy-idle" form="terminalPolicyForm" />
+                minutes
+              </label>
+            </div>
+            <p class="settings-hint">A terminal runs as its person, in their project folder. Visitors signed in from other nodes never get one. Every open and close is recorded in the node's audit log.</p>
+            <div class="node-block-add"><button class="ghost compact" type="button" id="terminalPolicySave" data-testid="terminal-policy-save">Save terminal settings</button></div>
+            <p class="settings-hint" id="terminalPolicyStatus" role="status" data-testid="terminal-policy-status"></p>
+          </fieldset>
+          <fieldset class="phase-settings" data-testid="settings-node-blocks">
+            <legend>Blocked nodes</legend>
+            <p class="settings-hint">A blocked node can't connect here and its users can't sign in here. Nothing syncs in either direction, and the cluster keeps working for everyone else. Twins can't be blocked; unpair them first.</p>
+            <ul class="node-block-list" id="nodeBlockList" data-testid="node-block-list"></ul>
+            <div class="node-block-add">
+              <label>Block a node
+                <select id="nodeBlockSelect" data-testid="node-block-select"></select>
+              </label>
+              <button class="ghost compact" type="button" id="nodeBlockButton" data-testid="node-block-button">Block</button>
+            </div>
+            <p class="settings-hint" id="nodeBlockStatus" role="status" data-testid="node-block-status"></p>
+          </fieldset>
+        </section>
+        <section class="settings-panel" id="settingsPanel-users" role="tabpanel" aria-labelledby="settingsTab-users" tabindex="0" data-testid="settings-panel-users" data-admin-only hidden>
+          <p class="settings-hint">People on this node. You see their accounts, never their projects, conversations or activity, and you can't read or reset their passwords.</p>
+          <p class="settings-hint" id="usersMultiUserStatus" role="status" data-testid="users-multi-user-status"></p>
+          <ul class="users-self-test" id="usersSelfTestFindings" data-testid="users-self-test-findings" hidden></ul>
+          <div class="node-block-add" id="usersModeActions" data-testid="users-mode-actions" hidden>
+            <button class="ghost compact" type="button" id="usersSelfTestButton" data-testid="users-self-test-button">Run self-test</button>
+            <button class="ghost compact" type="button" id="usersEnableButton" data-testid="users-enable-button">Turn on multi-user mode</button>
+          </div>
+          <div class="users-enable-confirm" id="usersEnableConfirm" data-testid="users-enable-confirm" hidden>
+            <p class="settings-hint">Your agents, shells and terminal move into your own OS account. Your Claude, Pi and Kiro transcripts and settings are copied there, and your projects stay where they are. This can't be turned off from here. It waits until no turn is running.</p>
+            <button class="ghost compact" type="button" id="usersEnableConfirmButton" data-testid="users-enable-confirm-button">Turn it on</button>
+            <button class="ghost compact" type="button" id="usersEnableCancelButton" data-testid="users-enable-cancel-button">Cancel</button>
+          </div>
+          <table class="users-table" data-testid="users-table">
+            <thead><tr><th>Email</th><th>Username</th><th>Role</th><th>Status</th><th>Added</th><th></th></tr></thead>
+            <tbody id="usersTableBody"></tbody>
+          </table>
+          <fieldset class="phase-settings" id="usersSubscriptionFieldset" data-testid="users-subscription">
+            <legend>Model subscriptions</legend>
+            <p class="settings-hint">Subscriptions belong to the node: everyone's agents use the logins you made here. Claude reaches people's accounts through a long-lived token. Run <code>claude setup-token</code> and paste what it prints. People's agents can read it, so share it only with people you'd share the subscription with.</p>
+            <div class="node-block-add">
+              <label>Claude token<input id="usersClaudeToken" type="password" autocomplete="off" spellcheck="false" form="usersAddForm" data-testid="users-claude-token" /></label>
+              <button class="ghost compact" type="button" id="usersClaudeTokenSave" data-testid="users-claude-token-save">Save</button>
+              <button class="ghost compact" type="button" id="usersClaudeTokenClear" data-testid="users-claude-token-clear">Remove</button>
+            </div>
+            <p class="settings-hint" id="usersClaudeTokenStatus" role="status" data-testid="users-claude-token-status"></p>
+          </fieldset>
+          <fieldset class="phase-settings" id="usersAddFieldset" data-testid="users-add">
+            <legend>Add a person</legend>
+            <div class="node-block-add">
+              <label>Username<input id="usersAddUsername" autocomplete="off" maxlength="28" form="usersAddForm" data-testid="users-add-username" /></label>
+              <label>Email<input id="usersAddEmail" type="email" autocomplete="off" maxlength="254" form="usersAddForm" data-testid="users-add-email" /></label>
+              <button class="ghost compact" type="button" id="usersAddButton" data-testid="users-add-button">Add</button>
+            </div>
+            <p class="settings-hint">They sign in once with a one-time password shown here, then choose their own. Each person gets their own OS account, projects and settings.</p>
+            <p class="users-one-time" id="usersOneTime" data-testid="users-one-time" hidden></p>
+          </fieldset>
+          <p class="settings-hint" id="usersStatus" role="status" data-testid="users-status"></p>
+        </section>
         <section class="settings-panel" id="settingsPanel-account" role="tabpanel" aria-labelledby="settingsTab-account" tabindex="0">
+          <fieldset class="phase-settings" id="myNodesFieldset" data-testid="my-nodes" hidden>
+            <legend>My nodes</legend>
+            <p class="settings-hint">The nodes of the clusters you joined. Your settings, pins and recents reach a node only after you sign in there.</p>
+            <ul class="my-nodes" id="myNodesList" data-testid="my-nodes-list"></ul>
+            <label class="checkbox-row"><input type="checkbox" id="settingsShowProjectsOnOtherNodes" data-testid="settings-show-projects-on-other-nodes" /> Show my projects on other nodes</label>
+            <p class="settings-hint">Signed in on one of these nodes, you see your unshared projects there too. They run here and are never copied there. Hide a single project from its menu.</p>
+          </fieldset>
           <label class="checkbox-row"><input type="checkbox" id="settingsFocusUi" data-testid="settings-focus-ui-toggle" /> Focus interface (experimental)</label>
           <p class="muted compact-copy">One screen at a time, with floating contextual controls. Saves immediately for your account on this node. Turn off here to restore the classic interface without leaving your conversation.</p>
           <fieldset class="phase-settings">
@@ -650,11 +743,13 @@
               days
             </label>
             <p class="settings-hint">Older transcripts stay on disk and load only when opened from a pin, recent item, canvas pane, or direct link.</p>
+            <div data-admin-only>
             <label>Delete conversations with no activity for
               <input id="settingsConversationRetentionDays" type="number" min="1" max="3650" step="1" required data-testid="settings-conversation-retention-days" />
               days
             </label>
             <p class="settings-hint">Deletion removes the transcript on every node. Pinned, ticket, and scheduled conversations are kept. Conversations that never got a message are deleted after an hour.</p>
+            </div>
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Context compaction</legend>
@@ -676,7 +771,7 @@
             </label>
             <p class="settings-hint">When on, this node describes uploaded images and browser screenshots with a vision-capable Pi model and inlines small text files, sending the words and the file path instead of the raw image so the harness does not carry every picture in its history. Agents can still open the file. When off, attachments are sent as today.</p>
           </fieldset>
-          <fieldset class="phase-settings" data-testid="settings-sync-check">
+          <fieldset class="phase-settings" data-testid="settings-sync-check" data-admin-only>
             <legend>Sync check</legend>
             <label class="checkbox-row">
               <input id="settingsSyncCheckEnabled" type="checkbox" data-testid="settings-sync-check-enabled" />
@@ -689,7 +784,7 @@
             <output id="settingsSyncCheckStatus" class="engine-readiness" data-testid="settings-sync-check-status"></output>
             <p class="settings-hint">Every few minutes this node looks for Syncthing conflict copies in the projects it owns and for folders stuck in an error state. It removes duplicate copies, restores copies whose original is gone, rescans broken folders, and asks the chosen harness and model to merge real two-sided edits. Binary and very large files are left for you.</p>
           </fieldset>
-          <fieldset class="phase-settings">
+          <fieldset class="phase-settings" data-admin-only>
             <legend>Terminal access</legend>
             <label class="checkbox-row">
               <input id="settingsRemoteTerminalTwins" type="checkbox" data-testid="settings-remote-terminal-twins" />
@@ -701,7 +796,7 @@
             </label>
             <p class="settings-hint">These apply when you are signed in to another node and open a terminal for a conversation or ticket running here. Signing in to this node directly always gives you its terminal.</p>
           </fieldset>
-          <fieldset class="phase-settings">
+          <fieldset class="phase-settings" data-admin-only>
             <legend>Shell commands</legend>
             <label class="checkbox-row">
               <input id="settingsShellTimeoutEnabled" type="checkbox" data-testid="settings-shell-timeout-enabled" />
@@ -1110,7 +1205,7 @@
             <div id="browserProfileDirectory" class="secret-account-list" data-testid="browser-profile-directory"></div>
             <p class="settings-hint" id="browserProfileDirectoryStatus" role="status" data-testid="browser-profile-directory-status"></p>
           </fieldset>
-          <fieldset class="phase-settings">
+          <fieldset class="phase-settings" data-admin-only>
             <legend>This machine's browser machines</legend>
             <p>Choose where new browsers open from this machine, independent of where the agent runs. Choices here apply only to this machine. Conversations and individual starts can still override them, and existing accounts stay on their original machines.</p>
             <p class="settings-hint">Order: the conversation's choice, then this machine's choice for the project's cluster, then the cluster default, then the default below.</p>
@@ -1125,7 +1220,7 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-workspaces" role="tabpanel" aria-labelledby="settingsTab-workspaces" tabindex="0" hidden>
-          <fieldset class="phase-settings">
+          <fieldset class="phase-settings" data-admin-only>
             <legend>Managed workspace</legend>
             <label>
               Joint Bob home folder
@@ -1146,18 +1241,18 @@
               <button class="ghost" type="button" id="workspaceAddButton" data-testid="workspace-add-button">Add workspace</button>
             </div>
           </fieldset>
-          <fieldset class="phase-settings">
+          <fieldset class="phase-settings" data-admin-only>
             <legend>Syncthing</legend>
             <p>Syncthing is installed, started, discovered, and configured automatically. Project files, ticket workspaces, shareable engine configuration, and sessions are shared when nodes pair. Authentication and credential-bearing settings stay on each node.</p>
           </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-engines" role="tabpanel" aria-labelledby="settingsTab-engines" tabindex="0" hidden>
-          <p>Harness paths are detected automatically for this node. Do not copy paths from another machine. Overrides are blank until you change them; a blank field uses the node default shown here.</p>
+          <p data-admin-only>Harness paths are detected automatically for this node. Do not copy paths from another machine. Overrides are blank until you change them; a blank field uses the node default shown here.</p>
           <div class="settings-subtabs" role="tablist" aria-label="Installed harnesses" id="harnessTabs"></div>
           <div id="harnessPanels"></div>
-          <div class="engine-actions"><button class="ghost" id="settingsCheckRuntimePathsButton" type="button" data-testid="settings-check-runtime-paths-button">Check paths</button></div>
-          <p class="engine-readiness" id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></p>
+          <div class="engine-actions" data-admin-only><button class="ghost" id="settingsCheckRuntimePathsButton" type="button" data-testid="settings-check-runtime-paths-button">Check paths</button></div>
+          <p class="engine-readiness" data-admin-only id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></p>
         </section>
 
         <section class="settings-panel" id="settingsPanel-git" role="tabpanel" aria-labelledby="settingsTab-git" tabindex="0" hidden>
@@ -1204,7 +1299,7 @@
           </section>
         </section>
 
-        <section class="settings-panel resources-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden data-testid="resources-panel">
+        <section class="settings-panel resources-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden data-testid="resources-panel" data-admin-only>
           <p class="settings-hint" id="resourcesSummary" data-testid="resources-summary"></p>
           <div class="resources-toolbar">
             <select id="resourcesScopeSelect" aria-label="Show resources for" data-testid="resources-scope-select">
@@ -1296,7 +1391,7 @@
           </div>
         </section>
 
-        <section class="settings-panel" id="settingsPanel-updates" role="tabpanel" aria-labelledby="settingsTab-updates" tabindex="0" hidden>
+        <section class="settings-panel" id="settingsPanel-updates" role="tabpanel" aria-labelledby="settingsTab-updates" tabindex="0" hidden data-admin-only>
           <p>Updates install the newest GitHub release and restart this node. Running work is prepared, saved, and resumed automatically; if the installation fails, the previous version is restored.</p>
           <p class="updates-version-line" id="updatesVersionLine" data-testid="updates-version-line">…</p>
           <p class="updates-state-line" id="updatesStateLine" role="status" data-testid="updates-state-line"></p>
@@ -2316,5 +2411,8 @@
     <script src="/vendor/xterm/xterm.js"></script>
     <script src="/vendor/xterm/addon-fit.js"></script>
     <script src="/app.js" type="module"></script>
-  </body>
+      <!-- Owns the terminal policy inputs, so the settings form never validates them. -->
+    <form id="terminalPolicyForm" hidden></form>
+    <form id="usersAddForm" hidden></form>
+</body>
 </html>

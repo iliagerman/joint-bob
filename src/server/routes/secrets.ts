@@ -1,11 +1,15 @@
+import type { AuthSession } from "../../auth.js";
 import { z } from "zod";
 import { ensureManagedHome } from "../../managed-home.js";
-import { deleteSecretAccount, getScopeSecretAccounts, listSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "../../secrets.js";
+import { actingAccount } from "../../account-context.js";
+import { accountInCluster } from "../../cluster-accounts.js";
+import { assertSecretVisible, deleteSecretAccount, getScopeSecretAccounts, listSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "../../secrets.js";
 import { getSettings } from "../../settings.js";
 import { deleteWorkspace, listWorkspaces, saveWorkspace } from "../../store.js";
 import { workspaceSchema } from "../projects.js";
 import { secretAccountSchema, secretScopeParamsSchema, secretScopeSchema } from "../schemas.js";
 import { app } from "../state.js";
+import { liveHomeCatalog } from "../live-link.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { getClusterNode } from "../../cluster.js";
 import { ensureSecretSharingSchema, secretGrants, setSecretGrants } from "../scoped-credentials.js";
@@ -77,12 +81,20 @@ app.put("/api/clusters/:clusterId/secrets", async (request, response, next) => {
   } catch(error){ if (error instanceof ClusterV2HttpError) { response.status(error.statusCode).json({ error: error.message }); return; } next(error);}
 });
 app.get("/api/secrets/accounts/:accountId/sharing", async (request, response, next) => {
-  try { response.json({ grants: secretGrants(await clusterV2Database(), (await getClusterNode()).id, z.string().uuid().parse(request.params.accountId)) }); } catch (error) { if (error instanceof ClusterV2HttpError) { response.status(error.statusCode).json({ error: error.message }); return; } next(error); }
+  try {
+    const accountId = z.string().uuid().parse(request.params.accountId);
+    assertSecretVisible(accountId);
+    response.json({ grants: secretGrants(await clusterV2Database(), (await getClusterNode()).id, accountId) });
+  } catch (error) { if (error instanceof ClusterV2HttpError) { response.status(error.statusCode).json({ error: error.message }); return; } next(error); }
 });
 app.put("/api/secrets/accounts/:accountId/sharing", async (request, response, next) => {
   try {
     const input = z.object({ grants: z.array(z.object({ clusterId: z.string().uuid(), nodeId: z.string().min(1).nullable() }).strict()).max(1000) }).strict().parse(request.body);
-    response.json({ grants: setSecretGrants(await clusterV2Database(), (await getClusterNode()).id, z.string().uuid().parse(request.params.accountId), input.grants) });
+    const accountId = z.string().uuid().parse(request.params.accountId), db = await clusterV2Database(), actor = actingAccount();
+    assertSecretVisible(accountId);
+    // A person shares their secret only into clusters they joined themselves.
+    if (actor && input.grants.some((grant) => !accountInCluster(db, actor.accountId, grant.clusterId))) { response.status(404).json({ error: "Cluster not found" }); return; }
+    response.json({ grants: setSecretGrants(db, (await getClusterNode()).id, accountId, input.grants) });
   } catch (error) { if (error instanceof ClusterV2HttpError) { response.status(error.statusCode).json({ error: error.message }); return; } next(error); }
 });
 app.post("/api/secrets/github-ssh-key", (_request, response, next) => {
@@ -125,7 +137,12 @@ app.put("/api/secrets/scopes/:scopeType/:scopeId", async (request, response, nex
 
 app.get("/api/workspaces", async (_request, response, next) => {
   try {
-    response.json({ workspaces: await listWorkspaces() });
+    // A visitor's workspaces at home come with their live projects (live-link.ts).
+    const session = response.locals.authSession as AuthSession | undefined;
+    const live = session?.isRemoteLogin ? await liveHomeCatalog(session) : undefined;
+    const local = await listWorkspaces();
+    const seen = new Set(local.map((workspace) => workspace.id));
+    response.json({ workspaces: [...local, ...((live?.workspaces ?? []) as typeof local).filter((workspace) => !seen.has(workspace.id))] });
   } catch (error) {
     next(error);
   }

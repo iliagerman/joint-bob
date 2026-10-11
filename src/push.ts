@@ -1,7 +1,9 @@
+import { accountOfSomeoneElse } from "./ownership.js";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { getClusterNode } from "./cluster.js";
-import { userIdForUsername, usernameForUser } from "./auth.js";
+import { accountIdForUser, userIdForAccount } from "./auth.js";
+import { isTwinOrigin, legacyAccountKey } from "./account-keys.js";
 import { resolveProjectAlias } from "./replication.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
@@ -400,7 +402,7 @@ export async function listPushSubscriberUserIds(projectId: string): Promise<stri
   const db = pushDatabase();
   const rows = db.prepare("SELECT DISTINCT user_id, username, project_id FROM push_session_subscriptions").all() as unknown as Array<UserRow & { username: string | null; project_id: string }>;
   const usernames = new Set(rows.flatMap((row) => row.username ? [row.username.toLowerCase()] : []));
-  const resolvedUsers = new Map([...usernames].map((username) => [username, userIdForUsername(username)]));
+  const resolvedUsers = new Map([...usernames].map((username) => [username, userIdForAccount(username)]));
   const canonical = resolveProjectAlias(db, projectId);
   const ids = rows.flatMap((row) => {
     if (row.project_id !== "*" && resolveProjectAlias(db, row.project_id) !== canonical) return [];
@@ -473,7 +475,9 @@ function compareVersion(left: VersionRow, right: VersionRow): number {
 }
 
 function applySubscriptionUpsert(db: DatabaseSync, event: PushSubscriptionEvent): boolean {
-  const value = event.value as PushSubscriptionUpsertValue;
+  const sent = event.value as PushSubscriptionUpsertValue;
+  // Older peers name the account by username.
+  const value = sent.username ? { ...sent, username: legacyAccountKey(db, sent.username, event.originNodeId, isTwinOrigin(db, event.originNodeId)) } : sent;
   const digest = endpointDigest(value.subscription.endpoint);
   const incoming: VersionRow = { updated_at: event.updatedAt, origin_node_id: event.originNodeId };
   const tombstone = db.prepare("SELECT updated_at, origin_node_id FROM push_subscription_tombstones WHERE endpoint_digest = ?").get(digest) as VersionRow | undefined;
@@ -528,11 +532,15 @@ export async function pushSubscriptionEventsForPeer(peerId: string, now = new Da
     WHERE d.peer_id = ? AND d.delivered_at IS NULL AND d.next_attempt_at <= ?
     ORDER BY e.created_at, e.event_id LIMIT 100
   `).all(peerId, at) as unknown as EventRow[];
-  return rows.map((row) => ({
+  const events = rows.map((row) => ({
     id: row.event_id, entityKey: row.entity_key, operation: row.operation,
     value: JSON.parse(decrypt(row.payload_encrypted)) as PushSubscriptionEvent["value"],
     updatedAt: row.updated_at, originNodeId: row.origin_node_id, createdAt: row.created_at,
   }));
+  // Twins are the admin's machines: a member's or a visitor's devices are never told to one.
+  const others = events.filter((event) => { const account = (event.value as { username?: unknown }).username; return typeof account === "string" && /^[0-9a-f]{32}$/.test(account) && accountOfSomeoneElse(account, db); });
+  await recordPushSubscriptionReceipt(peerId, others.map((event) => event.id));
+  return events.filter((event) => !others.includes(event));
 }
 
 export async function recordPushSubscriptionReceipt(peerId: string, eventIds: string[]): Promise<void> {
@@ -617,7 +625,7 @@ export function ntfySubscription(serviceUrl: string, topic: string, token: strin
 }
 
 function userProjectSubscriptions(db: DatabaseSync, userId: string, projectId: string, includeGlobal = false): SubscriptionRow[] {
-  const username = usernameForUser(userId) ?? null;
+  const username = accountIdForUser(userId) ?? null;
   const rows = db.prepare("SELECT * FROM push_session_subscriptions WHERE username=? COLLATE NOCASE OR (username IS NULL AND user_id=?)")
     .all(username, userId) as unknown as SubscriptionRow[];
   const canonical = resolveProjectAlias(db, projectId);
@@ -628,7 +636,7 @@ function userProjectSubscriptions(db: DatabaseSync, userId: string, projectId: s
 export async function migratePushConversationSubscriptions(userId: string, username: string, projectId: string, sessions: SessionSummary[]): Promise<void> {
   const db = pushDatabase();
   const canonical = resolveProjectAlias(db, projectId);
-  if (usernameForUser(userId)?.toLowerCase() !== username.toLowerCase()) throw new Error("Push migration account does not match");
+  if (accountIdForUser(userId) !== username) throw new Error("Push migration account does not match");
   const rows = userProjectSubscriptions(db, userId, canonical, true);
   const identities = new Map<string, string>();
   for (const session of sessions) {

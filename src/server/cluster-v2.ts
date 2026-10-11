@@ -259,7 +259,8 @@ export async function publishNodeDescriptor(): Promise<void> {
   await flushV2MembershipOutbox();
 }
 
-/** Receives replicated user credentials from a peer node. */
+
+/** Receives the one home user an older node sends; see applyUserReplication. */
 export async function receiveUserReplication(request: Request, response: Response, next: NextFunction): Promise<void> {
   try {
     const senderNodeId = response.locals.machineNodeId as string | undefined;

@@ -1,4 +1,5 @@
 import { appendFile, lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { runtimeHome } from "../../account-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import { parseCompletedJsonl } from "../../jsonl.js";
@@ -36,7 +37,7 @@ function defaults(home: string) {
 }
 
 function sessionRoot(): string {
-  return configuredRuntime("kiro", defaults(os.homedir())).sessionPath;
+  return configuredRuntime("kiro", defaults(runtimeHome())).sessionPath;
 }
 
 function aliasRoot(): string {

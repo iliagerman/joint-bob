@@ -5,6 +5,10 @@ import { addNtfyService, deleteNtfyService, getNtfyService, importNtfyService, l
 import { checkNtfyToken, createNtfyUser, deleteNtfyTopicAccess, deleteNtfyUser, listNtfyTopics, listNtfyUsers, ntfyPermission, ntfySince, ntfyTopicName, ntfyTopicPattern, ntfyUsername, readNtfyMessages, setNtfyTopicAccess } from "../../ntfy-admin.js";
 import { isHarnessId, type HarnessId } from "../../types.js";
 import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "../../push.js";
+import { projectVisible } from "../../store.js";
+import { actingAccount } from "../../account-context.js";
+import { accountInCluster } from "../../cluster-accounts.js";
+import { isNodeAdmin } from "../admin.js";
 import { sendError } from "../http-auth.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ntfyServiceSchema, pushSubscribeSchema, pushUnsubscribeSchema, sharedNtfyServiceSchema } from "../schemas.js";
@@ -30,7 +34,9 @@ app.post("/api/push/subscribe", async (request, response, next) => {
   try {
     const payload = pushSubscribeSchema.parse(request.body);
     const authSession = response.locals.authSession as AuthSession;
-    await savePushSubscription(payload.subscription, authSession.userId, payload.projectId, payload.sessionPath, payload.title || "Conversation", authSession.username.toLowerCase());
+    // Notifications are for conversations the person can open.
+    if (payload.projectId !== "*" && !await projectVisible(payload.projectId)) { sendError(response, 404, "Project not found"); return; }
+    await savePushSubscription(payload.subscription, authSession.userId, payload.projectId, payload.sessionPath, payload.title || "Conversation", authSession.accountId);
     flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     response.status(204).send();
   } catch (error) {
@@ -135,10 +141,13 @@ app.post("/api/ntfy/services/:id/share", async (request, response, next) => {
     if (!getNtfyService(request.params.id)) { sendError(response, 404, "ntfy service not found"); return; }
     const payload = z.object({ includeTwins: z.boolean().default(true), clusterIds: z.array(z.string().uuid()).max(50).default([]) }).strict().parse(request.body ?? {});
     const db = await clusterV2Database(), local = await getClusterNode();
+    // Twins are the admin's own machines, and a person shares only into clusters they joined.
+    const actor = actingAccount(), admin = isNodeAdmin(response.locals.authSession as AuthSession | undefined);
     for (const clusterId of payload.clusterIds) {
+      if (actor && !accountInCluster(db, actor.accountId, clusterId)) { sendError(response, 404, "Cluster not found"); return; }
       if (!listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === local.id)) { sendError(response, 403, "You are not a member of a selected cluster"); return; }
     }
-    setNtfyServiceSharing(request.params.id, payload);
+    setNtfyServiceSharing(request.params.id, { ...payload, includeTwins: payload.includeTwins && admin });
     const results = await shareNtfyServiceNow(request.params.id);
     response.json({ sharing: ntfyServiceSharingView(request.params.id), results });
   } catch (error) { next(error); }

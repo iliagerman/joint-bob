@@ -1,4 +1,5 @@
 import { listHarnessSessions } from "../harnesses.js";
+import { asNode } from "../account-context.js";
 import { listProjects } from "../store.js";
 import { usageIngestIdle } from "../usage-ingest.js";
 import { usageInventoryCoverage } from "../usage-ledger.js";
@@ -47,7 +48,12 @@ export function createUsageRefreshController(work: () => Promise<UsageCoverage>,
   return { request, refresh, status };
 }
 
+/** Node-wide, whoever asked: a member's refresh must not cache usage of only their projects. */
 async function run(): Promise<UsageCoverage> {
+  return asNode(refreshEveryProject);
+}
+
+async function refreshEveryProject(): Promise<UsageCoverage> {
   const projects = await listProjects();
   for (const project of projects) await listHarnessSessions({ ...project, historyDays: 0 });
   await usageIngestIdle();

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
 import { z } from "zod";
@@ -32,6 +32,8 @@ async function persistAttachments(cwd: string, attachments: Array<{ name: string
   if (!attachments.length) return [];
   const attachmentDir = path.join(cwd, ".joint-bob-attachments");
   await mkdir(attachmentDir, { recursive: true });
+  // The folder is the project's to write: one swapped for a link elsewhere is never written through.
+  if (await realpath(attachmentDir) !== path.join(await realpath(cwd), ".joint-bob-attachments")) throw new Error("This project's attachments folder is a link; remove it and try again");
   const saved: Array<{ name: string; path: string }> = [];
   for (const attachment of attachments) {
     const filePath = path.join(attachmentDir, `${Date.now()}-${randomUUID()}-${safeAttachmentName(attachment.name)}`);

@@ -6,6 +6,7 @@ import { signClusterRequest } from "../cluster-protocol.js";
 import { registerLocalSharingResource } from "../cluster-sharing.js";
 import { isTrustedTwin, mayReceiveResource, registerOwnedResource } from "../cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
+import { ownedByAdmin } from "../ownership.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { sharingFilesStatus, sharedProjectIds } from "./sharing-files.js";
 import { flushSharedTranscripts, sharedTranscriptStatus } from "./shared-transcripts.js";
@@ -29,9 +30,10 @@ export function sharingTwin(db: DatabaseSync, local: string, relationshipId: str
   return row.peer_node_id;
 }
 
+/** Only the admin's projects: a twin is the admin's own machine, not a member's. */
 export function adoptionInventory(db: DatabaseSync): AdoptionInventory {
-  return db.prepare(`SELECT p.id,o.owner_node_id ownerNodeId FROM projects p LEFT JOIN sharing_resource_owners o
-    ON o.kind='project' AND o.resource_id=p.id ORDER BY p.id`).all() as unknown as AdoptionInventory;
+  return (db.prepare(`SELECT p.id,o.owner_node_id ownerNodeId FROM projects p LEFT JOIN sharing_resource_owners o
+    ON o.kind='project' AND o.resource_id=p.id ORDER BY p.id`).all() as unknown as AdoptionInventory).filter((project) => ownedByAdmin("project", project.id, db));
 }
 
 export function adoptTwinProjects(db: DatabaseSync, local: string, relationshipId: string, owner: string, remote: AdoptionInventory): void {

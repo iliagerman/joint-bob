@@ -1,4 +1,8 @@
+import { accountReceivesFrom } from "./cluster-accounts.js";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { NotFoundError } from "./not-found.js";
+import { actingAccount, type ActingAccount } from "./account-context.js";
+import { forgetResourceOwner, newResourceOwner, resourceOwner, setResourceOwner } from "./ownership.js";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
@@ -157,6 +161,63 @@ function accountRow(id: string): AccountRow {
   return row;
 }
 
+/** A secret belongs to its project's owner when it is the project's own, otherwise to
+    whoever created it. A copy received from a cluster is the admin's until people join
+    clusters themselves. The node itself sees every secret; a visitor sees none here. */
+function secretVisible(row: AccountRow, account: ActingAccount | undefined = actingAccount()): boolean {
+  if (!account) return true;
+  if (account.isRemoteLogin) return false;
+  const local = hasTable('cluster_node') ? (db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined)?.id : undefined;
+  // One another node shared: for the people who joined the cluster it was shared into.
+  if (row.origin_node_id && row.origin_node_id !== local) return accountReceivesFrom(db(), account, row.origin_node_id, receivedThroughClusters(row.id));
+  return (row.project_id ? resourceOwner("project", row.project_id, db()) : resourceOwner("secret", row.id, db())) === account.accountId;
+}
+
+/** The clusters a received secret was granted or scoped into, as its owner stated them. */
+function receivedThroughClusters(id: string): string[] {
+  if (!hasTable("cluster_v2_scoped_secret_copies")) return [];
+  const copy = db().prepare("SELECT grants, scopes FROM cluster_v2_scoped_secret_copies WHERE account_id = ?").get(id) as { grants: string; scopes: string } | undefined;
+  if (!copy) return [];
+  try {
+    const grants = JSON.parse(copy.grants) as Array<{ clusterId?: string }>, scopes = JSON.parse(copy.scopes) as Array<{ clusterIds?: string[] }>;
+    return [...new Set([...grants.map((grant) => grant.clusterId), ...scopes.flatMap((scope) => scope.clusterIds ?? [])].filter((value): value is string => typeof value === "string"))];
+  } catch { return []; }
+}
+
+function visibleAccountRow(id: string): AccountRow {
+  const row = accountRow(id);
+  if (!secretVisible(row)) throw new NotFoundError("Secret account not found");
+  return row;
+}
+
+/** Answers like a missing account when the acting person may not see this one. */
+export function assertSecretVisible(id: string): void {
+  visibleAccountRow(id);
+}
+
+/** Whether this node holds the account but the acting person may not see it. */
+export function secretHiddenFromActor(id: string): boolean {
+  const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
+  return Boolean(row && !secretVisible(row));
+}
+
+/** Whether the acting person may attach secrets to this scope. */
+function scopeVisible(scopeType: SecretScopeType, scopeId: string, account: ActingAccount | undefined = actingAccount()): boolean {
+  if (!account) return true;
+  if (account.isRemoteLogin) return false;
+  if (scopeType === "workspace") return resourceOwner("workspace", scopeId, db()) === account.accountId && Boolean(db().prepare("SELECT 1 FROM workspaces WHERE id = ?").get(scopeId));
+  const projectId = scopeType === "project" ? scopeId
+    : hasTable("conversation_records") ? (db().prepare("SELECT project_id FROM conversation_records WHERE engine || ':' || session_id = ? LIMIT 1").get(scopeId) as { project_id: string } | undefined)?.project_id : undefined;
+  if (!projectId || !db().prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) return scopeType === "conversation" && account.role === "admin";
+  const received = hasTable("sharing_resource_owners") ? db().prepare("SELECT o.owner_node_id AS owner FROM sharing_resource_owners o JOIN cluster_node n ON n.singleton = 1 WHERE o.kind = 'project' AND o.resource_id = ? AND o.owner_node_id <> n.id").get(projectId) as { owner: string } | undefined : undefined;
+  // A project another node shared: for the people who joined a cluster it is shared into.
+  if (received) {
+    const clusters = hasTable("sharing_resource_shares") ? (db().prepare("SELECT cluster_id AS id FROM sharing_resource_shares WHERE kind = 'project' AND resource_id = ?").all(projectId) as unknown as Array<{ id: string }>).map((share) => share.id) : [];
+    return accountReceivesFrom(db(), account, received.owner, clusters);
+  }
+  return resourceOwner("project", projectId, db()) === account.accountId;
+}
+
 function publicAccount(row: AccountRow): SecretAccount {
   const local = hasTable('cluster_node') ? db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined : undefined;
   const readOnly = Boolean(row.origin_node_id && row.origin_node_id !== local?.id);
@@ -263,14 +324,15 @@ function resolved(project: string, conversation?: SecretConversation): ResolvedA
 }
 
 export async function listSecretAccounts(): Promise<SecretAccount[]> {
-  return (db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts ORDER BY label, id").all() as unknown as AccountRow[]).map(publicAccount);
+  return (db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts ORDER BY label, id").all() as unknown as AccountRow[]).filter((row) => secretVisible(row)).map(publicAccount);
 }
 
 export async function saveSecretAccount(input: SecretAccountInput): Promise<SecretAccount> {
   assertInput(input);
   const id = input.id ?? randomUUID();
   if (input.id) assertAccountId(id);
-  const old = input.id ? accountRow(id) : undefined;
+  const old = input.id ? visibleAccountRow(id) : undefined;
+  if (!old && input.projectId !== undefined && !scopeVisible("project", canonicalScopeId("project", input.projectId))) throw new NotFoundError("Secret project not found");
   if (old && (old.origin_node_id && hasTable('cluster_node') && old.origin_node_id !== (db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined)?.id || hasTable('cluster_v2_scoped_secret_copies') && db().prepare('SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=?').get(id))) throw new ClusterV2HttpError(403, 'Shared secret accounts are read-only on this node');
   const websiteOrigin = input.websiteOrigin === undefined ? old?.website_origin ?? null : input.websiteOrigin === null ? null : normalizeWebsiteOrigin(input.websiteOrigin);
   if (input.provider === "website" && !websiteOrigin) throw new Error("Website secret accounts require a website origin");
@@ -296,6 +358,7 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
     db().prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, website_origin, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, replicate = excluded.replicate, website_origin = excluded.website_origin, updated_at = excluded.updated_at").run(id, input.label.trim(), input.provider, encryptSecretValue(JSON.stringify(variables)), replicate, websiteOrigin, projectId, now, now);
     // A project-owned account is attached to its project in the same write, so it is never left floating.
     if (!old && projectId) db().prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES ('project', ?, ?)").run(projectId, id);
+    if (!old && !projectId) setResourceOwner("secret", id, newResourceOwner(), db());
     db().exec("COMMIT");
   } catch (error) {
     db().exec("ROLLBACK");
@@ -306,13 +369,14 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
 }
 
 export async function deleteSecretAccount(accountId: string): Promise<void> {
-  const row = accountRow(accountId);
+  const row = visibleAccountRow(accountId);
   if (row.origin_node_id && hasTable('cluster_node') && row.origin_node_id !== (db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined)?.id || hasTable('cluster_v2_scoped_secret_copies') && db().prepare('SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=?').get(accountId)) throw new ClusterV2HttpError(403, 'Shared secret accounts are read-only on this node');
   db().exec("BEGIN IMMEDIATE");
   try {
     db().prepare("DELETE FROM secret_assignments WHERE account_id = ?").run(row.id);
     if (hasTable('cluster_v2_secret_grants')) db().prepare('DELETE FROM cluster_v2_secret_grants WHERE account_id=?').run(row.id);
     db().prepare("DELETE FROM secret_accounts WHERE id = ?").run(row.id);
+    forgetResourceOwner("secret", row.id, db());
     db().exec("COMMIT");
   } catch (error) {
     db().exec("ROLLBACK");
@@ -323,14 +387,16 @@ export async function deleteSecretAccount(accountId: string): Promise<void> {
 
 export async function getScopeSecretAccounts(scopeType: SecretScopeType, scopeId: string): Promise<{ accountIds: string[] }> {
   const canonical = canonicalScopeId(scopeType, scopeId);
+  if (!scopeVisible(scopeType, canonical)) throw new NotFoundError("Secret scope not found");
   const rows = db().prepare("SELECT account_id FROM secret_assignments WHERE scope_type = ? AND scope_id = ? ORDER BY account_id").all(scopeType, canonical) as unknown as Array<{ account_id: string }>;
   return { accountIds: rows.map((row) => row.account_id) };
 }
 
 export async function setScopeSecretAccounts(scopeType: SecretScopeType, scopeId: string, accountIds: string[]): Promise<void> {
   const canonical = canonicalScopeId(scopeType, scopeId);
+  if (!scopeVisible(scopeType, canonical)) throw new NotFoundError("Secret scope not found");
   if (new Set(accountIds).size !== accountIds.length) throw new Error("Secret account IDs must be unique");
-  const rows = accountIds.map(accountRow);
+  const rows = accountIds.map(visibleAccountRow);
   assertNoCollision(rows);
   const previous = scopeType === "workspace" ? (await getScopeSecretAccounts(scopeType, canonical)).accountIds : [];
   const changed = [...new Set([...previous, ...accountIds])].filter((id) => previous.includes(id) !== accountIds.includes(id));

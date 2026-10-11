@@ -1,3 +1,4 @@
+import { reloadTravellingPreferences } from "./roaming.js";
 import { loadWorktrees } from "./worktrees.js";
 import { harnessIdFromPath, harnessLabel } from "../harness-metadata.js";
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
@@ -266,7 +267,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
 
 export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "updatePreparing") {
-    const message = payload.message || "Updating... Work will resume automatically.";
+    const message = payload.message || "Joint Bob is restarting. Work will resume automatically.";
     setConnecting(true, message);
     setComposerEnabled(false);
     return;
@@ -434,7 +435,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     if (payload.scheduled) return;
     state.spinOffSourceTaskId = null;
     const sentAt = payload.timestamp ? new Date(payload.timestamp) : true;
-    const bubble = appendMessage("user", payload.text, sentAt, payload.attachments);
+    const bubble = appendMessage("user", payload.text, sentAt, payload.attachments, false, undefined, payload.author);
     if (payload.queued) markMessageQueued(bubble, payload.queueId, payload.editableText, payload.settings, payload.revision);
     state.thinkingBubble = null;
     return;
@@ -454,7 +455,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
         continue;
       }
       const sentAt = prompt.timestamp ? new Date(prompt.timestamp) : true;
-      markMessageQueued(appendMessage("user", prompt.text, sentAt, prompt.attachments), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
+      markMessageQueued(appendMessage("user", prompt.text, sentAt, prompt.attachments, false, undefined, prompt.author), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
     }
     syncQueuedMessageOrder(prompts.map((prompt) => prompt.id));
     return;
@@ -654,6 +655,7 @@ const INVALIDATION_HANDLERS = {
   shortcutsChanged: () => state.canvasController?.reloadShortcuts(),
   tasksChanged: () => loadTasks().catch((error) => console.warn(error)),
   worktreesChanged: () => loadWorktrees().catch((error) => console.warn(error)),
+  profileChanged: () => reloadTravellingPreferences().catch((error) => console.warn(error)),
 };
 
 /** Runs the loader for an invalidation notice; false when the payload is not one. */

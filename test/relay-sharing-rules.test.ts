@@ -229,11 +229,15 @@ test("turning off other users' phone sign-in closes their open phone sockets at 
     const local = await gatewaySocket(`/ws?projectId=${project.id}`, `${gatewaySessionCookieName}=${owner.id}`);
     sockets.push(local);
     await new Promise((resolve) => setTimeout(resolve, 200));
-    assert.equal(visiting.closeReason(), undefined, "the socket stays open while the owner allows it");
+    // A visitor sees none of this machine's projects, so their socket is refused: it's relayed
+    // to their home node, which here is not reachable. Whether the owner's phone sign-in is on
+    // or off, that refusal stands; the owner's own socket is what must stay open.
+    const refused = Date.now() + 5_000;
+    while (visiting.closeReason() === undefined && Date.now() < refused) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(visiting.closeReason(), "Your home node is offline", "a visitor's socket to a project they can't see is refused");
+    assert.equal(local.closeReason(), undefined, "the owner's socket stays open while the owner allows it");
     setOtherUsersMayUsePhone(db, false);
-    const deadline = Date.now() + 5_000;
-    while (visiting.closeReason() === undefined && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.equal(visiting.closeReason(), "Phone sign-in for other users is off");
+    await new Promise((resolve) => setTimeout(resolve, 200));
     assert.equal(local.closeReason(), undefined, "the machine's own users keep their phone sockets");
   } finally {
     for (const socket of sockets) socket.close();

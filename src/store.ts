@@ -1,4 +1,9 @@
+import { visitorClusterIds } from "./auth.js";
 import { inheritWorkspaceSharing } from "./selected-sharing.js";
+import { NotFoundError } from "./not-found.js";
+import { actingAccount, type ActingAccount } from "./account-context.js";
+import { accountInCluster } from "./cluster-accounts.js";
+import { actorOwns, forgetResourceOwner, newResourceOwner, resourceOwner, setResourceOwner } from "./ownership.js";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
@@ -484,7 +489,51 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
 export async function listProjects(): Promise<ProjectRecord[]> {
   const db = await projectDatabase();
   const rows = db.prepare("SELECT * FROM projects ORDER BY updated_at DESC").all() as unknown as ProjectRow[];
-  return rows.filter((row) => projectMetadataVisible(db, localNodeId, row.id)).map((row) => rowToProject(db, row));
+  return rows.filter((row) => projectMetadataVisible(db, localNodeId, row.id) && projectVisibleToActor(db, row.id)).map((row) => rowToProject(db, row));
+}
+
+/**
+ * The wall between people on this node. The node itself sees every project. A person sees
+ * their own projects, and projects received from a cluster they joined; never another local
+ * person's, even one shared into the same cluster. Twin copies are the admin's own machine's.
+ * A visitor from another node sees projects shared into a cluster their home node is in.
+ */
+function projectVisibleToActor(db: DatabaseSync, projectId: string, account: ActingAccount | undefined = actingAccount()): boolean {
+  if (!account) return true;
+  const owner = (db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind='project' AND resource_id=?").get(projectId) as { owner_node_id: string } | undefined)?.owner_node_id ?? localNodeId;
+  const sharedIn = (): string[] => { try { return resourceClusterIds(db, localNodeId, "project", projectId); } catch { return []; } };
+  const clusters = () => owner === localNodeId ? [] : sharedIn();
+  if (account.isRemoteLogin) {
+    // A visitor sees projects shared into the clusters they joined at home, as it states them.
+    if (!account.homeNodeId || !tableExists(db, "sharing_memberships")) return false;
+    const homeClusters = new Set((db.prepare("SELECT cluster_id FROM sharing_memberships WHERE node_id = ?").all(account.homeNodeId) as unknown as Array<{ cluster_id: string }>).map((row) => row.cluster_id));
+    const joined = new Set(visitorClusterIds(account.accountId).filter((clusterId) => homeClusters.has(clusterId)));
+    return sharedIn().some((clusterId) => joined.has(clusterId));
+  }
+  if (owner === localNodeId) return actorOwns("project", projectId, account, db);
+  if (isActiveTwin(db, owner)) return account.role === "admin";
+  return clusters().some((clusterId) => accountInCluster(db, account.accountId, clusterId));
+}
+
+/** Who this project's agents run as on this node: a local project's owner, the admin for a
+    twin's copy of the admin's own projects, or the cluster account for a received project. */
+export async function projectRuntimeOwner(projectId: string): Promise<{ accountId: string | undefined } | { clusterId: string } | undefined> {
+  const db = await projectDatabase();
+  const canonical = resolveProjectId(db, projectId);
+  if (!canonical) return undefined;
+  const owner = (db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind='project' AND resource_id=?").get(canonical) as { owner_node_id: string } | undefined)?.owner_node_id ?? localNodeId;
+  if (owner === localNodeId) return { accountId: resourceOwner("project", canonical, db) };
+  if (isActiveTwin(db, owner)) return { accountId: undefined };
+  let clusters: string[] = [];
+  try { clusters = resourceClusterIds(db, localNodeId, "project", canonical); } catch { clusters = []; }
+  return clusters.length ? { clusterId: [...clusters].sort()[0] } : { accountId: undefined };
+}
+
+/** Whether the acting person may see this project; for checks outside the store. */
+export async function projectVisible(projectId: string, account: ActingAccount | undefined = actingAccount()): Promise<boolean> {
+  const db = await projectDatabase();
+  const canonical = resolveProjectId(db, projectId);
+  return Boolean(canonical && projectVisibleToActor(db, canonical, account));
 }
 
 export async function canonicalProjectId(projectId: string): Promise<string | undefined> {
@@ -680,6 +729,7 @@ export async function getProject(projectId: string): Promise<ProjectRecord | und
   const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(canonicalId) as ProjectRow | undefined;
   if (!row) return undefined;
   if (!projectMetadataVisible(db, localNodeId, row.id)) return undefined;
+  if (!projectVisibleToActor(db, row.id)) return undefined;
   return rowToProject(db, row);
 }
 
@@ -691,6 +741,8 @@ export async function addProject(name: string, folderPath: string, options: AddP
 
   const db = await projectDatabase();
   const row = db.prepare("SELECT * FROM projects WHERE path = ?").get(resolvedPath) as ProjectRow | undefined;
+  // A folder someone else registered is never handed back, nor named.
+  if (row && !projectVisibleToActor(db, row.id)) throw new Error("That folder is already a project");
   if (row) {
     const duplicate = rowToProject(db, row);
     const requestedMacPath = options.macPath ? path.resolve(options.macPath) : undefined;
@@ -719,6 +771,7 @@ export async function addProject(name: string, folderPath: string, options: AddP
     updatedAt: now,
   };
   saveNewLocalProject(db, project);
+  setResourceOwner("project", project.id, newResourceOwner(), db);
   return project;
 }
 
@@ -875,6 +928,7 @@ export async function removeProject(projectId: string): Promise<void> {
       deleteSharedResource(db, localNodeId, "project", canonicalId, policy.generation);
     }
     db.prepare("DELETE FROM projects WHERE id = ?").run(canonicalId);
+    forgetResourceOwner("project", canonicalId, db);
     if (tableExists(db, "cluster_v2_transcript_errors")) db.prepare("DELETE FROM cluster_v2_transcript_errors WHERE project_id=?").run(canonicalId);
     if (tableExists(db, "cluster_v2_transcript_progress")) db.prepare("DELETE FROM cluster_v2_transcript_progress WHERE project_id=?").run(canonicalId);
     db.exec("COMMIT");
@@ -897,7 +951,9 @@ export function workspaceIdFromLabel(label: string): string {
 
 export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
   const db = await projectDatabase();
-  const rows = db.prepare("SELECT id, label FROM workspaces ORDER BY created_at, id").all() as unknown as Array<{ id: string; label: string }>;
+  const account = actingAccount();
+  const rows = (db.prepare("SELECT id, label FROM workspaces ORDER BY created_at, id").all() as unknown as Array<{ id: string; label: string }>)
+    .filter((row) => actorOwns("workspace", row.id, account, db));
   // A cluster copy of another node's workspace keeps its label, so it names that node to
   // tell it apart. A twin's workspace merges into this node's own under the same id.
   const sharedTable = db.prepare("SELECT 1 FROM sqlite_master WHERE name='cluster_v2_shared_workspaces'").get();
@@ -916,9 +972,16 @@ export async function saveWorkspace(input: { id?: string; label: string }): Prom
   const label = input.label.trim();
   if (!label || label.length > 40) throw new WorkspaceError("Workspace name must be 1 to 40 characters");
   // Canonicalise first: an explicit id like "../tickets" must be reduced before the reserved check.
-  const id = workspaceIdFromLabel(input.id?.trim() || label);
-  if (!id) throw new WorkspaceError("Workspace name must contain a letter or a number");
-  if (reservedWorkspaceIds.has(id)) throw new WorkspaceError(`"${id}" is reserved by the managed workspace`);
+  const slug = workspaceIdFromLabel(input.id?.trim() || label).replace(/-{2,}/g, "-");
+  if (!slug) throw new WorkspaceError("Workspace name must contain a letter or a number");
+  if (reservedWorkspaceIds.has(slug)) throw new WorkspaceError(`"${slug}" is reserved by the managed workspace`);
+  // A member's workspaces carry their name, so two people's "Personal" never collide.
+  const account = actingAccount();
+  const owner = newResourceOwner(account);
+  const memberPrefix = account && account.role !== "admin" && owner ? `${account.username}--` : "";
+  const id = input.id && input.id.startsWith(memberPrefix) && memberPrefix ? input.id : `${memberPrefix}${slug}`;
+  const existing = db.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(id);
+  if (existing && !actorOwns("workspace", id, account, db)) throw new WorkspaceError("Choose another workspace name");
   const now = new Date().toISOString();
   db.prepare(`
     INSERT INTO workspaces (id, label, created_at, updated_at)
@@ -927,22 +990,24 @@ export async function saveWorkspace(input: { id?: string; label: string }): Prom
       label = excluded.label,
       updated_at = excluded.updated_at
   `).run(id, label, now, now);
+  if (!existing) setResourceOwner("workspace", id, owner, db);
   return { id, label };
 }
 
 export async function deleteWorkspace(workspaceId: string): Promise<void> {
   const db = await projectDatabase();
   ensureProjectMetadataSchema(db);
+  if (!db.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(workspaceId) || !actorOwns("workspace", workspaceId, actingAccount(), db)) throw new NotFoundError("Workspace not found");
   const used = db.prepare("SELECT COUNT(*) AS total FROM projects WHERE workspace_id = ?").get(workspaceId) as { total: number };
   if (used.total > 0) throw new WorkspaceError("Move or delete this workspace's projects before deleting it");
-  const remaining = db.prepare("SELECT COUNT(*) AS total FROM workspaces").get() as { total: number };
-  if (remaining.total <= 1) throw new WorkspaceError("Keep at least one workspace");
+  if ((await listWorkspaces()).length <= 1) throw new WorkspaceError("Keep at least one workspace");
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM secret_assignments WHERE scope_type = 'workspace' AND scope_id = ?").run(workspaceId);
     db.prepare("DELETE FROM cluster_v2_project_workspaces WHERE workspace_id = ?").run(workspaceId);
     db.prepare("DELETE FROM cluster_v2_shared_workspaces WHERE workspace_id = ?").run(workspaceId);
     db.prepare("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
+    forgetResourceOwner("workspace", workspaceId, db);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

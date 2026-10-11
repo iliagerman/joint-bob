@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ownedByAdmin } from "./ownership.js";
 import { mkdirSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
@@ -128,7 +129,7 @@ function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, valu
   for (const id of ids) assertNoScopeCollision(handle, "workspace", id, accountId, value);
   handle.prepare("DELETE FROM secret_assignments WHERE scope_type = 'workspace' AND account_id = ?").run(accountId);
   const insert = handle.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) SELECT 'workspace', id, ? FROM workspaces WHERE id = ?");
-  for (const id of ids) insert.run(accountId, id);
+  for (const id of ids) if (ownedByAdmin("workspace", id, handle)) insert.run(accountId, id);
 }
 
 /** Applies the full attachment set. Project and conversation rows are stored even when the
@@ -140,6 +141,8 @@ function applyAssignments(handle: DatabaseSync, accountId: string, value: Secret
   const insert = handle.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
   for (const entry of value.assignments) {
     if (entry.scopeType === "workspace" && !handle.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(entry.scopeId)) continue;
+    // Never onto a member's project or workspace.
+    if ((entry.scopeType === "project" || entry.scopeType === "workspace") && !ownedByAdmin(entry.scopeType, entry.scopeId, handle)) continue;
     assertNoScopeCollision(handle, entry.scopeType, entry.scopeId, accountId, value);
     insert.run(entry.scopeType, entry.scopeId, accountId);
   }
@@ -152,7 +155,9 @@ function refreshOutbox(handle: DatabaseSync, nodeId: string): void {
     WHERE a.id IS NULL OR a.replicate=0 OR a.project_id IS NOT NULL OR e.updated_at<>a.updated_at`;
   handle.prepare(`DELETE FROM secret_credential_deliveries WHERE event_id IN (${obsolete})`).run();
   handle.prepare(`DELETE FROM secret_credential_events WHERE event_id IN (${obsolete})`).run();
-  const replicating = handle.prepare("SELECT id, label, provider, variables_encrypted, website_origin, updated_at, origin_node_id FROM secret_accounts WHERE replicate = 1 AND project_id IS NULL").all() as unknown as Array<{ id: string; label: string; provider: SecretProvider; variables_encrypted: string; website_origin: string | null; updated_at: string; origin_node_id: string }>;
+  // Twins carry the admin's own replicating accounts; a member's never leave this node that way.
+  const replicating = (handle.prepare("SELECT id, label, provider, variables_encrypted, website_origin, updated_at, origin_node_id FROM secret_accounts WHERE replicate = 1 AND project_id IS NULL").all() as unknown as Array<{ id: string; label: string; provider: SecretProvider; variables_encrypted: string; website_origin: string | null; updated_at: string; origin_node_id: string }>)
+    .filter((row) => ownedByAdmin("secret", row.id, handle));
   for (const account of replicating) {
     const originNodeId = account.origin_node_id || nodeId;
     if (!account.origin_node_id) handle.prepare("UPDATE secret_accounts SET origin_node_id = ? WHERE id = ?").run(nodeId, account.id);
@@ -206,7 +211,8 @@ export async function receiveSecretCredentialEvents(events: SecretCredentialEven
       if (!inbox.run(event.id, event.originNodeId, new Date().toISOString()).changes) { received.push(event.id); continue; }
       const current = handle.prepare("SELECT updated_at, origin_node_id FROM secret_accounts WHERE id = ?").get(event.entityKey) as VersionRow | undefined;
       // A local edit bumps updated_at to now, so it outranks anything the peer still holds (FR7.4).
-      if (!current || compareVersion({ updated_at: event.updatedAt, origin_node_id: event.originNodeId }, current) > 0) {
+      // A twin carries the admin's secrets only: it never replaces one a member made here.
+      if ((!current || compareVersion({ updated_at: event.updatedAt, origin_node_id: event.originNodeId }, current) > 0) && ownedByAdmin("secret", event.entityKey, handle)) {
         // Re-encrypted here with this node's own key, never stored under the sender's.
         handle.prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, website_origin, origin_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, website_origin = excluded.website_origin, origin_node_id = excluded.origin_node_id, updated_at = excluded.updated_at")
           .run(event.entityKey, event.value.label, event.value.provider, encryptSecretValue(JSON.stringify(event.value.variables)), event.value.websiteOrigin ?? null, event.originNodeId, event.updatedAt, event.updatedAt);

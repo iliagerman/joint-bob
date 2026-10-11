@@ -23,7 +23,9 @@ export async function refreshProjectsQuietly() {
   if (state.projectsRefreshing) return;
   state.projectsRefreshing = true;
   try {
-    state.projects = (await api("/api/projects")).projects;
+    const body = await api("/api/projects");
+    state.projects = body.projects;
+    state.liveHome = body.liveHome;
     renderProjects();
   } catch (error) {
     console.warn("Could not refresh project sync status", error);
@@ -51,6 +53,7 @@ export async function loadProjects() {
   try {
     const body = await api("/api/projects?syncStatus=false");
     state.projects = body.projects;
+    state.liveHome = body.liveHome;
   } finally {
     setListLoading("projects", false);
   }

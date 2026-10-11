@@ -14,8 +14,11 @@ import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
 import { applyUserRecentSessionEvent, ensureUserRecentSessionSchema } from "./recent-sessions.js";
 import { isHarnessId, PROJECT_COLORS, type TaskRecord } from "./types.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
+import { multiUserEnabled, runInRuntime, serviceRuntime, type RuntimeAccount } from "./account-runtime.js";
 import { applyClusterRoutingEvent, ensureRoutingPolicySchema } from "./routing-policy.js";
 import { applyUsageDifficultyEvent, applyUsageEvent, ensureUsageSchema } from "./usage-ledger.js";
+import { isTwinOrigin, translateLegacyAccountEvent } from "./account-keys.js";
+import { applyMessageAuthorEvent } from "./message-authors.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -95,7 +98,7 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   const payload = event.payload as Record<string, unknown> | null | undefined;
   if (!payload || typeof payload !== "object") return undefined;
   if (event.entityType === "name.override") return payload.scope === "projects" && typeof payload.key === "string" ? payload.key : undefined;
-  if (!["task", "project.lock", "conversation.record", "conversation.queue", "conversation.goal", "conversation.routing", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered", "model.usage", "usage.difficulty"].includes(event.entityType)) return undefined;
+  if (!["task", "project.lock", "conversation.record", "conversation.author", "conversation.queue", "conversation.goal", "conversation.routing", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered", "model.usage", "usage.difficulty"].includes(event.entityType)) return undefined;
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
@@ -300,6 +303,7 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "conversation.notification": applyConversationNotificationEvent,
   "conversation.notification.delivered": applyConversationNotificationDeliveredEvent,
   "conversation.goal": applyConversationGoalEvent,
+  "conversation.author": applyMessageAuthorEvent,
   "canvas.shortcut": applyCanvasShortcutEvent,
   "user.pin": applyUserPinEvent,
   "user.recent": applyUserRecentSessionEvent,
@@ -307,31 +311,47 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "usage.difficulty": applyUsageDifficultyEvent,
 };
 
+/** Every event type this node can apply. Each one needs a scope in replication-v2.ts. */
+export function replicatedEntityTypes(): string[] { return Object.keys(REPLICATION_APPLIERS); }
+
+async function replicationRuntime(projectId: string): Promise<RuntimeAccount> {
+  if (!multiUserEnabled()) return serviceRuntime();
+  const { runtimeForProject } = await import("./project-runtime.js");
+  return runtimeForProject(projectId).catch(() => serviceRuntime());
+}
+
 export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<string[]> {
   const db = await replicationDatabase();
   const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string }).id;
-  const localTranscripts = new Map<string, LocalTranscript>();
-  if (batch.events.some((event) => event.entityType === "task" && event.operation === "upsert")) {
-    for (const adapter of listDiscoveredHarnesses()) {
-      localTranscripts.set(adapter.id, {
-        root: path.resolve(adapter.sync.transcriptRoot()),
-        sessionId: (pointer) => adapter.paths.ownsSession(pointer) ? adapter.paths.sessionId(pointer) : undefined,
-      });
-    }
+  // A task's transcripts are where its project's agents write them: the project's runtime
+  // account's home in multi-user mode, else the service's.
+  const projectTranscripts = new Map<string, Map<string, LocalTranscript>>();
+  const taskProject = (event: ReplicationEvent): string | undefined => { try { return resolveProjectAlias(db, taskPayload(event).projectId); } catch { return undefined; } };
+  for (const event of batch.events) {
+    if (event.entityType !== "task" || event.operation !== "upsert") continue;
+    const projectId = taskProject(event);
+    if (!projectId || projectTranscripts.has(projectId)) continue;
+    const runtime = await replicationRuntime(projectId);
+    projectTranscripts.set(projectId, runInRuntime(runtime, () => new Map(listDiscoveredHarnesses().map((adapter) => [adapter.id, {
+      root: path.resolve(adapter.sync.transcriptRoot()),
+      sessionId: (pointer: string) => adapter.paths.ownsSession(pointer) ? adapter.paths.sessionId(pointer) : undefined,
+    }]))));
   }
   db.exec("BEGIN IMMEDIATE");
   try {
     const insert = db.prepare("INSERT OR IGNORE INTO replication_inbox (event_id, origin_node_id, received_at) VALUES (?, ?, ?)");
     const remove = db.prepare("DELETE FROM replication_inbox WHERE event_id = ?");
     const received: string[] = [];
-    for (const event of batch.events) {
+    for (const original of batch.events) {
+      // Older peers name people by username; this node keys them by account.
+      const event = translateLegacyAccountEvent(db, original, isTwinOrigin(db, original.originNodeId));
       if (!insert.run(event.id, event.originNodeId, new Date().toISOString()).changes) {
         received.push(event.id);
         continue;
       }
       const applier = REPLICATION_APPLIERS[event.entityType];
       if (!applier) throw new Error("Unsupported replication event");
-      const applied = (event.entityType === "task" ? applyTaskEvent(db, event, localTranscripts) : applier(db, event)) !== false;
+      const applied = (event.entityType === "task" ? applyTaskEvent(db, event, projectTranscripts.get(taskProject(event) ?? "")) : applier(db, event)) !== false;
       if (!applied) {
         remove.run(event.id);
         continue;

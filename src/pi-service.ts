@@ -9,6 +9,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
+  readStoredCredential,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -29,13 +30,10 @@ import { forgetTranscriptSummary, storeTranscriptSummary, storedTranscriptSummar
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { agentResourcePaths, commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
+import { createCoreSession, type PiCoreHooks, type PiCoreInputs, type PiCredentials, type PiSessionHandle } from "./pi-session-core.js";
+import { currentRuntime, runInRuntime, serviceRuntime } from "./account-runtime.js";
 
-export interface PiSessionHandle {
-  session: AgentSession;
-  safeguardsEnabled: boolean;
-  reloadingSkills?: boolean;
-  dispose: () => void;
-}
+export type { PiSessionHandle } from "./pi-session-core.js";
 
 interface PiSessionOptions {
   cwd: string;
@@ -53,7 +51,9 @@ type UnknownRecord = Record<string, unknown>;
 
 const PI_LIST_CONCURRENCY = 8;
 
-const initialPiSettings = getSettings().pi;
+// The module may first load inside a person's runtime (a lazy import from their project);
+// the server's own Pi always starts from the service's settings.
+const initialPiSettings = runInRuntime(serviceRuntime(), () => getSettings().pi);
 if (initialPiSettings.configPath) process.env.PI_CODING_AGENT_DIR = initialPiSettings.configPath;
 const modelRuntime = await ModelRuntime.create();
 type AvailableModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
@@ -180,25 +180,11 @@ export async function reloadPiSkills(handle: PiSessionHandle): Promise<void> {
   handle.reloadingSkills = true;
   const activeTools = handle.session.getActiveToolNames();
   try {
+    await handle.refreshResources?.();
     await handle.session.reload();
     const available = new Set(handle.session.getAllTools().map((tool) => tool.name));
     handle.session.setActiveToolsByName(activeTools.filter((name) => available.has(name)));
   } finally { handle.reloadingSkills = false; }
-}
-
-function skillsOverride(cwd: string, projectId: string, agentDir: string, conversationId?: string) {
-  return (current: { skills: Skill[]; diagnostics: ReturnType<typeof loadSkills>["diagnostics"] }) => {
-    const configured = getScopedResourcePaths(projectId, conversationId);
-    const roots = [agentResourcePaths().sharedSkills, ...configured.global.skills, path.join(cwd, ".pi", "skills"), ...configured.project.skills];
-    const byName = new Map(current.skills.map((skill) => [skill.name, skill]));
-    const diagnostics = [...current.diagnostics];
-    for (const skillPath of roots) {
-      const loaded = loadSkills({ cwd, agentDir, skillPaths: [skillPath], includeDefaults: false });
-      for (const skill of loaded.skills) byName.set(skill.name, skill);
-      diagnostics.push(...loaded.diagnostics);
-    }
-    return { skills: [...byName.values()], diagnostics };
-  };
 }
 
 /** Sends a prompt as its own turn once the session is idle. A task phase must run
@@ -594,145 +580,67 @@ export async function refreshPiSessions(project: SessionProjectPaths & { history
   return [...retained, ...refreshed.filter((session): session is SessionSummary => Boolean(session))];
 }
 
-export function isPermissionSafeguardExtension(extensionPath: string): boolean {
-  return ["safe-guard.ts", "safe-guard.js"].includes(basename(extensionPath));
+export { isPermissionSafeguardExtension, sessionSafeguardsEnabled, sessionToolSelection } from "./pi-session-core.js";
+
+/** The server-side inputs a Pi session needs, read from this node's own state. */
+/** The node's Pi sign-ins, for a worker under a person's OS account: refreshed here first,
+    under the service's lock, so the worker never refreshes or replaces a login itself. */
+export async function nodePiCredential(providerId: string): Promise<ReturnType<typeof readStoredCredential>> {
+  await modelRuntime.getAuth(providerId, { minOAuthValidityMs: 10 * 60_000 }).catch(() => undefined);
+  return readStoredCredential(providerId, path.join(getAgentDir(), "auth.json"));
 }
 
-export function sessionSafeguardsEnabled(sessionManager: SessionManager): boolean {
-  let enabled = true;
-  for (const entry of sessionManager.getBranch()) {
-    if (entry.type !== "custom" || entry.customType !== "joint-bob:safeguards") continue;
-    const data = entry.data;
-    if (typeof data !== "object" || data === null || typeof (data as UnknownRecord).enabled !== "boolean") {
-      throw new Error("Invalid session safeguards state");
-    }
-    enabled = (data as UnknownRecord).enabled as boolean;
-  }
-  return enabled;
+export async function nodePiCredentialList(): Promise<Array<{ providerId: string; type: string }>> {
+  return (await modelRuntime.listCredentials()).map((entry) => ({ providerId: entry.providerId, type: entry.type }));
 }
 
-export function sessionToolSelection(sessionManager: SessionManager): string[] | undefined {
-  let enabledTools: string[] | undefined;
-  for (const entry of sessionManager.getBranch()) {
-    if (entry.type !== "custom" || entry.customType !== "joint-bob:tools") continue;
-    const data = entry.data;
-    const selection = typeof data === "object" && data !== null ? (data as UnknownRecord).enabledTools : undefined;
-    if (!Array.isArray(selection) || selection.some((name) => typeof name !== "string")) {
-      throw new Error("Invalid session tool selection");
-    }
-    enabledTools = selection as string[];
-  }
-  return enabledTools;
-}
-
-function bindPiCredentials(session: AgentSession, projectId: string, conversation: SecretConversation, refreshEnvironment: () => void): () => void {
-  let refresh = true;
-  let credentialContext = "";
-  // Raw agent events also cover queued follow-ups and steering, before their model call.
-  const unsubscribe = session.agent.subscribe((event) => {
-    if (event.type === "message_start" && event.message.role === "user") refresh = true;
+export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
+  const conversation = (sessionId: string): SecretConversation => ({ engine: "pi", sessionId });
+  const credentials = (sessionId: string, conversationId: string): PiCredentials => ({
+    environment: agentEnvironment(options.projectId, conversation(sessionId)),
+    capabilityEnvironment: agentCapabilityEnvironment(options.projectId, "pi", conversationId, conversation(sessionId)),
+    credentialContext: agentCredentialContext(options.projectId, conversation(sessionId)),
   });
-  const stream = session.agent.streamFunction;
-  session.agent.streamFunction = (model, context, options) => {
-    if (refresh) {
-      credentialContext = agentCredentialContext(projectId, conversation);
-      refreshEnvironment();
-      refresh = false;
-    }
-    return stream(model, { ...context, messages: [
-      ...context.messages,
-      { role: "system", content: credentialContext, timestamp: Date.now() },
-    ] }, options);
+  return {
+    conversationId: async (sessionId) => options.conversationId
+      ?? (await getConversationRecord(options.projectId, "pi", sessionId))?.conversationId
+      ?? sessionId,
+    persistAccounts: (sessionId) => persistConversationSecretAccounts("pi", sessionId, options.conversation?.accountIds ?? []),
+    credentials: async (sessionId, conversationId) => credentials(sessionId, conversationId),
+    credentialsNow: credentials,
+    resources: async (conversationId) => {
+      const configured = getScopedResourcePaths(options.projectId, conversationId);
+      const commonInstructions = await commonAgentInstructionFiles(undefined, [...configured.global.rules, ...configured.project.rules]);
+      const resources = piAgentResourcePaths(undefined, configured);
+      return {
+        extensions: resources.extensions,
+        prompts: resources.prompts,
+        themes: resources.themes,
+        agentsFiles: [...commonInstructions, ...agentCapabilityInstructionFiles()],
+        skillRoots: [agentResourcePaths().sharedSkills, ...configured.global.skills, path.join(options.cwd, ".pi", "skills"), ...configured.project.skills],
+      };
+    },
   };
-  return unsubscribe;
 }
 
 export async function createPiSession(options: PiSessionOptions): Promise<PiSessionHandle> {
-  await reloadPiAuth();
-  const sessionManager = options.sessionPath
-    ? SessionManager.open(options.sessionPath, piSessionPath(), options.cwd)
-    : SessionManager.create(options.cwd, piSessionPath(), options.sessionId ? { id: options.sessionId } : undefined);
-  const safeguardsEnabled = options.safeguardsEnabled ?? sessionSafeguardsEnabled(sessionManager);
-  const logicalConversationId = options.conversationId
-    ?? (await getConversationRecord(options.projectId, "pi", sessionManager.getSessionId()))?.conversationId
-    ?? sessionManager.getSessionId();
-  const conversation = { engine: "pi" as const, sessionId: sessionManager.getSessionId() };
-  await persistConversationSecretAccounts("pi", conversation.sessionId, options.conversation?.accountIds ?? []);
-  let capabilityEnvironment = agentCapabilityEnvironment(options.projectId, "pi", logicalConversationId, conversation);
-  let environment = agentEnvironment(options.projectId, conversation);
-  const bashTool = createBashTool(options.cwd, {
-    shellPath: capabilityEnvironment.JOINT_BOB_TASK_SHELL,
-    spawnHook: (context) => ({ ...context, env: { ...context.env, ...environment, ...capabilityEnvironment } }),
-  });
-  const agentDir = getAgentDir();
-  const settingsManager = SettingsManager.create(options.cwd, agentDir);
-  const configured = getScopedResourcePaths(options.projectId, logicalConversationId);
-  const commonInstructions = await commonAgentInstructionFiles(undefined, [...configured.global.rules, ...configured.project.rules]);
-  const resources = piAgentResourcePaths(undefined, configured);
-  const resourceLoader = new DefaultResourceLoader({
+  // In multi-user mode the session runs in a worker under the project's OS account.
+  const runtime = currentRuntime();
+  if (runtime.name) return (await import("./harnesses/pi/remote.js")).createRemotePiSession(options, runtime, piSessionHooks(options), piSessionDefaults());
+  return createCoreSession(modelRuntime, {
     cwd: options.cwd,
-    agentDir,
-    settingsManager,
-    additionalExtensionPaths: resources.extensions,
-    skillsOverride: skillsOverride(options.cwd, options.projectId, agentDir, logicalConversationId),
-    additionalPromptTemplatePaths: resources.prompts,
-    additionalThemePaths: resources.themes,
-    agentsFilesOverride: (current) => ({
-      agentsFiles: [
-        ...current.agentsFiles,
-        ...commonInstructions,
-        ...agentCapabilityInstructionFiles(),
-      ],
-    }),
-    ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
-  });
-  await resourceLoader.reload();
+    agentDir: getAgentDir(),
+    sessionRoot: piSessionPath(),
+    sessionPath: options.sessionPath,
+    sessionId: options.sessionId,
+    safeguardsEnabled: options.safeguardsEnabled,
+    defaults: piSessionDefaults(),
+  }, piSessionHooks(options));
+}
+
+export function piSessionDefaults(): PiCoreInputs["defaults"] {
   const defaults = getSettings().conversationDefaults.pi;
-  let model = options.sessionPath ? undefined : modelRuntime.getModel(defaults.provider, defaults.modelId);
-  let thinkingLevel: AgentSession["thinkingLevel"] | undefined = options.sessionPath ? undefined : defaults.thinkingLevel;
-  if (!options.sessionPath && !model) throw new Error(`Model not found: ${defaults.provider}/${defaults.modelId}`);
-  const saved = sessionManager.buildSessionContext();
-  // The SDK only restores settings itself when the transcript contains messages.
-  if (options.sessionPath && saved.messages.length === 0) {
-    if (saved.model) {
-      model = modelRuntime.getModel(saved.model.provider, saved.model.modelId);
-      if (!model) throw new Error(`Model not found: ${saved.model.provider}/${saved.model.modelId}`);
-    }
-    if (sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change")) {
-      thinkingLevel = saved.thinkingLevel as AgentSession["thinkingLevel"];
-    }
-  }
-  const result = await createAgentSession({
-    cwd: options.cwd,
-    model,
-    thinkingLevel,
-    sessionManager,
-    modelRuntime,
-    customTools: [bashTool],
-    agentDir,
-    settingsManager,
-    resourceLoader,
-  });
-  const session = result.session;
-  const unsubscribeCredentials = bindPiCredentials(session, options.projectId, conversation, () => {
-    environment = agentEnvironment(options.projectId, conversation);
-    capabilityEnvironment = agentCapabilityEnvironment(options.projectId, "pi", logicalConversationId, conversation);
-  });
-
-  if ("bindExtensions" in session && typeof session.bindExtensions === "function") {
-    await session.bindExtensions({});
-  }
-  const savedTools = sessionToolSelection(sessionManager);
-  if (savedTools) {
-    const available = new Set(session.getAllTools().map((tool) => tool.name));
-    session.setActiveToolsByName(savedTools.filter((name) => available.has(name)));
-  }
-
-  return {
-    session,
-    safeguardsEnabled,
-    dispose: () => { unsubscribeCredentials(); session.dispose(); },
-  };
+  return { provider: defaults.provider, modelId: defaults.modelId, thinkingLevel: defaults.thinkingLevel as AgentSession["thinkingLevel"] };
 }
 
 export async function reloadPiAuth(): Promise<void> {

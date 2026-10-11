@@ -13,3 +13,5 @@ export function readSupervisorControl(dataDirectory: string): SupervisorControl 
 export function mintTaskToken(dataDirectory: string, identity: string): string;
 export function requestSupervisor<T = unknown>(socketPath: string, token: string, body: object, timeoutMs?: number): Promise<T>;
 export function supervisorRequest<T = unknown>(dataDirectory: string, body: object, options?: SupervisorRequestOptions): Promise<T>;
+export function taskRelay(value: unknown): string;
+export function requestTaskControl<T = unknown>(env: NodeJS.ProcessEnv, body: object, timeoutMs?: number): Promise<T>;

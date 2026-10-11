@@ -1,13 +1,19 @@
 import { readFile } from "node:fs/promises";
+import { adminGate } from "../admin.js";
+import { relayLiveRequests } from "../live-link.js";
+import { multiUserEnabled, runInRuntime } from "../../account-runtime.js";
+import { projectFolderConfined, runtimeForProject } from "../../project-runtime.js";
+import { actingAccount, asNode } from "../../account-context.js";
+import { getProject, projectVisible } from "../../store.js";
 import { createHash } from "node:crypto";
 import { dispatchSignedRuntime, twinRuntimeGuard } from "../runtime-peers.js";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { authenticate, authenticationStatus, AuthError, type AuthSession, type MfaLoginChallenge, beginMfaSetup, cancelMfaSetup, changePassword, clearSessionCookieValue, completeMfaLogin, sessionCookieNameFor, confirmMfaSetup, createAdministrator, listLoginSessions, manageMfa, mfaStatus, revokeSession, revokeUserSession, sessionCookieValue, sessionForId } from "../../auth.js";
+import { authenticate, authenticationStatus, AuthError, type AuthSession, type MfaLoginChallenge, beginMfaSetup, cancelMfaSetup, changePassword, setOwnEmail, clearSessionCookieValue, completeMfaLogin, confirmMfaSetup, createAdministrator, listLoginSessions, manageMfa, mfaStatus, revokeSession, revokeUserSession, sessionCookieNameFor, sessionCookieValue, sessionForId } from "../../auth.js";
 import { appVersion } from "../../changelog.js";
 import { captureClusterRawBody, clusterBodyParserError, rejectEncodedClusterBody, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
-import { loginSchema, passwordChangeSchema } from "../schemas.js";
+import { emailSchema, loginSchema, passwordChangeSchema, setupSchema } from "../schemas.js";
 import { app, clusterWorkAllowed, codemirrorDir, flags, publicDir } from "../state.js";
 import { receiveUserReplication, redeemV2Membership } from "../cluster-v2.js";
 import { receiveManagerCertificate } from "../cluster-manager.js";
@@ -74,7 +80,6 @@ app.use(clusterBodyParserError);
 app.post("/api/cluster/v2/membership/redeem", redeemV2Membership);
 app.post("/api/cluster/v2/manager-transfer/certificate", receiveManagerCertificate);
 app.post("/api/cluster/v2/twins/confirm", confirmTwinHttp);
-app.post("/api/cluster/v2/user-replication", receiveUserReplication);
 
 app.get("/api/auth/status", (request, response) => {
   const session = sessionForId(requestCookie(request, sessionCookieNameFor(viaGateway(request))));
@@ -103,7 +108,9 @@ function viaGateway(request: Request): boolean { return relayTransportOf(request
 function sendLogin(request: Request, response: Response, result: AuthSession | MfaLoginChallenge): void {
   if ("mfaRequired" in result) { response.json(result); return; }
   response.setHeader("Set-Cookie", sessionCookieValue(result, viaGateway(request)));
-  response.json({ mustChangePassword: result.mustChangePassword, csrfToken: result.csrfToken, username: result.username });
+  // A visitor's profile comes from their home node, asked for at each sign-in here.
+  if (result.isRemoteLogin) void import("../roaming.js").then(({ requestProfile }) => requestProfile(result.accountId)).catch((error) => console.warn("Profile request failed", error));
+  response.json({ mustChangePassword: result.mustChangePassword, csrfToken: result.csrfToken, username: result.username, email: result.email, accountId: result.accountId, role: result.role, needsEmail: !result.isRemoteLogin && !result.email, isRemoteLogin: result.isRemoteLogin });
 }
 
 function authError(error: unknown, _request: Request, response: Response, next: NextFunction): void {
@@ -119,12 +126,12 @@ const mfaManagementSchema = mfaPasswordSchema.extend({ code: mfaCodeSchema.shape
 
 app.post("/api/auth/setup", (request, response, next) => {
   try {
-    const payload = loginSchema.parse(request.body);
+    const payload = setupSchema.parse(request.body);
     if (!authenticationStatus().setupRequired) {
       sendError(response, 409, "Administrator already exists");
       return;
     }
-    createAdministrator(payload.username, payload.password, false);
+    createAdministrator(payload.username, payload.password, false, payload.email);
     const session = authenticate(payload.username, payload.password);
     sendLogin(request, response.status(201), session);
   } catch (error) {
@@ -132,6 +139,7 @@ app.post("/api/auth/setup", (request, response, next) => {
       sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
       return;
     }
+    if (error instanceof AuthError) { sendError(response, error.statusCode, error.message); return; }
     next(error);
   }
 });
@@ -176,7 +184,27 @@ app.post("/api/auth/login/mfa", (request, response, next) => {
   } catch (error) { authError(error, request, response, next); }
 });
 
-app.use("/api", requireHttpAuth, requireCsrf);
+// Older nodes still send their one home user here until they upgrade.
+app.post("/api/cluster/v2/user-replication", receiveUserReplication);
+app.use("/api", requireHttpAuth, requireCsrf, adminGate);
+// A visitor's own projects at home travel live: requests about them go home (live-link.ts).
+app.use("/api", relayLiveRequests);
+// A project's routes resolve harness paths and start processes as the project's OS account
+// in multi-user mode, the way its sockets and sessions do.
+app.param("projectId", (_request, response, next, projectId: string) => {
+  void (async () => {
+    // Someone else's project is answered like one that doesn't exist, before any handler
+    // can forward the request to a peer or tell the two apart.
+    if (actingAccount() && !await projectVisible(projectId)) { sendError(response, 404, "Project not found"); return; }
+    if (!multiUserEnabled()) { next(); return; }
+    const runtime = await runtimeForProject(projectId).catch(() => undefined);
+    if (!runtime) { next(); return; }
+    // A folder its owner swapped for a link elsewhere is never served.
+    const project = await asNode(() => getProject(projectId));
+    if (project && !await projectFolderConfined(runtime, project.path, project.id)) { sendError(response, 409, "This project's folder is outside its owner's home"); return; }
+    runInRuntime(runtime, next);
+  })().catch(next);
+});
 app.use("/api/cluster/v2/runtime", twinRuntimeGuard);
 app.use(dispatchSignedRuntime);
 app.use("/api", (request, response, next) => {
@@ -221,6 +249,13 @@ app.post("/api/auth/change-password", (request, response, next) => {
     }
     next(error);
   }
+});
+
+app.put("/api/auth/email", (request, response, next) => {
+  try {
+    const payload = emailSchema.parse(request.body);
+    response.json({ email: setOwnEmail(response.locals.authSession as AuthSession, payload.email) });
+  } catch (error) { authError(error, request, response, next); }
 });
 
 app.post("/api/auth/logout", (request, response) => {

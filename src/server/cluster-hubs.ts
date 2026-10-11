@@ -20,7 +20,7 @@ import { removeTranscriptsDeletedBy } from "./deleted-transcripts.js";
 import { ensureResourceSharingSchema } from "../cluster-sharing.js";
 import { signedPost } from "./cluster-v2.js";
 import { broadcastReplicationInvalidations } from "./realtime.js";
-import { mayReplicateEvent, replicationEventProject } from "./replication-v2.js";
+import { EVENT_SCOPES, mayReplicateEvent, replicationEventProject } from "./replication-v2.js";
 import { replicationReceiptSchema } from "./schemas.js";
 
 export interface RelayEnvelope { event: ReplicationEvent; signature: string }
@@ -63,6 +63,8 @@ function isMember(db: DatabaseSync, clusterId: string, node: string): boolean {
 
 /** Clusters whose non-twin members may receive this event. Twins already get it directly. */
 function hubClusters(db: DatabaseSync, local: string, event: ReplicationEvent): string[] {
+  // A person's account events go to their own nodes directly (replication-v2.ts).
+  if (["account", "twins"].includes(EVENT_SCOPES[event.entityType] ?? "")) return [];
   if (!replicationEventProject(db, event)) return [];
   return listSharingMemberships(db, local).map((membership) => membership.clusterId).filter((clusterId) =>
     otherMembers(db, clusterId, local).some((member) => !isTrustedTwin(db, local, member) && mayReplicateEvent(db, local, member, event)));
@@ -112,6 +114,8 @@ function enqueueOwnEvents(db: DatabaseSync, local: string): boolean {
     if (added.length) {
       for (const row of db.prepare("SELECT rowid,* FROM replication_outbox WHERE origin_node_id=? ORDER BY rowid").iterate(local) as unknown as Iterable<OutboxRow>) {
         const event = eventFromRow(row), project = replicationEventProject(db, event);
+        // A person's own rows about the project (pins, recents, review marks) never go to a hub.
+        if (["account", "twins"].includes(EVENT_SCOPES[event.entityType] ?? "account")) continue;
         for (const pair of added) {
           const [clusterId, projectId] = pair.split("\n");
           if (project === projectId) queueForCluster(db, local, clusterId, event, now);
