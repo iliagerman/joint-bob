@@ -19,6 +19,7 @@ import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, tic
 import { loadWorktrees, otherWorktreesSection, worktreeBadge, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
 import { confirmAction, enableNotifications, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
+import { chooseTransferDestination } from "./session-transfer.js";
 import { state } from "./state.js";
 import { activeChatSession } from "./terminal.js";
 import { usageBadge } from "./usage-format.js";
@@ -359,6 +360,13 @@ function sessionMenuItems(session, sessionActive) {
       onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
     },
     {
+      label: "Move or copy to project…",
+      icon: "copy",
+      testid: "session-transfer-button",
+      title: "Move this conversation to another project, or copy it there",
+      onSelect: () => transferSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
+    },
+    {
       label: session.doneAt ? "Mark not done" : "Mark done",
       icon: "check",
       testid: "session-done-button",
@@ -483,6 +491,19 @@ async function forkSessionFromRow(session) {
   toast("Conversation forked");
 }
 
+async function transferSessionFromRow(session, sessionActive) {
+  const choice = await chooseTransferDestination(session, state.activeProjectId);
+  if (!choice) return;
+  const destination = state.projects.find((project) => project.id === choice.projectId);
+  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/transfer`, {
+    method: "POST",
+    body: JSON.stringify({ engine: sessionEngine(session), sessionId: session.id, destinationProjectId: choice.projectId, mode: choice.mode }),
+  });
+  if (choice.mode === "move" && sessionActive) clearActiveSession();
+  await refreshSessionsQuietly();
+  toast(`Conversation ${choice.mode === "move" ? "moved" : "copied"} to ${destination?.name ?? "the project"}`);
+}
+
 /** Closing a conversation out is list housekeeping, so it works on read-only rows too. */
 async function toggleSessionDone(session) {
   const done = !session.doneAt;
@@ -518,6 +539,19 @@ async function toggleSessionReviewNotifications(session) {
   toast(enabled ? "Review notifications enabled" : "Review notifications disabled");
 }
 
+function clearActiveSession() {
+  state.activeTaskId = null;
+  closeSocket();
+  clearChat();
+  clearAttachments();
+  state.activeSessionPath = null;
+  state.activeSessionId = null;
+  if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: null, activeSessionId: null });
+  elements.sessionTitle.textContent = "Select a conversation";
+  setComposerEnabled(false);
+  setMobileView("sessions");
+}
+
 async function removeSessionFromRow(session, sessionActive) {
   const confirmed = await confirmAction({
     eyebrow: "Remove conversation",
@@ -529,18 +563,7 @@ async function removeSessionFromRow(session, sessionActive) {
   if (!confirmed) return;
   const taskQuery = session.taskId ? `&taskId=${encodeURIComponent(session.taskId)}` : "";
   await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionId=${encodeURIComponent(session.id)}&engine=${sessionEngine(session)}${taskQuery}`, { method: "DELETE" });
-  if (sessionActive) {
-    state.activeTaskId = null;
-    closeSocket();
-    clearChat();
-    clearAttachments();
-    state.activeSessionPath = null;
-    state.activeSessionId = null;
-    if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: null, activeSessionId: null });
-    elements.sessionTitle.textContent = "Select a conversation";
-    setComposerEnabled(false);
-    setMobileView("sessions");
-  }
+  if (sessionActive) clearActiveSession();
   await refreshSessionsQuietly();
 }
 for (const button of elements.chatFilters.querySelectorAll("button[data-filter]")) {

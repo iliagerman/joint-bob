@@ -2857,8 +2857,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .session-card[data-color]:hover { background: color-mix(in srgb, var(--project-hue) 22%, var(--field)); }
 .session-card[data-color].active { border-color: color-mix(in srgb, var(--project-hue) 60%, var(--line-strong)); box-shadow: inset 4px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 28%, var(--surface)); }
 
-/* ---- Project node lock ---- */
-.project-review-badge {
+/* ---- Project activity ---- */
+.project-card-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; margin-bottom: 3px; }
+.project-card .project-card-heading strong { margin: 0; min-width: 0; }
+.project-running-badge, .project-review-badge {
   align-self: start;
   border-radius: 5px;
   padding: 2px 7px;
@@ -2869,8 +2871,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   color: var(--amber);
   background: color-mix(in srgb, var(--amber) 15%, transparent);
 }
+.project-running-badge { color: var(--live); background: color-mix(in srgb, var(--live) 15%, transparent); }
 /* A collapsed group hides its project rows, so the summary carries the count instead. */
-.project-group-review-badge {
+.project-group-running-badge, .project-group-review-badge {
   margin-left: auto;
   border-radius: 5px;
   padding: 1px 6px;
@@ -2881,6 +2884,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   background: color-mix(in srgb, var(--amber) 15%, transparent);
 }
 /* An open group already shows each project's own badge, so the summary must not double up. */
+.project-group-running-badge { color: var(--live); background: color-mix(in srgb, var(--live) 15%, transparent); }
+.project-group-running-badge + .project-group-review-badge { margin-left: 0; }
+.project-group[open] > .project-group-summary .project-group-running-badge,
 .project-group[open] > .project-group-summary .project-group-review-badge { display: none; }
 .project-card .project-lock-badge { display: block; margin: 3px 0 0; font-size: 10px; font-style: normal; color: var(--accent); }
 .project-card .project-lock-badge.foreign { color: var(--danger); }

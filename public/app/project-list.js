@@ -5,6 +5,7 @@ import { elements } from "./elements.js";
 import { filteredProjects } from "./layout.js";
 import { loadProjects, refreshProjectsQuietly, selectProject } from "./project-selection.js";
 import { pendingReviewCountForProject } from "./reviews.js";
+import { runningCountForProject } from "./running.js";
 import { openResources } from "./resources.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { mobileProjectFilterActions } from "./focus-project-controls.js";
@@ -106,6 +107,15 @@ function projectGroupElement(group) {
   count.className = "project-group-count";
   count.textContent = String(group.projects.length);
   summary.append(label, count);
+  const groupRunningCount = group.projects.reduce((total, project) => total + runningCountForProject(project.id), 0);
+  if (groupRunningCount) {
+    const runningBadge = document.createElement("em");
+    runningBadge.className = "project-group-running-badge";
+    runningBadge.dataset.testid = "project-group-running-badge";
+    runningBadge.textContent = groupRunningCount > 99 ? "99+" : String(groupRunningCount);
+    runningBadge.setAttribute("aria-label", `${groupRunningCount} conversations running in ${group.label}`);
+    summary.append(runningBadge);
+  }
   const groupReviewCount = group.projects.reduce((total, project) => total + pendingReviewCountForProject(project.id), 0);
   if (groupReviewCount) {
     const reviewBadge = document.createElement("em");
@@ -136,6 +146,27 @@ function projectRow(project) {
     if (project.color) button.dataset.color = project.color;
     const name = document.createElement("strong");
     name.textContent = project.name;
+    const heading = document.createElement("div");
+    heading.className = "project-card-heading";
+    heading.append(name);
+    const runningCount = runningCountForProject(project.id);
+    if (runningCount) {
+      const runningBadge = document.createElement("em");
+      runningBadge.className = "project-running-badge";
+      runningBadge.dataset.testid = "project-running-badge";
+      runningBadge.textContent = `${runningCount > 99 ? "99+" : runningCount} running`;
+      runningBadge.setAttribute("aria-label", `${runningCount} conversations running in ${project.name}`);
+      heading.append(runningBadge);
+    }
+    const reviewCount = pendingReviewCountForProject(project.id);
+    if (reviewCount) {
+      const reviewBadge = document.createElement("em");
+      reviewBadge.className = "project-review-badge";
+      reviewBadge.dataset.testid = "project-review-badge";
+      reviewBadge.textContent = `${reviewCount > 99 ? "99+" : reviewCount} to review`;
+      reviewBadge.setAttribute("aria-label", `${reviewCount} conversations need review in ${project.name}`);
+      heading.append(reviewBadge);
+    }
     const projectPath = document.createElement("span");
     projectPath.textContent = project.path;
     // The sync status is a sibling of the path, not a child: the path truncates,
@@ -147,18 +178,9 @@ function projectRow(project) {
     syncStatus.dataset.testid = "project-sync-status";
     syncStatus.textContent = status.state === "error" && status.message ? `Error: ${status.message}` : syncLabels[status.state] || syncLabels.unavailable;
     syncStatus.title = status.message || "";
-    button.append(name, projectPath, syncStatus, usageBadge(project.usage, "project-usage-cost"));
+    button.append(heading, projectPath, syncStatus, usageBadge(project.usage, "project-usage-cost"));
     const clusterBadge = projectClusterBadge(project);
     if (clusterBadge) button.append(clusterBadge);
-    const reviewCount = pendingReviewCountForProject(project.id);
-    if (reviewCount) {
-      const reviewBadge = document.createElement("em");
-      reviewBadge.className = "project-review-badge";
-      reviewBadge.dataset.testid = "project-review-badge";
-      reviewBadge.textContent = `${reviewCount > 99 ? "99+" : reviewCount} to review`;
-      reviewBadge.setAttribute("aria-label", `${reviewCount} conversations need review in ${project.name}`);
-      button.append(reviewBadge);
-    }
     if (project.lock) {
       const lockBadge = document.createElement("em");
       lockBadge.className = `project-lock-badge${project.lockedElsewhere ? " foreign" : ""}`;

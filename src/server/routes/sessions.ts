@@ -777,6 +777,78 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
   }
 });
 
+const sessionTransferSchema = sessionForkSchema.extend({ destinationProjectId: z.string().min(1), mode: z.enum(["copy", "move"]) });
+
+/** Copy writes a fresh-identity snapshot into the destination project. Move then deletes the
+ * source; if that fails (busy turn, done ticket) the copy is rolled back so nothing is duplicated.
+ * Session ids change because peers refuse an id that moves between projects. */
+export async function transferLocalConversation(source: ProjectRecord, destination: ProjectRecord, engine: ConversationEngine, sessionId: string, mode: "copy" | "move", viewer?: { userId: string; username: string }): Promise<SessionSummary> {
+  if (source.id === destination.id) throw new ConversationForkError(400, "Choose a different project");
+  if (mode === "move") {
+    const shared = findHarnessSession(source.id, engine, sessionId);
+    if (shared && harnessSessionBusy(shared)) throw new ConversationDeleteError(409, "Wait for the current turn to finish before moving");
+  }
+  const copy = await forkLocalConversation(source, engine, sessionId, "", viewer, destination);
+  if (mode === "copy") return copy;
+  try {
+    await deleteLocalConversation(source, engine, sessionId);
+  } catch (error) {
+    await deleteLocalConversation(destination, copy.harnessId, copy.id).catch((cleanupError) => console.warn("Could not roll back moved conversation copy", cleanupError));
+    throw error;
+  }
+  broadcastToProject(source.id, { type: "sessionsChanged" });
+  return copy;
+}
+
+app.post("/api/projects/:projectId/sessions/transfer", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = sessionTransferSchema.parse(request.body);
+    const destination = await getProject(payload.destinationProjectId);
+    if (!destination) { sendError(response, 404, "Destination project not found"); return; }
+    const local = await getClusterNode();
+    const ownership = await getConversationOwnership(payload.engine, payload.sessionId);
+    if (ownership && ownership.ownerNodeId !== local.id) {
+      const peer = await getRuntimePeer(ownership.ownerNodeId);
+      if (!peer) throw new ConversationForkError(409, "Conversation owner is unavailable");
+      let routed: globalThis.Response;
+      try {
+        routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/transfer`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(30_000),
+        });
+      } catch { throw new ConversationForkError(409, "Conversation owner is unavailable; transfer was not confirmed"); }
+      response.status(routed.status).json(await routed.json());
+      if (routed.ok) { broadcastToProject(project.id, { type: "sessionsChanged" }); broadcastToProject(destination.id, { type: "sessionsChanged" }); }
+      return;
+    }
+    const authSession = response.locals.authSession as AuthSession;
+    const session = await transferLocalConversation(project, destination, payload.engine, payload.sessionId, payload.mode, { userId: authSession.userId, username: authSession.username });
+    broadcastToProject(destination.id, { type: "sessionsChanged" });
+    response.status(201).json({ session, projectId: destination.id });
+  } catch (error) {
+    if (error instanceof ConversationForkError || error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post(["/api/cluster/sessions/transfer", "/api/cluster/v2/runtime/sessions/transfer"], async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = sessionTransferSchema.extend({ projectId: z.string().min(1) }).parse(request.body);
+    const project = await getProject(payload.projectId);
+    const destination = await getProject(payload.destinationProjectId);
+    if (!project || !destination) { sendError(response, 404, "Project not found"); return; }
+    const session = await transferLocalConversation(project, destination, payload.engine, payload.sessionId, payload.mode);
+    broadcastToProject(destination.id, { type: "sessionsChanged" });
+    response.status(201).json({ session, projectId: destination.id });
+  } catch (error) {
+    if (error instanceof ConversationForkError || error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
 app.delete(["/api/cluster/sessions/delete", "/api/cluster/v2/runtime/sessions/delete"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }

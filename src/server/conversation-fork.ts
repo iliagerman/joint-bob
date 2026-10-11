@@ -26,8 +26,10 @@ function isWithin(filePath: string, root: string): boolean {
  * The fork uses the existing project directory, like a new conversation.
  * Listing through the viewer's scope reuses their cached catalog and finds pinned or
  * recent conversations past the history window; a different scope forces a full rescan. */
-export async function forkLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix = "[F]", viewer = { userId: "", username: "" }): Promise<SessionSummary> {
+export async function forkLocalConversation(sourceProject: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix = "[F]", viewer = { userId: "", username: "" }, destination: ProjectRecord = sourceProject): Promise<SessionSummary> {
+  const project = sourceProject;
   await assertProjectEditable(project);
+  if (destination.id !== project.id) await assertProjectEditable(destination);
   const local = await getClusterNode();
   const sessions = await listProjectSessionsWithReviewState(project, viewer.userId, viewer.username).catch((error) => {
     if (error instanceof SyntaxError) throw new HarnessForkError(409, "Conversation transcript is incomplete or invalid");
@@ -42,7 +44,7 @@ export async function forkLocalConversation(project: ProjectRecord, engine: Conv
   const accounts = await Promise.all(targets.map((target) => getScopeSecretAccounts("conversation", conversationScopeId(target.engine, target.sessionId))));
   const ownership = await getConversationOwnership(engine, sessionId);
   if (ownership && (ownership.ownerNodeId !== local.id || ownership.status !== "owned")) throw new HarnessForkError(409, "Conversation owner changed; retry on its owner");
-  const title = `${titlePrefix} ${source.title}`;
+  const title = titlePrefix ? `${titlePrefix} ${source.title}` : source.title;
   const timestamp = new Date().toISOString();
   const loaded = await Promise.all(targets.map(async (target) => {
     const adapter = getHarness(target.engine);
@@ -54,7 +56,7 @@ export async function forkLocalConversation(project: ProjectRecord, engine: Conv
   const copies = targets.map((target, index) => {
     const id = randomUUID();
     const { adapter, snapshot } = loaded[index];
-    const result = snapshot({ project, sessionId: target.sessionId, sessionPath: target.path, newSessionId: id, title, timestamp, draft: Boolean(target.draft), live: findHarnessSession(project.id, target.engine, target.sessionId)?.session });
+    const result = snapshot({ project: destination, sessionId: target.sessionId, sessionPath: target.path, newSessionId: id, title, timestamp, draft: Boolean(target.draft), live: findHarnessSession(project.id, target.engine, target.sessionId)?.session });
     const root = adapter.sync.transcriptRoot();
     for (const file of result.files) {
       if (!isWithin(file.destination, root)) throw new HarnessForkError(409, "Fork transcript is outside the configured transcript root");
@@ -76,21 +78,21 @@ export async function forkLocalConversation(project: ProjectRecord, engine: Conv
     await setSessionTitle(conversationId, title);
     if (source.color) await setSessionColor(conversationId, source.color);
     if (source.classification) await setSessionClassification(conversationId, source.classification);
-    if (settings) recordQueueSettings(`${project.id}:${conversationId}`, settings);
+    if (settings) recordQueueSettings(`${destination.id}:${conversationId}`, settings);
     for (const [index, copy] of copies.entries()) {
       await claimConversationLocally(copy.engine, copy.sessionId, local.id);
       await setScopeSecretAccounts("conversation", conversationScopeId(copy.engine, copy.sessionId), accounts[index].accountIds);
-      await ensureConversationRecord(project.id, copy.engine, copy.sessionId, local.id, undefined, copies.length > 1 ? { conversationId, segmentIndex: index } : undefined);
+      await ensureConversationRecord(destination.id, copy.engine, copy.sessionId, local.id, undefined, copies.length > 1 ? { conversationId, segmentIndex: index } : undefined);
     }
     const face = copies.at(-1)!;
-    await refreshHarnessSessions(project.id, files.map((file) => file.destination));
-    const listed = (await listReviewScopeSessions(project, viewer.userId, viewer.username)).find((session) => session.id === face.sessionId);
+    await refreshHarnessSessions(destination.id, files.map((file) => file.destination));
+    const listed = (await listReviewScopeSessions(destination, viewer.userId, viewer.username)).find((session) => session.id === face.sessionId);
     if (!listed) throw new HarnessForkError(409, "Fork transcript could not be listed");
     return { ...listed, executionNodeId: local.id };
   } catch (error) {
-    for (const destination of written) await rm(destination, { force: true });
+    for (const file of written) await rm(file, { force: true });
     for (const copy of copies) {
-      await deleteConversationRecord(project.id, copy.engine, copy.sessionId, local.id);
+      await deleteConversationRecord(destination.id, copy.engine, copy.sessionId, local.id);
       await setScopeSecretAccounts("conversation", conversationScopeId(copy.engine, copy.sessionId), []);
     }
     throw error;
