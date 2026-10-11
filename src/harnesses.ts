@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { isInternalSession } from "./internal-sessions.js";
 import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverrides, sessionTitleOverrides } from "./names.js";
-import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
+import { conversationDraftPath, listConversationRecords, parseConversationDraftPath } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
 import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
 import type { HarnessModel, HarnessRuntime } from "./harnesses/runtime.js";
@@ -43,9 +43,14 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
     return groups.flat();
   }
 
-  async find(project: HarnessProject, harnessId: HarnessId, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
+  async find(requested: HarnessProject, harnessId: HarnessId, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
     const adapter = this.adapters.find((candidate) => candidate.id === harnessId);
     if (!adapter) throw new Error(`No harness registered for conversation engine: ${harnessId}`);
+    // A transcript holding only the automatic start command is hidden from lists. It is still
+    // the conversation being opened, or its socket could never reconnect before the first prompt.
+    const project = { ...requested, includeUnstarted: true };
+    // A node without the transcript lists the conversation as a draft and names it that way.
+    if (parseConversationDraftPath(sessionPath)) return this.recoverById(adapter, project, sessionId);
     const prefix = `${harnessId}:`;
     let transcriptPath = path.resolve(sessionPath.startsWith(prefix) ? sessionPath.slice(prefix.length) : sessionPath);
     if (!adapter.paths.ownsTranscript(transcriptPath)) {

@@ -4,7 +4,7 @@ import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
-import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
+import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
@@ -57,7 +57,15 @@ export function closeSocket() {
   setConnecting(false);
 }
 
-function scheduleReconnect(sessionPath, delay = 1500) {
+const RECONNECT_MS = 1500;
+// The server closes with this code and a reason when it will not open the conversation
+// (deleted, locked, signed out). Asking again at once hid the reason behind "Connecting…"
+// for as long as the page stayed open, and made the node search for the conversation each time.
+const REFUSED_CLOSE = 1008;
+const REFUSED_RETRY_MAX_MS = 30000;
+let refusedCloses = 0;
+
+function scheduleReconnect(sessionPath, delay = RECONNECT_MS) {
   if (!state.activeProjectId || !sessionPath) return;
   if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
   state.reconnectTimer = setTimeout(() => {
@@ -160,6 +168,12 @@ function websocketUrl(sessionPath) {
 }
 
 export function openSession(sessionPath, title = "New conversation", preserveChat = false, preserveTask = false, reviewHighlightAfter = null) {
+  // The list renders before harness metadata arrives, and the engine is resolved from it below.
+  // Opening without it threw after "Connecting…" was already on screen, with nothing left to retry.
+  if (!state.harnesses.length) {
+    loadHarnesses().then(() => openSession(sessionPath, title, preserveChat, preserveTask, reviewHighlightAfter)).catch((error) => toast(error.message, 8000));
+    return;
+  }
   rememberDraft();
   // Opening a conversation that already exists drops the picks made for a new one.
   if (sessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === sessionPath)) {
@@ -180,6 +194,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   }
   closeSocket();
   if (!preserveChat) {
+    refusedCloses = 0;
     state.reviewHighlightAfter = reviewHighlightAfter;
     state.pendingSessionTitle = null;
     state.pendingSessionColor = null;
@@ -225,17 +240,27 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     if (state.socket !== socket) return;
     console.info("Conversation socket closed", { code: event.code, reason: event.reason || "none", engine: state.engine });
     stopHeartbeat();
-    setStatus("Connecting…", false, true);
-    setConnecting(true, "Connecting…");
+    const refused = event.code === REFUSED_CLOSE;
+    refusedCloses = refused ? refusedCloses + 1 : 0;
+    setStatus(refused && event.reason ? event.reason : "Connecting…", false, true);
+    setConnecting(true, event.reason ? `${event.reason}. Trying again…` : "Connecting…");
+    // Only the placeholder is replaced; a transcript already on screen stays as it is.
+    if (event.reason && elements.messages.querySelector(".empty-state")) {
+      showChatEmptyState(refused ? "Can't open this conversation" : "Connecting…", `${event.reason}. Trying again…`);
+    }
     setComposerEnabled(false);
-    scheduleReconnect(state.activeSessionPath);
+    scheduleReconnect(state.activeSessionPath, refused ? Math.min(REFUSED_RETRY_MAX_MS, RECONNECT_MS * 2 ** (refusedCloses - 1)) : RECONNECT_MS);
+    // A conversation this node refused may have been deleted; the list decides whether to leave it.
+    if (refused) refreshSessionsQuietly();
   });
   // The connecting banner already shows this state, and reconnect attempts
   // repeat, so a toast per attempt is pure noise.
   socket.addEventListener("error", () => console.warn("WebSocket connection failed"));
   socket.addEventListener("message", (event) => {
     if (state.socket !== socket) return;
-    handleSocketPayload(JSON.parse(event.data), !preserveChat);
+    const payload = JSON.parse(event.data);
+    if (payload.type === "ready") refusedCloses = 0;
+    handleSocketPayload(payload, !preserveChat);
   });
 }
 
@@ -678,7 +703,9 @@ async function refreshSessionSnapshot(projectId) {
     if (newlyNeedsReview) playCompletionSound().catch((error) => console.warn("Completion sound failed", error));
     const activeNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
     const activeSessionExists = state.sessions.some((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);
-    if (activeNode?.local && state.activeSessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath) && !socketOpen() && !activeSessionExists) {
+    // Missing from the list is not enough to leave a conversation: one that has only run the
+    // automatic start command is hidden there, and a socket that merely dropped is reconnecting.
+    if (activeNode?.local && state.activeSessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath) && !socketOpen() && refusedCloses > 0 && !activeSessionExists) {
       state.activeTaskId = null;
       closeSocket();
       clearChat();

@@ -12,6 +12,8 @@ export interface HarnessProject extends ProjectRecord {
   includedSessionPaths?: string[];
   includedSessionIds?: string[];
   recordSessionIds?: string[];
+  /** Summarize a transcript that holds only the automatic start command. Lists hide those; opening one must not. */
+  includeUnstarted?: boolean;
 }
 
 export interface HarnessAdapter<TId extends HarnessId = HarnessId> {

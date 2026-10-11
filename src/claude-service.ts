@@ -362,8 +362,8 @@ async function summarizeClaudeTranscript(project: SessionProjectPaths, filePath:
   }
   const facts = await claudeSessionFacts(filePath, fileStat, startPrompt);
   // Opening a new chat writes only the automatic setup command. It is not a
-  // conversation until the user has supplied a real prompt.
-  if (!facts.prompt || facts.internal || isInternalSession(path.basename(path.dirname(path.dirname(filePath))))) return null;
+  // conversation until the user has supplied a real prompt, but it can still be opened.
+  if ((!facts.prompt && !project.includeUnstarted) || facts.internal || isInternalSession(path.basename(path.dirname(path.dirname(filePath))))) return null;
   const projectCwds = new Set(sessionCwds(project));
   if (![...facts.cwds].some((cwd) => projectCwds.has(cwd))) return null;
   const subagentParentId = path.basename(path.dirname(filePath)) === "subagents"

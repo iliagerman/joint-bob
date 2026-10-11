@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed conversations that stayed on "Connecting…" and never opened. A conversation whose only message was the automatic start command could not be reopened after a dropped connection, from a phone, or from another machine's list; a conversation tapped right after the page loaded did nothing; and when a machine refuses to open a conversation, the page now shows its reason and retries slowly instead of asking again every second and a half.
+
 ## 2.71.6 — 2026-10-11
 
 - Fixed typing in the classification picker no longer skipping labels: since labels gained icons, pressing B did nothing because each option's text starts with its icon. Typing now narrows to the label whose name starts with what you type, and repeating one letter steps through the labels that share it.
