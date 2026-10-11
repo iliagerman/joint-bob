@@ -110,7 +110,8 @@ test("a watcher that keeps failing is reopened less and less often", async (t) =
   const originalWatch = fs.watch;
   const watchMock = t.mock.method(fs, "watch", (...args: Parameters<typeof fs.watch>) => {
     const handle = originalWatch(...args);
-    if (String(args[0]) === root) handles.push(handle);
+    // Linux emulates a recursive watch with plain watches of its own, the root's included.
+    if (String(args[0]) === root && typeof args[1] === "object" && args[1] !== null && "recursive" in args[1] && args[1].recursive) handles.push(handle);
     return handle;
   });
   syncBuiltinESMExports();
