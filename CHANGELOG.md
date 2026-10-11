@@ -3,13 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.72.0 — 2026-10-11
 
-- Fixed conversations that stayed on "Connecting…" and never opened. A conversation whose only message was the automatic start command could not be reopened after a dropped connection, from a phone, or from another machine's list; a conversation tapped right after the page loaded did nothing; and when a machine refuses to open a conversation, the page now shows its reason and retries slowly instead of asking again every second and a half.
+- Added copying or moving a conversation to another project. A copy is written before anything is removed, so a failed move leaves nothing duplicated; a move is refused while the conversation is busy, and a conversation owned by another machine in the cluster is handed to the cluster owner to transfer.
+- Fixed conversations that stayed on "Connecting…" and never opened. A conversation whose only message was the automatic start command could not be reopened after a dropped connection, from a phone, or from another machine's list, and a conversation tapped right after the page loaded did nothing.
+- When a machine refuses to open a conversation, the page now shows the reason and backs off to retrying every 30 seconds instead of every second and a half, and it drops the conversation from the list only once that machine has refused it.
 
 ## 2.71.6 — 2026-10-11
 
-- Fixed typing in the classification picker no longer skipping labels: since labels gained icons, pressing B did nothing because each option's text starts with its icon. Typing now narrows to the label whose name starts with what you type, and repeating one letter steps through the labels that share it.
+- Fixed typing a letter in the classification picker no longer selecting a label: since labels gained icons, pressing B did nothing because each option's text starts with its icon. Typing now matches the label's name again.
 - Fixed the Invite a node and Close cluster buttons sitting flush against the node strip below them in Settings → Cluster.
 - Fixed the new quick note button beside the project search looking unlike the buttons around it: it had no outline and an oversized icon.
 
