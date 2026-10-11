@@ -9,7 +9,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 2.72.1 — 2026-10-11
 
-- Fixed scheduled tasks whose prompt asks for a worktree being refused one; the prompt now counts as the request, so the run creates the worktree it asks for.
+- Agent instructions now say that a scheduled task's prompt counts as your request for a worktree, so the rule against agents creating worktrees on their own cannot stop a run that asks for one. No scheduled run had been refused.
 - Fixed idle machines repeating the same sync and lookup work every few seconds: file sharing with a twin, deliveries to an offline node, and conversation lists now wait out a backoff or skip work nothing needs, and database lookups run faster on the homeserver.
 - Fixed open pages reloading their lists every 15 seconds when a folder could not be watched on Linux; failed watches now retry with longer and longer waits, up to ten minutes.
 
