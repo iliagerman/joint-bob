@@ -202,6 +202,9 @@ test("cluster page lists clusters, finds nodes fuzzily, splits what you get from
     assert.equal(await canvas.evaluate((element) => getComputedStyle(element).display), "grid", "a phone lists the map's nodes as cards");
     const [mapBox, inspectorBox] = await Promise.all([canvas.boundingBox(), page.getByTestId("cluster-inspector").boundingBox()]);
     assert.ok(mapBox && inspectorBox && inspectorBox.y >= mapBox.y + mapBox.height, "the inspector stacks below the map on a phone");
+    const [titleBox, actionsBox, stripBox] = await Promise.all([details.getByRole("heading", { name: "Research" }).boundingBox(), details.locator(".cluster-detail-actions").boundingBox(), page.getByTestId("cluster-strip").boundingBox()]);
+    assert.ok(titleBox && actionsBox && stripBox && actionsBox.y > titleBox.y + titleBox.height, "the cluster's actions wrap under its title on a phone");
+    assert.ok(stripBox.y - (actionsBox.y + actionsBox.height) >= 8, `the wrapped actions keep a gap above the node strip, got ${stripBox.y - (actionsBox.y + actionsBox.height)}px`);
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByTestId("settings-cancel-button").click();
     await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });

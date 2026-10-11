@@ -32,6 +32,34 @@ export function classificationPicker(container, prefix) {
   };
   select.addEventListener("change", sync);
   other.addEventListener("input", () => other.setCustomValidity(""));
+  // An icon leads each option's text, so the browser's own type-to-select never reaches
+  // the label's first letter. Typed characters are matched against the names instead.
+  let typed = "";
+  let typedAt = 0;
+  select.addEventListener("keydown", (event) => {
+    if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (Date.now() - typedAt > 1000) typed = "";
+    // Space on its own opens the list; inside a name it is one more typed character.
+    if (event.key === " " && !typed) return;
+    event.preventDefault();
+    typedAt = Date.now();
+    typed += event.key.toLocaleLowerCase();
+    // Repeating one letter walks through the names that start with it.
+    const needle = [...typed].every((character) => character === typed[0]) ? typed[0] : typed;
+    const options = [...select.options];
+    const from = select.selectedIndex + (needle.length === 1 ? 1 : 0);
+    for (let step = 0; step < options.length; step += 1) {
+      const option = options[(from + step) % options.length];
+      const name = option.value && option.value !== "__other__" ? option.value : option.text;
+      if (!name.toLocaleLowerCase().startsWith(needle)) continue;
+      if (option.index !== select.selectedIndex) {
+        select.selectedIndex = option.index;
+        select.dispatchEvent(new Event("input", { bubbles: true }));
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return;
+    }
+  });
   return {
     /** The wizard has to reveal the step holding this field before the browser can
         point at it, so it asks first rather than validating blind. */

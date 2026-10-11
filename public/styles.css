@@ -632,12 +632,13 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
    same field surface as the selects standing next to them. The outline is drawn as an
    inset ring rather than a border, because the toolbar zeroes its buttons' block
    borders to keep the shortcut badges on one line. */
-.chat-toolbar .ghost, .panel-toolbar .ghost, .project-actions .ghost, .canvas-page-strip .ghost {
+.chat-toolbar .ghost, .panel-toolbar .ghost, .project-actions .ghost, .project-search-row .ghost, .canvas-page-strip .ghost {
   background: var(--field);
   box-shadow: inset 0 0 0 1px var(--line);
 }
 .chat-toolbar .ghost:hover:not(:disabled), .panel-toolbar .ghost:hover:not(:disabled),
-.project-actions .ghost:hover:not(:disabled), .canvas-page-strip .ghost:hover:not(:disabled) {
+.project-actions .ghost:hover:not(:disabled), .project-search-row .ghost:hover:not(:disabled),
+.canvas-page-strip .ghost:hover:not(:disabled) {
   background: var(--surface);
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
@@ -772,6 +773,7 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .project-search-row { display: flex; align-items: center; gap: 6px; margin: 12px 12px 2px; }
 .project-search-row .search-shell { flex: 1; min-width: 0; margin: 0; }
 .project-search-row .icon-button { min-width: 40px; width: 40px; min-height: 40px; flex: none; }
+.project-search-row .icon-button svg { width: 22px; height: 22px; }
 input, textarea, select {
   width: 100%;
   min-width: 0;
@@ -3370,6 +3372,8 @@ body.file-view { overflow: auto; }
 .cluster-avatar[data-twin="true"] { border-color: var(--claude); }
 .cluster-avatar[data-match="true"] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 55%, transparent); }
 .cluster-avatar-manager { position: absolute; top: -8px; right: -7px; color: var(--amber); font-size: 12px; }
+/* The header's actions wrap under the title in a narrow inspector, so the gap to the node strip belongs to the container. */
+#clusterDetails { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .cluster-detail-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 10px; }
 .cluster-detail-head h3 { margin: 0 0 2px; font-size: 18px; overflow-wrap: anywhere; }
 .cluster-strip { display: flex; align-items: center; min-width: 0; overflow-x: auto; padding: 16px 12px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }

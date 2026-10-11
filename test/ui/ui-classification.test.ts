@@ -56,6 +56,16 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
       const select = page.getByTestId("new-session-classification-select");
       assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")), "new-session-classification-select",
         "the step hands the cursor to its own first control");
+      // Typing picks a label by its name, even though an icon leads the option's text.
+      await page.keyboard.press("b");
+      assert.equal(await select.inputValue(), "Bug", "a letter selects the label that starts with it");
+      await page.waitForTimeout(1100);
+      await page.keyboard.type("su");
+      assert.equal(await select.inputValue(), "Support", "letters typed together narrow to one label");
+      await page.waitForTimeout(1100);
+      await page.keyboard.press("o");
+      assert.equal(await select.inputValue(), "__other__");
+      assert.equal(await page.getByTestId("new-session-classification-other").isVisible(), true, "typing to Other reveals its text field");
       await select.selectOption(selection);
       assert.deepEqual(await select.locator("option").allTextContents(), ["Unclassified", "🔬 Research", "🐞 Bug", "✨ Feature", "🧪 POC", "Support", "Other…"]);
       if (selection === "__other__") {

@@ -118,6 +118,13 @@ test("mobile keeps creation actions together and switches conversations and note
   await page.getByTestId("nav-projects-button").click();
   const projectQuickNote = page.getByTestId("projects-quick-note-create-button");
   assert.equal(await projectQuickNote.isVisible(), true, "Projects has a mobile quick-note action");
+  const [noteLook, toolLook] = await Promise.all([projectQuickNote, page.getByTestId("settings-open-button")].map((button) => button.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { background: style.backgroundColor, outline: style.boxShadow };
+  })));
+  assert.deepEqual(noteLook, toolLook, "the quick-note action carries the same surface and outline as the project tools");
+  const noteIcon = await projectQuickNote.locator("svg").boundingBox();
+  assert.ok(noteIcon && Math.abs(noteIcon.width - 22) < 1, `the quick-note icon is sized like the project tools' icons, got ${noteIcon?.width}px`);
   await projectQuickNote.click();
   await page.getByTestId("quick-note-dialog").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("quick-note-project-select").textContent(), "Internal Assistant", "the Projects action uses the active project");
