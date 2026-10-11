@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { actingAccount } from "../../account-context.js";
+import { multiUserEnabled } from "../../account-runtime.js";
 import { getClusterNode } from "../../cluster.js";
+import { NotFoundError } from "../../not-found.js";
+import { runtimeForAccount } from "../../project-runtime.js";
 import { getProject } from "../../store.js";
 import { createTaskWorkspace, removeTaskWorkspace, TaskWorkspaceError, taskWorkspaceKey, TICKET_MERGE_DIR } from "../../task-workspaces.js";
 import { listTasks, updateTask } from "../../tasks.js";
@@ -150,7 +154,11 @@ app.get("/api/filesystem/directories", async (request, response, next) => {
 
 async function directoryListing(requestedPath: unknown): Promise<{ currentPath: string; parentPath: string | null; directories: Array<{ name: string; path: string }> }> {
   const payload = directoryBrowseSchema.parse({ path: requestedPath });
-  const homeDirectory = await realpath(os.homedir());
+  // A member browses their own home, never the node's; someone visiting from another node
+  // has no folders here at all.
+  const account = actingAccount();
+  if (account?.isRemoteLogin) throw new NotFoundError("Not found");
+  const homeDirectory = await realpath(account && account.role !== "admin" && multiUserEnabled() ? runtimeForAccount(account.accountId).home : os.homedir());
   const currentPath = await realpath(payload.path ?? homeDirectory);
   requirePathInsideHome(currentPath, homeDirectory);
   const info = await stat(currentPath);

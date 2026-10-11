@@ -3,8 +3,8 @@ import type { AuthSession } from "../auth.js";
 import { sendError } from "./http-auth.js";
 
 /** The node's admin: its local admin account, signed in here, never a visitor from another node. */
-export function isNodeAdmin(session: Pick<AuthSession, "role" | "isRemoteLogin"> | undefined): boolean {
-  return Boolean(session && session.role === "admin" && !session.isRemoteLogin);
+export function isNodeAdmin(session: Pick<AuthSession, "role" | "isRemoteLogin" | "live"> | undefined): boolean {
+  return Boolean(session && session.role === "admin" && !session.isRemoteLogin && !session.live);
 }
 
 /**
@@ -29,12 +29,18 @@ export const ADMIN_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "*", path: /^\/twins(\/|$)/ },
   { method: "*", path: /^\/clusters\/[^/]+\/members\/[^/]+\/twin-request$/ },
   // Global resource paths and node-wide resource inventory.
-  { method: "*", path: /^\/resources\/(inventory|skills\/(scan|sources))$/ },
+  { method: "*", path: /^\/resources\/inventory$/ },
+  // Skills and MCP servers published from here load into everyone's agents on this node.
+  { method: "*", path: /^\/resources\/skills(\/|$)/ },
+  { method: "*", path: /^\/resources\/mcp\/share$/ },
   // The browser executor's configuration for this machine.
   { method: "PUT", path: /^\/browser\/config$/ },
 ];
 
-export function isAdminRoute(method: string, path: string): boolean {
+/** Express matches routes whatever their letter case and with a trailing slash, so the gate
+    must too: `/API/Users/` reaches the same handler as `/api/users`. */
+export function isAdminRoute(method: string, requestPath: string): boolean {
+  const path = requestPath.toLowerCase().replace(/\/+$/, "") || "/";
   return ADMIN_ROUTES.some((route) => (route.method === "*" || route.method === method) && route.path.test(path));
 }
 

@@ -5,6 +5,7 @@ import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { sendError } from "../http-auth.js";
 import { forgetRoamingNode, HomeOfflineError, receiveForget, receiveProfile, receiveRoamingEdit, receiveSignedIn, visitorProfileStatus } from "../roaming.js";
 import { app } from "../state.js";
+import { receiveLiveRequest } from "../live-link.js";
 
 function machineSender(locals: Record<string, unknown>): string | undefined {
   return locals.machineProtocol === 2 && typeof locals.machineNodeId === "string" ? locals.machineNodeId : undefined;
@@ -48,3 +49,6 @@ app.post("/api/account/nodes/:nodeId/forget", (request, response, next) => {
   if (!nodeId.success) { sendError(response, 400, "Invalid request"); return; }
   forgetRoamingNode(session.accountId, nodeId.data).then(() => response.json({ forgotten: true }), (error) => failure(error, response, next));
 });
+
+// Your unshared projects, relayed live from a node you signed in to (live-link.ts).
+app.all("/api/cluster/v2/live/:accountId/*", receiveLiveRequest);

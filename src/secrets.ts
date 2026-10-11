@@ -1,3 +1,4 @@
+import { accountReceivesFrom } from "./cluster-accounts.js";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { NotFoundError } from "./not-found.js";
 import { actingAccount, type ActingAccount } from "./account-context.js";
@@ -167,14 +168,37 @@ function secretVisible(row: AccountRow, account: ActingAccount | undefined = act
   if (!account) return true;
   if (account.isRemoteLogin) return false;
   const local = hasTable('cluster_node') ? (db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined)?.id : undefined;
-  if (row.origin_node_id && row.origin_node_id !== local) return account.role === "admin";
+  // One another node shared: for the people who joined the cluster it was shared into.
+  if (row.origin_node_id && row.origin_node_id !== local) return accountReceivesFrom(db(), account, row.origin_node_id, receivedThroughClusters(row.id));
   return (row.project_id ? resourceOwner("project", row.project_id, db()) : resourceOwner("secret", row.id, db())) === account.accountId;
+}
+
+/** The clusters a received secret was granted or scoped into, as its owner stated them. */
+function receivedThroughClusters(id: string): string[] {
+  if (!hasTable("cluster_v2_scoped_secret_copies")) return [];
+  const copy = db().prepare("SELECT grants, scopes FROM cluster_v2_scoped_secret_copies WHERE account_id = ?").get(id) as { grants: string; scopes: string } | undefined;
+  if (!copy) return [];
+  try {
+    const grants = JSON.parse(copy.grants) as Array<{ clusterId?: string }>, scopes = JSON.parse(copy.scopes) as Array<{ clusterIds?: string[] }>;
+    return [...new Set([...grants.map((grant) => grant.clusterId), ...scopes.flatMap((scope) => scope.clusterIds ?? [])].filter((value): value is string => typeof value === "string"))];
+  } catch { return []; }
 }
 
 function visibleAccountRow(id: string): AccountRow {
   const row = accountRow(id);
   if (!secretVisible(row)) throw new NotFoundError("Secret account not found");
   return row;
+}
+
+/** Answers like a missing account when the acting person may not see this one. */
+export function assertSecretVisible(id: string): void {
+  visibleAccountRow(id);
+}
+
+/** Whether this node holds the account but the acting person may not see it. */
+export function secretHiddenFromActor(id: string): boolean {
+  const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id, origin_node_id FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
+  return Boolean(row && !secretVisible(row));
 }
 
 /** Whether the acting person may attach secrets to this scope. */
@@ -185,8 +209,13 @@ function scopeVisible(scopeType: SecretScopeType, scopeId: string, account: Acti
   const projectId = scopeType === "project" ? scopeId
     : hasTable("conversation_records") ? (db().prepare("SELECT project_id FROM conversation_records WHERE engine || ':' || session_id = ? LIMIT 1").get(scopeId) as { project_id: string } | undefined)?.project_id : undefined;
   if (!projectId || !db().prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) return scopeType === "conversation" && account.role === "admin";
-  const received = hasTable("sharing_resource_owners") && db().prepare("SELECT 1 FROM sharing_resource_owners o JOIN cluster_node n ON n.singleton = 1 WHERE o.kind = 'project' AND o.resource_id = ? AND o.owner_node_id <> n.id").get(projectId);
-  return received ? account.role === "admin" : resourceOwner("project", projectId, db()) === account.accountId;
+  const received = hasTable("sharing_resource_owners") ? db().prepare("SELECT o.owner_node_id AS owner FROM sharing_resource_owners o JOIN cluster_node n ON n.singleton = 1 WHERE o.kind = 'project' AND o.resource_id = ? AND o.owner_node_id <> n.id").get(projectId) as { owner: string } | undefined : undefined;
+  // A project another node shared: for the people who joined a cluster it is shared into.
+  if (received) {
+    const clusters = hasTable("sharing_resource_shares") ? (db().prepare("SELECT cluster_id AS id FROM sharing_resource_shares WHERE kind = 'project' AND resource_id = ?").all(projectId) as unknown as Array<{ id: string }>).map((share) => share.id) : [];
+    return accountReceivesFrom(db(), account, received.owner, clusters);
+  }
+  return resourceOwner("project", projectId, db()) === account.accountId;
 }
 
 function publicAccount(row: AccountRow): SecretAccount {

@@ -9,6 +9,7 @@ import { requireAdmin } from "../admin.js";
 import { accountNodes, changeNodeBlock, NodeBlockError, receiveBlockNotice } from "../account-sync.js";
 import type { AuthSession } from "../../auth.js";
 import { sendError } from "../http-auth.js";
+import { replicationPeers } from "../replication-v2.js";
 import { app } from "../state.js";
 
 const noticeSchema = z.object({ blockedNodeId: z.string().uuid(), blocked: z.boolean(), updatedAt: z.string().max(40) }).strict();
@@ -23,6 +24,8 @@ app.post("/api/cluster/v2/accounts", async (request, response, next) => {
     const sender = machineSender(response.locals);
     if (!sender) { sendError(response, 401, "Unauthorized"); return; }
     const db = await clusterV2Database(), local = await getClusterNode();
+    // Sign-in records come only from a twin or a node this one shares a cluster with.
+    if (!replicationPeers(db, local.id).some((peer) => peer.nodeId === sender)) { sendError(response, 403, "Not a peer of this node"); return; }
     response.json(applyAccountSnapshot(db, local.id, sender, request.body));
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, "Invalid account snapshot"); return; }

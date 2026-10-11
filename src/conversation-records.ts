@@ -184,6 +184,13 @@ export async function getConversationRecord(projectId: string, engine: Conversat
   return selectRecord(await database(), projectId, engine, sessionId);
 }
 
+/** Whether a conversation is on record only in other projects: naming it from this one must
+    not touch it. One with no record yet (named before its first message) belongs to nobody. */
+export async function conversationBelongsElsewhere(projectId: string, engine: ConversationEngine, sessionId: string): Promise<boolean> {
+  const rows = (await database()).prepare("SELECT project_id FROM conversation_records WHERE engine = ? AND session_id = ?").all(engine, sessionId) as unknown as Array<{ project_id: string }>;
+  return rows.length > 0 && !rows.some((entry) => entry.project_id === projectId);
+}
+
 export async function listConversationRecords(projectId: string): Promise<ConversationRecord[]> {
   return ((await database()).prepare("SELECT * FROM conversation_records WHERE project_id = ? ORDER BY updated_at DESC").all(projectId) as Record<string, unknown>[]).map(row);
 }

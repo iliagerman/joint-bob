@@ -167,6 +167,8 @@ export interface SettingsInput {
   subprocessMaxLifetimeMinutes?: number;
   /** Describe images and inline text files for the agent instead of sending raw bytes. */
   digestAttachments?: boolean;
+  /** Signed in on another node, see your unshared projects there through a live link home. */
+  showProjectsOnOtherNodes?: boolean;
   syncCheck?: SyncCheckSettings;
   /** Which other nodes may open a terminal on this node through a signed peer socket. */
   remoteTerminal?: RemoteTerminalSettings;
@@ -189,6 +191,7 @@ export interface SettingsResponse {
   shellCommandTimeoutSeconds: number | null;
   subprocessMaxLifetimeMinutes: number;
   digestAttachments: boolean;
+  showProjectsOnOtherNodes: boolean;
   syncCheck: SyncCheckSettings;
   remoteTerminal: RemoteTerminalSettings;
   conversationCommands: ConversationCommandsSettings;
@@ -305,7 +308,7 @@ export function getSettings(): SettingsResponse {
 
 /** Settings each person keeps for themselves. The admin's are the node's, so a node with
     one user behaves as before; members and visitors keep their own copy. */
-export const PERSONAL_SETTING_KEYS = ["conversationLabels", "conversationHistoryDays", "autoCompactThreshold", "digestAttachments", "conversationCommands", "conversationDefaults"] as const;
+export const PERSONAL_SETTING_KEYS = ["conversationLabels", "conversationHistoryDays", "autoCompactThreshold", "digestAttachments", "showProjectsOnOtherNodes", "conversationCommands", "conversationDefaults"] as const;
 export type PersonalSettings = Pick<SettingsResponse, (typeof PERSONAL_SETTING_KEYS)[number]>;
 
 const personalSchemas = {
@@ -313,6 +316,7 @@ const personalSchemas = {
   conversationHistoryDays: z.number().int().min(1).max(3650),
   autoCompactThreshold: z.number().int().min(1).max(100).nullable(),
   digestAttachments: z.boolean(),
+  showProjectsOnOtherNodes: z.boolean(),
   conversationCommands: z.object({ start: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict(), end: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict() }).strict(),
   conversationDefaults: conversationDefaultsSchema,
 } satisfies Record<(typeof PERSONAL_SETTING_KEYS)[number], z.ZodTypeAny>;
@@ -367,6 +371,7 @@ export function updatePersonalSettings(input: Partial<PersonalSettings>, account
       if ("conversationHistoryDays" in changes) save(db, "conversationHistoryDays", String(changes.conversationHistoryDays));
       if ("autoCompactThreshold" in changes) save(db, "autoCompactThreshold", changes.autoCompactThreshold === null ? "disabled" : String(changes.autoCompactThreshold));
       if ("digestAttachments" in changes) save(db, "digestAttachments", String(changes.digestAttachments));
+      if ("showProjectsOnOtherNodes" in changes) save(db, "showProjectsOnOtherNodes", String(changes.showProjectsOnOtherNodes));
       if ("conversationCommands" in changes) save(db, "conversationCommands", JSON.stringify(changes.conversationCommands));
       if ("conversationDefaults" in changes) save(db, "conversationDefaults", JSON.stringify(changes.conversationDefaults));
     }
@@ -431,6 +436,7 @@ export function nodeSettings(): SettingsResponse {
     shellCommandTimeoutSeconds: value("shellCommandTimeoutSeconds", "unlimited") === "unlimited" ? null : Number(value("shellCommandTimeoutSeconds", "unlimited")),
     subprocessMaxLifetimeMinutes: Number(value("subprocessMaxLifetimeMinutes", String(DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES))),
     digestAttachments: value("digestAttachments", "false") === "true",
+    showProjectsOnOtherNodes: value("showProjectsOnOtherNodes", "true") === "true",
     syncCheck: syncCheck(conversationDefaults),
     remoteTerminal: remoteTerminalSettings(),
     conversationCommands: conversationCommands(),
@@ -532,6 +538,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const subprocessMaxLifetimeMinutes = input.subprocessMaxLifetimeMinutes === undefined ? previous.subprocessMaxLifetimeMinutes : input.subprocessMaxLifetimeMinutes;
   if (!validSubprocessLifetime(subprocessMaxLifetimeMinutes)) throw new Error("Subprocess maximum lifetime must be an integer from 1 to 10080 minutes");
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
+  const showProjectsOnOtherNodes = input.showProjectsOnOtherNodes ?? previous.showProjectsOnOtherNodes;
   const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
   const conversationCommands = input.conversationCommands ?? previous.conversationCommands;
@@ -553,6 +560,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "shellCommandTimeoutSeconds", shellCommandTimeoutSeconds === null ? "unlimited" : String(shellCommandTimeoutSeconds));
     save(db, "subprocessMaxLifetimeMinutes", String(subprocessMaxLifetimeMinutes));
     save(db, "digestAttachments", String(digestAttachments));
+    save(db, "showProjectsOnOtherNodes", String(showProjectsOnOtherNodes));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
     save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));

@@ -11,6 +11,7 @@ Every deployment is a version. The newest section must always match the
 - Each member now has their own projects, secrets, workspaces, and settings; admins manage accounts and can transfer the admin role from the Users tab.
 - Agents, shells, and terminals now run in separate OS accounts when multi-user mode is enabled, providing process and network isolation.
 - Members can now join clusters independently and visit cluster nodes; their settings, preferences, and pins follow them there.
+- Your projects appeared on the other nodes you signed in to, marked “At home”, while they kept running on your home node; you could hide any one project or turn this off in Settings.
 
 ## 2.48.0 — 2026-10-07
 

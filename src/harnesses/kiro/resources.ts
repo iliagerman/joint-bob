@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { runtimeHome } from "../../account-runtime.js";
+import { nodeMcpServersApply, runtimeHome } from "../../account-runtime.js";
+import { adminAccountId } from "../../ownership.js";
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -187,7 +188,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
     resources: skills,
     tools: enabledTools === undefined ? ["*"] : [...enabledTools],
     allowedTools: [],
-    mcpServers: await readMcpConfig(resources.mcpConfig),
+    mcpServers: nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(resources.mcpConfig) : {},
     includeMcpJson: true,
   };
   const file = path.join(agents, `${name}.json`);

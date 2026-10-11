@@ -53,6 +53,8 @@ export interface AuthSession {
   isRemoteLogin: boolean;
   /** The node ID where this user account originates. Null for the home user. */
   homeNodeId: string | null;
+  /** A request another node relays for this person (live-link.ts): never the admin's powers. */
+  live?: boolean;
 }
 
 export interface LoginSessionSummary {
@@ -223,8 +225,48 @@ function passwordDigest(password: string, salt: Buffer): Buffer {
   return scryptSync(password, salt, 64);
 }
 
+/**
+ * Proof that a person really signed in on another node. That node holds their sign-in
+ * record, so only something made from the password itself tells a sign-in from a claim:
+ * a second digest of it, which the node can make only while it has the password in hand.
+ * The home node keeps a digest of that proof, and nothing of it is replicated.
+ */
+function ensureRoamingProofSchema(db: DatabaseSync): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS roaming_sign_in_verifiers (user_id TEXT PRIMARY KEY, verifier TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS visitor_sign_in_proofs (user_id TEXT PRIMARY KEY, proof TEXT NOT NULL);`);
+}
+function roamingProof(password: string, salt: Buffer): string {
+  return scryptSync(password, Buffer.concat([Buffer.from("joint-bob-roaming:"), salt]), 32).toString("hex");
+}
+function rememberRoamingProof(db: DatabaseSync, user: { id: string; home_node_id: string | null }, password: string, salt: Buffer): void {
+  ensureRoamingProofSchema(db);
+  const proof = roamingProof(password, salt);
+  if (user.home_node_id === null) db.prepare("INSERT INTO roaming_sign_in_verifiers (user_id, verifier) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET verifier = excluded.verifier").run(user.id, digest(proof));
+  else db.prepare("INSERT INTO visitor_sign_in_proofs (user_id, proof) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET proof = excluded.proof").run(user.id, proof);
+}
+/** On the node a visitor signed in to: the proof of it, for their home node. */
+export function visitorSignInProof(userId: string): string | undefined {
+  const db = authDatabase();
+  ensureRoamingProofSchema(db);
+  return (db.prepare("SELECT proof FROM visitor_sign_in_proofs WHERE user_id = ?").get(userId) as { proof: string } | undefined)?.proof;
+}
+export function forgetVisitorSignInProof(userId: string): void {
+  const db = authDatabase();
+  ensureRoamingProofSchema(db);
+  db.prepare("DELETE FROM visitor_sign_in_proofs WHERE user_id = ?").run(userId);
+}
+/** At home: whether another node's proof shows this person signed in there. */
+export function roamingProofValid(userId: string, proof: string): boolean {
+  const db = authDatabase();
+  ensureRoamingProofSchema(db);
+  const stored = (db.prepare("SELECT verifier FROM roaming_sign_in_verifiers WHERE user_id = ?").get(userId) as { verifier: string } | undefined)?.verifier;
+  const offered = digest(proof);
+  return Boolean(stored) && stored!.length === offered.length && timingSafeEqual(Buffer.from(stored!), Buffer.from(offered));
+}
+
 function validUsername(username: string): boolean {
-  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$/.test(username);
+  // A name shaped like an account id would be taken for one where older rows are read.
+  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$/.test(username) && !/^[0-9a-f]{32}$/i.test(username);
 }
 
 function validPassword(password: string): boolean {
@@ -278,6 +320,10 @@ export function createLocalUser(input: { username: string; email: string }, acto
   const db = authDatabase();
   const email = checkedEmail(input.email);
   const oneTimePassword = randomBytes(18).toString("base64url");
+  // A person of this node comes before a visitor's record: one holding the same name or email
+  // gives way, with the copy of theirs this node kept.
+  const visitors = db.prepare("SELECT username, home_node_id FROM users WHERE home_node_id IS NOT NULL AND (username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE)").all(input.username, email) as unknown as Array<{ username: string; home_node_id: string }>;
+  for (const visitor of visitors) deleteReplicatedUser(visitor.home_node_id, visitor.username);
   db.exec("BEGIN IMMEDIATE");
   try {
     const userId = insertLocalUser(db, input.username, oneTimePassword, true, email, "member");
@@ -361,6 +407,8 @@ export function offerAdminTransfer(toUserId: string, actorId: string): void {
   const db = authDatabase();
   ensureAdminTransferSchema(db);
   const user = localUser(toUserId);
+  // Only the admin gives the role away, whatever route the call came through.
+  if (localUser(actorId)?.role !== "admin") throw new AuthError(404, "Not found");
   if (!user || user.disabled || user.role === "admin") throw new AuthError(404, "User not found");
   db.prepare("INSERT INTO admin_transfers (singleton, to_user_id, offered_by, offered_at) VALUES (1, ?, ?, ?) ON CONFLICT(singleton) DO UPDATE SET to_user_id = excluded.to_user_id, offered_by = excluded.offered_by, offered_at = excluded.offered_at")
     .run(toUserId, actorId, new Date().toISOString());
@@ -370,6 +418,7 @@ export function offerAdminTransfer(toUserId: string, actorId: string): void {
 export function cancelAdminTransfer(actorId: string): void {
   const db = authDatabase();
   ensureAdminTransferSchema(db);
+  if (localUser(actorId)?.role !== "admin") throw new AuthError(404, "Not found");
   db.prepare("DELETE FROM admin_transfers").run();
   appendAuditEvent(db, { eventType: "auth.admin_transfer.cancelled", actorType: "user", actorId, entityType: "user" });
 }
@@ -486,6 +535,7 @@ export function authenticate(username: string, password: string): AuthSession | 
   if (row.home_node_id !== null && row.remote_mfa === 1) {
     throw new AuthError(403, "This account uses two-factor sign-in, which works only on its home node for now");
   }
+  rememberRoamingProof(db, row, password, row.password_salt);
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM login_attempts WHERE username = ?").run(normalizedUsername.toLowerCase());
@@ -590,6 +640,7 @@ export function changePassword(session: AuthSession, currentPassword: string, ne
     db.prepare(`
       UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 0, updated_at = ? WHERE id = ?
     `).run(passwordDigest(newPassword, salt), salt, new Date().toISOString(), session.userId);
+    rememberRoamingProof(db, row, newPassword, salt);
     db.prepare("DELETE FROM mfa_login_challenges WHERE user_id = ?").run(session.userId);
     db.prepare("DELETE FROM mfa_enrollments WHERE user_id = ?").run(session.userId);
     appendAuditEvent(db, { eventType: "auth.password.changed", actorType: "user", actorId: session.userId, entityType: "user", entityId: session.userId });
@@ -836,6 +887,13 @@ export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUser
     if (existing && existing.home_node_id === null) throw new Error("Cannot overwrite the home user with a replicated user");
     if (existing && existing.home_node_id !== input.homeNodeId) throw new Error("Username conflict: replicated user from different home node");
     if (email !== null && emailTaken(db, email, existing?.id)) throw new Error("Email conflict: another account on this node uses that email");
+    // The account id is the other node's statement. It may never be the id of a person of
+    // this node, nor one another account here already answers to.
+    if (input.accountId) {
+      if (!/^[0-9a-f]{32}$/.test(input.accountId)) throw new Error("Invalid account id for replicated user");
+      if (listLocalUsers().some((user) => user.accountId === input.accountId)) throw new Error("Account conflict: that account belongs to a person of this node");
+      if (db.prepare("SELECT 1 FROM users WHERE account_id = ? AND id IS NOT ?").get(input.accountId, existing?.id ?? null)) throw new Error("Account conflict: another account here already has that id");
+    }
     const id = existing?.id ?? nanoid(18);
     if (existing) {
       db.prepare("UPDATE users SET password_hash = ?, password_salt = ?, email = ?, remote_mfa = ?, account_id = ?, remote_clusters = ?, updated_at = ? WHERE id = ?")
@@ -879,10 +937,16 @@ export function deleteReplicatedUser(homeNodeId: string, username: string): bool
   const user = db.prepare("SELECT id, account_id FROM users WHERE username = ? COLLATE NOCASE AND home_node_id = ?").get(username, homeNodeId) as { id: string; account_id: string | null } | undefined;
   if (!user) return false;
 
+  let revoked: string[] = [];
   db.exec("BEGIN IMMEDIATE");
   try {
+    const ended = (db.prepare("SELECT id FROM login_sessions WHERE user_id = ?").all(user.id) as unknown as Array<{ id: string }>).map((session) => session.id);
     db.prepare("DELETE FROM login_sessions WHERE user_id = ?").run(user.id);
     db.prepare("DELETE FROM users WHERE id = ?").run(user.id);
+    ensureRoamingProofSchema(db);
+    db.prepare("DELETE FROM visitor_sign_in_proofs WHERE user_id = ?").run(user.id);
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_preferences'").get()) db.prepare("DELETE FROM user_preferences WHERE user_id = ?").run(user.id);
+    revoked = ended;
     // Their copy here goes with them: every per-person row and their roaming profile.
     if (user.account_id) {
       const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as unknown as Array<{ name: string }>).map((row) => row.name));
@@ -891,6 +955,8 @@ export function deleteReplicatedUser(homeNodeId: string, username: string): bool
       }
     }
     db.exec("COMMIT");
+    // Open pages and sockets of theirs end now, not at their next request.
+    if (revoked.length) authSessionEvents.emit("revoked", revoked);
     appendAuditEvent(db, { eventType: "auth.replicated_user.deleted", actorType: "system", entityType: "user", entityId: user.id, details: { homeNodeId } });
     return true;
   } catch (error) {

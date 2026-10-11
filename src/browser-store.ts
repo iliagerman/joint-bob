@@ -386,20 +386,37 @@ export class BrowserStore {
 
   /** No grant, whatever its scope, reaches another person's conversations: the profile's
       own project and the project using it must have the same owner on this node. */
-  private sameOwner(): string {
+  private hasTable(name: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
+  }
+
+  /** Who a project belongs to on this node: its person, nobody in particular (the admin),
+      or the node that shared it into a cluster. A received project is not the admin's own,
+      so the admin's profiles don't follow a grant into it. A twin's project is. */
+  private projectOwner(project: string): string {
+    const person = `(SELECT o.account_id FROM resource_account_owners o WHERE o.kind = 'project' AND o.resource_id = ${project})`;
+    if (!this.hasTable("sharing_resource_owners") || !this.hasTable("cluster_node")) return `COALESCE(${person}, '')`;
+    const twin = this.hasTable("cluster_v2_twin_relationships") ? " AND NOT EXISTS (SELECT 1 FROM cluster_v2_twin_relationships t WHERE t.peer_node_id = s.owner_node_id AND t.status = 'active')" : "";
+    const received = `(SELECT 'node:' || s.owner_node_id FROM sharing_resource_owners s WHERE s.kind = 'project' AND s.resource_id = ${project} AND s.owner_node_id <> (SELECT id FROM cluster_node LIMIT 1)${twin})`;
+    return `COALESCE(${person}, ${received}, '')`;
+  }
+
+  /** No grant, whatever its scope, reaches another person's conversations: the profile's
+      own project and the project using it must have the same owner on this node. */
+  private sameOwner(projectId: string): { sql: string; params: string[] } {
     ensureOwnershipSchema(this.db);
-    return `COALESCE((SELECT o.account_id FROM resource_account_owners o WHERE o.kind = 'project' AND o.resource_id = (SELECT projectId FROM browser_profiles WHERE id = g.profileId)), '')
-      = COALESCE((SELECT o.account_id FROM resource_account_owners o WHERE o.kind = 'project' AND o.resource_id = ?), '')`;
+    const used = this.projectOwner("?");
+    return { sql: `${this.projectOwner("(SELECT projectId FROM browser_profiles WHERE id = g.profileId)")} = ${used}`, params: Array.from({ length: used.split("?").length - 1 }, () => projectId) };
   }
 
   profileUsable(id: string, access: BrowserAccess): boolean {
-    const match = this.grantMatch(access);
-    return Boolean(this.db.prepare(`SELECT 1 FROM browser_profile_grants g WHERE g.profileId = ? AND (${match.sql}) AND ${this.sameOwner()} LIMIT 1`).get(id, ...match.params, access.projectId));
+    const match = this.grantMatch(access), owner = this.sameOwner(access.projectId);
+    return Boolean(this.db.prepare(`SELECT 1 FROM browser_profile_grants g WHERE g.profileId = ? AND (${match.sql}) AND ${owner.sql} LIMIT 1`).get(id, ...match.params, ...owner.params));
   }
 
   usableProfiles(access: BrowserAccess): BrowserProfile[] {
-    const match = this.grantMatch(access);
-    const ids = this.db.prepare(`SELECT DISTINCT g.profileId AS id FROM browser_profile_grants g JOIN browser_profiles p ON p.id = g.profileId WHERE (${match.sql}) AND ${this.sameOwner()}`).all(...match.params, access.projectId) as unknown as Array<{ id: string }>;
+    const match = this.grantMatch(access), owner = this.sameOwner(access.projectId);
+    const ids = this.db.prepare(`SELECT DISTINCT g.profileId AS id FROM browser_profile_grants g JOIN browser_profiles p ON p.id = g.profileId WHERE (${match.sql}) AND ${owner.sql}`).all(...match.params, ...owner.params) as unknown as Array<{ id: string }>;
     return ids.map(({ id }) => this.profile(id))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .map(profile => ({ ...profile, grants: this.profileGrants(profile.id) }));

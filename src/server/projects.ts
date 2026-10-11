@@ -46,10 +46,12 @@ export async function projectsWithSharedNames(includeSyncStatusOrOptions?: boole
     });
   }
 
+  const hidden = await hiddenFromOtherNodes();
   return visibleProjects.map((project) => {
     const lock = locks[project.id];
     return {
       ...project,
+      ...(hidden.has(project.id) ? { hiddenFromOtherNodes: true } : {}),
       name: overrides[project.id] ?? project.name,
       syncStatus: project.syncFolderId
         ? statuses[project.syncFolderId] ?? unavailableProjectStatus("Loading sync status")
@@ -58,6 +60,13 @@ export async function projectsWithSharedNames(includeSyncStatusOrOptions?: boole
       ...(lock ? { lock, lockedElsewhere: lock.nodeId !== local.id } : {}),
     };
   });
+}
+
+/** Projects their owner keeps off the nodes they visit (live-link.ts). */
+async function hiddenFromOtherNodes(): Promise<Set<string>> {
+  const db = await clusterV2Database();
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_live_hidden'").get()) return new Set();
+  return new Set((db.prepare("SELECT project_id FROM project_live_hidden").all() as unknown as Array<{ project_id: string }>).map((row) => row.project_id));
 }
 
 /** Gets the set of cluster IDs that a node is a member of. */

@@ -39,6 +39,14 @@ export function renderProjects() {
   const projects = filteredProjects();
   elements.projectList.replaceChildren();
   if (state.projectsLoading) return;
+  // A visitor's own projects at home show only while home answers; nothing stale is kept.
+  if (state.liveHome && !state.liveHome.online) {
+    const offline = document.createElement("p");
+    offline.className = "muted project-live-offline";
+    offline.dataset.testid = "project-live-offline";
+    offline.textContent = `Your projects at ${state.liveHome.name || "your home node"} are offline. They show again when it's back.`;
+    elements.projectList.append(offline);
+  }
   if (state.projects.length === 0) {
     const empty = document.createElement("p");
     empty.className = "muted";
@@ -159,6 +167,14 @@ function projectRow(project) {
       reviewBadge.setAttribute("aria-label", `${reviewCount} conversations need review in ${project.name}`);
       button.append(reviewBadge);
     }
+    if (project.live) {
+      const liveBadge = document.createElement("em");
+      liveBadge.className = "project-live-badge";
+      liveBadge.dataset.testid = "project-live-badge";
+      liveBadge.textContent = "⌂ At home";
+      liveBadge.title = "Runs on your home node. Nothing of it is kept on this node.";
+      button.append(liveBadge);
+    }
     if (project.lock) {
       const lockBadge = document.createElement("em");
       lockBadge.className = `project-lock-badge${project.lockedElsewhere ? " foreign" : ""}`;
@@ -234,6 +250,13 @@ function projectMenuItems(project) {
       title: project.lockedElsewhere ? `Locked by ${project.lock.nodeName} — select to unlock` : "",
       onSelect: () => toggleProjectLock(project).catch((error) => toast(error.message, 6000)),
     },
+    ...(project.locallyOwned !== false && !project.live ? [{
+      label: project.hiddenFromOtherNodes ? "Show on other nodes" : "Hide from other nodes",
+      icon: "lock",
+      testid: "project-other-nodes-button",
+      title: "Whether this project shows on the nodes you sign in to, through a live link home",
+      onSelect: () => toggleOtherNodes(project).catch((error) => toast(error.message)),
+    }] : []),
     {
       label: "Session path mappings",
       icon: "folder",
@@ -262,6 +285,12 @@ function projectMenuItems(project) {
       onSelect: () => removeProject(project).catch((error) => toast(error.message)),
     },
   ];
+}
+
+async function toggleOtherNodes(project) {
+  const { hiddenFromOtherNodes } = await api(`/api/projects/${encodeURIComponent(project.id)}/other-nodes`, { method: "PUT", body: JSON.stringify({ hidden: !project.hiddenFromOtherNodes }) });
+  toast(hiddenFromOtherNodes ? `${project.name} stays off the nodes you visit` : `${project.name} shows on the nodes you visit`);
+  await refreshProjectsQuietly();
 }
 
 async function toggleProjectLock(project) {

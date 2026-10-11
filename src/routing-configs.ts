@@ -1,6 +1,7 @@
+import { accountInCluster, accountReceivesFrom } from "./cluster-accounts.js";
 import { randomUUID } from "node:crypto";
 import { actingAccount, type ActingAccount } from "./account-context.js";
-import { adminAccountId, forgetResourceOwner, newResourceOwner, resourceOwner, setResourceOwner } from "./ownership.js";
+import { adminAccountId, forgetResourceOwner, newResourceOwner, personalAccount, resourceOwner, setResourceOwner } from "./ownership.js";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { getDifficultyClassifier } from "./classifiers/registry.js";
@@ -105,7 +106,7 @@ function configVisible(db: DatabaseSync, row: ConfigRow, account: ActingAccount 
   if (!account) return true;
   if (account.isRemoteLogin) return false;
   const local = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
-  if (row.owner_node_id !== local) return account.role === "admin";
+  if (row.owner_node_id !== local) return accountReceivesFrom(db, account, row.owner_node_id);
   return resourceOwner("routing_config", row.id, db) === account.accountId;
 }
 
@@ -186,7 +187,7 @@ function selectionAccount(db: DatabaseSync, accountId: string | undefined): stri
   return accountId && accountId !== adminAccountId(db) ? accountId : undefined;
 }
 
-export function selectedRoutingConfigId(db: DatabaseSync, accountId: string | undefined = newResourceOwner()): string {
+export function selectedRoutingConfigId(db: DatabaseSync, accountId: string | undefined = personalAccount()): string {
   ensureRoutingConfigSchema(db);
   const person = selectionAccount(db, accountId);
   if (person) return ((db.prepare("SELECT config_id FROM routing_config_account_selection WHERE account_id = ?").get(person) as { config_id: string } | undefined)?.config_id) ?? "";
@@ -194,7 +195,7 @@ export function selectedRoutingConfigId(db: DatabaseSync, accountId: string | un
 }
 
 /** Sets the person's active configuration. An empty id turns automatic routing off. */
-export function setRoutingConfigSelection(db: DatabaseSync, configId: string, accountId: string | undefined = newResourceOwner()): void {
+export function setRoutingConfigSelection(db: DatabaseSync, configId: string, accountId: string | undefined = personalAccount()): void {
   ensureRoutingConfigSchema(db);
   if (configId !== "" && configId !== DEFAULT_ROUTING_CONFIG_ID && !getRoutingConfig(db, configId)) throw new RoutingConfigError(404, "Routing configuration not found");
   const person = selectionAccount(db, accountId);
@@ -204,7 +205,7 @@ export function setRoutingConfigSelection(db: DatabaseSync, configId: string, ac
 
 /** The configuration that drives routing for a person's conversations right now: their
     selection, resolved independently of any cluster. A disabled or missing one means none. */
-export function activeRoutingConfig(db: DatabaseSync, accountId: string | undefined = newResourceOwner()): StoredRoutingConfig | null {
+export function activeRoutingConfig(db: DatabaseSync, accountId: string | undefined = personalAccount()): StoredRoutingConfig | null {
   ensureRoutingConfigSchema(db);
   const selected = selectedRoutingConfigId(db, accountId);
   if (!selected) return null;
@@ -302,10 +303,13 @@ export function applyRoutingConfigEvents(db: DatabaseSync, events: RoutingConfig
 /** The nodes a shared configuration may be distributed to right now: every member of
     every cluster this node belongs to, and every active twin. Nothing propagates
     beyond them. */
-export function routingConfigShareTargets(db: DatabaseSync, localNodeId: string): RoutingConfigShareTarget[] {
+export function routingConfigShareTargets(db: DatabaseSync, localNodeId: string, owner?: string): RoutingConfigShareTarget[] {
   ensureRoutingConfigSchema(db);
   const targets = new Map<string, RoutingConfigShareTarget>();
+  // A member's configuration goes only into clusters they joined, and never to the admin's twins.
+  const member = owner && owner !== adminAccountId(db) ? owner : undefined;
   for (const membership of listSharingMemberships(db, localNodeId)) {
+    if (member && !accountInCluster(db, member, membership.clusterId)) continue;
     for (const member of listSharingClusterMembers(db, membership.clusterId)) {
       if (member.nodeId === localNodeId || targets.has(member.nodeId)) continue;
       const descriptor = db.prepare("SELECT name, url FROM cluster_v2_membership_nodes WHERE cluster_id = ? AND node_id = ?").get(membership.clusterId, member.nodeId) as { name: string; url: string } | undefined;
@@ -314,7 +318,7 @@ export function routingConfigShareTargets(db: DatabaseSync, localNodeId: string)
       targets.set(member.nodeId, { nodeId: member.nodeId, name: descriptor.name, url: descriptor.url, kind: "cluster", clusterId: membership.clusterId, ...(clusterName ? { clusterName } : {}) });
     }
   }
-  for (const twin of listTwinUpdateTargets(db, localNodeId)) {
+  for (const twin of member ? [] : listTwinUpdateTargets(db, localNodeId)) {
     if (!targets.has(twin.nodeId)) targets.set(twin.nodeId, { nodeId: twin.nodeId, name: twin.name, url: twin.url, kind: "twin", relationshipId: twin.relationshipId });
   }
   return [...targets.values()];

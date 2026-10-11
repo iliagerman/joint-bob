@@ -12,7 +12,7 @@ import { getRuntimePeer, runtimeFetch } from "../runtime-peers.js";
 import { ConversationOwnershipError } from "../../conversation-ownership.js";
 import { listHarnessSessions } from "../../harnesses.js";
 import { getProject } from "../../store.js";
-import { TICKET_BASELINE_DIR, TICKET_MERGE_DIR } from "../../task-workspaces.js";
+import { TICKET_BASELINE_DIR, TICKET_MERGE_DIR, ticketWorkspaceRoot } from "../../task-workspaces.js";
 import { listTasks } from "../../tasks.js";
 import type { ProjectRecord } from "../../types.js";
 import { sendError } from "../http-auth.js";
@@ -136,7 +136,15 @@ async function resolutionRoot(projectId: string, projectPath: string, taskId?: s
   const task = (await listTasks(projectId)).find((candidate) => candidate.id === taskId);
   if (!task) throw new ProjectFileError(404, "Ticket was not found");
   if (!task.worktreePath) throw new ProjectFileError(404, "Ticket workspace is not available");
-  return await realpath(task.worktreePath);
+  const workspace = await realpath(task.worktreePath);
+  // A ticket's workspace is where the node made it, whatever a peer's copy of the ticket says:
+  // under the node's ticket folder or beside the project, and named for the ticket.
+  if (multiUserEnabled()) {
+    const roots = await Promise.all([ticketWorkspaceRoot(), path.join(path.dirname(projectPath), ".joint-bob-worktrees")].map((root) => realpath(root).catch(() => undefined)));
+    const within = roots.some((root) => root && workspace.startsWith(root + path.sep));
+    if (!within || path.basename(workspace) !== taskId) throw new ProjectFileError(404, "Ticket workspace is not available");
+  }
+  return workspace;
 }
 
 async function projectFileResolution(projectId: string, requestedPath: string, taskId?: string): Promise<{ path: string }> {

@@ -5,10 +5,14 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { chromium, type BrowserContext, type Page, type CDPSession, type Dialog, type FileChooser, type Locator } from "playwright-core";
 import { WebSocket } from "ws";
+import { multiUserEnabled, runtimeCommand, runtimeEnvironment, serviceRuntime, type RuntimeAccount } from "./account-runtime.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { getClusterNode } from "./cluster.js";
 import { BrowserStore, profileBusyMessage, type RecoveryState } from "./browser-store.js";
-import { prepareProfile, profileDirectory } from "./browser-profile-files.js";
+import { accountBrowserDirectory, prepareProfile, profileDirectory, profileLocation } from "./browser-profile-files.js";
+import { adminAccountId } from "./ownership.js";
+import { runtimeForAccount, runtimeForProject } from "./project-runtime.js";
+import { fileURLToPath } from "node:url";
 import { browserCommandSchema, browserStartSchema, type BrowserAccess, type BrowserActor, type BrowserCapability, type BrowserSessionRecord, type BrowserCommand, type BrowserProfile, type BrowserProfileGrant, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
 import { createMonitorReadExpression, normalizeMonitorRead, type MonitorReadInput } from "./browser-monitor-checkers.js";
 import { BrowserMonitorCheckError } from "./browser-monitor-scheduler.js";
@@ -96,6 +100,8 @@ interface LiveSession {
   projectId: string;
   conversationId: string;
   profileId: string;
+  /** The account the browser runs as; the service itself without multi-user mode. */
+  runtime: RuntimeAccount;
   restoring: boolean;
   context: BrowserContext;
   pages: Map<string, Page>;
@@ -134,6 +140,31 @@ export function browserLaunchArguments(platform = process.platform): string[] {
 const readOnly = new Set(["snapshot", "screenshot", "wait"]);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const defaultIdleTimeoutMs = 2 * 60 * 60 * 1000;
+
+/** The account a profile's browser runs as: its home project's own, like that project's
+    agents. A profile kept for a project this machine doesn't hold is the admin's. */
+async function profileRuntime(projectId: string): Promise<RuntimeAccount> {
+  if (!multiUserEnabled()) return serviceRuntime();
+  try { return await runtimeForProject(projectId); }
+  catch (error) {
+    if (!(error instanceof Error) || error.message !== "Project not found") throw error;
+    return runtimeForAccount(adminAccountId() ?? "");
+  }
+}
+
+/**
+ * How Playwright starts the browser as a person's account: through a small script that runs
+ * the account helper and carries Playwright's pipe (file descriptors 3 and 4, which sudo
+ * drops) as standard input and output, where the command inside the account puts it back.
+ */
+export function accountLaunch(runtime: RuntimeAccount, executable: string): { executablePath: string; env: Record<string, string> } {
+  const inside = runtimeCommand(runtime, runtime.home, "/bin/sh", ["-c", 'exec "$0" "$@" 3<&0 4>&1 1>&2 0</dev/null', executable]);
+  const words = [inside.command, ...inside.args];
+  const env = Object.fromEntries(Object.entries(runtimeEnvironment(runtime, process.env)).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  env.JOINT_BOB_BROWSER_LAUNCH_COUNT = String(words.length);
+  words.forEach((word, index) => { env[`JOINT_BOB_BROWSER_LAUNCH_${index}`] = word; });
+  return { executablePath: fileURLToPath(new URL("../scripts/multi-user/browser-as-account.sh", import.meta.url)), env };
+}
 
 export class BrowserRuntime {
   private readonly store = new BrowserStore();
@@ -254,10 +285,14 @@ export class BrowserRuntime {
       if (!id) id = this.store.create(start, accessNodeId).id;
       const capability = await (this.options.capability ?? browserCapability)();
       if (!capability.supported || !capability.available || !capability.executable) throw new Error(capability.reason || "Browser unavailable on this node");
-      const directory = await prepareProfile(profile.id);
+      // With several people on the node the browser runs as the profile's own account, so
+      // its logins live in that person's home and the port wall between people holds for it.
+      const runtime = await profileRuntime(profile.projectId);
+      const directory = await prepareProfile(profile.id, runtime);
+      const asAccount = runtime.name ? { ...accountLaunch(runtime, capability.executable), downloadsPath: await accountBrowserDirectory(runtime, "transfers") } : { executablePath: capability.executable };
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       // server.ts owns TERM/INT shutdown. A second Playwright close force-kills Chrome before cookies flush.
-      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless: true, handleSIGTERM: false, handleSIGINT: false, args: browserLaunchArguments(), viewport: defaultViewport, acceptDownloads: true });
+      context = await chromium.launchPersistentContext(directory, { ...asAccount, headless: true, handleSIGTERM: false, handleSIGINT: false, args: browserLaunchArguments(), viewport: defaultViewport, acceptDownloads: true });
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       if (!profile.persistent) {
         // Legacy snapshot import reads the profile's own home project: the session
@@ -271,7 +306,7 @@ export class BrowserRuntime {
       context.setDefaultNavigationTimeout(20000);
       const row = this.store.get(id);
       this.store.resume(id);
-      session = { id: row.id, projectId: row.projectId, conversationId: row.conversationId, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, lastActivityAt: Date.now(), activeOperations: 0, loginVerificationEpoch: 0, credentialOrigins, skipLoginPause: start.skipLoginPause === true, viewportOverrides: new Set(), stopped: false, stopSignal: new AbortController() };
+      session = { id: row.id, projectId: row.projectId, conversationId: row.conversationId, profileId: profile.id, runtime, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, lastActivityAt: Date.now(), activeOperations: 0, loginVerificationEpoch: 0, credentialOrigins, skipLoginPause: start.skipLoginPause === true, viewportOverrides: new Set(), stopped: false, stopSignal: new AbortController() };
       this.sessions.set(row.id, session);
       const live = session;
       context.on("page", page => this.addPage(live, page));
@@ -393,6 +428,7 @@ export class BrowserRuntime {
       // must survive a delete request the store is about to refuse.
       this.store.assertProfileDeletable(id, projectId);
       if (profileLeases.has(profileDirectory(id))) throw new Error("Browser profile in use");
+      await rm(await profileLocation(id, await profileRuntime(this.store.profile(id).projectId)), { recursive: true, force: true });
       await rm(profileDirectory(id), { recursive: true, force: true });
       this.store.deleteProfile(id, projectId);
     });
@@ -712,6 +748,10 @@ export class BrowserRuntime {
     await Promise.all(pages.filter(page => !page.isClosed()).map(page => page.setViewportSize(defaultViewport).catch(() => {})));
   }
 
+  private async stagingRoot(session: LiveSession): Promise<string> {
+    return session.runtime.name ? accountBrowserDirectory(session.runtime, "staging", session.id) : path.join(this.root, session.id, "staging");
+  }
+
   private async upload(session: LiveSession, page: Page, command: Extract<BrowserCommand, { action: "upload" }>, actor: BrowserActor): Promise<void> {
     const files = validateBrowserUploads(command.files);
     const chooser = command.selector ? null : session.chooser;
@@ -719,17 +759,19 @@ export class BrowserRuntime {
     const target = command.selector ? await this.locator(page, command.selector).elementHandle() : chooser!.chooser.element();
     if (!target) throw new Error("No upload input found");
     const directory = await target.evaluate(element => (element as Element).hasAttribute("webkitdirectory"));
-    const staging = path.join(this.root, session.id, "staging", randomUUID());
+    // The browser reads the files it uploads, so in a person's account they wait in their home.
+    const staging = path.join(await this.stagingRoot(session), randomUUID());
+    const [folderMode, fileMode] = session.runtime.name ? [0o770, 0o660] : [0o700, 0o600];
     try {
       this.live(session.id);
-      await mkdir(staging, { recursive: true, mode: 0o700 });
+      await mkdir(staging, { recursive: true, mode: folderMode });
       const paths: string[] = [];
       for (const file of files) {
         this.live(session.id);
         const destination = path.join(staging, file.name);
-        await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+        await mkdir(path.dirname(destination), { recursive: true, mode: folderMode });
         this.live(session.id);
-        await writeFile(destination, file.buffer, { mode: 0o600, flag: "wx" });
+        await writeFile(destination, file.buffer, { mode: fileMode, flag: "wx" });
         paths.push(destination);
       }
       const roots = new Set(files.map(file => file.name.split("/")[0]));
@@ -953,7 +995,7 @@ export class BrowserRuntime {
         profileLeases.delete(profileDirectory(session.profileId));
         this.store.finish(session.id, state, error, restoreOnRestart);
         await Promise.all(session.transfers);
-        await rm(path.join(this.root, session.id, "staging"), { recursive: true, force: true });
+        await rm(await this.stagingRoot(session), { recursive: true, force: true });
       } finally { await this.releaseSession(session); }
     })();
   }

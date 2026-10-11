@@ -64,6 +64,26 @@ export function newResourceOwner(account: ActingAccount | undefined = actingAcco
   return account && !account.isRemoteLogin ? account.accountId : undefined;
 }
 
+/** Whose personal things apply (ntfy servers, queue, routing choice): the acting person's own,
+    a visitor's included, so nobody falls through to the admin's. Only the node's own work,
+    with nobody acting, uses the admin's. */
+export function personalAccount(account: ActingAccount | undefined = actingAccount()): string | undefined {
+  return account?.accountId;
+}
+
+/** Whether an account is known here as someone other than the admin: a member of this node,
+    or a visitor from another. The admin can be on record under an older id (before a twin
+    was paired), so an id nobody here answers to counts as the admin's. */
+export function accountOfSomeoneElse(accountId: string, db: DatabaseSync = ownershipDatabase()): boolean {
+  let members: Array<{ username: string; account_id: string | null }>;
+  try {
+    if (db.prepare("SELECT 1 FROM users WHERE account_id = ? AND home_node_id IS NOT NULL").get(accountId)) return true;
+    members = db.prepare("SELECT username, account_id FROM users WHERE home_node_id IS NULL AND role = 'member'").all() as unknown as Array<{ username: string; account_id: string | null }>;
+  } catch { return false; } // No accounts table yet, or one from before roles: nobody but the admin.
+  const home = canonicalLocalHome(db);
+  return members.some((member) => member.account_id === accountId || (home !== "" && accountIdFor(home, member.username) === accountId));
+}
+
 /** Whether the acting person owns the resource. The node itself (no acting account) sees
     everything; a visitor from another node owns nothing here. */
 export function actorOwns(kind: OwnedKind, resourceId: string, account: ActingAccount | undefined = actingAccount(), db: DatabaseSync = ownershipDatabase()): boolean {

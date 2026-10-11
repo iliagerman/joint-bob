@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { decrypt, save, setting, settingsDatabase } from "./settings-store.js";
-import { adminAccountId, newResourceOwner } from "./ownership.js";
+import { adminAccountId, personalAccount } from "./ownership.js";
 
 /** A user-defined ntfy server. The token grants publish access, so the whole
     list is stored encrypted in the node settings store. */
@@ -29,7 +29,7 @@ const SERVICES_KEY = "ntfy.services";
 
 /** Each person keeps their own ntfy servers; the admin's are the node's original list. */
 function servicesKey(): string {
-  const account = newResourceOwner();
+  const account = personalAccount();
   return account && account !== adminAccountId() ? `${SERVICES_KEY}.${account}` : SERVICES_KEY;
 }
 

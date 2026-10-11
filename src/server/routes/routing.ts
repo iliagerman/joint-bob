@@ -1,9 +1,11 @@
+import { resourceOwner } from "../../ownership.js";
+import { actingAccount } from "../../account-context.js";
 import { z } from "zod";
 import { listDifficultyClassifiers } from "../../classifiers/registry.js";
 import { getClusterNode } from "../../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { listHarnesses, listHarnessModels } from "../../harnesses.js";
-import { applyRoutingConfigEvents, createRoutingConfig, DEFAULT_ROUTING_CONFIG_ID, defaultRoutingConfig, deleteRoutingConfig, enqueueRoutingConfigDeliveries, getRoutingConfig, listRoutingConfigs, pendingRoutingConfigDeliveryCount, routingConfigDatabase, routingConfigEventFor, routingConfigEventSchema, routingConfigShareTargets, routingConfigWarning, RoutingConfigError, setRoutingConfigSelection, updateRoutingConfig, type RoutingConfigEvent, type StoredRoutingConfig } from "../../routing-configs.js";
+import { applyRoutingConfigEvents, createRoutingConfig, DEFAULT_ROUTING_CONFIG_ID, defaultRoutingConfig, deleteRoutingConfig, enqueueRoutingConfigDeliveries, getRoutingConfig, listRoutingConfigs, pendingRoutingConfigDeliveryCount, routingConfigDatabase, routingConfigEventFor, routingConfigEventSchema, routingConfigShareTargets, routingConfigWarning, RoutingConfigError, selectedRoutingConfigId, setRoutingConfigSelection, updateRoutingConfig, type RoutingConfigEvent, type StoredRoutingConfig } from "../../routing-configs.js";
 import { automaticRoutingModelAllowed, defaultRoutingPolicy, listRoutingPolicies, RoutingPolicyError, routingPolicyDatabase, validateRoutingPolicy } from "../../routing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { sendError } from "../http-auth.js";
@@ -59,7 +61,7 @@ async function ownerNames(local: { id: string; name: string }): Promise<Map<stri
 async function distribute(event: RoutingConfigEvent): Promise<Array<{ nodeId: string; name: string; delivered: boolean; error?: string }>> {
   const local = await getClusterNode();
   const db = routingConfigDatabase();
-  const targets = routingConfigShareTargets(routingPolicyDatabase(), local.id);
+  const targets = routingConfigShareTargets(routingPolicyDatabase(), local.id, resourceOwner("routing_config", event.configId));
   enqueueRoutingConfigDeliveries(db, event, targets);
   const results = await flushRoutingConfigDeliveries(event.configId);
   if (!results.length && targets.length && pendingRoutingConfigDeliveryCount(db, event.configId) > 0) {
@@ -79,11 +81,11 @@ app.get("/api/routing-configs", async (_request, response, next) => {
     response.json({
       routingLevels: 10,
       configs: [configView(local.id, defaultRoutingConfig(), names, true), ...listRoutingConfigs(db).map((config) => configView(local.id, config, names))],
-      selectedId: (db.prepare("SELECT config_id FROM routing_config_selection WHERE singleton = 1").get() as { config_id: string } | undefined)?.config_id ?? "",
+      selectedId: selectedRoutingConfigId(db),
       classifiers: listDifficultyClassifiers().map(({ id, label, variableName }) => ({ id, label, variableName })),
       harnesses,
       defaultPolicy: defaultRoutingPolicy(),
-      shareTargets: routingConfigShareTargets(policies, local.id).map(({ nodeId, name, kind, clusterName }) => ({ nodeId, name, kind, ...(clusterName ? { clusterName } : {}) })),
+      shareTargets: routingConfigShareTargets(policies, local.id, actingAccount()?.accountId).map(({ nodeId, name, kind, clusterName }) => ({ nodeId, name, kind, ...(clusterName ? { clusterName } : {}) })),
       // Kept for older callers: the retired per-cluster policies are listed read-only until the migration empties them.
       policies: listRoutingPolicies(policies).map((stored) => ({ ...stored, editable: false, localLeader: false, leaderName: stored.leaderNodeId, warning: null })),
     });

@@ -7,6 +7,7 @@
  * block or a left cluster takes the copies away again. MFA secrets are encrypted with the
  * home node's key and never travel; a peer only learns that a second factor is required.
  */
+import { adminAccountId } from "./ownership.js";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
@@ -45,13 +46,15 @@ export function ensureAccountReplicationSchema(db: DatabaseSync): void {
  */
 export function accountSnapshotFor(db: DatabaseSync, local: string, peer: string): AccountSnapshot {
   if (isNodeBlocked(db, local, peer)) return { version: 2, accounts: [] };
-  const twin = isTrustedTwin(db, local, peer);
+  const twin = isTrustedTwin(db, local, peer), admin = adminAccountId(db);
   const shared = listSharingMemberships(db, local).map((membership) => membership.clusterId)
     .filter((clusterId) => listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === peer));
   return {
     version: 2,
     accounts: localAccountsForReplication().filter((account) => account.accountId).map((account) => ({ account, clusterIds: accountClusterIds(db, account.accountId, shared) }))
-      .filter(({ clusterIds }) => twin || clusterIds.length).map(({ account, clusterIds }) => ({
+      // A twin is the admin's own second machine: it holds the admin's sign-in record, and a
+      // member's only when that member joined a cluster the twin is in, like any other node.
+      .filter(({ account, clusterIds }) => (twin && account.accountId === admin) || clusterIds.length).map(({ account, clusterIds }) => ({
       accountId: account.accountId,
       username: account.username,
       email: account.email,
@@ -96,7 +99,13 @@ export function applyAccountSnapshot(db: DatabaseSync, local: string, sender: st
   const snapshot = accountSnapshotSchema.parse(input);
   if (isNodeBlocked(db, local, sender)) { removeReplicatedUsersFromNode(sender); return { applied: [], rejected: snapshot.accounts.map((account) => account.username) }; }
   const applied: string[] = [], rejected: string[] = [];
-  for (const account of snapshot.accounts) {
+  // A person may sign in here through clusters both nodes are really in, whatever is stated.
+  const twin = isTrustedTwin(db, local, sender);
+  const shared = new Set(listSharingMemberships(db, local).map((membership) => membership.clusterId)
+    .filter((clusterId) => listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === sender)));
+  for (const stated of snapshot.accounts) {
+    const account = { ...stated, clusterIds: stated.clusterIds.filter((clusterId) => shared.has(clusterId)) };
+    if (!twin && !account.clusterIds.length) continue; // Not kept: their record here is removed below.
     try {
       upsertReplicatedUser({
         username: account.username,

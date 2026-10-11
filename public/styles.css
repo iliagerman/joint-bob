@@ -4084,3 +4084,5 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .my-nodes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .my-nodes li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .visitor-banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); z-index: 60; }
+.project-live-badge { font-style: normal; font-size: 11px; color: var(--muted); }
+.project-live-offline { margin: 6px 10px; font-size: 13px; }

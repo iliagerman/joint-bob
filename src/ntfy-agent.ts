@@ -31,6 +31,12 @@ export function ntfyAgentEnvironment(projectId: string, engine: HarnessId, conve
   };
 }
 
+/** A deleted conversation's (or project's) agents hold nothing any more. */
+export function revokeNtfyAgentTokens(projectId: string, conversationId?: string): void {
+  if (conversationId) database().prepare("DELETE FROM ntfy_agent_tokens WHERE project_id = ? AND conversation_id = ?").run(projectId, conversationId);
+  else database().prepare("DELETE FROM ntfy_agent_tokens WHERE project_id = ?").run(projectId);
+}
+
 export function ntfyAgentIdentity(token: string): AgentCapabilityIdentity | undefined {
   if (!/^[a-f0-9]{64}$/.test(token)) return undefined;
   const row = database().prepare("SELECT project_id AS projectId, engine, conversation_id AS conversationId FROM ntfy_agent_tokens WHERE token_hash=? AND expires_at>?").get(hash(token), Date.now()) as AgentCapabilityIdentity | undefined;

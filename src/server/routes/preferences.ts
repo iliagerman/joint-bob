@@ -1,6 +1,6 @@
 import { forwardRoamingEdit, HomeOfflineError, roamingPreferences } from "../roaming.js";
 import { projectAdditionalPaths } from "../session-scope.js";
-import { projectHomeFor } from "../../project-runtime.js";
+import { assertProjectFolderAllowed, ProjectFolderError, projectHomeFor } from "../../project-runtime.js";
 import { actingAccount } from "../../account-context.js";
 import { isNodeAdmin } from "../admin.js";
 import { personalSettings, terminalAccessSettings, updatePersonalSettings, updateTerminalAccessSettings } from "../../settings.js";
@@ -303,6 +303,7 @@ const personalSettingsSchema = z.object({
   conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
   autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
   digestAttachments: z.boolean().optional(),
+  showProjectsOnOtherNodes: z.boolean().optional(),
   conversationCommands: z.unknown().optional(),
   conversationDefaults: z.unknown().optional(),
 }).strict();
@@ -413,8 +414,11 @@ app.put("/api/projects/:projectId/resource-paths", async (request, response, nex
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const payload = z.object({ resources: resourcePathsSchema }).strict().parse(request.body);
     const session = response.locals.authSession as AuthSession;
+    // The node reads these folders with its own rights, so they stay inside the person's home.
+    for (const entry of Object.values(payload.resources).flat()) await assertProjectFolderAllowed(actingAccount(), entry);
     response.json({ resources: updateProjectResourcePaths(project.id, payload.resources, session.userId) });
   } catch (error) {
+    if (error instanceof ProjectFolderError) { sendError(response, 400, error.message); return; }
     if (error instanceof z.ZodError || error instanceof Error && error.message.includes("Resource paths")) { sendError(response, 400, error instanceof Error ? error.message : "Invalid resource paths"); return; }
     next(error);
   }

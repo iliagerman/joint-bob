@@ -1,3 +1,7 @@
+import { revokeAgentCapabilities } from "../../agent-capabilities.js";
+import { clusterV2Database } from "../../cluster-v2-store.js";
+import { mayReplicateEvent } from "../replication-v2.js";
+import { conversationOfAnotherProject } from "./projects.js";
 import { projectAdditionalPaths } from "../session-scope.js";
 import { randomUUID } from "node:crypto";
 import { lstat, unlink } from "node:fs/promises";
@@ -30,7 +34,7 @@ import { flushReplicationOutbox } from "../maintenance.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ConversationForkError, forkLocalConversation } from "../conversation-fork.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
-import { broadcastSessionsChangedToAllProjects, broadcastToProject, scheduleReviewNotifications, send } from "../realtime.js";
+import { broadcastToAllClients, broadcastToProject, scheduleReviewNotifications, send } from "../realtime.js";
 import { disposeHarnessSession, findHarnessSession, harnessSessionBusy } from "../harness-sessions.js";
 import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionNtfySchema, sessionRecoverySchema, sessionReviewedSchema, sessionReviewNotificationsSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
 import { stopConversationBackgroundTasks } from "../background-tasks.js";
@@ -479,7 +483,11 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
     unavailable.add(source.id);
     return unavailable;
   }
-  await receiveReplicationBatch(snapshot);
+  // The previous owner answers with this conversation's ownership and queue, and nothing else.
+  const db = await clusterV2Database();
+  const events = (Array.isArray(snapshot.events) ? snapshot.events : []).filter((event) => ["conversation.ownership", "conversation.queue"].includes(event.entityType)
+    && event.originNodeId === source.id && mayReplicateEvent(db, localId, source.id, event));
+  await receiveReplicationBatch({ ...snapshot, events });
   return unavailable;
 }
 
@@ -528,7 +536,8 @@ app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, 
     if (!session.updatedAt || submitted.updatedAt > session.updatedAt) { sendError(response, 409, "Conversation review watermark is newer than current activity"); return; }
     const local = await getClusterNode();
     markConversationReviewed(authSession.userId, authSession.accountId, project.id, { path: session.path, engine: session.harnessId, sessionId: session.id, updatedAt: submitted.updatedAt }, local.id);
-    broadcastSessionsChangedToAllProjects();
+    // Review marks are the person's own: only their pages refresh.
+    broadcastToAllClients({ type: "sessionsChanged" }, authSession.accountId);
     flushReplicationOutbox().catch((error) => console.warn("Review watermark flush failed", error));
     response.status(204).send();
   } catch (error) {
@@ -557,7 +566,8 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
       const current = currentByPath.get(watermark.sessionPath)!;
       return [{ path: watermark.sessionPath, engine: current.harnessId, sessionId: current.id, updatedAt: watermark.updatedAt }];
     }), local.id);
-    broadcastSessionsChangedToAllProjects();
+    // Review marks are the person's own: only their pages refresh.
+    broadcastToAllClients({ type: "sessionsChanged" }, authSession.accountId);
     flushReplicationOutbox().catch((error) => console.warn("Review watermark flush failed", error));
     response.status(204).send();
   } catch (error) {
@@ -663,6 +673,7 @@ app.post("/api/projects/:projectId/sessions/recover", async (request, response, 
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const payload = sessionRecoverySchema.parse(request.body);
+    if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) { sendError(response, 404, "Conversation not found"); return; }
     const local = await getClusterNode();
     const mapped = resolveLocalSessionPath(payload.sessionPath);
     if (payload.engine !== mapped.engine) throw new Error("Recovery engine does not match the transcript");
@@ -735,6 +746,7 @@ export async function deleteLocalConversation(project: ProjectRecord, engine: Co
   // drop their grants; the profile entities themselves stay durable.
   for (const conversationId of new Set([sessionId, ...(session.conversationId ? [session.conversationId] : []), ...targets.map(target => target.sessionId)])) {
     dropBrowserConversationGrants(project.id, conversationId);
+    revokeAgentCapabilities(project.id, conversationId);
   }
   clearHarnessSessionCache(project.id);
   broadcastToProject(project.id, { type: "sessionsChanged" });

@@ -1,3 +1,4 @@
+import { runtimeExec } from "./account-runtime.js";
 import { createHash } from "node:crypto";
 import { execFile } from "./subprocess.js";
 import { promises as fs } from "node:fs";
@@ -38,7 +39,9 @@ function expectedTaskWorktree(projectPath: string, taskId: string, title: string
 
 async function git(cwd: string, args: string[]): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+    const launch = runtimeExec("git", ["-C", cwd, ...args]);
+    const { stdout } = await execFileAsync(launch.command, launch.args, {
+      env: launch.env,
       encoding: "utf8",
       maxBuffer: 1024 * 1024,
     });
@@ -51,7 +54,8 @@ async function git(cwd: string, args: string[]): Promise<string> {
 
 async function hasGitRef(cwd: string, ref: string): Promise<boolean> {
   try {
-    await execFileAsync("git", ["-C", cwd, "show-ref", "--verify", "--quiet", ref]);
+    const launch = runtimeExec("git", ["-C", cwd, "show-ref", "--verify", "--quiet", ref]);
+    await execFileAsync(launch.command, launch.args, { env: launch.env });
     return true;
   } catch (error) {
     const status = (error as { code?: number | string }).code;
@@ -63,7 +67,8 @@ async function hasGitRef(cwd: string, ref: string): Promise<boolean> {
 
 async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
   try {
-    await execFileAsync("git", ["-C", cwd, "merge-base", "--is-ancestor", ancestor, descendant]);
+    const launch = runtimeExec("git", ["-C", cwd, "merge-base", "--is-ancestor", ancestor, descendant]);
+    await execFileAsync(launch.command, launch.args, { env: launch.env });
     return true;
   } catch (error) {
     const status = (error as { code?: number | string }).code;

@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { ownedByAdmin } from "../ownership.js";
+import { accountOfSomeoneElse, ownedByAdmin, resourceOwner } from "../ownership.js";
 import { getClusterNode } from "../cluster.js";
 import { ensurePeerEndpointSchema, type PeerEndpoint } from "../cluster-peer-endpoints.js";
 import { signClusterRequest } from "../cluster-protocol.js";
@@ -85,8 +85,27 @@ export function visitorEventRoute(db: DatabaseSync, _local: string, peer: string
   const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'account_roaming_nodes')").all() as unknown as Array<{ name: string }>).map((row) => row.name));
   // A visitor here, whose home is the peer.
   if (tables.has("users") && db.prepare("SELECT 1 FROM users WHERE account_id = ? AND home_node_id = ?").get(account, peer)) return true;
-  // One of our people, signed in on the peer.
-  return tables.has("account_roaming_nodes") && Boolean(db.prepare("SELECT 1 FROM account_roaming_nodes WHERE account_id = ? AND node_id = ?").get(account, peer));
+  // One of our people, signed in on the peer: only about a project that node can show them.
+  if (!tables.has("account_roaming_nodes") || !db.prepare("SELECT 1 FROM account_roaming_nodes WHERE account_id = ? AND node_id = ?").get(account, peer)) return false;
+  const project = replicationEventProjectId(event);
+  return !project || visitedNodeSeesProject(db, _local, peer, account, project);
+}
+
+/** Whether a node one of our people signed in to can show them this project: one shared
+    with that node, or their own project here that isn't hidden from other nodes. A pin or
+    recent about any other project stays home, title and path included. */
+export function visitedNodeSeesProject(db: DatabaseSync, local: string, peer: string, accountId: string, projectId: string): boolean {
+  try {
+    if (mayReceiveResource(db, peer, "project", projectId)) return true;
+    const owner = db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind = 'project' AND resource_id = ?").get(projectId) as { owner_node_id: string } | undefined;
+    if (owner && owner.owner_node_id !== local) return false;
+    if (resourceOwner("project", projectId, db) !== accountId) return false;
+    const hidden = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_live_hidden'").get()
+      && db.prepare("SELECT 1 FROM project_live_hidden WHERE project_id = ?").get(projectId);
+    return !hidden;
+  } catch {
+    return false;
+  }
 }
 
 /** The nodes our account events go to directly: visitors' home nodes and the nodes our
@@ -105,16 +124,29 @@ export function visitorHomeNodes(db: DatabaseSync): Set<string> {
   return new Set((db.prepare("SELECT DISTINCT home_node_id FROM users WHERE home_node_id IS NOT NULL").all() as unknown as Array<{ home_node_id: string }>).map((row) => row.home_node_id));
 }
 
+/** Twins are the admin's own machines: a member's or a visitor's account data never goes to
+    one, and none is taken from one. Rows from before accounts had ids are the admin's. */
+function twinHoldsAccount(db: DatabaseSync, event: ReplicationEvent): boolean {
+  const account = (event.payload as { username?: unknown } | null)?.username;
+  return typeof account !== "string" || !/^[0-9a-f]{32}$/.test(account) || !accountOfSomeoneElse(account, db);
+}
+
+function hasMembers(db: DatabaseSync): boolean {
+  try { return Boolean(db.prepare("SELECT 1 FROM users WHERE home_node_id IS NULL AND role = 'member' LIMIT 1").get()); }
+  catch { return false; } // No accounts table yet, or one from before roles: nobody but the admin.
+}
+
 export function mayReplicateEvent(db: DatabaseSync, local: string, peer: string, event: ReplicationEvent): boolean {
   const scope = EVENT_SCOPES[event.entityType];
   if (!scope || scope === "separate") return false;
   if (!peerUnderstands(db, peer, event.entityType)) return false;
   // A block between any two of the three nodes involved stops the event, relays included.
   if (nodesBlockedBetween(db, local, peer) || nodesBlockedBetween(db, local, event.originNodeId, peer)) return false;
-  if (scope === "account" || scope === "twins") return isTrustedTwin(db, local, peer) || visitorEventRoute(db, local, peer, event);
+  if (scope === "account" || scope === "twins") return isTrustedTwin(db, local, peer) ? twinHoldsAccount(db, event) : visitorEventRoute(db, local, peer, event);
   const project = replicationEventProject(db, event);
   // Data outside any project stays on the user's own machines: twins only.
-  if (!project) return isTrustedTwin(db, local, peer);
+  // With several people here nothing says whose it is, so it stays.
+  if (!project) return isTrustedTwin(db, local, peer) && !hasMembers(db);
   const policy = db.prepare("SELECT deleted FROM cluster_v2_resource_policy WHERE kind='project' AND resource_id=?")
     .get(project) as { deleted: number } | undefined;
   return Boolean(policy && !policy.deleted && mayReceiveResource(db, local, "project", project)

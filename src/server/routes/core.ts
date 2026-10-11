@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { adminGate } from "../admin.js";
+import { relayLiveRequests } from "../live-link.js";
 import { multiUserEnabled, runInRuntime } from "../../account-runtime.js";
 import { projectFolderConfined, runtimeForProject } from "../../project-runtime.js";
-import { asNode } from "../../account-context.js";
-import { getProject } from "../../store.js";
+import { actingAccount, asNode } from "../../account-context.js";
+import { getProject, projectVisible } from "../../store.js";
 import { createHash } from "node:crypto";
 import { dispatchSignedRuntime, twinRuntimeGuard } from "../runtime-peers.js";
 import path from "node:path";
@@ -147,11 +148,16 @@ app.post("/api/auth/login/mfa", (request, response, next) => {
 });
 
 app.use("/api", requireHttpAuth, requireCsrf, adminGate);
+// A visitor's own projects at home travel live: requests about them go home (live-link.ts).
+app.use("/api", relayLiveRequests);
 // A project's routes resolve harness paths and start processes as the project's OS account
 // in multi-user mode, the way its sockets and sessions do.
 app.param("projectId", (_request, response, next, projectId: string) => {
-  if (!multiUserEnabled()) { next(); return; }
   void (async () => {
+    // Someone else's project is answered like one that doesn't exist, before any handler
+    // can forward the request to a peer or tell the two apart.
+    if (actingAccount() && !await projectVisible(projectId)) { sendError(response, 404, "Project not found"); return; }
+    if (!multiUserEnabled()) { next(); return; }
     const runtime = await runtimeForProject(projectId).catch(() => undefined);
     if (!runtime) { next(); return; }
     // A folder its owner swapped for a link elsewhere is never served.

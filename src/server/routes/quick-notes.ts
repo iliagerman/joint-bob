@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { authorizeQuickNotePeer, forwardQuickNote, listSharedQuickNotes, offeredQuickNotes, sharedQuickNote } from "../shared-quick-notes.js";
 import { mapV2Error } from "../cluster-v2.js";
+import { secretHiddenFromActor } from "../../secrets.js";
 import { getProject, projectVisible } from "../../store.js";
 import { NotFoundError } from "../../not-found.js";
 import { getClusterNode } from "../../cluster.js";
@@ -93,6 +94,8 @@ app.post("/api/quick-notes", async (request, response, next) => {
     const payload = quickNoteSchema.parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
+    // A note carries only secrets its writer may use: the queue starts it later, as the node.
+    if ((payload.secretAccountIds ?? []).some(secretHiddenFromActor)) { sendError(response, 404, "Secret account not found"); return; }
     response.status(201).json({ note: createQuickNote({ ...payload, projectId: project.id }) });
   } catch (error) {
     next(error);
@@ -110,6 +113,8 @@ app.patch("/api/quick-notes/:noteId", async (request, response, next) => {
     const payload = quickNoteSchema.parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
+    // A note carries only secrets its writer may use: the queue starts it later, as the node.
+    if ((payload.secretAccountIds ?? []).some(secretHiddenFromActor)) { sendError(response, 404, "Secret account not found"); return; }
     response.json({ note: updateQuickNote(request.params.noteId, { ...payload, projectId: project.id }) });
   } catch (error) {
     mapV2Error(error, response, next);

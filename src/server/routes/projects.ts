@@ -1,7 +1,12 @@
+import { revokeAgentCapabilities } from "../../agent-capabilities.js";
 import path from "node:path";
-import { assertProjectFolderAllowed, projectHomeFor } from "../../project-runtime.js";
+import { assertProjectFolderAllowed, projectHomeFor, withProjectRuntime } from "../../project-runtime.js";
+import { liveHomeCatalog, projectHiddenFromOtherNodes, setProjectHiddenFromOtherNodes } from "../live-link.js";
+import { actorOwns } from "../../ownership.js";
 import { grantProjectFolder } from "../multi-user-setup.js";
 import { actingAccount, asNode } from "../../account-context.js";
+import { listHarnessSessions } from "../../harnesses.js";
+import type { HarnessId, ProjectRecord } from "../../types.js";
 import { terminalAccessSettings, terminalAllowedFor } from "../../settings.js";
 import { z } from 'zod';
 import type { AuthSession } from "../../auth.js";
@@ -14,6 +19,7 @@ import { importProjectDirectory, ProjectDirectoryImportError } from "../../proje
 import { setProjectLock } from "../../project-locks.js";
 import { getScopedResourcePaths, getSettings } from "../../settings.js";
 import { defaultSkillRoots, listSkills } from "../../skills.js";
+import { conversationBelongsElsewhere, getConversationRecord } from "../../conversation-records.js";
 import { addProject, getProject, listProjects, listWorkspaces, removeProject, renameProject, updateProjectColor, updateProjectMacPath, WorkspaceError } from "../../store.js";
 import { ensureSyncthingFolder, rescanSyncthingFolder } from "../../syncthing.js";
 import { listTasks, unmergedWorkspaceBlocksClose } from "../../tasks.js";
@@ -21,7 +27,7 @@ import { sessionWatcher } from "../chat.js";
 import { clusterPeerMayAccessProject, conversationBelongsToDoneTask, mappedPathInsideHome, peerMayOpenTerminal } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable, projectsWithSharedNames, projectView, relocateProjectWorkspace } from "../projects.js";
-import { broadcastToAllClients, broadcastToProject } from "../realtime.js";
+import { broadcastToProject, projectAudience } from "../realtime.js";
 import { projectListQuerySchema, projectLockSchema, projectPathMappingSchema, projectSchema, projectUpdateSchema, registeredHarnessIdSchema, sessionClassificationSchema, sessionColorSchema, sessionDoneSchema, sessionTitleSchema } from "../schemas.js";
 import { app } from "../state.js";
 import { peerSnapshot } from "../peer-snapshots.js";
@@ -35,7 +41,9 @@ app.get("/api/projects", async (request, response, next) => {
       includeSyncStatus: query.syncStatus === "true",
       filterForHomeNodeId: session?.isRemoteLogin ? session.homeNodeId : undefined,
     });
-    response.json({ projects });
+    // A visitor also sees their own projects at home, live; offline, only that home is offline.
+    const live = session ? await liveHomeCatalog(session) : undefined;
+    response.json({ projects: [...projects, ...(live?.projects ?? [])], ...(live ? { liveHome: live.home } : {}) });
   } catch (error) {
     next(error);
   }
@@ -110,8 +118,31 @@ app.post("/api/projects", async (request, response, next) => {
       await ensureSyncthingFolder(project.syncFolderId, project.name, project.path);
     }
     sessionWatcher.ensureProject(project);
-    broadcastToAllClients({ type: "projectsChanged" });
+    (await projectAudience(project.id))({ type: "projectsChanged" });
     response.status(201).json({ project: await projectView(project) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The owner keeps a project off the nodes they visit, even with their projects shown there.
+app.put("/api/projects/:projectId/other-nodes", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project || !actorOwns("project", project.id)) { sendError(response, 404, "Project not found"); return; }
+    const { hidden } = z.object({ hidden: z.boolean() }).strict().parse(request.body);
+    await setProjectHiddenFromOtherNodes(project.id, hidden);
+    response.json({ hiddenFromOtherNodes: hidden });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/projects/:projectId/other-nodes", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project || !actorOwns("project", project.id)) { sendError(response, 404, "Project not found"); return; }
+    response.json({ hiddenFromOtherNodes: await projectHiddenFromOtherNodes(project.id) });
   } catch (error) {
     next(error);
   }
@@ -155,7 +186,7 @@ app.patch("/api/projects/:projectId", async (request, response, next) => {
       await setProjectName(project.id, payload.name);
     }
     if (payload.color !== undefined) project = await updateProjectColor(project.id, payload.color);
-    broadcastToAllClients({ type: "projectsChanged" });
+    (await projectAudience(project.id))({ type: "projectsChanged" });
     response.json({ project: await projectView(project) });
   } catch (error) {
     next(error);
@@ -172,7 +203,7 @@ app.put("/api/projects/:projectId/lock", async (request, response, next) => {
     }
     const payload = projectLockSchema.parse(request.body);
     await setProjectLock(project.id, payload.locked);
-    broadcastToAllClients({ type: "projectsChanged" });
+    (await projectAudience(project.id))({ type: "projectsChanged" });
     response.json({ project: await projectView(project) });
   } catch (error) {
     next(error);
@@ -180,6 +211,25 @@ app.put("/api/projects/:projectId/lock", async (request, response, next) => {
 });
 
 // Rename a conversation. Works for both engines; an empty title clears the override.
+/**
+ * Whether a conversation named from this project is really another project's. A conversation
+ * is marked by its id alone, so the id must be this project's own, or nobody's yet (one named
+ * before its first message). Older conversations have no record: with several people on the
+ * node, those are looked up in the projects the caller can't see.
+ */
+export async function conversationOfAnotherProject(project: ProjectRecord, engine: HarnessId, sessionId: string): Promise<boolean> {
+  if (await getConversationRecord(project.id, engine, sessionId)) return false;
+  if (await conversationBelongsElsewhere(project.id, engine, sessionId)) return true;
+  if (!actingAccount()) return false;
+  const visible = new Set((await listProjects()).map((candidate) => candidate.id));
+  for (const other of await asNode(() => listProjects())) {
+    if (visible.has(other.id)) continue;
+    const sessions = await asNode(() => withProjectRuntime(other.id, () => listHarnessSessions(other))).catch(() => []);
+    if (sessions.some((session) => session.id === sessionId)) return true;
+  }
+  return false;
+}
+
 app.put("/api/projects/:projectId/sessions/title", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
@@ -188,6 +238,7 @@ app.put("/api/projects/:projectId/sessions/title", async (request, response, nex
       return;
     }
     const payload = sessionTitleSchema.parse(request.body);
+    if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) { sendError(response, 404, "Conversation not found"); return; }
     if (await conversationBelongsToDoneTask(project.id, payload.engine, payload.sessionId)) {
       sendError(response, 409, "Done ticket conversations are read-only");
       return;
@@ -210,6 +261,7 @@ app.put("/api/projects/:projectId/sessions/classification", async (request, resp
       return;
     }
     const payload = sessionClassificationSchema.parse(request.body);
+    if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) { sendError(response, 404, "Conversation not found"); return; }
     if (await conversationBelongsToDoneTask(project.id, payload.engine, payload.sessionId)) {
       sendError(response, 409, "Done ticket conversations are read-only");
       return;
@@ -231,6 +283,7 @@ app.put("/api/projects/:projectId/sessions/done", async (request, response, next
       return;
     }
     const payload = sessionDoneSchema.parse(request.body);
+    if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) { sendError(response, 404, "Conversation not found"); return; }
     // Like classification, a conversation can be closed out before its transcript exists.
     await setSessionDone(payload.sessionId, payload.done);
     broadcastToProject(project.id, { type: "sessionsChanged" });
@@ -248,6 +301,7 @@ app.put("/api/projects/:projectId/sessions/color", async (request, response, nex
       return;
     }
     const payload = sessionColorSchema.parse(request.body);
+    if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) { sendError(response, 404, "Conversation not found"); return; }
     if (await conversationBelongsToDoneTask(project.id, payload.engine, payload.sessionId)) {
       sendError(response, 409, "Done ticket conversations are read-only");
       return;
@@ -281,9 +335,11 @@ app.delete("/api/projects/:projectId", async (request, response, next) => {
       sendError(response, 409, "Resolve this project's ticket merges (or discard them) before deleting the project");
       return;
     }
+    const tellAudience = await projectAudience(project.id);
     await removeProject(project.id);
+    revokeAgentCapabilities(project.id);
     sessionWatcher.removeProject(project.id);
-    broadcastToAllClients({ type: "projectsChanged" });
+    tellAudience({ type: "projectsChanged" });
     response.status(204).send();
   } catch (error) {
     if (error instanceof Error && ["Settle task handoffs before deleting project", "Wait for task handoff settlement before deleting project", "Wait for task agents to finish before deleting project"].includes(error.message)) {

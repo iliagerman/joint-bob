@@ -47,8 +47,16 @@ export function helperInstalled(): boolean {
 }
 
 /** On only after the admin turned it on (which also moved the admin into their account). */
+export function multiUserTurnedOn(): boolean {
+  return value("multiUser.enabled", "false") === "true";
+}
+
 export function multiUserEnabled(): boolean {
-  return value("multiUser.enabled", "false") === "true" && helperInstalled();
+  if (!multiUserTurnedOn()) return false;
+  // Once on it stays on: without the helper nothing can run as a person's account, and
+  // running their work as the service instead would take the wall down silently.
+  if (!helperInstalled()) throw new Error("Multi-user mode is on but its helper is missing; reinstall it with `just install-multi-user`");
+  return true;
 }
 
 function homeRoot(): string {
@@ -99,6 +107,13 @@ export function runtimeHome(): string {
   return currentRuntime().home;
 }
 
+/** Whether the node's own MCP servers load here. They can carry the admin's tokens, so they
+    load into the admin's agents (and the service's), never into another person's. */
+export function nodeMcpServersApply(adminAccountId: string | undefined): boolean {
+  const runtime = currentRuntime();
+  return runtime.name === null || runtime.key === adminAccountId;
+}
+
 /** Whether node-wide harness path overrides apply: only to the service's own runtime. */
 export function usingServiceRuntime(): boolean {
   return currentRuntime().name === null;
@@ -123,14 +138,41 @@ export function spawnInRuntime(runtime: RuntimeAccount, command: string, args: s
   return spawn(wrapped.command, wrapped.args, { ...options, cwd: runtime.home, env: runtimeEnvironment(runtime, options.env ?? process.env) });
 }
 
+/**
+ * A program the node itself runs in a person's folder (git, mostly) runs as that person: the
+ * folder's contents are theirs to write, and git obeys the configuration it finds there. It
+ * starts in the account's home; the caller names the folder to the program itself.
+ */
+export function runtimeExec(command: string, args: string[], environment: NodeJS.ProcessEnv = process.env): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
+  const runtime = currentRuntime();
+  if (!runtime.name) return { command, args, env: environment };
+  const wrapped = runtimeCommand(runtime, runtime.home, command, args);
+  return { command: wrapped.command, args: wrapped.args, env: runtimeEnvironment(runtime, environment) };
+}
+
 /** What the service keeps for itself: its data directory, agent sockets and session bus. */
 const SERVICE_ONLY_ENVIRONMENT = ["JOINT_BOB_DATA_DIR", "PI_WEB_DATA_DIR", "JOINT_BOB_TASK_DATA_DIR", "JOINT_BOB_TASK_SOCKET", "SSH_AUTH_SOCK", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "JOINT_BOB_BROWSER_TOKEN_FILE"];
 
+/** What an account may inherit from the service's own environment: how to find and run
+    programs, and Joint Bob's and the harnesses' plain configuration. */
+const INHERITED_ENVIRONMENT = /^(PATH|LANG|LANGUAGE|LC_[A-Z_]+|TERM|COLORTERM|TZ|SHELL|NODE_[A-Z_]+|SSL_CERT_(FILE|DIR)|(HTTPS?|ALL|NO)_PROXY|(https?|all|no)_proxy|(JOINT_BOB|PI|CLAUDE|KIRO)_[A-Z0-9_]+)$/;
+const SECRET_ENVIRONMENT = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|KEY/i;
+
+/**
+ * The environment of a process that runs as a person's account. Whatever the caller set for
+ * this run is kept. Of what merely came along from the service's own environment only the
+ * plain configuration above is: the service's keys, tokens and passwords are never a person's.
+ */
 export function runtimeEnvironment(runtime: RuntimeAccount, environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (!runtime.name) return environment;
-  const result: NodeJS.ProcessEnv = { ...environment, HOME: runtime.home, TMPDIR: path.join(runtime.home, ".tmp") };
-  for (const key of SERVICE_ONLY_ENVIRONMENT) delete result[key];
-  return result;
+  const result: NodeJS.ProcessEnv = {};
+  for (const [key, entry] of Object.entries(environment)) {
+    if (entry === undefined || SERVICE_ONLY_ENVIRONMENT.includes(key)) continue;
+    const inherited = process.env[key] === entry;
+    if (inherited && (!INHERITED_ENVIRONMENT.test(key) || SECRET_ENVIRONMENT.test(key))) continue;
+    result[key] = entry;
+  }
+  return { ...result, HOME: runtime.home, TMPDIR: path.join(runtime.home, ".tmp") };
 }
 
 /** Model subscriptions are the node's. Claude reaches a person's account as a long-lived

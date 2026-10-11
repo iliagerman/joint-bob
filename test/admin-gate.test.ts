@@ -83,7 +83,7 @@ test("every admin route answers a member like an unknown route, and the admin st
 
     const own = await api<Record<string, unknown>>(node, noam, "GET", "/settings");
     assert.equal(own.status, 200);
-    assert.deepEqual(Object.keys(own.body).sort(), ["autoCompactThreshold", "conversationCommands", "conversationDefaults", "conversationHistoryDays", "conversationLabels", "digestAttachments", "projects"], "a member sees only their own settings");
+    assert.deepEqual(Object.keys(own.body).sort(), ["autoCompactThreshold", "conversationCommands", "conversationDefaults", "conversationHistoryDays", "conversationLabels", "digestAttachments", "projects", "showProjectsOnOtherNodes"], "a member sees only their own settings");
     const changed = await api<{ conversationLabels: string[] }>(node, noam, "PUT", "/settings/personal", { conversationLabels: ["noam-only"] });
     assert.equal(changed.status, 200, JSON.stringify(changed.body));
     assert.deepEqual(changed.body.conversationLabels, ["noam-only"]);

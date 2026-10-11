@@ -1,9 +1,9 @@
 import { fileURLToPath } from "node:url";
-import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
+import { browserAgentEnvironment, browserAgentInstructions, revokeBrowserAgentTokens } from "./browser-agent.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { isHarnessId, type HarnessId } from "./types.js";
 import { websiteCredentialSnapshot, type SecretConversation } from "./secrets.js";
-import { ntfyAgentEnvironment, ntfyAgentInstructions } from "./ntfy-agent.js";
+import { ntfyAgentEnvironment, ntfyAgentInstructions, revokeNtfyAgentTokens } from "./ntfy-agent.js";
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 import { getSettings } from "./settings.js";
 import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-git-policy.js";
@@ -137,6 +137,12 @@ export function agentCapabilityEnvironment(projectId: string, engine: HarnessId,
   const identity = { projectId, engine, conversationId, secretConversation };
   validateCapabilities(identity);
   return Object.assign({}, ...agentCapabilities.map((capability) => capability.environment(identity)));
+}
+
+/** Ends the tokens handed to a deleted conversation's agents, or to all of a deleted project's. */
+export function revokeAgentCapabilities(projectId: string, conversationId?: string): void {
+  revokeBrowserAgentTokens(projectId, conversationId);
+  revokeNtfyAgentTokens(projectId, conversationId);
 }
 
 export function agentCapabilityInstructionFiles(): Array<{ path: string; content: string }> {

@@ -362,6 +362,7 @@ async function loadSettings() {
   elements.settingsAutoCompactThreshold.value = settings.autoCompactThreshold ?? 70;
   elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked;
   elements.settingsDigestAttachments.checked = settings.digestAttachments;
+  document.querySelector("#settingsShowProjectsOnOtherNodes").checked = settings.showProjectsOnOtherNodes !== false;
   elements.settingsStartConversationEnabled.checked = settings.conversationCommands.start.enabled;
   elements.settingsStartConversationPrompt.value = settings.conversationCommands.start.prompt;
   elements.settingsEndConversationEnabled.checked = settings.conversationCommands.end.enabled;
@@ -391,6 +392,7 @@ function personalSettingsValue() {
     conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
     autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
     digestAttachments: elements.settingsDigestAttachments.checked,
+    showProjectsOnOtherNodes: document.querySelector("#settingsShowProjectsOnOtherNodes").checked,
     conversationCommands: {
       start: { enabled: elements.settingsStartConversationEnabled.checked, prompt: elements.settingsStartConversationPrompt.value.trim() },
       end: { enabled: elements.settingsEndConversationEnabled.checked, prompt: elements.settingsEndConversationPrompt.value.trim() },
@@ -439,6 +441,7 @@ async function saveSettings(event) {
       shellCommandTimeoutSeconds: elements.settingsShellTimeoutEnabled.checked ? Number(elements.settingsShellTimeoutSeconds.value) : null,
       subprocessMaxLifetimeMinutes: Number(elements.settingsSubprocessMaxLifetimeMinutes.value),
       digestAttachments: elements.settingsDigestAttachments.checked,
+      showProjectsOnOtherNodes: document.querySelector("#settingsShowProjectsOnOtherNodes").checked,
       ...(syncCheck ? { syncCheck } : {}),
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
       conversationCommands: {

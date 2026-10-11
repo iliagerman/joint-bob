@@ -114,6 +114,8 @@ function enqueueOwnEvents(db: DatabaseSync, local: string): boolean {
     if (added.length) {
       for (const row of db.prepare("SELECT rowid,* FROM replication_outbox WHERE origin_node_id=? ORDER BY rowid").iterate(local) as unknown as Iterable<OutboxRow>) {
         const event = eventFromRow(row), project = replicationEventProject(db, event);
+        // A person's own rows about the project (pins, recents, review marks) never go to a hub.
+        if (["account", "twins"].includes(EVENT_SCOPES[event.entityType] ?? "account")) continue;
         for (const pair of added) {
           const [clusterId, projectId] = pair.split("\n");
           if (project === projectId) queueForCluster(db, local, clusterId, event, now);

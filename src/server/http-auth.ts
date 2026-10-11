@@ -124,6 +124,13 @@ async function requireClusterV2Auth(request: Request, response: Response, next: 
 }
 
 export async function requireHttpAuth(request: Request, response: Response, next: NextFunction): Promise<void> {
+  // A live request from a node one of our people signed in to, already checked (live-link.ts).
+  if (response.locals.liveRelay && response.locals.authSession) {
+    // Only a project's own routes; never the routes nodes and sign-ins use.
+    if (!/^\/projects\/[^/]+(\/|$)/i.test(request.path)) { sendError(response, 404, "Not found"); return; }
+    runAsAccount(actingAccountFromSession(response.locals.authSession as AuthSession), next);
+    return;
+  }
   if (isClusterV2Url(`/api${request.path}`)) {
     await requireClusterV2Auth(request, response, next);
     return;
@@ -156,7 +163,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent) {
     next();
     return;
   }

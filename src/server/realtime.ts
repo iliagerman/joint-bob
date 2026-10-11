@@ -7,7 +7,7 @@ import { claimConversationNotification, conversationNotifications, finishConvers
 import { listPushSubscriberUserIds, notifyConversationReview, reviewNotificationBody } from "../push.js";
 import { type ReplicationBatch, replicationInvalidations } from "../replication.js";
 import { getHarness, refreshHarnessSessions } from "../harnesses.js";
-import { getProject } from "../store.js";
+import { getProject, projectVisible } from "../store.js";
 import { listPendingUpdateRecoveries, saveUpdateRecoveries, type UpdateRecoveryRecord } from "../update-recovery.js";
 import { UpdateRefusalError } from "../updater.js";
 import { harnessChatConnections, drainHarnessPromptQueue } from "./harness-chat.js";
@@ -65,6 +65,25 @@ export function broadcastToAllClients(payload: unknown, accountId?: string): voi
   for (const clients of watchClients.values()) for (const client of clients) sockets.add(client);
   for (const session of harnessSessions.values()) for (const client of session.clients) sockets.add(client);
   for (const socket of sockets) if (!accountId || socketAccounts.get(socket)?.accountId === accountId) send(socket, payload);
+}
+/**
+ * The open pages of the people who can see a project, as it is now: who to tell that the
+ * project list changed. Asked before a delete, it still names them afterwards. Nobody else
+ * learns that anything happened.
+ */
+export async function projectAudience(projectId: string): Promise<(payload: unknown) => void> {
+  const sockets = new Set<WebSocket>();
+  for (const clients of watchClients.values()) for (const client of clients) sockets.add(client);
+  for (const session of harnessSessions.values()) for (const client of session.clients) sockets.add(client);
+  const sees = new Map<string, boolean>();
+  const audience: WebSocket[] = [];
+  for (const socket of sockets) {
+    const account = socketAccounts.get(socket);
+    if (!account) { audience.push(socket); continue; } // A peer's socket: the node's own business.
+    if (!sees.has(account.accountId)) sees.set(account.accountId, await projectVisible(projectId, account));
+    if (sees.get(account.accountId)) audience.push(socket);
+  }
+  return (payload) => { for (const socket of audience) send(socket, payload); };
 }
 export function broadcastSessionsChangedToAllProjects(): void { broadcastToAllClients({ type: "sessionsChanged" }); }
 export function wakeQueuedConversations(): void {

@@ -31,6 +31,26 @@ function storedIdsFor(db: DatabaseSync, accountId: string): string[] {
   return row?.account_id && row.account_id !== accountId ? [accountId, row.account_id] : [accountId];
 }
 
+/**
+ * Whether a person here may see something another node sent this one. From the admin's twin
+ * it is the admin's. From a cluster member it is for the people who joined a cluster both
+ * nodes are in (one of `only`, when the sender named the clusters), the admin like anyone.
+ */
+export function accountReceivesFrom(db: DatabaseSync, account: { accountId: string; role: string | null }, nodeId: string, only?: string[]): boolean {
+  try {
+    const has = (table: string): boolean => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
+    if (has("cluster_v2_twin_relationships") && db.prepare("SELECT 1 FROM cluster_v2_twin_relationships WHERE peer_node_id = ? AND status = 'active'").get(nodeId)) return account.role === "admin";
+    if (!has("sharing_memberships") || !has("cluster_node")) return account.role === "admin";
+    const shared = (db.prepare(`SELECT a.cluster_id AS id FROM sharing_memberships a JOIN sharing_memberships b ON b.cluster_id = a.cluster_id
+      WHERE a.node_id = (SELECT id FROM cluster_node LIMIT 1) AND b.node_id = ?`).all(nodeId) as unknown as Array<{ id: string }>).map((row) => row.id);
+    // Nothing says which cluster it came through: it stays with the admin, as before people joined clusters.
+    if (!shared.length) return account.role === "admin";
+    return shared.filter((clusterId) => !only?.length || only.includes(clusterId)).some((clusterId) => accountInCluster(db, account.accountId, clusterId));
+  } catch {
+    return false;
+  }
+}
+
 export function accountInCluster(db: DatabaseSync, accountId: string, clusterId: string): boolean {
   const members = clusterLocalMembers(db, clusterId);
   return storedIdsFor(db, accountId).some((id) => members.includes(id));

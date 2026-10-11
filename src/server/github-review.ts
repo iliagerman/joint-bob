@@ -1,3 +1,4 @@
+import { runtimeExec } from "../account-runtime.js";
 import { execFile } from "../subprocess.js";
 import { promisify } from "node:util";
 import { parse } from "yaml";
@@ -17,7 +18,10 @@ function tokenFor(credentials: Credentials, repository: { owner: string; host?: 
 
 export async function githubRepository(cwd: string, credentials?: Credentials, request: typeof fetch = fetch): Promise<{ owner: string; repo: string; host?: string }> {
   let remote: string;
-  try { remote = (await exec("git", ["-C", cwd, "remote", "get-url", "origin"], { timeout: 10_000 })).stdout.trim(); }
+  try {
+    const launch = runtimeExec("git", ["-C", cwd, "remote", "get-url", "origin"]);
+    remote = (await exec(launch.command, launch.args, { timeout: 10_000, env: launch.env })).stdout.trim();
+  }
   catch { throw new GitReviewError(400, "GitHub remote origin is not configured"); }
   const scp = remote.match(/^git@([A-Za-z0-9][A-Za-z0-9_.-]*):([^/]+)\/([^/]+?)(?:\.git)?$/);
   let parts = scp?.slice(2);

@@ -1,3 +1,4 @@
+import { revokeAgentCapabilities } from "../agent-capabilities.js";
 import type { DatabaseSync } from "node:sqlite";
 import { asNode } from "../account-context.js";
 import { ACCOUNT_KEY_COLUMNS } from "../account-keys.js";
@@ -22,7 +23,7 @@ export async function deleteAccountData(accountId: string): Promise<void> {
   ensureOwnershipSchema(db);
   const local = await getClusterNode();
   await asNode(async () => {
-    for (const projectId of ownedResourceIds("project", accountId, db)) await removeProject(projectId);
+    for (const projectId of ownedResourceIds("project", accountId, db)) { await removeProject(projectId); revokeAgentCapabilities(projectId); }
     for (const secretId of ownedResourceIds("secret", accountId, db)) await deleteSecretAccount(secretId).catch(() => undefined);
     const routing = routingConfigDatabase();
     for (const configId of ownedResourceIds("routing_config", accountId, db)) { try { deleteRoutingConfig(routing, local.id, configId); } catch { /* already gone */ } }

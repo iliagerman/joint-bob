@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { resourceOwner } from "../ownership.js";
+import { actingAccount, runAsAccount } from "../account-context.js";
+import { memberOwnedIds, ownerAsActor, resourceOwner } from "../ownership.js";
 import WebSocket from "ws";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, runtimeFetch, runtimeSocketHeaders } from "./runtime-peers.js";
@@ -280,7 +281,10 @@ async function claimAndDispatch(existing: QuickNote, from: QuickNote["status"][]
   const reservationKey = `${note.projectId}:${sessionId}`;
   reservations.set(reservationKey, note.projectId);
   try {
-    await validateLaunchContext(note.projectId, note.secretAccountIds, Boolean(note.nodeId && note.nodeId !== (await getClusterNode()).id));
+    // A person's own project launches as that person, so only their own secrets can attach.
+    const remote = Boolean(note.nodeId && note.nodeId !== (await getClusterNode()).id);
+    const owner = memberOwnedIds("project").has(note.projectId) ? ownerAsActor(resourceOwner("project", note.projectId)) : actingAccount();
+    await runAsAccount(owner, () => validateLaunchContext(note.projectId, note.secretAccountIds, remote));
     if (note.thinkingLevel && !REASONING_LEVELS.includes(note.thinkingLevel as (typeof REASONING_LEVELS)[number])) {
       throw new QuickNoteLaunchError(400, `Reasoning level is not supported: ${note.thinkingLevel}`);
     }

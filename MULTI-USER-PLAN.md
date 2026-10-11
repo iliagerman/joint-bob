@@ -273,6 +273,20 @@ Signed in on another node, you see all your own projects, not only the shared on
 - **The wall.** The relay is server code on the visited node. That node's users and admin get no view of it in the app, its logs carry no content, and the trust boundary for someone with `sudo` there is the same as in open question 8.
 - **Sharing is unchanged.** Other people still see only what you share into a cluster.
 
+**How it's built (phase 7):**
+- On the visited node, any API request or socket of a visitor that names a project the node doesn't have is relayed to their home. The project id can be in the path, the query or the body. The relay goes to `/api/cluster/v2/live/<account>/…`, signed by the visited node with the account in the signed path. Answers stream back with `Cache-Control: no-store`, and nothing is written.
+- At home the request runs through the same routes as there, as that person. Home answers only while all of these hold:
+  - the person is signed in on that node, and it's in one of their clusters
+  - neither node blocks the other
+  - the person shows their projects on other nodes
+  - every project the request names is theirs, local, not hidden, and not already shared with that node
+- Project and workspace lists on the visited node add the visitor's live projects, marked "At home". With home offline they show a note instead, and opening one answers 503.
+- Sockets are relayed the same way. A live socket can't be a terminal or a browser viewer.
+
+**Known limits:**
+- A relayed request may take up to two minutes; a longer one fails rather than hang.
+- Lists that span projects, like search, Tasks and usage, show the visited node's projects only.
+
 ## 4. Phases
 
 Each phase ships on its own. Single-user nodes keep today's behaviour, except that the terminal is off by default.

@@ -1,3 +1,4 @@
+import { runtimeExec } from "./account-runtime.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -16,8 +17,9 @@ export type GitCatchUp = "not-repository" | "no-upstream" | "current" | "moved" 
 interface GitRun { stdout: string; stderr: string; code: number; }
 
 async function run(cwd: string, env: NodeJS.ProcessEnv, args: string[], input?: string): Promise<GitRun> {
-  const pending = execute("git", ["-C", cwd, ...args], {
-    env: { ...process.env, ...env, GIT_TERMINAL_PROMPT: "0" }, encoding: "utf8", timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_OUTPUT_BYTES,
+  const launch = runtimeExec("git", ["-C", cwd, ...args], { ...process.env, ...env, GIT_TERMINAL_PROMPT: "0" });
+  const pending = execute(launch.command, launch.args, {
+    env: launch.env, encoding: "utf8", timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_OUTPUT_BYTES,
   });
   if (input !== undefined) pending.child.stdin!.end(input);
   try {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { ActingAccount } from "../account-context.js";
-import { endVisitorSessions, listLocalUsers, replicatedUserByAccount } from "../auth.js";
+import { endVisitorSessions, forgetVisitorSignInProof, listLocalUsers, replicatedUserByAccount, roamingProofValid, visitorSignInProof } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
@@ -13,7 +13,7 @@ import { applyUserPinEvent, deleteUserPins, userPinEvents } from "../user-pins.j
 import { accountSnapshotFor } from "../user-replication.js";
 import { peerReachable } from "./peer-availability.js";
 import { broadcastToAllClients } from "./realtime.js";
-import { replicationPeers, signedPeerPost } from "./replication-v2.js";
+import { replicationPeers, signedPeerPost, visitedNodeSeesProject } from "./replication-v2.js";
 import { userPreferencesSchema } from "./schemas.js";
 
 /**
@@ -80,10 +80,12 @@ function mayRoamTo(db: DatabaseSync, local: string, peer: string, id: string): b
 
 /** A node `sender` says one of our people signed in there. */
 export async function receiveSignedIn(sender: string, input: unknown): Promise<void> {
-  const { accountId: id } = z.object({ accountId }).strict().parse(input);
+  const { accountId: id, proof } = z.object({ accountId, proof: z.string().regex(/^[0-9a-f]{64}$/) }).strict().parse(input);
   const db = await clusterV2Database(), local = await getClusterNode();
   ensureRoamingSchema(db);
-  if (!localAccount(id) || !mayRoamTo(db, local.id, sender, id)) throw new ClusterV2HttpError(404, "Not found");
+  const account = localAccount(id);
+  // A node's word isn't enough: it shows what only the person's password could make there.
+  if (!account || !mayRoamTo(db, local.id, sender, id) || !roamingProofValid(account.userId!, proof)) throw new ClusterV2HttpError(404, "Not found");
   db.prepare("INSERT OR IGNORE INTO account_roaming_nodes (account_id, node_id, since) VALUES (?, ?, ?)").run(id, sender, new Date().toISOString());
   db.prepare("DELETE FROM account_forget_notices WHERE account_id = ? AND node_id = ?").run(id, sender);
   void flushProfiles(true).catch((error) => console.warn("Profile delivery failed", error));
@@ -97,7 +99,8 @@ export async function receiveRoamingEdit(sender: string, input: unknown): Promis
   const account = localAccount(edit.accountId);
   const roams = db.prepare("SELECT 1 FROM account_roaming_nodes WHERE account_id = ? AND node_id = ?").get(edit.accountId, sender);
   if (!account || !roams || !mayRoamTo(db, local.id, sender, edit.accountId)) throw new ClusterV2HttpError(404, "Not found");
-  if (edit.settings) updatePersonalSettings(edit.settings as Partial<PersonalSettings>, account);
+  // Whether their projects show on other nodes is decided at home only.
+  if (edit.settings) { delete edit.settings.showProjectsOnOtherNodes; updatePersonalSettings(edit.settings as Partial<PersonalSettings>, account); }
   if (edit.preferences) updateUserPreferences(account.userId!, edit.preferences as never);
   broadcastToAllClients({ type: "profileChanged" }, edit.accountId);
   void flushProfiles(true).catch((error) => console.warn("Profile delivery failed", error));
@@ -152,8 +155,10 @@ async function deliverProfiles(): Promise<void> {
       continue;
     }
     const peer = peers.get(row.node_id);
-    const profile = profileFor(row.account_id);
-    if (!peer || !profile) continue;
+    const whole = profileFor(row.account_id);
+    if (!peer || !whole) continue;
+    // Pins and recents go along only for projects that node can show the person.
+    const profile = { ...whole, events: whole.events.filter((event) => { const project = (event.payload as { projectId?: unknown }).projectId; return typeof project !== "string" || !project || visitedNodeSeesProject(db, local.id, row.node_id, row.account_id, project); }) };
     const digest = profileDigest(profile);
     const delivered = db.prepare("SELECT digest FROM account_profile_deliveries WHERE account_id = ? AND node_id = ?").get(row.account_id, row.node_id) as { digest: string } | undefined;
     if (delivered?.digest === digest) continue;
@@ -206,7 +211,10 @@ export async function sendSignInNotices(): Promise<void> {
     const peer = peers.get(row.home_node_id);
     if (!peer || Date.now() - (noticeSentAt.get(row.account_id) ?? 0) < 30_000) continue;
     noticeSentAt.set(row.account_id, Date.now());
-    try { await signedPeerPost(peer, "/api/cluster/v2/accounts/signed-in", { accountId: row.account_id }); }
+    const visitor = replicatedUserByAccount(row.account_id);
+    const proof = visitor && visitorSignInProof(visitor.userId);
+    if (!proof) continue; // Nobody signed in with their password here since the record arrived.
+    try { await signedPeerPost(peer, "/api/cluster/v2/accounts/signed-in", { accountId: row.account_id, proof }); }
     catch (error) { console.warn(`Sign-in notice to ${row.home_node_id} failed: ${error instanceof Error ? error.message : "unknown error"}`); }
   }
 }
@@ -235,8 +243,9 @@ export async function receiveProfile(sender: string, input: unknown): Promise<vo
 export async function receiveForget(sender: string, input: unknown): Promise<void> {
   const { accountId: id } = z.object({ accountId }).strict().parse(input);
   const visitor = replicatedUserByAccount(id);
-  if (visitor && visitor.homeNodeId !== sender) throw new ClusterV2HttpError(404, "Not found");
-  await forgetVisitor(id, visitor?.userId);
+  // Only a visitor's own home node takes their copy away; nobody else's, and no local person's.
+  if (!visitor || visitor.homeNodeId !== sender) throw new ClusterV2HttpError(404, "Not found");
+  await forgetVisitor(id, visitor.userId);
 }
 
 /** Deletes a visitor's copy here: settings, preferences, pins, recents, and their sessions. */
@@ -249,6 +258,7 @@ export async function forgetVisitor(id: string, userId?: string): Promise<void> 
   db.prepare("DELETE FROM visitor_profiles WHERE account_id = ?").run(id);
   if (userId) {
     db.prepare("DELETE FROM user_preferences WHERE user_id = ?").run(userId);
+    forgetVisitorSignInProof(userId);
     endVisitorSessions(userId);
   }
 }

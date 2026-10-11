@@ -55,6 +55,10 @@ export interface ProjectView extends ProjectRecord {
   lock?: ProjectLock;
   /** True when another node holds the lock, so this node must not edit the project. */
   lockedElsewhere?: boolean;
+  /** Its owner keeps it off the nodes they visit. */
+  hiddenFromOtherNodes?: boolean;
+  /** One of a visitor's own projects at home, relayed live and never kept here. */
+  live?: { homeNodeId: string };
 }
 
 export type HarnessId = string;

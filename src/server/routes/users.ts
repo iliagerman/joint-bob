@@ -8,8 +8,9 @@ import { seedPersonalSettings } from "../../settings.js";
 import { saveWorkspace } from "../../store.js";
 import { deleteAccountData, materializeAdminOwnership } from "../account-data.js";
 import { createAccountRuntime, deleteAccountRuntime, enableMultiUser, MultiUserSetupError, runSelfTest } from "../multi-user-setup.js";
-import { helperInstalled, multiUserEnabled } from "../../account-runtime.js";
+import { helperInstalled, multiUserTurnedOn, osNameFor } from "../../account-runtime.js";
 import { sendError } from "../http-auth.js";
+import { forgetAllRoaming } from "../roaming.js";
 import { app } from "../state.js";
 
 const userId = z.string().min(1).max(64);
@@ -25,13 +26,13 @@ function authFailure(error: unknown, response: Parameters<typeof sendError>[0], 
 
 /** A second person needs the machine wall up: the self-test passed and the mode is on. */
 function canAddPeople(): boolean {
-  return multiUserStatus().ready && (multiUserEnabled() || process.env.JOINT_BOB_TEST_MULTI_USER_READY === "1");
+  return multiUserStatus().ready && (multiUserTurnedOn() && helperInstalled() || process.env.JOINT_BOB_TEST_MULTI_USER_READY === "1");
 }
 
 // Admin-only (see admin.ts): accounts, never activity.
 app.get("/api/users", (_request, response) => {
   const pending = pendingAdminTransfer();
-  response.json({ users: listLocalUsers(), multiUser: { ...multiUserStatus(), enabled: multiUserEnabled(), helperPresent: helperInstalled(), canAddPeople: canAddPeople(), claudeToken: Boolean(value("multiUser.claudeToken", "")) }, adminTransfer: pending ?? null });
+  response.json({ users: listLocalUsers(), multiUser: { ...multiUserStatus(), enabled: multiUserTurnedOn(), helperPresent: helperInstalled(), canAddPeople: canAddPeople(), claudeToken: Boolean(value("multiUser.claudeToken", "")) }, adminTransfer: pending ?? null });
 });
 
 // Admin-only: the node's Claude subscription for people's accounts. Saved, never shown again.
@@ -63,6 +64,9 @@ app.post("/api/users", async (request, response, next) => {
     const session = response.locals.authSession as AuthSession;
     if (!canAddPeople()) { sendError(response, 409, "Set up multi-user mode before adding people"); return; }
     const input = createSchema.parse(request.body);
+    // Two usernames that come to one OS account would share a home, and deleting one would
+    // delete the other's.
+    if (listLocalUsers().some((user) => osNameFor(user.username) === osNameFor(input.username))) { sendError(response, 409, "That username is too close to an existing one"); return; }
     const created = createLocalUser(input, session.userId);
     try { await createAccountRuntime(created.user.accountId, created.user.username); }
     catch (error) { deleteLocalUser(created.user.userId, session.userId); throw error; }
@@ -97,6 +101,8 @@ app.delete("/api/users/:userId", async (request, response, next) => {
     const { confirm } = deleteSchema.parse(request.body ?? {});
     if (confirm !== user.username) { sendError(response, 400, "Type the username to confirm"); return; }
     if (user.role === "admin") { sendError(response, 409, "The admin account can't be deleted"); return; }
+    // Their copies on the nodes they signed in to go first, while this node can still say so.
+    await forgetAllRoaming(user.accountId).catch((error) => console.warn("Could not take back a deleted person's copies on other nodes", error));
     await deleteAccountData(user.accountId);
     await deleteAccountRuntime(user.accountId, user.username);
     deleteLocalUser(user.userId, session.userId);

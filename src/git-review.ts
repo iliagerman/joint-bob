@@ -1,3 +1,4 @@
+import { runtimeExec } from "./account-runtime.js";
 import { execFile } from "./subprocess.js";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -64,12 +65,13 @@ const DIFF_MAX_BYTES = 2 * 1024 * 1024;
 
 async function git(cwd: string, args: string[], options: { maxBuffer?: number } = {}): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+    // A review command must never prompt for credentials or open a pager.
+    const launch = runtimeExec("git", ["-C", cwd, ...args], { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", GIT_PAGER: "cat", PAGER: "cat" });
+    const { stdout } = await execFileAsync(launch.command, launch.args, {
       encoding: "utf8",
       maxBuffer: options.maxBuffer ?? GIT_MAX_BUFFER,
       timeout: GIT_TIMEOUT_MS,
-      // A review command must never prompt for credentials or open a pager.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", GIT_PAGER: "cat", PAGER: "cat" },
+      env: launch.env,
     });
     return stdout;
   } catch (error) {

@@ -1,3 +1,4 @@
+import { accountOfSomeoneElse } from "./ownership.js";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { getClusterNode } from "./cluster.js";
@@ -531,11 +532,15 @@ export async function pushSubscriptionEventsForPeer(peerId: string, now = new Da
     WHERE d.peer_id = ? AND d.delivered_at IS NULL AND d.next_attempt_at <= ?
     ORDER BY e.created_at, e.event_id LIMIT 100
   `).all(peerId, at) as unknown as EventRow[];
-  return rows.map((row) => ({
+  const events = rows.map((row) => ({
     id: row.event_id, entityKey: row.entity_key, operation: row.operation,
     value: JSON.parse(decrypt(row.payload_encrypted)) as PushSubscriptionEvent["value"],
     updatedAt: row.updated_at, originNodeId: row.origin_node_id, createdAt: row.created_at,
   }));
+  // Twins are the admin's machines: a member's or a visitor's devices are never told to one.
+  const others = events.filter((event) => { const account = (event.value as { username?: unknown }).username; return typeof account === "string" && /^[0-9a-f]{32}$/.test(account) && accountOfSomeoneElse(account, db); });
+  await recordPushSubscriptionReceipt(peerId, others.map((event) => event.id));
+  return events.filter((event) => !others.includes(event));
 }
 
 export async function recordPushSubscriptionReceipt(peerId: string, eventIds: string[]): Promise<void> {

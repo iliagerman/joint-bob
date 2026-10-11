@@ -1,5 +1,8 @@
+import { isTrustedTwin } from "../cluster-sharing-policy.js";
+import { clusterV2Database } from "../cluster-v2-store.js";
 import { randomUUID } from "node:crypto";
 import { projectFolderConfined, runtimeForProject } from "../project-runtime.js";
+import { liveSocketSession, relayLiveSocket } from "./live-link.js";
 import { multiUserEnabled, runInRuntime, type RuntimeAccount } from "../account-runtime.js";
 import { decodeAuthor, encodeAuthor, type MessageAuthor } from "../message-authors.js";
 import { actingAccountFromSession, asNode, runAsAccount, type ActingAccount } from "../account-context.js";
@@ -110,12 +113,36 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   // Who is writing: the signed-in person, or the person a peer relays, named in the signed URL.
   const author: MessageAuthor | undefined = session && !session.mustChangePassword
     ? { accountId: session.accountId, email: session.email, username: session.username, homeNodeId: session.homeNodeId }
-    : signedPeer ? decodeAuthor(url.searchParams.get("author")) : undefined;
+    : signedPeer ? await peerAuthor(signedPeer, decodeAuthor(url.searchParams.get("author"))) : undefined;
   // Everything the socket does for its project resolves paths and starts processes as the
   // project's OS account (multi-user mode); without the mode this is the service itself.
   const runtime = await socketRuntime(url.searchParams.get("projectId"));
   if (runtime === "unconfined") { socket.close(1008, "This project's folder is outside its owner's home"); return; }
   const inRuntime = <T>(work: () => T): T => runtime ? runInRuntime(runtime, work) : work();
+  // One of our people, on a node they signed in to, opening one of their own projects live.
+  const liveAccount = signedPeer ? url.searchParams.get("liveAccount") : null;
+  if (signedPeer && liveAccount) {
+    const live = await liveSocketSession(signedPeer, liveAccount, url.searchParams.get("projectId") ?? "");
+    if (!live || browserMode) { socket.close(1008, "Not found"); return; }
+    const account = actingAccountFromSession(live);
+    socketAccounts.set(socket, account);
+    const emit = socket.emit.bind(socket) as (...args: unknown[]) => boolean;
+    // The link is checked again before each thing the person sends: once they forget that
+    // node, hide the project or stop showing their projects, the socket ends.
+    let checked: Promise<unknown> = Promise.resolve();
+    const projectId = url.searchParams.get("projectId") ?? "";
+    (socket as unknown as { emit: (...args: unknown[]) => boolean }).emit = (...args) => {
+      if (args[0] !== "message") return runAsAccount(account, () => inRuntime(() => emit(...args)));
+      checked = checked.then(async () => {
+        if (!await liveSocketSession(signedPeer, liveAccount, projectId)) { socket.close(1008, "Not found"); return; }
+        runAsAccount(account, () => inRuntime(() => emit(...args)));
+      }).catch(() => socket.close(1011, "Not available"));
+      return true;
+    };
+    const liveAuthor: MessageAuthor = { accountId: live.accountId, email: live.email, username: live.username, homeNodeId: null };
+    await runAsAccount(account, () => inRuntime(() => handleBrowserConnection(socket, request, url, live, liveAuthor, undefined, browserMode, undefined)));
+    return;
+  }
   // A browser's socket acts for its person from here on, including every message it sends.
   if (!machineAuthenticated && session) {
     const account = actingAccountFromSession(session);
@@ -130,6 +157,15 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
     (socket as unknown as { emit: (...args: unknown[]) => boolean }).emit = (...args) => inRuntime(() => emit(...args));
   }
   await inRuntime(() => handleBrowserConnection(socket, request, url, session, author, signedPeer, browserMode, browserMachineId));
+}
+
+/** An author a peer relays is one of that peer's people unless it names another home, so
+    nobody arriving through a peer is recorded as a person of this node. A twin is this
+    node's own second machine: its people are this node's. */
+async function peerAuthor(peer: string, author: MessageAuthor | undefined): Promise<MessageAuthor | undefined> {
+  if (!author || author.homeNodeId) return author;
+  const db = await clusterV2Database(), local = await getClusterNode();
+  return isTrustedTwin(db, local.id, peer) ? author : { ...author, homeNodeId: peer };
 }
 
 async function socketRuntime(projectId: string | null): Promise<RuntimeAccount | "unconfined" | undefined> {
@@ -158,6 +194,8 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
   const projectId = url.searchParams.get("projectId") ?? "";
   const project = await getProject(projectId);
   if (!project) {
+    // A visitor's own project at home: the socket goes there, live (live-link.ts).
+    if (session?.isRemoteLogin && session.homeNodeId && !signedPeer) { await relayLiveSocket(socket, url, session, author); return; }
     socket.close(1008, "Project not found");
     return;
   }

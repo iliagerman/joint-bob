@@ -1,6 +1,9 @@
 import { z } from "zod";
-import { runAsAccount } from "./account-context.js";
-import { ownerAsActor, resourceOwner } from "./ownership.js";
+import { type ActingAccount, asNode, runAsAccount } from "./account-context.js";
+import { multiUserEnabled } from "./account-runtime.js";
+import { listLocalUsers } from "./auth.js";
+import { ownerAsActor } from "./ownership.js";
+import { projectRuntimeOwner } from "./store.js";
 import type { AgentCapabilityIdentity } from "./agent-capabilities.js";
 import { createNtfyUser, deleteNtfyTopicAccess, deleteNtfyUser, listNtfyTopics, listNtfyUsers, NtfyRequestError, ntfyPermission, ntfySince, ntfyTopicName, ntfyTopicPattern, ntfyUsername, readNtfyMessages, setNtfyTopicAccess, type NtfyServer } from "./ntfy-admin.js";
 import { getNtfyService, listNtfyServices, type NtfyService } from "./ntfy.js";
@@ -93,7 +96,17 @@ async function publish(server: { url: string; token: string }, request: Extract<
 
 /** An agent sends with its conversation's owner's ntfy servers. */
 export async function ntfyAgentRequest(identity: AgentCapabilityIdentity, request: Request): Promise<NtfyAgentResult> {
-  return runAsAccount(ownerAsActor(resourceOwner("project", identity.projectId)), () => ownerNtfyAgentRequest(identity, request));
+  // A project that is gone has no owner; its token must not fall through to the admin's servers.
+  const known = await asNode(() => projectRuntimeOwner(identity.projectId));
+  // With one person on the node there is nobody else's list to fall through to.
+  if (!known && listLocalUsers().length > 1) throw new NtfyRequestError(404, "Not found");
+  const owner = known ?? { accountId: undefined };
+  // A project received from a cluster belongs to no one person here, so once several people
+  // share the node its agents have no personal ntfy servers.
+  const actor: ActingAccount | undefined = "clusterId" in owner
+    ? (multiUserEnabled() ? { accountId: `cluster:${owner.clusterId}`, username: "", role: null, isRemoteLogin: false, homeNodeId: null } : ownerAsActor(undefined))
+    : ownerAsActor(owner.accountId);
+  return runAsAccount(actor, () => ownerNtfyAgentRequest(identity, request));
 }
 
 async function ownerNtfyAgentRequest(identity: AgentCapabilityIdentity, request: Request): Promise<NtfyAgentResult> {

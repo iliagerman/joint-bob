@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { chmod, copyFile, mkdir, rm } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { chmod, copyFile, mkdir, realpath, rm } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -56,8 +57,15 @@ async function provisionAgentDir(runtime: RuntimeAccount): Promise<void> {
   const source = serviceRuntimeSettings().pi.configPath;
   const target = path.join(runtime.home, ".pi", "agent");
   await mkdir(target, { recursive: true, mode: 0o770 });
+  // The folder is the person's to write: the node never follows a link out of their home here.
+  const home = await realpath(runtime.home), real = await realpath(target);
+  if (real !== path.join(home, ".pi", "agent")) throw new Error("This account's Pi folder is a link; remove it and try again");
   for (const name of SHARED_PI_FILES) {
-    try { await copyFile(path.join(source, name), path.join(target, name)); await chmod(path.join(target, name), 0o660); }
+    try {
+      await rm(path.join(target, name), { force: true });
+      await copyFile(path.join(source, name), path.join(target, name), fsConstants.COPYFILE_EXCL);
+      await chmod(path.join(target, name), 0o660);
+    }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
   await rm(path.join(target, "auth.json"), { force: true });
