@@ -151,7 +151,6 @@ async function fillConversations(selected) {
 function syncKind() {
   const conversation = field.kind.value === "conversation";
   field.conversationLabel.hidden = !conversation;
-  field.conversation.required = conversation;
   if (conversation) void fillConversations(editing?.target.sessionId).catch((error) => showStatus(status, errorText(error), "error"));
 }
 
@@ -182,8 +181,18 @@ function closeForm() {
   void list.reload();
 }
 
+/** The editor sits inside the Settings form, so its fields are checked here rather than by the browser. */
+function missingField() {
+  if (!field.name.value.trim()) return { element: field.name, message: "Enter a name for the webhook" };
+  if (!field.project.value) return { element: field.project, message: "Choose a project" };
+  if (field.kind.value === "conversation" && !field.conversation.value) return { element: field.conversation, message: "Choose a conversation" };
+  return null;
+}
+
 async function submit(event) {
   event.preventDefault();
+  const missing = missingField();
+  if (missing) { showStatus(status, missing.message, "error"); missing.element.focus(); return; }
   const target = field.kind.value === "conversation"
     ? { kind: "conversation", projectId: field.project.value, sessionId: field.conversation.value, engine: field.conversation.selectedOptions[0]?.dataset.engine || "" }
     : { kind: "project", projectId: field.project.value };
@@ -213,7 +222,9 @@ function wire() {
   byId("webhooksRevealDone").addEventListener("click", () => { reveal.hidden = true; byId("webhooksRevealUrls").replaceChildren(); });
   field.kind.addEventListener("change", syncKind);
   field.project.addEventListener("change", () => { if (field.kind.value === "conversation") syncKind(); });
-  form.addEventListener("submit", (event) => void submit(event));
+  field.save.addEventListener("click", (event) => void submit(event));
+  // Enter in the name would otherwise submit the whole Settings form.
+  field.name.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); field.save.click(); } });
 }
 
 export async function loadWebhooks() {

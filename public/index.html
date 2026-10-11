@@ -961,16 +961,16 @@
             <p class="settings-hint">Shown once; only a fingerprint of the secret is kept. Anyone with the address can call the webhook, so keep it private. If it leaks, make a new address and the old one stops working. Send a POST with any body.</p>
             <button class="ghost compact" type="button" id="webhooksRevealDone" data-testid="webhooks-reveal-done-button">Done</button>
           </div>
-          <form class="relay-form-section" id="webhooksForm" data-testid="webhooks-form" hidden>
+          <div class="relay-form-section" id="webhooksForm" data-testid="webhooks-form" hidden>
             <div class="relay-form">
-              <label>Name<input id="webhooksName" name="name" required maxlength="120" autocomplete="off" placeholder="GitHub issues" data-testid="webhooks-name-input" /></label>
+              <label>Name<input id="webhooksName" name="name" maxlength="120" autocomplete="off" placeholder="GitHub issues" data-testid="webhooks-name-input" /></label>
               <label>Send each call to
                 <select id="webhooksTargetKind" data-testid="webhooks-target-kind-select">
                   <option value="project">A project: start a new conversation</option>
                   <option value="conversation">A conversation: add a message</option>
                 </select>
               </label>
-              <label>Project<select id="webhooksProject" required data-testid="webhooks-project-select"></select></label>
+              <label>Project<select id="webhooksProject" data-testid="webhooks-project-select"></select></label>
               <label id="webhooksConversationLabel" hidden>Conversation<select id="webhooksConversation" data-testid="webhooks-conversation-select"></select></label>
             </div>
             <label>Context for the agent
@@ -980,9 +980,9 @@
             <label class="checkbox-row"><input type="checkbox" id="webhooksEnabled" checked data-testid="webhooks-enabled-toggle" /> Accept calls</label>
             <div class="relay-row-actions">
               <button class="ghost compact" type="button" id="webhooksCancel" data-testid="webhooks-cancel-button">Cancel</button>
-              <button class="primary compact" type="submit" id="webhooksSave" data-testid="webhooks-save-button">Create webhook</button>
+              <button class="primary compact" type="button" id="webhooksSave" data-testid="webhooks-save-button">Create webhook</button>
             </div>
-          </form>
+          </div>
           <section class="relay-section" id="webhooksListSection" data-testid="webhooks-list-section">
             <div class="relay-list" id="webhooksHistory" data-testid="webhooks-history" hidden></div>
             <div class="relay-list" id="webhooksList" data-testid="webhooks-list"></div>
