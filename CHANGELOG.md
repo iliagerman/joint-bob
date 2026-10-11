@@ -15,6 +15,10 @@ Every deployment is a version. The newest section must always match the
 - Conversations started in a worktree on another machine now appear under that worktree right away, before its files finish syncing; until they arrive, the worktree shows a note in place of its menu, and renames and deletions reach those conversations too.
 - Walled off the people sharing one node from each other, so no member could see another member's conversations, projects, or secrets on that node.
 
+## 2.72.2 — 2026-10-11
+
+- Fixed conversations started in a worktree on another machine being listed as plain conversations until the worktree's files finished syncing; they now appear under their worktree straight away, with a note in place of its actions until the files arrive, and renames, colour changes and deletions reach them too.
+
 ## 2.72.1 — 2026-10-11
 
 - Agent instructions now say that a scheduled task's prompt counts as your request for a worktree, so the rule against agents creating worktrees on their own cannot stop a run that asks for one. No scheduled run had been refused.

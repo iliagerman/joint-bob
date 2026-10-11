@@ -19,7 +19,7 @@ test("browser status reports local machine alongside inherited configuration", a
   } finally { await closeBrowserRuntime(); }
 });
 
-test("an agent requires configuration but explicit starts and default changes ignore active-session fences", async (t) => {
+test("an unchosen start falls to the conversation's machine, and explicit starts and default changes ignore active-session fences", async (t) => {
   const folder = path.join(os.homedir(), "browser-local-start");
   await mkdir(folder, { recursive: true });
   const project = await addProject("Local browser", folder, { writeInstructions: false });
@@ -35,7 +35,8 @@ test("an agent requires configuration but explicit starts and default changes ig
   const socket = { OPEN: 1, readyState: 1, send: (payload: string) => notifications.push(JSON.parse(payload)) };
   watchClients.set(project.id, new Set([socket as never]));
   try {
-    await assert.rejects(browserOperation({operation:"start",args},{kind:"agent"}),/Settings/);
+    // With no machine chosen anywhere a start falls to the conversation's own machine, so it fails only when that machine is gone.
+    await assert.rejects(browserOperation({ operation: "start", args: { ...args, appNodeId: randomUUID() } }, { kind: "agent" }), /no longer paired/i);
     assert.deepEqual(notifications, [], "failed starts must not invalidate browser session discovery");
     const result = await browserOperation({ operation: "start", args }, { kind: "agent" },node.id) as { session: BrowserSessionView };
     assert.equal(result.session.nodeId,node.id);
