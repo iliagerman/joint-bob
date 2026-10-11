@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.71.2 — 2026-10-11
 
 - Fixed pressing Enter in a webhook's name field submitting the whole Settings form; a webhook missing its name, project, or conversation now says which field to fill in.
 
