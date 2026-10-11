@@ -105,3 +105,11 @@ test("agent instructions leave creating worktrees to the user's request", () => 
     assert.doesNotMatch(text, /Isolated work happens in Joint Bob worktrees/);
   }
 });
+
+// A scheduled run's prompt arrives from the scheduler, so "only when the user's request asks"
+// could be read as excluding it. The monitoring tasks that hand each fix to a worktree depend on it.
+test("agent instructions count a scheduled task's prompt as the user's request for a worktree", () => {
+  const worktrees = agentCapabilityInstructionFiles().find((file) => file.path === "/virtual/JOINT_BOB_WORKTREES.md")?.content ?? "";
+  assert.match(worktrees, /made when they start a conversation or write a scheduled task\./);
+  assert.match(worktrees, /A scheduled task's prompt is the user's request: when it asks for a worktree, create one on each run that needs it\./);
+});

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed scheduled tasks that ask for a worktree not getting one: each run that needs it now gets a fresh worktree, as the task asks.
+
 ## 2.72.0 — 2026-10-11
 
 - Added copying or moving a conversation to another project. A copy is written before anything is removed, so a failed move leaves nothing duplicated; a move is refused while the conversation is busy, and a conversation owned by another machine in the cluster is handed to the cluster owner to transfer.
