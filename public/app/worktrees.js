@@ -150,6 +150,15 @@ export function worktreeSectionHeader(worktree, count) {
     event.stopPropagation();
     openRowMenu(menu, worktreeMenuItems(worktree), `[data-worktree-id="${CSS.escape(worktree.id)}"] [data-testid="worktree-menu-button"]`);
   });
+  // Its files have not reached this machine: every menu action needs them here.
+  if (worktree.syncing) {
+    const note = document.createElement("span");
+    note.className = "worktree-cleanup-note";
+    note.dataset.testid = "worktree-syncing-note";
+    note.textContent = "Its files are still syncing to this machine. Until they arrive, manage it from the machine that created it.";
+    header.append(toggle, note);
+    return header;
+  }
   header.append(toggle, menu);
   const reason = state.worktreeCleanupReasons[worktree.id];
   if (reason) {

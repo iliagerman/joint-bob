@@ -5,7 +5,10 @@ import { DatabaseSync } from "node:sqlite";
 import type { ConversationEngine } from "./conversation-ownership.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, type ReplicationEvent } from "./replication.js";
 import { dropConversationGrantsInDatabase } from "./browser-store.js";
-import { isHarnessId } from "./types.js";
+import { isHarnessId, PROJECT_COLORS, type ProjectColor } from "./types.js";
+
+/** The worktree a conversation runs in, as much of it as a list needs to show the conversation under it. */
+export interface ConversationWorktree { id: string; name: string; color: ProjectColor }
 
 export interface ConversationRecord {
   projectId: string;
@@ -24,6 +27,14 @@ export interface ConversationRecord {
   conversationId?: string;
   /** Position in the conversation; segment 0 is the first harness to own it. */
   segmentIndex?: number;
+  /**
+   * The worktree the conversation runs in, or null once that worktree is deleted. A worktree's
+   * own metadata reaches other nodes by file sync, behind every smaller file in the folder;
+   * the record gets there first, so every node can list the conversation under its worktree.
+   */
+  worktree?: ConversationWorktree | null;
+  /** When `worktree` was last set or cleared. The newest value wins on every node. */
+  worktreeAt?: string;
 }
 
 interface ConversationRecordPayload {
@@ -43,7 +54,7 @@ function createConversationRecordTables(db: DatabaseSync): void {
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '', task_id TEXT,
     conversation_id TEXT, segment_index INTEGER NOT NULL DEFAULT 0, cron_task_id TEXT,
-    silent_review_from TEXT, silent_review_until TEXT,
+    silent_review_from TEXT, silent_review_until TEXT, worktree TEXT, worktree_at TEXT,
     PRIMARY KEY (project_id, engine, session_id)
   ); CREATE TABLE IF NOT EXISTS conversation_record_tombstones (
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -61,6 +72,8 @@ export function ensureConversationRecordSchema(db: DatabaseSync): void {
   if (!records.some((column) => column.name === "task_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN task_id TEXT");
   if (!records.some((column) => column.name === "conversation_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN conversation_id TEXT");
   if (!records.some((column) => column.name === "segment_index")) db.exec("ALTER TABLE conversation_records ADD COLUMN segment_index INTEGER NOT NULL DEFAULT 0");
+  if (!records.some((column) => column.name === "worktree")) db.exec("ALTER TABLE conversation_records ADD COLUMN worktree TEXT");
+  if (!records.some((column) => column.name === "worktree_at")) db.exec("ALTER TABLE conversation_records ADD COLUMN worktree_at TEXT");
   for (const table of ["conversation_records", "conversation_record_tombstones"]) {
     const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string } | undefined;
     if (!row?.sql.includes("engine IN ('pi', 'claude')")) continue;
@@ -130,7 +143,81 @@ function row(record: Record<string, unknown>): ConversationRecord {
     ...(record.silent_review_from ? { silentReviewFrom: String(record.silent_review_from) } : {}),
     ...(record.silent_review_until ? { silentReviewUntil: String(record.silent_review_until) } : {}),
     ...(conversationId ? { conversationId, segmentIndex: Number(record.segment_index ?? 0) } : {}),
+    ...(record.worktree_at ? { worktree: storedWorktree(record.worktree), worktreeAt: String(record.worktree_at) } : {}),
   };
+}
+
+function validWorktree(value: unknown): value is ConversationWorktree {
+  const worktree = value as Partial<ConversationWorktree> | null;
+  return Boolean(worktree) && typeof worktree === "object" && !Array.isArray(worktree)
+    && typeof worktree!.id === "string" && /^[0-9a-f-]{36}$/.test(worktree!.id)
+    && typeof worktree!.name === "string" && worktree!.name.length > 0 && worktree!.name.length <= 80
+    && PROJECT_COLORS.includes(worktree!.color as ProjectColor);
+}
+
+function storedWorktree(value: unknown): ConversationWorktree | null {
+  if (typeof value !== "string") return null;
+  try {
+    const worktree = JSON.parse(value) as unknown;
+    return validWorktree(worktree) ? { id: worktree.id, name: worktree.name, color: worktree.color } : null;
+  } catch { return null; }
+}
+
+function sameWorktree(left: ConversationWorktree | null | undefined, right: ConversationWorktree | null): boolean {
+  return left && right ? left.id === right.id && left.name === right.name && left.color === right.color : !left && !right;
+}
+
+function writeWorktree(db: DatabaseSync, existing: ConversationRecord, worktree: ConversationWorktree | null, originNodeId: string): void {
+  const now = new Date().toISOString();
+  const value = worktree ? { id: worktree.id, name: worktree.name, color: worktree.color } : null;
+  const record = { ...existing, worktree: value, worktreeAt: now, updatedAt: now, originNodeId };
+  db.prepare("UPDATE conversation_records SET worktree = ?, worktree_at = ?, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND engine = ? AND session_id = ?")
+    .run(value ? JSON.stringify(value) : null, now, now, originNodeId, existing.projectId, existing.engine, existing.sessionId);
+  publish(db, "upsert", existing.projectId, existing.engine, existing.sessionId, record, now, originNodeId);
+}
+
+/**
+ * Records the worktree a conversation runs in, once. Later renames and the deletion come
+ * through `syncConversationWorktrees`; a node that still holds a stale copy of the worktree
+ * must not write its old name back, or bring a deleted worktree back, by opening the conversation.
+ */
+export async function setConversationWorktree(projectId: string, engine: ConversationEngine, sessionId: string, worktree: ConversationWorktree, originNodeId: string): Promise<boolean> {
+  const db = await database();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const existing = selectRecord(db, projectId, engine, sessionId);
+    const changed = Boolean(existing) && existing!.worktreeAt === undefined;
+    if (changed) writeWorktree(db, existing!, worktree, originNodeId);
+    db.exec("COMMIT");
+    return changed;
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
+/**
+ * Carries a worktree's rename or recolour, or its deletion (`next` null), to the records of
+ * the conversations that run in it. Returns how many records changed.
+ */
+export async function syncConversationWorktrees(projectId: string, worktreeId: string, next: ConversationWorktree | null, originNodeId: string): Promise<number> {
+  const db = await database();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const records = (db.prepare("SELECT * FROM conversation_records WHERE project_id = ? AND worktree IS NOT NULL").all(projectId) as Record<string, unknown>[]).map(row)
+      .filter((record) => record.worktree?.id === worktreeId && !sameWorktree(record.worktree, next));
+    for (const record of records) writeWorktree(db, record, next, originNodeId);
+    db.exec("COMMIT");
+    return records.length;
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
+/** `engine:sessionId` → the worktree its record names, for every conversation of the project that runs in one. */
+export async function recordedConversationWorktrees(projectId: string): Promise<Map<string, ConversationWorktree>> {
+  const rows = (await database()).prepare("SELECT engine, session_id, worktree FROM conversation_records WHERE project_id = ? AND worktree IS NOT NULL").all(projectId) as Array<{ engine: string; session_id: string; worktree: string }>;
+  const worktrees = new Map<string, ConversationWorktree>();
+  for (const record of rows) {
+    const worktree = storedWorktree(record.worktree);
+    if (worktree) worktrees.set(`${record.engine}:${record.session_id}`, worktree);
+  }
+  return worktrees;
 }
 
 export async function markCronConversation(projectId: string, engine: ConversationEngine, sessionId: string, cronTaskId: string, originNodeId: string): Promise<void> {
@@ -292,6 +379,7 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
     if (payload.record?.cronTaskId) db.prepare("UPDATE conversation_records SET cron_task_id = ? WHERE project_id = ? AND engine = ? AND session_id = ? AND cron_task_id IS NULL").run(payload.record.cronTaskId, projectId, payload.engine, payload.sessionId);
     if (payload.record?.silentReviewUntil && payload.record.silentReviewFrom) db.prepare("UPDATE conversation_records SET silent_review_from = ?, silent_review_until = ? WHERE project_id = ? AND engine = ? AND session_id = ? AND (silent_review_until IS NULL OR silent_review_until < ?)")
       .run(payload.record.silentReviewFrom, payload.record.silentReviewUntil, projectId, payload.engine, payload.sessionId, payload.record.silentReviewUntil);
+    applyRecordedWorktree(db, projectId, payload);
     return;
   }
   // Releases before the sub-agent fix still send these; they are never conversations.
@@ -313,6 +401,20 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
   }
   db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id, conversation_id, segment_index, cron_task_id, silent_review_from, silent_review_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET created_at = excluded.created_at, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id, task_id = excluded.task_id, conversation_id = excluded.conversation_id, segment_index = excluded.segment_index, cron_task_id = COALESCE(excluded.cron_task_id, conversation_records.cron_task_id), silent_review_from = CASE WHEN excluded.silent_review_until > COALESCE(conversation_records.silent_review_until, '') THEN excluded.silent_review_from ELSE conversation_records.silent_review_from END, silent_review_until = CASE WHEN excluded.silent_review_until > COALESCE(conversation_records.silent_review_until, '') THEN excluded.silent_review_until ELSE conversation_records.silent_review_until END").run(projectId, payload.engine, payload.sessionId, payload.record.createdAt, payload.updatedAt, payload.originNodeId, payload.record.taskId ?? null, payload.record.conversationId ?? null, payload.record.segmentIndex ?? 0, payload.record.cronTaskId ?? null, payload.record.silentReviewFrom ?? null, payload.record.silentReviewUntil ?? null);
   db.prepare("DELETE FROM conversation_record_tombstones WHERE project_id = ? AND engine = ? AND session_id = ?").run(projectId, payload.engine, payload.sessionId);
+  applyRecordedWorktree(db, projectId, payload);
+}
+
+/**
+ * The worktree is its own last-writer-wins value: an update from a node that had not heard
+ * of it yet must not erase it, and a late copy of it must not undo its deletion. A value
+ * this node cannot read, such as a colour a newer release added, is left out, not refused.
+ */
+function applyRecordedWorktree(db: DatabaseSync, projectId: string, payload: ConversationRecordPayload): void {
+  const { worktree, worktreeAt } = payload.record ?? {};
+  if (typeof worktreeAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(worktreeAt) || !Number.isFinite(Date.parse(worktreeAt))) return;
+  if (worktree !== null && !validWorktree(worktree)) return;
+  db.prepare("UPDATE conversation_records SET worktree = ?, worktree_at = ? WHERE project_id = ? AND engine = ? AND session_id = ? AND (worktree_at IS NULL OR worktree_at < ?)")
+    .run(worktree ? JSON.stringify({ id: worktree.id, name: worktree.name, color: worktree.color }) : null, worktreeAt, projectId, payload.engine, payload.sessionId, worktreeAt);
 }
 
 export function conversationDraftPath(engine: ConversationEngine, sessionId: string): string { return `draft:${engine}:${sessionId}`; }

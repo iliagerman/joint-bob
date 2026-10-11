@@ -7,6 +7,7 @@ import { type ChildProcess } from "node:child_process";
 import { access, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
 import { type Browser, type BrowserContext, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
@@ -314,6 +315,12 @@ test("a conversation started in the worktree skips the start-of-conversation pro
   // The prompt would be queued as soon as the conversation is ready; give it time to show.
   await page.waitForTimeout(3_000);
   assert.equal(await page.getByText(START_PROMPT, { exact: true }).count(), 0, "the start prompt is not sent in a worktree");
+  // Its record names the worktree, so a machine still waiting for the worktree's files lists it there too.
+  const sessionId = await page.evaluate(async () => (await import("/app/state.js")).state.activeSessionId);
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"), { readOnly: true });
+  const recorded = db.prepare("SELECT worktree FROM conversation_records WHERE project_id = ? AND session_id = ?").get(project.id, sessionId) as { worktree: string | null } | undefined;
+  db.close();
+  assert.deepEqual({ id: JSON.parse(recorded?.worktree ?? "{}").id, name: JSON.parse(recorded?.worktree ?? "{}").name }, { id: path.basename(await onlyWorktreePath()), name: WORKTREE_NAME });
 });
 
 test("merge to project writes the worktree's edits into the project folder", async () => {
@@ -376,4 +383,49 @@ test("marking the last conversation done removes its worktree header and folder"
   await page.reload({ waitUntil: "domcontentloaded" });
   await openProject();
   assert.equal(await page.getByTestId("worktree-section").count(), 0, "no zero-count header returns after reload");
+});
+
+// A worktree made on another machine: its conversation's record arrives in seconds, its
+// files by file sync much later. The conversation is grouped under it from the start, and
+// the header offers nothing that needs the files.
+test("a conversation whose worktree has not synced to this machine is grouped under it, without actions", async () => {
+  const REMOTE = { id: "41ab1391-dd48-4ca3-9398-c1be5a8f8a27", name: "audit-email-attachment-scope", color: "amber" };
+  const REMOTE_SESSION = "remote-worktree-conversation";
+  const REMOTE_NAME = "Scope report email attachments";
+  const at = (minutes: number) => new Date(Date.parse("2026-10-11T07:09:00.000Z") + minutes * 60_000).toISOString();
+  const transcript = [
+    { type: "session", version: 3, id: REMOTE_SESSION, timestamp: at(0), cwd: `/home/ilia/JointBob/worktrees/${project.id}/${REMOTE.id}` },
+    { type: "session_info", name: REMOTE_NAME, timestamp: at(0) },
+    { type: "message", id: `${REMOTE_SESSION}-0`, parentId: null, timestamp: at(1), message: { role: "user", content: [{ type: "text", text: "Scope the attachments to the current request" }], timestamp: Date.parse(at(1)) } },
+    { type: "message", id: `${REMOTE_SESSION}-1`, parentId: `${REMOTE_SESSION}-0`, timestamp: at(2), message: { role: "assistant", content: [{ type: "text", text: "Reading the attachment collector." }], timestamp: Date.parse(at(2)) } },
+  ];
+  await writeFile(path.join(environment.home, ".pi", "sessions", `${REMOTE_SESSION}.jsonl`), `${transcript.map((record) => JSON.stringify(record)).join("\n")}\n`);
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  db.exec("PRAGMA busy_timeout = 5000");
+  db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, worktree, worktree_at) VALUES (?, 'pi', ?, ?, ?, 'peer', ?, ?)")
+    .run(project.id, REMOTE_SESSION, at(0), at(2), JSON.stringify(REMOTE), at(0));
+  db.close();
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await openProject();
+  const header = page.getByTestId("worktree-section").filter({ hasText: REMOTE.name });
+  await header.waitFor({ timeout: 20_000 });
+  assert.match(await header.getByTestId("worktree-syncing-note").innerText(), /still syncing to this machine/);
+  assert.equal(await header.getByTestId("worktree-menu-button").count(), 0, "merge, rename and delete need the files here");
+  assert.equal((await header.getByTestId("worktree-section-count").innerText()).trim(), "1");
+  const row = page.locator("#sessionList .list-row", { hasText: REMOTE_NAME });
+  assert.equal((await row.getByTestId("session-worktree-badge").innerText()).trim(), REMOTE.name);
+  const order = await page.evaluate(() => [...document.querySelectorAll("#sessionList > *")].map((element) => (element as HTMLElement).dataset.testid || (element.classList.contains("has-worktree") ? "worktree-row" : "project-row")));
+  assert.deepEqual(order.slice(0, 4), ["worktree-subsection", "worktree-section", "worktree-row", "project-folder-subsection"]);
+  // The picker for a new conversation offers only worktrees whose files are here.
+  assert.equal(await page.evaluate(async (id) => (await import("/app/state.js")).state.worktrees.some((worktree: { id: string }) => worktree.id === id), REMOTE.id), false);
+
+  // Once its conversation is hidden as done, nothing is left to show: it has no actions to keep reachable.
+  await row.getByTestId("session-menu-button").click();
+  const marked = page.waitForResponse((response) => response.url().endsWith("/sessions/done") && response.request().method() === "PUT");
+  await page.getByTestId("session-done-button").click();
+  await marked;
+  await header.waitFor({ state: "detached", timeout: 20_000 });
+  assert.equal(await page.getByTestId("other-worktrees").count(), 0, "no empty group for a worktree that cannot be used here");
+  assert.equal(consoleErrors.filter((message) => !/favicon|ERR_ABORTED|WebSocket/i.test(message)).length, 0, consoleErrors.join("\n"));
 });

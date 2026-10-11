@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { promises as fs, type Stats } from "node:fs";
 import path from "node:path";
 import { getClusterNode } from "./cluster.js";
+import { syncConversationWorktrees } from "./conversation-records.js";
 import { managedHomePaths } from "./managed-home.js";
 import { applyMergeTransaction, recordMergeTransaction, rollbackMergeTransaction, type MergeOp } from "./merge-journal.js";
 import { getSettings } from "./settings.js";
@@ -319,7 +320,14 @@ export async function updateProjectWorktree(projectId: string, worktreeId: strin
   const next = { ...metadata, name, color: normalizeColor(input.color, metadata.color) };
   await writeAtomic(metadataFile(worktree), `${JSON.stringify(next, null, 2)}\n`);
   announce(projectId);
+  await carryToConversationRecords(projectId, worktreeId, { id: worktreeId, name: next.name, color: next.color });
   return view(projectId, worktree, next);
+}
+
+/** Nodes still waiting for the worktree's files list its conversations from their records, so the records follow it. */
+async function carryToConversationRecords(projectId: string, worktreeId: string, next: { id: string; name: string; color: ProjectColor } | null): Promise<void> {
+  try { await syncConversationWorktrees(projectId, worktreeId, next, (await getClusterNode()).id); }
+  catch (error) { console.warn(`Could not update conversation records for worktree ${worktreeId}`, error); }
 }
 
 /** Deleting the folder is the deletion: Syncthing removes it from every node sharing the project. */
@@ -329,6 +337,7 @@ export async function deleteProjectWorktree(projectId: string, worktreeId: strin
   await fs.rm(metadataFile(worktree), { force: true });
   await fs.rm(worktree, { recursive: true, force: true });
   announce(projectId);
+  await carryToConversationRecords(projectId, worktreeId, null);
 }
 
 function conversationMarker(worktree: string, engine: string, sessionId: string): string {
@@ -347,8 +356,14 @@ export async function markWorktreeConversation(projectId: string, worktreeId: st
 
 /** `engine:sessionId` → worktree, for every conversation started inside a worktree of the project. */
 export async function worktreeConversationIndex(projectId: string, root = worktreeRoot()): Promise<Map<string, ProjectWorktree>> {
+  return (await worktreeConversations(projectId, root)).index;
+}
+
+/** The project's worktrees whose files are on this node, and the same index of the conversations started inside them. */
+export async function worktreeConversations(projectId: string, root = worktreeRoot()): Promise<{ worktrees: ProjectWorktree[]; index: Map<string, ProjectWorktree> }> {
+  const worktrees = await listProjectWorktrees(projectId, root);
   const index = new Map<string, ProjectWorktree>();
-  for (const worktree of await listProjectWorktrees(projectId, root)) {
+  for (const worktree of worktrees) {
     let files: string[];
     try { files = await fs.readdir(path.join(worktree.path, WORKTREE_META_DIR, "conversations")); }
     catch { continue; }
@@ -357,7 +372,7 @@ export async function worktreeConversationIndex(projectId: string, root = worktr
       if (match) index.set(`${match[1]}:${match[2]}`, worktree);
     }
   }
-  return index;
+  return { worktrees, index };
 }
 
 /** Every path any node keeps a worktree of this project at: conversations are matched by working directory. */

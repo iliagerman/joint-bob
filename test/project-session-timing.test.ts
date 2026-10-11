@@ -30,7 +30,7 @@ test("project session stages use only static, code-owned timing labels", async (
     "sessions.decoration_review": ["applyConversationWork", "syncConversationReviewDetails"],
     "sessions.ownership": ["Promise.all", "getConversationOwnership"],
     "sessions.notifications": ["migratePortableNotifications", "ntfySubscribedSessionPaths"],
-    "sessions.worktrees": ["worktreeConversationIndex"],
+    "sessions.worktrees": ["Promise.all", "worktreeConversations", "recordedConversationWorktrees"],
   })) {
     for (const call of calls) assert.ok(stages.get(stage)?.includes(`${call}(`), `${stage} covers ${call}`);
   }

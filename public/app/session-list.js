@@ -105,7 +105,8 @@ export function renderSessions() {
   for (const worktree of worktrees.values()) {
     const group = worktreeRows.get(worktree.id) || [];
     if (!group.length) {
-      if (!narrowed && !state.chatFilters.size) emptyWorktrees.push(worktree);
+      // The fold exists to reach an empty worktree's actions; one whose files are not here has none.
+      if (!narrowed && !state.chatFilters.size && !worktree.syncing) emptyWorktrees.push(worktree);
       continue;
     }
     list.append(worktreeSectionHeader(worktree, group.filter((row) => row.depth === 0).length));

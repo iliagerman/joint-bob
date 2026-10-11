@@ -6,7 +6,7 @@ import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSocket } from "./runtime-peers.js";
 import { clusterPeerMayAccessProject, peerMayOpenTerminal } from "./cluster-helpers.js";
 import { type ConversationEngine, getConversationOwnership } from "../conversation-ownership.js";
-import { ensureConversationRecord, getConversationRecord, listConversationSegments, parseConversationDraftPath } from "../conversation-records.js";
+import { ensureConversationRecord, getConversationRecord, listConversationSegments, parseConversationDraftPath, setConversationWorktree } from "../conversation-records.js";
 import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import { getProjectLock } from "../project-locks.js";
 import { ensureWorktreeLocalFiles, getProjectWorktree, markWorktreeConversation, worktreeConversationIndex, type ProjectWorktree } from "../project-worktrees.js";
@@ -421,6 +421,11 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       }
       throw error;
     }
+  }
+  // File sync delivers a worktree's own metadata behind every smaller file in it; the record tells other nodes now.
+  if (worktree) {
+    await setConversationWorktree(project.id, sessionRequest.engine, ownershipSessionId, { id: worktree.id, name: worktree.name, color: worktree.color }, local.id)
+      .catch((error) => console.warn("Could not record the conversation's worktree", error));
   }
   const conversationReadOnly = sessionReadOnly || task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
   try {

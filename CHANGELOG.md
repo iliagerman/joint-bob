@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations started in a worktree on another machine now appear under that worktree right away, before its files finish syncing; until they arrive, the worktree shows a note in place of its menu, and renames and deletions reach those conversations too.
+
 ## 2.72.1 — 2026-10-11
 
 - Fixed scheduled tasks whose prompt asks for a worktree being refused one; the prompt now counts as the request, so the run creates the worktree it asks for.
