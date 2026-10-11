@@ -50,7 +50,8 @@ test("global default and scoped conversation preference converge across real pai
   assert.deepEqual(initial.body.nodes.map((n: any) => n.id).sort(), [a.nodeId,b.nodeId].sort());
   assert.ok(initial.body.nodes.every((n: any) => n.reachable && !n.available && n.reason));
   const start = { projectId:a.projects[0].id, engine:"pi", conversationId, appNodeId:a.nodeId };
-  assert.match((await request(0,"POST","/browser/sessions",start)).body.error,/Settings|configur/i);
+  // With no machine chosen anywhere, a new browser opens on the machine the conversation runs on.
+  assert.match((await request(0,"POST","/browser/sessions",start)).body.error,new RegExp(`browser-${a.key}`));
   assert.equal((await request(0,"PUT","/browser/config",{executorNodeId:b.nodeId})).status,200);
   assert.equal((await request(1,"GET","/browser/config")).body.config.executorNodeId,null,"a machine's default stays on the machine that chose it");
   const preference = `/browser/preferences?${query()}`;

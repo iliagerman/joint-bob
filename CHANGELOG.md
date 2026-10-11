@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed a new browser opening on the conversation's own machine when no browser machine is chosen, instead of failing and asking you to pick one in Settings.
+
 ## 2.71.3 — 2026-10-11
 
 - Fixed conversation label icons dropping onto their own line beneath a long title; the icon now stays beside the title's last word.

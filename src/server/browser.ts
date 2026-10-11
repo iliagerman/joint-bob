@@ -568,7 +568,7 @@ async function startBrowser(operation: Extract<BrowserOperation, { operation: "s
         }
       }
     }
-  } else if (!nodeId) nodeId = (await browserPreferences(scope)).effectiveNodeId ?? undefined;
+  } else if (!nodeId) nodeId = (await browserPreferences(scope)).effectiveNodeId ?? operation.args.appNodeId;
   if (!nodeId) throw new BrowserRequestError(409, "Choose a browser machine in Settings first");
   await knownNode(nodeId);
   if (nodeId === (await getClusterNode()).id) return localBrowserOperation(operation, actor);
