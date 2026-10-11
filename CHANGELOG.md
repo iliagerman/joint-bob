@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.72.3 — 2026-10-11
 
 - Fixed the focus border of the field you are editing being clipped at the left and right edges of the scheduled task editor.
 
