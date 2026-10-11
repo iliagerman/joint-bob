@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the offline app cache leaving out the conversation label icon script, so label icons work when the app loads from its cache.
+
 ## 2.71.0 — 2026-10-10
 
 - Added pasting images straight into a quick note, which attaches them the same way choosing an image file does.
