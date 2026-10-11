@@ -3,13 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Fixed typing several letters in the classification picker now narrows to the label whose name they start with, and repeating one letter steps through the labels that share it.
-
 ## 2.71.6 — 2026-10-11
 
-- Fixed typing a letter in the classification picker no longer selecting a label: since labels gained icons, pressing B did nothing because each option's text starts with its icon. Typing now matches the label's name again.
+- Fixed typing in the classification picker no longer skipping labels: since labels gained icons, pressing B did nothing because each option's text starts with its icon. Typing now narrows to the label whose name starts with what you type, and repeating one letter steps through the labels that share it.
 - Fixed the Invite a node and Close cluster buttons sitting flush against the node strip below them in Settings → Cluster.
 - Fixed the new quick note button beside the project search looking unlike the buttons around it: it had no outline and an oversized icon.
 
