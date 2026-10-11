@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.71.4 — 2026-10-11
 
-- Fixed a new browser opening on the conversation's own machine when no browser machine is chosen, instead of failing and asking you to pick one in Settings.
+- Fixed a new browser failing with "Choose a browser machine in Settings first" when no browser machine was set, which stopped scheduled runs; it now opens on the machine the conversation runs on.
 
 ## 2.71.3 — 2026-10-11
 
