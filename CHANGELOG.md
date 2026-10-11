@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.73.0 — 2026-10-11
 
 - Accounts now require email addresses and support signing in by email; node admins can block specific nodes from connecting.
 - Node administrators can invite members to sign in with their own accounts; terminal access and settings are managed separately by role.
