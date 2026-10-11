@@ -836,7 +836,7 @@ app.post("/api/projects/:projectId/sessions/transfer", async (request, response,
       return;
     }
     const authSession = response.locals.authSession as AuthSession;
-    const session = await transferLocalConversation(project, destination, payload.engine, payload.sessionId, payload.mode, { userId: authSession.userId, username: authSession.username });
+    const session = await transferLocalConversation(project, destination, payload.engine, payload.sessionId, payload.mode, { userId: authSession.userId, username: authSession.accountId });
     broadcastToProject(destination.id, { type: "sessionsChanged" });
     response.status(201).json({ session, projectId: destination.id });
   } catch (error) {

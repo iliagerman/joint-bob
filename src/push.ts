@@ -636,7 +636,7 @@ function userProjectSubscriptions(db: DatabaseSync, userId: string, projectId: s
 export async function migratePushConversationSubscriptions(userId: string, username: string, projectId: string, sessions: SessionSummary[]): Promise<void> {
   const db = pushDatabase();
   const canonical = resolveProjectAlias(db, projectId);
-  if (accountIdForUser(userId)?.toLowerCase() !== username.toLowerCase()) throw new Error("Push migration account does not match");
+  if (accountIdForUser(userId) !== username) throw new Error("Push migration account does not match");
   const rows = userProjectSubscriptions(db, userId, canonical, true);
   const identities = new Map<string, string>();
   for (const session of sessions) {

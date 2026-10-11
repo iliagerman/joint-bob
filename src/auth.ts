@@ -897,7 +897,7 @@ export interface ReplicatedUserRecord {
 /** Creates or updates a replicated user from another node. */
 export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUserRecord {
   if (!validUsername(input.username)) throw new Error("Invalid username for replicated user");
-  const email = input.email === null ? null : normalizeEmail(input.email);
+  const email = input.email == null ? null : normalizeEmail(input.email);
   if (email !== null && !validEmail(email)) throw new Error("Invalid email for replicated user");
   const db = authDatabase();
   const now = new Date().toISOString();
@@ -918,10 +918,10 @@ export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUser
     const id = existing?.id ?? nanoid(18);
     if (existing) {
       db.prepare("UPDATE users SET password_hash = ?, password_salt = ?, email = ?, remote_mfa = ?, account_id = ?, remote_clusters = ?, updated_at = ? WHERE id = ?")
-        .run(input.passwordHash, input.passwordSalt, email, input.mfaRequired ? 1 : 0, input.accountId, JSON.stringify(input.clusterIds ?? []), now, id);
+        .run(input.passwordHash, input.passwordSalt, email, input.mfaRequired ? 1 : 0, input.accountId ?? null, JSON.stringify(input.clusterIds ?? []), now, id);
     } else {
       db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, must_change_password, home_node_id, email, remote_mfa, account_id, remote_clusters, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.username, input.passwordHash, input.passwordSalt, input.homeNodeId, email, input.mfaRequired ? 1 : 0, input.accountId, JSON.stringify(input.clusterIds ?? []), now, now);
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.username, input.passwordHash, input.passwordSalt, input.homeNodeId, email, input.mfaRequired ? 1 : 0, input.accountId ?? null, JSON.stringify(input.clusterIds ?? []), now, now);
     }
     appendAuditEvent(db, { eventType: existing ? "auth.replicated_user.updated" : "auth.replicated_user.created", actorType: "system", entityType: "user", entityId: id, details: { homeNodeId: input.homeNodeId } });
     db.exec("COMMIT");

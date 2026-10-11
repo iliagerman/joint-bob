@@ -14,6 +14,7 @@ Every deployment is a version. The newest section must always match the
 - Your projects appeared on the other nodes you signed in to, marked “At home”, while they kept running on your home node; you could hide any one project or turn this off in Settings.
 - Conversations started in a worktree on another machine now appear under that worktree right away, before its files finish syncing; until they arrive, the worktree shows a note in place of its menu, and renames and deletions reach those conversations too.
 - Walled off the people sharing one node from each other, so no member could see another member's conversations, projects, or secrets on that node.
+- Fixed member accounts arriving from another node failing to save when they had no email or account ID, and conversation transfers and push subscription moves refusing members whose account name differed from their sign-in name.
 
 ## 2.72.2 — 2026-10-11
 
