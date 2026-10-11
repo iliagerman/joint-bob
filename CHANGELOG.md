@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the app staying on its loading screen when opened on a phone through a relay: the relay answered "429 Too Many Requests" to every request past 32 at once from one address, and the app asks for more modules than that. Requests past the limit now wait their turn.
+
 ## 2.71.4 — 2026-10-11
 
 - Fixed a new browser failing with "Choose a browser machine in Settings first" when no browser machine was set, which stopped scheduled runs; it now opens on the machine the conversation runs on.

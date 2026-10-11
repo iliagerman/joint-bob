@@ -32,6 +32,9 @@ const HEARTBEAT_MS = 30_000;
 const MAX_CHANNELS_PER_MACHINE = 512;
 const MAX_GATEWAY_CHANNELS_PER_MACHINE = 128;
 const MAX_GATEWAY_REQUESTS_PER_IP = 32;
+/** Requests from one address past that share wait for a slot: this many, each this long. */
+const MAX_GATEWAY_WAITING_PER_IP = 512;
+const GATEWAY_WAIT_MS = 30_000;
 /** A machine that stops reading while this much waits for it is cut off. */
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 /** Connections from one address that have not authenticated yet. */
@@ -632,6 +635,8 @@ export class RelayServer {
   }
 
   private readonly gatewayByIp = new Map<string, number>();
+  private readonly gatewayWaiting = new Map<string, Array<() => void>>();
+  private gatewayWaitMs = GATEWAY_WAIT_MS;
 
   /** Counts a phone's concurrent requests; the count drops when its gateway stream closes. */
   private admitGatewayRequest(clientIp: string): boolean {
@@ -641,7 +646,34 @@ export class RelayServer {
     return true;
   }
 
+  /**
+   * Runs `start` once the phone's address has a free slot, which `start` then owns. A browser asks
+   * for all of the app's modules at once and never retries one that was refused, so a request past
+   * the address's share waits its turn; `start(false)` means it waited too long or too many already wait.
+   */
+  private whenGatewayAdmitted(clientIp: string, socket: Duplex, start: (admitted: boolean) => void): void {
+    if (this.admitGatewayRequest(clientIp)) { start(true); return; }
+    const waiting = this.gatewayWaiting.get(clientIp) ?? [];
+    if (waiting.length >= MAX_GATEWAY_WAITING_PER_IP) { start(false); return; }
+    const leave = (): void => {
+      clearTimeout(timer);
+      socket.off("close", leave);
+      const index = waiting.indexOf(admit);
+      if (index >= 0) waiting.splice(index, 1);
+      if (!waiting.length) this.gatewayWaiting.delete(clientIp);
+    };
+    const admit = (): void => { leave(); start(true); };
+    const timer = setTimeout(() => { leave(); start(false); }, this.gatewayWaitMs);
+    timer.unref();
+    socket.once("close", leave);
+    waiting.push(admit);
+    this.gatewayWaiting.set(clientIp, waiting);
+  }
+
   private releaseGatewayRequest(clientIp: string): void {
+    // The slot passes straight to the request that has waited longest.
+    const next = this.gatewayWaiting.get(clientIp)?.[0];
+    if (next) { next(); return; }
     const count = (this.gatewayByIp.get(clientIp) ?? 1) - 1;
     if (count <= 0) this.gatewayByIp.delete(clientIp);
     else this.gatewayByIp.set(clientIp, count);
@@ -669,13 +701,21 @@ export class RelayServer {
       this.polls.handle(request, response);
       return true;
     }
-    const target = this.gatewayTarget(label);
-    if (!target) { sendNotFound(response); return true; }
-    const problem = this.channelProblem(target, "gateway");
-    if (problem) { response.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" }).end(problem); return true; }
+    if (!this.gatewayTarget(label)) { sendNotFound(response); return true; }
     const clientIp = clientAddress(request);
-    if (!this.admitGatewayRequest(clientIp)) { response.writeHead(429, { "Content-Type": "text/plain; charset=utf-8", "Retry-After": "5" }).end("Too many requests"); return true; }
-    this.proxyRequest(request, response, this.openGatewayStream(target, clientIp), request.url, clientIp);
+    this.whenGatewayAdmitted(clientIp, request.socket, (admitted) => {
+      if (!admitted) { response.writeHead(429, { "Content-Type": "text/plain; charset=utf-8", "Retry-After": "5" }).end("Too many requests"); return; }
+      // Looked up only now: the machine may have gone while the request waited.
+      const target = this.gatewayTarget(label);
+      const problem = target && this.channelProblem(target, "gateway");
+      if (!target || problem) {
+        this.releaseGatewayRequest(clientIp);
+        if (problem) response.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" }).end(problem);
+        else sendNotFound(response);
+        return;
+      }
+      this.proxyRequest(request, response, this.openGatewayStream(target, clientIp), request.url, clientIp);
+    });
     return true;
   }
 
@@ -768,21 +808,28 @@ export class RelayServer {
   private handleGatewayUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): boolean {
     const label = this.gatewayLabel(request);
     if (!label) return false;
-    const target = this.gatewayTarget(label);
-    if (!target) { refuseUpgrade(socket, 404, "Not found"); return true; }
-    if (this.channelProblem(target, "gateway")) { refuseUpgrade(socket, 503, "Service Unavailable"); return true; }
+    if (!this.gatewayTarget(label)) { refuseUpgrade(socket, 404, "Not found"); return true; }
     const clientIp = clientAddress(request);
-    if (!this.admitGatewayRequest(clientIp)) { refuseUpgrade(socket, 429, "Too Many Requests"); return true; }
-    const stream = this.openGatewayStream(target, clientIp);
-    const headers = forwardedHeaders(request.rawHeaders, clientIp, this.origin, true);
-    const lines = [`${request.method} ${request.url} HTTP/1.1`];
-    for (let index = 0; index < headers.length; index += 2) lines.push(`${headers[index]}: ${headers[index + 1]}`);
-    stream.write(`${lines.join("\r\n")}\r\n\r\n`);
-    if (head.length) stream.write(head);
-    socket.on("error", () => stream.destroy());
-    stream.on("error", () => socket.destroy());
-    socket.pipe(stream);
-    stream.pipe(socket);
+    this.whenGatewayAdmitted(clientIp, socket, (admitted) => {
+      if (!admitted) { refuseUpgrade(socket, 429, "Too Many Requests"); return; }
+      const target = this.gatewayTarget(label);
+      if (!target || this.channelProblem(target, "gateway")) {
+        this.releaseGatewayRequest(clientIp);
+        if (target) refuseUpgrade(socket, 503, "Service Unavailable");
+        else refuseUpgrade(socket, 404, "Not found");
+        return;
+      }
+      const stream = this.openGatewayStream(target, clientIp);
+      const headers = forwardedHeaders(request.rawHeaders, clientIp, this.origin, true);
+      const lines = [`${request.method} ${request.url} HTTP/1.1`];
+      for (let index = 0; index < headers.length; index += 2) lines.push(`${headers[index]}: ${headers[index + 1]}`);
+      stream.write(`${lines.join("\r\n")}\r\n\r\n`);
+      if (head.length) stream.write(head);
+      socket.on("error", () => stream.destroy());
+      stream.on("error", () => socket.destroy());
+      socket.pipe(stream);
+      stream.pipe(socket);
+    });
     return true;
   }
 }

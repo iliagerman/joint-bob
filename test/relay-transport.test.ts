@@ -66,6 +66,12 @@ relayHttp.on("upgrade", (request, socket, head) => { if (!relay.handleUpgrade(re
 
 const machines: Machine[] = [];
 const endlessClosed: string[] = [];
+/** `/held` requests stay unanswered until a test lets them through, so a burst overlaps the way a phone's module requests do. */
+const held = { now: 0, peak: 0, open: false, waiting: [] as Array<() => void> };
+function letHeldThrough(): void {
+  held.open = true;
+  for (const answer of held.waiting.splice(0)) answer();
+}
 async function machine(name: string, known: () => string[], overrides: Partial<ConstructorParameters<typeof RelayRuntime>[3]> = {}): Promise<Machine> {
   const nodeId = randomUUID();
   const db = new DatabaseSync(path.join(root, `${nodeId}.db`));
@@ -86,6 +92,13 @@ async function machine(name: string, known: () => string[], overrides: Partial<C
       response.on("close", () => { endlessClosed.push(name); });
       const write = (): void => { while (!response.destroyed && response.write(chunk)) { /* fill until backpressure */ } if (!response.destroyed) response.once("drain", write); };
       write();
+      return;
+    }
+    if (request.url === "/held") {
+      held.now += 1;
+      held.peak = Math.max(held.peak, held.now);
+      const answer = (): void => { held.now -= 1; response.writeHead(200).end("held"); };
+      if (held.open) answer(); else held.waiting.push(answer);
       return;
     }
     if (request.url === "/big") {
@@ -458,6 +471,53 @@ test("a machine answering its gateway with an invalid status gets a 502, and the
     assert.equal(await ask("/api/health"), 200, "the relay still serves");
   } finally { console.warn = warn; }
   assert.deepEqual(warnings, [], "the bad answer is handled, not thrown");
+});
+
+/** One phone request to machine A's `/held` from a fixed address; `abandon` hangs up without waiting for the answer. */
+function heldRequest(address: string): { status: Promise<number>; abandon: () => void } {
+  const name = listMemberships(a.db)[0].name!;
+  const request = http.request({ host: "127.0.0.1", port: relayPort, path: "/held", agent: false, headers: { Host: `${name}.localhost:${relayPort}`, "X-Forwarded-For": address } });
+  const status = new Promise<number>((resolve, reject) => {
+    request.on("response", (response) => { response.resume(); resolve(response.statusCode ?? 0); });
+    request.on("error", reject);
+  });
+  request.end();
+  return { status, abandon: () => { status.catch(() => undefined); request.destroy(); } };
+}
+
+const gatewayQueue = relay as unknown as { gatewayByIp: Map<string, number>; gatewayWaiting: Map<string, unknown[]>; gatewayWaitMs: number };
+
+test("a phone loading more modules at once than its share gets every one, the extra ones in turn", async () => {
+  Object.assign(held, { now: 0, peak: 0, open: false });
+  const requests = Array.from({ length: 70 }, () => heldRequest("203.0.113.70"));
+  await eventually(() => assert.equal(held.waiting.length, 32));
+  await eventually(() => assert.equal(gatewayQueue.gatewayWaiting.get("203.0.113.70")?.length, 38));
+  letHeldThrough();
+  const statuses = await Promise.all(requests.map((request) => request.status));
+  assert.deepEqual(statuses.filter((status) => status !== 200), [], "a refused module would leave the app on its loading screen");
+  assert.equal(held.peak, 32, "one address still reaches the machine with at most its share at once");
+  await eventually(() => assert.equal(gatewayQueue.gatewayByIp.has("203.0.113.70"), false, "every slot is given back"));
+});
+
+test("a waiting phone request that hangs up gives up its place, and one that waits too long is refused", async () => {
+  Object.assign(held, { now: 0, peak: 0, open: false });
+  const running = Array.from({ length: 32 }, () => heldRequest("203.0.113.71"));
+  await eventually(() => assert.equal(held.waiting.length, 32));
+  const impatient = heldRequest("203.0.113.71");
+  await eventually(() => assert.equal(gatewayQueue.gatewayWaiting.get("203.0.113.71")?.length, 1));
+  impatient.abandon();
+  await eventually(() => assert.equal(gatewayQueue.gatewayWaiting.has("203.0.113.71"), false));
+
+  const patience = gatewayQueue.gatewayWaitMs;
+  gatewayQueue.gatewayWaitMs = 50;
+  try { assert.equal(await heldRequest("203.0.113.71").status, 429, "it is told to come back, not left hanging"); } finally { gatewayQueue.gatewayWaitMs = patience; }
+  assert.equal(gatewayQueue.gatewayWaiting.has("203.0.113.71"), false);
+  const neighbour = heldRequest("203.0.113.72");
+  await eventually(() => assert.equal(held.waiting.length, 33, "another address is not held back"));
+
+  letHeldThrough();
+  assert.deepEqual((await Promise.all([...running, neighbour].map((request) => request.status))).filter((status) => status !== 200), []);
+  await eventually(() => assert.equal(gatewayQueue.gatewayByIp.size, 0, "every slot is given back"));
 });
 
 /** A second relay in the same process, for routing between relays. */
