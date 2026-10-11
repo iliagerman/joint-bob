@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed a webhook call whose agent could not start opening a blank conversation; the reason now shows in that conversation.
+
 ## 2.73.0 — 2026-10-11
 
 - Accounts now require email addresses and support signing in by email; node admins can block specific nodes from connecting.

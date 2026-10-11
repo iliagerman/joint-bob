@@ -94,6 +94,18 @@ test("a conversation holding only the automatic start command can still be opene
       socket.close();
       await new Promise<void>((resolve) => socket.once("close", () => resolve()));
     }
+
+    // A webhook call that could not start its agent leaves a listed conversation with no
+    // transcript at all. Opening it shows the recorded reason, not a blank conversation.
+    const { recordTurnFailure } = await import("../src/turn-failures.js");
+    const failedId = randomUUID();
+    await ensureConversationRecord(project.id, "claude", failedId, (await getClusterNode()).id);
+    recordTurnFailure("claude", failedId, 'Webhook "Issues" could not start this conversation: Claude authentication unavailable on this node');
+    const failed = await openConversation(`ws://127.0.0.1:${address.port}/ws?projectId=${project.id}&sessionPath=${encodeURIComponent(`draft:claude:${failedId}`)}&sessionId=${failedId}`, base, cookie);
+    sockets.push(failed.socket);
+    assert.deepEqual((failed.ready.messages as Array<{ role: string; text?: string }>).map((message) => [message.role, message.text]), [
+      ["error", 'Webhook "Issues" could not start this conversation: Claude authentication unavailable on this node'],
+    ]);
   } finally {
     for (const socket of sockets) socket.terminate();
     if (server?.listening) await new Promise<void>((resolve) => server!.close(() => resolve()));

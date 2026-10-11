@@ -9,6 +9,7 @@ import { listDiscoveredHarnesses } from "../harnesses/registry.js";
 import { ensureSessionTitle } from "../names.js";
 import { getProjectLock } from "../project-locks.js";
 import { getProject } from "../store.js";
+import { recordTurnFailure } from "../turn-failures.js";
 import { isHarnessId } from "../types.js";
 import { recordWebhookDelivery, WebhookError, webhookMessage, type Webhook, type WebhookCall } from "../webhooks.js";
 import { queueConversationPrompt } from "./conversation-prompt.js";
@@ -48,7 +49,13 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   await ensureConversationRecord(project.id, engine, sessionId, local.id);
   await ensureSessionTitle(sessionId, webhook.name);
   broadcastToProject(project.id, { type: "sessionsChanged" });
-  await queueConversationPrompt({ projectId: project.id, engine, sessionId, message, requestId, label: "Webhook", until: "started" });
+  try {
+    await queueConversationPrompt({ projectId: project.id, engine, sessionId, message, requestId, label: "Webhook", until: "started" });
+  } catch (error) {
+    // The conversation is already listed. It says why it is empty, instead of opening blank.
+    recordTurnFailure(engine, sessionId, `Webhook "${webhook.name}" could not start this conversation: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
   return sessionId;
 }
 
