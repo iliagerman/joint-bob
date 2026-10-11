@@ -7,9 +7,12 @@ import { fillShortcutSettings } from "./shortcut-settings.js";
 import { loadSkills } from "./composer-dialogs.js";
 import { showSignedOut } from "./auth.js";
 import { loadClusterPanel } from "./cluster-panel.js";
+import { loadRelayServing } from "./relay-serving.js";
+import { loadWebhooks } from "./webhooks.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadNtfyServicesPanel } from "./ntfy.js";
+import { loadErrorReportingSettings } from "./error-reporting-settings.js";
 import { loadMfaSettings } from "./mfa.js";
 import { loadRoutingConfigs, saveDirtyRoutingConfig } from "./routing-configs.js";
 import { showResourcesPanel } from "./resources.js";
@@ -21,6 +24,7 @@ import { createSearchableSelect } from "./searchable-select.js";
 import { refreshSessionsQuietly } from "./socket.js";
 import { loadWorkspaces } from "./workspaces.js";
 import { loadGitReviewerSettings } from "./git-reviewer-options.js";
+import { labelIconsValue, loadLabelIcons } from "./label-icons.js";
 
 /** Compares two "major.minor.patch" strings; anything else never counts as newer. */
 function isNewerVersion(candidate, baseline) {
@@ -89,12 +93,12 @@ function renderClientLogs() {
 }
 
 // These panels guard their own loading and do not depend on Save settings.
-const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users"].includes(panel.id);
+const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users"].includes(panel.id);
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
-const ADMIN_TABS = new Set(["node", "users", "updates", "resources"]);
-function selectSettingsTab(name) {
-  if (ADMIN_TABS.has(name) && !isNodeAdmin()) name = "account";
+function selectSettingsTab(requested) {
+  // A tab hidden from this account (Relay for a replicated user, admin tabs for a member) falls back to Account.
+  const name = elements.settingsTabs.some((tab) => tab.dataset.settingsTab === requested && !tab.hidden && (isNodeAdmin() || !tab.hasAttribute("data-admin-only"))) ? requested : "account";
   elements.settingsForm.dataset.tab = name;
   for (const tab of elements.settingsTabs) {
     const selected = tab.dataset.settingsTab === name;
@@ -105,7 +109,9 @@ function selectSettingsTab(name) {
   if (elements.settingsTabsSelect) elements.settingsTabsSelect.value = name;
   if (name === "cluster" || name === "browser") void loadBrowserStatus();
   if (name === "browser") void loadBrowserProfileDirectory();
-  if (name === "notifications") void loadNtfyServicesPanel();
+  if (name === "relay") void loadRelayServing();
+  if (name === "webhooks") void loadWebhooks();
+  if (name === "notifications") { void loadNtfyServicesPanel(); void loadErrorReportingSettings(); }
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
@@ -116,6 +122,16 @@ function selectSettingsTab(name) {
     void loadNodeBlocks().catch((error) => toast(error.message));
     void loadTerminalPolicy().catch((error) => toast(error.message));
   }
+}
+
+/** Hides the tabs a replicated user cannot use. Their only feature is `conversations`, so settings tabs go. */
+export function syncSettingsAccess() {
+  const allowed = !state.isRemoteLogin;
+  for (const node of document.querySelectorAll("[data-requires-settings]")) {
+    node.hidden = !allowed;
+    if (node instanceof HTMLOptionElement) node.disabled = !allowed;
+  }
+  if (!allowed && ["relay", "webhooks"].includes(elements.settingsForm.dataset.tab)) selectSettingsTab("account");
 }
 
 let runtimeDefaults;
@@ -357,12 +373,17 @@ async function loadSettings() {
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";
   document.querySelector("#settingsConversationLabels").value = settings.conversationLabels.join("\n");
+  loadLabelIcons(settings.conversationLabelIcons);
   document.querySelector("#settingsConversationHistoryDays").value = settings.conversationHistoryDays;
   elements.settingsAutoCompactEnabled.checked = settings.autoCompactThreshold !== null;
   elements.settingsAutoCompactThreshold.value = settings.autoCompactThreshold ?? 70;
   elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked;
   elements.settingsDigestAttachments.checked = settings.digestAttachments;
   document.querySelector("#settingsShowProjectsOnOtherNodes").checked = settings.showProjectsOnOtherNodes !== false;
+  elements.settingsNewConversationWorktree.checked = settings.newConversationWorktree;
+  renderSyncCheckSettings(settings);
+  elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
+  elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
   elements.settingsStartConversationEnabled.checked = settings.conversationCommands.start.enabled;
   elements.settingsStartConversationPrompt.value = settings.conversationCommands.start.prompt;
   elements.settingsEndConversationEnabled.checked = settings.conversationCommands.end.enabled;
@@ -435,6 +456,7 @@ async function saveSettings(event) {
       projects: { homePath: elements.settingsProjectHome.value.trim() },
       resources: resourceFieldsValue(globalResourceFields),
       conversationLabels: document.querySelector("#settingsConversationLabels").value.split("\n").map((label) => label.trim()).filter(Boolean),
+      conversationLabelIcons: labelIconsValue(),
       conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
       conversationRetentionDays: Number(document.querySelector("#settingsConversationRetentionDays").value),
       autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
@@ -442,6 +464,7 @@ async function saveSettings(event) {
       subprocessMaxLifetimeMinutes: Number(elements.settingsSubprocessMaxLifetimeMinutes.value),
       digestAttachments: elements.settingsDigestAttachments.checked,
       showProjectsOnOtherNodes: document.querySelector("#settingsShowProjectsOnOtherNodes").checked,
+      newConversationWorktree: elements.settingsNewConversationWorktree.checked,
       ...(syncCheck ? { syncCheck } : {}),
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
       conversationCommands: {
@@ -451,6 +474,7 @@ async function saveSettings(event) {
     }),
   });
   state.conversationLabels = saved.conversationLabels;
+  state.conversationLabelIcons = saved.conversationLabelIcons;
   if (state.activeProjectId) await refreshSessionsQuietly();
   else renderSessions();
   const restartRequired = harnessDescriptors.filter(({ id }) => saved.restartRequired[id]).map(({ label }) => `${label} configuration`);
@@ -502,10 +526,9 @@ for (const tab of elements.settingsTabs) {
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
     if (!step) return;
     event.preventDefault();
-    // A member's tab list has no admin tabs to walk into.
-    const tabs = elements.settingsTabs.filter((candidate) => isNodeAdmin() || !candidate.hasAttribute("data-admin-only"));
-    const index = tabs.indexOf(tab);
-    const next = tabs[(index + step + tabs.length) % tabs.length];
+    const visible = elements.settingsTabs.filter((item) => !item.hidden && (isNodeAdmin() || !item.hasAttribute("data-admin-only")));
+    const index = visible.indexOf(tab);
+    const next = visible[(index + step + visible.length) % visible.length];
     selectSettingsTab(next.dataset.settingsTab);
     next.focus();
   });

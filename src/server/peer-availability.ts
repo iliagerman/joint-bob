@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { DatabaseSync } from "node:sqlite";
 import { isAdministrationPath, isNodeBlocked } from "../node-blocks.js";
+import { peerFetch } from "../relay/transport.js";
 
 /**
  * An offline peer (a sleeping laptop, a Tailscale host that drops packets) makes every
@@ -75,7 +76,7 @@ export async function fetchPeer(db: DatabaseSync, peerId: string, input: string 
   if (local && isNodeBlocked(db, local, peerId) && !isAdministrationPath(target)) throw new PeerBlockedError(peerId);
   if (optionalReads.getStore() && !peerReachable(peerId, lastSeenAt(db, peerId))) throw new PeerUnreachableError(peerId);
   try {
-    const response = await fetch(input, init);
+    const response = await peerFetch(input, init, peerId);
     markPeerReachable(peerId);
     return response;
   } catch (error) {

@@ -11,8 +11,12 @@ import { listTwinUpdateTargets } from "../twin-updates.js";
 import { signedPeerPost } from "./replication-v2.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
-import { clusterRequestRawBody, isClusterOriginUrl, sendError } from "./http-auth.js";
+import { clusterRequestRawBody, isClusterOriginUrl, sendError, assertRelayChannelSender } from "./http-auth.js";
 import { listDifficultyClassifiers } from "../classifiers/registry.js";
+import { applyUserReplication } from "../user-replication.js";
+import { advertisedNodeUrl } from "../relay/index.js";
+import { peerFetch } from "../relay/transport.js";
+import { fetchPeer, PeerUnreachableError, whilePeerOptional } from "./peer-availability.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const origin = z.string().transform((value, context) => {
@@ -57,8 +61,10 @@ export function invitationHash(invitation: MembershipInvitation): string {
 
 export async function localMembershipDescriptor(): Promise<{ nodeId: string; name: string; url: string }> {
   const node = await getClusterNode();
-  if (!node.url || !isClusterOriginUrl(node.url)) throw new ClusterV2HttpError(409, "Cluster node URL must be an HTTPS or loopback origin");
-  return { nodeId: node.id, name: node.name, url: new URL(node.url).origin };
+  // A machine without a direct URL is reachable through its relays (RELAY-PLAN.md §4.5).
+  const url = await advertisedNodeUrl(node);
+  if (!url || !isClusterOriginUrl(url)) throw new ClusterV2HttpError(409, "Set this machine's HTTPS URL or join a relay before joining clusters");
+  return { nodeId: node.id, name: node.name, url: new URL(url).origin };
 }
 
 export function parseV2InvitationLink(link: string): { invitation: MembershipInvitation; fingerprint: string; secret: string } {
@@ -100,7 +106,7 @@ export async function signedPost<T>(db: DatabaseSync, senderNodeId: string, reci
   const peer = memberDescriptor(db, clusterId, recipientNodeId);
   let response: globalThis.Response;
   try {
-    response = await fetch(new URL(target, peer.url), { method: "POST", redirect: "error", headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, senderNodeId, recipientNodeId, "POST", target, body) }, body, signal: AbortSignal.timeout(10_000) });
+    response = await peerFetch(new URL(target, peer.url), { method: "POST", redirect: "error", headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, senderNodeId, recipientNodeId, "POST", target, body) }, body, signal: AbortSignal.timeout(10_000) }, recipientNodeId);
   } catch { throw new ClusterV2HttpError(503, "Cluster peer is unavailable"); }
   if (!response.ok) throw new ClusterV2HttpError(response.status >= 400 && response.status < 500 ? response.status : 503, `Cluster peer request failed (${response.status})`);
   try { return await response.json() as T; } catch { throw new ClusterV2HttpError(503, "Cluster peer returned an invalid response"); }
@@ -181,6 +187,7 @@ export async function redeemV2Membership(request: Request, response: Response, n
       pinClusterPublicKey(db, payload.request.member.nodeId, payload.request.member.publicKey);
       const sender = verifyClusterRequest(db, local.id, request.method, request.originalUrl, raw, request.header("authorization"));
       if (sender !== payload.request.member.nodeId) throw new ClusterProtocolError("Invalid cluster request");
+      assertRelayChannelSender(request, sender);
       const snapshot = redeemMembershipInvitation(db, local.id, payload.request as MembershipJoinRequest, payload.secret);
       db.exec("RELEASE cluster_v2_bootstrap");
       // Routing configurations are shared explicitly and are never part of the join:
@@ -207,10 +214,12 @@ export async function flushV2MembershipOutbox(): Promise<void> {
       try {
         const target = "/api/cluster/v2/membership/snapshot";
         const body = Buffer.from(JSON.stringify({ snapshot: delivery.snapshot }));
-        const response = await fetch(new URL(target, delivery.url), {
+        // The delivery stays queued, so a peer known to be down is asked once per backoff
+        // window instead of on every flush, each of which waited out its connection attempt.
+        const response = await whilePeerOptional(() => fetchPeer(db, delivery.peerId, new URL(target, delivery.url), {
           method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), body,
           headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, local.id, delivery.peerId, "POST", target, body) },
-        });
+        }));
         if (!response.ok) throw new ClusterV2HttpError(response.status, "Membership delivery rejected");
         for (const pending of deliveries) {
           if (pending.clusterId === delivery.clusterId && pending.peerId === delivery.peerId && pending.revision <= delivery.revision) {
@@ -218,6 +227,7 @@ export async function flushV2MembershipOutbox(): Promise<void> {
           }
         }
       } catch (error) {
+        if (error instanceof PeerUnreachableError) continue;
         const status = error instanceof ClusterV2HttpError ? error.statusCode : 500;
         console.warn(`V2 membership delivery to ${delivery.peerId} failed (${status})`);
       }
@@ -235,7 +245,9 @@ export function clusterManager(db: DatabaseSync, clusterId: string): string {
     through its manager, which republishes the signed membership, and each twin directly. */
 export async function publishNodeDescriptor(): Promise<void> {
   const db = await clusterV2Database(), local = await getClusterNode();
-  const descriptor = { name: local.name, url: local.url };
+  const url = await advertisedNodeUrl(local);
+  if (!url) return;
+  const descriptor = { name: local.name, url };
   for (const membership of listSharingMemberships(db, local.id)) {
     const manager = clusterManager(db, membership.clusterId);
     if (manager === local.id) updateMembershipDescriptor(db, local.id, membership.clusterId, { nodeId: local.id, ...descriptor });
@@ -247,3 +259,13 @@ export async function publishNodeDescriptor(): Promise<void> {
   await flushV2MembershipOutbox();
 }
 
+
+/** Receives the one home user an older node sends; see applyUserReplication. */
+export async function receiveUserReplication(request: Request, response: Response, next: NextFunction): Promise<void> {
+  try {
+    const senderNodeId = response.locals.machineNodeId as string | undefined;
+    if (!senderNodeId) throw new ClusterV2HttpError(401, "Unauthorized");
+    await applyUserReplication(request.body);
+    response.json({ received: true });
+  } catch (error) { mapV2Error(error, response, next); }
+}

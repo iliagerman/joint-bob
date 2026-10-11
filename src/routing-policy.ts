@@ -217,6 +217,36 @@ export function routingEvalDue(policy: RoutingPolicy, promptOrdinal: number, las
   return promptOrdinal - lastEvalOrdinal >= (policy.evalCadence.n ?? Number.POSITIVE_INFINITY);
 }
 
+/** The Joint Bob preset's task categories. Jev chooses among these descriptions, so Pi
+    and Claude share them and differ only in the model each category runs on. */
+const DEFAULT_ROUTING_TASKS = [
+  { level: "1", description: "General questions about the app, the project, or how something works, answered by reading and explaining without changing code." },
+  { level: "2", description: "Terminal and git work: running CLI commands, shell inspection, reviewing diffs, committing, pushing, resolving straightforward conflicts, and managing existing branches." },
+  { level: "4", description: "Simple coding: a small, well-scoped code change such as a one-file edit, a rename, a config tweak, or a short script." },
+  { level: "6", description: "Complex coding: implementing or refactoring a feature across several files or components and verifying the result with tests." },
+  { level: "8", description: "Debugging a reported error or unexpected behaviour: reproducing the failure, tracing its root cause, and making the fix." },
+  { level: "10", description: "Planning: architecture, design, breaking down ambiguous multi-system work, or high-risk changes that need deep analysis before implementation." },
+] as const;
+
+const DEFAULT_ROUTING_MODELS: Record<string, Record<(typeof DEFAULT_ROUTING_TASKS)[number]["level"], { provider: string; modelId: string; thinkingLevel: string }>> = {
+  pi: {
+    "1": { provider: "openai-codex", modelId: "gpt-6-luna", thinkingLevel: "xhigh" },
+    "2": { provider: "openai-codex", modelId: "gpt-6-luna", thinkingLevel: "medium" },
+    "4": { provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" },
+    "6": { provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" },
+    "8": { provider: "openai-codex", modelId: "gpt-6-astra", thinkingLevel: "xhigh" },
+    "10": { provider: "openai-codex", modelId: "gpt-6-astra", thinkingLevel: "xhigh" },
+  },
+  claude: {
+    "1": { provider: "claude", modelId: "haiku", thinkingLevel: "xhigh" },
+    "2": { provider: "claude", modelId: "haiku", thinkingLevel: "medium" },
+    "4": { provider: "claude", modelId: "haiku", thinkingLevel: "xhigh" },
+    "6": { provider: "claude", modelId: "sonnet", thinkingLevel: "medium" },
+    "8": { provider: "claude", modelId: "opus", thinkingLevel: "xhigh" },
+    "10": { provider: "claude", modelId: "opus", thinkingLevel: "xhigh" },
+  },
+};
+
 /** Builds the immutable Joint Bob preset. Kiro and unknown harnesses stay blank;
     only Pi and Claude have an intentional task-to-model mapping. */
 export function defaultRoutingPolicy(): RoutingPolicy {
@@ -224,25 +254,10 @@ export function defaultRoutingPolicy(): RoutingPolicy {
   for (const adapter of listDiscoveredHarnesses()) {
     if (!adapter.configuration) continue;
     const levelsMap: RoutingPolicy["harnesses"][string]["levels"] = {};
-    const tiers = adapter.id === "pi"
-      ? [
-        { level: "1", provider: "zai", modelId: "glm-5.3-flash", thinkingLevel: "low", description: "Direct CLI commands, shell inspection, lookups, and other short mechanical terminal work that does not change git history." },
-        { level: "3", provider: "openai-codex", modelId: "gpt-6-luna", thinkingLevel: "medium", description: "Git operations such as reviewing diffs, preparing commits, resolving straightforward conflicts, and managing an existing branch." },
-        { level: "5", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium", description: "Debugging a reported error, reproducing a failure, tracing its cause, and making a focused fix." },
-        { level: "7", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "high", description: "Software development that implements or refactors a feature across the codebase and verifies the result." },
-        { level: "10", provider: "openai-codex", modelId: "gpt-6-astra", thinkingLevel: "xhigh", description: "Complex planning, architecture, ambiguous multi-system design, or high-risk work that needs deep analysis before implementation." },
-      ]
-      : adapter.id === "claude"
-        ? [
-          { level: "1", provider: "claude", modelId: "haiku", thinkingLevel: "low", description: "Direct CLI commands, shell inspection, lookups, and other short mechanical terminal work that does not change git history." },
-          { level: "3", provider: "claude", modelId: "haiku", thinkingLevel: "low", description: "Git operations such as reviewing diffs, preparing commits, resolving straightforward conflicts, and managing an existing branch." },
-          { level: "5", provider: "claude", modelId: "opus", thinkingLevel: "medium", description: "Debugging a reported error, reproducing a failure, tracing its cause, and making a focused fix." },
-          { level: "7", provider: "claude", modelId: "opus", thinkingLevel: "high", description: "Software development that implements or refactors a feature across the codebase and verifies the result." },
-          { level: "10", provider: "claude", modelId: "opus", thinkingLevel: "xhigh", description: "Complex planning, architecture, ambiguous multi-system design, or high-risk work that needs deep analysis before implementation." },
-        ]
-        : [];
-    for (const tier of tiers) {
-      levelsMap[tier.level] = { ...(adapter.configuration.fixedProvider ? {} : { provider: tier.provider }), modelId: tier.modelId, thinkingLevel: tier.thinkingLevel, description: tier.description };
+    const models = DEFAULT_ROUTING_MODELS[adapter.id];
+    for (const task of models ? DEFAULT_ROUTING_TASKS : []) {
+      const model = models![task.level];
+      levelsMap[task.level] = { ...(adapter.configuration.fixedProvider ? {} : { provider: model.provider }), modelId: model.modelId, thinkingLevel: model.thinkingLevel, description: task.description };
     }
     harnesses[adapter.id] = { levels: levelsMap };
   }

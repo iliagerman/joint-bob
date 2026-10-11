@@ -101,6 +101,57 @@ test("importing a legacy project matched by sync folder keeps the local ID and r
   });
 });
 
+test("legacy owner orphan retires once on startup; missing remote metadata stays live", async () => {
+  await withStore(async (root, store) => {
+    const owner = await store.addProject("legacy owner", path.join(root, "owner"));
+    const remote = await store.addProject("awaiting metadata", path.join(root, "remote"));
+    const db = new DatabaseSync(path.join(root, "data", "node.db"));
+    const remoteId = randomUUID();
+    db.prepare("UPDATE sharing_resource_owners SET owner_node_id=? WHERE kind='project' AND resource_id=?").run(remoteId, remote.id);
+    db.prepare("UPDATE cluster_v2_resource_policy SET owner_node_id=? WHERE kind='project' AND resource_id=?").run(remoteId, remote.id);
+    db.prepare("DELETE FROM projects WHERE id IN (?,?)").run(owner.id, remote.id);
+    db.close();
+    const reload = () => import(new URL(`../src/store.ts?orphan=${Math.random()}`, import.meta.url).href);
+    await (await reload()).listProjects();
+    const inspect = new DatabaseSync(path.join(root, "data", "node.db"));
+    const state = (id: string) => inspect.prepare("SELECT generation,deleted FROM cluster_v2_resource_policy WHERE kind='project' AND resource_id=?").get(id) as {generation:number;deleted:number};
+    assert.deepEqual({ ...state(owner.id) }, { generation: 2, deleted: 1 });
+    assert.deepEqual({ ...state(remote.id) }, { generation: 1, deleted: 0 });
+    await (await reload()).listProjects();
+    assert.deepEqual({ ...state(owner.id) }, { generation: 2, deleted: 1 });
+    inspect.close();
+  });
+});
+
+test("delivery failure rolls back owner deletion; replica removal cannot sign owner deletion", async () => {
+  await withStore(async (root, store) => {
+    const { getClusterNode } = await import("../src/cluster.js");
+    const { applyTwinCertificate, confirmTwinAcceptance, createTwinInvitation, prepareTwinAcceptance } = await import("../src/cluster-twins.js");
+    const local = await getClusterNode();
+    await store.listProjects();
+    const db = new DatabaseSync(path.join(root, "data", "node.db"));
+    const peer = randomUUID(), peerDb = new DatabaseSync(":memory:");
+    const invite = createTwinInvitation(db, local.id);
+    const acceptance = prepareTwinAcceptance(peerDb, peer, invite, invite.body.inviter.fingerprint);
+    applyTwinCertificate(peerDb, peer, confirmTwinAcceptance(db, local.id, acceptance, invite.secret));
+    const owner = await store.addProject("owner", path.join(root, "owner"));
+    db.exec("CREATE TRIGGER fail_delete_delivery BEFORE INSERT ON cluster_v2_resource_deliveries BEGIN SELECT RAISE(ABORT,'delivery failed'); END");
+    await assert.rejects(store.removeProject(owner.id), /delivery failed/);
+    assert.ok(await store.getProject(owner.id));
+    assert.deepEqual({ ...db.prepare("SELECT generation,deleted FROM cluster_v2_resource_policy WHERE resource_id=?").get(owner.id) }, { generation: 1, deleted: 0 });
+    db.exec("DROP TRIGGER fail_delete_delivery");
+    const replica = await store.addProject("replica", path.join(root, "replica"));
+    const remote = randomUUID();
+    db.prepare("UPDATE sharing_resource_owners SET owner_node_id=? WHERE kind='project' AND resource_id=?").run(remote, replica.id);
+    db.prepare("UPDATE cluster_v2_resource_policy SET owner_node_id=? WHERE kind='project' AND resource_id=?").run(remote, replica.id);
+    await store.removeProject(replica.id);
+    assert.equal(await store.getProject(replica.id), undefined);
+    assert.deepEqual({ ...db.prepare("SELECT generation,deleted FROM cluster_v2_resource_policy WHERE resource_id=?").get(replica.id) }, { generation: 1, deleted: 0 });
+    assert.equal(db.prepare("SELECT 1 FROM cluster_v2_resource_deletions WHERE resource_id=?").get(replica.id), undefined);
+    db.close(); peerDb.close();
+  });
+});
+
 test("project keeps paths from three nodes without changing its local path", async () => {
   await withStore(async (root, store) => {
     const localPath = path.join(root, "node-b", "demo");

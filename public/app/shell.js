@@ -139,7 +139,7 @@ function notificationPermissionGranted() {
 export function syncNotifyButton() {
   const enabled = state.notificationsEnabled && notificationPermissionGranted();
   elements.notifyButton.setAttribute("aria-pressed", enabled ? "true" : "false");
-  elements.notifyButton.title = enabled ? "Notifications on — tap to turn off" : "Notify when a conversation needs review";
+  elements.notifyButton.title = enabled ? "Notify — on, tap to turn off" : "Notify — when a conversation needs review";
   elements.notifyButton.classList.toggle("active", enabled);
   elements.notificationToggleButton.setAttribute("aria-pressed", enabled ? "true" : "false");
   elements.notificationToggleButton.textContent = enabled ? "Browser notifications enabled" : state.notificationsEnabled ? "Enable notifications on this device" : "Enable browser notifications";

@@ -25,7 +25,8 @@ import { listUserPins, setUserPin } from "../../user-pins.js";
 import { assertManagedHomeChangeAllowed } from "../cluster-helpers.js";
 import { Feature, requireFeature, sendError } from "../http-auth.js";
 import { broadcastToAllClients, reloadSharedSkills } from "../realtime.js";
-import { auditQuerySchema, recentSessionIdentitySchema, recentSessionSchema, registeredHarnessIdSchema, resourcePathsSchema, runtimeCheckSchema, settingsSchema, userPinSchema, userPreferencesSchema } from "../schemas.js";
+import { auditQuerySchema, labelIconRequestSchema, recentSessionIdentitySchema, recentSessionSchema, registeredHarnessIdSchema, resourcePathsSchema, runtimeCheckSchema, settingsSchema, userPinSchema, userPreferencesSchema } from "../schemas.js";
+import { generateLabelIcon } from "../label-icon.js";
 import { app } from "../state.js";
 
 // Block settings access for replicated users
@@ -362,6 +363,17 @@ app.post("/api/settings/runtime-check", (request, response, next) => {
     response.json(checkRuntimeSettings(runtimeCheckSchema.parse(request.body)));
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
+    next(error);
+  }
+});
+
+app.post("/api/settings/label-icon", async (request, response, next) => {
+  try {
+    const payload = labelIconRequestSchema.parse(request.body);
+    response.json({ icon: await generateLabelIcon(payload.label, payload) });
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
+    if (error instanceof Error && /^(Icon harness|No agent|The agent did not)/.test(error.message)) { sendError(response, 422, error.message); return; }
     next(error);
   }
 });

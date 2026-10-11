@@ -49,12 +49,12 @@ test("classification filters combine with search and status, include custom labe
     assert.equal(await rows.count(), sessions.length);
     assert.equal(await filter.trigger.innerText(), "All labels");
     const labels = await filter.labels();
-    for (const label of ["Unclassified", "Research", "Bug", "Feature", "POC", "Investigation <custom>", "unclassified"]) {
+    for (const label of ["Unclassified", "🔬 Research", "🐞 Bug", "✨ Feature", "🧪 POC", "Investigation <custom>", "unclassified"]) {
       assert.ok(labels.includes(label), `Missing filter ${label}`);
     }
-    await filter.choose("Bug");
+    await filter.choose("🐞 Bug");
     assert.equal(await rows.count(), 2);
-    assert.equal(await filter.trigger.innerText(), "Bug");
+    assert.equal(await filter.trigger.innerText(), "🐞 Bug");
     assert.equal(await page.locator('[data-filter-count="all"]').textContent(), "2", "status counts respect classification");
     await page.getByTestId("conversation-list-search-input").fill("thread-based");
     assert.equal(await rows.count(), 1);
@@ -62,7 +62,7 @@ test("classification filters combine with search and status, include custom labe
     await page.getByTestId("chats-filter-active-button").click();
     assert.equal(await rows.count(), 0, "status and classification filters intersect");
     await page.getByTestId("chats-filter-all-button").click();
-    assert.deepEqual(await filter.selected(), ["Bug"], "All statuses does not clear the classification filter");
+    assert.deepEqual(await filter.selected(), ["🐞 Bug"], "All statuses does not clear the classification filter");
     assert.equal(await rows.count(), 1);
     await filter.choose("Unclassified");
     assert.equal(await rows.count(), 0, "search and Unclassified also intersect");
@@ -72,18 +72,19 @@ test("classification filters combine with search and status, include custom labe
     assert.equal(await rows.count(), 1, "a literal custom label cannot collide with Unclassified");
     assert.match(await rows.first().innerText(), /Flow Runner Tool Evaluation/);
     // Several labels at once show conversations carrying any of them.
-    await filter.choose("unclassified", "Investigation <custom>", "Bug");
+    await filter.choose("unclassified", "Investigation <custom>", "🐞 Bug");
     assert.equal(await rows.count(), 4);
     assert.match(await filter.trigger.innerText(), /^Labels: 3 selected$/);
     await filter.choose("Investigation <custom>");
     assert.equal(await rows.count(), 1);
     assert.match(await rows.first().innerText(), /Short one/);
-    await filter.choose("Feature");
+    await filter.choose("✨ Feature");
     assert.equal(await rows.count(), 0);
     await page.locator("#sessionList").getByText("No matching conversations.", { exact: true }).waitFor();
 
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-labels").click();
+    await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
     await page.getByTestId("settings-conversation-labels").fill("Research\nBug\nFeature\nPOC\nSupport");
     await page.getByTestId("settings-save-button").click();
     await page.locator("#settingsDialog").waitFor({ state: "hidden" });
@@ -91,6 +92,7 @@ test("classification filters combine with search and status, include custom labe
     assert.equal(await rows.count(), 0, "new predefined labels are immediately filterable without conversations");
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-labels").click();
+    await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
     await page.getByTestId("settings-conversation-labels").fill("Research\nBug\nFeature\nPOC");
     await page.getByTestId("settings-save-button").click();
     await page.locator("#settingsDialog").waitFor({ state: "hidden" });

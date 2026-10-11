@@ -63,7 +63,9 @@ export const state = {
   // The Joint Bob worktree a new conversation should run in; null runs it in the project folder.
   newSessionWorktreeId: null,
   worktrees: [],
-  worktreeFilter: null,
+  worktreeCleanupReasons: {},
+  // Worktree sub-sections the user folded in the conversation list.
+  collapsedWorktreeIds: new Set(),
   // Accounts picked in the new-conversation dialog; the server persists them once the engine reports an id.
   newSessionSecretAccountIds: [],
   pendingSessionTitle: null,
@@ -118,7 +120,12 @@ export const state = {
   twinNodeIds: [],
   // Conversations the user has closed out are hidden until this is switched on.
   showDoneConversations: false,
+  showScheduledConversations: false,
+  projectConversationVisibility: {},
+  hiddenCronTaskIds: new Set(),
+  knownCronTaskIds: new Set(),
   conversationLabels: [],
+  conversationLabelIcons: {},
   conversationCommands: null,
   watchSocket: null,
   watchProjectId: null,
@@ -169,6 +176,7 @@ export const state = {
   email: "",
   role: null,
   needsEmail: false,
+  isRemoteLogin: false,
   setupRequired: false,
   mustChangePassword: false,
   lastTurnStartedAt: 0,

@@ -48,6 +48,16 @@ test("the conversation limit counts top-level families instead of sub-agent rows
   );
 });
 
+test("scheduled runs do not use up the limit for other conversations", () => {
+  const runs = Array.from({ length: 5 }, (_, index) => ({ ...session(`run-${index}`), cronTaskId: "hourly" }));
+  const ordinary = [session("first"), session("second"), session("third")];
+
+  assert.deepEqual(
+    orderSessionFamilies([...runs, ...ordinary], 2).map((entry) => entry.id),
+    ["run-0", "run-1", "first", "second"],
+  );
+});
+
 test("the conversation list renders child lineage", async () => {
   const [app, styles, serviceWorker] = await Promise.all([
     appSource(),
@@ -57,7 +67,7 @@ test("the conversation list renders child lineage", async () => {
 
   assert.match(app, /function nestedSessionRows\(sessions, shouldExpand = \(\) => true\)/);
   assert.match(app, /row\.dataset\.sessionDepth = String\(depth\)/);
-  assert.match(app, /for \(const \{ session, depth, childCount \} of rows\)/);
+  assert.match(app, /function sessionRow\(\{ session, depth, childCount \}, sessionActive\)/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\]/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\] \.session-card/);
   assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v\d+";/);

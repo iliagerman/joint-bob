@@ -137,3 +137,16 @@ export async function readNtfyMessages(server: NtfyServer, topic: string, since 
   }
   return messages.slice(-limit);
 }
+
+export interface NtfyTokenCheck { status: "admin" | "user" | "rejected" | "unreachable"; username: string | null }
+
+/** Asks the server who the token belongs to; any valid token may read /v1/account. */
+export async function checkNtfyToken(server: NtfyServer): Promise<NtfyTokenCheck> {
+  try {
+    const account = await json(server, "GET", "/v1/account") as { username?: unknown; role?: unknown };
+    return { status: account.role === "admin" ? "admin" : "user", username: text(account.username) };
+  } catch (error) {
+    if (error instanceof NtfyRequestError && error.status === 403) return { status: "rejected", username: null };
+    return { status: "unreachable", username: null };
+  }
+}

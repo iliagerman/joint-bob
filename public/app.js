@@ -24,6 +24,7 @@ import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, to
 import { state } from "./app/state.js";
 import { openUsageDashboard } from "./app/usage-dashboard.js";
 import "./app/state.js";
+import "./app/error-reporting.js";
 import "./app/elements.js";
 import "./app/project-files.js";
 import "./app/project-explorer.js";
@@ -41,6 +42,7 @@ import "./app/workspaces.js";
 import "./app/session-identity.js";
 import "./app/session-rows.js";
 import "./app/icons.js";
+import "./app/quick-tooltips.js";
 import "./app/row-menu.js";
 import "./app/project-list.js";
 import "./app/reviews.js";
@@ -71,11 +73,29 @@ initializeFocusUi({
 });
 
 if ("serviceWorker" in navigator) {
+  // A page that already had a worker is running the previous release once a new one takes
+  // over. The worker navigates its clients itself, but Safari web apps can miss that, so the
+  // page reloads on its own too, unless it would throw away a message being typed.
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloading) return;
+    if (elements.messageInput?.value.trim()) {
+      toast("Joint Bob was updated. Reload after sending your message to get the new version.", 10_000);
+      return;
+    }
+    reloading = true;
+    location.reload();
+  });
   window.addEventListener("load", async () => {
     try {
       const registration = await navigator.serviceWorker.register("/sw.js");
       await registration.update();
       setInterval(() => updateServiceWorker(registration), SERVICE_WORKER_UPDATE_MS);
+      // Background windows throttle that timer, so a window coming back checks at once.
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") updateServiceWorker(registration);
+      });
     } catch (error) {
       console.warn("Service worker registration failed", error);
     }

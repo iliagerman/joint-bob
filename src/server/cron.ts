@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import WebSocket from "ws";
 import { getClusterNode } from "../cluster.js";
-import { getRuntimePeer, runtimeFetch, runtimeSocketHeaders } from "./runtime-peers.js";
+import { getRuntimePeer, runtimeFetch } from "./runtime-peers.js";
+import { queueConversationPrompt } from "./conversation-prompt.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { scheduledPromptText } from "../scheduled-prompt.js";
 import { ensureConversationRecord, getConversationRecord, markCronConversation } from "../conversation-records.js";
@@ -13,7 +13,7 @@ import { cancelQueuedPrompt, listQueuedPrompts } from "../prompt-queue.js";
 import { getProject } from "../store.js";
 import { takeLocalSessionOwnership } from "./routes/sessions.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
-import { flags, server } from "./state.js";
+import { flags } from "./state.js";
 
 export async function cronConversationReady(projectId: string, sessionId: string, engine: string): Promise<boolean> {
   const project = await getProject(projectId);
@@ -57,54 +57,20 @@ async function prepareConversation(task: CronTask): Promise<string> {
 }
 
 export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: string): Promise<void> {
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Scheduled executor server is not listening");
-  const url = new URL(`ws://127.0.0.1:${address.port}/ws`);
-  for (const [key, value] of Object.entries({ projectId: task.projectId, sessionId, sessionPath: `draft:${task.engine}:${sessionId}`, nodeSession: "1" })) url.searchParams.set(key, value);
-  const record = await getConversationRecord(task.projectId, task.engine, sessionId);
-  const queueKey = `${task.projectId}:${record!.conversationId ?? sessionId}`;
-  const headers=await runtimeSocketHeaders((await getClusterNode()).id,url);
-  await new Promise<void>((resolve, reject) => {
-    const socket = new WebSocket(url, { headers });
-    const reasoning = task.reasoning ?? task.model?.reasoning;
-    let queueId: string | undefined;
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true; clearTimeout(timer); socket.close();
-      if (error) {
-        if (queueId) cancelQueuedPrompt(queueKey, queueId);
-        reject(error);
-      } else resolve();
-    };
-    const timer = setTimeout(() => finish(new Error("Scheduled conversation did not start within 30 seconds")), 30000);
-    socket.on("error", finish);
-    socket.on("close", (_code, reason) => finish(new Error(`Scheduled connection closed before completion: ${reason}`)));
-    socket.on("message", raw => {
-      const event = JSON.parse(raw.toString());
-      if (event.type === "ready") {
-        if (event.ownership || event.readOnly) { finish(new Error("Scheduled conversation is not writable on this node")); return; }
-        // Model and reasoning ride along with the queued prompt instead of
-        // configuring the live session here: unrelated scheduled tasks share a
-        // conversation, and configuring one mid-turn throws "session is busy".
-        // The queue applies these when this prompt's own turn starts.
-        const queueSettings = task.model || reasoning ? {
-          harnessId: task.engine,
-          provider: task.model?.provider ?? event.status.model.provider,
-          modelId: task.model?.modelId ?? event.status.model.id,
-          reasoning: reasoning ?? event.status.thinkingLevel,
-        } : undefined;
-        socket.send(JSON.stringify({ type: "prompt", message: scheduledPromptText(task.prompt), requestId: run.id, ...(queueSettings ? { queueSettings } : {}) }));
-      }
-      if (event.type === "userMessage" && event.queued && event.requestId === run.id) {
-        queueId = event.queueId;
-        clearTimeout(timer);
-      }
-      if (event.type === "promptStarted" && event.queueId === queueId) cronStore().started(run.id, sessionId);
-      if (event.type === "promptCompleted" && event.queueId === queueId) finish();
-      if (event.type === "queuedPromptCancelled" && event.queueId === queueId) finish(new Error("Scheduled prompt was cancelled"));
-      if (event.type === "promptFailed" && event.queueId === queueId || event.type === "error") finish(new Error(event.error));
-    });
+  const reasoning = task.reasoning ?? task.model?.reasoning;
+  await queueConversationPrompt({
+    projectId: task.projectId, engine: task.engine, sessionId, message: scheduledPromptText(task.prompt), requestId: run.id, label: "Scheduled", until: "completed",
+    // Model and reasoning ride along with the queued prompt instead of
+    // configuring the live session here: unrelated scheduled tasks share a
+    // conversation, and configuring one mid-turn throws "session is busy".
+    // The queue applies these when this prompt's own turn starts.
+    queueSettings: (status) => task.model || reasoning ? {
+      harnessId: task.engine,
+      provider: task.model?.provider ?? status.model.provider,
+      modelId: task.model?.modelId ?? status.model.id,
+      reasoning: reasoning ?? status.thinkingLevel,
+    } : undefined,
+    onStarted: () => cronStore().started(run.id, sessionId),
   });
 }
 

@@ -7,7 +7,8 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { gitPushHistory } from "../src/git-review.js";
 import { buildTurns, commitHashesIn } from "../src/server/conversation-turns.js";
-import { checkStory, fileArea, fitPatches, lineCounts, sourcesFromTurns, turnDigest, type ChangeStory } from "../src/server/git-change-story.js";
+import { checkStory, fileArea, fitPatches, lineCounts, sourcesFromPull, sourcesFromTurns, turnDigest, type ChangeStory } from "../src/server/git-change-story.js";
+import { createTopLevelFieldScanner } from "../src/server/story-json-scanner.js";
 
 const git = promisify(execFile);
 
@@ -45,6 +46,21 @@ test("turns split at user messages and collect commit hashes from git output onl
   assert.equal(turns[0].at, "2026-10-05T10:00:00.000Z");
   assert.match(turns[0].assistant, /Committed app.ts/);
   assert.deepEqual(commitHashesIn("[detached HEAD (root-commit) abcdef1] x"), ["abcdef1"]);
+});
+
+test("the scanner reports each top-level field once, as soon as the model finishes writing it", () => {
+  const written = { ...story(), overview: { what: 'Braces { and ] and "quotes" stay text.', why: "Back\\slash \\\" escapes.", notice: ["a,b"], unchanged: "" }, count: 3, flag: true };
+  const text = `\`\`\`json\n${JSON.stringify(written, null, 2)}\n\`\`\``;
+  const seen: Array<[string, unknown]> = [];
+  const scan = createTopLevelFieldScanner((key, value) => seen.push([key, value]));
+  const overviewEnds = text.indexOf('"diagram"');
+  for (let end = 1; end <= text.length; end += 7) {
+    scan(text.slice(0, end));
+    if (end < overviewEnds) assert.ok(!seen.some(([key]) => key === "diagram"), "the diagram is not reported before it is written");
+  }
+  scan(text);
+  assert.deepEqual(seen.map(([key]) => key), ["kind", "title", "overview", "diagram", "timeline", "examples", "implementation", "count", "flag"]);
+  assert.deepEqual(Object.fromEntries(seen), written);
 });
 
 test("a valid story passes and every unknown reference is rejected by name", () => {
@@ -164,6 +180,21 @@ test("picked commits are explained oldest first without the conversation, and ba
     assert.equal(new Set(hashes).size, 21);
     await assert.rejects(sourcesFromTurns(root, [], false, { ...sources, commits: hashes }), /at most 20 commits/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("PR source uses GitHub patches and detects head or description updates", () => {
+  const input = { pull: { number: 42, title: "Add widget", body: "Needed for the dashboard", html_url: "https://github.com/acme/widget/pull/42", head: { sha: "a".repeat(40) }, base: { ref: "main" }, changed_files: 2 }, files: [
+    { filename: "src/widget.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+widget" },
+    { filename: "image.png", status: "modified", additions: 0, deletions: 0 },
+  ] };
+  const source = sourcesFromPull(input);
+  assert.equal(source.facts.conversation, false);
+  assert.deepEqual(source.facts.files.map((file) => file.path), ["src/widget.ts", "image.png"]);
+  assert.deepEqual(source.facts.omitted, ["image.png"]);
+  assert.match(source.patches[0].patch, /widget/);
+  assert.notEqual(sourcesFromPull({ ...input, pull: { ...input.pull, head: { sha: "b".repeat(40) } } }).fingerprint, source.fingerprint);
+  assert.notEqual(sourcesFromPull({ ...input, pull: { ...input.pull, body: "Updated" } }).fingerprint, source.fingerprint);
+  assert.throws(() => sourcesFromPull({ ...input, files: [] }), /no changed files/);
 });
 
 test("push history lists each push with its own commits and skips fetches", async () => {

@@ -30,7 +30,7 @@ function closeViewer() {
 export function syncBrowserButton() {
   const identity = browserIdentity();
   elements.openBrowserButton.disabled = !identity;
-  elements.openBrowserButton.title = identity ? "View this conversation's browser. Closing the viewer leaves it running." : "Send a message or open an existing conversation before starting its browser.";
+  elements.openBrowserButton.title = identity ? "Browser — view this conversation's browser. Closing the viewer leaves it running." : "Browser — send a message or open an existing conversation before starting its browser.";
   if (viewer && viewerKey !== identityKey(identity)) {
     if (viewer.session?.owner === "human") toast("Browser viewer hidden. Previous conversation's browser is still under human control; reopen it to resume the agent.", 8000);
     closeViewer();

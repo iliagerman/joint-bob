@@ -7,9 +7,11 @@ import type { ProjectRecord } from "./types.js";
 
 const DEBOUNCE_MS = 750;
 const RESCAN_MS = 15_000;
+/** The longest a directory whose watcher keeps failing is left unwatched. */
+const MAX_RETRY_MS = 10 * 60_000;
 export type SessionChangeListener = (projectId: string, changedFiles: string[]) => void;
 interface WatchedProject { paths: SessionProjectPaths; directories: Set<string>; pendingFiles: Map<string, ReturnType<typeof listDiscoveredHarnesses>[number]>; needsFullRefresh: boolean; debounceTimer: NodeJS.Timeout | null; runtime: RuntimeAccount; }
-interface SharedWatch { watcher: FSWatcher; projects: Set<string>; }
+interface SharedWatch { watcher: FSWatcher; projects: Set<string>; openedAt: number; }
 
 export function sessionWatchDirs(project: SessionProjectPaths): string[] {
   return [...new Set(listDiscoveredHarnesses().flatMap((adapter) => adapter.sync.watchDirs?.(project) ?? [adapter.sync.transcriptRoot()]))];
@@ -19,6 +21,10 @@ function missing(error: unknown): boolean { const code = (error as NodeJS.ErrnoE
 export class SessionWatcher {
   private projects = new Map<string, WatchedProject>();
   private directories = new Map<string, SharedWatch>();
+  // Reopening a directory walks its whole tree and refreshes every project that uses it. A
+  // watcher that fails again at once (Linux out of inotify watches) repeated that every
+  // rescan and kept the node saturated, so each failure waits longer than the last.
+  private failures = new Map<string, { count: number; retryAt: number }>();
   private ownerReads = new Map<string, Promise<string | null>>();
   private rescanTimer: NodeJS.Timeout;
   constructor(private listener: SessionChangeListener) { this.rescanTimer = setInterval(() => this.rescan(), RESCAN_MS); this.rescanTimer.unref(); }
@@ -59,6 +65,7 @@ export class SessionWatcher {
     for (const dir of project.directories) if (!desired.has(dir)) this.unsubscribe(projectId, dir);
     for (const dir of desired) {
       if (project.directories.has(dir)) continue;
+      if (!this.directories.has(dir) && (this.failures.get(dir)?.retryAt ?? 0) > Date.now()) continue;
       try {
         const shared = this.directories.get(dir) ?? this.openDirectory(dir);
         shared.projects.add(projectId);
@@ -77,9 +84,17 @@ export class SessionWatcher {
     watcher.unref();
     watcher.on("error", (error) => {
       for (const projectId of projects) this.unsubscribe(projectId, dir);
-      if (!missing(error)) console.error(`Session watcher failed for ${dir}:`, error);
+      if (missing(error)) return;
+      // A watcher that ran for a long while before failing starts a new streak.
+      const streak = Date.now() - shared.openedAt < MAX_RETRY_MS ? this.failures.get(dir)?.count ?? 0 : 0;
+      const delay = Math.min(MAX_RETRY_MS, RESCAN_MS * 2 ** streak);
+      this.failures.set(dir, { count: streak + 1, retryAt: Date.now() + delay });
+      const cause = (error as NodeJS.ErrnoException).code === "ENOSPC"
+        ? "this user is out of inotify watches (raise fs.inotify.max_user_watches)"
+        : error instanceof Error ? error.message : String(error);
+      console.error(`Session watcher failed for ${dir}: ${cause}. Conversation lists under it refresh again in ${Math.round(delay / 1000)} s.`);
     });
-    const shared = { watcher, projects };
+    const shared: SharedWatch = { watcher, projects, openedAt: Date.now() };
     this.directories.set(dir, shared);
     return shared;
   }

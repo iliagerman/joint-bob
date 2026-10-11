@@ -12,6 +12,13 @@ export const worktreeHeavyDirectories = [
 ] as const;
 export const worktreeHeavyFiles = [".stignore"] as const;
 
+/** Installed dependencies a worktree links to in the project instead of copying. Build outputs
+    stay out: a worktree build writing through a link would overwrite the project's own build. */
+export const worktreeLinkedDirectories = [
+  "node_modules", ".venv", "venv", "vendor", "bower_components", "jspm_packages", "Pods", ".yarn", ".pnpm-store",
+  ".gradle", ".m2", ".dart_tool", ".terraform", ".tox", ".nox",
+] as const;
+
 export const worktreeBinaryExtensions = [
   "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp", "tif", "tiff", "heic", "psd", "ai", "sketch", "fig",
   "mp4", "mov", "avi", "mkv", "webm", "mp3", "wav", "flac", "ogg", "m4a", "aac",

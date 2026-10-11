@@ -129,6 +129,34 @@ test("v2 HTTP membership preserves independent clusters and routes authority thr
   }
 });
 
+test("original owner closes a populated cluster and members leave on signed delivery", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-v2-close-"));
+  const [envA, envB] = await Promise.all(["a", "b"].map((name) => seedDevEnvironment(path.join(root, name), 1)));
+  const [a, b] = [envA.nodes[0], envB.nodes[0]];
+  const children = [];
+  try {
+    children.push(await startDevNode(envA, a), await startDevNode(envB, b));
+    const [sa, sb] = await Promise.all([signIn(envA, a), signIn(envB, b)]);
+    const created = await call<{ snapshot: Snapshot }>(a, sa, "POST", "/clusters", { name: "To close" });
+    const id = created.body.snapshot.body.clusterId;
+    const invite = await call<{ link: string }>(a, sa, "POST", `/clusters/${id}/invitations`, { expectedEpoch: 1 });
+    assert.equal((await call(b, sb, "POST", "/clusters/join", { link: invite.body.link, requestId: randomUUID() })).status, 201);
+    assert.equal((await call(b, sb, "POST", `/clusters/${id}/close`, { expectedEpoch: 1 })).status, 403);
+    assert.equal((await call(a, sa, "POST", `/clusters/${id}/close`, { expectedEpoch: 2 })).status, 409);
+    const closed = await call<{ snapshot: Snapshot }>(a, sa, "POST", `/clusters/${id}/close`, { expectedEpoch: 1 });
+    assert.equal(closed.status, 200, JSON.stringify(closed.body));
+    assert.deepEqual(closed.body.snapshot.body.members, []);
+    assert.equal(closed.body.snapshot.body.managerNodeId, null);
+    assert.deepEqual((await call<ClusterStatus>(a, sa, "GET", "/clusters")).body.clusters, []);
+    const deadline = Date.now() + 15_000;
+    while ((await call<ClusterStatus>(b, sb, "GET", "/clusters")).body.clusters.length && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual((await call<ClusterStatus>(b, sb, "GET", "/clusters")).body.clusters, []);
+    assert.equal((await call(a, sa, "POST", `/clusters/${id}/close`, { expectedEpoch: 1 })).status, 409);
+  } finally {
+    await Promise.all(children.map(stopDevNode));
+  }
+});
+
 test("malformed v2 invitation objects return 400 without joining a cluster", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-v2-malformed-"));
   const environment = await seedDevEnvironment(root, 1);

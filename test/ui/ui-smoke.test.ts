@@ -1108,6 +1108,10 @@ test("opening a conversation that is waiting for review updates the badge at onc
   const badge = page.getByTestId("pending-reviews-badge");
   await badge.waitFor({ timeout: 20_000 });
   assert.equal(await badge.innerText(), "1", "the answered conversation is counted as waiting for review");
+  const projectReviewBadge = page.locator('.project-card', { hasText: 'Joint Bob' }).getByTestId('project-review-badge');
+  await projectReviewBadge.waitFor();
+  assert.equal(await projectReviewBadge.innerText(), '1 to review');
+  assert.equal(await projectReviewBadge.locator('xpath=..').getByText('Joint Bob', { exact: true }).count(), 1, 'review badge sits beside the project name');
 
   await page.locator(".project-card", { hasText: "Joint Bob" }).first().click();
   await page.locator(".session-card", { hasText: "Thread Notifications Naming and Pinning" }).first().click();
@@ -1138,6 +1142,7 @@ test("opening a conversation that is waiting for review updates the badge at onc
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   }
   assert.equal(await badge.isVisible(), false, `the badge clears with the conversation it counted (still showing ${await badge.innerText().catch(() => "")})`);
+  await projectReviewBadge.waitFor({ state: 'hidden' });
 });
 
 // The canvas is a whole second surface. Reaching it and getting back has to be one key
@@ -1356,12 +1361,17 @@ test("running badge follows active conversation changes without waiting for the 
     await page.evaluate(async () => (await import("/app/socket.js")).refreshSessionsQuietly());
     await badge.waitFor({ state: "visible", timeout: 10_000 });
     assert.equal(await badge.textContent(), "1");
+    const projectRunningBadge = page.locator('.project-card', { hasText: 'Internal Assistant' }).getByTestId('project-running-badge');
+    await projectRunningBadge.waitFor();
+    assert.equal(await projectRunningBadge.innerText(), '1 running');
+    assert.equal(await projectRunningBadge.locator('xpath=..').getByText('Internal Assistant', { exact: true }).count(), 1, 'running badge sits beside the project name');
   } finally {
     database.prepare("DELETE FROM conversation_runtime_leases WHERE engine = ? AND session_id = ?").run(target.harnessId, target.id);
     database.close();
     await page.evaluate(async () => (await import("/app/socket.js")).refreshSessionsQuietly());
   }
   await badge.waitFor({ state: "hidden", timeout: 10_000 });
+  await page.locator('.project-card', { hasText: 'Internal Assistant' }).getByTestId('project-running-badge').waitFor({ state: 'hidden' });
 });
 
 test("running conversations open their live conversation in another project", async () => {
@@ -1378,6 +1388,10 @@ test("running conversations open their live conversation in another project", as
     database.prepare(`INSERT INTO conversation_runtime_leases
       (engine, session_id, owner_node_id, ownership_epoch, run_id, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(target.harnessId, target.id, node.nodeId, 1, randomUUID(), now.toISOString(), new Date(now.getTime() + 60_000).toISOString());
+    await page.evaluate(async () => (await import('/app/running.js')).refreshRunningConversations());
+    const remoteBadge = page.locator('.project-card', { hasText: project.name }).getByTestId('project-running-badge');
+    await remoteBadge.waitFor();
+    assert.equal(await remoteBadge.innerText(), '1 running', 'an unselected project shows live activity');
     await page.getByTestId("running-conversations-open-button").click();
     const dialog = page.getByTestId("running-conversations-dialog");
     await dialog.getByText(project.name, { exact: true }).waitFor();

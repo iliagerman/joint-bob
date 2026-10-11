@@ -76,9 +76,10 @@ test("different schedules run concurrently in isolated conversations that join p
     child = await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: log, JOINT_BOB_TEST_ENGINE_HOLD_DIR: root });
     const auth = await signIn(environment, node);
     const base = { projectId: node.projects[0].id, prompt: "Parallel report", engine: "claude", sessionId: null, ownerNodeId: node.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
+    await api(node, auth, "GET", `/projects/${base.projectId}/sessions`); // Initialize review tracking before either run.
     const tasks: CronTask[] = [];
     for (const name of ["Parallel A", "Parallel B"]) {
-      const created = await api<{ task: CronTask }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "create", input: { ...base, name } } });
+      const created = await api<{ task: CronTask }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "create", input: { ...base, name, markForReview: name !== "Parallel A" } } });
       assert.equal(created.status, 200, JSON.stringify(created.body));
       tasks.push(created.body.task);
     }
@@ -102,8 +103,11 @@ test("different schedules run concurrently in isolated conversations that join p
       const listed = await readTasks();
       return tasks.every(task => listed.find(candidate => candidate.id === task.id)?.lastRun?.status === "succeeded");
     });
-    const sessions = await api<{ sessions: Array<{ cronTaskId?: string }> }>(node, auth, "GET", `/projects/${base.projectId}/sessions`);
+    const sessions = await api<{ sessions: Array<{ cronTaskId?: string; reviewState?: string; silentReviewUntil?: string }> }>(node, auth, "GET", `/projects/${base.projectId}/sessions`);
     for (const task of tasks) assert.ok(sessions.body.sessions.some(session => session.cronTaskId === task.id), `${task.name} result missing from project history`);
+    assert.equal(sessions.body.sessions.find(session => session.cronTaskId === tasks[0].id)?.reviewState, "reviewed", "silent run should not enter review");
+    assert.ok(sessions.body.sessions.find(session => session.cronTaskId === tasks[0].id)?.silentReviewUntil, "silent boundary should persist on conversation");
+    assert.equal(sessions.body.sessions.find(session => session.cronTaskId === tasks[1].id)?.reviewState, "needs_review", "ordinary run still needs review");
   } finally {
     if (child) await stopDevNode(child);
     await rm(root, { recursive: true, force: true });
@@ -121,9 +125,9 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     await pairTwinNodes(environment);
     const auth = await signIn(environment, a);
     const projectId = a.projects[0].id;
-    const input = { projectId, name: "Scheduled report", prompt: "Give a report", engine: "claude", sessionId: null, ownerNodeId: b.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
+    const input = { projectId, name: "Scheduled report", prompt: "Give a report", engine: "claude", sessionId: null, ownerNodeId: b.nodeId, enabled: true, markForReview: false, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
     const authBInitial = await signIn(environment, b);
-    const listSessions = async (node: typeof a, session: typeof auth) => (await api<{ sessions: Array<{ id: string; harnessId: string; cronTaskId?: string }> }>(node, session, "GET", `/projects/${projectId}/sessions`)).body.sessions;
+    const listSessions = async (node: typeof a, session: typeof auth) => (await api<{ sessions: Array<{ id: string; harnessId: string; cronTaskId?: string; silentReviewUntil?: string; reviewState?: string }> }>(node, session, "GET", `/projects/${projectId}/sessions`)).body.sessions;
     const unscheduled = (await listSessions(b, authBInitial)).filter(session => session.harnessId === "pi").slice(0, 2);
     assert.equal(unscheduled.length, 2);
     assert.ok(unscheduled.every(session => session.cronTaskId === undefined));
@@ -156,6 +160,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     const sessions = await api<{ sessions: Array<{ id: string; cronTaskId?: string }> }>(b, await signIn(environment, b), "GET", `/projects/${projectId}/sessions`);
     assert.equal(sessions.body.sessions.filter(session => session.cronTaskId === id).length, 2);
     await until(async () => (await api<{ sessions: Array<{ cronTaskId?: string }> }>(a, auth, "GET", `/projects/${projectId}/sessions`)).body.sessions.filter(session => session.cronTaskId === id).length === 2);
+    await until(async () => (await listSessions(a, auth)).filter(session => session.cronTaskId === id && session.silentReviewUntil && session.reviewState === "reviewed").length === 2);
     // Seeded transcripts exist on both nodes, so takeover exercises the real
     // ownership fence rather than inventing an unsynchronized draft.
     const existing = (await api<{ sessions: Array<{ id: string; path: string; harnessId: string }> }>(a, auth, "GET", `/projects/${projectId}/sessions`)).body.sessions.find(session => session.harnessId === "claude" && !sessions.body.sessions.some(candidate => candidate.id === session.id && candidate.cronTaskId))!;

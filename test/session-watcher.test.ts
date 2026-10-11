@@ -99,6 +99,73 @@ test("projects share one recursive watcher and removing a subscriber keeps it al
   }
 });
 
+// Linux has no recursive watch, so Node holds one inotify watch per transcript. When the
+// user's quota ran out the watcher failed whenever a file appeared, and reopening it every
+// 15 s rescanned every project and made every open page reload its lists.
+test("a watcher that keeps failing is reopened less and less often", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-backoff-"));
+  const previousHome = process.env.HOME;
+  const root = path.join(home, ".pi/agent/sessions");
+  const handles: fs.FSWatcher[] = [];
+  const originalWatch = fs.watch;
+  const watchMock = t.mock.method(fs, "watch", (...args: Parameters<typeof fs.watch>) => {
+    const handle = originalWatch(...args);
+    // Linux emulates a recursive watch with plain watches of its own, the root's included.
+    if (String(args[0]) === root && typeof args[1] === "object" && args[1] !== null && "recursive" in args[1] && args[1].recursive) handles.push(handle);
+    return handle;
+  });
+  syncBuiltinESMExports();
+  const errors = t.mock.method(console, "error", () => undefined);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const watcher = new SessionWatcher(() => undefined);
+  const subject = project("a", path.join(home, "a"));
+  const fail = (): void => { handles.at(-1)!.emit("error", Object.assign(new Error("ENOSPC: System limit for number of file watchers reached"), { code: "ENOSPC" })); };
+  try {
+    process.env.HOME = home;
+    await mkdir(root, { recursive: true });
+    watcher.ensureProject(subject);
+    assert.equal(handles.length, 1);
+
+    fail();
+    watcher.ensureProject(subject);
+    assert.equal(handles.length, 1, "a failed directory is not reopened at once");
+    t.mock.timers.tick(15_001);
+    watcher.ensureProject(subject);
+    assert.equal(handles.length, 2, "the first retry comes after one rescan interval");
+
+    fail();
+    t.mock.timers.tick(15_001);
+    watcher.ensureProject(subject);
+    assert.equal(handles.length, 2, "a second failure in a row waits longer");
+    t.mock.timers.tick(15_001);
+    watcher.ensureProject(subject);
+    assert.equal(handles.length, 3);
+
+    for (let failure = 0; failure < 8; failure++) {
+      fail();
+      t.mock.timers.tick(10 * 60_000 + 1);
+      watcher.ensureProject(subject);
+    }
+    assert.equal(handles.length, 11, "however often it fails, a directory is retried within ten minutes");
+    assert.equal(errors.mock.callCount(), 10, "each failure is reported once");
+    assert.match(String(errors.mock.calls[0].arguments[0]), /out of inotify watches \(raise fs\.inotify\.max_user_watches\)/);
+
+    // A watcher that ran for a long while before failing starts over at the short wait.
+    t.mock.timers.tick(10 * 60_000 + 1);
+    fail();
+    t.mock.timers.tick(15_001);
+    watcher.ensureProject(subject);
+    assert.equal(handles.length, 12);
+  } finally {
+    watcher.close();
+    watchMock.mock.restore();
+    syncBuiltinESMExports();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("shared flat Pi session watcher does not keep the process alive", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-exit-"));
 

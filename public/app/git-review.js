@@ -4,7 +4,7 @@ import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { renderSideBySideDiff } from "./git-diff-view.js";
-import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyCommitsToExplain, storyHasSaved, storyHidesScope, storyIsFresh, storyPicking } from "./git-story.js";
+import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyCommitsToExplain, storyHasSaved, storyHidesScope, storyIsFresh, storyPicking, storyPullNumber, storyPullUrl, selectStoryPull } from "./git-story.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel, selectModel } from "./git-reviewer-options.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -132,7 +132,7 @@ async function loadCurrentTab() {
   if (git.tab === "changes") return loadChanges();
   if (git.tab === "history") return loadHistory();
   if (git.tab === "story") return openStoryTab();
-  if (git.tab === "pulls" || git.tab === "pipelines") return loadGitHosting(git.tab, gitApiUrl);
+  if (git.tab === "pulls" || git.tab === "pipelines") return loadGitHosting(git.tab, gitApiUrl, (number) => { applyTab("story"); selectStoryPull(number); void openStoryTab(); });
   return loadReviews();
 }
 
@@ -628,7 +628,7 @@ function syncStoryChrome() {
   else renderAmbiguity();
   const chrome = storyChrome();
   elements.gitReviewGenerate.textContent = chrome.button;
-  const nothingToExplain = !storyHasSaved() && !storyPicking() && !storyCoverageReady();
+  const nothingToExplain = !storyHasSaved() && !storyPicking() && !storyPullNumber() && !storyCoverageReady();
   elements.gitReviewGenerate.disabled = chrome.disabled || nothingToExplain || !git.harnesses.length;
   setStatus(chrome.status);
 }
@@ -668,6 +668,11 @@ async function generateStoryFromView({ conversation = false } = {}) {
   const model = selectedModel(elements.gitReviewModel);
   const provider = model.provider || harness.configuration?.fixedProvider;
   const reviewer = { harnessId: harness.id, ...(provider ? { provider } : {}), modelId: model.modelId, thinkingLevel: elements.gitReviewThinking.value };
+  const pullNumber = conversation ? null : storyPullNumber();
+  if (pullNumber) {
+    await generateStory({ conversationId: git.conversationId, source: "pull", pullNumber, ...(storyPullUrl() ? { pullUrl: storyPullUrl() } : {}), scope: "all", paths: [], includeCommits: false, ...reviewer });
+    return;
+  }
   const picked = conversation ? null : storyCommitsToExplain();
   if (picked) {
     if (!picked.length) { toast("Pick at least one commit or push"); return; }

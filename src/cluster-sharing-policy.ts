@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { ownedByAdmin } from "./ownership.js";
+import { notifyRelayPeersChanged } from "./relay/events.js";
 
 export type SharedResourceKind = "project" | "ticket" | "secret";
 export interface ResourceShare { clusterId: string; projectId: string | null }
@@ -257,6 +258,7 @@ export function setTrustedTwin(db: DatabaseSync, localNodeId: string, peerNodeId
   const [left, right] = pair(localNodeId, peerNodeId);
   if (trusted) db.prepare("INSERT OR IGNORE INTO sharing_twins(left_node_id,right_node_id) VALUES (?,?)").run(left, right);
   else db.prepare("DELETE FROM sharing_twins WHERE left_node_id=? AND right_node_id=?").run(left, right);
+  notifyRelayPeersChanged();
 }
 
 export function isTrustedTwin(db: DatabaseSync, leftNodeId: string, rightNodeId: string): boolean {

@@ -15,7 +15,9 @@ import { removeAllDeletedTranscripts } from "./server/deleted-transcripts.js";
 import { flushSuccessionNotices } from "./server/succession.js";
 import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, sweepRuntimeLeases, sweepStaleConversations } from "./server/maintenance.js";
 import { runSyncCheck } from "./server/sync-check.js";
+import { installBackendErrorCapture } from "./server/error-capture.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
+import { syncNtfyServiceShares } from "./server/ntfy-share.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { flushAccountReplication, flushBlockNotices, syncLocalAccountIds } from "./server/account-sync.js";
 import { getClusterNode } from "./cluster.js";
@@ -25,6 +27,7 @@ import { clusterWorkAllowed, flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
 import { startBrowserMonitors, stopBrowserMonitors } from "./server/browser-monitors.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
+import { startRelay, stopRelay } from "./relay/index.js";
 import "./server/schemas.js";
 import "./server/http-auth.js";
 import "./server/task-handoff.js";
@@ -56,6 +59,8 @@ import "./server/routes/projects.js";
 import "./server/routes/resources.js";
 import "./server/routes/quick-notes.js";
 import { cleanupAbandonedByTheWayConversations } from "./server/routes/sessions.js";
+import { sweepConversationRetention } from "./server/conversation-retention.js";
+import { sweepWorktrees } from "./server/worktree-cleanup.js";
 import { startCronScheduler } from "./server/cron.js";
 import { startQuickNoteScheduler } from "./server/quick-note-dispatch.js";
 import "./server/routes/cron.js";
@@ -65,11 +70,14 @@ import "./server/routes/project-files.js";
 import "./server/routes/git-review.js";
 import "./server/routes/search.js";
 import "./server/routes/usage.js";
+import "./server/routes/relay.js";
+import "./server/routes/webhooks.js";
 import "./server/routes/updates.js";
 import "./server/routes/not-found.js";
 export { app, createApp, server } from "./server/state.js";
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  installBackendErrorCapture();
   // Playwright installs signal handlers of its own. Explicitly finish node shutdown
   // after closing Chrome rather than leaving the HTTP server alive after SIGTERM.
   let stopping = false;
@@ -77,6 +85,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (stopping) return;
     stopping = true;
     server.close();
+    stopRelay();
     const timeout = setTimeout(() => process.exit(0), 8000); timeout.unref();
     stopBrowserMonitors();
     void closeBrowserRuntime().catch(error => console.warn("Browser shutdown failed", error)).finally(() => process.exit(0));
@@ -128,6 +137,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
     void startQuickNoteScheduler().catch(error => console.error("Quick note recovery failed; scheduler not started", error));
     void startBrowserMonitors().catch(error => console.error("Browser monitor startup failed", error));
+    // Relays connect out at once: a machine without a direct URL is reachable only through them.
+    void startRelay().catch(error => console.error("Relay startup failed", error));
     // Cluster work waits for startup reconciliation: run alongside it, it kept a restarting
     // node too busy to become ready within its release health check.
     const flushClusterWork = (): void => {
@@ -150,6 +161,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         clusterStarted = true;
         pullFromHubs().catch((error) => console.warn("Hub pull failed", error));
         removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
+        syncNtfyServiceShares().catch((error) => console.warn("ntfy service share sync failed", error));
       }
       flushClusterWork();
     };
@@ -164,6 +176,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     // First run comes a quarter hour after start, clear of the release health check.
     setInterval(() => { if (clusterWorkAllowed()) runReplicationHousekeeping().catch((error) => console.warn("Replication housekeeping failed", error)); }, 15 * 60_000).unref();
     setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
+    // Empty drafts go an hour after their last activity; the first sweep waits out the release health check.
+    const sweepRetention = (): void => { sweepConversationRetention().catch((error) => console.warn("Conversation retention sweep failed", error)); };
+    setTimeout(sweepRetention, 5 * 60_000).unref();
+    setInterval(sweepRetention, 60 * 60_000).unref();
+    // Worktrees without an undone conversation are removed every half hour.
+    const sweepWorktreeFolders = (): void => { sweepWorktrees().catch((error) => console.warn("Worktree sweep failed", error)); };
+    setTimeout(sweepWorktreeFolders, 5 * 60_000).unref();
+    setInterval(sweepWorktreeFolders, 30 * 60_000).unref();
     setInterval(() => {
       void initializeStartupReadiness();
       sweepRuntimeLeases();

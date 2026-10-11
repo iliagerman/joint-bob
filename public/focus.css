@@ -124,6 +124,9 @@ body.booting :is(#focusControlsButton, #focusControls) { visibility: hidden; }
 #focusChatControls .chat-more > summary { display: none; }
 #focusChatControls .chat-more-actions { position: static; display: grid; width: 100%; min-width: 0; box-shadow: none; border: 0; background: none; padding: 0; gap: 0; }
 #focusChatControls .chat-more-actions button { display: flex; width: 100%; min-height: 44px; background: transparent; box-shadow: none; }
+#focusChatControls .chat-more-actions .chat-action { justify-content: flex-start; padding: 0 12px; }
+#focusChatControls .chat-more-actions .chat-action[hidden] { display: none; }
+#focusChatControls .chat-action-label { display: inline; }
 #focusChatControls .chat-more-actions button:hover:not(:disabled) { background: var(--field); }
 @media (max-width: 700px) {
   body.focus-ui .shell { padding: 0; }

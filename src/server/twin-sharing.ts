@@ -13,9 +13,11 @@ import { flushSharedTranscripts, sharedTranscriptStatus } from "./shared-transcr
 import { mayReplicateEvent, signedPeerPost } from "./replication-v2.js";
 import { pendingEventsForPeer } from "../replication.js";
 import { listProjectMetadataDeliveries } from "../cluster-project-metadata.js";
+import { sessionTitleOverrides } from "../names.js";
 import { resumeSharedProjectFolder } from "../syncthing.js";
 import { ensureTwinHttpSchema, pendingTwinDeliveries, bootstrapOwnedTwinPolicies } from "./twins.js";
 import { peerSnapshot, staleSnapshotReason } from "./peer-snapshots.js";
+import { peerFetch } from "../relay/transport.js";
 
 export const adoptionInventorySchema = z.array(z.object({id:z.string().min(1).max(300),ownerNodeId:z.string().uuid().nullable()}).strict()).max(10000);
 export type AdoptionInventory = z.infer<typeof adoptionInventorySchema>;
@@ -92,8 +94,11 @@ export async function localTwinSharingStatus(db: DatabaseSync, local: string, re
   const job=db.prepare('SELECT error FROM cluster_v2_twin_sharing_jobs WHERE relationship_id=?').get(relationshipId) as {error:string|null}|undefined;
   if(job)pendingDeliveries++;
   const error=job?.error??row?.error??files.error??transcripts.error??events.error??secretError;
+  // A conversation both machines continued is listed by title, so it can be recognized and settled.
+  const titles=transcripts.conflicts?await sessionTitleOverrides():{};
+  const conflicts=transcripts.conflicts?.map(conflict=>({...conflict,...(titles[conflict.sessionId]?{title:titles[conflict.sessionId]}:{})}));
   return {state:error?"error":row&&files.ready&&!pendingDeliveries&&!missing.count?"ready":"pending",
-    initialized:Boolean(row||job),ownerNodeId:row?.owner_node_id??defaultTwinOwner(db,local,peer,relationshipId),projectCount,pendingDeliveries,...(error?{error}:{})};
+    initialized:Boolean(row||job),ownerNodeId:row?.owner_node_id??defaultTwinOwner(db,local,peer,relationshipId),projectCount,pendingDeliveries,...(error?{error}:{}),...(conflicts?{conflicts}:{})};
 }
 
 export async function twinSharingStatus(db:DatabaseSync,local:string,relationshipId:string){
@@ -149,8 +154,8 @@ async function coordinateTwinSharing(db:DatabaseSync,local:string,peer:string,re
   scheduleTwinSharing(db,relationshipId);
   const target="/api/cluster/v2/twins/sharing",body=Buffer.from(JSON.stringify({relationshipId,ownerNodeId:owner,projects:adoptionInventory(db)}));
   let response: Response;
-  try{response=await fetch(new URL(target,endpoint.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10000),body,
-    headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local,peer,"POST",target,body)}});}
+  try{response=await peerFetch(new URL(target,endpoint.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10000),body,
+    headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local,peer,"POST",target,body)}}, peer);}
   catch{throw new ClusterV2HttpError(503,"Twin peer is unavailable");}
   if(!response.ok) throw new ClusterV2HttpError(response.status,"Twin sharing request rejected");
   const inventory=adoptionInventorySchema.parse((await response.json() as {projects:unknown}).projects);

@@ -1,11 +1,14 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { syncErrorReportingServices } from "./error-reporting-settings.js";
+import { openNtfyManager, syncNtfyManager } from "./ntfy-manage.js";
 import { toast } from "./shell.js";
 import { refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
 
 /** The dialog is shared, so it remembers which conversation it was opened for. */
 let pendingNtfySession = null;
+const ntfyClusterNames = new Map();
 
 function serviceButton(text, testid, className, action) {
   const button = document.createElement("button");
@@ -28,14 +31,14 @@ async function shareNtfyService(service) {
   const heading = document.createElement("h2"); heading.id = "ntfyShareHeading"; heading.textContent = `Share ${service.name}`;
   const note = document.createElement("p"); note.textContent = "The server token grants publishing access. Choose exactly who receives it.";
   const twinsLabel = document.createElement("label");
-  const twins = document.createElement("input"); twins.type = "checkbox"; twins.name = "twins"; twins.checked = true; twins.dataset.testid = "ntfy-share-twins";
+  const twins = document.createElement("input"); twins.type = "checkbox"; twins.name = "twins"; twins.checked = service.sharing ? service.sharing.includeTwins : true; twins.dataset.testid = "ntfy-share-twins";
   twinsLabel.append(twins, document.createTextNode(" Active trusted twins"));
   const clusterTitle = document.createElement("h3"); clusterTitle.textContent = "Clusters";
   const clusterInputs = [];
   const clusterList = document.createElement("div"); clusterList.className = "ntfy-share-clusters";
   for (const cluster of clusters) {
     const label = document.createElement("label");
-    const input = document.createElement("input"); input.type = "checkbox"; input.value = cluster.id; input.name = "cluster"; input.dataset.testid = `ntfy-share-cluster-${cluster.id}`;
+    const input = document.createElement("input"); input.type = "checkbox"; input.value = cluster.id; input.name = "cluster"; input.checked = Boolean(service.sharing?.clusterIds.includes(cluster.id)); input.dataset.testid = `ntfy-share-cluster-${cluster.id}`;
     clusterInputs.push(input);
     const members = cluster.members.map((member) => member.name).join(", ");
     label.append(input, document.createTextNode(` ${cluster.name}${members ? ` · ${members}` : ""}`));
@@ -45,22 +48,35 @@ async function shareNtfyService(service) {
   const actions = document.createElement("div"); actions.className = "dialog-actions";
   const cancel = serviceButton("Cancel", "ntfy-share-cancel", "ghost", () => dialog.close());
   const submit = serviceButton("Share", "ntfy-share-confirm", "primary", () => {}); submit.type = "submit";
+  const progress = document.createElement("p");
+  progress.className = "ntfy-share-progress"; progress.setAttribute("role", "status"); progress.dataset.testid = "ntfy-share-progress"; progress.hidden = true;
+  progress.textContent = "Sharing… offline nodes can take up to 10 seconds to answer.";
   actions.append(cancel, submit);
-  card.append(heading, note, twinsLabel, clusterTitle, clusterList, actions);
+  card.append(heading, note, twinsLabel, clusterTitle, clusterList, progress, actions);
   card.addEventListener("submit", async (event) => {
     event.preventDefault();
     const clusterIds = clusterInputs.filter((input) => input.checked).map((input) => input.value);
     if (!twins.checked && !clusterIds.length) { toast("Choose twins or at least one cluster"); return; }
-    submit.disabled = true;
+    const inputs = [twins, ...clusterInputs];
+    const busy = (on) => {
+      submit.disabled = on; submit.textContent = on ? "Sharing…" : "Share";
+      submit.setAttribute("aria-busy", String(on)); progress.hidden = !on;
+      for (const input of inputs) input.disabled = on;
+    };
+    busy(true);
     try {
       const { results } = await api(`/api/ntfy/services/${encodeURIComponent(service.id)}/share`, {
         method: "POST", body: JSON.stringify({ includeTwins: twins.checked, clusterIds }),
       });
       dialog.close();
-      const failures = results.filter((result) => !result.ok);
-      toast(failures.length ? `Shared with ${results.length - failures.length} nodes; ${failures.length} failed` : `Shared with ${results.length} node${results.length === 1 ? "" : "s"}`, failures.length ? 8000 : 3000);
+      const pending = results.filter((result) => !result.ok).length;
+      const delivered = results.length - pending;
+      toast(pending
+        ? `Sharing is on. Delivered to ${delivered} node${delivered === 1 ? "" : "s"}; ${pending} offline node${pending === 1 ? "" : "s"} will get it when back online`
+        : `Sharing is on${results.length ? `; delivered to ${results.length} node${results.length === 1 ? "" : "s"}` : ""}`, pending ? 8000 : 3000);
+      await loadNtfyServicesPanel();
     } catch (error) { toast(error.message, 8000); }
-    finally { submit.disabled = false; }
+    finally { busy(false); }
   });
   dialog.append(card); document.body.append(dialog);
   dialog.addEventListener("close", () => dialog.remove(), { once: true });
@@ -70,7 +86,18 @@ async function shareNtfyService(service) {
 function renderNtfyService(service) {
   const item = document.createElement("li");
   const label = document.createElement("span");
-  label.textContent = `${service.name} — ${service.url}${service.hasToken ? " · token" : ""}${service.isDefault ? " · Default" : ""}`;
+  const sharing = service.sharing && (service.sharing.includeTwins || service.sharing.clusterIds.length)
+    ? ` · Shared with ${[service.sharing.includeTwins ? "twins" : null, ...service.sharing.clusterIds.map((id) => ntfyClusterNames.get(id) ?? "a cluster")].filter(Boolean).join(", ")}`
+    : "";
+  label.textContent = `${service.name} — ${service.url}${service.hasToken ? " · token" : ""}${service.isDefault ? " · Default" : ""}${sharing}`;
+  const pending = service.sharing?.pendingNodes ?? 0;
+  if (pending) {
+    const badge = document.createElement("span");
+    badge.className = "ntfy-share-pending"; badge.setAttribute("role", "status"); badge.dataset.testid = "ntfy-share-pending";
+    badge.title = "Offline nodes ask for the service when they start, and this node retries when it restarts";
+    badge.textContent = ` ${pending} offline node${pending === 1 ? "" : "s"} will get it when back online`;
+    label.append(badge);
+  }
   const actions = document.createElement("span");
   actions.className = "ntfy-service-actions";
   if (!service.isDefault) actions.append(serviceButton("Make default", "ntfy-service-default-button", "ghost compact", async () => {
@@ -80,6 +107,8 @@ function renderNtfyService(service) {
       toast(`${service.name} is the default ntfy service`);
     } catch (error) { toast(error.message, 8000); }
   }));
+  actions.append(serviceButton("Manage", "ntfy-service-manage-button", "ghost compact", () => openNtfyManager(service, loadNtfyServicesPanel)));
+  actions.lastChild.setAttribute("aria-label", `Manage ntfy service ${service.name}`);
   actions.append(serviceButton("Share", "ntfy-service-share-button", "ghost compact", async () => {
     try { await shareNtfyService(service); } catch (error) { toast(error.message, 8000); }
   }));
@@ -100,7 +129,12 @@ function renderNtfyService(service) {
 export async function loadNtfyServicesPanel() {
   try {
     const { services } = await api("/api/ntfy/services");
+    if (services.some((service) => service.sharing?.clusterIds.length)) {
+      try { for (const cluster of (await api("/api/clusters")).clusters) ntfyClusterNames.set(cluster.id, cluster.name); } catch { /* names are cosmetic */ }
+    }
     elements.ntfyServiceList.replaceChildren(...services.map(renderNtfyService));
+    syncNtfyManager(services);
+    syncErrorReportingServices(services);
   } catch (error) { toast(error.message, 8000); }
 }
 

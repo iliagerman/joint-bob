@@ -18,7 +18,7 @@ export async function openConversationClassificationDialog(session) {
   const settings = await api("/api/settings");
   if (state.activeProjectId !== projectId) return;
   pendingClassification = { projectId, sessionId: session.conversationId || session.id, engine: sessionEngine(session) };
-  classification.reset(settings.conversationLabels, session.classification || null);
+  classification.reset(settings.conversationLabels, session.classification || null, settings.conversationLabelIcons);
   elements.conversationClassificationDialog.showModal();
 }
 

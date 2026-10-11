@@ -5,7 +5,7 @@ import { z } from "zod";
 import { canonicalCanvasKeyToken } from "../canvas-keys.js";
 import { listHarnesses } from "../harnesses.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
-import { classificationSchema, conversationLabelsSchema } from "../conversation-labels.js";
+import { classificationSchema, conversationLabelIconsSchema, conversationLabelsSchema } from "../conversation-labels.js";
 import { CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal } from "../preferences.js";
 import { isHarnessId, PROJECT_COLORS } from "../types.js";
 import { canonicalClusterUrl, isClusterOriginUrl } from "./http-auth.js";
@@ -37,7 +37,8 @@ const clusterUrlSchema = z.string().url().max(500)
   .transform(canonicalClusterUrl);
 export const clusterNodeSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  url: clusterUrlSchema,
+  // Empty for a machine that is reachable only through relays (RELAY-PLAN.md §4.8).
+  url: z.union([z.literal(""), clusterUrlSchema]),
 });
 const replicationEventSchema = z.object({
   id: z.string().uuid(),
@@ -164,6 +165,8 @@ export const sessionTitleSchema = z.object({
   engine: registeredHarnessIdSchema,
   title: z.string().trim().max(200),
 });
+export const labelIconRequestSchema = z.object({ label: classificationSchema, harnessId: z.string().trim().min(1).max(100).optional(), provider: z.string().trim().max(200).optional(), modelId: z.string().trim().max(300).optional() }).strict();
+
 export const sessionClassificationSchema = z.object({
   sessionId: z.string().trim().min(1).max(240),
   engine: registeredHarnessIdSchema,
@@ -334,6 +337,8 @@ export const sharedNtfyServiceSchema = ntfyServiceSchema.extend({
   id: z.string().uuid(),
   token: z.string().max(500),
 }).strict();
+/** A service a peer returns when this node asks what it shares with it. */
+export const pulledNtfyService = sharedNtfyServiceSchema.extend({ updatedAt: z.number().int().nonnegative() }).strict();
 export const sessionNtfySchema = z.object({
   sessionPath: z.string().trim().min(1).max(2000),
   enabled: z.boolean(),
@@ -375,6 +380,7 @@ export const settingsSchema = z.object({
   }).optional(),
   resources: resourcePathsSchema.optional(),
   conversationLabels: conversationLabelsSchema.optional(),
+  conversationLabelIcons: conversationLabelIconsSchema.optional(),
   conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
   conversationRetentionDays: z.number().int().min(1).max(3650).optional(),
   autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
@@ -382,6 +388,7 @@ export const settingsSchema = z.object({
   subprocessMaxLifetimeMinutes: z.number().int().min(1).max(10_080).optional(),
   digestAttachments: z.boolean().optional(),
   showProjectsOnOtherNodes: z.boolean().optional(),
+  newConversationWorktree: z.boolean().optional(),
   syncCheck: syncCheckSchema.optional(),
   remoteTerminal: z.object({ twins: z.boolean(), otherNodes: z.boolean() }).strict().optional(),
   conversationCommands: conversationCommandsSchema.optional(),
@@ -542,6 +549,8 @@ export const userPreferencesSchema = z.object({
   canvasKeymap: canvasKeymapPreferenceSchema.optional(),
   conversationLastRead: z.record(z.string().min(1).max(200), z.number().int().nonnegative())
     .refine((marks) => Object.keys(marks).length <= 400, "Too many conversation read marks").optional(),
+  projectConversationVisibility: z.record(z.string().min(1).max(240), z.object({ done: z.boolean(), scheduled: z.boolean() }).strict())
+    .refine((projects) => Object.keys(projects).length <= 400, "Too many project visibility settings").optional(),
   gitReviewer: z.object({
     harnessId: registeredHarnessIdSchema,
     provider: z.string().trim().min(1).max(200).optional(),

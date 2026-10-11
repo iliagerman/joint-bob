@@ -631,8 +631,30 @@ test("agent resources folder is shared unpaused with resource ignores", async ()
   assert.ok(!ignore.includes("!.env"));
 });
 
+test("a new worktree folder pulls smallest files first; a project folder keeps Syncthing's default", async () => {
+  const folders: Array<{ id: string; order?: string }> = [];
+  await withSyncthingApi((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url === "/rest/config/folders") { response.end(JSON.stringify(folders)); return; }
+      if (request.method === "GET" && request.url === "/rest/system/status") { response.end(JSON.stringify({ myID: "LOCAL" })); return; }
+      if (request.method === "POST" && request.url === "/rest/config/folders") { folders.push(JSON.parse(body)); response.end("{}"); return; }
+      if (request.url?.startsWith("/rest/db/ignores?")) { response.end(request.method === "GET" ? JSON.stringify({ ignore: [] }) : "{}"); return; }
+      response.statusCode = 404;
+      response.end();
+    });
+  }, async (syncthing) => {
+    await syncthing.ensureSharedProjectFolder("joint-bob-worktrees-abc", "Demo worktrees", "/tmp/worktrees/abc", "NODE-B");
+    await syncthing.ensureSharedProjectFolder("demo", "Demo", "/tmp/demo", "NODE-B");
+  });
+  assert.deepEqual(folders.map((folder) => [folder.id, folder.order]), [["joint-bob-worktrees-abc", "smallestFirst"], ["demo", undefined]]);
+});
+
 test("worktree folders get deletable ignore rules that keep heavy trees and binaries out", async () => {
   const posted: string[][] = [];
+  const updated: Array<{ id: string; order?: string; devices: unknown[] }> = [];
   const folder = "joint-bob-worktrees-0123";
   await withSyncthingApi(withConfiguredFolders([folder], (request, response) => {
     let body = "";
@@ -648,12 +670,18 @@ test("worktree folders get deletable ignore rules that keep heavy trees and bina
         response.end("{}");
         return;
       }
+      if (request.method === "PUT" && request.url === `/rest/config/folders/${folder}`) {
+        updated.push(JSON.parse(body));
+        response.end("{}");
+        return;
+      }
       response.statusCode = 404;
       response.end();
     });
   }), async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: folder }]);
   });
+  assert.deepEqual(updated.map((entry) => [entry.id, entry.order]), [[folder, "smallestFirst"]], "metadata and conversation markers arrive before the bulk copy");
   const ignore = posted[0];
   assert.ok(ignore, "worktree ignores must be written");
   const managed = ignore.filter((rule) => rule !== "keep-me/");

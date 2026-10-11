@@ -3,6 +3,7 @@ import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { selectProject } from "./project-selection.js";
+import { renderProjects } from "./project-list.js";
 import { openListedSession } from "./reviews.js";
 import { formatDate, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -59,6 +60,11 @@ function renderRunningEntry(group, entry) {
   elements.runningConversationsList.append(button);
 }
 
+export function runningCountForProject(projectId) {
+  if (projectId === state.activeProjectId && !state.sessionsLoading) return state.sessions.filter((session) => session.running).length;
+  return runningProjects.find((group) => group.projectId === projectId)?.sessions.length ?? 0;
+}
+
 function renderRunningBadges() {
   const count = runningProjects.reduce((total, group) => total + group.sessions.length, 0);
   for (const badge of document.querySelectorAll("[data-running-count]")) {
@@ -83,6 +89,7 @@ async function refreshRunningSnapshots() {
     const body = await api("/api/running");
     runningProjects = body.projects;
     renderRunningBadges();
+    renderProjects();
     if (elements.runningConversationsDialog.open) renderRunningConversationsDialog();
   }
 }

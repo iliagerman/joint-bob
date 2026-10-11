@@ -8,6 +8,7 @@ import { actingAccount, asNode } from "../../account-context.js";
 import { listHarnessSessions } from "../../harnesses.js";
 import type { HarnessId, ProjectRecord } from "../../types.js";
 import { terminalAccessSettings, terminalAllowedFor } from "../../settings.js";
+import { cleanupDoneWorktrees } from "../worktree-cleanup.js";
 import { z } from 'zod';
 import type { AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
@@ -286,8 +287,12 @@ app.put("/api/projects/:projectId/sessions/done", async (request, response, next
     if (await conversationOfAnotherProject(project, payload.engine, payload.sessionId)) { sendError(response, 404, "Conversation not found"); return; }
     // Like classification, a conversation can be closed out before its transcript exists.
     await setSessionDone(payload.sessionId, payload.done);
+    const cleanup = payload.done ? await cleanupDoneWorktrees(project).catch((error) => {
+      console.warn("Done worktree cleanup failed", error);
+      return undefined;
+    }) : undefined;
     broadcastToProject(project.id, { type: "sessionsChanged" });
-    response.json({ ok: true });
+    response.json({ ok: true, ...cleanup });
   } catch (error) {
     next(error);
   }

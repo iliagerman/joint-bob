@@ -157,10 +157,13 @@
           <button type="button" data-filter="done" data-testid="chats-filter-done-button" title="Reviewed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.7 2.7L16.5 9"/></svg><span class="sr-only">Reviewed</span><span data-filter-count="done">0</span></button>
         </div>
         <div class="classification-filter list-filter-row" id="conversationFilterRow" role="group" aria-label="Filter conversations by label and cluster"></div>
-        <div class="worktree-strip" id="worktreeStrip" role="group" aria-label="Worktrees" data-testid="worktree-strip"></div>
         <label class="done-filter" for="showDoneConversations">
           <input type="checkbox" id="showDoneConversations" data-testid="show-done-conversations-toggle" />
           Show done
+        </label>
+        <label class="done-filter" for="showScheduledConversations">
+          <input type="checkbox" id="showScheduledConversations" data-testid="show-scheduled-conversations-toggle" />
+          Show scheduled
         </label>
         <div class="panel-scroll session-list" id="sessionList"></div>
         </div>
@@ -275,26 +278,27 @@
             <span id="chatModeLabel">Thinking</span>
             <select id="reasoningLevelSelect" class="chat-toolbar-control" aria-labelledby="chatModeLabel" data-testid="chat-reasoning-select"></select>
           </label>
-          <div class="chat-toolbar-break" aria-hidden="true" data-testid="chat-toolbar-break"></div>
-          <button class="ghost icon-button chat-recents-button" id="chatRecentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-recent-sessions-open data-shortcut-hint="recents" data-testid="chat-recent-sessions-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg></button>
-          <button class="ghost icon-button chat-recents-button chat-running-button" id="chatRunningConversationsButton" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-shortcut-hint="runningConversations" data-testid="chat-running-conversations-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg><span class="reviews-badge running-badge" data-running-count data-testid="chat-running-conversations-badge" hidden>0</span></button>
-          <button class="ghost compact background-tasks-trigger" id="backgroundTasksButton" data-shortcut-hint="backgroundTasks" type="button" aria-controls="backgroundTasksDialog" aria-haspopup="dialog" aria-label="Background tasks" data-testid="background-tasks-open" title="Background tasks"><svg class="chat-toolbar-icon background-tasks-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 10.5 10 13l-2.5 2.5"/><path d="M13 15.5h3.5"/></svg><span class="background-tasks-label">Tasks</span> <span class="background-tasks-badge" id="backgroundTasksBadge" hidden></span></button>
-          <details class="chat-more" id="chatMoreMenu">
-            <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
-            <div class="chat-more-actions">
-              <button class="ghost compact" id="openTerminalButton" data-shortcut-hint="terminal" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
-              <button class="ghost compact" id="openBrowserButton" data-shortcut-hint="browser" type="button" disabled aria-expanded="false" aria-controls="browserPanel" title="Open an existing conversation before starting its browser" data-testid="chat-open-browser-button">Browser</button>
-              <button class="ghost compact" id="chatFilesButton" data-shortcut-hint="chatFiles" type="button" data-testid="chat-files-button">Files</button>
-              <button class="ghost compact" id="chatGitButton" type="button" data-testid="chat-git-button">Git</button>
-              <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notification device settings" data-testid="chat-notify-button">Notify</button>
-              <button class="ghost compact" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
-              <button class="ghost compact" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button">Rename</button>
-              <button class="ghost compact" id="chatCronButton" data-shortcut-hint="scheduledTasks" type="button" data-testid="chat-cron-button">Scheduled tasks</button>
-              <button class="ghost compact" id="chatDoneButton" type="button" title="Hide it from the list until you ask for done conversations" data-testid="chat-done-button">Mark done</button>
-              <button class="ghost compact" id="chatSessionMenuButton" type="button" title="The same actions the conversation list offers for this conversation" data-testid="chat-session-menu-button">Conversation actions</button>
-              <button class="ghost compact" id="installAppButton" type="button" hidden data-testid="chat-install-button">Install</button>
-            </div>
-          </details>
+          <div class="chat-toolbar-actions">
+            <button class="ghost icon-button chat-recents-button" id="chatRecentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-recent-sessions-open data-shortcut-hint="recents" data-testid="chat-recent-sessions-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg></button>
+            <button class="ghost icon-button chat-recents-button chat-running-button" id="chatRunningConversationsButton" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-shortcut-hint="runningConversations" data-testid="chat-running-conversations-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg><span class="reviews-badge running-badge" data-running-count data-testid="chat-running-conversations-badge" hidden>0</span></button>
+            <button class="ghost compact background-tasks-trigger" id="backgroundTasksButton" data-shortcut-hint="backgroundTasks" type="button" aria-controls="backgroundTasksDialog" aria-haspopup="dialog" aria-label="Tasks" data-testid="background-tasks-open" title="Tasks"><svg class="chat-toolbar-icon background-tasks-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 10.5 10 13l-2.5 2.5"/><path d="M13 15.5h3.5"/></svg><span class="background-tasks-label">Tasks</span> <span class="background-tasks-badge" id="backgroundTasksBadge" hidden></span></button>
+            <details class="chat-more" id="chatMoreMenu">
+              <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
+              <div class="chat-more-actions">
+                <button class="ghost compact chat-action" id="openTerminalButton" data-shortcut-hint="terminal" type="button" disabled data-testid="chat-open-terminal-button" title="Terminal" aria-label="Terminal"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 5 5-5 5"/><path d="M12.5 17h6.5"/></svg><span class="chat-action-label">Terminal</span></button>
+                <button class="ghost compact chat-action" id="openBrowserButton" data-shortcut-hint="browser" type="button" disabled aria-expanded="false" aria-controls="browserPanel" title="Browser" data-testid="chat-open-browser-button" aria-label="Browser"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><path d="M12 3.5c2.4 2.5 3.5 5.3 3.5 8.5s-1.1 6-3.5 8.5c-2.4-2.5-3.5-5.3-3.5-8.5s1.1-6 3.5-8.5z"/></svg><span class="chat-action-label">Browser</span></button>
+                <button class="ghost compact chat-action" id="chatFilesButton" data-shortcut-hint="chatFiles" type="button" data-testid="chat-files-button" title="Files" aria-label="Files"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.8l2 2.5h7.2a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg><span class="chat-action-label">Files</span></button>
+                <button class="ghost compact chat-action" id="chatGitButton" type="button" data-testid="chat-git-button" title="Git" aria-label="Git"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6.5" cy="5.5" r="2"/><circle cx="6.5" cy="18.5" r="2"/><circle cx="17.5" cy="7.5" r="2"/><path d="M6.5 7.5v9"/><path d="M17.5 9.5c0 4.5-6 3.5-10 7.3"/></svg><span class="chat-action-label">Git</span></button>
+                <button class="ghost compact chat-action" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notify" data-testid="chat-notify-button" aria-label="Notify"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg><span class="chat-action-label">Notify</span></button>
+                <button class="ghost compact chat-action" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button" title="Add to canvas" aria-label="Add to canvas"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M12 8v8M8 12h8"/></svg><span class="chat-action-label">Add to canvas</span></button>
+                <button class="ghost compact chat-action" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button" title="Rename" aria-label="Rename"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 19.5l1-4L16 5a2.1 2.1 0 0 1 3 3L8.5 18.5z"/><path d="m14 7 3 3"/></svg><span class="chat-action-label">Rename</span></button>
+                <button class="ghost compact chat-action" id="chatCronButton" data-shortcut-hint="scheduledTasks" type="button" data-testid="chat-cron-button" title="Scheduled tasks" aria-label="Scheduled tasks"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M12 13v3.2l2.2 1.3"/></svg><span class="chat-action-label">Scheduled tasks</span></button>
+                <button class="ghost compact chat-action" id="chatDoneButton" type="button" title="Mark done" data-testid="chat-done-button" aria-label="Mark done"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.3 2.4 2.4 4.8-5"/></svg><span class="chat-action-label">Mark done</span></button>
+                <button class="ghost compact chat-action" id="chatSessionMenuButton" type="button" title="Conversation actions" data-testid="chat-session-menu-button" aria-label="Conversation actions"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10.5L6.5 20v-3.5a2 2 0 0 1-2-2z"/><path d="M8.5 9h7M8.5 12h4.5"/></svg><span class="chat-action-label">Conversation actions</span></button>
+                <button class="ghost compact chat-action" id="installAppButton" type="button" hidden data-testid="chat-install-button" title="Install" aria-label="Install"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M5 19.5h14"/></svg><span class="chat-action-label">Install</span></button>
+              </div>
+            </details>
+          </div>
         </div>
 
         <div class="messages-wrap" id="messagesWrap">
@@ -596,9 +600,12 @@
           <option value="account">Account</option>
           <option value="notifications">Notifications</option>
           <option value="labels">Labels</option>
+          <option value="conversations">Conversations</option>
           <option value="commands">Commands</option>
           <option value="secrets">Secrets</option>
           <option value="cluster">Cluster</option>
+          <option value="relay" data-requires-settings>Relay</option>
+          <option value="webhooks" data-requires-settings>Webhooks</option>
           <option value="browser">Browser</option>
           <option value="workspaces">Workspaces</option>
           <option value="engines">Harnesses</option>
@@ -617,9 +624,12 @@
           <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
           <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
           <button class="settings-tab" type="button" data-settings-tab="labels" role="tab" id="settingsTab-labels" aria-controls="settingsPanel-labels" aria-selected="false" tabindex="-1" data-testid="settings-tab-labels">Labels</button>
+          <button class="settings-tab" type="button" data-settings-tab="conversations" role="tab" id="settingsTab-conversations" aria-controls="settingsPanel-conversations" aria-selected="false" tabindex="-1" data-testid="settings-tab-conversations">Conversations</button>
           <button class="settings-tab" type="button" data-settings-tab="commands" role="tab" id="settingsTab-commands" aria-controls="settingsPanel-commands" aria-selected="false" tabindex="-1" data-testid="settings-tab-commands">Commands</button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
+          <button class="settings-tab" type="button" data-settings-tab="relay" role="tab" id="settingsTab-relay" aria-controls="settingsPanel-relay" aria-selected="false" tabindex="-1" data-requires-settings data-testid="settings-tab-relay">Relay</button>
+          <button class="settings-tab" type="button" data-settings-tab="webhooks" role="tab" id="settingsTab-webhooks" aria-controls="settingsPanel-webhooks" aria-selected="false" tabindex="-1" data-requires-settings data-testid="settings-tab-webhooks">Webhooks</button>
           <button class="settings-tab" type="button" data-settings-tab="browser" role="tab" id="settingsTab-browser" aria-controls="settingsPanel-browser" aria-selected="false" tabindex="-1" data-testid="settings-tab-browser">Browser</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Harnesses</button>
@@ -844,6 +854,8 @@
             <legend>ntfy services</legend>
             <p class="settings-hint">Define ntfy servers once, share them with paired nodes, and choose a default. Tokens are encrypted on every node; the chosen server and token also travel with each conversation you enable.</p>
             <ul id="ntfyServiceList" class="settings-list" data-testid="ntfy-service-list"></ul>
+            <section id="ntfyManagePanel" class="ntfy-manage" data-testid="ntfy-manage-panel" hidden></section>
+            <div id="ntfyServiceAddForm" class="ntfy-service-add" data-testid="ntfy-service-add-form">
             <label>Name
               <input id="ntfyServiceNameInput" autocomplete="off" placeholder="Home server" data-testid="ntfy-service-name-input" />
             </label>
@@ -854,6 +866,34 @@
               <input id="ntfyServiceTokenInput" type="password" autocomplete="off" data-testid="ntfy-service-token-input" />
             </label>
             <button class="ghost" id="ntfyServiceAddButton" type="button" data-testid="ntfy-service-add-button">Add service</button>
+            </div>
+          </fieldset>
+          <fieldset class="phase-settings" data-testid="error-reporting-settings">
+            <legend>Send errors to ntfy</legend>
+            <p class="settings-hint">Forwards UI errors from browsers signed in to this node and this node's backend errors, with their stack traces. The same error is sent once every 10 minutes, at most 20 per channel. Applies to this node when you press Save error reporting.</p>
+            <label class="checkbox-row"><input id="errorReportingEnabled" type="checkbox" data-testid="error-reporting-enabled" /> Send errors to ntfy</label>
+            <div id="errorReportingOptions" class="ntfy-service-add" data-testid="error-reporting-options" hidden>
+              <label class="checkbox-row"><input id="errorReportingClientEnabled" type="checkbox" data-testid="error-reporting-client-enabled" /> Client (UI) errors</label>
+              <div id="errorReportingClientDestination" class="ntfy-service-add" data-testid="error-reporting-client-destination">
+                <label>Client errors server
+                  <select id="errorReportingClientService" data-testid="error-reporting-client-service"></select>
+                </label>
+                <label>Client errors topic
+                  <input id="errorReportingClientTopic" autocomplete="off" maxlength="64" placeholder="joint-bob-ui-errors" data-testid="error-reporting-client-topic" />
+                </label>
+              </div>
+              <label class="checkbox-row"><input id="errorReportingBackendEnabled" type="checkbox" data-testid="error-reporting-backend-enabled" /> Backend errors</label>
+              <label class="checkbox-row" id="errorReportingSameRow"><input id="errorReportingSameDestination" type="checkbox" data-testid="error-reporting-same-destination" /> Send backend errors to the client server and topic</label>
+              <div id="errorReportingBackendDestination" class="ntfy-service-add" data-testid="error-reporting-backend-destination">
+                <label>Backend errors server
+                  <select id="errorReportingBackendService" data-testid="error-reporting-backend-service"></select>
+                </label>
+                <label>Backend errors topic
+                  <input id="errorReportingBackendTopic" autocomplete="off" maxlength="64" placeholder="joint-bob-backend-errors" data-testid="error-reporting-backend-topic" />
+                </label>
+              </div>
+            </div>
+            <button class="ghost" id="errorReportingSaveButton" type="button" data-testid="error-reporting-save-button">Save error reporting</button>
           </fieldset>
         </section>
 
@@ -862,12 +902,30 @@
             <textarea id="settingsConversationLabels" rows="8" data-testid="settings-conversation-labels" aria-describedby="settingsLabelsHint"></textarea>
           </label>
           <p class="settings-hint" id="settingsLabelsHint">One label per line, up to 50 labels of 80 characters each. These choices are node-local. Other always allows free text. Changing this list does not change existing conversation classifications.</p>
+          <fieldset class="label-icons" id="settingsLabelIcons" data-testid="settings-label-icons">
+            <legend>Label icons</legend>
+          </fieldset>
+          <label>Agent that generates icons
+            <select id="settingsLabelIconHarness" data-testid="settings-label-icon-harness"></select>
+          </label>
+          <label id="settingsLabelIconModelLabel" hidden>Model
+            <select id="settingsLabelIconModel" data-testid="settings-label-icon-model"></select>
+          </label>
+          <p class="settings-hint">An icon replaces the label's text in lists and filters. Leave it empty to show the text. Generate asks the chosen agent and model for one emoji. Automatic uses the default agent on its default model.</p>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-conversations" role="tabpanel" aria-labelledby="settingsTab-conversations" tabindex="0" hidden>
+          <fieldset class="phase-settings">
+            <legend>New conversations</legend>
+            <label class="checkbox-row"><input id="settingsNewConversationWorktree" type="checkbox" data-testid="settings-new-conversation-worktree" /> Start each new conversation in its own worktree</label>
+            <p class="settings-hint">The new-conversation dialog then picks New worktree: a Joint Bob worktree named after the conversation is created and the conversation runs in it. You can still choose the project folder or an existing worktree. A conversation that runs on another node starts in the project folder, because a new worktree reaches other nodes only after it syncs.</p>
+          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-commands" role="tabpanel" aria-labelledby="settingsTab-commands" tabindex="0" hidden>
           <fieldset class="phase-settings">
             <legend>Conversation commands</legend>
-            <label class="checkbox-row"><input id="settingsStartConversationEnabled" type="checkbox" data-testid="settings-start-conversation-enabled" /> Run at the start of every new conversation</label>
+            <label class="checkbox-row"><input id="settingsStartConversationEnabled" type="checkbox" data-testid="settings-start-conversation-enabled" /> Run at the start of every new conversation (not in worktrees)</label>
             <label>Start conversation prompt<textarea id="settingsStartConversationPrompt" rows="3" maxlength="10000" data-testid="settings-start-conversation-prompt"></textarea></label>
             <label class="checkbox-row"><input id="settingsEndConversationEnabled" type="checkbox" data-testid="settings-end-conversation-enabled" /> Enable double-click Send to end a conversation</label>
             <label>End conversation prompt<textarea id="settingsEndConversationPrompt" rows="4" maxlength="10000" data-testid="settings-end-conversation-prompt"></textarea></label>
@@ -984,6 +1042,160 @@
             </aside>
           </div>
           </div>
+        </section>
+
+        <section class="settings-panel relay-panel" id="settingsPanel-webhooks" role="tabpanel" aria-labelledby="settingsTab-webhooks" tabindex="0" data-testid="settingsPanel-webhooks" hidden>
+          <div class="relay-head">
+            <p class="settings-hint">A webhook is a secret address another service can call. Each call starts a new conversation in a project, or adds a message to one conversation. Changes apply at once and do not need Save settings.</p>
+            <button class="primary compact" type="button" id="webhooksNew" data-testid="webhooks-new-button">New webhook</button>
+          </div>
+          <p class="settings-hint relay-inline-status" id="webhooksStatus" role="status" data-testid="webhooks-status"></p>
+          <div class="relay-reveal" id="webhooksReveal" data-testid="webhooks-reveal" hidden>
+            <p class="settings-hint" id="webhooksRevealTitle"></p>
+            <div id="webhooksRevealUrls" class="relay-list"></div>
+            <p class="settings-hint">Shown once; only a fingerprint of the secret is kept. Anyone with the address can call the webhook, so keep it private. If it leaks, make a new address and the old one stops working. Send a POST with any body.</p>
+            <button class="ghost compact" type="button" id="webhooksRevealDone" data-testid="webhooks-reveal-done-button">Done</button>
+          </div>
+          <div class="relay-form-section" id="webhooksForm" data-testid="webhooks-form" hidden>
+            <div class="relay-form">
+              <label>Name<input id="webhooksName" name="name" maxlength="120" autocomplete="off" placeholder="GitHub issues" data-testid="webhooks-name-input" /></label>
+              <label>Send each call to
+                <select id="webhooksTargetKind" data-testid="webhooks-target-kind-select">
+                  <option value="project">A project: start a new conversation</option>
+                  <option value="conversation">A conversation: add a message</option>
+                </select>
+              </label>
+              <label>Project<select id="webhooksProject" data-testid="webhooks-project-select"></select></label>
+              <label id="webhooksConversationLabel" hidden>Conversation<select id="webhooksConversation" data-testid="webhooks-conversation-select"></select></label>
+            </div>
+            <label>Context for the agent
+              <textarea id="webhooksContext" rows="4" maxlength="10000" placeholder="Optional. For example: Triage new issues and reply with a plan." data-testid="webhooks-context-input"></textarea>
+            </label>
+            <p class="settings-hint">This text goes ahead of the call's content in every message this webhook creates.</p>
+            <label class="checkbox-row"><input type="checkbox" id="webhooksEnabled" checked data-testid="webhooks-enabled-toggle" /> Accept calls</label>
+            <div class="relay-row-actions">
+              <button class="ghost compact" type="button" id="webhooksCancel" data-testid="webhooks-cancel-button">Cancel</button>
+              <button class="primary compact" type="button" id="webhooksSave" data-testid="webhooks-save-button">Create webhook</button>
+            </div>
+          </div>
+          <section class="relay-section" id="webhooksListSection" data-testid="webhooks-list-section">
+            <div class="relay-list" id="webhooksHistory" data-testid="webhooks-history" hidden></div>
+            <div class="relay-list" id="webhooksList" data-testid="webhooks-list"></div>
+            <div class="relay-pager" id="webhooksPager" data-testid="webhooks-pager" hidden></div>
+          </section>
+        </section>
+
+        <section class="settings-panel relay-panel" id="settingsPanel-relay" role="tabpanel" aria-labelledby="settingsTab-relay" tabindex="0" data-testid="settingsPanel-relay" hidden>
+          <div class="relay-head">
+            <p class="settings-hint">Relay actions apply immediately. They do not require Save settings. Serving is off by default, and this machine stays a normal working machine either way.</p>
+            <button class="ghost compact" type="button" id="relayRefreshButton" data-testid="relay-refresh-button">Refresh</button>
+          </div>
+          <p class="settings-hint relay-inline-status" id="relayStatus" role="status" data-testid="relay-load-status"></p>
+          <div class="relay-summary" id="relaySummary" data-testid="relay-summary" hidden>
+            <span class="cluster-badge" id="relaySummaryState" data-testid="relay-summary-state">Off</span>
+            <span>Fingerprint <code id="relayFingerprint" data-testid="relay-serving-fingerprint"></code></span>
+            <button class="ghost compact" type="button" id="relayFingerprintCopy" data-testid="relay-fingerprint-copy-button" disabled>Copy</button>
+            <span class="cluster-muted" id="relayCounts" data-testid="relay-counts"></span>
+          </div>
+          <div class="settings-subtabs relay-tabs" id="relayTabs" role="tablist" aria-label="Relay sections">
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-joined" data-relay-tab="joined" data-testid="relay-tab-joined" aria-controls="relayJoinedSection" aria-selected="true">Joined relays</button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-serving" data-relay-tab="serving" data-testid="relay-tab-serving" aria-controls="relayServingSection" aria-selected="false">Serving</button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-machines" data-relay-tab="machines" data-testid="relay-tab-machines" aria-controls="relayMachinesSection" aria-selected="false">Machines <span class="cluster-tab-count"></span></button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-tokens" data-relay-tab="tokens" data-testid="relay-tab-tokens" aria-controls="relayTokensSection" aria-selected="false">Tokens</button>
+            <button class="settings-subtab" type="button" role="tab" id="relayTab-audit" data-relay-tab="audit" data-testid="relay-tab-audit" aria-controls="relayAuditSection" aria-selected="false">Audit log</button>
+          </div>
+
+          <section class="relay-section relays-section" id="relayJoinedSection" role="tabpanel" aria-labelledby="relayTab-joined" data-testid="relay-joined-section">
+            <div class="relays-head">
+              <p class="settings-hint">Relays this machine has joined. A relay lets machines reach each other, and your phone reach this machine, without a public address. Direct connections and Tailscale keep working.</p>
+              <button class="ghost compact" type="button" id="relaysAddReveal" data-testid="relays-add-reveal" aria-expanded="false" aria-controls="relaysAddForm">Add relay</button>
+            </div>
+            <p class="cluster-muted" id="relaysAddress" data-testid="relays-address"></p>
+            <div class="relay-switch">
+              <label class="checkbox-row"><input type="checkbox" id="relaysOtherUsers" data-testid="relays-other-users-toggle" /> Let other users sign in to this machine from a phone</label>
+              <p class="settings-hint">Other users are accounts whose home is another machine in your clusters. Turning this off also ends their open phone sessions.</p>
+            </div>
+            <div class="cluster-create-row" id="relaysAddForm" data-testid="relays-add-form" hidden>
+              <div class="relays-add-choices">
+                <div class="relays-add-choice">
+                  <label>Paste a relay link<input id="relaysLinkInput" type="url" spellcheck="false" autocomplete="off" placeholder="https://relay.example.com/enroll#…" data-testid="relays-link-input" /></label>
+                  <div class="cluster-form-actions"><button class="primary compact" type="button" id="relaysLinkButton" data-testid="relays-link-button">Add relay</button></div>
+                </div>
+                <div class="relays-add-choice">
+                  <label>Or enter a relay address<input id="relaysOriginInput" type="url" spellcheck="false" autocomplete="off" placeholder="https://relay.example.com" data-testid="relays-origin-input" /></label>
+                  <div class="cluster-form-actions"><button class="ghost compact" type="button" id="relaysRequestButton" data-testid="relays-request-button">Request access</button></div>
+                </div>
+              </div>
+              <div class="cluster-form-actions"><button class="ghost compact" type="button" id="relaysAddCancel" data-testid="relays-add-cancel">Cancel</button></div>
+            </div>
+            <p class="cluster-muted relay-inline-status" id="relaysStatus" role="status" data-testid="relays-status"></p>
+            <div class="relays-list" id="relaysList" data-testid="relays-list"></div>
+            <div class="relay-pager" id="relaysPager" data-testid="relays-pager" hidden></div>
+          </section>
+
+          <section class="relay-section relay-form-section" id="relayServingSection" role="tabpanel" aria-labelledby="relayTab-serving" data-testid="relay-serving-section" hidden>
+            <label class="checkbox-row"><input type="checkbox" id="relayEnabled" data-testid="relay-enabled-toggle" /> Serve as a relay</label>
+            <p class="settings-hint">Machines you admit can reach each other, and your phone can reach them, through this machine. It needs a public HTTPS address and a wildcard name, like *.relay.example.com.</p>
+            <div class="relay-form">
+              <label>Public address<input id="relayOrigin" type="url" autocomplete="off" spellcheck="false" placeholder="https://relay.example.com" data-testid="relay-origin-input" /></label>
+              <label>Environment label<input id="relayEnvironment" autocomplete="off" maxlength="40" placeholder="prod" data-testid="relay-environment-input" /></label>
+              <label>Max machines<input id="relayMaxMachines" type="number" min="1" max="10000" step="1" value="50" data-testid="relay-max-machines-input" /></label>
+              <label>Monthly allowance per machine, GB<input id="relayMonthlyCapGb" type="number" min="0" step="any" value="0" data-testid="relay-monthly-cap-input" /></label>
+              <label>Alert ntfy topic<input id="relayAlertTopic" autocomplete="off" spellcheck="false" maxlength="64" placeholder="Optional" data-testid="relay-alert-topic-input" /></label>
+            </div>
+            <label class="checkbox-row"><input type="checkbox" id="relayRequestsEnabled" data-testid="relay-requests-toggle" /> Accept access requests</label>
+            <p class="settings-hint">A machine can ask to join and you approve it after checking its pairing code. Turn this off to admit machines by token only. 0 GB means no cap. The alert topic hears when a machine passes its allowance.</p>
+            <label class="checkbox-row"><input type="checkbox" id="relayOwnMachinesOnly" data-testid="relay-own-machines-only-toggle" /> Only my own machines can use this relay</label>
+            <p class="settings-hint">Your own machines are this machine's twins. Other machines are disconnected and refused.</p>
+            <div class="github-group-actions">
+              <button class="primary compact" type="button" id="relayServingSave" data-testid="relay-serving-save-button">Save</button>
+              <button class="ghost compact" type="button" id="relayCheckButton" data-testid="relay-check-button" disabled>Check DNS and TLS</button>
+            </div>
+            <p class="settings-hint relay-inline-status" id="relayServingStatus" role="status" data-testid="relay-serving-status"></p>
+            <p class="settings-hint" id="relayCheckHint" data-testid="relay-check-hint">Turn serving on and save to check DNS and TLS.</p>
+            <ul class="relay-check-list" id="relayCheckResults" data-testid="relay-check-results"></ul>
+          </section>
+
+          <section class="relay-section" id="relayMachinesSection" role="tabpanel" aria-labelledby="relayTab-machines" data-testid="relay-machines-section" hidden>
+            <div class="settings-subtabs relay-filter" id="relayMachineFilter" role="group" aria-label="Show machines">
+              <button class="settings-subtab" type="button" data-machine-filter="all" aria-pressed="true" data-testid="relay-machines-filter-all">All</button>
+              <button class="settings-subtab" type="button" data-machine-filter="pending" aria-pressed="false" data-testid="relay-machines-filter-pending">Pending</button>
+              <button class="settings-subtab" type="button" data-machine-filter="admitted" aria-pressed="false" data-testid="relay-machines-filter-admitted">Admitted</button>
+              <button class="settings-subtab" type="button" data-machine-filter="suspended" aria-pressed="false" data-testid="relay-machines-filter-suspended">Suspended</button>
+            </div>
+            <p class="settings-hint relay-inline-status" id="relayMachinesStatus" role="status" data-testid="relay-machines-status"></p>
+            <div class="relay-list" id="relayMachinesList" data-testid="relay-machines-list"></div>
+            <div class="relay-pager" id="relayMachinesPager" data-testid="relay-machines-pager" hidden></div>
+          </section>
+
+          <section class="relay-section" id="relayTokensSection" role="tabpanel" aria-labelledby="relayTab-tokens" data-testid="relay-tokens-section" hidden>
+            <div class="relay-token-form" id="relayTokenForm">
+              <label>Label<input id="relayTokenLabel" autocomplete="off" maxlength="80" placeholder="Office Mac" data-testid="relay-token-label-input" /></label>
+              <label>Uses<input id="relayTokenUses" type="number" min="1" max="1000" step="1" value="1" data-testid="relay-token-uses-input" /></label>
+              <label>Expires in, hours<input id="relayTokenHours" type="number" min="0.25" max="2160" step="any" value="24" data-testid="relay-token-hours-input" /></label>
+              <label>Suggested name<input id="relayTokenName" autocomplete="off" spellcheck="false" maxlength="63" placeholder="Optional, like office-mac" data-testid="relay-token-name-input" /></label>
+              <button class="primary compact" type="button" id="relayTokenCreate" data-testid="relay-token-create-button" disabled>Create token</button>
+            </div>
+            <div class="relay-reveal" id="relayTokenReveal" data-testid="relay-token-reveal" hidden>
+              <label>Relay link
+                <div class="cluster-token-row">
+                  <input id="relayTokenLink" spellcheck="false" readonly aria-readonly="true" autocomplete="off" data-testid="relay-token-link-input" />
+                  <button class="ghost compact" type="button" id="relayTokenCopy" data-testid="relay-token-copy-button">Copy link</button>
+                </div>
+              </label>
+              <p class="settings-hint">Shown once. Send it to the machine's owner; it adds one machine.</p>
+              <button class="ghost compact" type="button" id="relayTokenDismiss" data-testid="relay-token-dismiss-button">Done</button>
+            </div>
+            <p class="settings-hint relay-inline-status" id="relayTokensStatus" role="status" data-testid="relay-tokens-status"></p>
+            <div class="relay-list" id="relayTokensList" data-testid="relay-tokens-list"></div>
+            <div class="relay-pager" id="relayTokensPager" data-testid="relay-tokens-pager" hidden></div>
+          </section>
+
+          <section class="relay-section" id="relayAuditSection" role="tabpanel" aria-labelledby="relayTab-audit" data-testid="relay-audit-section" hidden>
+            <p class="settings-hint relay-inline-status" id="relayAuditStatus" role="status" data-testid="relay-audit-status"></p>
+            <div class="relay-list" id="relayAuditList" data-testid="relay-audit-list"></div>
+            <div class="relay-pager" id="relayAuditPager" data-testid="relay-audit-pager" hidden></div>
+          </section>
         </section>
 
         <section class="settings-panel" id="settingsPanel-browser" role="tabpanel" aria-labelledby="settingsTab-browser" tabindex="0" hidden>
@@ -2120,7 +2332,7 @@
       </section>
     </dialog>
 
-    <!-- Scheduled tasks use the same bounded, scrolling card as every other app dialog. -->
+    <!-- Scheduled tasks keep actions visible while the list or editor scrolls. -->
     <dialog id="cronDialog" aria-labelledby="cronHeading" data-testid="cron-dialog">
       <section class="dialog-card cron-card">
         <div class="dialog-heading" tabindex="-1">
@@ -2128,10 +2340,10 @@
           <h2 id="cronHeading">Scheduled tasks</h2>
           <p id="cronContext"></p>
         </div>
+        <div id="cronBody" class="cron-body">
         <p id="cronError" role="alert"></p>
         <div id="cronListView">
           <div id="cronList" class="cron-list" data-testid="cron-list"></div>
-          <button id="cronNew" class="primary" type="button" data-testid="cron-new">New scheduled task</button>
         </div>
         <form id="cronForm" data-testid="cron-form" hidden>
           <div class="cron-form-heading">
@@ -2172,10 +2384,13 @@
           <label id="cronReasoningLabel">Reasoning<select name="reasoning" data-testid="cron-reasoning"></select></label>
           <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
           <label class="checkbox-row"><input name="pauseOnFailure" type="checkbox" data-testid="cron-pause-on-failure">Pause schedule after a failed run</label>
+          <label class="checkbox-row"><input name="markForReview" type="checkbox" checked data-testid="cron-mark-for-review">Mark completed runs for review</label>
+          <label class="checkbox-row"><input name="hideFromHistory" type="checkbox" data-testid="cron-hide-from-history">Hide this task's conversations from history, even when Show scheduled is on</label>
           <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Failed runs retry at the next scheduled time unless pause on failure is selected.</p>
-          <div class="dialog-actions"><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" data-testid="cron-save">Save task</button></div>
         </form>
-        <div id="cronFooter" class="dialog-actions"><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh</button><button id="cronClose" class="primary" type="button" data-testid="cron-close">Close</button></div>
+        </div>
+        <div id="cronFormActions" class="dialog-actions" hidden><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" form="cronForm" data-testid="cron-save">Save task</button></div>
+        <div id="cronFooter" class="dialog-actions"><button id="cronNew" class="ghost icon-button" type="button" aria-label="New scheduled task" title="New scheduled task" data-testid="cron-new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh</button><button id="cronClose" class="primary" type="button" data-testid="cron-close">Close</button></div>
       </section>
     </dialog>
     <div class="row-menu" id="rowMenu" popover="auto" aria-label="Conversation actions" data-testid="session-row-menu"></div>

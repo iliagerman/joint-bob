@@ -64,3 +64,43 @@ test("done conversations leave the list until the reader asks for them", { timeo
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("conversation visibility toggles follow each project and survive reload", { timeout: 120_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-visibility-ui-"));
+  const environment = await seedDevEnvironment(root, 1);
+  const node = environment.nodes[0];
+  const server = await startDevNode(environment, node);
+  let browser: Browser | undefined;
+  try {
+    browser = await launchChrome({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+    page.setDefaultTimeout(15_000);
+    await page.goto(node.url);
+    await page.getByTestId("login-username-input").fill(environment.username);
+    await page.getByTestId("login-password-input").fill(environment.password);
+    await page.getByTestId("login-submit-button").click();
+    await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+    await page.locator("#sessionList .session-card").first().waitFor();
+    await page.getByTestId("show-done-conversations-toggle").check();
+    await page.getByTestId("show-scheduled-conversations-toggle").check();
+    await page.locator(".project-card", { hasText: "Joint Bob" }).first().click();
+    await page.locator("#sessionList .session-card").first().waitFor();
+    assert.equal(await page.getByTestId("show-done-conversations-toggle").isChecked(), false);
+    assert.equal(await page.getByTestId("show-scheduled-conversations-toggle").isChecked(), false);
+    await page.getByTestId("show-done-conversations-toggle").check();
+    await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+    assert.equal(await page.getByTestId("show-done-conversations-toggle").isChecked(), true);
+    assert.equal(await page.getByTestId("show-scheduled-conversations-toggle").isChecked(), true);
+    await page.goto(node.url);
+    await page.locator("#sessionList .session-card").first().waitFor();
+    assert.equal(await page.getByTestId("show-done-conversations-toggle").isChecked(), true);
+    assert.equal(await page.getByTestId("show-scheduled-conversations-toggle").isChecked(), true);
+    await page.locator(".project-card", { hasText: "Joint Bob" }).first().click();
+    assert.equal(await page.getByTestId("show-done-conversations-toggle").isChecked(), true);
+    assert.equal(await page.getByTestId("show-scheduled-conversations-toggle").isChecked(), false);
+  } finally {
+    await browser?.close();
+    await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});

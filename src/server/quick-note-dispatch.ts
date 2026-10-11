@@ -27,6 +27,7 @@ import { getProjectLock } from "../project-locks.js";
 import { projectsWithSharedNames } from "./projects.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
 import { flags, server } from "./state.js";
+import { peerWebSocket } from "../relay/transport.js";
 
 /**
  * Server-side dispatch for quick notes. The browser is never involved: this
@@ -72,7 +73,7 @@ export function planQuickNoteLaunches(notes: QuickNotePlanCandidate[], queue: Qu
     within each project (including harness-switched conversations). */
 export async function runningConversationCounts(): Promise<Map<string, number>> {
   const running = new Map<string, Set<string>>();
-  const projects = await projectsWithSharedNames(false);
+  const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
   await Promise.all(projects.map(async (project) => {
     const sessions = await listProjectSessionsWithReviewState(project, "", "");
     running.set(project.id, new Set(sessions.filter(session => session.running).map(session => `${project.id}:${session.conversationId ?? session.id}`)));
@@ -181,7 +182,7 @@ async function launchPromptOverSocket(note: QuickNote, sessionId: string, target
   let outcomeResolve!: (outcome: "completed" | "failed" | "abandoned") => void;
   const accepted = new Promise<void>((resolve, reject) => { acceptResolve = resolve; acceptReject = reject; });
   const settled = new Promise<"completed" | "failed" | "abandoned">(resolve => { outcomeResolve = resolve; });
-  const socket = new WebSocket(url, { headers: await runtimeSocketHeaders(target.nodeId,url) });
+  const socket = peerWebSocket(url, { headers: await runtimeSocketHeaders(target.nodeId,url) }, target.nodeId);
   const reservationKey = `${note.projectId}:${sessionId}`;
 
   const cancelQueuedPromptIfPending = (): void => {

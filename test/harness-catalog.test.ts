@@ -137,6 +137,38 @@ test("direct lookup recovers a transcript by session id when its saved path is u
   assert.equal(found?.path, `claude:${recoveredPath}`);
 });
 
+test("opening finds a transcript the list hides because only the start command ran", async (t) => {
+  const settings = await import("../src/settings.js");
+  const before = settings.getSettings();
+  const startPrompt = "Check main before doing any work.";
+  settings.updateSettings({ ...before, conversationCommands: { ...before.conversationCommands, start: { enabled: false, prompt: startPrompt } } });
+  const project = { id: randomUUID(), name: "Unstarted", path: path.join(os.homedir(), randomUUID()) };
+  const sessionId = randomUUID();
+  const piPath = path.join(os.homedir(), ".pi/agent/sessions", `${sessionId}.jsonl`);
+  const claudePath = claudeSessionFilePath(project.path, sessionId);
+  const timestamp = new Date().toISOString();
+  await mkdir(path.dirname(piPath), { recursive: true });
+  await mkdir(path.dirname(claudePath), { recursive: true });
+  await writeFile(piPath, `${JSON.stringify({ type: "session", version: 3, id: sessionId, cwd: project.path, timestamp })}\n${JSON.stringify({ type: "message", id: `${sessionId}-setup`, parentId: null, timestamp, message: { role: "user", content: [{ type: "text", text: startPrompt }] } })}\n`);
+  await writeFile(claudePath, JSON.stringify({ type: "user", sessionId, cwd: project.path, timestamp, message: { role: "user", content: startPrompt } }) + "\n");
+  t.after(async () => {
+    settings.updateSettings(before);
+    clearHarnessSessionCache(project.id);
+    await rm(piPath);
+    await rm(path.dirname(claudePath), { recursive: true, force: true });
+  });
+  assert.deepEqual((await listHarnessSessions(project)).filter((session) => session.id === sessionId), [], "the list still hides an unstarted conversation");
+  const catalog = new HarnessSessionCatalog(listHarnesses());
+  for (const [engine, filePath] of [["pi", piPath], ["claude", claudePath]] as const) {
+    const sessionPath = engine === "claude" ? `claude:${filePath}` : filePath;
+    assert.equal((await catalog.find(project, engine, sessionPath, sessionId))?.path, sessionPath, `${engine} reconnects by transcript path before the first prompt`);
+    // A node that has the record but not the transcript lists a draft and opens it by that path.
+    assert.equal((await catalog.find(project, engine, `draft:${engine}:${sessionId}`, sessionId))?.path, sessionPath, `${engine} resolves a peer's draft path to the transcript`);
+    assert.equal(await catalog.find({ ...project, path: "/another-project" }, engine, `draft:${engine}:${sessionId}`, sessionId), undefined, "a draft path must not bypass project membership");
+    assert.equal(await catalog.find(project, engine, `draft:${engine}:${randomUUID()}`, randomUUID()), undefined, "a draft without a transcript stays a draft");
+  }
+});
+
 test("cached lists and known-file refreshes do not rescan transcript roots", async () => {
   const project = { id: randomUUID(), name: "Cached catalog", path: "/tmp/cached-catalog" };
   let scans = 0;

@@ -6,6 +6,7 @@ export interface SessionProjectPaths extends Pick<ProjectRecord, "path" | "macPa
   additionalPaths?: string[];
   includedSessionIds?: string[];
   recordSessionIds?: string[];
+  includeUnstarted?: boolean;
 }
 
 export function sessionCwds(project: SessionProjectPaths): string[] {

@@ -310,13 +310,16 @@ function ownershipEvent(record: ConversationOwnership, originNodeId: string) {
   };
 }
 
+// Peers reached through a Tailscale relay take several seconds per request.
+const TAKEOVER_PEER_TIMEOUT_MS = 15_000;
+
 class OwnershipAcknowledgementError extends Error {}
 
 async function applyOwnershipToPeer(peer: ClusterPeer, record: ConversationOwnership, originNodeId: string): Promise<OwnershipApplyResult> {
   const response = await runtimeFetch(`${peer.url}/api/cluster/sessions/ownership/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ record, originNodeId }), signal: AbortSignal.timeout(3_000),
+    body: JSON.stringify({ record, originNodeId }), signal: AbortSignal.timeout(TAKEOVER_PEER_TIMEOUT_MS),
   });
   const result = await response.json() as OwnershipApplyResult & { error?: string };
   if (!response.ok) throw new OwnershipAcknowledgementError(result.error || `Ownership acknowledgement failed from ${peer.name}`);
@@ -346,8 +349,13 @@ app.post(["/api/cluster/sessions/ownership/apply", "/api/cluster/v2/runtime/sess
 
 interface ConversationTranscriptPresence { found: boolean; hasTranscript: boolean }
 
+/** Worktree conversations live outside the project folder; a lookup that misses them sees only their draft record. */
+async function listProjectScopeSessions(project: ProjectRecord): Promise<SessionSummary[]> {
+  return listHarnessSessions({ ...project, additionalPaths: await projectAdditionalPaths(project.id) });
+}
+
 async function localConversationTranscriptPresence(project: ProjectRecord, engine: ConversationEngine, sessionId: string): Promise<ConversationTranscriptPresence> {
-  const session = (await listHarnessSessions(project)).find((candidate) => candidate.harnessId === engine && candidate.id === sessionId);
+  const session = (await listProjectScopeSessions(project)).find((candidate) => candidate.harnessId === engine && candidate.id === sessionId);
   return { found: Boolean(session), hasTranscript: Boolean(session && !session.draft) };
 }
 
@@ -381,16 +389,17 @@ async function assertDraftTakeoverReady(project: ProjectRecord, matching: Sessio
   const ownership = await getConversationOwnership(matching.harnessId, matching.id);
   if (!ownership || ownership.ownerNodeId === localId) return;
   const owner = peers.find((peer) => peer.id === ownership.ownerNodeId);
-  if (!owner) throw new TaskWorktreeError("Conversation owner is unavailable; cannot verify transcript synchronization");
+  if (!owner) throw new TaskWorktreeError("Conversation owner is not a peer for this project; cannot verify transcript synchronization");
   const url = new URL("/api/cluster/sessions/transcript-presence", owner.url);
   url.searchParams.set("projectId", project.id);
   url.searchParams.set("engine", matching.harnessId);
   url.searchParams.set("sessionId", matching.id);
   let response: globalThis.Response;
   try {
-    response = await runtimeFetch(url, { signal: AbortSignal.timeout(3_000) });
-  } catch {
-    throw new TaskWorktreeError("Conversation owner is unavailable; cannot verify transcript synchronization");
+    response = await runtimeFetch(url, { signal: AbortSignal.timeout(TAKEOVER_PEER_TIMEOUT_MS) });
+  } catch (error) {
+    if (!peerIsUnreachable(error)) throw error;
+    throw new TaskWorktreeError(`${owner.name} did not answer the transcript check; cannot verify transcript synchronization`);
   }
   if (!response.ok) throw new Error(`Transcript presence check failed on ${owner.name}`);
   const presence = z.object({ found: z.boolean(), hasTranscript: z.boolean() }).parse(await response.json());
@@ -403,7 +412,7 @@ app.post(["/api/cluster/sessions/queue-transfer", "/api/cluster/v2/runtime/sessi
     const payload = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().min(1) }).parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
-    const listed = await listHarnessSessions(project);
+    const listed = await listProjectScopeSessions(project);
     if (!listed.some((session) => session.id === payload.sessionId && session.harnessId === payload.engine)) throw new Error("Queue conversation is not the active segment in this project");
     const local = await getClusterNode();
     const destination = response.locals.machineNodeId as string;
@@ -443,7 +452,7 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
     url.searchParams.set("engine", engine); url.searchParams.set("sessionId", sessionId);
     let body: unknown;
     try {
-      const reply = await runtimeFetch(url, { signal: AbortSignal.timeout(3_000) });
+      const reply = await runtimeFetch(url, { signal: AbortSignal.timeout(TAKEOVER_PEER_TIMEOUT_MS) });
       if (!reply.ok) {
         const refusal = await reply.json().catch(() => ({})) as { error?: string };
         throw new TaskWorktreeError(`Cannot verify queue ownership on ${peer.name} (${reply.status}${refusal.error ? `: ${refusal.error}` : ""})`);
@@ -492,7 +501,7 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
 }
 
 export async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>, requireOnline = false): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
-  const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listRuntimePeers(project.id)]);
+  const [local, sessions, peers] = await Promise.all([getClusterNode(), listProjectScopeSessions(project), listRuntimePeers(project.id)]);
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
   if (!matching) throw new TaskWorktreeError("Conversation was not found on the destination node");
@@ -582,7 +591,7 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
 app.get("/api/reviews/pending", async (_request, response, next) => {
   try {
     const authSession = response.locals.authSession as AuthSession;
-    const projects = await projectsWithSharedNames(false);
+    const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
     const groups = await Promise.all(projects.map(async (project) => {
       const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.accountId);
       return {
@@ -609,7 +618,7 @@ app.get("/api/reviews/pending", async (_request, response, next) => {
 app.get("/api/running", async (_request, response, next) => {
   try {
     const authSession = response.locals.authSession as AuthSession;
-    const projects = await projectsWithSharedNames(false);
+    const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
     const groups = await Promise.all(projects.map(async (project) => {
       const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.accountId);
       return {
@@ -776,6 +785,78 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
     response.status(204).send();
   } catch (error) {
     if (error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+const sessionTransferSchema = sessionForkSchema.extend({ destinationProjectId: z.string().min(1), mode: z.enum(["copy", "move"]) });
+
+/** Copy writes a fresh-identity snapshot into the destination project. Move then deletes the
+ * source; if that fails (busy turn, done ticket) the copy is rolled back so nothing is duplicated.
+ * Session ids change because peers refuse an id that moves between projects. */
+export async function transferLocalConversation(source: ProjectRecord, destination: ProjectRecord, engine: ConversationEngine, sessionId: string, mode: "copy" | "move", viewer?: { userId: string; username: string }): Promise<SessionSummary> {
+  if (source.id === destination.id) throw new ConversationForkError(400, "Choose a different project");
+  if (mode === "move") {
+    const shared = findHarnessSession(source.id, engine, sessionId);
+    if (shared && harnessSessionBusy(shared)) throw new ConversationDeleteError(409, "Wait for the current turn to finish before moving");
+  }
+  const copy = await forkLocalConversation(source, engine, sessionId, "", viewer, destination);
+  if (mode === "copy") return copy;
+  try {
+    await deleteLocalConversation(source, engine, sessionId);
+  } catch (error) {
+    await deleteLocalConversation(destination, copy.harnessId, copy.id).catch((cleanupError) => console.warn("Could not roll back moved conversation copy", cleanupError));
+    throw error;
+  }
+  broadcastToProject(source.id, { type: "sessionsChanged" });
+  return copy;
+}
+
+app.post("/api/projects/:projectId/sessions/transfer", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = sessionTransferSchema.parse(request.body);
+    const destination = await getProject(payload.destinationProjectId);
+    if (!destination) { sendError(response, 404, "Destination project not found"); return; }
+    const local = await getClusterNode();
+    const ownership = await getConversationOwnership(payload.engine, payload.sessionId);
+    if (ownership && ownership.ownerNodeId !== local.id) {
+      const peer = await getRuntimePeer(ownership.ownerNodeId);
+      if (!peer) throw new ConversationForkError(409, "Conversation owner is unavailable");
+      let routed: globalThis.Response;
+      try {
+        routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/transfer`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(30_000),
+        });
+      } catch { throw new ConversationForkError(409, "Conversation owner is unavailable; transfer was not confirmed"); }
+      response.status(routed.status).json(await routed.json());
+      if (routed.ok) { broadcastToProject(project.id, { type: "sessionsChanged" }); broadcastToProject(destination.id, { type: "sessionsChanged" }); }
+      return;
+    }
+    const authSession = response.locals.authSession as AuthSession;
+    const session = await transferLocalConversation(project, destination, payload.engine, payload.sessionId, payload.mode, { userId: authSession.userId, username: authSession.username });
+    broadcastToProject(destination.id, { type: "sessionsChanged" });
+    response.status(201).json({ session, projectId: destination.id });
+  } catch (error) {
+    if (error instanceof ConversationForkError || error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post(["/api/cluster/sessions/transfer", "/api/cluster/v2/runtime/sessions/transfer"], async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = sessionTransferSchema.extend({ projectId: z.string().min(1) }).parse(request.body);
+    const project = await getProject(payload.projectId);
+    const destination = await getProject(payload.destinationProjectId);
+    if (!project || !destination) { sendError(response, 404, "Project not found"); return; }
+    const session = await transferLocalConversation(project, destination, payload.engine, payload.sessionId, payload.mode);
+    broadcastToProject(destination.id, { type: "sessionsChanged" });
+    response.status(201).json({ session, projectId: destination.id });
+  } catch (error) {
+    if (error instanceof ConversationForkError || error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
     next(error);
   }
 });

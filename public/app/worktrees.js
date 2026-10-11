@@ -9,6 +9,7 @@ import { state } from "./state.js";
 
 let editing = null;
 let loadGeneration = 0;
+const cleanupAfter = new Map();
 
 function worktreesUrl(projectId, suffix = "") {
   return `/api/projects/${encodeURIComponent(projectId)}/worktrees${suffix}`;
@@ -18,13 +19,40 @@ export async function loadWorktrees() {
   const projectId = state.activeProjectId;
   if (!projectId || state.canvasPaneMode) return;
   const generation = ++loadGeneration;
+  // Listing must stay fast even when checking finished worktrees takes seconds.
   const { worktrees } = await api(worktreesUrl(projectId));
   if (generation !== loadGeneration || state.activeProjectId !== projectId) return;
   const changed = JSON.stringify(worktrees) !== JSON.stringify(state.worktrees);
   state.worktrees = worktrees;
-  if (state.worktreeFilter && !worktrees.some((worktree) => worktree.id === state.worktreeFilter)) state.worktreeFilter = null;
-  renderWorktreeStrip();
   if (changed) renderSessions();
+  cleanupFinishedWorktrees(projectId);
+}
+
+function cleanupFinishedWorktrees(projectId) {
+  // Session notices can arrive every few seconds. Do not rescan a whole project
+  // on each notice, or pile up requests while a scan is already running.
+  if (Date.now() < (cleanupAfter.get(projectId) || 0)) return;
+  cleanupAfter.set(projectId, Infinity);
+  void api(worktreesUrl(projectId, "/cleanup"), { method: "POST", body: "{}" })
+    .then(async ({ deletedWorktreeIds, retainedWorktrees }) => {
+      if (state.activeProjectId !== projectId) return;
+      state.worktreeCleanupReasons = retainedWorktrees;
+      renderSessions();
+      if (deletedWorktreeIds.length) await loadWorktrees();
+    })
+    .catch((error) => console.warn("Could not clean up finished worktrees", error))
+    .finally(() => cleanupAfter.set(projectId, Date.now() + 60_000));
+}
+
+/** Creates a worktree of the open project named after a conversation, numbering the name when it is taken. */
+export async function createConversationWorktree(projectId, title) {
+  const base = title.replace(/\s+/g, " ").trim().slice(0, 74) || "Conversation";
+  const taken = new Set(state.worktrees.map((worktree) => worktree.name.toLowerCase()));
+  let name = base;
+  for (let suffix = 2; taken.has(name.toLowerCase()); suffix += 1) name = `${base} ${suffix}`;
+  const { worktree } = await api(worktreesUrl(projectId), { method: "POST", body: JSON.stringify({ name, color: nextColor() }) });
+  await loadWorktrees();
+  return worktree;
 }
 
 /** The badge that marks a conversation running inside a worktree, in that worktree's colour. */
@@ -45,16 +73,13 @@ function worktreeGlyph() {
   return svg;
 }
 
-export function renderWorktreeStrip() {
-  const strip = elements.worktreeStrip;
-  strip.replaceChildren();
-  if (!state.activeProjectId) { strip.hidden = true; return; }
-  strip.hidden = false;
+/** The heading that opens the worktrees sub-section of the conversation list. */
+export function worktreesHeading() {
+  const heading = document.createElement("div");
+  heading.className = "worktree-subsection-title";
+  heading.dataset.testid = "worktree-subsection";
   const label = document.createElement("span");
-  label.className = "worktree-strip-label";
   label.textContent = "Worktrees";
-  strip.append(label);
-  for (const worktree of state.worktrees) strip.append(worktreeChip(worktree));
   const add = document.createElement("button");
   add.type = "button";
   add.className = "ghost worktree-add-button";
@@ -62,31 +87,61 @@ export function renderWorktreeStrip() {
   add.title = "New worktree: a synced copy of this project's code for isolated work";
   add.textContent = "+ Worktree";
   add.addEventListener("click", () => openWorktreeDialog(null));
-  strip.append(add);
+  heading.append(label, add);
+  return heading;
 }
 
-function worktreeChip(worktree) {
-  const chip = document.createElement("span");
-  const selected = state.worktreeFilter === worktree.id;
-  chip.className = `worktree-chip${selected ? " selected" : ""}`;
-  chip.dataset.worktreeColor = worktree.color;
-  chip.dataset.testid = "worktree-chip";
-  chip.dataset.worktreeId = worktree.id;
-  const filter = document.createElement("button");
-  filter.type = "button";
-  filter.className = "worktree-chip-filter";
-  filter.dataset.testid = "worktree-chip-filter";
-  filter.setAttribute("aria-pressed", String(selected));
-  filter.title = selected ? `Show every conversation` : `Show only conversations in ${worktree.name}`;
-  filter.append(worktreeGlyph(), document.createTextNode(worktree.name));
-  filter.addEventListener("click", () => {
-    state.worktreeFilter = selected ? null : worktree.id;
-    renderWorktreeStrip();
+/** Keep zero-visible groups accessible without crowding the conversation list. */
+export function otherWorktreesSection(worktrees, expanded) {
+  const section = document.createElement("details");
+  section.className = "other-worktrees";
+  section.dataset.testid = "other-worktrees";
+  section.dataset.projectId = state.activeProjectId;
+  section.open = expanded;
+  const summary = document.createElement("summary");
+  summary.dataset.testid = "other-worktrees-toggle";
+  summary.textContent = `Other worktrees (${worktrees.length})`;
+  const note = document.createElement("p");
+  note.textContent = "No conversations shown in these groups. Check Show done and Show scheduled for hidden conversations.";
+  section.append(summary, note, ...worktrees.map((worktree) => worktreeSectionHeader(worktree, 0)));
+  return section;
+}
+
+/** One worktree's fold header; its conversations are listed beneath it. */
+export function worktreeSectionHeader(worktree, count) {
+  const collapsed = state.collapsedWorktreeIds.has(worktree.id);
+  const header = document.createElement("div");
+  header.className = "worktree-section-header";
+  header.dataset.worktreeColor = worktree.color;
+  header.dataset.testid = "worktree-section";
+  header.dataset.worktreeId = worktree.id;
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "worktree-section-toggle";
+  toggle.dataset.testid = "worktree-section-toggle";
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.title = `${collapsed ? "Show" : "Hide"} conversations in ${worktree.name}`;
+  const caret = document.createElement("span");
+  caret.className = "worktree-section-caret";
+  caret.setAttribute("aria-hidden", "true");
+  caret.textContent = collapsed ? "▸" : "▾";
+  const name = document.createElement("span");
+  name.className = "worktree-section-name";
+  name.textContent = worktree.name;
+  const total = document.createElement("span");
+  total.className = "worktree-section-count";
+  total.dataset.testid = "worktree-section-count";
+  total.textContent = String(count);
+  total.title = `${count} visible conversations`;
+  toggle.append(caret, worktreeGlyph(), name, total);
+  toggle.addEventListener("click", () => {
+    if (collapsed) state.collapsedWorktreeIds.delete(worktree.id);
+    else state.collapsedWorktreeIds.add(worktree.id);
     renderSessions();
   });
   const menu = document.createElement("button");
   menu.type = "button";
-  menu.className = "ghost icon-button worktree-chip-menu";
+  menu.className = "ghost icon-button worktree-section-menu";
   menu.dataset.testid = "worktree-menu-button";
   menu.setAttribute("aria-label", `Actions for worktree ${worktree.name}`);
   menu.setAttribute("aria-haspopup", "true");
@@ -95,8 +150,25 @@ function worktreeChip(worktree) {
     event.stopPropagation();
     openRowMenu(menu, worktreeMenuItems(worktree), `[data-worktree-id="${CSS.escape(worktree.id)}"] [data-testid="worktree-menu-button"]`);
   });
-  chip.append(filter, menu);
-  return chip;
+  // Its files have not reached this machine: every menu action needs them here.
+  if (worktree.syncing) {
+    const note = document.createElement("span");
+    note.className = "worktree-cleanup-note";
+    note.dataset.testid = "worktree-syncing-note";
+    note.textContent = "Its files are still syncing to this machine. Until they arrive, manage it from the machine that created it.";
+    header.append(toggle, note);
+    return header;
+  }
+  header.append(toggle, menu);
+  const reason = state.worktreeCleanupReasons[worktree.id];
+  if (reason) {
+    const note = document.createElement("span");
+    note.className = "worktree-cleanup-note";
+    note.dataset.testid = "worktree-cleanup-note";
+    note.textContent = reason.replace(/^Worktree kept:/, "Kept:");
+    header.append(note);
+  }
+  return header;
 }
 
 function worktreeMenuItems(worktree) {
@@ -143,7 +215,7 @@ async function deleteWorktree(worktree) {
   });
   if (!confirmed) return;
   await api(worktreesUrl(state.activeProjectId, `/${encodeURIComponent(worktree.id)}`), { method: "DELETE" });
-  if (state.worktreeFilter === worktree.id) state.worktreeFilter = null;
+  state.collapsedWorktreeIds.delete(worktree.id);
   await loadWorktrees();
 }
 
@@ -204,6 +276,8 @@ elements.worktreeForm.addEventListener("submit", async (event) => {
     }
     elements.worktreeDialog.close();
     await loadWorktrees();
+    // An explicitly created empty worktree should be visible immediately.
+    if (!editing && state.activeProjectId === projectId) elements.sessionList.querySelector(".other-worktrees")?.setAttribute("open", "");
   } catch (error) {
     toast(error.message);
   } finally {
@@ -212,4 +286,3 @@ elements.worktreeForm.addEventListener("submit", async (event) => {
   }
 });
 
-renderWorktreeStrip();

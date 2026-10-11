@@ -1,6 +1,8 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+// Every module that opens the node's database resolves its directory here first.
+import "./sqlite-statements.js";
 
 let temporaryDataDirectory: string | undefined;
 

@@ -32,6 +32,8 @@ export interface RunGitReviewInput {
   history?: Array<{ role: "user" | "assistant"; text: string }>;
   /** Structured review/discovery instructions; still runs in the same read-only session. */
   instructions?: string;
+  /** Called with the whole answer so far each time the model writes more. */
+  onText?: (soFar: string) => void;
 }
 
 export interface RunGitReviewResult {
@@ -94,9 +96,14 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
   const runtime = await getHarnessRuntime(input.harnessId);
   const session = await runtime.open({ projectId: input.projectId, cwd: input.cwd, sessionId: internalSessionId() });
   const events: HarnessEvent[] = [];
+  let soFar = "";
   const unsubscribe = session.subscribe((event) => {
-    if (event.type === "agent_start") events.length = 0;
-    if (event.type === "textDelta" && typeof event.text === "string") events.push(event);
+    if (event.type === "agent_start") { events.length = 0; soFar = ""; }
+    if (event.type === "textDelta" && typeof event.text === "string") {
+      events.push(event);
+      soFar += event.text;
+      input.onText?.(soFar);
+    }
   });
   try {
     const base = session.settings();

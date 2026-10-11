@@ -17,6 +17,7 @@ let workflowFilter = "all";
 let detail = null;
 let jobId = null;
 let log = null;
+let explainPull = null;
 
 function node(tag, className = "", text = "") {
   const element = document.createElement(tag);
@@ -51,7 +52,8 @@ export function resetGitHosting() {
   hosting.replaceChildren();
 }
 
-export async function loadGitHosting(nextTab, gitUrl) {
+export async function loadGitHosting(nextTab, gitUrl, onExplainPull) {
+  explainPull = onExplainPull;
   generation++;
   tab = nextTab;
   url = gitUrl;
@@ -152,9 +154,55 @@ function renderList() {
     list.append(row);
   }
   const empty = node("p", "git-hosting-empty git-hosting-message", "No matching items on this page.");
-  hosting.replaceChildren(title, note, filters(), list, empty);
+  hosting.replaceChildren(title, note, ...(tab === "pulls" ? [createPullForm()] : []), filters(), list, empty);
   if (more) hosting.append(button("Load more", () => { page++; void loadList(true); }, "ghost compact", "git-hosting-more"));
   filterRows();
+}
+
+function createPullForm() {
+  const form = node("form", "git-hosting-section");
+  const toggle = button("New pull request", () => { fields.hidden = !fields.hidden; }, "ghost compact", "git-hosting-new-pull");
+  const fields = node("div", "git-hosting-actions");
+  fields.hidden = true;
+  const input = (label, name, required = true) => {
+    const field = node("input", "git-hosting-search");
+    field.name = name;
+    field.placeholder = label;
+    field.setAttribute("aria-label", label);
+    field.required = required;
+    return field;
+  };
+  fields.append(input("Pushed head branch", "head"), input("Base branch", "base"), input("PR title", "title"));
+  const body = node("textarea", "git-hosting-draft");
+  body.name = "body";
+  body.placeholder = "Description";
+  body.setAttribute("aria-label", "PR description");
+  const draft = node("input");
+  draft.type = "checkbox";
+  draft.name = "draft";
+  const draftLabel = node("label", "git-hosting-note", " Draft PR");
+  draftLabel.prepend(draft);
+  const submit = button("Create PR", () => { if (form.reportValidity()) void createPull(form); }, "primary compact", "git-hosting-create-pull");
+  fields.append(body, draftLabel, submit);
+  form.append(toggle, fields);
+  form.addEventListener("submit", (event) => { event.preventDefault(); void createPull(form); });
+  return form;
+}
+
+async function createPull(form) {
+  const values = new FormData(form);
+  const payload = { action: "create", head: String(values.get("head")).trim(), base: String(values.get("base")).trim(), title: String(values.get("title")).trim(), body: String(values.get("body") ?? ""), draft: values.has("draft") };
+  if (!await confirmAction({ title: `Create ${payload.draft ? "draft " : ""}PR from ${payload.head} into ${payload.base}?`, confirmLabel: "Create PR" })) return;
+  try {
+    const pull = await api(url("github"), { method: "POST", body: JSON.stringify(payload) });
+    status(`Created PR #${pull.number} on GitHub`);
+    page = 1;
+    pullState = "open";
+    await loadList();
+  } catch (error) {
+    status(`GitHub action failed or may be uncertain: ${error.message}. Check the PR before retrying.`);
+    toast("Check GitHub before retrying", 8000);
+  }
 }
 
 async function openDetail(index) {
@@ -195,7 +243,8 @@ function commentEntry(entry, label) {
 function renderPullDetail() {
   const { pull, comments, reviews, inline, files, truncated } = detail;
   hosting.append(node("h3", "git-hosting-title", `#${pull.number} · ${pull.title}`));
-  hosting.append(node("p", "git-hosting-note", `${pull.user.login} · ${pull.head.ref} → ${pull.base.ref} · ${pull.state}`));
+  hosting.append(node("p", "git-hosting-note", `${pull.user.login} · ${pull.head.ref} → ${pull.base.ref} · ${pull.merged ? "merged" : pull.state}${pull.draft ? " · draft" : ""}`));
+  hosting.append(button("Explain this PR", () => explainPull?.(pull.number), "ghost compact", "git-hosting-explain-pull"));
   hosting.append(node("p", "git-hosting-description", pull.body || "No description."));
   const reviewSection = node("section", "git-hosting-section");
   reviewSection.append(node("h4", "", `Conversation · ${comments.length} comments · ${reviews.length} reviews`));
@@ -225,23 +274,29 @@ function renderPullActions(pull) {
   controls.append(draft);
   for (const [label, action, event] of [["Comment", "comment", ""], ["Approve", "review", "APPROVE"], ["Request changes", "review", "REQUEST_CHANGES"], ["Close PR", "close", ""]]) {
     if (pull.state !== "open" && action !== "comment") continue;
-    controls.append(button(label, () => { void submitPullAction(pull.number, action, event, draft.value); }, `ghost compact${action === "close" ? " destructive" : ""}`, `git-hosting-${action === "review" ? event.toLowerCase() : action}`));
+    controls.append(button(label, () => { void submitPullAction(pull, action, event, draft.value); }, `ghost compact${action === "close" ? " destructive" : ""}`, `git-hosting-${action === "review" ? event.toLowerCase() : action}`));
+  }
+  if (pull.state === "closed" && !pull.merged) controls.append(button("Reopen PR", () => { void submitPullAction(pull, "reopen", "", ""); }, "ghost compact", "git-hosting-reopen"));
+  if (pull.state === "open" && !pull.draft) for (const [method, label] of [["merge", "Merge"], ["squash", "Squash and merge"], ["rebase", "Rebase and merge"]]) {
+    controls.append(button(label, () => { void submitPullAction(pull, "merge", method, ""); }, "ghost compact", `git-hosting-merge-${method}`));
   }
   hosting.append(controls);
 }
 
-async function submitPullAction(number, action, event, body) {
+async function submitPullAction(pull, action, event, body) {
+  const number = pull.number;
   if ((action === "comment" || event === "REQUEST_CHANGES") && !body.trim()) { toast("Write a comment first"); return; }
-  if (!await confirmAction({ title: action === "close" ? `Close PR #${number}?` : `${event === "REQUEST_CHANGES" ? "Request changes on" : event === "APPROVE" ? "Approve" : "Comment on"} PR #${number}?`, confirmLabel: action === "close" ? "Close PR" : "Submit", destructive: action === "close" })) return;
+  const label = action === "merge" ? `${event === "squash" ? "Squash and merge" : event === "rebase" ? "Rebase and merge" : "Merge"} PR #${number} into ${pull.base.ref}?` : action === "close" ? `Close PR #${number}?` : action === "reopen" ? `Reopen PR #${number}?` : `${event === "REQUEST_CHANGES" ? "Request changes on" : event === "APPROVE" ? "Approve" : "Comment on"} PR #${number}?`;
+  if (!await confirmAction({ title: label, confirmLabel: action === "merge" ? "Merge PR" : action === "close" ? "Close PR" : "Submit", destructive: action === "close" || action === "merge" })) return;
   try {
-    await api(url("github"), { method: "POST", body: JSON.stringify({ action, number, ...(action !== "close" ? { body } : {}), ...(event ? { event } : {}) }) });
+    await api(url("github"), { method: "POST", body: JSON.stringify({ action, number, ...(action === "comment" || action === "review" ? { body } : {}), ...(action === "review" ? { event } : {}), ...(action === "merge" ? { sha: pull.head.sha, method: event } : {}) }) });
   } catch (error) {
     status(`GitHub action failed or may be uncertain: ${error.message}. Check the PR before retrying.`);
     toast("Check the PR on GitHub before retrying", 8000);
     return;
   }
   pulls = [];
-  status(`${action === "close" ? "Closed" : "Submitted"} on GitHub`);
+  status(`${action === "close" ? "Closed" : action === "reopen" ? "Reopened" : action === "merge" ? "Merged" : "Submitted"} on GitHub`);
   const version = ++generation;
   try {
     const response = await api(url("github", { op: "pull", id: number }));

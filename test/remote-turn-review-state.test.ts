@@ -94,11 +94,12 @@ test("a twin shows a remote turn's end as needing review, never as reviewed, and
       await appendFile(transcript, message("assistant", prompt + 2_000, "Second answer"));
       const answerAt = new Date(prompt + 2_000).toISOString();
       publishPiRuntime(runtimeDb, run, false);
-      assert.equal((await eventually(async () => {
+      // The owner learns the answer from its transcript watcher, which can trail the run's end under load.
+      await eventually(async () => {
         const current = await row(owner, ownerAuth);
         assert.equal(current.running, false);
-        return current;
-      }, 10_000)).reviewState, "needs_review");
+        assert.equal(current.reviewState, "needs_review");
+      }, 10_000);
       assert.ok(Date.now() - pulledAt < 20_000, "the turn ended well before the twin's next periodic pull");
 
       const seen: string[] = [];

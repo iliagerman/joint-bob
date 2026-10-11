@@ -1,5 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
-import { loadSessionNodes } from "./chat-controls.js";
+import { loadHarnesses, loadSessionNodes } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
@@ -243,6 +243,12 @@ function openPendingReviewsDialog() {
 }
 
 export async function openListedSession(session) {
+  // Lists render before harness metadata arrives, and the steps below resolve the engine from
+  // it. A row tapped in that window threw here, so the tap did nothing at all.
+  if (!state.harnesses.length) {
+    try { await loadHarnesses(); }
+    catch (error) { toast(error.message, 8000); return; }
+  }
   const reviewHighlightAfter = session.reviewState === "needs_review" ? session.reviewedAt : null;
   markSessionReviewed(session);
   rememberRecentSession(session);

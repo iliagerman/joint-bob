@@ -126,7 +126,9 @@ function isDoneConversation(session) {
 
 /** Done conversations are out of sight — and out of the counts — until the reader asks for them. */
 function isVisible(session) {
-  return state.showDoneConversations || !isDoneConversation(session);
+  return (state.showDoneConversations || !isDoneConversation(session))
+    && (!session.cronTaskId || (state.showScheduledConversations
+      && state.knownCronTaskIds.has(session.cronTaskId) && !state.hiddenCronTaskIds.has(session.cronTaskId)));
 }
 
 function matchesClassification(session) {
@@ -153,7 +155,6 @@ export function filteredSessions() {
   const query = normalizedQuery(elements.sessionSearchInput.value || "");
   return state.sessions.filter((session) => {
     if (!matchesClassification(session) || !sessionMatchesClusters(session) || !isVisible(session)) return false;
-    if (state.worktreeFilter && session.worktree?.id !== state.worktreeFilter) return false;
     const searchableText = `${shortSessionTitle(session)}\n${session.firstMessage || ""}\n${session.path || ""}`.toLowerCase();
     if (query && !searchableText.includes(query)) return false;
     return matchesChatFilters(session);

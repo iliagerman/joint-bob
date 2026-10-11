@@ -33,12 +33,13 @@ import { persistTaskAttachments, promptTextWithAttachments } from "./chat.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
 import { conversationTranscriptPayload, scheduledReportMessages } from "../conversation-segments.js";
 import { isScheduledPromptText } from "../scheduled-prompt.js";
+import { silentScheduledReview } from "./scheduled-review.js";
 import { socketMessageSchema } from "./schemas.js";
 import { claimConversationLocally, describeConversationOwner, type ForeignConversationOwner, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { flags } from "./state.js";
 import { measureOperation } from "./performance-diagnostics.js";
 import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
-import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
+import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, historyBeforeLiveTurn, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 
 export interface HarnessChatConnection {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
@@ -200,7 +201,7 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   markHarnessInput(connection.shared);
   publish(connection, { type: "userMessage", text: displayText, timestamp: queued.createdAt, ...(queued.author ? { author: queued.author } : {}), scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
   refreshHarnessPromptQueue(connection);
-  void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
+  void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
 }
 
 async function applyQueuedSettings(connection: HarnessChatConnection, settings: QueuedSettings): Promise<void> {
@@ -354,6 +355,8 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       // Once a second person writes, the agent sees who wrote each prompt.
       const authored = queued.systemEventId ? attachments.text : authoredPromptText(connection.project.id, connection.conversationId, attachments.text, queued.author);
       const text = `${connection.handoffContext ?? ""}${authored}`;
+      const finishSilentReview = queued.requestId && isScheduledPromptText(queued.promptText)
+        ? await silentScheduledReview(connection.project, connection.engine, connection.shared.session.id, queued.requestId) : undefined;
       await connection.shared.session.prompt({ text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
         armAutoCompactAfterPrompt(connection.shared.session);
         if (claimed) return;
@@ -366,6 +369,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
         refreshHarnessPromptQueue(connection);
       } });
       if (!claimed) throw new Error("Harness did not start the queued prompt");
+      if (finishSilentReview) await finishSilentReview();
       if (!queued.systemEventId) publish(connection, { type: "promptCompleted", queueId: queued.id });
     } catch (error) {
       // An automatic completion may have crossed the harness start boundary even
@@ -442,7 +446,7 @@ function wakeWhenHarnessIdle(connection: HarnessChatConnection): void {
     if (harnessTurnBusy(shared)) return;
     cleanup();
     // The idle event may fire before the old drain has removed itself from the map.
-    setImmediate(() => void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) })));
+    setImmediate(() => void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection)));
   };
   unsubscribe = shared.session.subscribe(() => queueMicrotask(check));
   timer = setInterval(check, 2_000);
@@ -591,7 +595,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
     } finally {
       connection.shared.turnInFlight -= 1;
       sendHarnessStatus(connection.shared);
-      void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
+      void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
     }
     return true;
   }
@@ -638,7 +642,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
     recordQueueSettings(queueKey(connection), currentSettings(connection)); markRoutingManual(connection); sendHarnessStatus(connection.shared); return true;
   }
   if (message.type === "rename") { await connection.shared.session.rename(message.name ?? ""); await setSessionTitle(connection.conversationId, message.name ?? ""); broadcastToProject(connection.project.id, { type: "sessionsChanged" }); return true; }
-  if (message.type === "setSafeguards") { if (message.safeguardsEnabled === undefined) throw new Error("Safeguards setting is required"); try { await connection.shared.session.setSafeguards(message.safeguardsEnabled); } finally { sendHarnessStatus(connection.shared); void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) })); } return true; }
+  if (message.type === "setSafeguards") { if (message.safeguardsEnabled === undefined) throw new Error("Safeguards setting is required"); try { await connection.shared.session.setSafeguards(message.safeguardsEnabled); } finally { sendHarnessStatus(connection.shared); void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection)); } return true; }
   return false;
 }
 
@@ -665,7 +669,7 @@ async function queueCommand(connection: HarnessChatConnection, message: ReturnTy
       sendHarnessStatus(connection.shared);
     } finally {
       pausedDrains.delete(key);
-      void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
+      void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
     }
     return;
   }
@@ -688,7 +692,7 @@ async function queueCommand(connection: HarnessChatConnection, message: ReturnTy
     if (!message.queueItems || message.queueItems.some(({ id }) => startingIds.has(id)) || !swapQueuedPrompts(queueKey(connection), message.queueItems)) throw new Error("Queued prompts changed; refresh and try again");
   } else if (!message.queueItems || message.queueItems.some(({ id }) => startingIds.has(id)) || !mergeQueuedPrompts(queueKey(connection), message.queueItems)) throw new Error("Queued prompts changed; refresh and try again");
   refreshHarnessPromptQueue(connection);
-  void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
+  void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
 }
 
 async function bobGoalCommand(connection: HarnessChatConnection, text: string, hasAttachments: boolean): Promise<void> {
@@ -705,7 +709,7 @@ async function bobGoalCommand(connection: HarnessChatConnection, text: string, h
     const goal = await startConversationGoal(connection.project.id, connection.conversationId, command.objective, local.id);
     publish(connection, { type: "userMessage", text: `/bob-goal ${command.objective}` });
     publishGoal(connection, goal);
-    void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
+    void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
     return;
   }
   publishGoal(connection, await cancelConversationGoal(connection.project.id, connection.conversationId, local.id));
@@ -714,7 +718,7 @@ async function bobGoalCommand(connection: HarnessChatConnection, text: string, h
 export async function handleHarnessChatMessage(connection: HarnessChatConnection, raw: Buffer): Promise<void> {
   const message = socketMessageSchema.parse(JSON.parse(raw.toString()));
   if (message.type === "prompt") {
-    if (message.message === "/reload" && !(message.images?.length || message.files?.length)) { await writable(connection); try { await connection.shared.session.reload(); } finally { sendHarnessStatus(connection.shared); void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) })); } send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); return; }
+    if (message.message === "/reload" && !(message.images?.length || message.files?.length)) { await writable(connection); try { await connection.shared.session.reload(); } finally { sendHarnessStatus(connection.shared); void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection)); } send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); return; }
     if (parseBobGoalCommand(message.message ?? "")) {
       await serializeMutation(connection, () => bobGoalCommand(connection, message.message ?? "", Boolean(message.images?.length || message.files?.length)));
       return;
@@ -729,9 +733,20 @@ export async function handleHarnessChatMessage(connection: HarnessChatConnection
   throw new Error(`Unknown chat command: ${message.type}`);
 }
 
+/** Ownership conflicts and malformed commands are answers to the client, not server faults. */
+function logChatFailure(context: string, connection: HarnessChatConnection, error: unknown): void {
+  if (error instanceof ConversationOwnershipError || (error instanceof Error && error.name === "ZodError")) return;
+  console.error(`${context} failed in ${connection.engine}:${connection.shared.session.id}`, error);
+}
+
+function promptQueueFailed(connection: HarnessChatConnection): (error: unknown) => void {
+  return (error) => { logChatFailure("Prompt queue", connection, error); publish(connection, { type: "error", error: chatErrorMessage(error) }); };
+}
+
 export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   let record = await getConversationRecord(options.project.id, options.engine, options.sessionId);
   const conversationId = record?.conversationId ?? options.sessionId;
+  const runtimeWasOpen = Boolean(options.sessionId && findHarnessSession(options.project.id, options.engine, options.sessionId));
   const shared = await measureOperation("chat.open.runtime", () => openHarnessSession(options.engine, { projectId: options.project.id, cwd: options.cwd, sessionId: options.sessionId, sessionPath: options.sessionPath, conversationId, accountIds: options.accountIds }));
   const connection: HarnessChatConnection = { socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId, author: options.author };
   const local = await getClusterNode();
@@ -742,8 +757,22 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const transcript = await measureOperation("chat.open.history", () => conversationTranscriptPayload(options.project.id, options.engine, shared.session.id, options.listedSessions, shared.session.messages));
   if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
   const scheduled = Boolean(record?.cronTaskId);
-  const history = withTurnFailures(attachMessageAuthors(options.project.id, conversationId, transcript.messages), listTurnFailures(options.engine, shared.session.id));
+  const beforeLiveTurn = historyBeforeLiveTurn(transcript.messages, shared);
+  const turnFailures = listTurnFailures(options.engine, shared.session.id);
+  const history = withTurnFailures(attachMessageAuthors(options.project.id, conversationId, beforeLiveTurn), turnFailures);
   const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
+  // Every step that can add or drop messages, so a client seeing a transcript shrink or change can name the step.
+  const diagnostics = {
+    runtime: runtimeWasOpen ? "already open" : "loaded",
+    runtimeMessages: shared.session.messages.length,
+    boundedMessages: transcript.messages.length,
+    trimmed: transcript.messages[0]?.id === "transcript-trimmed",
+    hiddenLiveTurnMessages: transcript.messages.length - beforeLiveTurn.length,
+    turnFailures: turnFailures.length,
+    scheduledCollapsed: history.length - browserMessages.length,
+    liveEvents: shared.liveEvents.length,
+    busy: harnessSessionBusy(shared),
+  };
   const goal = await getConversationGoal(options.project.id, conversationId);
   const routing = await routingClientState(connection, local.id);
   const routingMode = routing ? routing.mode : "manual";
@@ -754,10 +783,11 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     .filter((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)))
     .sort((left, right) => Date.parse(left) - Date.parse(right));
   const conversationStartedAt = startedCandidates[0] ?? null;
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {
+    logChatFailure("Chat command", connection, error);
     send(options.socket, { type: "error", error: chatErrorMessage(error) });
     if (error instanceof ConversationOwnershipError) send(options.socket, { type: "ownership", ownership: await describeConversationOwner(error.ownership, local.id) });
     sendHarnessStatus(connection.shared, options.socket);
@@ -766,5 +796,5 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   if (options.autoStartPrompt && !shared.session.messages.length && !listQueuedPrompts(queueKey(connection)).length) {
     await serializeMutation(connection, () => enqueue(connection, options.autoStartPrompt!, [], []));
   }
-  if (!options.ownership && !options.readOnly) void drainHarnessPromptQueue(connection).catch((error) => send(options.socket, { type: "error", error: chatErrorMessage(error) }));
+  if (!options.ownership && !options.readOnly) void drainHarnessPromptQueue(connection).catch((error) => { logChatFailure("Prompt queue", connection, error); send(options.socket, { type: "error", error: chatErrorMessage(error) }); });
 }

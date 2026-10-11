@@ -446,12 +446,11 @@ function renderDialogImages() {
 }
 
 imageButton.addEventListener("click", () => imageInput.click());
-imageInput.addEventListener("change", async (event) => {
+async function addDialogImages(files) {
   const generation = dialogGeneration;
   readingImages = true;
   updateFormControls();
   try {
-    const files = [...(event.target.files || [])];
     if (files.some(file => !file.type.startsWith("image/"))) throw new Error("Notes accept image attachments only.");
     const images = await attachmentsFromFiles(files, dialogImages);
     if (generation !== dialogGeneration) return;
@@ -466,6 +465,14 @@ imageInput.addEventListener("change", async (event) => {
       updateFormControls();
     }
   }
+}
+
+imageInput.addEventListener("change", (event) => addDialogImages([...(event.target.files || [])]));
+dialog.addEventListener("paste", (event) => {
+  const images = [...(event.clipboardData?.files || [])].filter((file) => file.type.startsWith("image/"));
+  if (!images.length || readingImages || imageButton.disabled) return;
+  if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+  void addDialogImages(images);
 });
 
 dialog.addEventListener("close", () => { ++dialogGeneration; ++optionsRequestId; });

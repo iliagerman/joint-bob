@@ -632,12 +632,13 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
    same field surface as the selects standing next to them. The outline is drawn as an
    inset ring rather than a border, because the toolbar zeroes its buttons' block
    borders to keep the shortcut badges on one line. */
-.chat-toolbar .ghost, .panel-toolbar .ghost, .project-actions .ghost, .canvas-page-strip .ghost {
+.chat-toolbar .ghost, .panel-toolbar .ghost, .project-actions .ghost, .project-search-row .ghost, .canvas-page-strip .ghost {
   background: var(--field);
   box-shadow: inset 0 0 0 1px var(--line);
 }
 .chat-toolbar .ghost:hover:not(:disabled), .panel-toolbar .ghost:hover:not(:disabled),
-.project-actions .ghost:hover:not(:disabled), .canvas-page-strip .ghost:hover:not(:disabled) {
+.project-actions .ghost:hover:not(:disabled), .project-search-row .ghost:hover:not(:disabled),
+.canvas-page-strip .ghost:hover:not(:disabled) {
   background: var(--surface);
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
@@ -732,6 +733,8 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .conversation-tabs button.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / 0.16); }
 .conversation-list-pane { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .conversation-list-pane[hidden] { display: none; }
+/* Long worktree names must not size the list's implicit grid column. */
+.session-list { grid-template-columns: minmax(0, 1fr); }
 .quick-notes-section { display: flex; flex-direction: column; flex: 1; min-height: 0; background: color-mix(in srgb, var(--field) 28%, transparent); }
 .quick-notes-section .section-title { min-height: 34px; margin-top: 10px; gap: 6px; }
 .quick-notes-filter { width: min(150px, 45%); min-height: 28px; margin-left: auto; padding: 3px 24px 3px 7px; font-size: 11px; }
@@ -770,6 +773,7 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .project-search-row { display: flex; align-items: center; gap: 6px; margin: 12px 12px 2px; }
 .project-search-row .search-shell { flex: 1; min-width: 0; margin: 0; }
 .project-search-row .icon-button { min-width: 40px; width: 40px; min-height: 40px; flex: none; }
+.project-search-row .icon-button svg { width: 22px; height: 22px; }
 input, textarea, select {
   width: 100%;
   min-width: 0;
@@ -802,6 +806,8 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .list-filter-row .searchable-select-trigger { min-height: 32px; padding: 6px 28px 6px 10px; background-position: right 9px center; font-size: 12px; }
 .list-filter-row .searchable-select-trigger:not(.empty) { border-color: color-mix(in srgb, var(--hue, var(--accent)) 42%, transparent); color: var(--text); }
 .list-filter-row .searchable-select-popover { min-width: 220px; }
+/* The right-hand filter opens leftward, so its wider list stays inside the lane instead of scrolling it sideways. */
+.list-filter-row > :last-child:not(:first-child) .searchable-select-popover { left: auto; width: max(100%, 220px); }
 .classification-filter { font-size: 12px; }
 .done-filter { display: flex; align-items: center; gap: 6px; margin: 4px 12px 2px; font-size: 12px; color: var(--muted); }
 .done-filter input { width: 14px; height: 14px; margin: 0; flex: 0 0 auto; }
@@ -900,6 +906,21 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   font: 500 11px/1.4 var(--mono);
   vertical-align: middle;
   overflow-wrap: anywhere;
+}
+/* The last title word and its label wrap together; `.session-card span` would clamp this span, so it resets that. */
+.session-card .session-title-tail { display: inline; -webkit-line-clamp: none; overflow: visible; white-space: nowrap; }
+/* `.session-card span` makes spans clamped line boxes; a label badge must stay inline beside the title. */
+.session-card .session-classification {
+  display: inline-block;
+  -webkit-line-clamp: none;
+  overflow: visible;
+  vertical-align: baseline;
+}
+.session-card .session-classification-icon {
+  padding: 0 4px;
+  border-color: transparent;
+  font-size: 14px;
+  line-height: 1.35;
 }
 .project-sync-status-synced { color: var(--live); }
 .project-sync-status-syncing { color: var(--accent); }
@@ -1229,8 +1250,9 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 /* The actions wrap to a second row rather than being clipped by the panel edge. */
 .chat-toolbar { overflow: visible; flex-wrap: wrap; row-gap: 8px; }
 .panel-toolbar[hidden], .chat-toolbar[hidden] { display: none; }
-/* Desktop-only line break: the selects keep row 1, the action buttons take row 2. */
-.chat-toolbar-break { display: none; }
+/* The action buttons move as one group: beside the selects when there is room, otherwise as a block on the next row.
+   A panel narrower than the group wraps the buttons inside it rather than letting them run past the edge. */
+.chat-toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: 0 0 auto; max-width: 100%; }
 .chat-session-controls { display: flex; align-items: end; gap: 8px; flex: 0 0 auto; }
 .chat-control { display: grid; gap: 4px; flex: 0 0 auto; }
 .chat-control > span {
@@ -1286,6 +1308,11 @@ select.chat-toolbar-control {
    into the toolbar needs the content box flattened too. */
 .chat-more::details-content { display: contents; content-visibility: visible; }
 .chat-more > summary { display: none; }
+/* The inline action row shows icons only; the name lives in the tooltip and aria-label,
+   and the dropdown layouts below bring the label back beside the icon. */
+.chat-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 34px; padding: 0; }
+.chat-action[hidden] { display: none; }
+.chat-action-label { display: none; }
 /* No inner scroll area — the dialog card is the single scroll region. */
 .model-dialog-list { display: grid; gap: 4px; min-width: 0; }
 .model-dialog-group { color: var(--muted); font-size: 10px; margin-top: 8px; }
@@ -1749,7 +1776,9 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   .by-the-way-card { width: 100vw; height: 100dvh; border: 0; border-radius: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
 }
 
-.cron-card { width: min(680px, calc(100vw - 24px)); }
+.cron-card { width: min(680px, calc(100vw - 24px)); display: flex; flex-direction: column; overflow: hidden; }
+.cron-card > .dialog-heading, .cron-card > .dialog-actions { flex: 0 0 auto; }
+.cron-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 14px; }
 #cronError:empty { display: none; }
 #cronError { margin: 0; color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
 #cronListView, #cronForm { display: grid; gap: 14px; min-width: 0; }
@@ -1776,7 +1805,8 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .cron-day-options input { width: 16px; height: 16px; min-width: 16px; padding: 0; accent-color: var(--ink); }
 #cronDays[hidden], #cronQuietTimes[hidden] { display: none; }
 .cron-help { margin: 0 !important; padding: 10px 12px; border-radius: 8px; background: var(--field); }
-#cronNew { justify-self: start; }
+#cronNew { margin-right: auto; min-width: 40px; width: 40px; min-height: 40px; }
+#cronNew svg { width: 18px; height: 18px; }
 
 .automation-card { width: min(900px, calc(100vw - 24px)); }
 #automationError { margin: 0; color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1815,8 +1845,7 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   .cron-schedule-grid { grid-template-columns: minmax(0, 1fr); }
   .cron-task-actions { margin-left: 0; }
   .cron-task-actions .ghost { min-height: 40px; padding-inline: 10px; }
-  #cronNew { width: 100%; }
-  #cronFooter > button { flex: 1 1 0; }
+  #cronFooter > button:not(#cronNew) { flex: 1 1 0; }
 }
 
 /* Wide enough to read a transcript in; the chat host owns its own scroll so the
@@ -1912,6 +1941,37 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 #ntfyServiceList { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 #ntfyServiceList li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ntfy-service-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.ntfy-share-progress { margin: 0; color: var(--muted); font-size: 12.5px; }
+.ntfy-share-progress::before, .ntfy-share-dialog button[aria-busy="true"]::before, .ntfy-share-pending::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color: var(--accent); border-radius: 50%; vertical-align: -1px; animation: queued-force-spin 0.7s linear infinite; }
+.ntfy-share-dialog button[aria-busy="true"]::before { border-color: color-mix(in srgb, currentColor 35%, transparent); border-top-color: currentColor; }
+.ntfy-share-progress[hidden] { display: none; }
+.ntfy-share-pending { margin-left: 6px; color: var(--accent); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .ntfy-share-progress::before, .ntfy-share-dialog button[aria-busy="true"]::before, .ntfy-share-pending::before { animation-duration: 2.4s; } }
+/* Inline ntfy server management. Every list is paginated, so the section never needs its own scrollbar. */
+fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
+.ntfy-manage { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); }
+.ntfy-service-add:not([hidden]) { display: contents; }
+.ntfy-manage[hidden] { display: none; }
+.ntfy-manage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ntfy-manage-heading, .ntfy-manage-subheading { margin: 0; color: var(--text); font-size: 13px; }
+.ntfy-manage-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ntfy-manage-tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.ntfy-manage-body { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.ntfy-manage-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); align-items: end; gap: 8px; }
+.ntfy-manage-form > button { justify-self: start; }
+.ntfy-manage-form[data-testid="ntfy-manage-read-form"] { grid-template-columns: minmax(0, 320px) auto auto; justify-content: start; }
+.ntfy-manage .settings-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ntfy-manage-topic { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--surface); list-style: none; }
+.ntfy-manage-topic-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.ntfy-manage-topic-name { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.ntfy-manage-grants li { display: grid; grid-template-columns: minmax(64px, 1fr) minmax(96px, 180px) auto; align-items: center; gap: 8px; }
+.ntfy-manage-grants select { min-width: 0; padding-top: 6px; padding-bottom: 6px; }
+.ntfy-manage-form label, .ntfy-manage-form input, .ntfy-manage-form select { min-width: 0; }
+.ntfy-manage-grant-user { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.ntfy-manage-user { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ntfy-manage-message { display: grid; gap: 2px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--surface); }
+.ntfy-manage-message-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.ntfy-manage-pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .settings-session-list { display: grid; gap: 6px; }
 /* The theme button sits in a grid fieldset; keep it at its own width instead of stretching. */
 #themeToggleButton { justify-self: start; }
@@ -2373,14 +2433,35 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* The toolbar reads as one straight line: the badges hang below their controls
      rather than claiming a second line in the layout. */
   .chat-toolbar { --control-line: 32px; align-items: end; gap: 4px; }
-  /* Forces the wrap right after the reasoning control. */
-  .chat-toolbar-break { display: block; flex: 0 0 100%; width: 100%; height: 0; }
   .chat-model-control, .chat-mode-control { align-self: end; }
   .chat-toolbar button[data-shortcut-hint], .chat-toolbar .background-tasks-trigger, .chat-toolbar #chatFilesButton {
     min-height: 0;
     padding: 0 6px;
     line-height: var(--control-line);
   }
+  /* Icon actions keep one square size whether or not they carry a shortcut badge. */
+  .chat-toolbar button:is(.chat-action, .background-tasks-trigger, #chatFilesButton) { min-height: 34px; min-width: 34px; padding: 0; line-height: normal; }
+  .chat-toolbar button.background-tasks-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+  /* Nothing in the toolbar takes its width from its own text. The model name, the
+     reasoning picker and the task count all change while an agent works, and a
+     toolbar sized from them re-wrapped its action row each time, which moved the
+     whole conversation up and down. Each control gets a width from this list, so
+     where the actions sit depends on the panel's width alone. Focus mode moves the
+     toolbar out of the panel and lays it out itself. */
+  #chatPanel > .chat-toolbar .chat-session-controls { display: contents; }
+  #chatPanel > .chat-toolbar .chat-control { grid-template-columns: minmax(0, 1fr); flex: var(--control-grow, 1) 1 var(--control-basis); min-width: 0; max-width: var(--control-max); }
+  #chatPanel > .chat-toolbar .chat-control > span { white-space: nowrap; }
+  #chatPanel > .chat-toolbar .chat-toolbar-control { width: 100%; min-width: 0; max-width: none; }
+  /* Node and model names are the long ones, so spare room goes to them first. */
+  #chatPanel > .chat-toolbar .chat-control[for="chatNodeSelect"] { --control-basis: 116px; --control-max: 170px; --control-grow: 3; }
+  #chatPanel > .chat-toolbar .chat-control[for="chatHarnessSelect"] { --control-basis: 80px; --control-max: 120px; }
+  #chatPanel > .chat-toolbar .chat-model-control { --control-basis: 140px; --control-max: 220px; --control-grow: 3; }
+  #chatPanel > .chat-toolbar .chat-mode-control { --control-basis: 92px; --control-max: 132px; }
+  /* A model without reasoning levels leaves the picker's place empty rather than closing
+     the gap; `!important` because the global `[hidden]` rule carries one. */
+  #chatPanel > .chat-toolbar .chat-mode-control[hidden] { display: grid !important; visibility: hidden; }
+  /* The count sits on the button's corner, as the running count does, and takes no room. */
+  #chatPanel > .chat-toolbar .background-tasks-badge { position: absolute; top: -3px; right: -3px; display: grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; font-size: 10px; font-weight: 650; line-height: 1; }
   .mobile-nav { display: none; }
   .back-button { display: none; }
   /* `.shell` declares these custom properties, so the override has to land on
@@ -2429,7 +2510,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
     align-items: end;
     overflow: visible;
   }
-  .chat-session-controls { display: contents; }
+  .chat-session-controls, .chat-toolbar-actions { display: contents; }
   select.chat-toolbar-control { width: 100%; max-width: none; }
   #chatNodeSelect, #chatHarnessSelect { max-width: none; }
   .chat-session-controls > .chat-control { min-width: 0; }
@@ -2454,8 +2535,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
     padding-inline: 6px;
   }
   /* Scoped to the toolbar so it outranks the desktop hide rule further down the file. */
-  .chat-toolbar .background-tasks-icon { display: block; }
-  .background-tasks-label { display: none; }
   .model-button { width: 100%; max-width: none; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-more { grid-column: 5; grid-row: 1; position: relative; display: block; align-self: end; }
   .chat-more > summary { display: inline-flex; align-items: center; justify-content: center; list-style: none; cursor: pointer; }
@@ -2476,6 +2555,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
     box-shadow: var(--shadow-soft);
   }
   .chat-more-actions > button { width: 100%; text-align: left; }
+  .chat-more-actions > .chat-action { justify-content: flex-start; padding: 0 12px; }
+  .chat-more-actions .chat-action-label { display: inline; }
   :root { --read: 15px; --read-leading: 1.68; --measure: none; }
   .mobile-nav { bottom: max(8px, env(safe-area-inset-bottom)); }
   /* 52px of reserved lane on the right so no header control lands under the fixed app menu. */
@@ -2776,8 +2857,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .session-card[data-color]:hover { background: color-mix(in srgb, var(--project-hue) 22%, var(--field)); }
 .session-card[data-color].active { border-color: color-mix(in srgb, var(--project-hue) 60%, var(--line-strong)); box-shadow: inset 4px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 28%, var(--surface)); }
 
-/* ---- Project node lock ---- */
-.project-review-badge {
+/* ---- Project activity ---- */
+.project-card-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; margin-bottom: 3px; }
+.project-card .project-card-heading strong { margin: 0; min-width: 0; }
+.project-running-badge, .project-review-badge {
   align-self: start;
   border-radius: 5px;
   padding: 2px 7px;
@@ -2788,8 +2871,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   color: var(--amber);
   background: color-mix(in srgb, var(--amber) 15%, transparent);
 }
+.project-running-badge { color: var(--live); background: color-mix(in srgb, var(--live) 15%, transparent); }
 /* A collapsed group hides its project rows, so the summary carries the count instead. */
-.project-group-review-badge {
+.project-group-running-badge, .project-group-review-badge {
   margin-left: auto;
   border-radius: 5px;
   padding: 1px 6px;
@@ -2800,6 +2884,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   background: color-mix(in srgb, var(--amber) 15%, transparent);
 }
 /* An open group already shows each project's own badge, so the summary must not double up. */
+.project-group-running-badge { color: var(--live); background: color-mix(in srgb, var(--live) 15%, transparent); }
+.project-group-running-badge + .project-group-review-badge { margin-left: 0; }
+.project-group[open] > .project-group-summary .project-group-running-badge,
 .project-group[open] > .project-group-summary .project-group-review-badge { display: none; }
 .project-card .project-lock-badge { display: block; margin: 3px 0 0; font-size: 10px; font-style: normal; color: var(--accent); }
 .project-card .project-lock-badge.foreign { color: var(--danger); }
@@ -3291,6 +3378,8 @@ body.file-view { overflow: auto; }
 .cluster-avatar[data-twin="true"] { border-color: var(--claude); }
 .cluster-avatar[data-match="true"] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 55%, transparent); }
 .cluster-avatar-manager { position: absolute; top: -8px; right: -7px; color: var(--amber); font-size: 12px; }
+/* The header's actions wrap under the title in a narrow inspector, so the gap to the node strip belongs to the container. */
+#clusterDetails { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .cluster-detail-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 10px; }
 .cluster-detail-head h3 { margin: 0 0 2px; font-size: 18px; overflow-wrap: anywhere; }
 .cluster-strip { display: flex; align-items: center; min-width: 0; overflow-x: auto; padding: 16px 12px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
@@ -3344,6 +3433,11 @@ body.file-view { overflow: auto; }
 .cluster-twin-sync { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; }
 .cluster-twin-sharing { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
 .cluster-twin-sharing:empty { display: none; }
+.cluster-sync-problem { display: grid; grid-column: 1 / -1; flex-basis: 100%; gap: 6px; min-width: 0; padding: 8px 10px; border-left: 2px solid var(--danger); background: color-mix(in srgb, var(--danger) 6%, var(--panel)); font-size: 12px; overflow-wrap: anywhere; }
+.cluster-sync-problem p { margin: 0; white-space: pre-wrap; }
+.cluster-sync-problem button { justify-self: start; }
+.cluster-sync-conflicts { display: grid; gap: 4px; }
+.cluster-sync-conflict { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .cluster-twin-link { margin-top: 8px; }
 .cluster-twin-link p { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
 
@@ -3481,8 +3575,8 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 
 /* Background task history */
 .background-tasks-trigger { position: relative; }
-/* Desktop keeps the word; the icon only comes out on the narrow toolbar. */
-.background-tasks-icon { display: none; }
+/* Tasks is an icon like the other chat actions; focus mode brings the word back. */
+.background-tasks-label { display: none; }
 .background-tasks-badge { min-width: 1.25rem; padding: 0 .3rem; border-radius: 999px; background: var(--danger); color: white; font-size: .72rem; text-align: center; }
 .background-tasks-dialog { padding: 0; }
 /* Flex, not the shared grid: a grid stretched the header, overview and footer
@@ -3814,6 +3908,18 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-story .gs-state-card .git-review-loading-head h3 { margin: 0; }
 .git-story .gs-state-note { margin: 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .git-story .gs-state-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 14px; }
+.git-story .gs-progress { display: inline-block; flex: none; width: 140px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.git-story .gs-progress > span { display: block; height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.git-story .gs-progress-row { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+.git-story .gs-progress-row .gs-progress { flex: 1; width: auto; }
+.git-story .gs-progress-list { display: grid; gap: 4px; margin: 0 0 14px; padding: 0; list-style: none; color: var(--muted); font-size: 12.5px; }
+.git-story .gs-progress-list li { display: flex; gap: 8px; }
+.git-story .gs-progress-list li > span { width: 14px; text-align: center; }
+.git-story .gs-progress-list li.is-done { color: var(--text); }
+.git-story .gs-progress-list li.is-done > span { color: var(--accent); }
+.git-story .gs-banner.is-writing { background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+.git-story .gs-banner.is-writing .git-review-spinner { flex: none; }
+.git-story .gs-rail-num .git-review-spinner { width: 10px; height: 10px; }
 .git-story .gs-parts { display: grid; gap: 8px; margin: 0 0 14px; padding: 0; list-style: none; }
 .git-story .gs-parts li { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; }
 .git-story .gs-muted { color: var(--muted); }
@@ -3839,6 +3945,8 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-story .gs-banner b { color: var(--amber); }
 .git-story .gs-spacer { flex: 1; }
 .git-story .gs-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px; padding: 10px 18px 9px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.git-story .gs-head > .gs-state-actions { grid-column: 1 / -1; margin: 6px 0 0; }
+.git-story .gs-state-actions input { min-width: 180px; max-width: 100%; }
 .git-story .gs-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .git-story .gs-title h3 { margin: 0; overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .git-story .gs-actions { display: flex; grid-row: span 2; align-items: center; gap: 8px; }
@@ -4044,15 +4152,19 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 [data-worktree-color="amber"] { --worktree-hue: #e0a33a; }
 [data-worktree-color="green"] { --worktree-hue: #46b35e; }
 [data-worktree-color="red"] { --worktree-hue: #e05c4b; }
-.worktree-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 6px 12px 2px; font-size: 12px; }
-.worktree-strip[hidden] { display: none; }
-.worktree-strip-label { color: var(--muted); font-weight: 600; margin-right: 2px; }
-.worktree-chip { display: inline-flex; align-items: center; max-width: 180px; border: 1px solid color-mix(in srgb, var(--worktree-hue) 45%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--worktree-hue) 12%, transparent); }
-.worktree-chip.selected { border-color: var(--worktree-hue); background: color-mix(in srgb, var(--worktree-hue) 30%, var(--surface)); }
-.worktree-chip-filter { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 2px 4px 2px 8px; border: 0; background: none; color: var(--heading); font: inherit; cursor: pointer; }
-.worktree-chip-filter { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.worktree-chip-menu { padding: 0 6px; min-height: 0; height: 20px; line-height: 1; }
-.worktree-add-button { padding: 2px 8px; min-height: 0; font-size: 12px; }
+.worktree-subsection-title { display: flex; align-items: center; gap: 8px; margin: 10px 2px 4px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.worktree-subsection-title:first-child { margin-top: 2px; }
+.worktree-subsection-title::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.worktree-add-button { order: 1; padding: 2px 8px; min-height: 0; font-size: 12px; letter-spacing: normal; text-transform: none; }
+.worktree-section-header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0 2px; border-left: 3px solid var(--worktree-hue); border-radius: 6px; background: color-mix(in srgb, var(--worktree-hue) 12%, transparent); }
+.worktree-cleanup-note { flex-basis: 100%; padding: 0 8px 6px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.other-worktrees > summary { padding: 6px 2px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.other-worktrees > p { margin: 4px 2px; color: var(--muted); font-size: 11px; }
+.worktree-section-toggle { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; min-height: 30px; padding: 4px 8px; border: 0; background: none; color: var(--heading); font: inherit; font-size: 12.5px; font-weight: 600; text-align: left; cursor: pointer; }
+.worktree-section-caret { width: 10px; flex: none; color: var(--muted); }
+.worktree-section-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-section-count { flex: none; padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--worktree-hue) 25%, transparent); color: var(--muted); font-size: 10.5px; font-weight: 500; }
+.worktree-section-menu { min-width: 28px; width: 28px; min-height: 26px; margin-right: 4px; font-size: 12.5px; }
 .worktree-glyph { width: 11px; height: 11px; flex: none; color: var(--worktree-hue); }
 /* A worktree conversation carries its worktree's hue on the right edge, so it stays
    distinguishable from the conversation's own colour bar on the left. */
@@ -4086,3 +4198,90 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .visitor-banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); z-index: 60; }
 .project-live-badge { font-style: normal; font-size: 11px; color: var(--muted); }
 .project-live-offline { margin: 6px 10px; font-size: 13px; }
+/* Shown at once on hover in place of the slow native title tooltip (quick-tooltips.js). */
+.quick-tooltip { position: fixed; z-index: 1000; max-width: 280px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-ctl); background: var(--header); color: var(--text); font-size: 12px; line-height: 1.35; box-shadow: var(--shadow-soft); pointer-events: none; }
+.quick-tooltip[hidden] { display: none; }
+
+/* ---- Relays: Settings → Relay (joined relays and serving) ---- */
+/* The Relay panel is a fixed column like Resources: each list takes the height left over and
+   relay-ui.js sizes its pages to it, so the lists page instead of scrolling. Only the serving
+   form and the joined relays (cards paged three at a time, one of which may show a QR code)
+   may scroll on a short screen. */
+.settings-panel.relay-panel { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.relay-panel > * { flex: none; }
+.relay-panel > .relay-section { flex: 1 1 0; min-height: 0; }
+.relay-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.relay-head .settings-hint { flex: 1; }
+.relay-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); font-size: 12.5px; }
+.relay-summary code, .relay-address { font: 11.5px var(--mono); overflow-wrap: anywhere; }
+.relay-section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.relay-section > * { flex: none; }
+.relay-section > .relay-list { flex: 1 1 0; min-height: 0; }
+.relay-form-section { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 3px; }
+.relay-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; }
+.relay-form input { width: 100%; }
+.relay-token-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr) auto; gap: 10px; align-items: end; }
+.relay-token-form input { width: 100%; }
+.relay-list { display: grid; gap: 6px; align-content: start; overflow: hidden; min-width: 0; }
+.relay-pager { display: flex; justify-content: center; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.relay-inline-status { margin: 0; }
+.relay-inline-status:empty { display: none; }
+.relay-inline-status[data-state="error"] { color: var(--danger); }
+.relay-inline-status[data-state="ok"] { color: var(--live); }
+.relay-empty { margin: 4px 0; color: var(--muted); font-size: 12.5px; }
+.relay-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.relay-row-compact { padding: 5px 12px; }
+.relay-row-main { display: grid; flex: 1; gap: 3px; min-width: 0; }
+.relay-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.relay-row-name { font-size: 13.5px; overflow-wrap: anywhere; }
+.relay-row-meta { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.relay-row-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.relay-row-actions .primary.compact { min-height: 34px; }
+.relay-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); }
+.relay-dot[data-online="true"] { background: var(--live); box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 22%, transparent); }
+.relay-code { padding: 2px 0; color: var(--text); font: 600 26px/1.1 var(--mono); letter-spacing: 0.16em; }
+.relay-rename { display: flex; align-items: center; gap: 6px; }
+.relay-rename input { min-height: 32px; }
+.relay-check-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.relay-check-list:empty { display: none; }
+.relay-check-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: 13px; }
+.relay-check-row[data-ok="true"] .relay-check-mark { color: var(--live); }
+.relay-check-row[data-ok="false"] .relay-check-mark, .relay-check-error { color: var(--danger); }
+.relay-check-error { font-size: 12px; overflow-wrap: anywhere; }
+.relay-reveal { display: grid; gap: 8px; padding: 10px 12px; border: 1px dashed var(--accent); border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.relay-reveal button { justify-self: start; }
+.relay-reveal input { width: 100%; font-family: var(--mono); }
+.relay-panel .ghost { border-color: var(--line-strong); }
+.relay-panel .ghost.danger, .relays-section .ghost.danger { border-color: color-mix(in srgb, var(--danger) 40%, transparent); color: var(--danger); }
+.relay-panel .ghost.danger[data-armed="true"], .relays-section .ghost.danger[data-armed="true"] { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+/* Relay → Joined relays: one card per relay, three to a page. */
+.relays-section { min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 3px; }
+.relays-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px; }
+.relays-head .settings-hint { flex: 1; margin: 0; }
+.relays-add-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.relays-add-choice { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.relays-list { display: grid; gap: 8px; }
+.relay-card { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--panel); }
+.relay-card-title { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.relay-card .relay-row-actions { justify-content: flex-start; }
+.relay-error { margin: 0; color: var(--danger); font-size: 12.5px; overflow-wrap: anywhere; }
+.relay-switch { display: grid; gap: 4px; }
+.relay-phone-access { display: grid; gap: 4px; min-width: 0; }
+.relay-phone-entry { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; padding: 3px 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
+.relay-phone-entry-label { min-width: 9ch; font-size: 12.5px; font-weight: 600; }
+.relay-phone-entry-link { color: var(--accent); font: 11.5px var(--mono); overflow-wrap: anywhere; }
+.relay-phone-qr { display: grid; justify-items: center; gap: 4px; margin: 0; }
+.relay-phone-qr svg { width: 192px; height: 192px; }
+.relay-phone-pager { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+@media (max-width: 720px) {
+  .relays-add-choices, .relay-token-form { grid-template-columns: minmax(0, 1fr); }
+  .relay-row { flex-wrap: wrap; }
+  .relay-row-actions { justify-content: flex-start; }
+}
+
+/* A fixed height keeps the dialog from moving when the rows re-render on blur, which would swallow the click on Save. */
+.label-icons { display: grid; align-content: start; gap: 6px; height: 220px; margin: 0; padding: 8px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+.label-icon-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; gap: 8px; align-items: center; }
+.label-icon-name { overflow-wrap: anywhere; }
+.label-icon-input { text-align: center; font-size: 16px; }

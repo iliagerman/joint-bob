@@ -91,6 +91,8 @@ export interface AgentRunSummary {
 
 export interface SessionSummary {
   cronTaskId?: string;
+  silentReviewFrom?: string;
+  silentReviewUntil?: string;
   usage?: import("./usage-types.js").UsageTotals;
   id: string;
   path: string;
@@ -98,8 +100,12 @@ export interface SessionSummary {
   classification?: string;
   /** When the user closed the conversation out; absent while it is still live. */
   doneAt?: string;
-  /** The Joint Bob worktree the conversation runs in, when it was started inside one. */
-  worktree?: { id: string; name: string; color: ProjectColor };
+  /**
+   * The Joint Bob worktree the conversation runs in, when it was started inside one.
+   * `syncing` marks a worktree this node knows only from the conversation's record: its
+   * files have not arrived by sync, so nothing can be done with it here yet.
+   */
+  worktree?: { id: string; name: string; color: ProjectColor; syncing?: true };
   harnessId: HarnessId;
   /** The agent that last drove the conversation: its own harness, or a task engine that overrode it. */
   agentId: HarnessId;

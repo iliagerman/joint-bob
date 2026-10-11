@@ -16,6 +16,7 @@ import { signClusterRequest } from "./cluster-protocol.js";
 import { clusterV2Database } from "./cluster-v2-store.js";
 import { isActiveUpdateTwin, listTwinUpdateTargets } from "./twin-updates.js";
 import { harnessUpdateStatus } from "./harness-updater.js";
+import { peerFetch } from "./relay/transport.js";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataDir = resolveDataDirectory();
@@ -377,16 +378,16 @@ function fleetRequestTimeout(deadline: number, maximum: number): number {
   return Math.min(maximum, remaining);
 }
 
-async function peerVersion(url: string, deadline: number): Promise<string> {
-  const response = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(fleetRequestTimeout(deadline, 10_000)) });
+async function peerVersion(url: string, deadline: number, nodeId: string): Promise<string> {
+  const response = await peerFetch(`${url}/api/health`, { signal: AbortSignal.timeout(fleetRequestTimeout(deadline, 10_000)) }, nodeId);
   if (!response.ok) throw new Error(`Peer health check returned ${response.status}`);
   return ((await response.json()) as { version?: string }).version ?? "";
 }
 
-async function waitForPeerVersion(url: string, target: string, deadline: number): Promise<void> {
+async function waitForPeerVersion(url: string, target: string, deadline: number, nodeId: string): Promise<void> {
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(fleetRequestTimeout(deadline, 5_000)) });
+      const response = await peerFetch(`${url}/api/health`, { signal: AbortSignal.timeout(fleetRequestTimeout(deadline, 5_000)) }, nodeId);
       if (response.ok && ((await response.json()) as { version?: string }).version === target) return;
     } catch (error) {
       if (error instanceof Error && error.message === "Fleet update timed out") break;
@@ -416,7 +417,7 @@ async function updateRemoteFleetEntry(
 ): Promise<void> {
   assertActiveFleetTwin(db, localNodeId, entry);
   if (!entry.url) throw new Error(`${entry.name} needs a configured endpoint`);
-  const version = await peerVersion(entry.url, deadline);
+  const version = await peerVersion(entry.url, deadline, entry.nodeId);
   assertActiveFleetTwin(db, localNodeId, entry);
   if (compareVersions(version, release.version) > 0) throw new Error(`${entry.name} already runs ${version}, newer than ${release.version}`);
   if (version === release.version) return;
@@ -425,13 +426,13 @@ async function updateRemoteFleetEntry(
   const relationshipId = assertActiveFleetTwin(db, localNodeId, entry);
   const rawBody = Buffer.from(JSON.stringify({ relationshipId, version: release.version }));
   const authorization = signClusterRequest(db, localNodeId, entry.nodeId, "POST", target, rawBody);
-  const response = await fetch(new URL(target, entry.url), {
+  const response = await peerFetch(new URL(target, entry.url), {
     method: "POST",
     headers: { Authorization: authorization, "Content-Type": "application/json" },
     body: rawBody,
     redirect: "error",
     signal: AbortSignal.timeout(fleetRequestTimeout(deadline, 15_000)),
-  });
+  }, entry.nodeId);
   if (response.status !== 202) {
     const body = await response.json().catch(() => ({})) as { error?: string };
     throw new Error(body.error ?? `Peer returned ${response.status}`);
@@ -442,7 +443,7 @@ async function updateRemoteFleetEntry(
     || acknowledgement.targetVersion !== release.version) {
     throw new Error("Peer returned an invalid update acknowledgement");
   }
-  await waitForPeerVersion(entry.url, release.version, deadline);
+  await waitForPeerVersion(entry.url, release.version, deadline, entry.nodeId);
 }
 
 async function executeFleetRun(run: FleetRun, release: ReleaseInfo, db: DatabaseSync, localNodeId: string): Promise<void> {

@@ -2,9 +2,10 @@ import { api } from "./api.js";
 import { loadClusterDirectory } from "./cluster-filters.js";
 import { MAP_PAGE_SIZE, clusterProjectCounts, nodeAvatar, renderClusterMap, renderNodeStrip, searchClusters, visibleClusters } from "./cluster-canvas.js";
 import { renderClusterSharing } from "./cluster-sharing.js";
-import { activeTwin, badge, declareLost, memberTwinControls, refreshTwinInventory, refreshTwins, renderTwinLink, renderTwinRequests, renderTwinSection, syncLabel, twinName, twinNodeIds, twins, unpair } from "./cluster-twins.js";
+import { activeTwin, badge, declareLost, memberTwinControls, refreshTwinInventory, refreshTwins, renderTwinLink, renderTwinRequests, renderTwinSection, syncLabel, twinName, twinNodeIds, twinSyncProblem, twins, unpair } from "./cluster-twins.js";
 import { elements } from "./elements.js";
 import { refreshProjectsQuietly } from "./project-selection.js";
+import { displayNodeUrl } from "./relay-ui.js";
 import { confirmAction, toast } from "./shell.js";
 
 /**
@@ -174,8 +175,10 @@ function memberRow(cluster, member, matched, onChange) {
   open.type = "button"; open.dataset.testid = `cluster-member-open-${member.nodeId}`;
   open.addEventListener("click", () => (local ? selectMachine() : selectNode(member.nodeId)));
   const name = document.createElement("strong"); name.append(open, badges);
-  who.append(name, text("small", member.url || member.nodeId));
+  who.append(name, text("small", displayNodeUrl(member.url) || member.nodeId));
   row.append(nodeAvatar(member, { local, manager, twin: twinNodeIds().includes(member.nodeId) }), who, actions);
+  const relationship = activeTwin(member.nodeId);
+  if (relationship) row.append(twinSyncProblem(twins.status.get(relationship.relationshipId), onChange));
   return row;
 }
 
@@ -233,6 +236,12 @@ function headerActions(cluster) {
   }
   leave.addEventListener("click", () => leaveCluster().catch((error) => toast(error.message)));
   actions.append(inviteButton, leave);
+  if (cluster.originalNodeId === data.localNodeId && cluster.members.length > 1) {
+    const close = text("button", "Delete cluster", "ghost compact danger"); close.type = "button";
+    close.dataset.testid = "cluster-delete-button";
+    close.addEventListener("click", () => closeCluster().catch((error) => toast(error.message)));
+    actions.append(close);
+  }
   return actions;
 }
 
@@ -272,7 +281,7 @@ function renderNodeView(nodeId) {
   const identity = document.createElement("div"); identity.className = "cluster-member-who";
   const title = text("h3", name);
   const state = reachability(nodeId);
-  identity.append(title, text("small", nodeUrl(nodeId) || nodeId));
+  identity.append(title, text("small", displayNodeUrl(nodeUrl(nodeId)) || nodeId));
   if (relationship) {
     const status = twins.status.get(relationship.relationshipId);
     const badges = document.createElement("span"); badges.className = "cluster-badges";
@@ -311,13 +320,13 @@ function renderNodeView(nodeId) {
   const twinTitle = document.createElement("h4"); twinTitle.className = "cluster-section-title";
   twinTitle.append(text("span", "Twin"));
   const twinNote = text("p", relationship ? "Twins copy everything they own to each other." : "Twins copy everything they own to each other, including credentials. Pair only machines you own.", "cluster-muted");
-  nodeView.replaceChildren(back, head, clustersTitle, list, twinTitle, twinNote, actions);
+  nodeView.replaceChildren(back, head, twinSyncProblem(relationship && twins.status.get(relationship.relationshipId), onTwinChange), clustersTitle, list, twinTitle, twinNote, actions);
 }
 
 function renderMachineHead() {
   const avatar = nodeAvatar({ nodeId: data.localNodeId, name: data.localNode.name }, { local: true }); avatar.dataset.large = "true";
   const identity = document.createElement("div"); identity.className = "cluster-member-who";
-  identity.append(text("h3", data.localNode.name || "This machine"), text("small", data.localNode.url || data.localNodeId || ""), badge("This machine", "you"));
+  identity.append(text("h3", data.localNode.name || "This machine"), text("small", displayNodeUrl(data.localNode.url) || data.localNodeId || ""), badge("This machine", "you"));
   machineHead.replaceChildren(avatar, identity);
   setTabCount(machineTabs, "data-machine-tab", "twins", twinNodeIds().length);
 }
@@ -497,6 +506,18 @@ async function joinCluster() {
   elements.clusterJoinLinkInput.value = "";
   showForm(joinForm, joinReveal, false);
   await afterMembershipChange(result.snapshot.body.clusterId); toast("Cluster membership added");
+}
+
+async function closeCluster() {
+  const cluster = selectedCluster();
+  if (!await confirmAction({ eyebrow: "Delete cluster", title: `Delete ${cluster.name}?`,
+    message: `All ${cluster.members.length} nodes leave this cluster. Shared resources stop syncing; local copies remain. This cannot be undone.`,
+    confirmLabel: "Delete cluster", destructive: true })) return;
+  if (selectedClusterId !== cluster.id) return;
+  await api(`/api/clusters/${cluster.id}/close`, { method: "POST", body: JSON.stringify({ expectedEpoch: cluster.managerEpoch }) });
+  selectedClusterId = null;
+  await afterMembershipChange(null);
+  toast("Cluster deleted");
 }
 
 async function leaveCluster() {

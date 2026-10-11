@@ -5,7 +5,7 @@ import { getSettings, syncthingApiKey } from "./settings.js";
 import { AGENT_RESOURCES_FOLDER_ID, AGENT_RESOURCES_FOLDER_LABEL } from "./agent-resources.js";
 import { TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
 import type { ProjectSyncStatus } from "./types.js";
-import { WORKTREE_FOLDER_PREFIX, worktreeBinaryExtensions, worktreeHeavyDirectories } from "./worktree-filters.js";
+import { WORKTREE_FOLDER_PREFIX, worktreeBinaryExtensions, worktreeHeavyDirectories, worktreeLinkedDirectories } from "./worktree-filters.js";
 
 interface SyncthingDevice {
   deviceID: string;
@@ -120,6 +120,8 @@ const projectIgnorePatterns = [
 const worktreeIgnorePatterns = [
   ...projectIgnorePatterns.map((rule) => rule.startsWith("(?d)") ? rule : `(?d)${rule}`),
   ...worktreeHeavyDirectories.filter((name) => !name.startsWith(".st")).map((name) => `(?d)${name}`),
+  // Each node links its own project's dependencies; a link never travels to a peer.
+  ...worktreeLinkedDirectories.filter((name) => !(worktreeHeavyDirectories as readonly string[]).includes(name)).map((name) => `(?d)${name}`),
   "(?d)*.egg-info",
   "(?d).joint-bob-merge",
   ...worktreeBinaryExtensions.map((extension) => `(?d)(?i)*.${extension}`),
@@ -216,9 +218,14 @@ async function request<T>(pathname: string, init: RequestInit = {}): Promise<T> 
   return body ? JSON.parse(body) as T : undefined as T;
 }
 
+let connectionGeneration = 0;
 export function resetSyncthingConnection(): void {
   connectionPromise = undefined;
+  connectionGeneration += 1;
 }
+
+/** Changes whenever this node is pointed at a different Syncthing, so work done against the old one is redone. */
+export function syncthingConnectionGeneration(): number { return connectionGeneration; }
 
 export async function syncthingDeviceId(): Promise<string | undefined> {
   if (!await connection()) return undefined;
@@ -265,8 +272,11 @@ export async function reconcileSyncthingProjectFolders(projects: Array<{ syncFol
   if (!folderIds.length) return;
   // Syncthing rejects ignores for an unknown folder, and one project whose folder was never
   // created must not hold startup readiness; the sync check reports the missing folder.
-  const configured = new Set((await request<SyncthingFolder[]>("/rest/config/folders")).map((folder) => folder.id));
+  const folders = await request<SyncthingFolder[]>("/rest/config/folders");
+  const configured = new Set(folders.map((folder) => folder.id));
   await Promise.all(folderIds.filter((folderId) => configured.has(folderId)).map(setProjectIgnores));
+  await Promise.all(folders.filter((folder) => folder.id.startsWith(WORKTREE_FOLDER_PREFIX) && folder.order !== "smallestFirst").map((folder) =>
+    request<void>(`/rest/config/folders/${encodeURIComponent(folder.id)}`, { method: "PUT", body: JSON.stringify({ ...folder, order: "smallestFirst" }) })));
 }
 
 function remaining(value: unknown): number {
@@ -358,6 +368,38 @@ export async function ensureSyncthingDevice(deviceId: string, name: string): Pro
   });
 }
 
+/**
+ * Changes where Syncthing dials a device, given its current addresses. Relay tunnels add or
+ * remove only their own loopback address and keep everything else (RELAY-PLAN.md §4.9).
+ * Returns false when Syncthing or the device is not configured.
+ */
+export async function updateSyncthingDeviceAddresses(deviceId: string, change: (current: string[]) => string[]): Promise<boolean> {
+  if (!await connection()) return false;
+  const devices = await request<SyncthingDevice[]>("/rest/config/devices");
+  const device = devices.find((item) => item.deviceID === deviceId);
+  if (!device) return false;
+  const current = device.addresses?.length ? device.addresses : ["dynamic"];
+  const next = change(current);
+  const addresses = next.length ? next : ["dynamic"];
+  if (current.length === addresses.length && current.every((address, index) => address === addresses[index])) return true;
+  await request<void>(`/rest/config/devices/${encodeURIComponent(deviceId)}`, { method: "PATCH", body: JSON.stringify({ addresses }) });
+  return true;
+}
+
+/** The local TCP port Syncthing accepts device connections on. */
+export async function syncthingListenPort(): Promise<number> {
+  if (await connection()) {
+    try {
+      const status = await request<{ connectionServiceStatus?: Record<string, unknown> }>("/rest/system/status");
+      for (const address of Object.keys(status.connectionServiceStatus ?? {})) {
+        const match = /^tcp\d?:\/\/[^/]*:(\d+)$/.exec(address);
+        if (match) return Number(match[1]);
+      }
+    } catch { /* fall back to Syncthing's default */ }
+  }
+  return 22000;
+}
+
 export async function removeSyncthingDevices(deviceIds: string[], folderIds: string[]): Promise<void> {
   if (!deviceIds.length || !folderIds.length || !await connection()) return;
   const removed = new Set(deviceIds);
@@ -417,8 +459,11 @@ async function ensureFolder(folderId: string, label: string, folderPath: string,
     peerDeviceId,
   ].filter((deviceId): deviceId is string => Boolean(deviceId)))];
   const pathChanged = Boolean(existing && path.resolve(existing.path) !== requestedPath);
+  // A new worktree arrives as thousands of files; its ~100-byte metadata (node paths, conversation
+  // markers) must not wait behind them, or peers cannot see the conversation running in it.
+  const order = folderId.startsWith(WORKTREE_FOLDER_PREFIX) ? { order: "smallestFirst" } : {};
   const folder = existing
-    ? { ...existing, label, path: requestedPath, ...(unpause ? { paused: false } : {}), devices: deviceIds.map((deviceID) => ({ deviceID })) }
+    ? { ...existing, ...order, label, path: requestedPath, ...(unpause ? { paused: false } : {}), devices: deviceIds.map((deviceID) => ({ deviceID })) }
     : {
         id: folderId,
         label,
@@ -426,10 +471,11 @@ async function ensureFolder(folderId: string, label: string, folderPath: string,
         type: "sendreceive",
         devices: deviceIds.map((deviceID) => ({ deviceID })),
         markerName: ".stfolder",
+        ...order,
       };
   if (!existing) {
     await request<void>("/rest/config/folders", { method: "POST", body: JSON.stringify(folder) });
-  } else if (pathChanged || deviceIds.length !== existing.devices.length || existing.label !== label || (unpause && existing.paused)) {
+  } else if (pathChanged || deviceIds.length !== existing.devices.length || existing.label !== label || (unpause && existing.paused) || (order.order && existing.order !== order.order)) {
     await request<void>(`/rest/config/folders/${encodeURIComponent(folderId)}`, { method: "PUT", body: JSON.stringify(folder) });
   }
   if (ignorePolicy === "project") await setProjectIgnores(folderId);

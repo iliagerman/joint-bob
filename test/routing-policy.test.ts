@@ -147,20 +147,23 @@ test("defaultRoutingPolicy maps task categories for Pi and Claude", () => {
   const generated = defaultRoutingPolicy();
   const pi = generated.harnesses.pi.levels;
   assert.deepEqual(Object.entries(pi).map(([level, mapping]) => [level, mapping!.provider, mapping!.modelId, mapping!.thinkingLevel]), [
-    ["1", "zai", "glm-5.3-flash", "low"],
-    ["3", "openai-codex", "gpt-6-luna", "medium"],
-    ["5", "openai-codex", "gpt-6-sol", "medium"],
-    ["7", "openai-codex", "gpt-6-sol", "high"],
+    ["1", "openai-codex", "gpt-6-luna", "xhigh"],
+    ["2", "openai-codex", "gpt-6-luna", "medium"],
+    ["4", "openai-codex", "gpt-6-sol", "medium"],
+    ["6", "openai-codex", "gpt-6-sol", "medium"],
+    ["8", "openai-codex", "gpt-6-astra", "xhigh"],
     ["10", "openai-codex", "gpt-6-astra", "xhigh"],
   ]);
   const claude = generated.harnesses.claude.levels;
   assert.deepEqual(Object.entries(claude).map(([level, mapping]) => [level, mapping!.modelId, mapping!.thinkingLevel]), [
-    ["1", "haiku", "low"],
-    ["3", "haiku", "low"],
-    ["5", "opus", "medium"],
-    ["7", "opus", "high"],
+    ["1", "haiku", "xhigh"],
+    ["2", "haiku", "medium"],
+    ["4", "haiku", "xhigh"],
+    ["6", "sonnet", "medium"],
+    ["8", "opus", "xhigh"],
     ["10", "opus", "xhigh"],
   ]);
+  assert.deepEqual(Object.values(pi).map((mapping) => mapping!.description), Object.values(claude).map((mapping) => mapping!.description), "Pi and Claude share task categories");
   assert.ok(Object.values(generated.harnesses.kiro.levels).every((mapping) => !mapping), "Kiro has no guessed defaults");
   assert.equal(generated.contextMessages, 1);
   assert.deepEqual(generated.evalCadence, { mode: "every-n", n: 1 });

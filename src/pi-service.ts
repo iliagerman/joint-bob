@@ -554,8 +554,8 @@ async function summarizePiTranscript(filePath: string, project: SessionProjectPa
     throw error;
   }
   // Opening a new chat writes only the automatic setup command. It is not a
-  // conversation until the user has supplied a real prompt.
-  if (!state || !state.firstMessage || isInternalSession(state.id, state.firstMessage)
+  // conversation until the user has supplied a real prompt, but it can still be opened.
+  if (!state || (!state.firstMessage && !project.includeUnstarted) || isInternalSession(state.id, state.firstMessage)
     || (!sessionCwds(project).includes(state.cwd) && !project.recordSessionIds?.includes(`pi:${state.id}`))) return null;
   return {
     id: state.id,

@@ -74,6 +74,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
         syncthing: { endpoint: "http://127.0.0.1:8384", apiKey: "secret-api-key" },
         conversationDefaults,
         conversationCommands,
+        newConversationWorktree: true,
         conversationHistoryDays: 45,
         conversationRetentionDays: 60,
         projects: { homePath: path.join(root, "JointBob") },
@@ -91,6 +92,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
       autoCompactThreshold: 70,
       digestAttachments: false,
       showProjectsOnOtherNodes: true,
+      newConversationWorktree: true,
       syncCheck: { enabled: true, harnessId: "pi", ...conversationDefaults.pi },
       remoteTerminal: { twins: true, otherNodes: false },
       conversationCommands,
@@ -112,6 +114,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
       conversationLabels: ["Research", "Bug", "Feature", "POC"],
+      conversationLabelIcons: { Research: "🔬", Bug: "🐞", Feature: "✨", POC: "🧪" },
       restartRequired: { pi: true, claude: true, kiro: false },
     });
 
@@ -127,6 +130,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
       autoCompactThreshold: 70,
       digestAttachments: false,
       showProjectsOnOtherNodes: true,
+      newConversationWorktree: true,
       syncCheck: { enabled: true, harnessId: "pi", ...conversationDefaults.pi },
       remoteTerminal: { twins: true, otherNodes: false },
       conversationCommands,
@@ -148,6 +152,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
       conversationLabels: ["Research", "Bug", "Feature", "POC"],
+      conversationLabelIcons: { Research: "🔬", Bug: "🐞", Feature: "✨", POC: "🧪" },
       restartRequired: { pi: false, claude: false, kiro: false },
     });
 

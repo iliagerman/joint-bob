@@ -45,8 +45,9 @@ async function runSweep(now: number): Promise<number> {
         ownedLocally: (candidate) => {
           const owner = ownership.get(candidate);
           if (owner) return owner.ownerNodeId === local.id;
+          // A draft never claims ownership before its first prompt; its record says who created it.
           const record = records.get(`${candidate.harnessId}:${candidate.id}`);
-          return record && record.originNodeId !== local.id ? false : undefined;
+          return record ? record.originNodeId === local.id : undefined;
         },
         hasQueuedPrompts: (candidate) => listQueuedPrompts(`${project.id}:${candidate.conversationId ?? candidate.id}`).length > 0,
       });

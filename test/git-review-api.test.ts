@@ -135,6 +135,23 @@ test("git review endpoints report status, diff, history, and commit for a projec
     });
     assert.equal(outOfScope.status, 409, "conversation review rejects paths outside a fresh agent-declared list");
 
+    // A browser asking for NDJSON gets the facts before the reviewer starts, then one final line.
+    const streamed = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story`, {
+      method: "POST", headers: { ...headers, Accept: "application/x-ndjson, application/json" },
+      body: JSON.stringify({ conversationId: null, scope: "all", paths: ["app.ts"], includeCommits: false, harnessId: "pi", modelId: "no-such-model", thinkingLevel: "off" }),
+    });
+    assert.equal(streamed.status, 200, node.output());
+    assert.match(streamed.headers.get("content-type") ?? "", /^application\/x-ndjson/);
+    const lines = (await streamed.text()).trim().split("\n").map((line) => JSON.parse(line) as { type: string; facts?: { files: Array<{ path: string }> }; error?: string });
+    assert.equal(lines[0].type, "facts");
+    assert.deepEqual(lines[0].facts?.files.map((file) => file.path), ["app.ts"]);
+    assert.ok(["done", "error"].includes(lines.at(-1)!.type), JSON.stringify(lines.at(-1)));
+    const refused = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story`, {
+      method: "POST", headers: { ...headers, Accept: "application/x-ndjson" },
+      body: JSON.stringify({ conversationId: null, scope: "all", paths: ["missing.ts"], includeCommits: false, harnessId: "pi", modelId: "m", thinkingLevel: "off" }),
+    });
+    assert.deepEqual(JSON.parse((await refused.text()).trim().split("\n").at(-1)!), { type: "error", status: 409, error: "Selected files changed; refresh Git status" });
+
     const invalidGithub = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/github?op=run&id=oops`, { headers });
     assert.equal(invalidGithub.status, 400);
     const noGithubRemote = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/github?op=pulls`, { headers });

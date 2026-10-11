@@ -1,4 +1,5 @@
-import { worktreeConversationIndex, type ProjectWorktree } from "../project-worktrees.js";
+import { worktreeConversations, type ProjectWorktree } from "../project-worktrees.js";
+import { recordedConversationWorktrees } from "../conversation-records.js";
 import { projectAdditionalPaths } from "./session-scope.js";
 import { listByTheWaySessionIds } from "../by-the-way-leases.js";
 import { backgroundTaskConversationId, readActiveBackgroundTaskIdentities } from "../background-tasks.js";
@@ -150,17 +151,27 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
     const ntfyPaths = userId ? await ntfySubscribedSessionPaths(userId, project.id) : new Set<string>();
     return { notifications, ntfyPaths };
   });
-  const worktrees = await measureOperation("sessions.worktrees", () => worktreeConversationIndex(project.id).catch((error) => {
-    console.warn("Worktree conversation index unavailable", error);
-    return new Map<string, ProjectWorktree>();
-  }));
+  const { worktrees: localWorktrees, index: worktrees, recorded } = await measureOperation("sessions.worktrees", async () => {
+    const [local, recorded] = await Promise.all([
+      worktreeConversations(project.id).catch((error) => {
+        console.warn("Worktree conversation index unavailable", error);
+        return { worktrees: [] as ProjectWorktree[], index: new Map<string, ProjectWorktree>() };
+      }),
+      recordedConversationWorktrees(project.id),
+    ]);
+    return { ...local, recorded };
+  });
+  const localWorktreesById = new Map(localWorktrees.map((worktree) => [worktree.id, worktree]));
   return listedSessions.map((session, index) => {
     const { engine: _engine, sessionId: _sessionId, ...summary } = session;
-    const worktree = [session, ...(session.segments ?? []).map((segment) => ({ harnessId: segment.engine, id: segment.sessionId }))]
-      .map((candidate) => worktrees.get(`${candidate.harnessId}:${candidate.id}`)).find(Boolean);
+    const keys = [session, ...(session.segments ?? []).map((segment) => ({ harnessId: segment.engine, id: segment.sessionId }))]
+      .map((candidate) => `${candidate.harnessId}:${candidate.id}`);
+    // The record names the worktree before file sync brings its folder, or this conversation's marker, here.
+    const named = keys.map((key) => worktrees.get(key)).find(Boolean) ?? keys.map((key) => recorded.get(key)).find(Boolean);
+    const worktree = named && (localWorktreesById.get(named.id) ?? { ...named, syncing: true as const });
     return {
       ...summary,
-      ...(worktree ? { worktree: { id: worktree.id, name: worktree.name, color: worktree.color } } : {}),
+      ...(worktree ? { worktree: { id: worktree.id, name: worktree.name, color: worktree.color, ...("syncing" in worktree ? { syncing: true as const } : {}) } } : {}),
       reviewState: reviewDetails.get(session.path)?.state,
       reviewedAt: reviewDetails.get(session.path)?.reviewedAt,
       reviewNotificationsEnabled: notifications.get(notificationConversationId(session))?.enabled === true,

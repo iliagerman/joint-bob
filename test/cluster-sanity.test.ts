@@ -24,7 +24,7 @@ import { browserCapability } from "../src/browser-runtime.js";
 import { authRequest, fixtureTotp } from "./mfa-fixture.js";
 import { signedNodeRequest } from "./signed-node-request.js";
 
-interface SessionView { id: string; path: string; title: string; harnessId: string; executionNodeId?: string }
+interface SessionView { id: string; path: string; title: string; harnessId: string; executionNodeId?: string; cronTaskId?: string }
 interface PinsView { projectIds: string[]; conversations: Array<{ projectId: string; engine: string; sessionId: string }> }
 interface RecentSessionView { recentSessions: Array<{ projectId: string; engine: string; sessionId: string; title: string; openedAt: string }> }
 
@@ -744,7 +744,8 @@ test("offline takeover survives an unresponsive owner and claimant restart, then
     const response = await fetch(`${nodeA.url}/api/projects/${project.id}/sessions/take-ownership`, {
       method: "POST", headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
       body: JSON.stringify({ peerId: nodeA.nodeId, sessionId: target.id, sessionPath: target.path }),
-      signal: AbortSignal.timeout(8_000),
+      // A silent peer is given the full takeover peer timeout (15 s, sized for relayed links) before it counts as offline.
+      signal: AbortSignal.timeout(30_000),
     });
     const result = await response.json();
     assert.equal(response.status, 200, JSON.stringify(result));
@@ -1201,11 +1202,13 @@ test("cross-node opening replaces stale home paths without the fifty-conversatio
     const catalogDeadline = Date.now() + 10_000;
     // External file writes reach a warm catalog through the debounced watcher.
     // Do not rely on another request evicting its cache to make this read cold.
-    while (listed.body.sessions.length !== 50 && Date.now() < catalogDeadline) {
+    // Scheduled runs have their own allowance under the list limit; count only ordinary conversations.
+    const ordinary = (sessions: SessionView[]) => sessions.filter((row) => !row.cronTaskId);
+    while (ordinary(listed.body.sessions).length !== 50 && Date.now() < catalogDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       listed = await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${project.id}/sessions`);
     }
-    assert.equal(listed.body.sessions.length, 50, "the catalog limit must be reached for this regression");
+    assert.equal(ordinary(listed.body.sessions).length, 50, "the catalog limit must be reached for this regression");
     assert.equal(listed.body.sessions.some((row) => row.id === sessionId), false, "the selected old conversation is outside the catalog window");
     const url = new URL("/ws", nodeA.url);
     url.protocol = "ws:";

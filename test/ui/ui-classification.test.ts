@@ -35,6 +35,7 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
     await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-labels").click();
+    await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
     await page.getByTestId("settings-conversation-labels").fill("Research\nBug\nFeature\nPOC\nSupport");
     await page.getByTestId("settings-save-button").click();
     await page.locator("#settingsDialog").waitFor({ state: "hidden" });
@@ -55,8 +56,18 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
       const select = page.getByTestId("new-session-classification-select");
       assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")), "new-session-classification-select",
         "the step hands the cursor to its own first control");
+      // Typing picks a label by its name, even though an icon leads the option's text.
+      await page.keyboard.press("b");
+      assert.equal(await select.inputValue(), "Bug", "a letter selects the label that starts with it");
+      await page.waitForTimeout(1100);
+      await page.keyboard.type("su");
+      assert.equal(await select.inputValue(), "Support", "letters typed together narrow to one label");
+      await page.waitForTimeout(1100);
+      await page.keyboard.press("o");
+      assert.equal(await select.inputValue(), "__other__");
+      assert.equal(await page.getByTestId("new-session-classification-other").isVisible(), true, "typing to Other reveals its text field");
       await select.selectOption(selection);
-      assert.deepEqual(await select.locator("option").allTextContents(), ["Unclassified", "Research", "Bug", "Feature", "POC", "Support", "Other…"]);
+      assert.deepEqual(await select.locator("option").allTextContents(), ["Unclassified", "🔬 Research", "🐞 Bug", "✨ Feature", "🧪 POC", "Support", "Other…"]);
       if (selection === "__other__") {
         await page.getByTestId("new-session-name-start-button").click();
         assert.equal(await page.getByTestId("new-session-name-dialog").isVisible(), true, "Other requires text");

@@ -58,7 +58,7 @@ async function validatedQuery(raw: unknown): Promise<UsageQuery> {
 }
 
 async function dashboard(query: UsageQuery, suppliedProjects?: Awaited<ReturnType<typeof projectsWithSharedNames>>) {
-  const projects = suppliedProjects ?? await projectsWithSharedNames(false);
+  const projects = suppliedProjects ?? await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
   const ids = projects.map((project) => project.id);
   if (query.projectId && !ids.includes(query.projectId)) throw Object.assign(new Error("Project not found"), { statusCode: 404 });
   // Dates are the viewer's calendar days: utcOffset is minutes east of UTC, as the browser reports it.
@@ -92,7 +92,7 @@ async function dashboard(query: UsageQuery, suppliedProjects?: Awaited<ReturnTyp
 app.get(["/api/usage", "/api/usage/summary"], async (request, response, next) => {
   try {
     const query = await validatedQuery(request.query);
-    const projects = await projectsWithSharedNames(false);
+    const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
     const result = await dashboard(query, projects);
     const savedCoverage = usageInventoryCoverage(result.projects.map((project) => project.id));
     // Queue only after every saved-data read. request() marks pending synchronously,

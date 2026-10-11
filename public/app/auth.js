@@ -12,7 +12,7 @@ import { renderProjects } from "./project-list.js";
 import { renderQuickNotes } from "./quick-notes.js";
 import { loadProjects, startProjectSyncPolling } from "./project-selection.js";
 import { renderSessions } from "./session-list.js";
-import { showWhatsNew } from "./settings.js";
+import { showWhatsNew, syncSettingsAccess } from "./settings.js";
 import { setTheme, syncNotifyButton, updateInstallButton } from "./shell.js";
 import { syncShortcutHints } from "./shortcut-hints.js";
 import { closeSocket, closeWatchSocket } from "./socket.js";
@@ -122,8 +122,10 @@ function applyAuthStatus(status) {
   state.email = status.email || "";
   state.role = status.role || null;
   state.needsEmail = status.authenticated === true && status.needsEmail === true;
+  // A replicated user has only the conversations feature, so settings-only tabs are hidden.
   state.isRemoteLogin = status.isRemoteLogin === true;
   applyAdminVisibility();
+  syncSettingsAccess();
   state.setupRequired = status.setupRequired === true;
   state.mustChangePassword = status.mustChangePassword === true;
   state.csrfToken = status.csrfToken || "";
@@ -178,6 +180,7 @@ export async function initializeApplication() {
   state.pinnedProjectIds = preferences.pinnedProjectIds || [];
   state.pinnedSessionPaths = preferences.pinnedSessionPaths || [];
   state.conversationLastRead = preferences.conversationLastRead || {};
+  state.projectConversationVisibility = preferences.projectConversationVisibility || {};
   state.gitReviewer = preferences.gitReviewer;
   state.replicatedPinnedProjectIds = pins.projectIds || [];
   state.pinnedConversations = pins.conversations || [];

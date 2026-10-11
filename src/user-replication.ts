@@ -15,6 +15,10 @@ import { deleteReplicatedUser, listReplicatedUsers, localAccountsForReplication,
 import { isNodeBlocked } from "./node-blocks.js";
 import { accountClusterIds } from "./cluster-accounts.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "./cluster-sharing-policy.js";
+import { accountIdFor } from "./accounts.js";
+import { pinnedClusterPublicKey, verifyClusterMessage } from "./cluster-identity.js";
+import { clusterV2Database } from "./cluster-v2-store.js";
+import { getClusterNode } from "./cluster.js";
 
 const hex = z.string().regex(/^[0-9a-f]+$/i).max(256);
 const accountSchema = z.object({
@@ -133,4 +137,40 @@ export function applyAccountSnapshot(db: DatabaseSync, local: string, sender: st
 /** Removes every replicated account whose home is `homeNodeId`. */
 export function removeReplicatedUsersFromNode(homeNodeId: string): void {
   for (const user of listReplicatedUsers()) if (user.homeNodeId === homeNodeId) deleteReplicatedUser(homeNodeId, user.username);
+}
+
+/** The one home user an older release sends, signed by its home node. Newer nodes send
+    accounts instead (applyAccountSnapshot); until every peer has upgraded, this keeps the old
+    ones' home users working, as a member of each cluster both nodes share. */
+const legacyUserPayloadSchema = z.object({
+  username: z.string().min(1).max(80),
+  passwordHash: hex,
+  passwordSalt: hex,
+  homeNodeId: z.string().uuid(),
+  mfaSecretEncrypted: z.string().nullable(),
+  mfaLastUsedStep: z.number().int().min(0),
+  mfaRecoveryCodes: z.array(z.string()),
+  updatedAt: z.string(),
+}).strict();
+const signedLegacyUserSchema = z.object({ body: legacyUserPayloadSchema, signerNodeId: z.string().uuid(), signature: z.string() }).strict();
+
+export async function applyUserReplication(input: unknown): Promise<void> {
+  const signed = signedLegacyUserSchema.parse(input);
+  const db = await clusterV2Database(), local = await getClusterNode();
+  const publicKey = pinnedClusterPublicKey(db, signed.signerNodeId);
+  if (!publicKey) throw new Error("Unknown sender node");
+  if (!verifyClusterMessage(publicKey, "user-replication", JSON.stringify(signed.body), signed.signature)) throw new Error("Invalid user replication signature");
+  if (signed.body.homeNodeId !== signed.signerNodeId) throw new Error("User replication must be signed by the home node");
+  const shared = listSharingMemberships(db, local.id).map((membership) => membership.clusterId)
+    .filter((clusterId) => listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === signed.signerNodeId));
+  upsertReplicatedUser({
+    username: signed.body.username,
+    email: null,
+    passwordHash: Buffer.from(signed.body.passwordHash, "hex"),
+    passwordSalt: Buffer.from(signed.body.passwordSalt, "hex"),
+    homeNodeId: signed.body.homeNodeId,
+    accountId: accountIdFor(signed.body.homeNodeId, signed.body.username),
+    mfaRequired: signed.body.mfaSecretEncrypted !== null,
+    clusterIds: shared,
+  });
 }

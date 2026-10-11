@@ -3,8 +3,9 @@ import { loadWorktrees } from "./worktrees.js";
 import { harnessIdFromPath, harnessLabel } from "../harness-metadata.js";
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
+import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
-import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
+import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
@@ -19,6 +20,7 @@ import { renderSessions } from "./session-list.js";
 import { maybeNotifyTurnComplete, playCompletionSound, setConnecting, setStatus, subscribeToPush, toast } from "./shell.js";
 import { state } from "./state.js";
 import { loadTasks } from "./tasks.js";
+import { logTranscriptChanges } from "./transcript-diagnostics.js";
 
 const GOAL_COMPLETE_MARKER = "BOB_GOAL_COMPLETE";
 
@@ -56,7 +58,15 @@ export function closeSocket() {
   setConnecting(false);
 }
 
-function scheduleReconnect(sessionPath, delay = 1500) {
+const RECONNECT_MS = 1500;
+// The server closes with this code and a reason when it will not open the conversation
+// (deleted, locked, signed out). Asking again at once hid the reason behind "Connecting…"
+// for as long as the page stayed open, and made the node search for the conversation each time.
+const REFUSED_CLOSE = 1008;
+const REFUSED_RETRY_MAX_MS = 30000;
+let refusedCloses = 0;
+
+function scheduleReconnect(sessionPath, delay = RECONNECT_MS) {
   if (!state.activeProjectId || !sessionPath) return;
   if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
   state.reconnectTimer = setTimeout(() => {
@@ -65,41 +75,70 @@ function scheduleReconnect(sessionPath, delay = 1500) {
   }, delay);
 }
 
+const PONG_TIMEOUT_MS = 30000;
+const PROBE_TIMEOUT_MS = 5000;
+let pingSentAt = 0;
+let probeTimer = null;
+
+function sendPing() {
+  pingSentAt = Date.now();
+  state.socket.send(JSON.stringify({ type: "ping" }));
+  return pingSentAt;
+}
+
 function startHeartbeat() {
   stopHeartbeat();
   state.lastPongAt = Date.now();
+  pingSentAt = 0;
   state.heartbeatTimer = setInterval(() => {
-    if (!state.socket) return;
-    if (state.socket.readyState === WebSocket.OPEN) {
-      if (Date.now() - state.lastPongAt > 45000) {
-        // Connection looks dead (no pong in 3+ intervals). Force a reconnect.
-        resumeConnection(true);
-        return;
-      }
-      state.socket.send(JSON.stringify({ type: "ping" }));
-    } else if (state.socket.readyState === WebSocket.CLOSING || state.socket.readyState === WebSocket.CLOSED) {
-      resumeConnection(true);
+    const socket = state.socket;
+    if (!socket) return;
+    if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+      resumeConnection(true, "heartbeat found the socket closed");
+      return;
     }
+    if (socket.readyState !== WebSocket.OPEN) return;
+    // Browsers throttle a hidden tab's timers past any pong deadline, so a healthy
+    // socket looked dead and reloaded its whole transcript every few minutes.
+    // Returning to the tab probes once instead.
+    if (document.visibilityState === "hidden") return;
+    if (pingSentAt > state.lastPongAt) {
+      if (Date.now() - pingSentAt > PONG_TIMEOUT_MS) resumeConnection(true, `no pong ${Math.round((Date.now() - pingSentAt) / 1000)} s after a ping`);
+      return;
+    }
+    sendPing();
   }, 15000);
 }
 
 function stopHeartbeat() {
   if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
   state.heartbeatTimer = null;
+  if (probeTimer) clearTimeout(probeTimer);
+  probeTimer = null;
+}
+
+/** One ping with a short deadline; a socket that stays silent is replaced. */
+function probeConnection(reason) {
+  const socket = state.socket;
+  const sentAt = sendPing();
+  if (probeTimer) clearTimeout(probeTimer);
+  probeTimer = setTimeout(() => {
+    probeTimer = null;
+    if (state.socket === socket && state.lastPongAt < sentAt) resumeConnection(true, `${reason}: no pong within ${PROBE_TIMEOUT_MS / 1000} s`);
+  }, PROBE_TIMEOUT_MS);
 }
 
 // Proactively restore the session connection. Mobile browsers freeze JS timers
 // and kill sockets when the app is backgrounded or the screen locks, so the
 // WebSocket "close" event often only fires after the user returns. This is
-// called on visibilitychange / pageshow / online and from the heartbeat.
-function resumeConnection(force = false) {
+// called on visibilitychange / pageshow / online / focus and from the heartbeat.
+function resumeConnection(force = false, reason = "resume") {
   if (!state.activeProjectId || !state.activeSessionPath) return;
-  const fresh = Date.now() - state.lastPongAt < 40000;
-  if (!force && socketOpen() && fresh) {
-    // Looks healthy — probe anyway so we notice zombies quickly.
-    sendSocket({ type: "ping" });
+  if (!force && socketOpen()) {
+    probeConnection(reason);
     return;
   }
+  console.info("Reconnecting conversation socket", { reason, engine: state.engine, sessionId: state.activeSessionId || null });
   if (state.socket) {
     const stale = state.socket;
     state.socket = null;
@@ -130,6 +169,12 @@ function websocketUrl(sessionPath) {
 }
 
 export function openSession(sessionPath, title = "New conversation", preserveChat = false, preserveTask = false, reviewHighlightAfter = null) {
+  // The list renders before harness metadata arrives, and the engine is resolved from it below.
+  // Opening without it threw after "Connecting…" was already on screen, with nothing left to retry.
+  if (!state.harnesses.length) {
+    loadHarnesses().then(() => openSession(sessionPath, title, preserveChat, preserveTask, reviewHighlightAfter)).catch((error) => toast(error.message, 8000));
+    return;
+  }
   rememberDraft();
   // Opening a conversation that already exists drops the picks made for a new one.
   if (sessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === sessionPath)) {
@@ -150,6 +195,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   }
   closeSocket();
   if (!preserveChat) {
+    refusedCloses = 0;
     state.reviewHighlightAfter = reviewHighlightAfter;
     state.pendingSessionTitle = null;
     state.pendingSessionColor = null;
@@ -195,17 +241,27 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     if (state.socket !== socket) return;
     console.info("Conversation socket closed", { code: event.code, reason: event.reason || "none", engine: state.engine });
     stopHeartbeat();
-    setStatus("Connecting…", false, true);
-    setConnecting(true, "Connecting…");
+    const refused = event.code === REFUSED_CLOSE;
+    refusedCloses = refused ? refusedCloses + 1 : 0;
+    setStatus(refused && event.reason ? event.reason : "Connecting…", false, true);
+    setConnecting(true, event.reason ? `${event.reason}. Trying again…` : "Connecting…");
+    // Only the placeholder is replaced; a transcript already on screen stays as it is.
+    if (event.reason && elements.messages.querySelector(".empty-state")) {
+      showChatEmptyState(refused ? "Can't open this conversation" : "Connecting…", `${event.reason}. Trying again…`);
+    }
     setComposerEnabled(false);
-    scheduleReconnect(state.activeSessionPath);
+    scheduleReconnect(state.activeSessionPath, refused ? Math.min(REFUSED_RETRY_MAX_MS, RECONNECT_MS * 2 ** (refusedCloses - 1)) : RECONNECT_MS);
+    // A conversation this node refused may have been deleted; the list decides whether to leave it.
+    if (refused) refreshSessionsQuietly();
   });
   // The connecting banner already shows this state, and reconnect attempts
   // repeat, so a toast per attempt is pure noise.
   socket.addEventListener("error", () => console.warn("WebSocket connection failed"));
   socket.addEventListener("message", (event) => {
     if (state.socket !== socket) return;
-    handleSocketPayload(JSON.parse(event.data), !preserveChat);
+    const payload = JSON.parse(event.data);
+    if (payload.type === "ready") refusedCloses = 0;
+    handleSocketPayload(payload, !preserveChat);
   });
 }
 
@@ -278,10 +334,14 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     updateStatus(payload.status);
     console.info("Conversation transcript ready", {
       engine: payload.engine,
+      sessionId: payload.sessionId || null,
+      load: scrollOnReady ? "open" : "reconnect",
       messages: payload.messages?.length || 0,
       characters: payload.messages?.reduce((total, message) => total + String(message.text || "").length, 0) || 0,
       segments: payload.segments?.length || 1,
+      ...(payload.diagnostics || {}),
     });
+    logTranscriptChanges(state.activeConversationId || payload.sessionId, payload.messages, scrollOnReady ? "open" : "reconnect");
     state.conversationStartedAt = payload.conversationStartedAt || null;
     const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments, state.conversationStartedAt);
     const activeTurnStartedAt = Date.parse(payload.turnStartedAt || "");
@@ -538,6 +598,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     // Read-only Claude transcript synchronized from another node: re-render in
     // place, following if the reader was at the bottom, anchoring if not.
     const segments = payload.segments || state.conversationSegments;
+    logTranscriptChanges(state.activeConversationId || state.activeSessionId, payload.messages, "synchronized update");
     const resumeFromTop = rerenderChatTranscript(payload.messages, segments, state.conversationStartedAt);
     restoreConversationTimer(payload.messages, state.lastTurnStartedAt);
     if (state.followChat) requestPinChat();
@@ -577,6 +638,9 @@ function scheduleAgentRunPoll() {
 
 /** Server "something changed" notices and the loader each one re-runs. Both sockets share it. */
 const INVALIDATION_HANDLERS = {
+  cronChanged: () => {
+    if (state.activeProjectId) loadHiddenCronTasks(state.activeProjectId).catch((error) => console.warn("Could not load scheduled task visibility", error));
+  },
   sessionsChanged: () => {
     refreshSessionsQuietly();
     // A worktree that arrived by sync has no notice of its own; the list refresh picks it up.
@@ -627,6 +691,11 @@ async function refreshSessionSnapshot(projectId) {
     if (state.activeProjectId !== projectId) return;
     const newlyNeedsReview = body.sessions.some((session) => session.reviewState === "needs_review" && previousStates.get(session.path) !== "needs_review");
     state.sessions = body.sessions;
+    if (body.sessions.some((session) => session.cronTaskId && !state.knownCronTaskIds.has(session.cronTaskId))) {
+      try { await loadHiddenCronTasks(projectId); }
+      catch (error) { console.warn("Could not load scheduled task visibility", error); }
+      if (state.activeProjectId !== projectId) return;
+    }
     const nowRunning = state.sessions.filter((session) => session.running).map((session) => session.path);
     if (nowRunning.length !== previouslyRunning.size || nowRunning.some((path) => !previouslyRunning.has(path))) scheduleRunningRefresh();
     const activeSession = state.sessions.find((session) => session.id === state.activeSessionId || session.path === state.activeSessionPath);
@@ -636,7 +705,9 @@ async function refreshSessionSnapshot(projectId) {
     if (newlyNeedsReview) playCompletionSound().catch((error) => console.warn("Completion sound failed", error));
     const activeNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
     const activeSessionExists = state.sessions.some((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);
-    if (activeNode?.local && state.activeSessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath) && !socketOpen() && !activeSessionExists) {
+    // Missing from the list is not enough to leave a conversation: one that has only run the
+    // automatic start command is hidden there, and a socket that merely dropped is reconnecting.
+    if (activeNode?.local && state.activeSessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath) && !socketOpen() && refusedCloses > 0 && !activeSessionExists) {
       state.activeTaskId = null;
       closeSocket();
       clearChat();
@@ -709,6 +780,7 @@ export function ensureWatchSocket() {
     loadPins().catch((error) => console.warn(error));
     loadRecentSessions().catch((error) => console.warn(error));
     state.watchPingTimer = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
     }, 25000);
   });
@@ -732,7 +804,7 @@ export function ensureWatchSocket() {
 // this the connection stays "dropped" until the user sends a follow-up message.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
-  resumeConnection();
+  resumeConnection(false, "tab became visible");
   ensureWatchSocket();
   refreshSessionsQuietly();
   loadPins().catch((error) => console.warn(error));
@@ -741,13 +813,13 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {
-    resumeConnection(true);
+    resumeConnection(true, "page restored from the back/forward cache");
     ensureWatchSocket();
     refreshSessionsQuietly();
   }
 });
 window.addEventListener("online", () => {
-  resumeConnection(true);
+  resumeConnection(true, "network came back online");
   ensureWatchSocket();
 });
-window.addEventListener("focus", () => resumeConnection());
+window.addEventListener("focus", () => resumeConnection(false, "window focused"));

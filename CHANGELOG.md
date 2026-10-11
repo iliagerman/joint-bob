@@ -12,10 +12,268 @@ Every deployment is a version. The newest section must always match the
 - Agents, shells, and terminals now run in separate OS accounts when multi-user mode is enabled, providing process and network isolation.
 - Members can now join clusters independently and visit cluster nodes; their settings, preferences, and pins follow them there.
 - Your projects appeared on the other nodes you signed in to, marked “At home”, while they kept running on your home node; you could hide any one project or turn this off in Settings.
+- Conversations started in a worktree on another machine now appear under that worktree right away, before its files finish syncing; until they arrive, the worktree shows a note in place of its menu, and renames and deletions reach those conversations too.
+- Walled off the people sharing one node from each other, so no member could see another member's conversations, projects, or secrets on that node.
+
+## 2.72.1 — 2026-10-11
+
+- Agent instructions now say that a scheduled task's prompt counts as your request for a worktree, so the rule against agents creating worktrees on their own cannot stop a run that asks for one. No scheduled run had been refused.
+- Fixed idle machines repeating the same sync and lookup work every few seconds: file sharing with a twin, deliveries to an offline node, and conversation lists now wait out a backoff or skip work nothing needs, and database lookups run faster on the homeserver.
+- Fixed open pages reloading their lists every 15 seconds when a folder could not be watched on Linux; failed watches now retry with longer and longer waits, up to ten minutes.
+
+## 2.72.0 — 2026-10-11
+
+- Added copying or moving a conversation to another project. A copy is written before anything is removed, so a failed move leaves nothing duplicated; a move is refused while the conversation is busy, and a conversation owned by another machine in the cluster is handed to the cluster owner to transfer.
+- Fixed conversations that stayed on "Connecting…" and never opened. A conversation whose only message was the automatic start command could not be reopened after a dropped connection, from a phone, or from another machine's list, and a conversation tapped right after the page loaded did nothing.
+- When a machine refuses to open a conversation, the page now shows the reason and backs off to retrying every 30 seconds instead of every second and a half, and it drops the conversation from the list only once that machine has refused it.
+
+## 2.71.6 — 2026-10-11
+
+- Fixed typing a letter in the classification picker no longer selecting a label: since labels gained icons, pressing B did nothing because each option's text starts with its icon. Typing now matches the label's name again.
+- Fixed the Invite a node and Close cluster buttons sitting flush against the node strip below them in Settings → Cluster.
+- Fixed the new quick note button beside the project search looking unlike the buttons around it: it had no outline and an oversized icon.
+
+## 2.71.5 — 2026-10-11
+
+- Fixed the app staying on its loading screen when opened on a phone through a relay; requests past the relay's per-address limit now wait their turn instead of being refused.
+
+## 2.71.4 — 2026-10-11
+
+- Fixed a new browser failing with "Choose a browser machine in Settings first" when no browser machine was set, which stopped scheduled runs; it now opens on the machine the conversation runs on.
+
+## 2.71.3 — 2026-10-11
+
+- Fixed conversation label icons dropping onto their own line beneath a long title; the icon now stays beside the title's last word.
+
+## 2.71.2 — 2026-10-11
+
+- Fixed pressing Enter in a webhook's name field submitting the whole Settings form; a webhook missing its name, project, or conversation now says which field to fill in.
+
+## 2.71.1 — 2026-10-11
+
+- Fixed label icons not showing when the app opens offline from its cache.
+
+## 2.71.0 — 2026-10-10
+
+- Added pasting images straight into a quick note, which attaches them the same way choosing an image file does.
+- Fixed the chat toolbar shifting the conversation up and down when the model, reasoning level, or running task count changed; in narrow panels its buttons now wrap instead of running past the edge.
+- Agents no longer create a worktree when a refused git command suggests one; they keep working in the conversation's folder and create a worktree only when you ask.
+
+## 2.70.0 — 2026-10-10
+
+- Added webhooks, managed in a new Webhooks tab in Settings: each gets a secret URL that, when another service calls it, adds the call to a chosen conversation or starts a new conversation in a chosen project.
+- Agents no longer create worktrees on their own; they work in the conversation's folder and create a worktree only when you ask for one.
+
+## 2.69.0 — 2026-10-10
+
+- Added emoji icons for conversation labels, which show in place of the label's name in lists and filters; you can type an icon or have an agent pick one in Settings.
+
+## 2.68.6 — 2026-10-10
+
+- Fixed the chat toolbar always pushing its action buttons onto a second row; they now share the model and reasoning dropdowns' row when there is room and drop below as a group when there is not.
+- Added emoji icons for conversation labels, which show in place of the label's name in lists and filters; you can type an icon or have an agent pick one in Settings.
+
+## 2.68.5 — 2026-10-10
+
+- Project worktrees that no conversation has started in are removed 30 minutes after they were created, instead of 10, and are kept while anything inside them changed in the last 30 minutes.
+
+## 2.68.4 — 2026-10-10
+
+- Fixed the right-hand filter dropdowns in the conversation list so they open inside the list's lane instead of making the whole list scroll sideways.
+
+## 2.68.3 — 2026-10-10
+
+- Scheduled-task runs no longer use up the conversation list's 50-row limit, so a task that runs often no longer hides your ordinary conversations from history.
+
+## 2.68.2 — 2026-10-10
+
+- Marking a worktree's last conversation done now removes the worktree right away, without checking whether it was merged, so the action is faster and finished worktrees no longer linger.
+
+## 2.68.1 — 2026-10-10
+
+- Retire deleted projects through signed twin policy delivery, repair legacy owner orphans, and clear obsolete conversation-history sync errors without removing project files.
+
+## 2.68.0 — 2026-10-10
+
+- Removed finished worktrees automatically every 30 minutes on every machine, including ones with unmerged edits or open pull requests.
+
+## 2.67.0 — 2026-10-09
+
+- Moved joined relays from Settings > Cluster to a new Joined relays tab in Settings > Relay, so all relay settings are in one place.
+
+## 2.66.2 — 2026-10-09
+
+- Show twin synchronization failures directly in cluster member rows, the node inspector, and the machine's Twins tab, with a read-only status refresh and recovery guidance.
+- Name the affected projects in conversation-history sync errors instead of showing only the first low-level failure.
+
+## 2.66.1 — 2026-10-09
+
+- Added cluster deletion for owners, letting other nodes leave while keeping their local copies.
+
+## 2.66.0 — 2026-10-09
+
+- Removed project worktrees with no conversation ten minutes after they were created, even when they had a pull request or unmerged changes.
+
+## 2.65.0 — 2026-10-09
+
+- Removed project worktrees that never got a conversation ten minutes after they were created, keeping any that still have unmerged changes.
+
+## 2.64.0 — 2026-10-09
+
+- Added relays, so a machine without a public address can be reached by its cluster peers and your phone through a machine that has one; direct addresses and Tailscale are still tried first.
+- Added relay serving in Settings > Relay, where you can issue tokens or approve access requests with pairing codes, name machines, set usage caps, review an audit log, and limit relay use to your own machines.
+- Added remembering of the relay that last worked for each peer in Settings > Cluster > Relays, so it is tried first and another relay takes over automatically when it goes away.
+- Relayed machine connections are end-to-end encrypted, so a relay only forwards traffic it cannot read, and a long-polling fallback keeps them working where WebSockets are blocked.
+- Added phone sign-in at a relay's address with two-factor authentication, and each relay lists the phone addresses that work now, each with a QR code.
+- Machines can close phone sign-in to other machines' users, which also disconnects those users' open phone sessions.
+- File sync can use a relay as a tunnel before public relays are tried.
+- Traffic through a relay carries only machine routes and never counts as local, so existing sharing rules still apply.
+
+## 2.63.0 — 2026-10-08
+
+- Added creating GitHub pull requests, including drafts, from the pull request tab.
+- Added reopening closed pull requests and merging open ones by merge, squash, or rebase from the pull request tab, each after a confirmation.
+- Added an "Explain this PR" action on pull requests and a PR number or URL field in the Story tab that writes a story from a pull request's description and GitHub diff.
+- Pull request details now show when a pull request is merged or a draft.
+- Story tab headers show the pull request a story came from.
+
+## 2.62.5 — 2026-10-08
+
+- Worktrees with no visible conversations now stay in a collapsed Other worktrees section instead of filling the list after reload. Their actions remain available, and newly created worktrees open immediately.
+
+## 2.62.4 — 2026-10-08
+
+- Sharing a project's files with a peer no longer stops for the whole batch when one project fails to set up; the other projects still sync and the failed one is logged.
+
+## 2.62.3 — 2026-10-08
+
+- Finished worktrees whose pull request was merged are now removed only when their local files match the merged code, and a kept worktree shows the reason next to its conversation group.
+
+## 2.62.2 — 2026-10-08
+
+- Moved the new scheduled task action into the dialog footer as a plus button, so it stays visible while scrolling.
+
+## 2.62.1 — 2026-10-08
+
+- Fixed conversations that loaded before the worktree list being filed under the project folder, and worktree groups no longer wait for finished-worktree cleanup before they appear.
+
+## 2.62.0 — 2026-10-08
+
+- Marking the last conversation in a worktree done now deletes that worktree when it has no unmerged changes or running work, and finished worktrees from earlier versions are cleaned up when the list opens.
+
+## 2.61.3 — 2026-10-08
+
+- Scheduled task dialogs keep their action buttons visible while the task list or editor scrolls.
+
+## 2.61.2 — 2026-10-08
+
+- Fixed long worktree names pushing conversation cards past the edge of the list, and the desktop conversation list now scrolls inside its own column again while the chat stays in place.
+
+## 2.61.1 — 2026-10-08
+
+- Fixed the installed app staying on an old version after an update: it now checks for updates as soon as you switch back to it and reloads itself into the new version, or asks you to reload if you are in the middle of typing a message.
+
+## 2.61.0 — 2026-10-08
+
+- Rebuilt the default model routing around six task types (questions, terminal and git work, simple edits, multi-file coding, debugging, and planning), each sent to a model matched to that task: Haiku, Sonnet and Opus on Claude, and GPT-6 Luna, Sol and Astra on Pi.
+
+## 2.60.0 — 2026-10-08
+
+- Added a Tasks icon to the chat action row, and chat toolbar icons now share one size with their names appearing in a quick tooltip instead of the slow native one.
+
+## 2.59.1 — 2026-10-08
+
+- Fixed the desktop conversation list, which scrolled inside its own column; it now scrolls with the page while the chat stays in place.
+
+## 2.59.0 — 2026-10-08
+
+- Added a per-task option to hide a scheduled task's conversations from history, and each project remembered its own "Show done" and "Show scheduled" settings across reloads.
+
+## 2.58.0 — 2026-10-08
+
+- Chat toolbar actions were turned into icons, with each action's name shown as a tooltip on hover; dropdown menu items kept their labels beside the icon.
+
+## 2.57.0 — 2026-10-08
+
+- Added keeping the uncommitted edits each worktree was created with, syncing them to other machines, and a warning on pull requests that change those files.
+
+## 2.56.0 — 2026-10-08
+
+- Added a scheduled-task option to skip review for completed runs, and hid scheduled conversations from the chat list behind a "Show scheduled" toggle.
+
+## 2.55.1 — 2026-10-08
+
+- Fixed story generation, which 2.55.0 refused on every request with "API error: 403".
+- Story sections opened as soon as the reviewer finished writing each one, with a progress bar and per-section status showing which sections were still being written.
+
+## 2.55.0 — 2026-10-07
+
+- Story generation displays real-time progress as sections complete, eliminating the wait for full explanations.
+- A worktree can no longer be deleted while a conversation started in it is running, and agents that start a worktree conversation are told to leave that issue to it instead of fixing it in the project folder or pushing to main themselves.
+
+## 2.54.1 — 2026-10-07
+
+- Worktree folders pull their small metadata files (node paths, conversation markers) before the bulk copy, so a conversation a scheduled task starts in a new worktree shows up on other nodes without waiting for the whole worktree to sync.
+
+## 2.54.0 — 2026-10-07
+
+- Agents and scheduled tasks can now create isolated worktrees, start conversations within them, and open pull requests directly from changes, enabling automated issue discovery and fixing.
+- Worktrees are provisioned with the project's .env files and symlinks to installed dependencies, without syncing builds or binaries.
+- Worktree scanning no longer follows symlinks.
+
+## 2.53.0 — 2026-10-07
+
+- Agents and scheduled tasks can now create isolated worktrees, start conversations within them, and open pull requests directly from those changes, enabling automated issue discovery and fixing.
+- Worktrees are now provisioned with the project's .env files and symlinks to installed dependencies without syncing builds or binaries.
+- Worktree scanning no longer follows symlinks, preventing build artifacts from being indexed.
+
+## 2.52.0 — 2026-10-07
+
+- New conversations can now start in their own worktree, automatically named after the conversation title—enable in Settings → Conversations.
+- Error reports are now sent to ntfy topics for monitoring—enable in Settings → Notifications.
+- Empty conversations are now automatically deleted after an hour of inactivity.
+- Conversations no longer reload repeatedly in the background when you switch away from the tab.
+
+## 2.51.0 — 2026-10-07
+
+- Conversations in worktrees now organize under a collapsible section in the conversation list instead of filter chips.
+- Transcript replication now continues past failed transcripts when syncing with cluster peers, and conversations in worktrees are properly included in ownership transfer lookups.
+- Cluster ownership transfers are now more reliable when communicating through Tailscale relays by accounting for higher latency.
+
+## 2.50.1 — 2026-10-07
+
+- Workspaces and conversations now accept multiple accounts with the same environment variable names. Agents can choose an account for an individual command without exposing its values or silently using the wrong account.
+- Fixed the offline shell manifest to include the ntfy manager.
+
+## 2.50.0 — 2026-10-07
+
+- ntfy service sharing is now event-driven: changes push immediately when shared or edited instead of retrying on a timer.
+- Nodes pull shared ntfy services from peers on startup or cluster rejoin instead of waiting for peers to push them.
+- ntfy service tokens are validated against the server before saving.
+- Add-service form is hidden while managing a service to avoid confusion between edit and add token fields.
+- Messages view now suggests concrete topics and reloads them after a token is saved.
+
+## 2.49.2 — 2026-10-07
+
+- Fixed duplicate output when reattaching to a Claude session mid-turn.
+
+## 2.49.1 — 2026-10-07
+
+- Secret account pickers now show why a workspace or conversation assignment failed instead of silently ignoring Save.
+
+## 2.49.0 — 2026-10-07
+
+- Share dialog now shows a progress spinner while services are being delivered to cluster members.
+- Service rows display the count of nodes still waiting to receive the service, updating in real-time until all nodes have it.
+- Service sharing is now persistent—selections are stored and delivery automatically retries when offline nodes reconnect.
+- Nodes joining a cluster after services have been shared now receive previously shared services.
+- Changed services are automatically re-sent to all nodes in the cluster.
+- Settings now includes an ntfy manager for administering topics (access grants), viewing messages (paginated reader), managing users, and rotating admin tokens.
+- New agent CLI commands support ntfy management and administration.
 
 ## 2.48.0 — 2026-10-07
 
-- Cluster administrators can now view and manage which ntfy services are shared with each node through new admin API endpoints.
+- Agents can now read ntfy topic messages and, with an admin token, list, create, update and delete topics (access grants) and users through the ntfy CLI.
 - Project reconciliation now skips folders that haven't been created in Syncthing, allowing automatic recovery when sync folders are missing.
 
 

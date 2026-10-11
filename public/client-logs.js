@@ -13,7 +13,14 @@
     entries = [];
   }
   const format = (value) => {
-    if (value instanceof Error) return value.stack || `${value.name}: ${value.message}`;
+    if (value instanceof Error) {
+      // Safari's stack omits the message, so it alone said only "api@…/api.js:17:20".
+      const head = `${value.name}: ${value.message}`;
+      const stack = value.stack && !value.stack.includes(value.message) ? `${head}\n${value.stack}` : value.stack || head;
+      let fields = "";
+      try { if (Object.keys(value).length) fields = ` ${JSON.stringify({ ...value })}`; } catch { /* circular fields */ }
+      return `${stack}${fields}${value.cause === undefined ? "" : `\nCaused by: ${format(value.cause)}`}`;
+    }
     if (typeof value === "string") return value;
     if (value === undefined) return "undefined";
     try { return JSON.stringify(value); } catch { return String(value); }
@@ -24,6 +31,9 @@
     entries = entries.slice(-limit);
     try { sessionStorage.setItem(key, JSON.stringify(entries)); } catch { /* storage unavailable */ }
     window.dispatchEvent(new Event("joint-bob-client-logs-changed"));
+    if (level === "error" || level === "uncaught" || level === "unhandled") {
+      window.dispatchEvent(new CustomEvent("joint-bob-client-error", { detail: { kind: level, message } }));
+    }
   };
   for (const level of ["debug", "info", "log", "warn", "error"]) {
     const native = console[level].bind(console);

@@ -176,6 +176,24 @@ function lostManagerSucceeded(db: DatabaseSync, previous: SignedMembershipSnapsh
 
 export function removeMembershipMember(db:DatabaseSync, localNodeId:string, actorNodeId:string, clusterId:string, targetNodeId:string, expectedEpoch:number):SignedMembershipSnapshot { ensureMembershipSchema(db); return transaction(db,()=>{ const state=getSharingCluster(db,clusterId); if(state.managerNodeId!==localNodeId||state.managerEpoch!==expectedEpoch) throw new Error("Cluster manager authority changed"); const old=nodeRows(db,clusterId), target=listSharingClusterMembers(db,clusterId).find(x=>x.nodeId===targetNodeId); if(!target) throw new Error("Target is not a member"); db.prepare("INSERT OR IGNORE INTO cluster_v2_membership_departures VALUES(?,?,?)").run(clusterId,targetNodeId,target.joinSequence); removeSharingMember(db,clusterId,actorNodeId,targetNodeId); db.prepare("DELETE FROM cluster_v2_membership_nodes WHERE cluster_id=? AND node_id=?").run(clusterId,targetNodeId); return publish(db,clusterId,localNodeId,[...old,...nodeRows(db,clusterId)]); }); }
 
+/** The original owner may close the cluster without transferring management or removing members individually. */
+export function closeMembershipCluster(db: DatabaseSync, localNodeId: string, actorNodeId: string, clusterId: string, expectedEpoch: number): SignedMembershipSnapshot {
+  ensureMembershipSchema(db);
+  return transaction(db, () => {
+    const state = getSharingCluster(db, clusterId);
+    if (state.managerNodeId !== localNodeId || state.managerEpoch !== expectedEpoch) throw new Error("Cluster manager authority changed");
+    if (state.closed || state.originalNodeId !== actorNodeId || !listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === actorNodeId)) throw new Error("Only the cluster owner may close it");
+    if (db.prepare("SELECT 1 FROM sharing_manager_transfers WHERE cluster_id=? AND expected_epoch=? AND status<>'committed'").get(clusterId, expectedEpoch)) throw new Error("Cluster has a pending transfer");
+    const recipients = nodeRows(db, clusterId);
+    for (const member of listSharingClusterMembers(db, clusterId)) db.prepare("INSERT OR IGNORE INTO cluster_v2_membership_departures VALUES(?,?,?)").run(clusterId, member.nodeId, member.joinSequence);
+    db.prepare("DELETE FROM sharing_resource_shares WHERE cluster_id=?").run(clusterId);
+    db.prepare("DELETE FROM sharing_memberships WHERE cluster_id=?").run(clusterId);
+    db.prepare("DELETE FROM cluster_v2_membership_nodes WHERE cluster_id=?").run(clusterId);
+    db.prepare("UPDATE sharing_clusters SET manager_node_id=NULL,closed=1 WHERE id=?").run(clusterId);
+    return publish(db, clusterId, localNodeId, recipients);
+  });
+}
+
 function verifyEvolution(previous:SignedMembershipSnapshot, incoming:SignedMembershipSnapshot, managerSucceeded=false):void { const old=previous.body, next=incoming.body; if(managerSucceeded ? next.managerEpoch!==old.managerEpoch+1||next.originalNodeId!==old.originalNodeId : next.managerEpoch!==old.managerEpoch||next.originalNodeId!==old.originalNodeId||(!next.closed&&next.managerNodeId!==old.managerNodeId)) throw new Error("Manager activation certificate required"); if(next.nextJoinSequence<old.nextJoinSequence) throw new Error("Join sequence cannot decrease"); const tombstones=new Set(next.departures.map(x=>`${x.nodeId}:${x.joinSequence}`)); for(const departed of old.departures) if(!tombstones.has(`${departed.nodeId}:${departed.joinSequence}`)) throw new Error("Missing departure tombstone"); for(const member of old.members) { const current=next.members.find(x=>x.nodeId===member.nodeId); if(current&&current.joinSequence===member.joinSequence) { if(current.publicKey!==member.publicKey) throw new Error("Member key cannot change"); continue; } if(!tombstones.has(`${member.nodeId}:${member.joinSequence}`)) throw new Error("Missing departure tombstone"); if(current&&current.joinSequence<old.nextJoinSequence) throw new Error("Admission rank cannot change"); } for(const member of next.members) if(!old.members.some(x=>x.nodeId===member.nodeId&&x.joinSequence===member.joinSequence)&&member.joinSequence<old.nextJoinSequence) throw new Error("Manager cannot manufacture an old rank"); }
 interface PreferenceRow { node_id: string; join_sequence: number; auto_share_projects: number }
 

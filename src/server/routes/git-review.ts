@@ -21,7 +21,7 @@ import {
   type GitReviewSelection,
   type GitReviewThread,
 } from "../../git-review-threads.js";
-import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StorySources } from "../git-change-story.js";
+import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StoryProgress, type StorySources } from "../git-change-story.js";
 import { getProject } from "../../store.js";
 import { genericSecretEnvironment, githubAccountsForProject } from "../../secrets.js";
 import { githubAccountFor } from "../../github-credentials.js";
@@ -67,7 +67,7 @@ async function proxyGitJson(response: Response, peer: ClusterPeer, clusterRoute:
   for (const [key, value] of Object.entries(query)) if (value) url.searchParams.set(key, value);
   const routed = await runtimeFetch(url, {
     method: request?.method ?? "GET",
-    headers: { ...(request ? { "Content-Type": "application/json" } : {}) },
+    headers: { ...(request ? { "Content-Type": "application/json" } : {}), ...(request && wantsStream(request) ? { Accept: NDJSON } : {}) },
     ...(request ? { body: JSON.stringify(request.body) } : {}),
     // A review turn can take minutes; the ask route needs a longer ceiling than reads.
     signal: AbortSignal.timeout(request ? 6 * 60_000 : 30_000),
@@ -81,6 +81,14 @@ async function proxyGitJson(response: Response, peer: ClusterPeer, clusterRoute:
   if (routed.status === 401 || routed.status === 403) {
     const detail = await routed.text().catch(() => "");
     response.status(502).json({ error: `Git node rejected the request (HTTP ${routed.status}). It may be running an older Joint Bob version; update every node.${detail ? ` Details: ${detail.slice(0, 200)}` : ""}` });
+    return;
+  }
+  if (routed.ok && routed.body && contentType?.startsWith(NDJSON)) {
+    response.status(routed.status);
+    response.flushHeaders();
+    const reader = routed.body.getReader();
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) response.write(chunk.value);
+    response.end();
     return;
   }
   response.status(routed.status).send(await routed.text());
@@ -106,8 +114,12 @@ async function withOwningNode(
     await proxyGitJson(response, peer, clusterRoute, { ...query, projectId, taskId }, forwardRequest);
     return;
   }
-  response.json(await local());
+  const result = await local();
+  if (result !== SENT) response.json(result);
 }
+
+/** Returned by a local handler that already wrote its own response. */
+const SENT = Symbol("sent");
 
 function handleGitError(response: Response, error: unknown, next: (error?: unknown) => void): void {
   if (error instanceof GitReviewError || error instanceof GitReviewRunError) { sendError(response, error.status, error.message); return; }
@@ -123,9 +135,12 @@ const githubQuery = z.object({
   id: z.coerce.number().int().positive().optional(),
 });
 const githubAction = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("create"), head: z.string().min(1).max(200), base: z.string().min(1).max(200), title: z.string().trim().min(1).max(256), body: z.string().max(65536), draft: z.boolean() }).strict(),
   z.object({ action: z.literal("comment"), number: z.number().int().positive(), body: z.string().trim().min(1).max(65536) }).strict(),
   z.object({ action: z.literal("review"), number: z.number().int().positive(), event: z.enum(["APPROVE", "REQUEST_CHANGES"]), body: z.string().max(65536) }).strict(),
   z.object({ action: z.literal("close"), number: z.number().int().positive() }).strict(),
+  z.object({ action: z.literal("reopen"), number: z.number().int().positive() }).strict(),
+  z.object({ action: z.literal("merge"), number: z.number().int().positive(), sha: z.string().regex(/^[0-9a-f]{40}$/), method: z.enum(["merge", "squash", "rebase"]) }).strict(),
 ]);
 
 async function githubClient(projectId: string, taskId?: string) {
@@ -156,8 +171,11 @@ async function githubWrite(projectId: string, taskId: string | undefined, body: 
   if (!parsed.success) throw new GitReviewError(400, "Invalid GitHub action");
   const github = await githubClient(projectId, taskId);
   const action = parsed.data;
+  if (action.action === "create") return github.create(action.head, action.base, action.title, action.body, action.draft);
   if (action.action === "comment") return github.comment(action.number, action.body);
   if (action.action === "close") return github.close(action.number);
+  if (action.action === "reopen") return github.reopen(action.number);
+  if (action.action === "merge") return github.merge(action.number, action.sha, action.method);
   return github.review(action.number, action.event, action.body);
 }
 
@@ -450,7 +468,9 @@ app.get("/api/projects/:projectId/git/guide-latest", async (request, response, n
 
 const storyRequest = z.object({
   conversationId: z.string().min(1).max(240).nullable(),
-  source: z.enum(["conversation", "commits"]).default("conversation"),
+  source: z.enum(["conversation", "commits", "pull"]).default("conversation"),
+  pullNumber: z.number().int().positive().optional(),
+  pullUrl: z.string().url().max(500).optional(),
   commits: z.array(z.string().regex(/^[0-9a-f]{7,40}$/i)).max(20).default([]),
   scope: z.enum(["conversation", "all"]),
   paths: z.array(z.string().min(1).max(2000)).max(100),
@@ -465,11 +485,16 @@ function storyThreadInfo(thread: GitReviewThread) {
   return { id: thread.id, harnessId: thread.harnessId, provider: thread.provider, modelId: thread.modelId, thinkingLevel: thread.thinkingLevel, createdAt: thread.createdAt, expiresAt: thread.expiresAt };
 }
 
-async function performStory(projectId: string, cwd: string, input: z.infer<typeof storyRequest>): Promise<unknown> {
+async function performStory(projectId: string, cwd: string, input: z.infer<typeof storyRequest>, onProgress?: (event: StoryProgress) => void): Promise<unknown> {
   const project = await getProject(projectId);
   if (!project) throw new GitReviewError(404, "Project not found");
   let sources: StorySources;
-  if (input.source === "commits") {
+  const pull = input.source === "pull" && input.pullNumber ? await (await githubClient(projectId)).storyPull(input.pullNumber) : undefined;
+  if (input.source === "pull") {
+    if (!pull) throw new GitReviewError(400, "Pull request number required");
+    if (input.pullUrl && input.pullUrl.replace(/\/$/, "") !== pull.pull.html_url) throw new GitReviewError(400, "PR URL does not belong to this project's GitHub repository");
+    sources = { kind: "pull", scope: "all", pendingPaths: [], includeCommits: false, pullNumber: pull.pull.number };
+  } else if (input.source === "commits") {
     if (!input.commits.length) throw new GitReviewError(400, "Pick at least one commit");
     sources = { kind: "commits", scope: "all", pendingPaths: [], includeCommits: false, commits: input.commits };
   } else {
@@ -482,7 +507,7 @@ async function performStory(projectId: string, cwd: string, input: z.infer<typeo
   }
   const { diff, ...saved } = await generateChangeStory({
     project, cwd, conversationId: input.conversationId, sources,
-    harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel,
+    harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel, onProgress, pull,
   });
   const thread = createGitReviewThread({ projectId, conversationId: input.conversationId, harnessId: input.harnessId, provider: input.provider ?? "", modelId: input.modelId, thinkingLevel: input.thinkingLevel, selection: { scope: "worktree" }, snapshot: diff, question: CHANGE_STORY_MARKER, answer: JSON.stringify(saved) });
   return { thread: storyThreadInfo(thread), saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } };
@@ -501,21 +526,57 @@ async function latestStory(projectId: string, cwd: string, conversationId: strin
     return { latest: null, commits };
   }
   const saved = JSON.parse(thread.messages[1].text) as SavedChangeStory;
-  return { latest: { thread: storyThreadInfo(thread), saved, freshness: await storyFreshness(project, cwd, thread.conversationId, saved) }, commits };
+  let freshness;
+  try {
+    const pull = saved.sources.kind === "pull" && saved.sources.pullNumber ? await (await githubClient(projectId)).storyPull(saved.sources.pullNumber) : undefined;
+    freshness = await storyFreshness(project, cwd, thread.conversationId, saved, pull);
+  } catch (error) {
+    freshness = { fresh: false, newTurns: 0, changedPaths: [], reason: error instanceof Error ? error.message : "PR unavailable" };
+  }
+  return { latest: { thread: storyThreadInfo(thread), saved, freshness }, commits };
+}
+
+const NDJSON = "application/x-ndjson";
+const wantsStream = (request: Request) => Boolean(request.get("accept")?.includes(NDJSON));
+
+// Streams progress lines and a final "done" (or "error") line when the client asks for
+// NDJSON. Once the stream has started, failures travel as a line, not an HTTP status.
+async function sendStory(request: Request, response: Response, run: (onProgress?: (event: StoryProgress) => void) => Promise<unknown>): Promise<void> {
+  if (!wantsStream(request)) { response.json(await run()); return; }
+  response.status(200).setHeader("Content-Type", NDJSON);
+  response.setHeader("Cache-Control", "no-cache");
+  response.setHeader("X-Accel-Buffering", "no");
+  response.flushHeaders();
+  const send = (line: object) => { if (!response.writableEnded && !response.destroyed) response.write(`${JSON.stringify(line)}\n`); };
+  try {
+    send({ type: "done", ...await run(send) as object });
+  } catch (error) {
+    const known = error instanceof GitReviewError || error instanceof GitReviewRunError;
+    send({ type: "error", status: known ? error.status : 500, error: known ? error.message : "The story could not be written." });
+    if (!known) console.error("Change story failed", error);
+  }
+  response.end();
 }
 
 app.post("/api/cluster/git/story", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const projectId = queryString(request, "projectId");
-    response.json(await performStory(projectId, await reviewCwd(projectId, queryOptional(request, "taskId")), storyRequest.parse(request.body)));
+    const cwd = await reviewCwd(projectId, queryOptional(request, "taskId"));
+    const input = storyRequest.parse(request.body);
+    await sendStory(request, response, (onProgress) => performStory(projectId, cwd, input, onProgress));
   } catch (error) { handleGitError(response, error, next); }
 });
 
 app.post("/api/projects/:projectId/git/story", async (request, response, next) => {
   try {
-    await withOwningNode(request, response, "/api/cluster/git/story", {}, async () =>
-      performStory(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId")), storyRequest.parse(request.body)), request);
+    const { projectId } = request.params;
+    const input = storyRequest.parse(request.body);
+    await withOwningNode(request, response, "/api/cluster/git/story", {}, async () => {
+      const cwd = await reviewCwd(projectId, queryOptional(request, "taskId"));
+      await sendStory(request, response, (onProgress) => performStory(projectId, cwd, input, onProgress));
+      return SENT;
+    }, request);
   } catch (error) { handleGitError(response, error, next); }
 });
 

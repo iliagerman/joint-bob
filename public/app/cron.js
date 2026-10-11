@@ -1,6 +1,7 @@
 import { harnessIdFromPath, harnessOption } from "../harness-metadata.js";
 import { api } from "./api.js";
 import { state } from "./state.js";
+import { renderSessions } from "./session-list.js";
 import { confirmAction, toast } from "./shell.js";
 
 const dialog = document.querySelector("#cronDialog");
@@ -9,6 +10,8 @@ const field = name => form.elements.namedItem(name);
 const errorText = document.querySelector("#cronError");
 const listView = document.querySelector("#cronListView");
 const footer = document.querySelector("#cronFooter");
+const formActions = document.querySelector("#cronFormActions");
+const body = document.querySelector("#cronBody");
 let context;
 let editing = null;
 let availableHarnesses = [];
@@ -43,8 +46,18 @@ export async function openScheduledTasks(projectId, session = null) {
   await refreshTasks();
 }
 
+export async function loadHiddenCronTasks(projectId) {
+  const body = await api(`/api/projects/${encodeURIComponent(projectId)}/cron`);
+  if (state.activeProjectId === projectId) {
+    state.hiddenCronTaskIds = new Set(body.tasks.filter((task) => task.hideFromHistory).map((task) => task.id));
+    state.knownCronTaskIds = new Set([...body.tasks.map((task) => task.id), ...state.sessions.map((session) => session.cronTaskId).filter(Boolean)]);
+    renderSessions();
+  }
+  return body;
+}
+
 async function refreshTasks() {
-  const body = await api(`/api/projects/${encodeURIComponent(context.projectId)}/cron`);
+  const body = await loadHiddenCronTasks(context.projectId);
   errorText.textContent = body.errors.map(error => `${error.nodeId}: ${error.error}`).join("\n");
   const list = document.querySelector("#cronList");
   list.replaceChildren();
@@ -74,7 +87,7 @@ async function refreshTasks() {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const execution = [["Repeat", repeat], ["Start time", task.schedule.frequency === "hourly" && task.schedule.startHour === undefined ? `At minute ${task.schedule.minute} (legacy UTC interval)` : `${String(task.schedule.startHour ?? task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`],
       ["Run on days", task.schedule.days ? task.schedule.days.map(day => days[day]).join(", ") : "Every eligible day"],
-      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"]];
+      ["Quiet hours", task.schedule.quietStart ? `${task.schedule.quietStart}–${task.schedule.quietEnd}` : "Off"], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"], ["Review", task.markForReview === false ? "Silent" : "Mark for review"], ["Conversation history", task.hideFromHistory ? "Hidden" : "Visible when Show scheduled is on"]];
     const entries = task.enabled
       ? [["Next run", new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone })], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
       : [["Status", "Paused"], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]];
@@ -128,7 +141,8 @@ function showList() {
   form.hidden = true;
   listView.hidden = false;
   footer.hidden = false;
-  dialog.querySelector(".cron-card").scrollTo(0, 0);
+  formActions.hidden = true;
+  body.scrollTo(0, 0);
 }
 function showLoading() {
   const list = document.querySelector("#cronList");
@@ -183,8 +197,9 @@ function editTask(task) {
   form.hidden = false;
   listView.hidden = true;
   footer.hidden = true;
+  formActions.hidden = false;
   document.querySelector("#cronFormTitle").textContent = task ? "Edit scheduled task" : "New scheduled task";
-  dialog.querySelector(".cron-card").scrollTo(0, 0);
+  body.scrollTo(0, 0);
   field("timezone").value = task ? task.schedule.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone;
   for (const name of ["name", "prompt", "ownerNodeId"]) if (task) field(name).value = task[name];
   field("engine").value = selectedEngine;
@@ -192,6 +207,8 @@ function editTask(task) {
   if (task) {
     field("enabled").checked = task.enabled;
     field("pauseOnFailure").checked = task.pauseOnFailure;
+    field("markForReview").checked = task.markForReview !== false;
+    field("hideFromHistory").checked = task.hideFromHistory === true;
     field("frequency").value = task.schedule.frequency;
     field("weekday").value = task.schedule.weekday;
     field("intervalHours").value = task.schedule.intervalHours ?? 1;
@@ -219,7 +236,7 @@ function showScheduleFields() {
 }
 form.addEventListener("submit", async event => {
   event.preventDefault();
-  const submit = form.querySelector('[type="submit"]');
+  const submit = formActions.querySelector('[type="submit"]');
   if (submit.disabled) return;
   submit.disabled = true; errorText.textContent = "";
   try {
@@ -234,7 +251,8 @@ form.addEventListener("submit", async event => {
       ownerNodeId: field("ownerNodeId").value, engine: field("engine").value,
       model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,
       sessionId: session?.engine === field("engine").value ? session.id : null, enabled: field("enabled").checked,
-      pauseOnFailure: field("pauseOnFailure").checked,
+      pauseOnFailure: field("pauseOnFailure").checked, markForReview: field("markForReview").checked,
+      hideFromHistory: field("hideFromHistory").checked,
       schedule: { frequency: field("frequency").value, intervalMinutes: field("frequency").value === "minutely" ? Number(field("intervalMinutes").value) : undefined,
         intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined,
         hour, minute, startHour: field("frequency").value === "hourly" ? hour : undefined,

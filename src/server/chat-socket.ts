@@ -10,15 +10,15 @@ import { claimTerminal } from "./terminal-policy.js";
 import { terminalAccessSettings } from "../settings.js";
 import type { IncomingMessage } from "node:http";
 import WebSocket from "ws";
-import { authSessionEvents, sessionCookieName, sessionForId } from "../auth.js";
+import { authSessionEvents, sessionCookieNameFor, sessionForId } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSocket } from "./runtime-peers.js";
 import { clusterPeerMayAccessProject, peerMayOpenTerminal } from "./cluster-helpers.js";
 import { type ConversationEngine, getConversationOwnership } from "../conversation-ownership.js";
-import { ensureConversationRecord, getConversationRecord, listConversationSegments, parseConversationDraftPath } from "../conversation-records.js";
+import { ensureConversationRecord, getConversationRecord, listConversationSegments, parseConversationDraftPath, setConversationWorktree } from "../conversation-records.js";
 import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import { getProjectLock } from "../project-locks.js";
-import { getProjectWorktree, markWorktreeConversation, worktreeConversationIndex, type ProjectWorktree } from "../project-worktrees.js";
+import { ensureWorktreeLocalFiles, getProjectWorktree, markWorktreeConversation, worktreeConversationIndex, type ProjectWorktree } from "../project-worktrees.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
 import { getProject } from "../store.js";
 import { getSettings } from "../settings.js";
@@ -38,6 +38,15 @@ import { ownerPeer } from "./task-handoff.js";
 import { measureOperation, traceOperation } from "./performance-diagnostics.js";
 import { projectAdditionalPaths } from "./session-scope.js";
 import { mergeReservations, taskCwd, taskHandoffContext, taskTerminalCounts } from "./task-runs.js";
+import { relayPeerOf, relayTransportOf } from "../relay/stream.js";
+import { peerWebSocket } from "../relay/transport.js";
+import { onPhonePolicyChanged, otherUsersMayUsePhone } from "../relay/phone-policy.js";
+
+/** A worktree that arrived through sync has no `.env` or dependency links on this node yet. */
+async function provisionWorktree(projectPath: string, worktreePath: string): Promise<void> {
+  await ensureWorktreeLocalFiles(projectPath, worktreePath).catch((error) => console.warn("Worktree local files could not be provisioned", error));
+}
+
 
 function describeSessionRequest(rawSessionPath: string | null) {
   const selected = rawSessionPath ?? listHarnesses()[0].paths.newSession;
@@ -61,7 +70,8 @@ async function directSessionForOpen(project: ProjectRecord, sessionPath: string,
   return findHarnessSession(project, request.engine, sessionPath, sessionId);
 }
 
-const authenticatedSockets = new Map<WebSocket, string>();
+/** Browser sockets by login session; `otherUserPhone` marks another machine's user signed in through the phone gateway. */
+const authenticatedSockets = new Map<WebSocket, { sessionId: string; otherUserPhone: boolean }>();
 
 /** A terminal relayed by a peer counts against that peer while the node allows terminals at all. */
 function peerTerminalAccount(peerId: string): ActingAccount | undefined {
@@ -70,8 +80,14 @@ function peerTerminalAccount(peerId: string): ActingAccount | undefined {
 }
 authSessionEvents.on("revoked", (sessionIds: string[]) => {
   const revoked = new Set(sessionIds);
-  for (const [socket, sessionId] of authenticatedSockets) {
-    if (revoked.has(sessionId)) socket.close(1008, "Login session revoked");
+  for (const [socket, entry] of authenticatedSockets) {
+    if (revoked.has(entry.sessionId)) socket.close(1008, "Login session revoked");
+  }
+});
+onPhonePolicyChanged((allowed) => {
+  if (allowed) return;
+  for (const [socket, entry] of authenticatedSockets) {
+    if (entry.otherUserPhone) socket.close(1008, "Phone sign-in for other users is off");
   }
 });
 
@@ -93,15 +109,19 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   if(authorization){
     try{signedPeer=await signedSocketPeer(url.pathname+url.search,authorization);}
     catch{socket.close(1008,'Unauthorized');return;}
-  }
+    // A relay channel carries sockets only from the machine it proved (RELAY-PLAN.md §4.10 rule 4).
+    const transport=relayTransportOf(request.socket),channelPeer=relayPeerOf(request.socket);
+    if(transport==='gateway'||(channelPeer&&channelPeer.nodeId!==signedPeer)){socket.close(1008,'Unauthorized');return;}
+  }else if(relayTransportOf(request.socket)==='peer'){socket.close(1008,'Unauthorized');return;}
   const browserMachineId = signedPeer;
   const machineAuthenticated = Boolean(signedPeer);
   const origin = request.headers.origin;
-  const cookiePrefix = `${sessionCookieName}=`;
+  const cookiePrefix = `${sessionCookieNameFor(relayTransportOf(request.socket) === "gateway")}=`;
   const session = sessionForId(request.headers.cookie?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith(cookiePrefix))?.slice(cookiePrefix.length));
   let browserAuthenticated = false;
   try {
-    browserAuthenticated = Boolean(host && typeof origin === "string" && new URL(origin).host === host && session && !session.mustChangePassword);
+    browserAuthenticated = Boolean(host && typeof origin === "string" && new URL(origin).host === host && session && !session.mustChangePassword
+      && !(session.isRemoteLogin && relayTransportOf(request.socket) === "gateway" && !otherUsersMayUsePhone()));
   } catch {
     browserAuthenticated = false;
   }
@@ -180,7 +200,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
   const machineAuthenticated = Boolean(signedPeer);
   const browserAuthenticated = !machineAuthenticated && Boolean(session);
   if (!machineAuthenticated && session) {
-    authenticatedSockets.set(socket, session.id);
+    authenticatedSockets.set(socket, { sessionId: session.id, otherUserPhone: session.isRemoteLogin && relayTransportOf(request.socket) === "gateway" });
     socket.once("close", () => authenticatedSockets.delete(socket));
   }
 
@@ -262,7 +282,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
     // A terminal socket must stay a terminal socket on the owner, not become a session.
     if (url.searchParams.get("mode") === "terminal") ownerUrl.searchParams.set("mode", "terminal");
     if (author) ownerUrl.searchParams.set("author", encodeAuthor(author));
-    proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }));
+    proxySocket(socket, peerWebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }, peer.id));
     return;
   }
   const requestedNodeId = url.searchParams.get("nodeId");
@@ -291,7 +311,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
       ownerUrl.searchParams.set("nodeSession", "1");
       if (author) ownerUrl.searchParams.set("author", encodeAuthor(author));
       else ownerUrl.searchParams.delete("author");
-      proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }));
+      proxySocket(socket, peerWebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }, peer.id));
       return;
     }
   }
@@ -353,6 +373,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
       socket.close(4031, claim.reason);
       return;
     }
+    if (terminalWorktree) await provisionWorktree(project.path, terminalWorktree.path);
     attachTerminalSession(socket, task ? taskCwd(project, task) : terminalWorktree?.path ?? project.path, local.id, undefined, claim.idleMinutes, await runtimeForProject(project.id));
     return;
   }
@@ -481,6 +502,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
     worktree = known ?? requested;
     if (worktree) {
       cwd = worktree.path;
+      await provisionWorktree(project.path, worktree.path);
       if (!known) await markWorktreeConversation(project.id, worktree.id, sessionRequest.engine, ownershipSessionId);
     }
   }
@@ -497,6 +519,11 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
       throw error;
     }
   }
+  // File sync delivers a worktree's own metadata behind every smaller file in it; the record tells other nodes now.
+  if (worktree) {
+    await setConversationWorktree(project.id, sessionRequest.engine, ownershipSessionId, { id: worktree.id, name: worktree.name, color: worktree.color }, local.id)
+      .catch((error) => console.warn("Could not record the conversation's worktree", error));
+  }
   const conversationReadOnly = sessionReadOnly || task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
   try {
     const startCommand = getSettings().conversationCommands.start;
@@ -505,7 +532,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
       sessionId: ownershipSessionId, sessionPath: sessionRequest.sessionPath,
       accountIds: secretAccountIds, readOnly: conversationReadOnly, ownership: foreignOwner,
       listedSessions, handoffContext: spinOffContext, author,
-      autoStartPrompt: refreshSessionsAfterReady && !sessionRequest.draft && startCommand.enabled ? startCommand.prompt : null,
+      autoStartPrompt: refreshSessionsAfterReady && !sessionRequest.draft && !worktree && startCommand.enabled ? startCommand.prompt : null,
     });
     if (refreshSessionsAfterReady) broadcastToProject(project.id, { type: "sessionsChanged" });
   } catch (error) {

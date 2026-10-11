@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { appendAuditEvent } from "./audit.js";
 import { resolveDataDirectory } from "./data-directory.js";
-import { conversationLabelsSchema, DEFAULT_CONVERSATION_LABELS } from "./conversation-labels.js";
+import { conversationLabelIconsSchema, conversationLabelsSchema, DEFAULT_CONVERSATION_LABEL_ICONS, DEFAULT_CONVERSATION_LABELS, iconsForLabels } from "./conversation-labels.js";
 import { conversationDefaultsSchema, type ConversationDefault } from "./harnesses/defaults.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime, detectExecutable, runtimeOverrides } from "./harnesses/runtime-configuration.js";
@@ -71,6 +71,13 @@ function syncCheck(defaults: Record<string, ConversationDefault>): SyncCheckSett
   if (!stored) return defaultSyncCheck(defaults);
   const parsed = syncCheckSchema.safeParse(JSON.parse(stored.value));
   return parsed.success ? parsed.data : defaultSyncCheck(defaults);
+}
+
+function labelIcons(): Record<string, string> {
+  const stored = setting("conversationLabelIcons");
+  if (!stored) return { ...DEFAULT_CONVERSATION_LABEL_ICONS };
+  const parsed = conversationLabelIconsSchema.safeParse(JSON.parse(stored.value));
+  return parsed.success ? parsed.data : { ...DEFAULT_CONVERSATION_LABEL_ICONS };
 }
 
 function validateSyncCheck(input: SyncCheckSettings): SyncCheckSettings {
@@ -158,6 +165,7 @@ export interface SettingsInput {
   projects?: { homePath?: string; rootPath?: string; personalRootPath?: string; workRootPath?: string };
   resources?: ResourcePaths;
   conversationLabels?: string[];
+  conversationLabelIcons?: Record<string, string>;
   conversationHistoryDays?: number;
   conversationRetentionDays?: number;
   autoCompactThreshold?: number | null;
@@ -169,6 +177,8 @@ export interface SettingsInput {
   digestAttachments?: boolean;
   /** Signed in on another node, see your unshared projects there through a live link home. */
   showProjectsOnOtherNodes?: boolean;
+  /** Start each new conversation in a Joint Bob worktree of its own. */
+  newConversationWorktree?: boolean;
   syncCheck?: SyncCheckSettings;
   /** Which other nodes may open a terminal on this node through a signed peer socket. */
   remoteTerminal?: RemoteTerminalSettings;
@@ -185,6 +195,7 @@ export interface SettingsResponse {
   projects: { homePath: string };
   resources: ResourcePaths;
   conversationLabels: string[];
+  conversationLabelIcons: Record<string, string>;
   conversationHistoryDays: number;
   conversationRetentionDays: number;
   autoCompactThreshold: number | null;
@@ -192,6 +203,7 @@ export interface SettingsResponse {
   subprocessMaxLifetimeMinutes: number;
   digestAttachments: boolean;
   showProjectsOnOtherNodes: boolean;
+  newConversationWorktree: boolean;
   syncCheck: SyncCheckSettings;
   remoteTerminal: RemoteTerminalSettings;
   conversationCommands: ConversationCommandsSettings;
@@ -430,6 +442,7 @@ export function nodeSettings(): SettingsResponse {
     projects: { homePath: value("projects.homePath", defaultManagedHome()) },
     resources: readResourcePaths("resources."),
     conversationLabels: conversationLabelsSchema.parse(JSON.parse(value("conversationLabels", JSON.stringify(DEFAULT_CONVERSATION_LABELS)))),
+    conversationLabelIcons: labelIcons(),
     conversationHistoryDays: Number(value("conversationHistoryDays", "30")),
     conversationRetentionDays: Number(value("conversationRetentionDays", "40")),
     autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
@@ -437,6 +450,7 @@ export function nodeSettings(): SettingsResponse {
     subprocessMaxLifetimeMinutes: Number(value("subprocessMaxLifetimeMinutes", String(DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES))),
     digestAttachments: value("digestAttachments", "false") === "true",
     showProjectsOnOtherNodes: value("showProjectsOnOtherNodes", "true") === "true",
+    newConversationWorktree: value("newConversationWorktree", "false") === "true",
     syncCheck: syncCheck(conversationDefaults),
     remoteTerminal: remoteTerminalSettings(),
     conversationCommands: conversationCommands(),
@@ -530,6 +544,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const homePath = input.projects?.homePath ?? previous.projects.homePath;
   const resources = input.resources ? normalizeResourcePaths(input.resources) : previous.resources;
   const conversationLabels = conversationLabelsSchema.parse(input.conversationLabels ?? previous.conversationLabels);
+  const conversationLabelIcons = iconsForLabels(conversationLabels, conversationLabelIconsSchema.parse(input.conversationLabelIcons ?? previous.conversationLabelIcons));
   const conversationHistoryDays = input.conversationHistoryDays ?? previous.conversationHistoryDays;
   const conversationRetentionDays = input.conversationRetentionDays ?? previous.conversationRetentionDays;
   if (!Number.isInteger(conversationRetentionDays) || conversationRetentionDays < 1 || conversationRetentionDays > 3650) throw new Error("Conversation retention must be between 1 and 3650 days");
@@ -539,6 +554,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   if (!validSubprocessLifetime(subprocessMaxLifetimeMinutes)) throw new Error("Subprocess maximum lifetime must be an integer from 1 to 10080 minutes");
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
   const showProjectsOnOtherNodes = input.showProjectsOnOtherNodes ?? previous.showProjectsOnOtherNodes;
+  const newConversationWorktree = input.newConversationWorktree ?? previous.newConversationWorktree;
   const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
   const conversationCommands = input.conversationCommands ?? previous.conversationCommands;
@@ -554,6 +570,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.homePath", path.resolve(homePath));
     save(db, "conversationLabels", JSON.stringify(conversationLabels));
+    save(db, "conversationLabelIcons", JSON.stringify(conversationLabelIcons));
     save(db, "conversationHistoryDays", String(conversationHistoryDays));
     save(db, "conversationRetentionDays", String(conversationRetentionDays));
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));
@@ -561,6 +578,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "subprocessMaxLifetimeMinutes", String(subprocessMaxLifetimeMinutes));
     save(db, "digestAttachments", String(digestAttachments));
     save(db, "showProjectsOnOtherNodes", String(showProjectsOnOtherNodes));
+    save(db, "newConversationWorktree", String(newConversationWorktree));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
     save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));

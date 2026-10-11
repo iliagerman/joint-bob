@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { diff3Merge } from "node-diff3";
 import { decide, type Decision, type FileState } from "./ticket-merge.js";
-import { copyAllowed, TICKET_BASELINE_DIR, TICKET_MERGE_DIR } from "./task-workspaces.js";
+import { copyAllowed, listTreeEntries, TICKET_BASELINE_DIR, TICKET_MERGE_DIR } from "./task-workspaces.js";
 
 /** Maximum size of a file that participates in marker-based text merging. */
 export const TEXT_MERGE_LIMIT = 1024 * 1024;
@@ -75,22 +75,21 @@ export async function scanTree(root: string, skipTopLevel: string[] = [], allowe
   const skip = new Set(skipTopLevel);
   const states = new Map<string, FileState>();
   const rootPath = path.resolve(root);
-  let entries: import("node:fs").Dirent[];
-  try { entries = await fs.readdir(root, { recursive: true, withFileTypes: true }); }
+  let entries: Array<{ path: string; symlink: boolean }>;
+  try { entries = await listTreeEntries(root); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return states;
     throw error;
   }
   for (const entry of entries) {
-    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-    const top = entry.parentPath.startsWith(root) ? path.relative(root, entry.parentPath).split(path.sep)[0] : "";
+    const top = path.relative(root, entry.path).split(path.sep)[0];
     if (top && skip.has(top)) continue;
-    const filePath = path.join(entry.parentPath, entry.name);
+    const filePath = entry.path;
     // The same exclusion policy that governed the copy governs the merge back:
     // agent-created secrets, dependency dirs and builds never round-trip.
     if (!allowed(rootPath, filePath)) continue;
     const relative = path.relative(root, filePath).split(path.sep).join("/");
-    if (entry.isSymbolicLink()) {
+    if (entry.symlink) {
       states.set(relative, { path: relative, sha256: "", mode: 0, symlink: true });
       continue;
     }

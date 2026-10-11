@@ -86,6 +86,34 @@ async function join(manager: SeededNode, managerSession: SignedIn, member: Seede
   }
 });
 
+test("original owner can close cluster after transferring management", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "manager-api-close-"));
+  const [envA, envB] = await Promise.all(["a", "b"].map((name) => seedDevEnvironment(path.join(root, name), 1)));
+  const [a, b] = [envA.nodes[0], envB.nodes[0]];
+  const children: import("node:child_process").ChildProcess[] = [];
+  try {
+    children.push(await startDevNode(envA, a), await startDevNode(envB, b));
+    const [sa, sb] = await Promise.all([signIn(envA, a), signIn(envB, b)]);
+    const created = await api<{ snapshot: { body: { clusterId: string } } }>(a, sa, "POST", "/clusters", { name: "Owner closes" });
+    const id = created.body.snapshot.body.clusterId;
+    await join(a, sa, b, sb, id);
+    const transferId = randomUUID();
+    assert.equal((await api(a, sa, "POST", `/clusters/${id}/manager-transfer`, { successorNodeId: b.nodeId, expectedEpoch: 1, transferId })).status, 202);
+    await poll("successor offer", () => api(b, sb, "GET", `/clusters/${id}/manager-transfer/${transferId}`), (value) => value.status === 200);
+    assert.equal((await api(b, sb, "POST", `/clusters/${id}/manager-transfer/${transferId}/accept`, {})).status, 202);
+    await poll("manager transfer", async () => Promise.all([status(a, sa), status(b, sb)]), (values) => values.every((value) => cluster(value, id)?.managerNodeId === b.nodeId));
+    assert.equal((await api(b, sb, "POST", `/clusters/${id}/close`, { expectedEpoch: 2 })).status, 403);
+    const closed = await api<{ snapshot: { body: { closed: boolean; members: unknown[] } } }>(a, sa, "POST", `/clusters/${id}/close`, { expectedEpoch: 2 });
+    assert.equal(closed.status, 200, JSON.stringify(closed.body));
+    assert.equal(closed.body.snapshot.body.closed, true);
+    assert.deepEqual(closed.body.snapshot.body.members, []);
+    await poll("both nodes leave", async () => Promise.all([status(a, sa), status(b, sb)]), (values) => values.every((value) => !cluster(value, id)));
+  } finally {
+    await Promise.all(children.map(stopDevNode));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("offline old-manager certificate relay advances lagging member and unauthenticated bootstrap rolls back", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "manager-api-three-"));
   const [envA, envB, envC] = await Promise.all(["a", "b", "c"].map((name) => seedDevEnvironment(path.join(root, name), 1)));

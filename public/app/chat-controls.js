@@ -127,13 +127,13 @@ export function renderChatSessionControls() {
   elements.openTerminalButton.disabled = !state.activeProjectId || !terminalNode?.online || !terminalNode.mapped || terminalRefused || conversationIsReadOnly();
   elements.openTerminalButton.title = localTerminalOff
     ? "Terminal is off on this node. Turn it on in Settings → Node."
-    : terminalRefused
+    : "Terminal — " + (terminalRefused
     ? `${terminalNode.name} does not allow terminal access from this node`
     : terminalNode
     ? activeTicket
       ? `Open this ticket's folder in Terminal on ${terminalNode.name}`
       : `Open the project folder in Terminal on ${terminalNode.name}`
-    : "Select an execution node first";
+    : "Select an execution node first");
   renderTaskBacklink();
 }
 

@@ -22,6 +22,8 @@ function unavailableProjectStatus(message = "No Syncthing folder is configured")
 
 interface ProjectListOptions {
   includeSyncStatus?: boolean;
+  /** Usage totals cost a ledger query per project; callers that only need the projects leave them out. */
+  includeUsage?: boolean;
   /** When set, filter to projects shared with clusters this node belongs to. */
   filterForHomeNodeId?: string | null;
 }
@@ -31,7 +33,7 @@ export async function projectsWithSharedNames(includeSyncStatusOrOptions?: boole
   const options = typeof includeSyncStatusOrOptions === "boolean"
     ? { includeSyncStatus: includeSyncStatusOrOptions }
     : includeSyncStatusOrOptions ?? {};
-  const { includeSyncStatus = true, filterForHomeNodeId } = options;
+  const { includeSyncStatus = true, includeUsage = true, filterForHomeNodeId } = options;
   const [projects, overrides, locks, local] = await Promise.all([listProjects(), projectNameOverrides(), projectLocks(), getClusterNode()]);
   const statuses = includeSyncStatus
     ? await syncthingFolderStatuses(projects.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []))
@@ -56,7 +58,7 @@ export async function projectsWithSharedNames(includeSyncStatusOrOptions?: boole
       syncStatus: project.syncFolderId
         ? statuses[project.syncFolderId] ?? unavailableProjectStatus("Loading sync status")
         : unavailableProjectStatus(),
-      usage: projectUsage(project.id),
+      ...(includeUsage ? { usage: projectUsage(project.id) } : {}),
       ...(lock ? { lock, lockedElsewhere: lock.nodeId !== local.id } : {}),
     };
   });

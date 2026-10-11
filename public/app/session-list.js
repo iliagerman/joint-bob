@@ -13,11 +13,13 @@ import { syncRecentSessionActivity } from "./recents.js";
 import { openListedSession, reviewableSessions } from "./reviews.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { openSecretScope } from "./secrets.js";
+import { labelIcon, labelOptionText } from "./classification.js";
 import { openConversationClassificationDialog, openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
 import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
-import { renderWorktreeStrip, worktreeBadge } from "./worktrees.js";
+import { loadWorktrees, otherWorktreesSection, worktreeBadge, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
 import { confirmAction, enableNotifications, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
+import { chooseTransferDestination } from "./session-transfer.js";
 import { state } from "./state.js";
 import { activeChatSession } from "./terminal.js";
 import { usageBadge } from "./usage-format.js";
@@ -32,7 +34,7 @@ function renderClassificationFilter() {
   for (const value of selected) if (value.startsWith("label:")) labels.add(value.slice(6));
   classificationFilter.setOptions([
     { value: "unclassified", label: "Unclassified" },
-    ...[...labels].sort((left, right) => left.localeCompare(right)).map((label) => ({ value: `label:${label}`, label })),
+    ...[...labels].sort((left, right) => left.localeCompare(right)).map((label) => ({ value: `label:${label}`, label: labelOptionText(label, state.conversationLabelIcons) })),
   ]);
   classificationFilter.setValues(selected);
 }
@@ -49,10 +51,11 @@ function syncChatFilterChips() {
 
 export function renderSessions() {
   syncRecentSessionActivity();
-  renderWorktreeStrip();
   keepListScroll(elements.sessionList);
   // A background refresh must not leave a menu floating over rows that just moved.
   queueMicrotask(refreshRowMenuAnchor);
+  const otherWorktrees = elements.sessionList.querySelector(".other-worktrees");
+  const otherWorktreesOpen = otherWorktrees?.dataset.projectId === state.activeProjectId && otherWorktrees.open;
   elements.sessionList.replaceChildren();
   renderChatSessionControls();
   syncChatDoneButton();
@@ -69,139 +72,195 @@ export function renderSessions() {
     button.disabled = newSessionDisabled || !state.harnesses.find(({ id }) => id === button.dataset.harnessId).ready;
   }
   renderClassificationFilter();
+  elements.showDoneConversations.checked = state.showDoneConversations;
+  elements.showScheduledConversations.checked = state.showScheduledConversations;
   updateChatFilterCounts();
   elements.markAllReviewedButton.disabled = !project || !reviewableSessions().length;
 
   if (!project || state.sessionsLoading) return;
   const sessions = filteredSessions();
-  if (state.sessions.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = "No conversations yet. Start a new conversation above.";
-    elements.sessionList.append(empty);
-    return;
-  }
-  if (sessions.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = state.classificationFilters.size || state.sessionClusterFilters.size || normalizedQuery(elements.sessionSearchInput.value || "")
-      ? "No matching conversations."
-      : `No ${[...state.chatFilters].map((filter) => chatFilterNames[filter]).join(" or ")} conversations.`;
-    elements.sessionList.append(empty);
-    return;
-  }
-
+  const narrowed = Boolean(state.classificationFilters.size || state.sessionClusterFilters.size || normalizedQuery(elements.sessionSearchInput.value || ""));
   const sessionIsActive = (candidate) => state.activeSessionId ? candidate.id === state.activeSessionId : candidate.path === state.activeSessionPath;
   const rows = nestedSessionRows(sessions, (parent, childSessions) => state.expandedSessionParents.has(parent.path) || childSessions.some(sessionIsActive));
-  for (const { session, depth, childCount } of rows) {
-    const sessionPinned = isSessionPinned(session);
-    const ticketTask = sessionTicketTask(session);
-    const row = document.createElement("div");
-    const sessionActive = sessionIsActive(session);
-    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}${session.doneAt ? " done" : ""}${ticketTask ? " has-ticket" : ""}${session.worktree ? " has-worktree" : ""}${childCount ? " has-children" : ""}`;
-    row.dataset.sessionDepth = String(depth);
-    // The row menu is re-pointed at this row after a refresh replaces it.
-    row.dataset.sessionPath = session.path;
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `session-card${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}`;
-    if (sessionActive) button.setAttribute("aria-current", "true");
-    if (session.color) button.dataset.color = session.color;
-    if (session.worktree) button.dataset.worktreeColor = session.worktree.color;
-    const sessionName = document.createElement("strong");
-    sessionName.textContent = shortSessionTitle(session);
-    const meta = document.createElement("span");
-    meta.textContent = formatDate(session.updatedAt || session.createdAt);
-    const agentId = sessionAgentId(session);
-    const agent = document.createElement("em");
-    agent.className = "session-agent-label";
-    agent.dataset.testid = "session-agent-label";
-    const agentMark = agentIcon(agentId);
-    agentMark.dataset.testid = "session-agent-icon";
-    agent.setAttribute("aria-label", session.agentLabel);
-    agent.append(agentMark);
-    meta.append(" ", agent);
-    if (session.classification) {
-      const classification = document.createElement("span");
-      classification.className = "session-classification";
-      classification.dataset.testid = "session-classification";
-      classification.textContent = session.classification;
-      sessionName.append(classification);
-    }
-    button.append(sessionName, meta, usageBadge(session.usage, "session-usage-cost"));
-    const displayState = sessionDisplayState(session);
-    const badge = document.createElement("em");
-    badge.className = `chat-badge chat-badge-${displayState}`;
-    const dot = document.createElement("i");
-    dot.className = "chat-status-dot";
-    dot.setAttribute("aria-hidden", "true");
-    const statusLabel = document.createElement("b");
-    statusLabel.textContent = displayState === "active" ? "Running" : displayState === "background" ? "Background tasks" : displayState === "review" ? "Needs review" : session.draft ? "Ready" : "Reviewed";
-    badge.append(dot, statusLabel);
-    meta.append(" ", badge);
-    if (session.doneAt) {
-      const doneBadge = document.createElement("em");
-      doneBadge.className = "session-done-badge";
-      doneBadge.dataset.testid = "session-done-badge";
-      doneBadge.title = `Marked done ${formatDate(session.doneAt)}`;
-      doneBadge.textContent = "Done";
-      meta.append(" ", doneBadge);
-    }
-    if (ticketTask) meta.append(" ", ticketBadge(ticketTask));
-    if (session.worktree) meta.append(" ", worktreeBadge(session.worktree));
-    button.addEventListener("click", () => openListedSession(session));
-
-    const menuButton = document.createElement("button");
-    menuButton.type = "button";
-    menuButton.className = "ghost icon-button row-action-button row-menu-button";
-    menuButton.setAttribute("aria-label", `Actions for ${shortSessionTitle(session)}`);
-    menuButton.setAttribute("aria-haspopup", "true");
-    menuButton.title = "Conversation actions";
-    menuButton.textContent = "\u22EE";
-    menuButton.dataset.testid = "session-menu-button";
-    menuButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openRowMenu(menuButton, sessionMenuItems(session, sessionActive), `[data-session-path="${CSS.escape(session.path)}"] [data-testid="session-menu-button"]`);
-    });
-
-    const pinToggle = sessionPinToggle(session);
-
-    let childToggle = null;
-    if (childCount) {
-      const expanded = state.expandedSessionParents.has(session.path);
-      childToggle = document.createElement("button");
-      childToggle.type = "button";
-      childToggle.className = "ghost icon-button row-action-button session-children-toggle";
-      childToggle.dataset.testid = "session-children-toggle";
-      childToggle.setAttribute("aria-expanded", String(expanded));
-      childToggle.setAttribute("aria-label", `${expanded ? "Hide" : "Show"} ${childCount} sub-agent conversation${childCount === 1 ? "" : "s"}`);
-      childToggle.textContent = `${expanded ? "▾" : "▸"} ${childCount}`;
-      childToggle.addEventListener("click", (event) => {
-        event.stopPropagation();
-        if (expanded) state.expandedSessionParents.delete(session.path);
-        else state.expandedSessionParents.add(session.path);
-        renderSessions();
-      });
-    }
-
-    // Sub-agent task lines below the card make the row taller than the card, so the
-    // action lanes hang off a wrapper that ends where the card does — otherwise they
-    // centre on the whole row and slide out past the card's border.
-    const rowMain = document.createElement("div");
-    rowMain.className = "list-row-main";
-    if (ticketTask) rowMain.append(button, ticketRowButton(ticketTask), pinToggle, menuButton);
-    else rowMain.append(button, pinToggle, menuButton);
-    if (childToggle) rowMain.append(childToggle);
-    row.append(rowMain);
-    if (session.agentRuns?.length) {
-      const tasks = session.agentRuns.flatMap((run) => run.tasks);
-      const collapsed = !state.expandedAgentRuns.has(session.path);
-      row.append(agentRunToggle(session, tasks, collapsed));
-      if (!collapsed) row.append(agentRunList(tasks));
-    }
-    elements.sessionList.append(row);
+  // Sessions can arrive before the worktree listing. Their badges already carry
+  // enough metadata to group them instead of misfiling them in the project folder.
+  const worktrees = new Map(state.worktrees.map((worktree) => [worktree.id, worktree]));
+  for (const session of state.sessions) {
+    if (session.worktree && !worktrees.has(session.worktree.id)) worktrees.set(session.worktree.id, session.worktree);
   }
+  // A sub-agent conversation stays with its root's group, whatever folder it ran in.
+  const worktreeRows = new Map();
+  const projectRows = [];
+  let owner = null;
+  for (const row of rows) {
+    if (row.depth === 0) owner = worktrees.has(row.session.worktree?.id) ? row.session.worktree.id : null;
+    if (!owner) projectRows.push(row);
+    else if (worktreeRows.has(owner)) worktreeRows.get(owner).push(row);
+    else worktreeRows.set(owner, [row]);
+  }
+
+  const list = elements.sessionList;
+  list.append(worktreesHeading());
+  const emptyWorktrees = [];
+  for (const worktree of worktrees.values()) {
+    const group = worktreeRows.get(worktree.id) || [];
+    if (!group.length) {
+      // The fold exists to reach an empty worktree's actions; one whose files are not here has none.
+      if (!narrowed && !state.chatFilters.size && !worktree.syncing) emptyWorktrees.push(worktree);
+      continue;
+    }
+    list.append(worktreeSectionHeader(worktree, group.filter((row) => row.depth === 0).length));
+    if (state.collapsedWorktreeIds.has(worktree.id)) continue;
+    for (const row of group) list.append(sessionRow(row, sessionIsActive(row.session)));
+  }
+  if (emptyWorktrees.length) list.append(otherWorktreesSection(emptyWorktrees, otherWorktreesOpen));
+  if (state.sessions.length === 0 || sessions.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = state.sessions.length === 0
+      ? "No conversations yet. Start a new conversation above."
+      : narrowed
+        ? "No matching conversations."
+        : `No ${[...state.chatFilters].map((filter) => chatFilterNames[filter]).join(" or ")} conversations.`;
+    list.append(empty);
+    return;
+  }
+  if (worktrees.size && projectRows.length) {
+    const heading = document.createElement("div");
+    heading.className = "worktree-subsection-title";
+    heading.dataset.testid = "project-folder-subsection";
+    heading.textContent = "Project folder";
+    list.append(heading);
+  }
+  for (const row of projectRows) list.append(sessionRow(row, sessionIsActive(row.session)));
+}
+
+function sessionCard(session, sessionActive, sessionPinned, ticketTask) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `session-card${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}`;
+  if (sessionActive) button.setAttribute("aria-current", "true");
+  if (session.color) button.dataset.color = session.color;
+  if (session.worktree) button.dataset.worktreeColor = session.worktree.color;
+  const sessionName = document.createElement("strong");
+  const title = shortSessionTitle(session);
+  sessionName.textContent = title;
+  const meta = document.createElement("span");
+  meta.textContent = formatDate(session.updatedAt || session.createdAt);
+  const agentId = sessionAgentId(session);
+  const agent = document.createElement("em");
+  agent.className = "session-agent-label";
+  agent.dataset.testid = "session-agent-label";
+  const agentMark = agentIcon(agentId);
+  agentMark.dataset.testid = "session-agent-icon";
+  agent.setAttribute("aria-label", session.agentLabel);
+  agent.append(agentMark);
+  meta.append(" ", agent);
+  if (session.classification) {
+    const classification = document.createElement("span");
+    classification.className = "session-classification";
+    classification.dataset.testid = "session-classification";
+    const icon = labelIcon(session.classification, state.conversationLabelIcons);
+    // An icon replaces the name visually; the name stays for assistive tech and hover.
+    classification.textContent = icon || session.classification;
+    if (icon) {
+      classification.classList.add("session-classification-icon");
+      classification.title = session.classification;
+      classification.setAttribute("role", "img");
+      classification.setAttribute("aria-label", session.classification);
+    }
+    // The last word and its label wrap as one piece, so a full-width title never leaves the label alone on a row.
+    const cut = title.lastIndexOf(" ") + 1;
+    const tail = document.createElement("span");
+    tail.className = "session-title-tail";
+    tail.append(title.slice(cut), classification);
+    sessionName.replaceChildren(title.slice(0, cut), tail);
+  }
+  button.append(sessionName, meta, usageBadge(session.usage, "session-usage-cost"));
+  const displayState = sessionDisplayState(session);
+  const badge = document.createElement("em");
+  badge.className = `chat-badge chat-badge-${displayState}`;
+  const dot = document.createElement("i");
+  dot.className = "chat-status-dot";
+  dot.setAttribute("aria-hidden", "true");
+  const statusLabel = document.createElement("b");
+  statusLabel.textContent = displayState === "active" ? "Running" : displayState === "background" ? "Background tasks" : displayState === "review" ? "Needs review" : session.draft ? "Ready" : "Reviewed";
+  badge.append(dot, statusLabel);
+  meta.append(" ", badge);
+  if (session.doneAt) {
+    const doneBadge = document.createElement("em");
+    doneBadge.className = "session-done-badge";
+    doneBadge.dataset.testid = "session-done-badge";
+    doneBadge.title = `Marked done ${formatDate(session.doneAt)}`;
+    doneBadge.textContent = "Done";
+    meta.append(" ", doneBadge);
+  }
+  if (ticketTask) meta.append(" ", ticketBadge(ticketTask));
+  if (session.worktree) meta.append(" ", worktreeBadge(session.worktree));
+  button.addEventListener("click", () => openListedSession(session));
+  return button;
+}
+
+function sessionRow({ session, depth, childCount }, sessionActive) {
+  const sessionPinned = isSessionPinned(session);
+  const ticketTask = sessionTicketTask(session);
+  const row = document.createElement("div");
+  row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}${session.doneAt ? " done" : ""}${ticketTask ? " has-ticket" : ""}${session.worktree ? " has-worktree" : ""}${childCount ? " has-children" : ""}`;
+  row.dataset.sessionDepth = String(depth);
+  // The row menu is re-pointed at this row after a refresh replaces it.
+  row.dataset.sessionPath = session.path;
+
+  const button = sessionCard(session, sessionActive, sessionPinned, ticketTask);
+
+  const menuButton = document.createElement("button");
+  menuButton.type = "button";
+  menuButton.className = "ghost icon-button row-action-button row-menu-button";
+  menuButton.setAttribute("aria-label", `Actions for ${shortSessionTitle(session)}`);
+  menuButton.setAttribute("aria-haspopup", "true");
+  menuButton.title = "Conversation actions";
+  menuButton.textContent = "\u22EE";
+  menuButton.dataset.testid = "session-menu-button";
+  menuButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openRowMenu(menuButton, sessionMenuItems(session, sessionActive), `[data-session-path="${CSS.escape(session.path)}"] [data-testid="session-menu-button"]`);
+  });
+
+  const pinToggle = sessionPinToggle(session);
+
+  let childToggle = null;
+  if (childCount) {
+    const expanded = state.expandedSessionParents.has(session.path);
+    childToggle = document.createElement("button");
+    childToggle.type = "button";
+    childToggle.className = "ghost icon-button row-action-button session-children-toggle";
+    childToggle.dataset.testid = "session-children-toggle";
+    childToggle.setAttribute("aria-expanded", String(expanded));
+    childToggle.setAttribute("aria-label", `${expanded ? "Hide" : "Show"} ${childCount} sub-agent conversation${childCount === 1 ? "" : "s"}`);
+    childToggle.textContent = `${expanded ? "▾" : "▸"} ${childCount}`;
+    childToggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (expanded) state.expandedSessionParents.delete(session.path);
+      else state.expandedSessionParents.add(session.path);
+      renderSessions();
+    });
+  }
+
+  // Sub-agent task lines below the card make the row taller than the card, so the
+  // action lanes hang off a wrapper that ends where the card does — otherwise they
+  // centre on the whole row and slide out past the card's border.
+  const rowMain = document.createElement("div");
+  rowMain.className = "list-row-main";
+  if (ticketTask) rowMain.append(button, ticketRowButton(ticketTask), pinToggle, menuButton);
+  else rowMain.append(button, pinToggle, menuButton);
+  if (childToggle) rowMain.append(childToggle);
+  row.append(rowMain);
+  if (session.agentRuns?.length) {
+    const tasks = session.agentRuns.flatMap((run) => run.tasks);
+    const collapsed = !state.expandedAgentRuns.has(session.path);
+    row.append(agentRunToggle(session, tasks, collapsed));
+    if (!collapsed) row.append(agentRunList(tasks));
+  }
+  return row;
 }
 
 /** A conversation fanning out to several sub-agents buries the rows under it, so the
@@ -302,6 +361,13 @@ function sessionMenuItems(session, sessionActive) {
       onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
     },
     {
+      label: "Move or copy to project…",
+      icon: "copy",
+      testid: "session-transfer-button",
+      title: "Move this conversation to another project, or copy it there",
+      onSelect: () => transferSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
+    },
+    {
       label: session.doneAt ? "Mark not done" : "Mark done",
       icon: "check",
       testid: "session-done-button",
@@ -386,10 +452,12 @@ elements.chatDoneButton.addEventListener("click", () => {
 /** The one label has to say what the click will do, on whichever conversation is open. */
 function syncChatDoneButton() {
   const session = activeChatSession();
-  elements.chatDoneButton.textContent = session?.doneAt ? "Mark not done" : "Mark done";
+  const label = session?.doneAt ? "Mark not done" : "Mark done";
+  elements.chatDoneButton.querySelector(".chat-action-label").textContent = label;
+  elements.chatDoneButton.setAttribute("aria-label", label);
   elements.chatDoneButton.title = session?.doneAt
-    ? "Put it back in the active list"
-    : "Hide it from the list until you ask for done conversations";
+    ? `${label} — put it back in the active list`
+    : `${label} — hide it from the list until you ask for done conversations`;
   elements.chatDoneButton.disabled = !session;
 }
 
@@ -424,16 +492,40 @@ async function forkSessionFromRow(session) {
   toast("Conversation forked");
 }
 
+async function transferSessionFromRow(session, sessionActive) {
+  const choice = await chooseTransferDestination(session, state.activeProjectId);
+  if (!choice) return;
+  const destination = state.projects.find((project) => project.id === choice.projectId);
+  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/transfer`, {
+    method: "POST",
+    body: JSON.stringify({ engine: sessionEngine(session), sessionId: session.id, destinationProjectId: choice.projectId, mode: choice.mode }),
+  });
+  if (choice.mode === "move" && sessionActive) clearActiveSession();
+  await refreshSessionsQuietly();
+  toast(`Conversation ${choice.mode === "move" ? "moved" : "copied"} to ${destination?.name ?? "the project"}`);
+}
+
 /** Closing a conversation out is list housekeeping, so it works on read-only rows too. */
 async function toggleSessionDone(session) {
   const done = !session.doneAt;
-  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/done`, {
+  const projectId = state.activeProjectId;
+  const result = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/done`, {
     method: "PUT",
     body: JSON.stringify({ sessionId: session.conversationId || session.id, engine: sessionEngine(session), done }),
   });
   session.doneAt = done ? new Date().toISOString() : undefined;
+  if (state.activeProjectId === projectId) {
+    // A list refresh during cleanup may have replaced the row's session object.
+    for (const current of state.sessions) {
+      if ((current.conversationId || current.id) === (session.conversationId || session.id)) current.doneAt = session.doneAt;
+    }
+    state.worktreeCleanupReasons = result.retainedWorktrees || {};
+  }
+  const deleted = result.deletedWorktreeIds?.length;
+  if (deleted && state.activeProjectId === projectId) await loadWorktrees();
   renderSessions();
-  toast(done ? "Conversation marked done" : "Conversation reopened");
+  const retained = result.retainedWorktrees?.[session.worktree?.id];
+  toast(retained || (deleted ? "Conversation marked done; empty worktrees deleted" : done ? "Conversation marked done" : "Conversation reopened"));
 }
 
 async function toggleSessionReviewNotifications(session) {
@@ -448,6 +540,19 @@ async function toggleSessionReviewNotifications(session) {
   toast(enabled ? "Review notifications enabled" : "Review notifications disabled");
 }
 
+function clearActiveSession() {
+  state.activeTaskId = null;
+  closeSocket();
+  clearChat();
+  clearAttachments();
+  state.activeSessionPath = null;
+  state.activeSessionId = null;
+  if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: null, activeSessionId: null });
+  elements.sessionTitle.textContent = "Select a conversation";
+  setComposerEnabled(false);
+  setMobileView("sessions");
+}
+
 async function removeSessionFromRow(session, sessionActive) {
   const confirmed = await confirmAction({
     eyebrow: "Remove conversation",
@@ -459,18 +564,7 @@ async function removeSessionFromRow(session, sessionActive) {
   if (!confirmed) return;
   const taskQuery = session.taskId ? `&taskId=${encodeURIComponent(session.taskId)}` : "";
   await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionId=${encodeURIComponent(session.id)}&engine=${sessionEngine(session)}${taskQuery}`, { method: "DELETE" });
-  if (sessionActive) {
-    state.activeTaskId = null;
-    closeSocket();
-    clearChat();
-    clearAttachments();
-    state.activeSessionPath = null;
-    state.activeSessionId = null;
-    if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: null, activeSessionId: null });
-    elements.sessionTitle.textContent = "Select a conversation";
-    setComposerEnabled(false);
-    setMobileView("sessions");
-  }
+  if (sessionActive) clearActiveSession();
   await refreshSessionsQuietly();
 }
 for (const button of elements.chatFilters.querySelectorAll("button[data-filter]")) {
@@ -485,9 +579,22 @@ for (const button of elements.chatFilters.querySelectorAll("button[data-filter]"
 }
 syncChatFilterChips();
 elements.sessionSearchInput.addEventListener("input", () => renderSessions());
+function saveProjectVisibility() {
+  if (!state.activeProjectId) return;
+  state.projectConversationVisibility = {
+    ...state.projectConversationVisibility,
+    [state.activeProjectId]: { done: state.showDoneConversations, scheduled: state.showScheduledConversations },
+  };
+  if (state.preferencesLoaded) savePreferencesInBackground({ projectConversationVisibility: state.projectConversationVisibility });
+  renderSessions();
+}
 elements.showDoneConversations.addEventListener("change", () => {
   state.showDoneConversations = elements.showDoneConversations.checked;
-  renderSessions();
+  saveProjectVisibility();
+});
+elements.showScheduledConversations.addEventListener("change", () => {
+  state.showScheduledConversations = elements.showScheduledConversations.checked;
+  saveProjectVisibility();
 });
 classificationFilter.onChange((values) => {
   state.classificationFilters = values;

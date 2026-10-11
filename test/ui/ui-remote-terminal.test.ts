@@ -41,11 +41,11 @@ test("the terminal button follows whether the execution node allows terminal acc
 
   await selectNode(PEERS[0].id);
   assert.equal(await button.isDisabled(), true, "a node that refuses this node's terminal disables the button");
-  assert.equal(await button.getAttribute("title"), "Locked Mac does not allow terminal access from this node");
+  assert.equal(await button.getAttribute("title"), "Terminal — Locked Mac does not allow terminal access from this node");
 
   await selectNode(PEERS[1].id);
   assert.equal(await button.isDisabled(), false);
-  assert.equal(await button.getAttribute("title"), "Open the project folder in Terminal on Open Twin");
+  assert.equal(await button.getAttribute("title"), "Terminal — Open the project folder in Terminal on Open Twin");
 
   await selectNode(node.nodeId);
   assert.equal(await button.isDisabled(), false, "this node's own terminal stays available");

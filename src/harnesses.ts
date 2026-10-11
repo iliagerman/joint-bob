@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { isInternalSession } from "./internal-sessions.js";
 import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverrides, sessionTitleOverrides } from "./names.js";
-import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
+import { conversationDraftPath, listConversationRecords, parseConversationDraftPath } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
 import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
 import type { HarnessModel, HarnessRuntime } from "./harnesses/runtime.js";
@@ -43,9 +43,14 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
     return groups.flat();
   }
 
-  async find(project: HarnessProject, harnessId: HarnessId, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
+  async find(requested: HarnessProject, harnessId: HarnessId, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
     const adapter = this.adapters.find((candidate) => candidate.id === harnessId);
     if (!adapter) throw new Error(`No harness registered for conversation engine: ${harnessId}`);
+    // A transcript holding only the automatic start command is hidden from lists. It is still
+    // the conversation being opened, or its socket could never reconnect before the first prompt.
+    const project = { ...requested, includeUnstarted: true };
+    // A node without the transcript lists the conversation as a draft and names it that way.
+    if (parseConversationDraftPath(sessionPath)) return this.recoverById(adapter, project, sessionId);
     const prefix = `${harnessId}:`;
     let transcriptPath = path.resolve(sessionPath.startsWith(prefix) ? sessionPath.slice(prefix.length) : sessionPath);
     if (!adapter.paths.ownsTranscript(transcriptPath)) {
@@ -233,7 +238,12 @@ export function orderSessionFamilies(sessions: SessionSummary[], rootLimit = Inf
     ordered.push(session);
     for (const child of children.get(session.path) ?? []) append(child);
   };
-  for (const root of roots.slice(0, rootLimit)) append(root);
+  // Scheduled runs stay hidden until the reader asks for them, so they draw on their own
+  // allowance; an hourly task would otherwise push every other conversation out of the list.
+  const kept = { ordinary: 0, scheduled: 0 };
+  for (const root of roots) {
+    if (kept[root.cronTaskId ? "scheduled" : "ordinary"]++ < rootLimit) append(root);
+  }
   return ordered;
 }
 
@@ -305,6 +315,8 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
     if (record?.taskId && !session.taskId) session.taskId = record.taskId;
     if (record?.cronTaskId) session.cronTaskId = record.cronTaskId;
+    if (record?.silentReviewFrom) session.silentReviewFrom = record.silentReviewFrom;
+    if (record?.silentReviewUntil) session.silentReviewUntil = record.silentReviewUntil;
   }
   // A harness can intentionally omit an unstarted transcript. Its record must
   // not turn that existing transcript back into a visible draft.
@@ -326,6 +338,8 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       draft: true,
       ...(record.taskId ? { taskId: record.taskId } : {}),
       ...(record.cronTaskId ? { cronTaskId: record.cronTaskId } : {}),
+      ...(record.silentReviewFrom ? { silentReviewFrom: record.silentReviewFrom } : {}),
+      ...(record.silentReviewUntil ? { silentReviewUntil: record.silentReviewUntil } : {}),
     });
   }
   const seen = new Set<string>();
@@ -364,9 +378,6 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     return {
       ...face,
       conversationId,
-      usage: face.readOnly
-        ? usageTotals({ projectIds: [project.id], projectId: project.id, sessionId: face.id })
-        : conversationUsage(project.id, conversationId),
       ...(segments.some(({ session }) => session.cronTaskId) ? { cronTaskId: segments.find(({ session }) => session.cronTaskId)!.session.cronTaskId } : {}),
       ...(segmentViews ? { segments: segmentViews } : {}),
       // A switched conversation keeps the title of its first real segment; a fresh
@@ -381,9 +392,15 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
 
   // Closed-out conversations sink below the live ones so the 50-row cap spends its
   // room on work that is still moving. Pins still outrank everything.
+  // Usage is a ledger query per conversation, so only the rows that survive the cap get one.
   return orderSessionFamilies([
     ...ordered.filter(isPinned),
     ...ordered.filter((session) => !isPinned(session) && !session.doneAt),
     ...ordered.filter((session) => !isPinned(session) && session.doneAt),
-  ], 50);
+  ], 50).map((session) => ({
+    ...session,
+    usage: session.readOnly
+      ? usageTotals({ projectIds: [project.id], projectId: project.id, sessionId: session.id })
+      : conversationUsage(project.id, session.conversationId ?? session.id),
+  }));
 }

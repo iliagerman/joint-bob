@@ -9,15 +9,44 @@ function headers() {
   return state.csrfToken ? { "X-CSRF-Token": state.csrfToken, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 }
 
-export async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, cache: "no-store", headers: { ...headers(), ...(options.headers || {}) } });
+// Safari's stack for a failed fetch names only api.js; the request makes an unhandled rejection traceable.
+async function send(path, options) {
+  const method = (options.method || "GET").toUpperCase();
+  let response;
+  try {
+    response = await fetch(path, { ...options, cache: "no-store", headers: { ...headers(), ...(options.headers || {}) } });
+  } catch (error) {
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { method, path, status: 0 });
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }));
     if (response.status === 401 && !["/api/auth/status", "/api/auth/login", "/api/auth/login/mfa"].includes(path)) showSignedOut();
-    throw new Error(body.error || response.statusText);
+    throw Object.assign(new Error(body.error || response.statusText), { method, path, status: response.status });
   }
+  return response;
+}
+
+export async function api(path, options = {}) {
+  const response = await send(path, options);
   if (response.status === 204) return null;
   return response.json();
+}
+
+const NDJSON = "application/x-ndjson";
+
+/** Calls a route that streams JSON lines, handing each line to onLine. A plain JSON reply arrives as one "done" line. */
+export async function apiLines(path, options, onLine) {
+  const response = await send(path, { ...options, headers: { Accept: `${NDJSON}, application/json`, ...(options.headers || {}) } });
+  if (!response.headers.get("content-type")?.startsWith(NDJSON)) { onLine({ type: "done", ...await response.json() }); return; }
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+    buffer += chunk.value;
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+    for (const line of lines) if (line.trim()) onLine(JSON.parse(line));
+  }
+  if (buffer.trim()) onLine(JSON.parse(buffer));
 }
 
 export async function savePreferences(partial) {

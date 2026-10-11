@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import type { AuthSession } from "../../auth.js";
 import { getHarnessRuntime, listHarnesses, listHarnessModels } from "../../harnesses.js";
 import { addNtfyService, deleteNtfyService, getNtfyService, importNtfyService, listNtfyServices, setDefaultNtfyService, updateNtfyService } from "../../ntfy.js";
-import { createNtfyUser, deleteNtfyTopicAccess, deleteNtfyUser, listNtfyTopics, listNtfyUsers, ntfyPermission, ntfySince, ntfyTopicName, ntfyTopicPattern, ntfyUsername, readNtfyMessages, setNtfyTopicAccess } from "../../ntfy-admin.js";
+import { checkNtfyToken, createNtfyUser, deleteNtfyTopicAccess, deleteNtfyUser, listNtfyTopics, listNtfyUsers, ntfyPermission, ntfySince, ntfyTopicName, ntfyTopicPattern, ntfyUsername, readNtfyMessages, setNtfyTopicAccess } from "../../ntfy-admin.js";
 import { isHarnessId, type HarnessId } from "../../types.js";
 import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "../../push.js";
 import { projectVisible } from "../../store.js";
@@ -16,10 +16,11 @@ import { app } from "../state.js";
 import { getClusterNode } from "../../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { replicationPeers, signedPeerPost } from "../replication-v2.js";
+import { forgetNtfyServiceSharing, ntfyServicesSharedWith, ntfyServiceSharingView, setNtfyServiceSharing, shareNtfyServiceNow } from "../ntfy-share.js";
 import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
 import { z } from "zod";
 import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema, savedNtfyServer } from "../../ntfy-publish.js";
+import { ErrorReportingSettingsError, getErrorReportingSettings, reportError, updateErrorReportingSettings } from "../../error-reporting.js";
 
 app.get("/api/push/vapid-public-key", async (_request, response, next) => {
   try {
@@ -66,7 +67,7 @@ app.post("/api/ntfy/agent", async (request, response, next) => {
 });
 
 app.get("/api/ntfy/services", (_request, response) => {
-  response.json({ services: listNtfyServices() });
+  response.json({ services: listNtfyServices().map((service) => ({ ...service, sharing: ntfyServiceSharingView(service.id) })) });
 });
 
 app.post("/api/ntfy/services", (request, response, next) => {
@@ -78,12 +79,19 @@ app.post("/api/ntfy/services", (request, response, next) => {
   }
 });
 
-app.put("/api/ntfy/services/:id", (request, response, next) => {
+/** A new token is checked against the server first: one it does not recognize is never saved. */
+app.put("/api/ntfy/services/:id", async (request, response, next) => {
   try {
     const payload = ntfyServiceSchema.partial().parse(request.body);
+    const current = getNtfyService(request.params.id);
+    if (!current) { sendError(response, 404, "ntfy service not found"); return; }
+    const account = payload.token ? await checkNtfyToken({ url: (payload.url ?? current.url).replace(/\/+$/, ""), token: payload.token }) : undefined;
+    if (account?.status === "rejected") { sendError(response, 400, "The ntfy server does not recognize this token (HTTP 401), so it was not saved. Create it on the server with `ntfy token add <admin user>`."); return; }
     const service = updateNtfyService(request.params.id, payload);
     if (!service) { sendError(response, 404, "ntfy service not found"); return; }
-    response.json({ service });
+    // Nodes this one shares the service with get the edit now; offline ones when either side restarts.
+    const results = await shareNtfyServiceNow(request.params.id);
+    response.json({ service, sharing: ntfyServiceSharingView(request.params.id), results, ...(account ? { account } : {}) });
   } catch (error) { next(error); }
 });
 
@@ -127,33 +135,21 @@ app.put("/api/ntfy/services/:id/default", (request, response) => {
   response.json({ ok: true });
 });
 
-/** Shares ntfy credentials only to explicitly selected twins or cluster members. */
+/** Records who should hold the service, then delivers; peers that are offline get it from the retry loop. */
 app.post("/api/ntfy/services/:id/share", async (request, response, next) => {
   try {
-    const service = getNtfyService(request.params.id);
-    if (!service) { sendError(response, 404, "ntfy service not found"); return; }
+    if (!getNtfyService(request.params.id)) { sendError(response, 404, "ntfy service not found"); return; }
     const payload = z.object({ includeTwins: z.boolean().default(true), clusterIds: z.array(z.string().uuid()).max(50).default([]) }).strict().parse(request.body ?? {});
     const db = await clusterV2Database(), local = await getClusterNode();
-    const peers = replicationPeers(db, local.id);
     // Twins are the admin's own machines, and a person shares only into clusters they joined.
-    const actor = actingAccount(), toTwins = payload.includeTwins && isNodeAdmin(response.locals.authSession as AuthSession | undefined);
-    const targets = new Set(peers.filter((peer) => toTwins && isTrustedTwin(db, local.id, peer.nodeId)).map((peer) => peer.nodeId));
+    const actor = actingAccount(), admin = isNodeAdmin(response.locals.authSession as AuthSession | undefined);
     for (const clusterId of payload.clusterIds) {
-      const members = listSharingClusterMembers(db, clusterId);
       if (actor && !accountInCluster(db, actor.accountId, clusterId)) { sendError(response, 404, "Cluster not found"); return; }
-      if (!members.some((member) => member.nodeId === local.id)) { sendError(response, 403, "You are not a member of a selected cluster"); return; }
-      for (const member of members) if (member.nodeId !== local.id && peers.some((peer) => peer.nodeId === member.nodeId)) targets.add(member.nodeId);
+      if (!listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === local.id)) { sendError(response, 403, "You are not a member of a selected cluster"); return; }
     }
-    const results = await Promise.all([...targets].map(async (peerId) => {
-      const peer = peers.find(({ nodeId }) => nodeId === peerId)!;
-      try {
-        await signedPeerPost(peer, "/api/cluster/v2/ntfy/services", service);
-        return { peerId, ok: true };
-      } catch (error) {
-        return { peerId, ok: false, error: error instanceof Error ? error.message : "Share failed" };
-      }
-    }));
-    response.json({ results });
+    setNtfyServiceSharing(request.params.id, { ...payload, includeTwins: payload.includeTwins && admin });
+    const results = await shareNtfyServiceNow(request.params.id);
+    response.json({ sharing: ntfyServiceSharingView(request.params.id), results });
   } catch (error) { next(error); }
 });
 
@@ -169,9 +165,47 @@ app.post("/api/cluster/v2/ntfy/services", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
+/** A node that just started asks each peer what it shares with it; it was not there for the pushes. */
+app.post("/api/cluster/v2/ntfy/services/pull", async (_request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    response.json({ services: await ntfyServicesSharedWith(response.locals.machineNodeId as string) });
+  } catch (error) { next(error); }
+});
+
 app.delete("/api/ntfy/services/:id", (request, response) => {
   if (!deleteNtfyService(request.params.id)) { sendError(response, 404, "ntfy service not found"); return; }
+  forgetNtfyServiceSharing(request.params.id);
   response.status(204).send();
+});
+
+app.get("/api/error-reporting", (_request, response) => {
+  response.json(getErrorReportingSettings());
+});
+
+app.put("/api/error-reporting", (request, response, next) => {
+  try {
+    response.json(updateErrorReportingSettings(request.body));
+  } catch (error) {
+    if (error instanceof ErrorReportingSettingsError) { sendError(response, 400, error.message); return; }
+    next(error);
+  }
+});
+
+const clientErrorSchema = z.object({
+  kind: z.enum(["error", "uncaught", "unhandled"]),
+  message: z.string().min(1).max(4_000),
+  page: z.string().max(500).optional(),
+}).strict();
+
+app.post("/api/client-errors", (request, response) => {
+  const report = clientErrorSchema.parse(request.body);
+  const [summary, ...detail] = report.message.split("\n");
+  const username = (response.locals.authSession as AuthSession | undefined)?.username ?? "unknown user";
+  console.warn(`Client ${report.kind} from ${username}: ${summary}`);
+  const userAgent = request.get("user-agent");
+  void reportError("client", { summary, detail: [...detail, ...(userAgent ? ["", `Browser: ${userAgent}`] : [])].join("\n"), source: [report.page, username].filter(Boolean).join(" · ") });
+  response.status(202).send();
 });
 
 async function harnessProblems(id: HarnessId): Promise<string[]> {

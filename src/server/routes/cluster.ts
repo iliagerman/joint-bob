@@ -19,6 +19,7 @@ import { clusterV2Database } from "../../cluster-v2-store.js";
 import { mayReplicateEvent, replicationPeers, signedPeerPost } from "../replication-v2.js";
 import { listTwinUpdateTargets } from "../../twin-updates.js";
 import { publishNodeDescriptor } from "../cluster-v2.js";
+import { setRelayNodeName } from "../../relay/index.js";
 import { receiveRelay, relayPage, relayPullSchema, relayRequestSchema } from "../cluster-hubs.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { isTrustedTwin } from "../../cluster-sharing-policy.js";
@@ -35,6 +36,7 @@ app.put("/api/cluster/node", async (request, response, next) => {
   try {
     const payload = clusterNodeSchema.parse(request.body);
     const node = await updateClusterNode(payload.name, payload.url);
+    setRelayNodeName(node.name);
     await publishNodeDescriptor();
     response.json({ node });
   } catch (error) {

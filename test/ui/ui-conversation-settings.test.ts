@@ -34,7 +34,7 @@ async function assertSaved(page: Page, label: string | null) {
     return (session.classification || null) === label;
   }, { state, label });
   await state.dispose();
-  const badge = await page.evaluate(`document.querySelector('[data-session-path="' + CSS.escape(window.classificationTarget.path) + '"] [data-testid="session-classification"]')?.textContent || null`);
+  const badge = await page.evaluate(`(() => { const el = document.querySelector('[data-session-path="' + CSS.escape(window.classificationTarget.path) + '"] [data-testid="session-classification"]'); return el ? el.getAttribute('aria-label') || el.textContent : null; })()`);
   assert.equal(badge, label, "saved classification must appear in the conversation row");
 }
 

@@ -2,18 +2,20 @@ import { confinedToRuntime, currentRuntime } from "../account-runtime.js";
 import { withProjectRuntime } from "../project-runtime.js";
 import { projectAdditionalPaths } from "./session-scope.js";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
+import { constants, createReadStream } from "node:fs";
+import { copyFile, lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
+import { projectMetadataVisible } from "../cluster-project-metadata.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import type { PeerEndpoint } from "../cluster-peer-endpoints.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
+import { resolveDataDirectory } from "../data-directory.js";
 import { clearHarnessSessionCache, getHarness, harnessForSessionPath, listHarnessSessions } from "../harnesses.js";
 import { getProject } from "../store.js";
 import { listTasks } from '../tasks.js';
@@ -21,7 +23,7 @@ import { getConversationOwnership } from "../conversation-ownership.js";
 import { deletedConversationKeys, ensureConversationRecord, ensureConversationRecordSchema } from "../conversation-records.js";
 import { replicationPeers } from "./replication-v2.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
-import { fetchPeer, whilePeerOptional } from "./peer-availability.js";
+import { fetchPeer, isPeerUnreachable, PeerUnreachableError, whilePeerOptional } from "./peer-availability.js";
 
 export const transcriptQuery=z.object({projectId:z.string().min(1).max(300),engine:z.string().min(1).max(80).optional(),sessionId:z.string().min(1).max(300).optional()}).strict();
 const entrySchema=z.object({engine:z.string().min(1).max(80),sessionId:z.string().min(1).max(300),relativePath:z.string().min(1).max(4096),size:z.number().int().min(0).max(1024*1024*1024),hash:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
@@ -31,6 +33,7 @@ function ensureSchema(db:DatabaseSync):void{
  db.exec(`CREATE TABLE IF NOT EXISTS cluster_v2_transcript_receipts(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,engine TEXT NOT NULL,session_id TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(peer_id,project_id,engine,session_id));
  CREATE TABLE IF NOT EXISTS cluster_v2_transcript_progress(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,PRIMARY KEY(peer_id,project_id));
  CREATE TABLE IF NOT EXISTS cluster_v2_transcript_errors(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,error TEXT NOT NULL,PRIMARY KEY(peer_id,project_id));
+ CREATE TABLE IF NOT EXISTS cluster_v2_transcript_conflicts(peer_id TEXT NOT NULL,project_id TEXT NOT NULL,engine TEXT NOT NULL,session_id TEXT NOT NULL,path TEXT NOT NULL,remote_hash TEXT NOT NULL,local_hash TEXT NOT NULL,artifact TEXT NOT NULL,detected_at TEXT NOT NULL,PRIMARY KEY(peer_id,project_id,engine,session_id));
  CREATE TABLE IF NOT EXISTS transcript_hashes(file TEXT PRIMARY KEY,mtime_ms REAL NOT NULL,size INTEGER NOT NULL,hash TEXT NOT NULL);`);
 }
 function within(root:string,file:string):boolean{
@@ -44,7 +47,11 @@ async function fileHash(file:string,info:{mtimeMs:number;size:number}):Promise<s
  const db=await clusterV2Database();ensureSchema(db);
  const row=hashCache.get(file)??(db.prepare('SELECT mtime_ms mtimeMs,size,hash FROM transcript_hashes WHERE file=?').get(file) as {mtimeMs:number;size:number;hash:string}|undefined);
  if(row&&row.mtimeMs===info.mtimeMs&&row.size===info.size){hashCache.set(file,row);return row.hash;}
- const hash=createHash('sha256');for await(const chunk of createReadStream(file))hash.update(chunk);
+ // Transcripts can grow between stat and the read. Hash exactly that snapshot's
+ // prefix, so the advertised size and digest always describe the same bytes.
+ const hash=createHash('sha256');let bytes=0;
+ if(info.size>0)for await(const chunk of createReadStream(file,{start:0,end:info.size-1})){bytes+=chunk.length;hash.update(chunk);}
+ if(bytes!==info.size)throw new Error('Transcript changed during hashing');
  const digest=hash.digest('hex');hashCache.set(file,{mtimeMs:info.mtimeMs,size:info.size,hash:digest});
  db.prepare('INSERT INTO transcript_hashes VALUES(?,?,?,?) ON CONFLICT(file) DO UPDATE SET mtime_ms=excluded.mtime_ms,size=excluded.size,hash=excluded.hash').run(file,info.mtimeMs,info.size,digest);
  return digest;
@@ -100,10 +107,21 @@ async function sharedTranscriptInventoryNow(peer:string,projectId:string,only?:{
  }
  return entries;
 }
-async function peerGet(peer:PeerEndpoint,target:string):Promise<Response>{
+async function peerGet(peer:PeerEndpoint,target:string,headers:Record<string,string>={},signal:AbortSignal=AbortSignal.timeout(30000)):Promise<Response>{
  const db=await clusterV2Database(),local=await getClusterNode();
- const response=await fetchPeer(db,peer.nodeId,new URL(target,peer.url),{redirect:'error',signal:AbortSignal.timeout(30000),headers:{Authorization:signClusterRequest(db,local.id,peer.nodeId,'GET',target,Buffer.alloc(0))}});
+ const response=await fetchPeer(db,peer.nodeId,new URL(target,peer.url),{redirect:'error',signal,headers:{...headers,Authorization:signClusterRequest(db,local.id,peer.nodeId,'GET',target,Buffer.alloc(0))}});
  if(!response.ok)throw new Error(`Transcript request rejected (${response.status})`);return response;
+}
+/** A transcript download is limited by how long it may go without receiving anything, not
+    by its total time: a large transcript on a slow link takes minutes, and a cap on the
+    whole transfer made it fail on every attempt. */
+let stallMs=30_000;
+export function setTranscriptStallTimeout(ms:number):void{stallMs=ms;}
+function stallGuard():{signal:AbortSignal;touch:()=>void;done:()=>void}{
+ const controller=new AbortController();let timer:NodeJS.Timeout|undefined;
+ const touch=():void=>{clearTimeout(timer);timer=setTimeout(()=>controller.abort(new DOMException('Transcript transfer stalled','TimeoutError')),stallMs);};
+ touch();
+ return {signal:controller.signal,touch,done:()=>clearTimeout(timer)};
 }
 async function safeParent(root:string,destination:string):Promise<void>{
  await mkdir(root,{recursive:true});
@@ -121,21 +139,38 @@ async function extendsTranscript(existing:string,incoming:string,size:number):Pr
   for(let offset=0;offset<size;offset+=65536){
    const length=Math.min(65536,size-offset);
    const old=await left.read(a,0,length,offset),next=await right.read(b,0,length,offset);
-   if(old.bytesRead!==length||next.bytesRead!==length||!a.subarray(0,length).equals(b.subarray(0,length)))throw new Error('Divergent transcript requires review');
+   if(old.bytesRead!==length||next.bytesRead!==length||!a.subarray(0,length).equals(b.subarray(0,length)))throw new DivergentTranscriptError();
   }
  }finally{await left.close();await right.close();}
+}
+class DivergentTranscriptError extends Error{constructor(){super('Divergent transcript requires review');}}
+type ConflictRow={path:string;remoteHash:string;localHash:string;artifact:string};
+const conflictColumns='path,remote_hash remoteHash,local_hash localHash,artifact';
+const conflictKey='peer_id=? AND project_id=? AND engine=? AND session_id=?';
+/** Where the two versions of a conversation both machines continued are kept for review:
+    outside every harness's transcript root, so neither is listed as a conversation. */
+function conflictFile(peer:string,engine:string,sessionId:string,suffix=''):string{
+ return path.join(resolveDataDirectory(),'transcript-conflicts',peer,`${engine}-${encodeURIComponent(sessionId)}${suffix}.jsonl`);
+}
+async function clearConflict(db:DatabaseSync,peer:string,projectId:string,engine:string,sessionId:string):Promise<void>{
+ const row=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peer,projectId,engine,sessionId) as ConflictRow|undefined;
+ if(!row)return;
+ db.prepare(`DELETE FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).run(peer,projectId,engine,sessionId);
+ await rm(row.artifact,{force:true});
 }
 // The background flush and a takeover can fetch the same transcript at once; the loser would
 // see the winner's rename as a local edit. One receive per conversation at a time.
 const activeReceives=new Map<string,Promise<void>>();
-function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
- const key=JSON.stringify([peer.nodeId,projectId,entry.engine,entry.sessionId]);
- const run=(activeReceives.get(key)??Promise.resolve()).then(()=>receiveTranscriptNow(db,peer,projectId,entry));
- const settled=run.catch(()=>undefined).finally(()=>{if(activeReceives.get(key)===settled)activeReceives.delete(key);});
+function oneAtATime<T>(peer:string,engine:string,sessionId:string,action:()=>Promise<T>):Promise<T>{
+ const key=JSON.stringify([peer,engine,sessionId]);
+ const run=(activeReceives.get(key)??Promise.resolve()).then(action);
+ const settled=run.then(()=>undefined,()=>undefined).finally(()=>{if(activeReceives.get(key)===settled)activeReceives.delete(key);});
  activeReceives.set(key,settled);
  return run;
 }
-// A project's transcripts go where its agents read them: its runtime account's home.
+function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
+ return oneAtATime(peer.nodeId,entry.engine,entry.sessionId,()=>receiveTranscriptNow(db,peer,projectId,entry));
+}
 function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
  return withProjectRuntime(projectId,()=>receiveTranscriptInRuntime(db,peer,projectId,entry));
 }
@@ -144,35 +179,75 @@ async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,proj
  if(!within(root,destination)||!confinedToRuntime(currentRuntime(),destination)||!adapter.paths.ownsTranscript(destination)||(adapter.paths.sessionId(destination)??adapter.paths.sessionId(`${entry.engine}:${destination}`))!==entry.sessionId)throw new Error('Invalid shared transcript identity');
  const receipt=db.prepare('SELECT path,hash FROM cluster_v2_transcript_receipts WHERE peer_id=? AND project_id=? AND engine=? AND session_id=?').get(peer.nodeId,projectId,entry.engine,entry.sessionId) as {path:string;hash:string}|undefined;
  const ownership=await getConversationOwnership(entry.engine,entry.sessionId);
- if(ownership&&ownership.ownerNodeId!==peer.nodeId)return;
+ if(ownership&&ownership.ownerNodeId!==peer.nodeId){await clearConflict(db,peer.nodeId,projectId,entry.engine,entry.sessionId);return;}
  const existing=await lstat(destination).catch(error=>{if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error;});
  if(existing&&(!existing.isFile()||existing.isSymbolicLink()))throw new Error('Shared transcript destination is not a regular file');
  // A receipt describes the bytes we installed, not the bytes still on disk.
  // Another file synchronizer can replace the local copy after the receipt is saved.
  const localHash=existing?await fileHash(destination,existing):undefined;
  if(existing&&receipt?.path===destination&&receipt.hash===entry.hash&&localHash===entry.hash)return;
+ // Neither side has changed since this conversation was found to differ. Its owner's copy is
+ // already kept for review, so it is not downloaded again on every pull only to be refused.
+ const conflict=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peer.nodeId,projectId,entry.engine,entry.sessionId) as ConflictRow|undefined;
+ if(conflict&&conflict.remoteHash===entry.hash&&conflict.localHash===localHash)throw new DivergentTranscriptError();
  await safeParent(root,destination);
  const target='/api/cluster/v2/transcripts/file?'+new URLSearchParams({projectId,engine:entry.engine,sessionId:entry.sessionId});
- const response=await peerGet(peer,target);if(!response.body)throw new Error('Empty transcript response');
- const temporary=`${destination}.${randomUUID()}.tmp`,hash=createHash('sha256');let bytes=0;
+ // A transfer that was cut off continues from the bytes already held instead of starting
+ // over. The digest still covers every byte, so a prefix that no longer matches fails the
+ // check below and is dropped.
+ const partial=`${destination}.${peer.nodeId}.part`,guard=stallGuard();
+ let hash=createHash('sha256'),bytes=0,keep=false;
  try{
-  await pipeline(Readable.fromWeb(response.body as never),new Transform({transform(chunk,_encoding,callback){bytes+=chunk.length;if(bytes>entry.size){callback(new Error('Transcript exceeds advertised size'));return;}hash.update(chunk);callback(null,chunk);}}),createWriteStream(temporary,{flags:'wx',mode:0o600}));
+  const held=await lstat(partial).catch(()=>undefined);
+  if(held?.isFile()&&held.size>0&&held.size<=entry.size)for await(const chunk of createReadStream(partial,{start:0,end:held.size-1})){bytes+=chunk.length;hash.update(chunk);}
+  if(bytes===0||bytes!==held?.size){await rm(partial,{force:true});hash=createHash('sha256');bytes=0;}
+  const resumed=bytes>0;
+  // sendFile already supports Range, including on older peers. Later appends
+  // belong to the next inventory; an empty snapshot needs no download.
+  let source:Readable=Readable.from([]);
+  if(bytes<entry.size){
+   guard.touch();
+   const response=await peerGet(peer,target,{Range:`bytes=${bytes}-${entry.size-1}`},guard.signal);
+   if(!response.body)throw new Error('Empty transcript response');
+   if(resumed&&response.status!==206)throw new Error('Transcript transfer could not be resumed');
+   source=Readable.fromWeb(response.body as never);
+  }
+  const sink=(await open(partial,resumed?constants.O_WRONLY|constants.O_APPEND|constants.O_NOFOLLOW:'wx',0o600)).createWriteStream();
+  try{
+   await pipeline(source,new Transform({transform(chunk,_encoding,callback){guard.touch();bytes+=chunk.length;if(bytes>entry.size){callback(new Error('Transcript exceeds advertised size'));return;}hash.update(chunk);callback(null,chunk);}}),sink);
+  }catch(error){
+   // What arrived before the connection dropped is kept for the next attempt.
+   keep=bytes<=entry.size;
+   throw guard.signal.aborted?guard.signal.reason:error;
+  }
   if(bytes!==entry.size||hash.digest('hex')!==entry.hash)throw new Error('Transcript changed during transfer');
   // A local copy changed since the last receipt may contain unsent work. Repair
   // truncated copies, but never overwrite divergent bytes without review.
   if(existing&&(!ownership||receipt?.hash!==localHash)){
-   await extendsTranscript(destination,temporary,Math.min(existing.size,entry.size));
-   if(existing.size>entry.size)return;
+   try{await extendsTranscript(destination,partial,Math.min(existing.size,entry.size));}
+   catch(error){
+    if(!(error instanceof DivergentTranscriptError))throw error;
+    const artifact=conflictFile(peer.nodeId,entry.engine,entry.sessionId);
+    await mkdir(path.dirname(artifact),{recursive:true,mode:0o700});
+    await copyFile(partial,artifact);
+    db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_conflicts VALUES(?,?,?,?,?,?,?,?,?)').run(peer.nodeId,projectId,entry.engine,entry.sessionId,destination,entry.hash,localHash!,artifact,new Date().toISOString());
+    throw error;
+   }
+   if(existing.size>entry.size){await clearConflict(db,peer.nodeId,projectId,entry.engine,entry.sessionId);return;}
   }
-  if(existing){const current=await stat(destination);if(current.size!==existing.size||current.mtimeMs!==existing.mtimeMs)throw new Error('Local transcript changed during transfer');}
-  await sharedTranscriptProject(peer.nodeId,projectId);
+  // The finished download is kept: the same snapshot needs no second transfer.
+  if(existing){const current=await stat(destination);if(current.size!==existing.size||current.mtimeMs!==existing.mtimeMs){keep=true;throw new Error('Local transcript changed during transfer');}}
   // A peer that has not heard of a deletion yet may still offer the conversation, and a
-  // deletion may arrive while its transcript downloads.
+  // deletion may arrive while its transcript downloads or while tombstones are read.
   if((await deletedConversationKeys(projectId)).has(`${entry.engine}:${entry.sessionId}`))return;
-  await rename(temporary,destination);
+  await sharedTranscriptProject(peer.nodeId,projectId);
+  await rename(partial,destination);
+  // Rename yields to other requests; a deletion may have committed while it ran.
+  await sharedTranscriptProject(peer.nodeId,projectId);
   db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_receipts VALUES(?,?,?,?,?,?)').run(peer.nodeId,projectId,entry.engine,entry.sessionId,destination,entry.hash);
+  await clearConflict(db,peer.nodeId,projectId,entry.engine,entry.sessionId);
   clearHarnessSessionCache(projectId);
- }finally{await rm(temporary,{force:true});}
+ }finally{guard.done();if(!keep)await rm(partial,{force:true});}
 }
 export function assertSharedTranscriptReady(projectId:string,sessionPath:string,ownerNodeId?:string):Promise<void>{
  return withProjectRuntime(projectId,()=>assertSharedTranscriptReadyNow(projectId,sessionPath,ownerNodeId));
@@ -225,13 +300,61 @@ export function flushSharedTranscripts():Promise<void>{
  if(!activeFlush)activeFlush=runSharedTranscripts().finally(()=>{activeFlush=undefined;});
  return activeFlush;
 }
-export function sharedTranscriptStatus(db:DatabaseSync,local:string,peer:string):{pending:number;error?:string}{
+export type TranscriptConflict={projectId:string;projectName:string|null;engine:string;sessionId:string;detectedAt:string;title?:string};
+export function sharedTranscriptStatus(db:DatabaseSync,local:string,peer:string):{pending:number;error?:string;conflicts?:TranscriptConflict[]}{
  ensureSchema(db);
- const projects=sharedProjectIds(db,local,peer);
- const errors=db.prepare('SELECT project_id,error FROM cluster_v2_transcript_errors WHERE peer_id=?').all(peer) as unknown as Array<{project_id:string;error:string}>;
- const failure=errors.find(error=>projects.includes(error.project_id));
+ const projects=sharedProjectIds(db,local,peer).filter(id=>db.prepare('SELECT 1 FROM projects WHERE id=?').get(id)&&projectMetadataVisible(db,local,id));
+ // Keep policy/history markers, but discard local sync state for ineligible rows.
+ const eligible=new Set(projects);
+ for(const table of ['cluster_v2_transcript_errors','cluster_v2_transcript_progress']){
+  const rows=db.prepare(`SELECT project_id FROM ${table} WHERE peer_id=?`).all(peer) as Array<{project_id:string}>;
+  for(const row of rows)if(!eligible.has(row.project_id))db.prepare(`DELETE FROM ${table} WHERE peer_id=? AND project_id=?`).run(peer,row.project_id);
+ }
+ const errors=db.prepare(`SELECT e.project_id,p.name,e.error FROM cluster_v2_transcript_errors e
+  LEFT JOIN projects p ON p.id=e.project_id WHERE e.peer_id=? ORDER BY p.name,e.project_id`).all(peer) as unknown as Array<{project_id:string;name:string|null;error:string}>;
+ const failures=errors.filter(error=>projects.includes(error.project_id));
  const pending=projects.filter(id=>!db.prepare('SELECT 1 FROM cluster_v2_transcript_progress WHERE peer_id=? AND project_id=?').get(peer,id)).length;
- return {pending,...(failure?{error:failure.error}:{})};
+ const details=failures.slice(0,10).map(row=>`${row.name??row.project_id}: ${row.error}`);
+ if(failures.length>10)details.push(`And ${failures.length-10} more projects.`);
+ // Named one by one, so each can be reviewed and settled from the twin's panel.
+ const conflicts=(db.prepare(`SELECT c.project_id projectId,p.name projectName,c.engine,c.session_id sessionId,c.detected_at detectedAt FROM cluster_v2_transcript_conflicts c
+  LEFT JOIN projects p ON p.id=c.project_id WHERE c.peer_id=? ORDER BY p.name,c.detected_at,c.session_id`).all(peer) as unknown as TranscriptConflict[]).filter(row=>eligible.has(row.projectId));
+ return {pending,...(failures.length?{error:`Conversation history sync failed:\n${details.join('\n')}`}:{}),...(conflicts.length?{conflicts}:{})};
+}
+/** The reviewed answer for a conversation both machines continued: take its owner's history.
+    This machine's version is saved next to the kept copy first, so nothing is lost. */
+export async function acceptOwnerTranscript(peerId:string,projectId:string,engine:string,sessionId:string):Promise<{saved:string}>{
+ const db=await clusterV2Database();ensureSchema(db);
+ return oneAtATime(peerId,engine,sessionId,async()=>{
+  await sharedTranscriptProject(peerId,projectId);
+  const row=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peerId,projectId,engine,sessionId) as ConflictRow|undefined;
+  if(!row)throw new ClusterV2HttpError(404,'This conversation no longer needs review');
+  const ownership=await getConversationOwnership(engine,sessionId);
+  if(ownership&&ownership.ownerNodeId!==peerId)throw new ClusterV2HttpError(409,'This conversation now belongs to another machine; check again');
+  const existing=await lstat(row.path).catch(()=>undefined),held=await lstat(row.artifact).catch(()=>undefined);
+  if(!existing?.isFile()||await fileHash(row.path,existing)!==row.localHash)throw new ClusterV2HttpError(409,'This machine\'s copy changed since it was compared; check again');
+  if(!held?.isFile()||await fileHash(row.artifact,held)!==row.remoteHash){
+   // Without the kept copy there is nothing to install; the next pull fetches it again.
+   await clearConflict(db,peerId,projectId,engine,sessionId);
+   throw new ClusterV2HttpError(409,'The other machine\'s copy is being fetched again; check again shortly');
+  }
+  const saved=conflictFile(peerId,engine,sessionId,`.local-${new Date().toISOString().replace(/[:.]/g,'-')}`),temporary=`${row.path}.${randomUUID()}.tmp`;
+  await copyFile(row.path,saved,constants.COPYFILE_EXCL);
+  try{
+   await copyFile(row.artifact,temporary,constants.COPYFILE_EXCL);
+   const current=await stat(row.path);
+   if(current.size!==existing.size||current.mtimeMs!==existing.mtimeMs)throw new ClusterV2HttpError(409,'This machine\'s copy changed since it was compared; check again');
+   await rename(temporary,row.path);
+  }finally{await rm(temporary,{force:true});}
+  db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_receipts VALUES(?,?,?,?,?,?)').run(peerId,projectId,engine,sessionId,row.path,row.remoteHash);
+  await clearConflict(db,peerId,projectId,engine,sessionId);
+  // The project's report clears now rather than at its next pull, unless another conversation still differs.
+  if(!db.prepare('SELECT 1 FROM cluster_v2_transcript_conflicts WHERE peer_id=? AND project_id=?').get(peerId,projectId))
+   db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=? AND error=?').run(peerId,projectId,new DivergentTranscriptError().message);
+  pulledAt.delete(`${peerId}\n${projectId}`);
+  clearHarnessSessionCache(projectId);
+  return {saved};
+ });
 }
 /** Each inventory makes the peer build that project's full conversation catalog, and the
     administration flush runs every 2 s: pulling on every flush kept a large project's
@@ -241,16 +364,30 @@ const pulledAt=new Map<string,number>();
 export function resetSharedTranscriptPulls():void{pulledAt.clear();}
 async function runSharedTranscripts():Promise<void>{
  const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);
- for(const peer of replicationPeers(db,local.id))for(const projectId of sharedProjectIds(db,local.id,peer.nodeId))try{
+ const eligible=async(peer:string,id:string)=>mayShareProject(db,local.id,peer,id)&&Boolean(await getProject(id));
+ for(const peer of replicationPeers(db,local.id))for(const projectId of sharedProjectIds(db,local.id,peer.nodeId)){const key=`${peer.nodeId}\n${projectId}`;try{
   if(!await getProject(projectId))continue;
-  const key=`${peer.nodeId}\n${projectId}`;
   if(Date.now()-(pulledAt.get(key)??0)<PULL_INTERVAL_MS)continue;
   pulledAt.set(key,Date.now());
   const target='/api/cluster/v2/transcripts?'+new URLSearchParams({projectId});
   // A peer known to be down is skipped until its next probe instead of waited on.
   const payload=inventorySchema.parse(await(await whilePeerOptional(()=>peerGet(peer,target))).json());
-  for(const entry of payload.entries)await receiveTranscript(db,peer,projectId,entry);
-  db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=?').run(peer.nodeId,projectId);
-  db.prepare('INSERT OR IGNORE INTO cluster_v2_transcript_progress VALUES(?,?)').run(peer.nodeId,projectId);
- }catch(error){db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_errors VALUES(?,?,?)').run(peer.nodeId,projectId,error instanceof Error?error.message:'Transcript transfer failed');}
+  // A conversation its owner no longer offers (deleted there, or no longer shared) has nothing left to settle.
+  const offered=new Set(payload.entries.map(entry=>`${entry.engine}\n${entry.sessionId}`));
+  for(const row of db.prepare('SELECT engine,session_id sessionId FROM cluster_v2_transcript_conflicts WHERE peer_id=? AND project_id=?').all(peer.nodeId,projectId) as unknown as Array<{engine:string;sessionId:string}>)
+   if(!offered.has(`${row.engine}\n${row.sessionId}`))await clearConflict(db,peer.nodeId,projectId,row.engine,row.sessionId);
+  // One transcript that keeps failing (still growing, edited here) must not hold back the rest; a peer that stops answering ends the pass.
+  let failure:unknown;
+  for(const entry of payload.entries)try{await receiveTranscript(db,peer,projectId,entry);}catch(error){failure??=error;if(isPeerUnreachable(error))break;}
+  if(failure)throw failure;
+  if(await eligible(peer.nodeId,projectId)){
+   db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=?').run(peer.nodeId,projectId);
+   db.prepare('INSERT OR IGNORE INTO cluster_v2_transcript_progress VALUES(?,?)').run(peer.nodeId,projectId);
+  }
+ }catch(error){
+  // A peer in backoff was not asked, which says nothing about this project: its last result
+  // stands, and it is pulled as soon as the peer answers instead of a full interval later.
+  if(error instanceof PeerUnreachableError){pulledAt.delete(key);continue;}
+  if(await eligible(peer.nodeId,projectId))db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_errors VALUES(?,?,?)').run(peer.nodeId,projectId,error instanceof Error?error.message:'Transcript transfer failed');
+ }}
 }
