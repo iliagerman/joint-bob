@@ -3,10 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.72.1 — 2026-10-11
 
-- Fixed scheduled tasks that ask for a worktree not getting one: each run that needs it now gets a fresh worktree, as the task asks.
-- Fixed idle nodes repeating the same work every few seconds: file sharing with a twin, retries for folders that cannot be watched, and deliveries to an unreachable node now wait out a backoff instead of retrying on every cycle, and conversation lists no longer compute usage for rows they do not show.
+- Fixed scheduled tasks whose prompt asks for a worktree being refused one; the prompt now counts as the request, so the run creates the worktree it asks for.
+- Fixed idle machines repeating the same sync and lookup work every few seconds: file sharing with a twin, deliveries to an offline node, and conversation lists now wait out a backoff or skip work nothing needs, and database lookups run faster on the homeserver.
+- Fixed open pages reloading their lists every 15 seconds when a folder could not be watched on Linux; failed watches now retry with longer and longer waits, up to ten minutes.
 
 ## 2.72.0 — 2026-10-11
 
