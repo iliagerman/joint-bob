@@ -192,6 +192,53 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   assert.ok(scrolledForm.scrollTop > 0 && scrolledForm.footerVisible, `Editor footer remains visible after scrolling: ${JSON.stringify(scrolledForm)}`);
 });
 
+test("scheduled task editor keeps focused field borders inside the scroll area", { timeout: 180_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.locator('#loginDialog[open]').waitFor();
+  await page.locator("#loginUsernameInput").fill(environment.username);
+  await page.locator("#loginPasswordInput").fill(environment.password);
+  await page.locator("#loginSubmitButton").click();
+  await page.waitForFunction(() => document.querySelectorAll("#projectList .list-row").length === 3);
+  await page.locator('[aria-label="Actions for Internal Assistant"]').click();
+  await page.getByTestId("project-cron-button").click();
+  await page.waitForFunction(() => document.querySelector("#cronDialog").open && document.querySelector("#cronForm").elements.ownerNodeId.options.length > 0);
+  await page.getByTestId("cron-new").click();
+  await page.getByTestId("cron-prompt").fill("A long scheduled prompt.\n".repeat(30));
+
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 721, height: 650 }, { width: 390, height: 500 }]) {
+    await page.setViewportSize(viewport);
+    for (const field of ["cron-name", "cron-prompt", "cron-frequency", "cron-time", "cron-timezone"]) {
+      const control = page.getByTestId(field);
+      await control.focus();
+      await control.evaluate(element => element.scrollIntoView({ block: "center" }));
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      const layout = await control.evaluate(element => {
+        const body = document.querySelector<HTMLElement>("#cronBody")!;
+        const bounds = body.getBoundingClientRect();
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        const left = bounds.left + body.clientLeft;
+        return {
+          focused: document.activeElement === element,
+          scrolls: body.scrollHeight > body.clientHeight,
+          horizontalOverflow: body.scrollWidth > body.clientWidth,
+          shadow: style.boxShadow,
+          ring: Math.max(3, parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset)),
+          leftSpace: rect.left - left,
+          rightSpace: left + body.clientWidth - rect.right,
+        };
+      });
+      const context = `${field} at ${viewport.width}px: ${JSON.stringify(layout)}`;
+      assert.ok(layout.focused && layout.scrolls, `Regression needs a focused field in a scrolling editor: ${context}`);
+      assert.notEqual(layout.shadow, "none", `Focus ring must remain visible: ${context}`);
+      assert.equal(layout.horizontalOverflow, false, `Editor must not scroll horizontally: ${context}`);
+      assert.ok(layout.leftSpace >= layout.ring && layout.rightSpace >= layout.ring,
+        `Scroll area clips the field's left or right focus border: ${context}`);
+    }
+  }
+});
+
 test("minute interval schedules save and reopen with their cadence", { timeout: 180_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await page.goto(node.url);

@@ -15,6 +15,11 @@ Every deployment is a version. The newest section must always match the
 - Conversations started in a worktree on another machine now appear under that worktree right away, before its files finish syncing; until they arrive, the worktree shows a note in place of its menu, and renames and deletions reach those conversations too.
 - Walled off the people sharing one node from each other, so no member could see another member's conversations, projects, or secrets on that node.
 - Fixed member accounts arriving from another node failing to save when they had no email or account ID, and conversation transfers and push subscription moves refusing members whose account name differed from their sign-in name.
+- Fixed the focus border of the field you are editing being clipped at the left and right edges of the scheduled task editor.
+
+## 2.72.3 — 2026-10-11
+
+- Fixed the focus border of the field you are editing being clipped at the left and right edges of the scheduled task editor.
 
 ## 2.72.2 — 2026-10-11
 
@@ -280,7 +285,6 @@ Every deployment is a version. The newest section must always match the
 
 - Agents can now read ntfy topic messages and, with an admin token, list, create, update and delete topics (access grants) and users through the ntfy CLI.
 - Project reconciliation now skips folders that haven't been created in Syncthing, allowing automatic recovery when sync folders are missing.
-
 
 ## 2.47.6 — 2026-10-07
 
