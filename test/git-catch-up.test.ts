@@ -86,16 +86,35 @@ test("HEAD stays put when the pushed files have not arrived on this node", async
   assert.equal(git(server, "status", "--porcelain"), "");
 });
 
-test("HEAD stays put when this node has commits that are not on the remote", async (t) => {
+test("HEAD stays put when this node has commits that are not on the remote and files differ", async (t) => {
   const { laptop, server } = cluster(t);
   pushChange(laptop);
-  syncFiles(laptop, server);
+  // Server has a local commit with different file content — not synced yet.
+  writeFileSync(path.join(server, "app.txt"), "local version\n");
   git(server, "add", "-A");
   git(server, "commit", "-q", "-m", "local only");
   const local = git(server, "rev-parse", "HEAD");
 
   assert.equal(await catchUpGitHead(server, {}), "local-commits");
   assert.equal(git(server, "rev-parse", "HEAD"), local);
+});
+
+test("local commits are abandoned when files already match upstream", async (t) => {
+  const { laptop, server } = cluster(t);
+  // Server makes a local commit.
+  writeFileSync(path.join(server, "app.txt"), "local version\n");
+  git(server, "add", "-A");
+  git(server, "commit", "-q", "-m", "local only");
+  // Laptop pushes a different change and Syncthing delivers the files.
+  const pushed = pushChange(laptop);
+  syncFiles(laptop, server);
+
+  assert.equal(await catchUpGitHead(server, {}), "reconciled");
+  assert.equal(git(server, "rev-parse", "HEAD"), pushed);
+  assert.equal(git(server, "status", "--porcelain"), "");
+  // The abandoned commit is logged.
+  const log = readFileSync(path.join(server, ".git", "joint-bob-abandoned-commits.log"), "utf8");
+  assert.match(log, /local only/);
 });
 
 test("staged changes are never unstaged", async (t) => {

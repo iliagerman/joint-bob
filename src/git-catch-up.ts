@@ -11,8 +11,13 @@ const MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
 /* Syncthing copies a project's files between nodes but never `.git`, so a commit made
    on one node leaves every other node's HEAD behind files it already has. Before a turn,
    HEAD moves to the upstream commit only when this node's files already hold that commit;
-   the working tree itself is never touched. */
-export type GitCatchUp = "not-repository" | "no-upstream" | "current" | "moved" | "local-commits" | "staged-changes" | "files-not-synced";
+   the working tree itself is never touched.
+
+   When HEAD has local commits not in upstream but the files already match upstream
+   (Syncthing delivered them), the local commits are stale: someone else pushed equivalent
+   or superseding changes. In this case, we log the abandoned commits and reset to upstream.
+   The commits remain in git reflog for recovery. */
+export type GitCatchUp = "not-repository" | "no-upstream" | "current" | "moved" | "reconciled" | "local-commits" | "staged-changes" | "files-not-synced";
 
 interface GitRun { stdout: string; stderr: string; code: number; }
 
@@ -48,6 +53,16 @@ async function exists(file: string): Promise<boolean> {
   }
 }
 
+/** Logs commits that will be abandoned when resetting past them. They stay in reflog. */
+async function logAbandonedCommits(root: string, env: NodeJS.ProcessEnv, from: string, to: string): Promise<void> {
+  const logPath = path.join(root, ".git", "joint-bob-abandoned-commits.log");
+  const commits = (await git(root, env, ["log", "--format=%H %s", `${to}..${from}`])).trim();
+  if (!commits) return;
+  const timestamp = new Date().toISOString();
+  const entry = commits.split("\n").map((line) => `${timestamp} ${line} (files matched upstream)`).join("\n") + "\n";
+  await fs.appendFile(logPath, entry);
+}
+
 /** True when every file that differs between the two commits is already on disk as `to` has it. */
 async function filesMatchCommit(root: string, env: NodeJS.ProcessEnv, from: string, to: string): Promise<boolean> {
   const fields = (await git(root, env, ["diff", "--raw", "-z", "--no-renames", "--no-abbrev", from, to])).split("\0");
@@ -76,11 +91,17 @@ async function catchUp(root: string, env: NodeJS.ProcessEnv): Promise<GitCatchUp
   const head = (await git(root, env, ["rev-parse", "HEAD"])).trim();
   const upstream = (await git(root, env, ["rev-parse", "@{upstream}"])).trim();
   if (head === upstream) return "current";
-  if ((await run(root, env, ["merge-base", "--is-ancestor", head, upstream])).code !== 0) return "local-commits";
+  const headIsAncestor = (await run(root, env, ["merge-base", "--is-ancestor", head, upstream])).code === 0;
   if ((await run(root, env, ["diff", "--cached", "--quiet"])).code !== 0) return "staged-changes";
-  if (!(await filesMatchCommit(root, env, head, upstream))) return "files-not-synced";
+  // Files must match upstream before we touch HEAD — either for fast-forward or reconciliation.
+  if (!(await filesMatchCommit(root, env, head, upstream))) return headIsAncestor ? "files-not-synced" : "local-commits";
+  if (!headIsAncestor) {
+    // HEAD has commits not in upstream, but files already match upstream (Syncthing delivered them).
+    // The local commits are stale; log them and reset. They remain in reflog for recovery.
+    await logAbandonedCommits(root, env, head, upstream);
+  }
   await git(root, env, ["reset", "--mixed", "--quiet", upstream]);
-  return "moved";
+  return headIsAncestor ? "moved" : "reconciled";
 }
 
 const inFlight = new Map<string, Promise<GitCatchUp>>();
