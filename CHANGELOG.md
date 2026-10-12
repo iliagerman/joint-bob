@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.75.0 — 2026-10-12
+
+- Fixed Compare periods requests aborting while loading; comparisons now use focused daily totals, preserve snapshots, and support cancellation and timeout retries.
+- Added observed skill attribution, turn and tool timing, and day/hour cost views with timezone and coverage details.
+- Added scoped local analysis with evidence-backed suggestions and explicitly reviewed skill drafts; nothing is installed or shared automatically.
+- Added cluster cost reports limited to explicitly shared projects the signed-in account can access.
+
 ## 2.74.0 — 2026-10-12
 
 - Added optional CPU and memory limits, off by default, for one conversation's shell commands under Settings > Shell commands; commands over the CPU limit run slower, and a command over the memory limit is stopped with the reason in its output.

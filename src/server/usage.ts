@@ -1,13 +1,13 @@
 import { listHarnessSessions } from "../harnesses.js";
 import { asNode } from "../account-context.js";
 import { listProjects } from "../store.js";
-import { usageIngestIdle } from "../usage-ingest.js";
+import { usageIngestIdle, withFreshUsage } from "../usage-ingest.js";
 import { usageInventoryCoverage } from "../usage-ledger.js";
 
 export interface UsageCoverage { projects: number; sessions: number; missing: number; refreshedAt: string }
 export interface UsageRefreshStatus { refreshing: boolean; refreshedAt: string | null; error: string | null }
 
-export function createUsageRefreshController(work: () => Promise<UsageCoverage>, ttlMs = 30_000) {
+export function createUsageRefreshController(work: (force: boolean) => Promise<UsageCoverage>, ttlMs = 30_000) {
   let cached: UsageCoverage | undefined;
   let inFlight: Promise<UsageCoverage> | undefined;
   let pending = false;
@@ -19,7 +19,7 @@ export function createUsageRefreshController(work: () => Promise<UsageCoverage>,
     if (!force && cached && Date.now() - last < ttlMs) return Promise.resolve(cached);
     // A retry starts here, rather than when it succeeds.
     lastError = null;
-    inFlight = work().then((result) => {
+    inFlight = work(force).then((result) => {
       cached = result;
       last = Date.now();
       return result;
@@ -49,8 +49,8 @@ export function createUsageRefreshController(work: () => Promise<UsageCoverage>,
 }
 
 /** Node-wide, whoever asked: a member's refresh must not cache usage of only their projects. */
-async function run(): Promise<UsageCoverage> {
-  return asNode(refreshEveryProject);
+async function run(force: boolean): Promise<UsageCoverage> {
+  return asNode(() => force ? withFreshUsage(refreshEveryProject) : refreshEveryProject());
 }
 
 async function refreshEveryProject(): Promise<UsageCoverage> {

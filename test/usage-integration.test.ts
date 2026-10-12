@@ -41,6 +41,16 @@ test("real usage fixture pages 20/20/5 stably without changing summary", async (
   const repeated = await api<any>(node, session, "GET", "/usage?refresh=false&page=1&pageSize=20");
   assert.deepEqual(repeated.body.breakdowns.conversations.map((row: any) => row.key), pages[0].body.breakdowns.conversations.map((row: any) => row.key));
 });
+test("focused calendar days reject unbounded queries and avoid conversation breakdown", async () => {
+  assert.equal((await fetch(`${node.url}/api/usage/days?from=2025-01-01&to=2025-01-31`)).status, 401);
+  for (const query of ["", "from=2025-01-01&to=2025-08-01", "from=2025-01-01&to=2025-01-31&timeZone=Mars%2FOlympus", "from=2025-01-01&to=2025-01-31&projectId=unknown"])
+    assert.equal((await api(node, session, "GET", `/usage/days?${query}`)).status, query.includes("projectId") ? 404 : 400);
+  const result = await api<any>(node, session, "GET", "/usage/days?from=2025-01-01&to=2025-01-31&timeZone=UTC&refresh=false");
+  assert.equal(result.status, 200);
+  assert.equal(result.body.days.reduce((total: number, row: any) => total + row.totals.requests, 0), 45);
+  assert.equal("breakdowns" in result.body, false);
+  assert.equal("conversations" in result.body, false);
+});
 test("usage refresh requires authentication and CSRF, then accepts asynchronously", async () => {
   assert.equal((await fetch(`${node.url}/api/usage/refresh`, { method: "POST" })).status, 401);
   assert.equal((await fetch(`${node.url}/api/usage/refresh`, { method: "POST", headers: { Cookie: session.cookie } })).status, 403);
@@ -83,6 +93,71 @@ test("usage API filters by the node the usage was recorded on", async () => {
     db.exec(`DELETE FROM model_usage_events WHERE id='peer-usage'; DELETE FROM sharing_memberships WHERE cluster_id='${clusterId}'; DELETE FROM sharing_clusters WHERE id='${clusterId}';`);
     db.close();
   }
+});
+test("local analysis preflight, scoped drafts, and explicit review approval", async () => {
+  const projectId = node.projects[0].id;
+  const preview = await api<any>(node, session, "GET", `/usage/analysis/preview?projectId=${projectId}`);
+  assert.equal(preview.status, 200); assert.equal(preview.body.model, null); assert.equal(preview.body.estimatedModelCostUsd, 0);
+  assert.equal((await api(node, session, "GET", "/usage/analysis/preview?projectId=private-project")).status, 404);
+  const analysis = await api<any>(node, session, "POST", "/usage/analysis", { projectId });
+  assert.equal(analysis.status, 200); assert.equal(analysis.body.actualModelCostUsd, 0);
+  assert.equal((await api(node, session, "POST", "/usage/analysis", { projectId: "private-project" })).status, 404);
+  const input = { projectId, name: "proposed-review", kind: "skill", content: "Read evidence first, then propose a change for approval.", evidenceConversationIds: ["not-in-project", "also-not", "neither"] };
+  assert.equal((await api(node, session, "POST", "/usage/analysis/drafts", input)).status, 400);
+  assert.equal((await api(node, session, "POST", "/usage/analysis/drafts", { ...input, projectId: "private-project" })).status, 404);
+  const blocked = await api(node, session, "POST", "/usage/analysis/drafts/not-real/install", { approved: true, reviewedSha256: "0".repeat(64) });
+  assert.equal(blocked.status, 404);
+});
+test("cluster report excludes private projects despite cluster membership and separates nodes", async () => {
+  const clusterId = "6f1f6a8e-2b0e-4c55-9f53-0d1b6e2a7c11";
+  const peerId = "9b2c7d4e-5f60-4a1b-8c2d-3e4f5a6b7c8d";
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  ensureClusterSharingPolicySchema(db);
+  db.prepare("INSERT INTO sharing_clusters(id,name,original_node_id,manager_node_id,manager_epoch,next_join_sequence,closed) VALUES(?,?,?,?,1,3,0)").run(clusterId, "Report cluster", node.nodeId, node.nodeId);
+  db.prepare("INSERT INTO sharing_memberships(cluster_id,node_id,join_sequence) VALUES(?,?,1),(?,?,2)").run(clusterId, node.nodeId, clusterId, peerId);
+  db.prepare("INSERT OR IGNORE INTO sharing_resource_owners(kind,resource_id,owner_node_id) VALUES('project',?,?)").run(node.projects[0].id, node.nodeId);
+  db.prepare("INSERT INTO sharing_resource_shares(kind,resource_id,cluster_id,project_id) VALUES('project',?,?,'')").run(node.projects[0].id, clusterId);
+  try {
+    const report = await api<any>(node, session, "GET", `/usage/clusters/${clusterId}/report?refresh=false&from=2025-01-01&to=2025-01-31`);
+    assert.equal(report.status, 200);
+    assert.deepEqual(report.body.projects.map((project: any) => project.id), [node.projects[0].id]);
+    assert.equal(report.body.projects[0].totals.requests, 45);
+    assert.equal(report.body.nodes.length, 2);
+    assert.ok(report.body.coverage.missingNodeIds.includes(peerId));
+    assert.equal((await api(node, session, "GET", `/usage/clusters/${clusterId}/report?projectId=${node.projects[1].id}`)).status, 404);
+    assert.equal((await fetch(`${node.url}/api/usage/clusters/${clusterId}/report`)).status, 401);
+  } finally {
+    db.prepare("DELETE FROM sharing_resource_shares WHERE cluster_id=?").run(clusterId);
+    db.prepare("DELETE FROM sharing_memberships WHERE cluster_id=?").run(clusterId);
+    db.prepare("DELETE FROM sharing_clusters WHERE id=?").run(clusterId);
+    db.close();
+  }
+});
+test("comparison day route respects DST, partial pricing, and date scope", async () => {
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  const insert = db.prepare("INSERT INTO model_usage_events(id,project_id,conversation_id,session_id,engine,occurred_at,payload,origin_node_id) VALUES(?,?,?,?,?,?,?,?)");
+  for (const [index, occurredAt] of ["2025-03-09T04:30:00.000Z", "2025-03-09T05:30:00.000Z", "2025-03-10T03:30:00.000Z", "2025-03-10T04:30:00.000Z"].entries()) {
+    const id = `dst-${index}`;
+    insert.run(id, node.projects[0].id, id, id, "pi", occurredAt, JSON.stringify({ id, occurredAt, projectId: node.projects[0].id, conversationId: id, sessionId: id, engine: "pi", provider: "test", modelId: "fixture", requestId: null, input: 1, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteUnknown: 0, reasoning: 0, apiCostUsd: index === 2 ? null : 1, pricing: null, usageStatus: "reported", difficultyLevel: null, difficultyConfidence: null, difficultyStatus: "unknown", turnId: null, toolCalls: 0, toolErrors: 0 }), node.nodeId);
+  }
+  try {
+    const data = await api<any>(node, session, "GET", "/usage/days?from=2025-03-09&to=2025-03-09&timeZone=America%2FNew_York&refresh=false");
+    assert.equal(data.status, 200);
+    assert.deepEqual(data.body.days.map((row: any) => [row.key, row.totals.requests, row.totals.apiCostUsd, row.totals.partial]), [["2025-03-09", 2, 1, true]]);
+  } finally { db.exec("DELETE FROM model_usage_events WHERE id LIKE 'dst-%'"); db.close(); }
+});
+test("hour buckets distinguish fall-back repeated hour and minute-offset zones", async () => {
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  const insert = db.prepare("INSERT INTO model_usage_events(id,project_id,conversation_id,session_id,engine,occurred_at,payload,origin_node_id) VALUES(?,?,?,?,?,?,?,?)");
+  for (const [index, occurredAt] of ["2025-11-02T05:30:00.000Z", "2025-11-02T06:30:00.000Z"].entries()) {
+    const id = `hour-${index}`;
+    insert.run(id, node.projects[0].id, id, id, "pi", occurredAt, JSON.stringify({ id, occurredAt, projectId: node.projects[0].id, conversationId: id, sessionId: id, engine: "pi", provider: "test", modelId: "fixture", requestId: null, input: 1, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteUnknown: 0, reasoning: 0, apiCostUsd: 1, pricing: null, usageStatus: "reported", difficultyLevel: null, difficultyConfidence: null, difficultyStatus: "unknown", turnId: null, toolCalls: 0, toolErrors: 0 }), node.nodeId);
+  }
+  try {
+    const data = await api<any>(node, session, "GET", "/usage/days?from=2025-11-02&to=2025-11-02&timeZone=America%2FNew_York&bucket=hour&refresh=false");
+    assert.deepEqual(data.body.days.map((row: any) => row.key), ["2025-11-02T01-04:00", "2025-11-02T01-05:00"]);
+    assert.equal((await api(node, session, "GET", "/usage/days?from=2025-11-02&to=2025-11-02&bucket=hour")).status, 400);
+  } finally { db.exec("DELETE FROM model_usage_events WHERE id LIKE 'hour-%'"); db.close(); }
 });
 test("usage API reads dates and day buckets in the viewer's time zone", async () => {
   const db = new DatabaseSync(path.join(node.dataDir, "node.db"));

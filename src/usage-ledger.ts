@@ -5,6 +5,7 @@ import { resolveDataDirectory } from "./data-directory.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
 import { usageDifficultySchema, usageEventSchema, type UsageDifficulty, type UsageDimension, type UsageEvent, type UsageFilters, type UsageTotals } from "./usage-types.js";
 import { priceUsage } from "./usage-pricing.js";
+import { calendarHourKey, calendarKey } from "./usage-calendar.js";
 
 let database: DatabaseSync | undefined;
 export function ensureUsageSchema(db: DatabaseSync): void {
@@ -68,7 +69,10 @@ function putEvent(db: DatabaseSync, raw: UsageEvent, origin: string): UsageEvent
     const better = compareQuality(event, current) > 0;
     const betterTools = event.toolCalls > current.toolCalls || event.toolErrors > current.toolErrors;
     const nativeUpgrade = current.pricing?.source !== "pi-reported" && event.pricing?.source === "pi-reported" && event.apiCostUsd !== null;
-    if (!better && !betterTools && !nativeUpgrade) return null;
+    const betterSkills = JSON.stringify(event.skillReads ?? []) !== JSON.stringify(current.skillReads ?? []) && Boolean(event.skillReads?.length);
+    const betterInvocations = JSON.stringify(event.skillInvocations ?? []) !== JSON.stringify(current.skillInvocations ?? []) && Boolean(event.skillInvocations?.length);
+    const betterTiming = event.toolDurationMs !== undefined && event.toolDurationMs !== null && (current.toolDurationMs === undefined || current.toolDurationMs === null || event.toolDurationMs > current.toolDurationMs);
+    if (!better && !betterTools && !nativeUpgrade && !betterSkills && !betterInvocations && !betterTiming) return null;
     const incoming = better ? event : current;
     const currentNative = current.pricing?.source === "pi-reported";
     const incomingNative = event.pricing?.source === "pi-reported" && event.apiCostUsd !== null;
@@ -79,6 +83,9 @@ function putEvent(db: DatabaseSync, raw: UsageEvent, origin: string): UsageEvent
       projectId: current.projectId, conversationId: current.conversationId, sessionId: current.sessionId, engine: current.engine,
       occurredAt: current.usageStatus === "missing" && incoming.usageStatus === "reported" ? incoming.occurredAt : current.occurredAt,
       pricing, apiCostUsd, toolCalls: Math.max(current.toolCalls, event.toolCalls), toolErrors: Math.max(current.toolErrors, event.toolErrors),
+      skillReads: betterSkills ? event.skillReads : current.skillReads, skillInvocations: betterInvocations ? event.skillInvocations : current.skillInvocations,
+      skillTurnId: betterSkills || betterInvocations ? event.skillTurnId : current.skillTurnId,
+      toolDurationMs: betterTiming ? event.toolDurationMs : current.toolDurationMs,
     };
   }
   db.prepare(`INSERT INTO model_usage_events(id,project_id,conversation_id,session_id,engine,occurred_at,payload,origin_node_id)
@@ -264,6 +271,123 @@ export function usageBreakdown(filters: UsageFilters, dimension: UsageDimension)
   const rows = db.prepare(`SELECT ${expressions[dimension]} key,${aggregate} FROM ${source(db, filters, dimension)} WHERE 1=1${condition.sql} GROUP BY key ORDER BY key`)
     .all(...condition.args) as unknown as Array<Record<string, number | null> & { key: string }>;
   return rows.map((row) => ({ key: row.key, totals: totalsRow(row) }));
+}
+/** Aggregate at UTC-minute granularity, then bucket in the viewer's IANA zone. Bounded by
+ * the requested date range, not the number of conversations or their transcript sizes. */
+export function usageCalendarBreakdown(filters: UsageFilters, timeZone: string, granularity: "day" | "hour" = "day"): Array<{ key: string; totals: UsageTotals }> {
+  const db = usageDatabase();
+  const condition = where(db, filters);
+  const rows = db.prepare(`SELECT substr(e.occurred_at,1,16) minute,${aggregate} FROM ${source(db, filters)} WHERE 1=1${condition.sql} GROUP BY minute ORDER BY minute`)
+    .all(...condition.args) as unknown as Array<Record<string, number | null> & { minute: string }>;
+  const buckets = new Map<string, UsageTotals>();
+  for (const row of rows) {
+    const key = granularity === "hour" ? calendarHourKey(`${row.minute}:00.000Z`, timeZone) : calendarKey(`${row.minute}:00.000Z`, timeZone);
+    const value = totalsRow(row);
+    const previous = buckets.get(key);
+    if (!previous) { buckets.set(key, value); continue; }
+    for (const field of ["input", "output", "cacheRead", "cacheWrite5m", "cacheWrite1h", "cacheWriteUnknown", "reasoning", "totalTokens", "requests", "pricedRequests", "missingRequests", "unavailableSessions", "toolCalls", "toolErrors"] as const) previous[field] += value[field];
+    previous.apiCostUsd = previous.apiCostUsd === null ? value.apiCostUsd : previous.apiCostUsd + (value.apiCostUsd ?? 0);
+    previous.partial ||= value.partial;
+  }
+  return [...buckets].map(([key, totals]) => ({ key, totals })).sort((a, b) => a.key.localeCompare(b.key));
+}
+export function usageSkillBreakdown(filters: UsageFilters): { skills: Array<{ id: string; name: string; version: string; associatedTurns: number; observedReads: number; explicitInvocations: number; associatedRequests: number; pricedRequests: number; apiEquivalentCostUsd: number; models: Array<{ modelId: string; requests: number; toolErrors: number; knownCostUsd: number }>; toolErrors: number; medianDurationMs: number | null; timedTurns: number }>; unattributedRequests: number; scopeRequests: number; note: string } {
+  const db = usageDatabase();
+  const condition = where(db, filters);
+  const records = db.prepare(`SELECT e.payload FROM ${source(db, filters)} WHERE 1=1${condition.sql} ORDER BY e.occurred_at LIMIT 50001`).all(...condition.args) as unknown as Array<{ payload: string }>;
+  if (records.length > 50000) throw new RangeError("Too many requests; select a shorter window");
+  const scoped = records.map(({ payload }) => usageEventSchema.parse(JSON.parse(payload)));
+  const ids = rawProjectIds(db, filters);
+  const timingRows = ids.length ? db.prepare(`SELECT payload FROM usage_difficulty WHERE project_id IN (${ids.map(() => "?").join(",")})${filters.from ? " AND occurred_at>=?" : ""}${filters.to ? " AND occurred_at<?" : ""} LIMIT 50001`)
+    .all(...ids, ...(filters.from ? [filters.from] : []), ...(filters.to ? [filters.to] : [])) as unknown as Array<{ payload: string }> : [];
+  const intervals = new Map<string, Array<{ start: number; end: number; duration: number }>>();
+  if (timingRows.length <= 50000) for (const { payload } of timingRows) {
+    const turn = usageDifficultySchema.parse(JSON.parse(payload));
+    if (!turn.startedAt || !turn.endedAt) continue;
+    const start = Date.parse(turn.startedAt), end = Date.parse(turn.endedAt);
+    if (end < start) continue;
+    const key = `${turn.projectId}:${turn.engine}:${turn.sessionId}`;
+    const rows = intervals.get(key) ?? []; rows.push({ start, end, duration: end - start }); intervals.set(key, rows);
+  }
+  const skills = new Map<string, { id: string; name: string; version: string; turns: Set<string>; readTurns: Set<string>; invokedTurns: Set<string>; durations: Map<string, number>; requests: number; priced: number; cost: number; errors: number; models: Map<string, { requests: number; toolErrors: number; knownCostUsd: number }> }>();
+  for (const event of scoped) for (const [kind, skill] of [...(event.skillReads ?? []).map((item) => ["read", item] as const), ...(event.skillInvocations ?? []).map((item) => ["invoked", item] as const)]) {
+    const key = JSON.stringify([skill.id, skill.version]);
+    let row = skills.get(key);
+    if (!row) { row = { ...skill, turns: new Set(), readTurns: new Set(), invokedTurns: new Set(), durations: new Map(), requests: 0, priced: 0, cost: 0, errors: 0, models: new Map() }; skills.set(key, row); }
+    const turnId = event.skillTurnId ?? `${event.sessionId}:${event.id}`;
+    row.turns.add(turnId);
+    const timestamp = Date.parse(event.occurredAt);
+    const interval = intervals.get(`${event.projectId}:${event.engine}:${event.sessionId}`)?.find(({ start, end }) => timestamp >= start && timestamp <= end);
+    if (interval && !row.durations.has(turnId)) row.durations.set(turnId, interval.duration);
+    (kind === "read" ? row.readTurns : row.invokedTurns).add(turnId);
+    row.requests++;
+    if (event.apiCostUsd !== null) { row.priced++; row.cost += event.apiCostUsd; }
+    row.errors += event.toolErrors;
+    const model = row.models.get(event.modelId) ?? { requests: 0, toolErrors: 0, knownCostUsd: 0 };
+    model.requests++; model.toolErrors += event.toolErrors; model.knownCostUsd += event.apiCostUsd ?? 0;
+    row.models.set(event.modelId, model);
+  }
+  return { skills: [...skills.values()].map((row) => ({ id: row.id, name: row.name, version: row.version, associatedTurns: row.turns.size,
+    observedReads: row.readTurns.size, explicitInvocations: row.invokedTurns.size,
+    associatedRequests: row.requests, pricedRequests: row.priced, apiEquivalentCostUsd: row.cost, toolErrors: row.errors,
+    timedTurns: row.durations.size, medianDurationMs: row.durations.size ? [...row.durations.values()].sort((a, b) => a - b)[Math.floor((row.durations.size - 1) / 2)] : null,
+    models: [...row.models].map(([modelId, totals]) => ({ modelId, ...totals })).sort((a, b) => b.requests - a.requests) })).sort((a, b) => b.apiEquivalentCostUsd - a.apiEquivalentCostUsd),
+    unattributedRequests: scoped.filter((event) => !event.skillReads?.length && !event.skillInvocations?.length).length, scopeRequests: scoped.length,
+    note: "Overlapping associated request costs are not additive. Historical attribution and duration are unknown unless observed." };
+}
+export function usageTurnTiming(filters: UsageFilters, timeZone: string): { days: Array<{ key: string; turns: number; failed: number; medianAgentMs: number; medianQueueMs: number | null; medianToolMs: number | null; toolTimedRequests: number; toolRequestsUnknown: number }>; unknownHistoricalTiming: number } {
+  const db = usageDatabase();
+  const ids = rawProjectIds(db, filters);
+  if (!ids.length) return { days: [], unknownHistoricalTiming: 0 };
+  const clauses = [`project_id IN (${ids.map(() => "?").join(",")})`];
+  const args = [...ids];
+  for (const [key, column] of [["conversationId", "conversation_id"], ["engine", "engine"]] as const) if (filters[key]) { clauses.push(`${column}=?`); args.push(filters[key]!); }
+  if (filters.from) { clauses.push("occurred_at>=?"); args.push(filters.from); }
+  if (filters.to) { clauses.push("occurred_at<?"); args.push(filters.to); }
+  if (filters.originNodeIds) {
+    if (!filters.originNodeIds.length) return { days: [], unknownHistoricalTiming: 0 };
+    clauses.push(`origin_node_id IN (${filters.originNodeIds.map(() => "?").join(",")})`); args.push(...filters.originNodeIds);
+  }
+  const records = db.prepare(`SELECT payload FROM usage_difficulty WHERE ${clauses.join(" AND ")} ORDER BY occurred_at LIMIT 50001`).all(...args) as unknown as Array<{ payload: string }>;
+  if (records.length > 50000) throw new RangeError("Too many turns; select a shorter window");
+  const days = new Map<string, Array<{ agent: number; queue: number | null; failed: boolean }>>();
+  const intervals = new Map<string, Array<{ start: number; end: number }>>();
+  for (const { payload } of records) {
+    const item = usageDifficultySchema.parse(JSON.parse(payload));
+    if (!item.startedAt || !item.endedAt) continue;
+    const agent = Date.parse(item.endedAt) - Date.parse(item.startedAt);
+    const queue = item.queuedAt ? Date.parse(item.startedAt) - Date.parse(item.queuedAt) : null;
+    if (agent < 0 || queue !== null && queue < 0) continue;
+    const key = calendarKey(item.startedAt, timeZone);
+    const session = `${item.projectId}:${item.engine}:${item.sessionId}`;
+    const ranges = intervals.get(session) ?? [];
+    ranges.push({ start: Date.parse(item.startedAt), end: Date.parse(item.endedAt) }); intervals.set(session, ranges);
+    const group = days.get(key) ?? [];
+    group.push({ agent, queue, failed: item.outcome === "failed" }); days.set(key, group);
+  }
+  const condition = where(db, filters);
+  const events = db.prepare(`SELECT e.payload FROM model_usage_events e WHERE 1=1${condition.sql} LIMIT 50001`).all(...condition.args) as unknown as Array<{ payload: string }>;
+  if (events.length > 50000) throw new RangeError("Too many requests; select a shorter window");
+  const toolDays = new Map<string, { measured: number[]; unknown: number }>();
+  let unknownHistoricalTiming = 0;
+  for (const { payload } of events) {
+    const event = usageEventSchema.parse(JSON.parse(payload));
+    const timestamp = Date.parse(event.occurredAt);
+    if (!intervals.get(`${event.projectId}:${event.engine}:${event.sessionId}`)?.some(({ start, end }) => timestamp >= start && timestamp <= end)) unknownHistoricalTiming++;
+    if (!event.toolCalls) continue;
+    const key = calendarKey(event.occurredAt, timeZone);
+    const tool = toolDays.get(key) ?? { measured: [], unknown: 0 };
+    if (event.toolDurationMs === undefined || event.toolDurationMs === null) tool.unknown++;
+    else tool.measured.push(event.toolDurationMs);
+    toolDays.set(key, tool);
+  }
+  const median = (values: number[]) => { const ordered = values.sort((a, b) => a - b); return ordered.length ? ordered[Math.floor((ordered.length - 1) / 2)] : null; };
+  return { days: [...new Set([...days.keys(), ...toolDays.keys()])].map((key) => {
+    const rows = days.get(key) ?? [], tool = toolDays.get(key);
+    return { key, turns: rows.length, failed: rows.filter((row) => row.failed).length,
+      medianAgentMs: median(rows.map((row) => row.agent)) ?? 0, medianQueueMs: median(rows.flatMap((row) => row.queue === null ? [] : [row.queue])),
+      medianToolMs: median(tool?.measured ?? []), toolTimedRequests: tool?.measured.length ?? 0, toolRequestsUnknown: tool?.unknown ?? 0 };
+  }).sort((a, b) => a.key.localeCompare(b.key)), unknownHistoricalTiming };
 }
 export function conversationUsage(projectId:string,conversationId:string):UsageTotals{return usageTotals({projectIds:[projectId],projectId,conversationId});} export function projectUsage(projectId:string):UsageTotals{return usageTotals({projectIds:[projectId],projectId});}
 export function latestDifficultyForConversation(projectId: string, conversationId: string, configId: string, configRevision: number): UsageDifficulty | null {

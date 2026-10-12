@@ -20,6 +20,14 @@ test("usage refresh request is deferred, reports progress, and coalesces", async
   assert.equal(calls, 1);
 });
 
+test("manual refresh carries force through to the scanner", async () => {
+  const forces: boolean[] = [];
+  const controller = createUsageRefreshController(async (force) => { forces.push(force); return coverage("2025-01-01T00:00:00.000Z"); }, 60_000);
+  await controller.refresh();
+  await controller.refresh(true);
+  assert.deepEqual(forces, [false, true]);
+});
+
 test("usage refresh coalesces direct callers, sanitizes errors, and retries", async () => {
   let calls = 0; let release!: (value: UsageCoverage) => void;
   const controller = createUsageRefreshController(() => {

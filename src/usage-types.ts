@@ -25,12 +25,17 @@ export const usageEventSchema = z.object({
   apiCostUsd: z.number().finite().nonnegative().nullable(), pricing: usagePricingSchema.nullable(), usageStatus: z.enum(["reported", "missing"]),
   difficultyLevel: z.number().int().min(1).max(10).nullable(), difficultyConfidence: z.number().min(0).max(1).nullable(), difficultyStatus: z.string(), turnId: z.string().nullable(),
   toolCalls: z.number().int().nonnegative(), toolErrors: z.number().int().nonnegative(),
+  /** Evidence from a completed, successful SKILL.md tool read in this turn; never inferred from prompt text. */
+  skillReads: z.array(z.object({ id: z.string().min(1).max(200), name: z.string().min(1).max(100), version: z.string().min(1).max(80) }).strict()).max(32).optional(),
+  skillInvocations: z.array(z.object({ id: z.string().min(1).max(200), name: z.string().min(1).max(100), version: z.string().min(1).max(80) }).strict()).max(32).optional(),
+  skillTurnId: z.string().max(100).optional(),
+  toolDurationMs: z.number().int().nonnegative().nullable().optional(),
 }).strict();
 export type UsageEvent = z.infer<typeof usageEventSchema>;
 
 export const usageDifficultySchema = z.object({
   turnId: z.string().min(1), projectId: z.string().min(1), conversationId: z.string().min(1), sessionId: z.string().min(1), engine: z.string().min(1), occurredAt: z.string().datetime(),
-  status: z.string().min(1), level: z.number().int().min(1).max(10).nullable(), confidence: z.number().min(0).max(1).nullable(), classifierId: z.string().nullable().optional(), configId: z.string().nullable().optional(), configRevision: z.number().int().nullable().optional(), inheritedFrom: z.string().nullable().optional(), mapped: z.boolean().optional(), startedAt: z.string().datetime().nullable().optional(), endedAt: z.string().datetime().nullable().optional(),
+  status: z.string().min(1), level: z.number().int().min(1).max(10).nullable(), confidence: z.number().min(0).max(1).nullable(), classifierId: z.string().nullable().optional(), configId: z.string().nullable().optional(), configRevision: z.number().int().nullable().optional(), inheritedFrom: z.string().nullable().optional(), mapped: z.boolean().optional(), startedAt: z.string().datetime().nullable().optional(), endedAt: z.string().datetime().nullable().optional(), queuedAt: z.string().datetime().nullable().optional(), turnKind: z.enum(["normal", "scheduled", "goal"]).optional(), outcome: z.enum(["completed", "failed"]).optional(),
 }).strict();
 export type UsageDifficulty = z.infer<typeof usageDifficultySchema>;
 
