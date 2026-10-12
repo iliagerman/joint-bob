@@ -100,13 +100,14 @@ export function wakeQueuedConversations(): void {
     .catch((error) => send(connection.socket, { type: "error", error: chatErrorMessage(error) }));
 }
 /* A twin replicates a usage record for every model call of every conversation it runs, and
-   each batch used to mark every project's conversation list as changed. Usage totals are not
-   part of the lists kept in session-listing-revisions.ts, and most other events name their
-   project; only an event that names none marks them all. Pages are told as before. */
-const USAGE_EVENTS = new Set(["model.usage", "usage.difficulty"]);
+   each batch used to mark every project's conversation list as changed. Only the kinds of
+   event that change a conversation list (or which conversations a person's list includes)
+   mark the lists kept in session-listing-revisions.ts, and most of them name their project;
+   one that names none marks them all. Pages are told as before. */
+const LISTING_EVENTS = new Set(["name.override", "task", "conversation.ownership", "conversation.record", "conversation.queue", "conversation.goal", "conversation.review", "conversation.notification", "user.pin", "user.recent"]);
 export function broadcastReplicationInvalidations(events: ReplicationBatch["events"]): void {
   for (const event of events) {
-    if (USAGE_EVENTS.has(event.entityType)) continue;
+    if (!LISTING_EVENTS.has(event.entityType)) continue;
     const projectId = (event.payload as { projectId?: unknown } | null)?.projectId;
     sessionListingChanged(typeof projectId === "string" && projectId ? projectId : undefined);
   }

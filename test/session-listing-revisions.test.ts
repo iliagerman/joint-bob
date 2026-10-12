@@ -46,18 +46,18 @@ test("an answer in flight when the project changes is not kept as current", asyn
   assert.equal(computations, 2);
 });
 
-test("an unannounced change is seen within ten seconds, and a failure is not kept", async () => {
+test("an unannounced change is seen within a minute, or at once when the caller read it, and a failure is not kept", async () => {
   resetSharedProjectListings();
   const { computed, list } = counter();
   const start = Date.now();
   await list("a", "ilia", start);
-  await list("a", "ilia", start + 9_000);
-  assert.equal(computed.length, 1);
-  await list("a", "ilia", start + 10_000);
+  await list("a", "ilia", start + 59_000);
+  assert.equal(computed.length, 1, "pages asking every fifteen seconds reuse the answer");
+  await list("a", "ilia", start + 60_000);
   assert.equal(computed.length, 2);
   // What the caller read just now differs from what the kept answer was computed against.
-  await list("a", "ilia", start + 10_001, "a terminal session started");
-  await list("a", "ilia", start + 10_002, "a terminal session started");
+  await list("a", "ilia", start + 60_001, "a terminal session started");
+  await list("a", "ilia", start + 60_002, "a terminal session started");
   assert.equal(computed.length, 3, "state that changed without an announcement computes again at once");
 
   let attempts = 0;

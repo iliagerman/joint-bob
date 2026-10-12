@@ -4,12 +4,14 @@
  * rebuild all of them, once per page and once per list, while only one project had changed.
  *
  * A project's answer is kept here until something is announced for that project, or for all
- * of them, and requests that arrive together share one computation. The age limit covers
- * state that changes without an announcement, such as a command started outside Joint Bob.
+ * of them, and requests that arrive together share one computation. Callers pass what they
+ * read of the state that changes unannounced (see unannouncedRunState), so the age limit is
+ * only a backstop for a change nobody thought to announce. It is as long as the pages' own
+ * poll: at ten seconds, pages asking every fifteen still recomputed every project each time.
  *
  * This module imports nothing, so anything that announces a change can mark it here.
  */
-const MAX_AGE_MS = 10_000;
+const MAX_AGE_MS = 60_000;
 const MAX_ENTRIES = 2_000;
 
 const projects = new Map<string, number>();
