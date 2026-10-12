@@ -59,7 +59,13 @@ const COLUMNS = [
   { key: "errors", label: "Errors", value: (totals) => totals.toolErrors },
 ];
 
+// Bumped to drop every overview request still in flight (closing, a hidden tab).
 let requestGeneration = 0;
+// The newest request for each section; an older response for it is ignored.
+const sectionTickets = new Map();
+// The newest load owns the status line and the refresh button.
+let loadSerial = 0;
+let lastLoadAt = 0;
 let page = 1;
 const clientPages = new Map();
 let pageSize = 10;
@@ -176,11 +182,11 @@ function updateInventory(data) {
   const merge = (current, incoming, key) => [
     ...new Map([...current, ...incoming].map((item) => [item[key], item])).values(),
   ];
-  inventory.projects = merge(inventory.projects, data.projects, "id");
-  inventory.conversations = data.conversations;
+  inventory.projects = merge(inventory.projects, data.projects || [], "id");
+  if (data.conversations) inventory.conversations = data.conversations;
   inventory.classifications = [...new Set([
     ...inventory.classifications,
-    ...data.breakdowns.classifications.map((item) => item.key).filter(Boolean),
+    ...(data.breakdowns?.classifications || []).map((item) => item.key).filter(Boolean),
   ])].sort();
   setOptions(filters.elements.projectId, inventory.projects.map((project) => ({
     value: project.id, label: project.name,
@@ -226,7 +232,8 @@ function renderSummary(totals) {
 }
 
 function dimensionCount(data, key) {
-  return key === "conversations" ? data.conversationPagination.total : data.breakdowns[key].length;
+  if (!data.breakdowns[key]) return "…";
+  return (key === "conversations" ? data.conversationPagination.total : data.breakdowns[key].length).toLocaleString();
 }
 function renderDimensions(data) {
   dimensionNav.replaceChildren(...DIMENSIONS.map((item) => {
@@ -235,7 +242,7 @@ function renderDimensions(data) {
     button.dataset.dimension = item.key;
     button.dataset.testid = `usage-dimension-${item.key}`;
     button.setAttribute("aria-pressed", String(item.key === dimension));
-    button.append(element("span", item.label), element("small", dimensionCount(data, item.key).toLocaleString()));
+    button.append(element("span", item.label), element("small", dimensionCount(data, item.key)));
     return button;
   }));
 }
@@ -332,7 +339,7 @@ function shareCell(item, max, total) {
 /** The strip above the table: the daily trend, or the selected row's cost by model. */
 function renderFocus() {
   if (!latest) return;
-  if (!selected) { renderUsageTrend(trend, latest.breakdowns.days); return; }
+  if (!selected) { if (latest.breakdowns.days) renderUsageTrend(trend, latest.breakdowns.days); return; }
   const head = element("div", undefined, "usage-focus-head");
   head.append(element("span", "Cost by model", "usage-trend-label"), element("strong", rowName(latest, selected).text, "usage-focus-name"));
   const split = splits.get(`${dimension}:${selected}`);
@@ -359,6 +366,14 @@ function pageWindow(data, rows) {
 }
 function renderTable(data) {
   const config = DIMENSIONS.find((item) => item.key === dimension);
+  if (!data.breakdowns[dimension]) {
+    const label = config.label.toLowerCase();
+    breakdowns.replaceChildren(element("p", data.failed.has(dimension) ? `${config.label} unavailable. Select Refresh usage to try again.` : `Loading ${label}…`));
+    rowCount.textContent = "";
+    sortNote.textContent = "";
+    pagination.hidden = true;
+    return;
+  }
   const rows = data.breakdowns[dimension].map((item) => ({ ...item, label: rowName(data, item.key).text }));
   const section = element("section", undefined, "usage-breakdown");
   section.dataset.dimension = dimension;
@@ -371,7 +386,7 @@ function renderTable(data) {
   thead.append(head);
   const body = element("tbody");
   const max = Math.max(0, ...rows.map((item) => item.totals.apiCostUsd ?? 0));
-  const total = data.summary.apiCostUsd;
+  const total = data.summary?.apiCostUsd ?? null;
   const view = pageWindow(data, sortedRows(rows));
   for (const item of view.rows) {
     const row = element("tr");
@@ -429,7 +444,7 @@ function refit() {
   if (dimension !== "conversations") { clientPages.set(dimension, Math.floor(first / size) + 1); renderBreakdowns(); return; }
   page = Math.floor(first / size) + 1;
   clearTimeout(refitTimer);
-  refitTimer = setTimeout(() => void loadUsage({ polling: true }), 150);
+  refitTimer = setTimeout(() => void loadUsage({ polling: true, sections: ["conversations"] }), 150);
 }
 new ResizeObserver(() => refit()).observe(breakdowns);
 
@@ -439,7 +454,7 @@ async function loadSplit(key) {
   if (splits.has(cacheKey) || !config.filter) return;
   const parameters = scopeParameters();
   for (const [name, value] of Object.entries(config.filter(key))) parameters.set(name, value);
-  parameters.set("refresh", "false"); parameters.set("pageSize", "1");
+  parameters.set("refresh", "false"); parameters.set("pageSize", "1"); parameters.set("sections", "models");
   const scope = snapshotScope;
   try {
     const data = await api(`/api/usage?${parameters}`, { signal: AbortSignal.timeout(20000) });
@@ -450,31 +465,56 @@ async function loadSplit(key) {
   if (scope === snapshotScope) renderFocus();
 }
 
-function renderUsage(data) {
-  hasSnapshot = true;
-  updateInventory(data);
-  latest = {
-    ...data,
-    names: {
-      projects: new Map(data.projects.map((item) => [item.id, item.name])),
-      conversations: new Map(data.conversations.map((item) => [item.conversationId, item])),
-    },
+const SECTIONS = ["summary", "projects", "conversations", "classifications", "difficulties", "models", "days"];
+/** What the open view shows first; the other groupings fill in behind it. */
+function sectionOrder() {
+  return [...new Set(["summary", dimension, "days", ...SECTIONS])];
+}
+function emptySnapshot() {
+  return {
+    summary: null, breakdowns: {}, conversations: [], projects: [], coverage: null, failed: new Set(),
+    conversationPagination: { page: 1, pageSize, total: 0, totalPages: 0 },
+    names: { projects: new Map(), conversations: new Map() },
   };
-  renderSummary(data.summary);
-  page = data.conversationPagination.page;
-  renderBreakdowns();
+}
+function renderCoverageNotice() {
+  const totals = latest?.summary, coverage = latest?.coverage;
+  if (!totals || !coverage) return;
   notice.removeAttribute("role");
   notice.title = "";
-  const missing = data.summary.unavailableSessions || 0;
-  const unpriced = Math.max(0, data.summary.requests - data.summary.pricedRequests);
-  const partial = missing || unpriced || data.summary.partial;
-  notice.className = data.coverage.error ? "usage-error" : partial ? "usage-warning" : "";
+  const missing = totals.unavailableSessions || 0;
+  const unpriced = Math.max(0, totals.requests - totals.pricedRequests);
+  const partial = missing || unpriced || totals.partial;
+  notice.className = coverage.error ? "usage-error" : partial ? "usage-warning" : "";
   notice.replaceChildren();
-  if (data.coverage.error) notice.textContent = data.coverage.error;
+  if (coverage.error) notice.textContent = coverage.error;
   else if (partial) {
-    notice.append(element("strong", "Partial coverage"), ` ${missing.toLocaleString()} sessions unavailable · ${unpriced.toLocaleString()} requests unpriced. Values marked `, partialMark(data.summary), " are lower bounds.");
+    notice.append(element("strong", "Partial coverage"), ` ${missing.toLocaleString()} sessions unavailable · ${unpriced.toLocaleString()} requests unpriced. Values marked `, partialMark(totals), " are lower bounds.");
     notice.title = notice.textContent.replace("marked  are", "marked with a dot are");
   }
+}
+/** Takes one section out of a response and draws it; the rest of the page keeps what it has. */
+function applySection(section, data) {
+  hasSnapshot = true;
+  latest ||= emptySnapshot();
+  latest.failed.delete(section);
+  latest.coverage = data.coverage;
+  latest.projects = data.projects || latest.projects;
+  latest.names.projects = new Map(latest.projects.map((item) => [item.id, item.name]));
+  if (section === "summary") latest.summary = data.summary;
+  else latest.breakdowns[section] = data.breakdowns[section] || [];
+  if (section === "conversations") {
+    latest.conversations = data.conversations || [];
+    latest.conversationPagination = data.conversationPagination || latest.conversationPagination;
+    latest.names.conversations = new Map(latest.conversations.map((item) => [item.conversationId, item]));
+    page = latest.conversationPagination.page;
+  }
+  if (section === "conversations") updateInventory(data);
+  else if (section === "summary" || section === "classifications") updateInventory({ projects: latest.projects, breakdowns: { classifications: latest.breakdowns.classifications } });
+  if (section === "summary") { renderSummary(latest.summary); renderCoverageNotice(); }
+  // The table and the strip above it redraw only for what they show; other groupings update their count.
+  if (section === dimension || section === "summary" || section === "days") renderBreakdowns();
+  else renderDimensions(latest);
 }
 function periodRange() {
   const preset = filters.elements.period.value;
@@ -507,12 +547,47 @@ function queryString() {
   return scopeParameters().toString();
 }
 function stopPolling(){if(pollTimer)clearTimeout(pollTimer);pollTimer=null;}
-async function loadUsage({ polling = false } = {}) {
+function settledStatus(coverage) {
+  return coverage.refreshing ? "Refreshing transcripts in background…" : coverage.refreshedAt ? `Usage refreshed ${new Date(coverage.refreshedAt).toLocaleString()}` : "Showing saved usage; first transcript refresh pending";
+}
+/**
+ * While transcripts refresh in the background, ask only whether saved usage changed. Re-reading
+ * every grouping every two seconds kept the node busy for as long as the dashboard was open.
+ */
+const RELOAD_WHILE_REFRESHING_MS = 15000;
+function schedulePoll() {
+  stopPolling();
+  if (dialog.open && !document.hidden) pollTimer = setTimeout(() => void pollRefresh(), 2000);
+}
+async function pollRefresh() {
+  pollTimer = null;
+  const generation = requestGeneration, serial = loadSerial;
+  const superseded = () => generation !== requestGeneration || serial !== loadSerial || !dialog.open;
+  let current;
+  try { current = await api("/api/usage/status", { signal: AbortSignal.timeout(10000) }); }
+  catch { if (!superseded()) schedulePoll(); return; }
+  if (superseded()) return;
+  const changed = current.revision !== latest?.coverage?.revision;
+  if (!current.refreshing) {
+    if (changed) { void loadUsage({ polling: true }); return; }
+    if (latest?.coverage) { latest.coverage = { ...latest.coverage, ...current }; status.textContent = settledStatus(latest.coverage); }
+    return;
+  }
+  if (changed && Date.now() - lastLoadAt >= RELOAD_WHILE_REFRESHING_MS) { void loadUsage({ polling: true }); return; }
+  schedulePoll();
+}
+/**
+ * Each section is its own request, so totals appear as soon as they are read and every grouping
+ * fills in as it arrives; one slow grouping no longer holds the whole page back.
+ */
+async function loadUsage({ polling = false, sections = null } = {}) {
   stopPolling();
   const scope = queryString();
   clearFilters.hidden = !activeFilterCount();
   if (scope !== snapshotScope) { hasSnapshot = false; snapshotScope = scope; splits.clear(); selected = ""; clientPages.clear(); }
-  const generation = ++requestGeneration;
+  const generation = requestGeneration;
+  const serial = ++loadSerial;
+  lastLoadAt = Date.now();
   status.textContent = hasSnapshot ? "Updating usage…" : "Loading usage…";
   if (!hasSnapshot) {
     notice.className = "";
@@ -524,32 +599,42 @@ async function loadUsage({ polling = false } = {}) {
     breakdowns.replaceChildren(element("p", "Loading breakdowns…"));
   }
   refreshButton.disabled = true;
-  try {
-    const parameters = new URLSearchParams(scope); parameters.set("page", String(page)); parameters.set("pageSize", String(pageSize)); if(polling)parameters.set("refresh","false");
-    const data = await api(`/api/usage?${parameters}`, {
-      signal: AbortSignal.timeout(20000),
-    });
-    if (generation !== requestGeneration) return;
-    renderUsage(data);
-    status.textContent = data.coverage.refreshing ? "Refreshing transcripts in background…" : data.coverage.refreshedAt ? `Usage refreshed ${new Date(data.coverage.refreshedAt).toLocaleString()}` : "Showing saved usage; first transcript refresh pending";
-    stopPolling();
-    if (dialog.open && !document.hidden && data.coverage.refreshing) pollTimer=setTimeout(()=>void loadUsage({polling:true}),2000);
-  } catch (error) {
-    if (generation !== requestGeneration) return;
-    const guidance = error.name === "TimeoutError"
-      ? "Usage timed out. Select Refresh usage to try again."
-      : `${error.message}. Select Refresh usage to try again.`;
+  const wanted = sections || sectionOrder();
+  let failure = null;
+  let coverage = null;
+  await Promise.all(wanted.map(async (section, index) => {
+    const ticket = Symbol(section);
+    sectionTickets.set(section, ticket);
+    const current = () => generation === requestGeneration && scope === snapshotScope && sectionTickets.get(section) === ticket;
+    const parameters = new URLSearchParams(scope);
+    parameters.set("page", String(page)); parameters.set("pageSize", String(pageSize)); parameters.set("sections", section);
+    // One request asks for the background transcript refresh; the others only read.
+    if (polling || index) parameters.set("refresh", "false");
+    try {
+      const data = await api(`/api/usage?${parameters}`, { signal: AbortSignal.timeout(20000) });
+      if (!current()) return;
+      coverage = data.coverage;
+      applySection(section, data);
+    } catch (error) {
+      if (!current()) return;
+      failure ||= error;
+      if (latest) { latest.failed.add(section); renderBreakdowns(); }
+    }
+  }));
+  if (generation !== requestGeneration || serial !== loadSerial || scope !== snapshotScope) return;
+  refreshButton.disabled = false;
+  if (failure) {
     notice.className = "usage-error";
     notice.setAttribute("role", "alert");
-    notice.textContent = guidance;
-    if (!hasSnapshot) {
-      summary.replaceChildren(element("p", "Usage totals unavailable. Select Refresh usage to try again."));
-      breakdowns.replaceChildren(element("p", "Usage breakdowns unavailable. Select Refresh usage to try again."));
-    }
-    status.textContent = "Usage unavailable";
-  } finally {
-    if (generation === requestGeneration) refreshButton.disabled = false;
+    notice.textContent = failure.name === "TimeoutError"
+      ? "Usage timed out. Select Refresh usage to try again."
+      : `${failure.message}. Select Refresh usage to try again.`;
+    if (!latest?.summary) summary.replaceChildren(element("p", "Usage totals unavailable. Select Refresh usage to try again."));
+    if (!latest) breakdowns.replaceChildren(element("p", "Usage breakdowns unavailable. Select Refresh usage to try again."));
   }
+  if (!coverage) { status.textContent = "Usage unavailable"; return; }
+  status.textContent = settledStatus(coverage);
+  if (coverage.refreshing) schedulePoll();
 }
 
 /** This month and week so far against the same days of the three before each. */
@@ -821,7 +906,7 @@ pagination.addEventListener("click", (event) => {
   const direction = event.target.closest("button")?.dataset.page;
   if (!direction) return;
   const step = direction === "next" ? 1 : -1;
-  if (dimension === "conversations") { page = Math.max(1, page + step); void loadUsage(); return; }
+  if (dimension === "conversations") { page = Math.max(1, page + step); void loadUsage({ polling: true, sections: ["conversations"] }); return; }
   clientPages.set(dimension, Math.max(1, (clientPages.get(dimension) || 1) + step));
   renderBreakdowns();
 });
@@ -864,7 +949,8 @@ dimensionNav.addEventListener("click", (event) => {
   if (!button || button.dataset.dimension === dimension) return;
   dimension = button.dataset.dimension;
   selected = "";
-  if (dimension === "conversations" && latest && latest.conversationPagination.pageSize !== pageSize) { page = 1; void loadUsage({ polling: true }); }
+  if (dimension === "conversations" && latest && latest.conversationPagination.pageSize !== pageSize) { page = 1; void loadUsage({ polling: true, sections: ["conversations"] }); }
+  else if (latest?.failed.has(dimension)) void loadUsage({ polling: true, sections: [dimension] });
   renderBreakdowns();
 });
 breakdowns.addEventListener("click", (event) => {

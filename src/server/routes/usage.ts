@@ -7,7 +7,7 @@ import { accountInCluster } from "../../cluster-accounts.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { getProject } from "../../store.js";
 import { deleteSubscriptionPlan, listSubscriptionPlans, saveSubscriptionPlan, subscriptionPlanInputSchema } from "../../subscription-usage.js";
-import { usageBreakdown, usageCalendarBreakdown, usageConversationPage, usageConversations, usageInventoryCoverage, usageSkillBreakdown, usageTurnTiming, usageTotals } from "../../usage-ledger.js";
+import { usageBreakdown, usageCalendarBreakdown, usageConversationPage, usageConversations, usageInventoryCoverage, usageLedgerRevision, usageSkillBreakdown, usageTurnTiming, usageTotals } from "../../usage-ledger.js";
 import { calendarBounds } from "../../usage-calendar.js";
 import { suggestRepeatableFlows, suggestSkillImprovements } from "../../usage-analysis.js";
 import { usageDatabase } from "../../usage-ledger.js";
@@ -41,6 +41,16 @@ const querySchema = z.object({
 type UsageQuery = z.infer<typeof querySchema>;
 
 /**
+ * The dashboard's parts. Each one is its own scan of the ledger, so a viewer asks for what it
+ * shows first and fills in the rest instead of waiting on all of them in one response.
+ */
+const SECTIONS = ["summary", "projects", "conversations", "classifications", "difficulties", "models", "days"] as const;
+type UsageSection = (typeof SECTIONS)[number];
+const sectionsSchema = z.string().min(1).max(200).transform((value) => [...new Set(value.split(","))]).pipe(z.array(z.enum(SECTIONS)).min(1));
+/** Lets other requests run: every section holds the server's one thread while its query runs. */
+const breathe = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/**
  * Usage belongs to the node it was recorded on. "local" is this node, including rows saved
  * before origins were stored; a cluster is its other members, as in the conversation filter.
  */
@@ -66,7 +76,7 @@ async function validatedQuery(raw: unknown): Promise<UsageQuery> {
   return { ...query, projectId: project.id };
 }
 
-async function dashboard(query: UsageQuery, suppliedProjects?: Awaited<ReturnType<typeof projectsWithSharedNames>>) {
+async function dashboard(query: UsageQuery, suppliedProjects?: Awaited<ReturnType<typeof projectsWithSharedNames>>, sections: readonly UsageSection[] = SECTIONS) {
   const projects = suppliedProjects ?? await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
   const ids = projects.map((project) => project.id);
   if (query.projectId && !ids.includes(query.projectId)) throw Object.assign(new Error("Project not found"), { statusCode: 404 });
@@ -80,34 +90,44 @@ async function dashboard(query: UsageQuery, suppliedProjects?: Awaited<ReturnTyp
     ...(utcOffset ? { dayOffsetMinutes: utcOffset } : {}),
     ...bounds,
   };
-  let conversationPage = usageConversationPage(filters, query.page, query.pageSize);
-  const totalPages = Math.max(1, Math.ceil(conversationPage.total / query.pageSize));
-  const page = Math.min(query.page, totalPages);
-  if (page !== query.page) conversationPage = usageConversationPage(filters, page, query.pageSize);
-  const visibleConversationIds = [...new Set([...conversationPage.rows.map((row) => row.key), ...(query.conversationId ? [query.conversationId] : [])])];
-  return {
-    summary: usageTotals(filters),
-    breakdowns: {
-      projects: usageBreakdown(filters, "project"), conversations: conversationPage.rows,
-      classifications: usageBreakdown(filters, "classification"), difficulties: usageBreakdown(filters, "difficulty"),
-      models: usageBreakdown(filters, "model"), days: timeZone ? usageCalendarBreakdown(filters, timeZone) : usageBreakdown(filters, "day"),
-    },
-    conversations: usageConversations(filters.projectId ? [filters.projectId] : ids, visibleConversationIds),
-    conversationPagination: { page, pageSize: query.pageSize, total: conversationPage.total, totalPages: conversationPage.total ? totalPages : 0 },
-    projects: projects.map(({ id, name }) => ({ id, name })),
-  };
+  const wanted = new Set(sections);
+  const breakdowns: Partial<Record<Exclude<UsageSection, "summary">, Array<{ key: string; totals: ReturnType<typeof usageTotals> }>>> = {};
+  const result: Record<string, unknown> = { breakdowns, projects: projects.map(({ id, name }) => ({ id, name })) };
+  if (wanted.has("conversations")) {
+    let conversationPage = usageConversationPage(filters, query.page, query.pageSize);
+    const totalPages = Math.max(1, Math.ceil(conversationPage.total / query.pageSize));
+    const page = Math.min(query.page, totalPages);
+    if (page !== query.page) conversationPage = usageConversationPage(filters, page, query.pageSize);
+    const visibleConversationIds = [...new Set([...conversationPage.rows.map((row) => row.key), ...(query.conversationId ? [query.conversationId] : [])])];
+    breakdowns.conversations = conversationPage.rows;
+    result.conversations = usageConversations(filters.projectId ? [filters.projectId] : ids, visibleConversationIds);
+    result.conversationPagination = { page, pageSize: query.pageSize, total: conversationPage.total, totalPages: conversationPage.total ? totalPages : 0 };
+    await breathe();
+  }
+  if (wanted.has("summary")) { result.summary = usageTotals(filters); await breathe(); }
+  for (const [section, dimension] of [["projects", "project"], ["classifications", "classification"], ["difficulties", "difficulty"], ["models", "model"]] as const) {
+    if (!wanted.has(section)) continue;
+    breakdowns[section] = usageBreakdown(filters, dimension);
+    await breathe();
+  }
+  if (wanted.has("days")) breakdowns.days = timeZone ? usageCalendarBreakdown(filters, timeZone) : usageBreakdown(filters, "day");
+  return result as { breakdowns: typeof breakdowns; projects: Array<{ id: string; name: string }>; summary?: ReturnType<typeof usageTotals>; conversations?: unknown[]; conversationPagination?: { page: number; pageSize: number; total: number; totalPages: number } };
 }
 
+/** Cheap enough to poll: whether a transcript refresh is running, and whether saved usage changed since. */
+app.get("/api/usage/status", (_request, response) => response.json({ ...usageRefreshStatus(), revision: usageLedgerRevision() }));
 app.get(["/api/usage", "/api/usage/summary"], async (request, response, next) => {
   try {
-    const query = await validatedQuery(request.query);
+    const { sections: rawSections, ...rawQuery } = request.query;
+    const sections = rawSections === undefined ? SECTIONS : sectionsSchema.parse(rawSections);
+    const query = await validatedQuery(rawQuery);
     const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
-    const result = await dashboard(query, projects);
+    const result = await dashboard(query, projects, sections);
     const savedCoverage = usageInventoryCoverage(result.projects.map((project) => project.id));
     // Queue only after every saved-data read. request() marks pending synchronously,
     // while its setImmediate guarantees discovery cannot race this snapshot.
     if (query.refresh === "true") requestUsageRefresh();
-    response.json({ ...result, coverage: { scope: "observed transcripts and replicated usage", ...savedCoverage, ...usageRefreshStatus() }, subscriptions: listSubscriptionPlans((response.locals.authSession as AuthSession).accountId) });
+    response.json({ ...result, coverage: { scope: "observed transcripts and replicated usage", ...savedCoverage, ...usageRefreshStatus(), revision: usageLedgerRevision() }, subscriptions: listSubscriptionPlans((response.locals.authSession as AuthSession).accountId) });
   } catch (error) {
     if (error instanceof z.ZodError || error instanceof RangeError) { sendError(response, 400, error instanceof z.ZodError ? error.errors.map((issue) => issue.message).join(", ") : error.message); return; }
     if ((error as { statusCode?: number }).statusCode === 404) { sendError(response, 404, (error as Error).message); return; }

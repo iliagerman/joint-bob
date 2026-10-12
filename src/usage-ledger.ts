@@ -14,6 +14,7 @@ CREATE INDEX IF NOT EXISTS usage_events_project ON model_usage_events(project_id
 CREATE TABLE IF NOT EXISTS usage_difficulty(turn_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,conversation_id TEXT NOT NULL,session_id TEXT NOT NULL,engine TEXT NOT NULL,occurred_at TEXT NOT NULL,payload TEXT NOT NULL,origin_node_id TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS usage_difficulty_scope ON usage_difficulty(project_id,conversation_id,session_id,engine,occurred_at);
 CREATE INDEX IF NOT EXISTS usage_difficulty_interval ON usage_difficulty(project_id,conversation_id,occurred_at DESC);
+CREATE INDEX IF NOT EXISTS usage_difficulty_session ON usage_difficulty(session_id,engine);
 CREATE TABLE IF NOT EXISTS usage_inventory(project_id TEXT NOT NULL,conversation_id TEXT NOT NULL,session_id TEXT NOT NULL,engine TEXT NOT NULL,title TEXT NOT NULL,classification TEXT,usage_status TEXT NOT NULL,PRIMARY KEY(project_id,engine,session_id));
 CREATE TABLE IF NOT EXISTS subscription_plans(id TEXT PRIMARY KEY,owner TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS subscription_owner ON subscription_plans(owner);
 CREATE TABLE IF NOT EXISTS usage_ingest_files(file_key TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,status TEXT NOT NULL);`);
@@ -32,8 +33,12 @@ export function saveUsageIngestFingerprint(key: string, fingerprint: string, sta
  */
 type UsageScope = { projectId: string; conversationId?: string; sessionId?: string; engine?: string };
 const totalsCache = new Map<string, { projectIds: string[]; filters: UsageFilters; totals: UsageTotals }>();
+let revision = 0;
+/** Changes whenever saved usage changes, so a viewer can tell an unchanged ledger without re-reading it. */
+export function usageLedgerRevision(): number { return revision; }
 function invalidateTotals(scopes: UsageScope[]): void {
   if (!scopes.length) return;
+  revision++;
   for (const [key, { projectIds, filters }] of totalsCache) {
     if (scopes.some((scope) => projectIds.includes(scope.projectId)
       && (!scope.conversationId || !filters.conversationId || scope.conversationId === filters.conversationId)
@@ -42,7 +47,7 @@ function invalidateTotals(scopes: UsageScope[]): void {
   }
 }
 /** For writers outside this module, such as tests that edit the tables directly. */
-export function clearUsageTotalsCache(): void { totalsCache.clear(); }
+export function clearUsageTotalsCache(): void { totalsCache.clear(); revision++; }
 export function usageDatabase(): DatabaseSync {
   if (database) return database;
   const directory = resolveDataDirectory(); mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -123,6 +128,7 @@ export function saveDifficulty(raw: UsageDifficulty, originNodeId: string): void
       .run(record.turnId, record.projectId, record.conversationId, record.sessionId, record.engine, record.occurredAt, JSON.stringify(record), originNodeId);
     enqueueReplicationEvent(db, { originNodeId, entityType: "usage.difficulty", entityKey: record.turnId, operation: "upsert", payload: { projectId: record.projectId, record, originNodeId } });
     db.exec("COMMIT");
+    revision++;
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
@@ -139,11 +145,9 @@ function projectAliases(db: DatabaseSync): Array<{ alias_id: string; project_id:
   queueMicrotask(() => { aliasPass = undefined; });
   return aliasPass.rows;
 }
-function hasAliases(db: DatabaseSync): boolean {
-  return projectAliases(db) !== null;
-}
+/** With no alias recorded every project is its own canonical one, and the plain column keeps its indexes usable. */
 function canonicalProject(db: DatabaseSync, alias: string): string {
-  return hasAliases(db) ? `COALESCE((SELECT project_id FROM project_aliases WHERE alias_id=${alias}.project_id),${alias}.project_id)` : `${alias}.project_id`;
+  return projectAliases(db)?.length ? `COALESCE((SELECT project_id FROM project_aliases WHERE alias_id=${alias}.project_id),${alias}.project_id)` : `${alias}.project_id`;
 }
 /**
  * The stored project ids whose canonical project is one of `projectIds`. Filtering on these
@@ -260,17 +264,29 @@ function dayExpression(offsetMinutes = 0): string {
   if (!Number.isInteger(offsetMinutes) || Math.abs(offsetMinutes) > 840) throw new RangeError("Invalid day offset");
   return offsetMinutes ? `date(e.occurred_at,'${offsetMinutes > 0 ? "+" : ""}${offsetMinutes} minutes')` : "substr(e.occurred_at,1,10)";
 }
-export function usageBreakdown(filters: UsageFilters, dimension: UsageDimension): Array<{ key: string; totals: UsageTotals }> {
-  const db = usageDatabase();
+function breakdownQuery(db: DatabaseSync, filters: UsageFilters, dimension: UsageDimension): { sql: string; args: string[] } {
   const condition = where(db, filters);
   const expressions: Record<UsageDimension, string> = {
     project: canonicalProject(db, "e"), conversation: "e.conversation_id", classification: classification(db),
     difficulty: difficultyExpression(),
     model: "json_extract(e.payload,'$.modelId')", day: dayExpression(filters.dayOffsetMinutes), engine: "e.engine",
   };
-  const rows = db.prepare(`SELECT ${expressions[dimension]} key,${aggregate} FROM ${source(db, filters, dimension)} WHERE 1=1${condition.sql} GROUP BY key ORDER BY key`)
-    .all(...condition.args) as unknown as Array<Record<string, number | null> & { key: string }>;
+  return { sql: `SELECT ${expressions[dimension]} key,${aggregate} FROM ${source(db, filters, dimension)} WHERE 1=1${condition.sql} GROUP BY key ORDER BY key`, args: condition.args };
+}
+export function usageBreakdown(filters: UsageFilters, dimension: UsageDimension): Array<{ key: string; totals: UsageTotals }> {
+  const db = usageDatabase();
+  const query = breakdownQuery(db, filters, dimension);
+  const rows = db.prepare(query.sql).all(...query.args) as unknown as Array<Record<string, number | null> & { key: string }>;
   return rows.map((row) => ({ key: row.key, totals: totalsRow(row) }));
+}
+/**
+ * How SQLite reads a grouping, one line per step. The difficulty grouping looks a turn up for
+ * every request: when that lookup scanned the whole table, the dashboard took a minute and timed out.
+ */
+export function usageBreakdownPlan(filters: UsageFilters, dimension: UsageDimension): string[] {
+  const db = usageDatabase();
+  const query = breakdownQuery(db, filters, dimension);
+  return (db.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.args) as unknown as Array<{ detail: string }>).map((row) => row.detail);
 }
 /** Aggregate at UTC-minute granularity, then bucket in the viewer's IANA zone. Bounded by
  * the requested date range, not the number of conversations or their transcript sizes. */
@@ -451,4 +467,5 @@ export function applyUsageDifficultyEvent(db: DatabaseSync, event: ReplicationEv
   if (current?.endedAt || current && JSON.stringify(current) === JSON.stringify(record)) return;
   db.prepare(`INSERT INTO usage_difficulty VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(turn_id) DO UPDATE SET payload=excluded.payload,occurred_at=excluded.occurred_at`)
     .run(record.turnId, projectId, record.conversationId, record.sessionId, record.engine, record.occurredAt, JSON.stringify({ ...record, projectId }), event.originNodeId);
+  revision++;
 }
