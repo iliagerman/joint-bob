@@ -1,4 +1,6 @@
 import { api } from "./api.js";
+import { openBudgetDialog, workspaceBudgetTarget } from "./budget-dialog.js";
+import { isNodeAdmin } from "./node-admin.js";
 import { elements } from "./elements.js";
 import { fillProjectBases } from "./project-forms.js";
 import { openSecretScope } from "./secrets.js";
@@ -65,6 +67,16 @@ function renderWorkspaces() {
     secrets.dataset.testid = "workspace-secrets-button";
     secrets.addEventListener("click", () => openSecretScope("workspace", workspace.id, workspace.label).catch((error) => toast(error.message)));
     row.append(secrets);
+
+    if (isNodeAdmin() && !workspace.source) {
+      const budget = document.createElement("button");
+      budget.type = "button";
+      budget.className = "ghost compact";
+      budget.textContent = "Budget";
+      budget.dataset.testid = "workspace-budget-button";
+      budget.addEventListener("click", () => openBudgetDialog(workspaceBudgetTarget(workspace)).catch((error) => toast(error.message)));
+      row.append(budget);
+    }
 
     const remove = document.createElement("button");
     remove.type = "button";

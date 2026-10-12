@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Fixed the local dev-cluster scratch folder never being cleaned up when a secret key inside it kept sync from deleting it.
 - Fixed a conversation continued on two machines stopping with a "Divergent transcript" review request when the other machine owned it and nothing you sent was lost; the owner's history now loads automatically and this machine's unsent leftovers are saved to a file.
 - Fixed the Costs dashboard timing out on large histories; totals now show first and each breakdown fills in as it loads.
+- Added spend budgets: cluster managers and project owners can cap spending by hour, day, week, month, year or in total, and a turn is refused with the reason once its limit is used up.
 
 ## 2.76.1 — 2026-10-12
 

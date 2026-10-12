@@ -7,6 +7,7 @@ import { loadProjects, refreshProjectsQuietly, selectProject } from "./project-s
 import { pendingReviewCountForProject } from "./reviews.js";
 import { runningCountForProject } from "./running.js";
 import { openResources } from "./resources.js";
+import { openBudgetDialog, projectBudgetTarget } from "./budget-dialog.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { mobileProjectFilterActions } from "./focus-project-controls.js";
 import { openSecretScope } from "./secrets.js";
@@ -259,6 +260,11 @@ function projectMenuItems(project) {
     { label: "Scheduled tasks", icon: "refresh", testid: "project-cron-button", onSelect: () => openScheduledTasks(project.id).catch(error => toast(error.message)) },
     { label: "Automations", icon: "refresh", testid: "project-automations-button", onSelect: () => openAutomations(project.id).catch(error => toast(error.message)) },
     { label: "Skills & tools", icon: "sliders", testid: "project-resources-button", onSelect: () => openResources({ scope: "project", projectId: project.id }) },
+    ...(project.locallyOwned !== false ? [{
+      label: "Budget…", icon: "sliders", testid: "project-budget-button",
+      title: "Limit what this project may spend",
+      onSelect: () => openBudgetDialog(projectBudgetTarget(project)).catch(error => toast(error.message)),
+    }] : []),
     {
       label: "Edit project",
       icon: "pencil",

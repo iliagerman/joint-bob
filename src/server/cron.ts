@@ -83,6 +83,8 @@ async function executeCronRun(task: CronTask, run: CronRun): Promise<void> {
     await queuedCronPrompt(task, run, sessionId);
     cronStore().finish(run.id, "succeeded", null);
   } catch (error) {
+    // A used-up budget is not the task's fault: the run is recorded, the task stays enabled.
+    if (error instanceof Error && /Budget reached:/.test(error.message)) { cronStore().finish(run.id, "failed", error.message); return; }
     if (task.pauseOnFailure) {
       const { id, nextRun, lastRun, ...input } = cronStore().get(task.id)!;
       cronStore().update(id, { ...input, enabled: false });

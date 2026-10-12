@@ -7,6 +7,7 @@ import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
+import { refreshBudgetNotice } from "./budget-dialog.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
@@ -296,6 +297,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     state.activeSessionId = payload.sessionId || state.activeSessionId;
     state.activeConversationId = payload.conversationId || payload.sessionId || null;
     state.activeConversationProjectId = payload.project?.id || state.activeProjectId;
+    refreshBudgetNotice();
     state.conversationSegments = payload.segments || null;
     state.scheduledTurn = payload.scheduledTurn === true;
     state.scheduledAssistantText = "";
@@ -482,6 +484,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "promptFailed") {
     markQueuedMessageFailed(payload.queueId, payload.error);
     appendErrorMessage(payload.error);
+    if (/Budget reached/.test(String(payload.error))) refreshBudgetNotice();
     return;
   }
   if (payload.type === "queuedPromptEdited") {
@@ -584,6 +587,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     }
   }
   if (payload.type === "agent_end") {
+    refreshBudgetNotice();
     clearThinkingBubble();
     finalizeAssistantBubble();
     if (state.scheduledTurn && state.scheduledAssistantText.trim()) appendMessage("assistant", visibleAssistantText(state.scheduledAssistantText));

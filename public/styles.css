@@ -4286,3 +4286,27 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .label-icon-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; gap: 8px; align-items: center; }
 .label-icon-name { overflow-wrap: anywhere; }
 .label-icon-input { text-align: center; font-size: 16px; }
+
+/* Settings > Cluster > Budget: one row per scope, one column per period. */
+.cluster-budget { display: grid; gap: 12px; }
+.budget-grid { display: grid; grid-template-columns: minmax(110px, 1.2fr) repeat(6, minmax(58px, 1fr)); gap: 6px 6px; align-items: center; overflow-x: auto; }
+.budget-head { color: var(--muted); font: 600 11px/1.4 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.budget-row-name { font-size: 13px; }
+.budget-grid input { width: 100%; min-width: 0; box-sizing: border-box; }
+.budget-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.budget-footer .cluster-muted { flex: 1 1 260px; }
+
+/* Budget dialog and the strip above the composer. */
+.budget-dialog { max-width: min(560px, calc(100vw - 32px)); border: 1px solid var(--line, #ccc); border-radius: 12px; padding: 18px; background: var(--panel, #fff); color: inherit; }
+.budget-dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+.budget-dialog h3 { margin: 0 0 6px; }
+.budget-dialog-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+.budget-dialog-field { display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.budget-dialog-field input { width: 100%; box-sizing: border-box; }
+.budget-dialog-status { margin: 0 0 12px; padding-left: 18px; font-size: 12.5px; }
+.budget-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.budget-over { color: var(--danger, #c0392b); font-weight: 600; }
+.budget-warn { color: #b9770e; }
+.budget-notice { margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; font-size: 13px; border: 1px solid currentColor; }
+.budget-notice[data-state="over"] { color: var(--danger, #c0392b); }
+.budget-notice[data-state="warning"] { color: #b9770e; }

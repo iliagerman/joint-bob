@@ -292,6 +292,7 @@ export async function reapInactiveConversations(now = Date.now(), data = resolve
     const shells = readImplicitShellTasks(data);
     const liveCallers = new Set(shells.filter((shell) => shell.callerUntil > now).map((shell) => shell.identity));
     await reapInactiveHarnessSessions(now, liveCallers);
+    await (await import("../budget-guard.js")).enforceRunningBudgets();
     for (const shell of shells) {
       if (shell.callerUntil > now) continue;
       const conversationId = backgroundTaskConversationId(shell.identity);

@@ -143,7 +143,8 @@ export async function getHarnessRuntime(id: HarnessId): Promise<HarnessRuntime> 
   if (existing) return existing;
   const adapter = getHarness(id);
   if (!adapter.runtime) throw new Error(`${adapter.label} does not support execution`);
-  const pending = adapter.runtime();
+  // Every model run a session starts passes the spend budgets first.
+  const pending = adapter.runtime().then(async (runtime) => (await import("./budget-guard.js")).guardRuntime(runtime));
   runtimePromises.set(id, pending);
   try {
     return await pending;

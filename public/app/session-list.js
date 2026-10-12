@@ -11,6 +11,7 @@ import { toggleSessionNtfy } from "./ntfy.js";
 import { keepListScroll, renderProjects } from "./project-list.js";
 import { syncRecentSessionActivity } from "./recents.js";
 import { openListedSession, reviewableSessions } from "./reviews.js";
+import { conversationBudgetTarget, openBudgetDialog } from "./budget-dialog.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { openSecretScope } from "./secrets.js";
 import { labelIcon, labelOptionText } from "./classification.js";
@@ -352,6 +353,13 @@ function sessionMenuItems(session, sessionActive) {
       icon: "canvas",
       testid: "session-add-to-canvas-button",
       onSelect: () => addSessionToCanvas(session),
+    },
+    {
+      label: "Budget…",
+      icon: "sliders",
+      testid: "session-budget-button",
+      title: "Limit what this conversation may spend",
+      onSelect: () => openBudgetDialog(conversationBudgetTarget(state.activeProjectId, session.conversationId || session.id, name)).catch((error) => toast(error.message)),
     },
     {
       label: "Fork conversation",
