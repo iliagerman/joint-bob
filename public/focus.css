@@ -115,10 +115,15 @@ body.view-chat #focusControlsButton { bottom: 160px; }
 .focus-effort-btn { background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(219, 39, 119, 0.1)) !important; border: 1px solid rgba(236, 72, 153, 0.3); }
 .focus-effort-btn:hover:not(:disabled) { background: linear-gradient(135deg, rgba(236, 72, 153, 0.25), rgba(219, 39, 119, 0.15)) !important; border-color: rgba(236, 72, 153, 0.5); }
 .focus-effort-btn svg { color: rgb(236, 72, 153); }
+.focus-node-btn { background: linear-gradient(135deg, rgba(20, 184, 166, 0.15), rgba(13, 148, 136, 0.1)) !important; border: 1px solid rgba(20, 184, 166, 0.3); }
+.focus-node-btn:hover:not(:disabled) { background: linear-gradient(135deg, rgba(20, 184, 166, 0.25), rgba(13, 148, 136, 0.15)) !important; border-color: rgba(20, 184, 166, 0.5); }
+.focus-node-btn svg { color: rgb(20, 184, 166); }
 .focus-tools-btn { background: linear-gradient(135deg, rgba(148, 163, 184, 0.15), rgba(100, 116, 139, 0.1)) !important; border: 1px solid rgba(148, 163, 184, 0.3); }
 .focus-tools-btn:hover:not(:disabled) { background: linear-gradient(135deg, rgba(148, 163, 184, 0.25), rgba(100, 116, 139, 0.15)) !important; border-color: rgba(148, 163, 184, 0.5); }
 .focus-tools-btn svg { color: rgb(148, 163, 184); }
-#focusMarkDone { grid-column: 1 / -1; }
+#focusMarkDone, #focusTools { grid-column: 1 / -1; }
+#focusNodeList { display: grid; padding: 4px 0; }
+#focusNodeList button[aria-pressed="true"] { color: var(--live); font-weight: 600; }
 .focus-global-actions { flex-shrink: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 6px 0; border-top: 1px solid var(--line); }
 .focus-global-actions button { min-height: 48px; }
 #focusReviews { grid-column: 1 / -1; }

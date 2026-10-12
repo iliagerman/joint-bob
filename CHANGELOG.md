@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a Node button to focus mode's quick actions on phones that names the node a conversation runs on and lets you switch to another one.
+
 ## 2.77.5 — 2026-10-13
 
 - Made the running and review lists update only the project a changed conversation belongs to, so an agent's progress no longer reloads every project's list.

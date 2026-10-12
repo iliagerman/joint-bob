@@ -14,6 +14,7 @@ const menu = document.querySelector("#focusControls");
 const toggle = document.querySelector("#settingsFocusUi");
 const chatHost = document.querySelector("#focusChatControls");
 const context = document.querySelector("#focusContextActions");
+const nodeList = document.querySelector("#focusNodeList");
 const toolbarHome = document.createComment("Chat toolbar location");
 let enabled = false;
 let preferred = false;
@@ -41,10 +42,12 @@ function showSection(section) {
   document.querySelector("#focusBack").hidden = !section;
   document.querySelector("#focusChatQuickActions").hidden = !inChat || Boolean(section);
   context.hidden = Boolean(section);
-  chatHost.hidden = !section;
+  chatHost.hidden = section !== "tools";
+  nodeList.hidden = section !== "node";
   document.querySelector("#focusTools").setAttribute("aria-expanded", String(section === "tools"));
+  document.querySelector("#focusNode").setAttribute("aria-expanded", String(section === "node"));
   document.querySelector("#focusContextTitle").textContent = section
-    ? { tools: "Tools & actions" }[section]
+    ? { tools: "Tools & actions", node: "Runs on" }[section]
     : { projects: "Projects", sessions: "This project", chat: "This conversation", board: "Project board", canvas: "Canvas" }[currentView()];
   elements.chatMoreMenu.open = section === "tools";
   placeMenu();
@@ -91,12 +94,37 @@ export function syncQuickActionLabels() {
   const agentLabel = document.querySelector("#focusAgentLabel");
   const modelLabel = document.querySelector("#focusModelLabel");
   const effortLabel = document.querySelector("#focusEffortLabel");
-  if (!agentLabel || !modelLabel || !effortLabel) return;
+  const nodeLabel = document.querySelector("#focusNodeLabel");
+  if (!agentLabel || !modelLabel || !effortLabel || !nodeLabel) return;
 
   const harness = state.harnesses.find(h => h.id === state.engine);
   agentLabel.textContent = harness?.label || "Agent";
   modelLabel.textContent = state.activeModelLabel || "Model";
   effortLabel.textContent = state.thinkingLevel || "Effort";
+  const activeNode = state.sessionNodes.find(n => n.id === state.activeNodeId);
+  nodeLabel.textContent = activeNode?.name || "Node";
+  document.querySelector("#focusNode").disabled = elements.chatNodeSelect.disabled;
+}
+
+/** The toolbar's node options as buttons: its <select> is hidden in this menu, and a hidden select has no picker to open. */
+function showNodes() {
+  nodeList.replaceChildren(...Array.from(elements.chatNodeSelect.options, option => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = option.textContent;
+    button.dataset.testid = "focus-node-option";
+    button.disabled = option.disabled;
+    button.setAttribute("aria-pressed", String(option.selected));
+    button.addEventListener("click", () => {
+      showMenu(false);
+      if (option.selected) return;
+      elements.chatNodeSelect.value = option.value;
+      elements.chatNodeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    return button;
+  }));
+  showSection("node");
+  document.querySelector("#focusBack").focus();
 }
 
 /** Layout only: never reload a session or change the user's panel-collapse preferences.
@@ -157,6 +185,7 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   document.querySelector("#focusAgent").onclick = () => { showMenu(false); if (typeof elements.chatHarnessSelect.showPicker === "function") elements.chatHarnessSelect.showPicker(); else elements.chatHarnessSelect.focus(); };
   document.querySelector("#focusModel").onclick = () => { showMenu(false); elements.modelButton.click(); };
   document.querySelector("#focusEffort").onclick = () => { showMenu(false); if (typeof elements.reasoningLevelSelect.showPicker === "function") elements.reasoningLevelSelect.showPicker(); else elements.reasoningLevelSelect.focus(); };
+  document.querySelector("#focusNode").onclick = showNodes;
   document.querySelector("#focusTools").onclick = () => { showSection("tools"); document.querySelector("#focusBack").focus(); };
   document.querySelector("#focusBack").onclick = backToControls;
   for (const [id, action] of [["focusNewNote", createNote], ["focusRecents", openRecentSessions], ["focusReviews", inspectReviews], ["focusRunning", inspectRunning]]) {

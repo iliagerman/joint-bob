@@ -137,6 +137,7 @@ export function renderChatSessionControls() {
       : `Open the project folder in Terminal on ${terminalNode.name}`
     : "Select an execution node first");
   renderTaskBacklink();
+  syncQuickActionLabels();
 }
 
 export function syncEngineUI() {
