@@ -132,7 +132,9 @@ test("pending browser login popup preserves ownership through failure, dismissal
     session.loginRequest = { ...session.loginRequest, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" };
     await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
     // A request another conversation owns announces itself; it never takes over the open screen.
-    await page.locator(".toast-message").filter({ hasText: "needs you to sign in" }).waitFor();
+    const notice = page.locator(".toast-message").filter({ hasText: "Sign-in needed" });
+    await notice.waitFor();
+    await notice.filter({ hasText: backgroundProjectId }).filter({ hasText: backgroundConversationId }).waitFor();
     assert.equal(await dialog.count(), 0, "a background conversation's sign-in must not mount here");
     assert.deepEqual(await page.evaluate(() => import("/app/state.js").then(({ state }) => [state.activeProjectId, state.activeConversationId, state.activeSessionId])), [null, null, null], "background discovery must not select a conversation");
 

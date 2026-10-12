@@ -119,7 +119,7 @@ async function discover() {
       const key = requestKey(row);
       if (announced.has(key)) continue;
       announced.add(key);
-      toast(`${row.profileLabel || "A browser"} needs you to sign in. Open that conversation to finish.`, 8000);
+      toast(`Sign-in needed for ${row.profileLabel || "the browser"} in project ${row.projectId}, conversation ${row.conversationId}. Open that conversation’s Browser panel to continue.`, 8000);
     }
   } catch {
     if (!discoveryOutage) toast("Could not check for browser sign-in requests. Check your connection.", 8000);
