@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.76.0 — 2026-10-12
 
-- Changed focused mode to show Agent, Model, Effort, Mark done, and Tools as one-tap buttons, and grouped terminal access settings under Node settings.
+- Focused mode now offers one-tap buttons for Agent, Model, Effort, Mark done, and Tools, each with its own icon and colour; the menu closes as soon as you pick one.
+- Terminal access settings now sit under Node settings, with separate sections for terminal access on this node and from other nodes.
 
 ## 2.75.0 — 2026-10-12
 
