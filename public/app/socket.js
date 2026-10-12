@@ -13,7 +13,7 @@ import { elements } from "./elements.js";
 import { setMobileView, shortSessionTitle, syncChatTitleFromSessions } from "./layout.js";
 import { refreshProjectsQuietly } from "./project-selection.js";
 import { loadRecentSessions } from "./recents.js";
-import { schedulePendingReviewsRefresh } from "./reviews.js";
+import { reviewableSessions, schedulePendingReviewsRefresh } from "./reviews.js";
 import { scheduleRunningRefresh } from "./running.js";
 import { saveSessionColor, saveSessionTitle } from "./session-identity.js";
 import { renderSessions } from "./session-list.js";
@@ -575,6 +575,8 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
       session.turnRunning = true;
       session.running = true;
       renderSessions();
+      // The row is already marked, so the list refresh will see no change to report.
+      scheduleRunningRefresh();
     }
   }
   if (payload.type === "agent_end") {
@@ -641,10 +643,14 @@ const INVALIDATION_HANDLERS = {
   cronChanged: () => {
     if (state.activeProjectId) loadHiddenCronTasks(state.activeProjectId).catch((error) => console.warn("Could not load scheduled task visibility", error));
   },
-  sessionsChanged: () => {
+  sessionsChanged: (payload) => {
     refreshSessionsQuietly();
     // A worktree that arrived by sync has no notice of its own; the list refresh picks it up.
     loadWorktrees().catch((error) => console.warn(error));
+    // The two scans below list every project, and a running conversation sends a notice
+    // about its own project every second. That project's list refresh reruns them itself
+    // when its running or review set changes, so only other notices start them here.
+    if (payload.projectId && payload.projectId === state.activeProjectId) return;
     schedulePendingReviewsRefresh();
     scheduleRunningRefresh();
   },
@@ -662,7 +668,7 @@ const INVALIDATION_HANDLERS = {
 function handleInvalidation(payload) {
   const handler = INVALIDATION_HANDLERS[payload.type];
   if (!handler) return false;
-  handler();
+  handler(payload);
   return true;
 }
 
@@ -684,6 +690,8 @@ export async function refreshSessionsQuietly() {
 async function refreshSessionSnapshot(projectId) {
   const previousStates = new Map(state.sessions.map((session) => [session.path, session.reviewState]));
   const previouslyRunning = new Set(state.sessions.filter((session) => session.running).map((session) => session.path));
+  const reviewablePaths = () => reviewableSessions().map((session) => session.path).sort().join("\n");
+  const previouslyReviewable = reviewablePaths();
   try {
     const body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
     // The active project can change mid-request; a late response must not
@@ -698,6 +706,7 @@ async function refreshSessionSnapshot(projectId) {
     }
     const nowRunning = state.sessions.filter((session) => session.running).map((session) => session.path);
     if (nowRunning.length !== previouslyRunning.size || nowRunning.some((path) => !previouslyRunning.has(path))) scheduleRunningRefresh();
+    if (reviewablePaths() !== previouslyReviewable) schedulePendingReviewsRefresh();
     const activeSession = state.sessions.find((session) => session.id === state.activeSessionId || session.path === state.activeSessionPath);
     // The list can arrive after the conversation opened, so the header takes the
     // list's name as soon as it exists rather than keeping its harness fallback.

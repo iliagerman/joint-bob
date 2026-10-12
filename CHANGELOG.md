@@ -3,9 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.74.0 — 2026-10-12
 
-- Fixed a webhook call whose agent could not start opening a blank conversation; the reason now shows in that conversation.
+- Added optional CPU and memory limits, off by default, for one conversation's shell commands under Settings > Shell commands; commands over the CPU limit run slower, and a command over the memory limit is stopped with the reason in its output.
+
+## 2.73.1 — 2026-10-12
+
+- Fixed a webhook call whose agent could not start opening a blank conversation; the conversation now shows why it could not start.
+- Fixed open pages rescanning every project each second while a conversation ran in the open project, which kept the server busy and made everything slow.
 
 ## 2.73.0 — 2026-10-11
 

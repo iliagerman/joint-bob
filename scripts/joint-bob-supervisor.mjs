@@ -1,11 +1,12 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { chmodSync, closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, statSync, unlinkSync } from "node:fs";
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, statSync, unlinkSync, writeSync } from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { openSupervisorStore } from "./supervisor-store.mjs";
 import { watchSubprocess } from "./subprocess-lifetime.mjs";
+import { createConversationLimiter } from "./conversation-limits.mjs";
 import { assertSupervisorCompatible, releaseAppSpec, waitForAppHealth } from "./supervisor-release.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -257,15 +258,27 @@ class Runtime {
     if (this.owned.get(id)?.child !== child) return;
     const owned = this.owned.get(id);
     clearTimeout(owned.stopTimer);
+    owned.limited?.dispose();
     this.owned.delete(id);
     const status = owned.stopRequested ? "stopped" : (result.error || result.code !== 0 || result.signal ? "failed" : "completed");
+    // Written once the command is gone: its own output can no longer land on top of this.
+    if (owned.stopReason) this.appendTaskLog(id, `\n${owned.stopReason}\n`);
     try {
-      this.store.completeTask(id, { status, exitCode: result.signal ? null : result.code, signal: result.signal, error: result.error ?? null });
+      this.store.completeTask(id, { status, exitCode: result.signal ? null : result.code, signal: result.signal, error: result.error ?? owned.stopReason ?? null });
     } catch (error) {
       console.error(`Failed to persist task ${id}: ${error.message}`);
     } finally {
       this.track(terminate(child, 0)).catch(error => console.error(error.message));
     }
+  }
+  appendTaskLog(id, text) {
+    let fd;
+    try {
+      fd = openSync(path.join(path.dirname(this.socketPath), "background-tasks", `${id}.log`), constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW);
+      if (fstatSync(fd).isFile()) writeSync(fd, text);
+    } catch (error) {
+      console.error(`Failed to note why task ${id} stopped: ${error.message}`);
+    } finally { if (fd !== undefined) closeSync(fd); }
   }
   async startTask(body) {
     const task = { id: validId(body.id), identity: text(body.identity, "identity", 1024), name: text(body.name, "name", 1024, true), executable: text(body.executable, "executable"), args: strings(body.args, "args"), cwd: directory(body.cwd) };
@@ -292,7 +305,7 @@ class Runtime {
       const launched = await launchWorker({ ...task, env }, [fd, fd], true);
       // Only task workers, never the supervisor's app worker or the server.
       const owned = { child: launched.child, stopRequested: false };
-      watchSubprocess(launched.child, {
+      const watch = watchSubprocess(launched.child, {
         dataDirectory: path.dirname(this.socketPath),
         ...this.taskLifetimeOptions,
         onExpire: () => {
@@ -300,6 +313,17 @@ class Runtime {
           owned.stopRequested = true;
           this.store.markStopping(task.id);
           console.error(`Task ${task.id} reached the subprocess maximum lifetime`);
+        },
+      });
+      // A conversation's tasks share its identity, and its limits.
+      owned.limited = this.limiter?.add({
+        identity: task.identity, id: task.id, watch,
+        isStopping: () => owned.stopRequested,
+        onMemoryExceeded: reason => {
+          if (this.owned.get(task.id) !== owned || owned.stopRequested) return;
+          owned.stopReason = reason;
+          console.error(`Task ${task.id}: ${reason}`);
+          this.stopTask(task.id);
         },
       });
       this.owned.set(task.id, owned);
@@ -427,6 +451,8 @@ class Runtime {
   async performClose() {
     await new Promise(resolve => this.server.close(resolve));
     while (this.pending.size) await Promise.allSettled([...this.pending]);
+    // Wakes anything it paused, so every task can act on the signals below.
+    this.limiter?.close();
     for (const [id, owned] of this.owned) {
       if (!owned.stopRequested) {
         owned.stopRequested = true;
@@ -442,7 +468,7 @@ class Runtime {
   }
 }
 
-export async function startSupervisor({ dataDirectory, app, installation, taskLifetimeOptions }) {
+export async function startSupervisor({ dataDirectory, app, installation, taskLifetimeOptions, conversationLimitOptions }) {
   if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Supervisor supports only Linux and macOS");
   if (!path.isAbsolute(dataDirectory)) throw new Error("dataDirectory must be absolute");
   const store = openSupervisorStore(dataDirectory);
@@ -453,6 +479,7 @@ export async function startSupervisor({ dataDirectory, app, installation, taskLi
   if (installation && existingInstallation && existingInstallation.installRoot !== installation.installRoot) { store.close(); throw new Error("Supervisor installation root does not match existing record"); }
   const runtime = new Runtime(store, socketPath, token, tokenHash, randomUUID(), installation ?? existingInstallation);
   runtime.taskLifetimeOptions = taskLifetimeOptions;
+  runtime.limiter = createConversationLimiter({ dataDirectory, ...conversationLimitOptions });
   let listening = false;
   try {
     store.beginStartup();
@@ -473,6 +500,7 @@ export async function startSupervisor({ dataDirectory, app, installation, taskLi
     runtime.scheduleAppRestart(runtime.appState);
     return { socketPath, token, close: () => runtime.close() };
   } catch (error) {
+    runtime.limiter.close();
     store.rollbackStartup();
     if (runtime.appState?.child) await terminate(runtime.appState.child, 0);
     if (listening) await new Promise(resolve => runtime.server.close(resolve));

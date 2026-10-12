@@ -15,6 +15,7 @@ import { decrypt, save, setting, settingsDatabase, value } from "./settings-stor
 import { defaultManagedHome } from "./managed-home.js";
 import { scopedSkillRoots } from "./scoped-skills.js";
 import { DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES, validSubprocessLifetime } from "../scripts/subprocess-lifetime.mjs";
+import { validConversationCpuLimit, validConversationMemoryLimit } from "../scripts/conversation-limits.mjs";
 import { actingAccount, type ActingAccount } from "./account-context.js";
 
 export interface RuntimeSettings {
@@ -173,6 +174,10 @@ export interface SettingsInput {
   shellCommandTimeoutSeconds?: number | null;
   /** Wall-clock maximum for owned subprocesses, in minutes. */
   subprocessMaxLifetimeMinutes?: number;
+  /** CPU cores one conversation's commands may use together on this node; null means no limit. */
+  conversationCpuLimitCores?: number | null;
+  /** Memory one conversation's commands may use together on this node, in GB; null means no limit. */
+  conversationMemoryLimitGb?: number | null;
   /** Describe images and inline text files for the agent instead of sending raw bytes. */
   digestAttachments?: boolean;
   /** Signed in on another node, see your unshared projects there through a live link home. */
@@ -201,6 +206,8 @@ export interface SettingsResponse {
   autoCompactThreshold: number | null;
   shellCommandTimeoutSeconds: number | null;
   subprocessMaxLifetimeMinutes: number;
+  conversationCpuLimitCores: number | null;
+  conversationMemoryLimitGb: number | null;
   digestAttachments: boolean;
   showProjectsOnOtherNodes: boolean;
   newConversationWorktree: boolean;
@@ -448,6 +455,8 @@ export function nodeSettings(): SettingsResponse {
     autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
     shellCommandTimeoutSeconds: value("shellCommandTimeoutSeconds", "unlimited") === "unlimited" ? null : Number(value("shellCommandTimeoutSeconds", "unlimited")),
     subprocessMaxLifetimeMinutes: Number(value("subprocessMaxLifetimeMinutes", String(DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES))),
+    conversationCpuLimitCores: value("conversationCpuLimitCores", "unlimited") === "unlimited" ? null : Number(value("conversationCpuLimitCores", "unlimited")),
+    conversationMemoryLimitGb: value("conversationMemoryLimitGb", "unlimited") === "unlimited" ? null : Number(value("conversationMemoryLimitGb", "unlimited")),
     digestAttachments: value("digestAttachments", "false") === "true",
     showProjectsOnOtherNodes: value("showProjectsOnOtherNodes", "true") === "true",
     newConversationWorktree: value("newConversationWorktree", "false") === "true",
@@ -552,6 +561,10 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const shellCommandTimeoutSeconds = input.shellCommandTimeoutSeconds === undefined ? previous.shellCommandTimeoutSeconds : input.shellCommandTimeoutSeconds;
   const subprocessMaxLifetimeMinutes = input.subprocessMaxLifetimeMinutes === undefined ? previous.subprocessMaxLifetimeMinutes : input.subprocessMaxLifetimeMinutes;
   if (!validSubprocessLifetime(subprocessMaxLifetimeMinutes)) throw new Error("Subprocess maximum lifetime must be an integer from 1 to 10080 minutes");
+  const conversationCpuLimitCores = input.conversationCpuLimitCores === undefined ? previous.conversationCpuLimitCores : input.conversationCpuLimitCores;
+  if (!validConversationCpuLimit(conversationCpuLimitCores)) throw new Error("Conversation CPU limit must be from 0.1 to 1024 cores");
+  const conversationMemoryLimitGb = input.conversationMemoryLimitGb === undefined ? previous.conversationMemoryLimitGb : input.conversationMemoryLimitGb;
+  if (!validConversationMemoryLimit(conversationMemoryLimitGb)) throw new Error("Conversation memory limit must be from 0.1 to 4096 GB");
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
   const showProjectsOnOtherNodes = input.showProjectsOnOtherNodes ?? previous.showProjectsOnOtherNodes;
   const newConversationWorktree = input.newConversationWorktree ?? previous.newConversationWorktree;
@@ -576,6 +589,8 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));
     save(db, "shellCommandTimeoutSeconds", shellCommandTimeoutSeconds === null ? "unlimited" : String(shellCommandTimeoutSeconds));
     save(db, "subprocessMaxLifetimeMinutes", String(subprocessMaxLifetimeMinutes));
+    save(db, "conversationCpuLimitCores", conversationCpuLimitCores === null ? "unlimited" : String(conversationCpuLimitCores));
+    save(db, "conversationMemoryLimitGb", conversationMemoryLimitGb === null ? "unlimited" : String(conversationMemoryLimitGb));
     save(db, "digestAttachments", String(digestAttachments));
     save(db, "showProjectsOnOtherNodes", String(showProjectsOnOtherNodes));
     save(db, "newConversationWorktree", String(newConversationWorktree));
@@ -607,6 +622,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         autoCompactThresholdChanged: previous.autoCompactThreshold !== settings.autoCompactThreshold,
         shellCommandTimeoutChanged: previous.shellCommandTimeoutSeconds !== settings.shellCommandTimeoutSeconds,
         subprocessMaxLifetimeChanged: previous.subprocessMaxLifetimeMinutes !== settings.subprocessMaxLifetimeMinutes,
+        conversationLimitsChanged: previous.conversationCpuLimitCores !== settings.conversationCpuLimitCores || previous.conversationMemoryLimitGb !== settings.conversationMemoryLimitGb,
         digestAttachmentsChanged: previous.digestAttachments !== settings.digestAttachments,
         syncCheckChanged: JSON.stringify(previous.syncCheck) !== JSON.stringify(settings.syncCheck),
         remoteTerminalChanged: JSON.stringify(previous.remoteTerminal) !== JSON.stringify(settings.remoteTerminal),

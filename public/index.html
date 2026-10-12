@@ -812,6 +812,23 @@
               <input id="settingsSubprocessMaxLifetimeMinutes" type="number" min="1" max="10080" step="1" required data-testid="settings-subprocess-max-lifetime-minutes" />
             </label>
             <p class="settings-hint">Default 360 minutes, measured from launch, not last activity. Applies to owned agent processes, shell/background tasks, terminal shells and command helpers on this node. Changes also affect running work. Sends TERM, then KILL after 5 seconds. Excludes the server, supervisor, update installer and persistent browser service. Descendants that detach before observation cannot be guaranteed.</p>
+            <label class="checkbox-row">
+              <input id="settingsConversationCpuLimitEnabled" type="checkbox" data-testid="settings-conversation-cpu-limit-enabled" />
+              Limit the CPU one conversation's commands may use
+            </label>
+            <label>Slow a conversation down above
+              <input id="settingsConversationCpuLimitCores" type="number" min="0.1" max="1024" step="0.1" required data-testid="settings-conversation-cpu-limit-cores" />
+              CPU cores
+            </label>
+            <label class="checkbox-row">
+              <input id="settingsConversationMemoryLimitEnabled" type="checkbox" data-testid="settings-conversation-memory-limit-enabled" />
+              Limit the memory one conversation's commands may use
+            </label>
+            <label>Stop a command when its conversation is above
+              <input id="settingsConversationMemoryLimitGb" type="number" min="0.1" max="4096" step="0.1" required data-testid="settings-conversation-memory-limit-gb" />
+              GB
+            </label>
+            <p class="settings-hint">Both are off by default and apply on this node to everything one conversation's shell commands and background tasks start, added together. The agent itself is not limited. Above the CPU limit the commands are paused for part of each second, so they run slower and do not fail. Above the memory limit for three seconds, the conversation's largest command is stopped and its output says why. Memory that processes share is counted once for each, so the total reads high. Changes reach running work within two seconds.</p>
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Account</legend>
