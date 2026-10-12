@@ -5,7 +5,7 @@ import path from "node:path";
 import test, { beforeEach } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationRecord } from "../src/conversation-records.js";
-import { applyUsageEvent, clearUsageTotalsCache, ensureUsageSchema, latestDifficultyForConversation, saveDifficulty, saveUsageEvent, saveUsageEvents, usageBreakdown, usageConversations, usageDatabase, usageInventoryCoverage, usageTotals, upsertUsageInventory } from "../src/usage-ledger.js";
+import { applyUsageEvent, clearUsageTotalsCache, ensureUsageSchema, latestDifficultyForConversation, saveDifficulty, saveUsageEvent, saveUsageEvents, usageBreakdown, usageCalendarBreakdown, usageSkillBreakdown, usageTurnTiming, usageConversations, usageDatabase, usageInventoryCoverage, usageTotals, upsertUsageInventory } from "../src/usage-ledger.js";
 import { ingestUsageSessions, scheduleUsageIngest, USAGE_REIMPORT_INTERVAL_MS, usageIngestIdle } from "../src/usage-ingest.js";
 import { ensureReplicationSchema } from "../src/replication.js";
 import type { ProjectRecord, SessionSummary } from "../src/types.js";
@@ -46,6 +46,37 @@ test("native prices upgrade without registry recomputation and invalid batches r
   assert.throws(() => saveUsageEvents([event({ id: "batch" }), event({ id: "bad", input: -1 })], "n")); assert.equal((db.prepare("SELECT count(*) n FROM model_usage_events").get() as { n: number }).n, before);
 });
 
+test("skill evidence survives quality upgrades and project-scoped replication", () => {
+  const skill = { id: "read-path", name: "review", version: "observed-v1" };
+  saveUsageEvent(event({ id: "skill-replica", apiCostUsd: 1 }), "node-a");
+  saveUsageEvent(event({ id: "skill-replica", apiCostUsd: 1, skillReads: [skill], skillTurnId: "turn-1" }), "node-a");
+  const storedEvent = stored("skill-replica");
+  assert.deepEqual(storedEvent.skillReads, [skill]);
+  const outbox = db.prepare("SELECT payload FROM replication_outbox WHERE entity_key='skill-replica' ORDER BY created_at DESC LIMIT 1").get() as { payload: string };
+  const payload = JSON.parse(outbox.payload) as { event: UsageEvent; projectId: string; originNodeId: string };
+  const replica = new DatabaseSync(":memory:"); ensureUsageSchema(replica); ensureReplicationSchema(replica);
+  applyUsageEvent(replica, { id: "replicated", originNodeId: "node-a", entityType: "model.usage", entityKey: payload.event.id, operation: "upsert", payload, createdAt: now });
+  assert.deepEqual(JSON.parse((replica.prepare("SELECT payload FROM model_usage_events WHERE id='skill-replica'").get() as { payload: string }).payload).skillReads, [skill]);
+  replica.close();
+});
+test("skill costs overlap, unattributed and unpriced coverage remain explicit", () => {
+  const skillA = { id: "a", name: "Review", version: "v1" }, skillB = { id: "b", name: "Other", version: "v2" };
+  saveUsageEvent(event({ id: "with-both", apiCostUsd: 2, skillReads: [skillA, skillB], skillTurnId: "turn-1" }), "n");
+  saveUsageEvent(event({ id: "unpriced", apiCostUsd: null, skillReads: [skillA], skillTurnId: "turn-1", occurredAt: "2025-01-01T00:01:00.000Z" }), "n");
+  saveUsageEvent(event({ id: "none", apiCostUsd: 1, occurredAt: "2025-01-01T00:02:00.000Z" }), "n");
+  const result = usageSkillBreakdown({ projectIds: ["p"] });
+  assert.equal(result.scopeRequests, 3);
+  assert.equal(result.unattributedRequests, 1);
+  assert.deepEqual(result.skills.map((skill) => [skill.name, skill.associatedTurns, skill.associatedRequests, skill.pricedRequests, skill.apiEquivalentCostUsd]), [["Review", 1, 2, 1, 2], ["Other", 1, 1, 1, 2]]);
+  assert.equal(usageCalendarBreakdown({ projectIds: ["p"] }, "UTC")[0].totals.partial, true);
+});
+test("turn timing separates queue and agent and marks historical timing unknown", () => {
+  saveUsageEvent(event({ apiCostUsd: 1, toolCalls: 1, toolDurationMs: 1200, occurredAt: "2025-01-01T00:00:03.000Z" }), "n");
+  saveDifficulty({ turnId: "timed", projectId: "p", conversationId: "c", sessionId: "s", engine: "pi", occurredAt: "2025-01-01T00:00:02.000Z", status: "disabled", level: null, confidence: null, queuedAt: now, startedAt: "2025-01-01T00:00:02.000Z", endedAt: "2025-01-01T00:00:06.000Z", outcome: "failed", turnKind: "scheduled" }, "n");
+  const result = usageTurnTiming({ projectIds: ["p"] }, "UTC");
+  assert.deepEqual(result.days, [{ key: "2025-01-01", turns: 1, failed: 1, medianAgentMs: 4000, medianQueueMs: 2000, medianToolMs: 1200, toolTimedRequests: 1, toolRequestsUnknown: 0 }]);
+  assert.equal(result.unknownHistoricalTiming, 0);
+});
 test("an event id cannot move to another session", () => { saveUsageEvent(event({ apiCostUsd: 1 }), "n"); saveUsageEvent(event({ sessionId: "other", output: 999, apiCostUsd: 9 }), "n"); assert.equal(stored().sessionId, "s"); assert.equal(usageTotals({ projectIds: ["p"] }).apiCostUsd, 1); });
 
 test("difficulty intervals close inclusively and inheritance respects newer manual or configuration", () => {

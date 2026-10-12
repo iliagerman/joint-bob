@@ -15,6 +15,7 @@ import { saveUsageEvents, saveUsageIngestFingerprint, upsertUsageInventory, usag
 export const USAGE_REIMPORT_INTERVAL_MS = 60_000;
 const fingerprints = new Map<string, { fingerprint: string; status: string; importedAt?: number }>();
 const inFlight = new Map<string, Promise<string>>();
+let unthrottled = 0;
 
 function nativePath(session: SessionSummary): string | null {
   if (session.draft || !["pi", "claude"].includes(session.harnessId)) return null;
@@ -40,12 +41,13 @@ async function importSession(project: ProjectRecord, session: SessionSummary, co
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
       throw error;
     }
-    const fingerprint = `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${project.id}:${conversationId}`;
+    // Schema revision forces one bounded reparse of old transcripts for provable read evidence.
+    const fingerprint = `skills-v1:${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${project.id}:${conversationId}`;
     // The persisted fingerprint keeps a restart from re-reading every transcript on disk.
     const cached: { fingerprint: string; status: string; importedAt?: number } | undefined = fingerprints.get(key) ?? usageIngestFingerprint(key);
     if (cached) fingerprints.set(key, cached);
     if (cached?.fingerprint === fingerprint) return cached.status;
-    if (cached?.importedAt && Date.now() - cached.importedAt < USAGE_REIMPORT_INTERVAL_MS) return cached.status;
+    if (!unthrottled && cached?.importedAt && Date.now() - cached.importedAt < USAGE_REIMPORT_INTERVAL_MS) return cached.status;
     let contents: string;
     try { contents = await readFile(file, "utf8"); }
     catch (error) {
@@ -116,4 +118,14 @@ function startDrain(): void {
 /** Resolves once every scheduled import has finished, for callers that report totals. */
 export async function usageIngestIdle(): Promise<void> {
   while (draining) await draining;
+}
+
+/**
+ * Runs `listing` (which schedules imports) and waits for them with the re-import interval
+ * lifted, so a budget check reads this moment's spend rather than a minute-old ledger.
+ */
+export async function withFreshUsage(listing: () => Promise<unknown>): Promise<void> {
+  unthrottled++;
+  try { await listing(); await usageIngestIdle(); }
+  finally { unthrottled--; }
 }

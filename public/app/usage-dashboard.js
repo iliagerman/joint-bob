@@ -6,6 +6,7 @@ import { formatPlanPrice, formatUsageCost } from "./usage-format.js";
 import { renderModelSplit, renderUsageTrend } from "./usage-charts.js";
 import { comparePeriods, isoDate, localeWeekStart, periodWindows, presetRange } from "./usage-periods.js";
 import { renderComparison } from "./usage-compare.js";
+import { requestComparison } from "./usage-request.js";
 
 const dialog = document.querySelector("#usageDialog");
 const filters = document.querySelector("#usageFilters");
@@ -29,6 +30,13 @@ const sortNote = document.querySelector("#usageSortNote");
 const dateRange = filters.querySelector(".usage-date-range");
 const compareHost = document.querySelector("#usageCompare");
 const compareStatus = document.querySelector("#usageCompareStatus");
+const insightsStatus = document.querySelector("#usageInsightsStatus");
+const skillsHost = document.querySelector("#usageSkills");
+const timingHost = document.querySelector("#usageTiming");
+const calendarHost = document.querySelector("#usageCalendar");
+const clusterReportHost = document.querySelector("#usageClusterReport");
+const calendarBucket = document.querySelector("#usageCalendarBucket");
+const analysisHost = document.querySelector("#usageAnalysisResults");
 // Wide and tall enough, the dialog fits the window and the table pages instead of scrolling.
 const FIT = window.matchMedia("(min-width: 701px) and (min-height: 560px)");
 const PERIOD_FIELDS = new Set(["period", "from", "to"]);
@@ -74,6 +82,10 @@ let activeTab = "overview";
 let compareGeneration = 0;
 let compareScope = "";
 let compareViews = [];
+let compareAbort = null;
+let comparePoll = null;
+let compareCoverage = null;
+let insightsGeneration = 0;
 
 const clusterFilter = createMultiSelect({ id: "usageClusterFilter", testid: "usage-cluster-filter", label: "Clusters", prompt: "All clusters", placeholder: "Search clusters" });
 clusterFilter.root.classList.add("usage-cluster-select");
@@ -488,6 +500,7 @@ function scopeParameters({ dates = true } = {}) {
     if (to) parameters.set("to", to);
   }
   parameters.set("utcOffset", String(-new Date().getTimezoneOffset()));
+  parameters.set("timeZone", Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   return parameters;
 }
 function queryString() {
@@ -547,28 +560,141 @@ async function loadCompare({ force = false } = {}) {
   parameters.set("from", isoDate(periodWindows("month", today, weekStart).at(-1).start));
   parameters.set("to", isoDate(today));
   parameters.set("refresh", "false");
-  parameters.set("pageSize", "1");
   const scope = parameters.toString();
   if (!force && scope === compareScope && compareViews.length) return;
+  compareAbort?.abort();
+  clearTimeout(comparePoll); comparePoll = null;
+  if (compareScope !== scope) { compareViews = []; compareHost.replaceChildren(); }
   compareScope = scope;
   const generation = ++compareGeneration;
   compareStatus.className = "";
-  compareStatus.textContent = "Loading comparison…";
+  compareStatus.textContent = compareViews.length ? "Updating comparison…" : "Loading comparison…";
+  const controller = new AbortController();
+  compareAbort = controller;
   try {
-    const data = await api(`/api/usage?${parameters}`, { signal: AbortSignal.timeout(20000) });
-    if (generation !== compareGeneration) return;
+    const data = await requestComparison(`/api/usage/days?${parameters}`, api, controller.signal);
+    if (generation !== compareGeneration || controller.signal.aborted) return;
     compareHost.replaceChildren();
-    compareViews = ["month", "week"].map((kind) => renderComparison(compareHost, comparePeriods(data.breakdowns.days, kind, today, weekStart)));
+    compareViews = ["month", "week"].map((kind) => renderComparison(compareHost, comparePeriods(data.days, kind, today, weekStart)));
+    compareCoverage = data.coverage;
     const filtered = scopeFilterCount();
-    compareStatus.textContent = filtered ? `Filtered by ${filtered} filter${filtered === 1 ? "" : "s"} · Clear filters to compare all usage` : "All recorded usage";
+    const gaps = `${data.coverage.missing} sessions unavailable${data.days.some((row) => row.totals.partial) ? " · some requests unpriced" : ""}`;
+    compareStatus.textContent = `${filtered ? `Filtered by ${filtered} filter${filtered === 1 ? "" : "s"}` : "All recorded usage"} · ${gaps} · ${data.coverage.refreshedAt ? `snapshot ${new Date(data.coverage.refreshedAt).toLocaleString()}` : "saved snapshot; refresh pending"}${data.coverage.refreshing ? " · refreshing" : ""}`;
+    if (data.coverage.refreshing && activeTab === "compare" && !document.hidden) comparePoll = setTimeout(() => void loadCompare({ force: true }), 2000);
   } catch (error) {
-    if (generation !== compareGeneration) return;
+    if (generation !== compareGeneration || controller.signal.aborted) return;
     compareScope = "";
-    compareViews = [];
     compareStatus.className = "usage-error";
-    compareStatus.textContent = `Comparison unavailable: ${error.message}`;
+    compareStatus.textContent = `Comparison ${compareViews.length ? "stale; update" : "unavailable"}: ${error.name === "TimeoutError" ? "Request timed out" : error.message}. Select Refresh usage to retry.`;
+  } finally {
+    if (compareAbort === controller) compareAbort = null;
   }
 }
+async function loadInsights() {
+  const generation = ++insightsGeneration;
+  insightsStatus.textContent = "Loading observed insights…";
+  const scope = scopeParameters();
+  scope.set("refresh", "false");
+  const { from, to } = periodRange();
+  try {
+    const windowAllowed = from && to && (Date.parse(to) - Date.parse(from)) / 86_400_000 <= 150;
+    const calendarScope = new URLSearchParams(scope); calendarScope.set("bucket", calendarBucket.value);
+    const reportingCluster = [...clusterValues].filter((value) => value !== "local");
+    const [skills, timing, calendar, clusterReport] = await Promise.all([
+      api(`/api/usage/skills?${scope}`, { signal: AbortSignal.timeout(30000) }),
+      windowAllowed ? api(`/api/usage/timing?${scope}`, { signal: AbortSignal.timeout(30000) }) : Promise.resolve(null),
+      windowAllowed ? api(`/api/usage/days?${calendarScope}`, { signal: AbortSignal.timeout(30000) }) : Promise.resolve(null),
+      reportingCluster.length === 1 ? api(`/api/usage/clusters/${encodeURIComponent(reportingCluster[0])}/report?${scope}`, { signal: AbortSignal.timeout(30000) }) : Promise.resolve(null),
+    ]);
+    if (generation !== insightsGeneration || !dialog.open) return;
+    skillsHost.replaceChildren();
+    insightsStatus.textContent = `${skills.unattributedRequests} of ${skills.scopeRequests} requests unattributed · ${skills.coverage.missing} sessions unavailable · Skill costs overlap; never add rows together.`;
+    for (const skill of skills.skills) {
+      const row = element("article", undefined, "subscription-card");
+      row.dataset.testid = "usage-skill-row";
+      row.append(element("h4", `${skill.name} · ${skill.version === "unknown" ? "version unknown" : `observed read ${skill.version}`}`),
+        element("p", `${skill.associatedTurns} associated turns · ${skill.observedReads} observed read turns · ${skill.explicitInvocations} explicit invocation turns · ${skill.associatedRequests} requests · ${formatUsageCost({ apiCostUsd: skill.apiEquivalentCostUsd, partial: false })} API-equivalent known cost (${skill.pricedRequests}/${skill.associatedRequests} priced) · ${skill.toolErrors} tool errors`),
+        element("small", `Models: ${skill.models.map((model) => `${model.modelId} (${model.requests} requests, ${model.toolErrors} errors)`).join(", ")} · Median duration: ${skill.medianDurationMs === null ? "unknown" : `${Math.round(skill.medianDurationMs / 1000)}s (${skill.timedTurns}/${skill.associatedTurns} turns timed)`}`));
+      skillsHost.append(row);
+    }
+    if (!skills.skills.length) skillsHost.append(element("p", "No proven skill reads in this scope. Historical coverage unknown."));
+    calendarHost.replaceChildren();
+    if (calendar?.days.length) for (const bucket of calendar.days) calendarHost.append(element("p", `${bucket.key}: ${formatUsageCost(bucket.totals)} · ${bucket.totals.requests} requests${bucket.totals.partial ? " · partial pricing" : ""}`));
+    else calendarHost.append(element("p", calendar ? "No observed requests in this window." : "Select a date window of at most 151 days for hourly or daily cost."));
+    clusterReportHost.replaceChildren();
+    if (clusterReport) {
+      clusterReportHost.append(element("p", `${clusterReport.scope} · ${clusterReport.coverage.missingNodeIds.length} nodes not yet seen · ${clusterReport.coverage.missing} sessions unavailable.`));
+      for (const project of clusterReport.projects) clusterReportHost.append(element("p", `${project.name}: ${formatUsageCost(project.totals)} (${project.totals.requests} requests)`));
+      for (const node of clusterReport.nodes) clusterReportHost.append(element("p", `Node ${node.nodeId}: ${formatUsageCost(node.totals)} · ${node.lastSeenAt ? `last seen ${new Date(node.lastSeenAt).toLocaleString()}` : "freshness unknown"}`));
+      for (const model of clusterReport.models) clusterReportHost.append(element("p", `Model ${model.key}: ${formatUsageCost(model.totals)}`));
+      for (const skill of clusterReport.skills.skills) clusterReportHost.append(element("p", `Skill ${skill.name}: ${formatUsageCost({ apiCostUsd: skill.apiEquivalentCostUsd, partial: skill.pricedRequests < skill.associatedRequests })} associated, overlapping cost`));
+    } else clusterReportHost.append(element("p", reportingCluster.length > 1 ? "Choose one cluster to report." : "Choose one cluster in the filter to report explicitly shared projects only."));
+    timingHost.replaceChildren();
+    if (!timing) timingHost.append(element("p", "Select a date window of at most 151 days to view timing."));
+    else {
+      timingHost.append(element("p", `${timing.unknownHistoricalTiming} requests lack known turn timing; durations exclude missing records.`));
+      for (const day of timing.days) timingHost.append(element("p", `${day.key}: ${day.turns} turns · ${day.failed} failed · median agent ${day.turns ? `${Math.round(day.medianAgentMs / 1000)}s` : "unknown"} · median queue ${day.medianQueueMs === null ? "unknown" : `${Math.round(day.medianQueueMs / 1000)}s`} · median tool ${day.medianToolMs === null ? "unknown" : `${Math.round(day.medianToolMs / 1000)}s`} (${day.toolTimedRequests} measured, ${day.toolRequestsUnknown} unknown)`));
+    }
+  } catch (error) {
+    if (generation !== insightsGeneration) return;
+    insightsStatus.textContent = `Insights unavailable: ${error.message}`;
+    insightsStatus.className = "usage-error";
+  }
+}
+calendarBucket.addEventListener("change", () => { if (activeTab === "insights") void loadInsights(); });
+document.querySelector("#usageAnalysis").addEventListener("click", async () => {
+  analysisHost.replaceChildren();
+  const projectId = filters.elements.projectId.value;
+  if (!projectId) { analysisHost.append(element("p", "Select one project before analysis.")); return; }
+  try {
+    const preview = await api(`/api/usage/analysis/preview?${new URLSearchParams({ projectId })}`);
+    analysisHost.append(element("p", `Preflight: ${preview.maxConversations} conversations maximum · no model · $0 estimated model cost · ${preview.data}.`));
+    const run = element("button", "Run local analysis", "ghost"); run.type = "button"; run.dataset.testid = "usage-analysis-run";
+    analysisHost.append(run);
+    run.addEventListener("click", async () => {
+      run.disabled = true;
+      try {
+        const result = await api("/api/usage/analysis", { method: "POST", body: JSON.stringify({ projectId }) });
+        if (filters.elements.projectId.value !== projectId || !dialog.open) return;
+        run.remove();
+        if (!result.suggestions.length) analysisHost.append(element("p", "No repeated title patterns with three or more conversations. No savings inferred."));
+        for (const suggestion of result.suggestions) {
+          const card = element("article", undefined, "subscription-card");
+          card.append(element("h4", `${suggestion.label} · candidate ${suggestion.kind}`), element("p", `Heuristic confidence ${(suggestion.confidence * 100).toFixed(0)}% · ${formatUsageCost({ apiCostUsd: suggestion.associatedCostUsd, partial: false })} associated known cost. No savings estimated. Review evidence before drafting; nothing installed or shared.`));
+          for (const evidence of suggestion.evidence) {
+            const link = element("a", evidence.conversationId); link.href = evidence.href; link.target = "_blank"; link.rel = "noopener noreferrer";
+            card.append(link);
+          }
+          const form = element("form", undefined, "usage-analysis-draft");
+          const name = element("input"); name.name = "name"; name.placeholder = "new-skill-name"; name.required = true; name.pattern = "[a-z][a-z0-9-]{1,59}"; name.dataset.testid = "usage-draft-name";
+          const contents = element("textarea"); contents.name = "content"; contents.placeholder = "Write instructions or a script after reviewing the evidence (20–10000 characters)."; contents.required = true; contents.minLength = 20; contents.maxLength = 10000; contents.dataset.testid = "usage-draft-content";
+          const save = element("button", "Save draft for review", "ghost"); save.type = "submit"; save.dataset.testid = "usage-draft-save";
+          form.append(name, contents, save);
+          form.addEventListener("submit", async (event) => {
+            event.preventDefault(); if (!form.reportValidity()) return;
+            save.disabled = true;
+            try {
+              const draft = await api("/api/usage/analysis/drafts", { method: "POST", body: JSON.stringify({ projectId, name: name.value, kind: suggestion.kind, content: contents.value, evidenceConversationIds: suggestion.evidence.map((item) => item.conversationId) }) });
+              const review = element("pre", draft.content); review.dataset.testid = "usage-draft-review";
+              const install = element("button", "Approve and install locally", "ghost"); install.type = "button"; install.dataset.testid = "usage-draft-approve";
+              form.replaceChildren(element("p", `Draft saved. Review exact content below. SHA-256: ${draft.reviewedSha256}. Never shared automatically.`), review, install);
+              install.addEventListener("click", async () => {
+                if (!await confirmAction({ title: `Install reviewed ${draft.kind} ${draft.name} in this project?`, confirmLabel: "Install locally" })) return;
+                install.disabled = true;
+                try {
+                  const result = await api(`/api/usage/analysis/drafts/${encodeURIComponent(draft.id)}/install`, { method: "POST", body: JSON.stringify({ approved: true, reviewedSha256: draft.reviewedSha256 }) });
+                  form.append(element("p", `Installed locally: ${result.path}. Sharing requires separate approval.`)); install.remove();
+                } catch (error) { form.append(element("p", `Installation failed: ${error.message}`)); install.disabled = false; }
+              });
+            } catch (error) { form.append(element("p", `Draft unavailable: ${error.message}`)); save.disabled = false; }
+          });
+          card.append(form);
+          analysisHost.append(card);
+        }
+      } catch (error) { analysisHost.append(element("p", `Analysis unavailable: ${error.message}`)); run.disabled = false; }
+    });
+  } catch (error) { analysisHost.append(element("p", `Preflight unavailable: ${error.message}`)); }
+});
 let redrawFrame = 0;
 new ResizeObserver(() => {
   cancelAnimationFrame(redrawFrame);
@@ -602,6 +728,9 @@ function showTab(name) {
   document.querySelector("#usageStatusRow").hidden = name !== "overview";
   filters.classList.toggle("comparing", name === "compare");
   if (name === "compare") void loadCompare();
+  else { compareAbort?.abort(); clearTimeout(comparePoll); comparePoll = null; ++compareGeneration; }
+  if (name === "insights") void loadInsights();
+  else ++insightsGeneration;
   if (name === "overview") requestAnimationFrame(refit);
 }
 function openEditor(plan, harness) {
@@ -683,10 +812,10 @@ document.querySelectorAll("[data-usage-open]").forEach((button) => {
   button.addEventListener("click", () => openUsageDashboard());
 });
 document.querySelector("[data-testid='usage-close']").addEventListener("click", () => dialog.close());
-dialog.addEventListener("close",()=>{stopPolling();requestGeneration++;compareGeneration++;});
+dialog.addEventListener("close",()=>{stopPolling();clearTimeout(comparePoll);comparePoll=null;requestGeneration++;compareGeneration++;compareAbort?.abort();++insightsGeneration;});
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { stopPolling(); requestGeneration++; }
-  else if (dialog.open && hasSnapshot) void loadUsage({ polling: true });
+  if (document.hidden) { stopPolling(); clearTimeout(comparePoll); comparePoll=null; compareAbort?.abort(); ++compareGeneration; requestGeneration++; }
+  else if (dialog.open) { if (activeTab === "compare") void loadCompare({ force: true }); if (hasSnapshot) void loadUsage({ polling: true }); }
 });
 pagination.addEventListener("click", (event) => {
   const direction = event.target.closest("button")?.dataset.page;
@@ -714,6 +843,7 @@ function scopeChanged() {
   page = 1;
   clientPages.clear();
   if (activeTab === "compare") void loadCompare();
+  if (activeTab === "insights") void loadInsights();
   void loadUsage();
 }
 filters.addEventListener("change", (event) => {
@@ -766,6 +896,9 @@ refreshButton.addEventListener("click", async () => {
   refreshButton.disabled = true;
   try {
     await api("/api/usage/refresh", { method: "POST" });
+    compareScope = "";
+    if (activeTab === "compare") void loadCompare({ force: true });
+    if (activeTab === "insights") void loadInsights();
     await loadUsage({polling:true});
   } catch (error) {
     toast(error.message);

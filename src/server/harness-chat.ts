@@ -325,7 +325,7 @@ async function catchUpProjectGit(connection: HarnessChatConnection): Promise<voi
   }
 }
 
-async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
+async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt & { createdAt?: string }): Promise<void> {
   if (queued.dispatchState === "starting" || startingIds.has(queued.id)) throw new Error("Queued prompt start is uncertain; edit or cancel it before retrying");
   await ensureCurrentSession(connection);
   const shared = connection.shared;
@@ -333,6 +333,8 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
   shared.internalTurn = Boolean(queued.systemEventId);
   shared.turnInFlight += 1;
   markHarnessInput(shared);
+  const preparationStartedAt = new Date().toISOString();
+  let enteredPrompt = false;
   try {
     if (queued.settings) await applyQueuedSettings(connection, queued.settings);
     const difficulty = await routePromptByDifficulty(connection, queued);
@@ -344,13 +346,15 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
     const latest = listQueuedPrompts(queueKey(connection)).find(({ id }) => id === queued.id);
     if (!latest || latest.revision !== queued.revision || !beginQueuedPrompt(queued.id, queued.revision)) return;
     startingIds.add(queued.id);
+    enteredPrompt = true;
     let origin: string | undefined;
     let activeDifficulty: UsageDifficulty | undefined;
+    let outcome: "completed" | "failed" = "failed";
     let claimed = false;
     try {
       origin = (await getClusterNode()).id;
       const startedAt = new Date().toISOString();
-      activeDifficulty = { ...difficulty, occurredAt: startedAt, startedAt };
+      activeDifficulty = { ...difficulty, occurredAt: startedAt, startedAt, queuedAt: queued.createdAt ?? null, turnKind: isScheduledPromptText(queued.promptText) ? "scheduled" : "normal" };
       saveDifficulty(activeDifficulty, origin);
       // Once a second person writes, the agent sees who wrote each prompt.
       const authored = queued.systemEventId ? attachments.text : authoredPromptText(connection.project.id, connection.conversationId, attachments.text, queued.author);
@@ -370,6 +374,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       } });
       if (!claimed) throw new Error("Harness did not start the queued prompt");
       if (finishSilentReview) await finishSilentReview();
+      outcome = "completed";
       if (!queued.systemEventId) publish(connection, { type: "promptCompleted", queueId: queued.id });
     } catch (error) {
       // An automatic completion may have crossed the harness start boundary even
@@ -386,9 +391,21 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       }
     } finally {
       try {
-        if (activeDifficulty && origin) saveDifficulty({ ...activeDifficulty, endedAt: new Date().toISOString() }, origin);
+        if (activeDifficulty && origin) saveDifficulty({ ...activeDifficulty, endedAt: new Date().toISOString(), outcome }, origin);
       } finally { startingIds.delete(queued.id); }
     }
+  } catch (error) {
+    if (!enteredPrompt) {
+      try {
+        const endedAt = new Date().toISOString();
+        saveDifficulty({ turnId: queued.id, projectId: connection.project.id, conversationId: connection.conversationId,
+          sessionId: connection.shared.session.id, engine: connection.engine, occurredAt: preparationStartedAt,
+          status: "failed-preflight", level: null, confidence: null, queuedAt: queued.createdAt ?? null,
+          startedAt: preparationStartedAt, endedAt, outcome: "failed",
+          turnKind: isScheduledPromptText(queued.promptText) ? "scheduled" : "normal" }, (await getClusterNode()).id);
+      } catch { /* Observability never replaces the original harness error. */ }
+    }
+    throw error;
   } finally {
     // switchHarness transfers the busy counter to the destination shared session.
     connection.shared.turnInFlight -= 1;
@@ -409,6 +426,10 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
   await ensureCurrentSession(connection);
   connection.shared.turnInFlight += 1;
   markHarnessInput(connection.shared);
+  const startedAt = new Date().toISOString();
+  const timing: UsageDifficulty = { turnId: randomUUID(), projectId: connection.project.id, conversationId: connection.conversationId, sessionId: connection.shared.session.id, engine: connection.engine, occurredAt: startedAt, status: "goal", level: null, confidence: null, startedAt, endedAt: null, turnKind: "goal" };
+  saveDifficulty(timing, local.id);
+  let outcome: "completed" | "failed" = "failed";
   try {
     await writable(connection);
     await catchUpProjectGit(connection);
@@ -418,6 +439,7 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
     if (assistantText === undefined) throw new Error("Goal turn ended without an assistant response");
     const updated = await recordConversationGoalResponse(connection.project.id, connection.conversationId, goal.createdAt, assistantText, local.id);
     publishGoal(connection, updated, updated?.status !== "active");
+    outcome = "completed";
     return true;
   } catch (error) {
     if (error instanceof ConversationOwnershipError) throw error;
@@ -425,6 +447,7 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
     publishGoal(connection, blocked, blocked?.status === "blocked");
     throw error;
   } finally {
+    saveDifficulty({ ...timing, endedAt: new Date().toISOString(), outcome }, local.id);
     connection.shared.turnInFlight -= 1;
     sendHarnessStatus(connection.shared);
   }

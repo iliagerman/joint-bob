@@ -499,6 +499,12 @@
           New password
           <input id="newPasswordInput" name="newPassword" type="password" autocomplete="new-password" minlength="16" data-testid="login-new-password-input" />
         </label>
+        <label id="loginMfaSetupLabel" hidden>Authenticator setup key
+          <input id="loginMfaSetupKey" class="mfa-key" readonly autocomplete="off" spellcheck="false" data-testid="login-mfa-setup-key" />
+        </label>
+        <label id="loginMfaRecoveryLabel" hidden>Save these recovery codes now; they will not be shown again.
+          <textarea id="loginMfaRecoveryCodes" readonly spellcheck="false" data-testid="login-mfa-recovery-codes"></textarea>
+        </label>
         <label id="loginMfaCodeLabel" hidden>
           Authenticator or recovery code
           <input id="loginMfaCodeInput" autocomplete="one-time-code" maxlength="64" spellcheck="false" autocapitalize="off" data-testid="login-mfa-code-input" />
@@ -548,7 +554,7 @@
 
     <dialog id="usageDialog" data-testid="usage-dialog" aria-labelledby="usageTitle">
       <div class="dialog-card usage-card">
-        <header class="usage-heading"><div class="usage-title"><span class="eyebrow">Costs</span><h2 id="usageTitle">Costs &amp; subscriptions</h2></div><nav class="usage-tabs" aria-label="Costs views"><button type="button" aria-pressed="true" data-testid="usage-tab-overview">Overview</button><button type="button" aria-pressed="false" data-testid="usage-tab-compare">Compare periods</button><button type="button" aria-pressed="false" data-testid="usage-tab-subscriptions">Harness subscriptions</button></nav><div class="usage-status-row" id="usageStatusRow"><div id="usageStatus" role="status" aria-live="polite">Loading usage…</div><div id="usageNotice"></div><button type="button" class="ghost" id="usageRefresh" data-testid="usage-refresh">Refresh usage</button></div><button type="button" class="ghost usage-close" data-testid="usage-close">Close</button></header>
+        <header class="usage-heading"><div class="usage-title"><span class="eyebrow">Costs</span><h2 id="usageTitle">Costs &amp; subscriptions</h2></div><nav class="usage-tabs" aria-label="Costs views"><button type="button" aria-pressed="true" data-testid="usage-tab-overview">Overview</button><button type="button" aria-pressed="false" data-testid="usage-tab-compare">Compare periods</button><button type="button" aria-pressed="false" data-testid="usage-tab-insights">Skills &amp; time</button><button type="button" aria-pressed="false" data-testid="usage-tab-subscriptions">Harness subscriptions</button></nav><div class="usage-status-row" id="usageStatusRow"><div id="usageStatus" role="status" aria-live="polite">Loading usage…</div><div id="usageNotice"></div><button type="button" class="ghost" id="usageRefresh" data-testid="usage-refresh">Refresh usage</button></div><button type="button" class="ghost usage-close" data-testid="usage-close">Close</button></header>
         <form id="usageFilters" class="usage-toolbar" aria-label="Filter usage">
           <label class="usage-period-field"><span class="sr-only">Period</span><select name="period" data-testid="usage-period-filter"><option value="month">This month</option><option value="last-month">Last month</option><option value="30d">Last 30 days</option><option value="90d">Last 90 days</option><option value="all">All time</option><option value="custom">Custom range</option></select></label>
           <span class="usage-date-range" hidden><label><span class="sr-only">From</span><input name="from" type="date" aria-label="From" data-testid="usage-from-filter" /></label><span aria-hidden="true">–</span><label><span class="sr-only">To</span><input name="to" type="date" aria-label="To" data-testid="usage-to-filter" /></label></span>
@@ -575,6 +581,7 @@
           <div id="usageCompare" class="usage-compare-grid" data-testid="usage-compare"></div>
           <p class="usage-source">Known API-equivalent cost through the same day of each period, in your local time. Uses the filters above except the period.</p>
         </section>
+        <section class="usage-subscriptions" id="usageInsightsPanel" data-usage-panel="insights" hidden><h3>Observed skill reads</h3><p id="usageInsightsStatus" role="status" aria-live="polite"></p><div id="usageSkills" data-testid="usage-skills"></div><h3>Calendar usage &amp; timing</h3><label>Cost buckets <select id="usageCalendarBucket" data-testid="usage-calendar-bucket"><option value="day">Day</option><option value="hour">Hour</option></select></label><div id="usageCalendar" data-testid="usage-calendar"></div><div id="usageTiming" data-testid="usage-timing"></div><h3>Cluster-shared project costs</h3><div id="usageClusterReport" data-testid="usage-cluster-report"></div><h3>Repeatable flows</h3><p>Local metadata only; no model or transcript sent. Suggestions are review-only and never installed or shared automatically.</p><button type="button" id="usageAnalysis" data-testid="usage-analysis">Preview analysis</button><div id="usageAnalysisResults" data-testid="usage-analysis-results"></div></section>
         <section class="usage-subscriptions" id="usageSubscriptionsPanel" data-usage-panel="subscriptions" hidden>
           <div class="usage-section-heading"><div><h3>Subscription prices by harness</h3><p>Choose a harness and enter the price you actually pay. Fees are not calculated from token usage.</p></div><button type="button" id="subscriptionAdd" data-testid="subscription-add">Add price</button></div>
           <div id="subscriptionPlanStatus" role="status"></div><div id="subscriptionList"></div>
@@ -815,6 +822,13 @@
           <fieldset class="phase-settings">
             <legend>Account</legend>
             <p>Signed in as <output id="settingsUsername" data-testid="settings-username"></output>.</p>
+            <div id="settingsEmailField" data-testid="settings-email-field">
+              <label>Email
+                <input id="settingsEmail" type="email" autocomplete="email" maxlength="254" required data-testid="settings-email-input" />
+              </label>
+              <button class="ghost" id="settingsChangeEmailButton" type="button" data-testid="settings-change-email-button">Change email</button>
+              <p class="settings-hint" id="settingsEmailStatus" role="status" data-testid="settings-email-status"></p>
+            </div>
             <div class="account-password-fields">
               <label>Current password
                 <input id="settingsCurrentPassword" type="password" autocomplete="current-password" data-testid="settings-current-password-input" />

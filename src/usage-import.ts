@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { UsageEvent, UsagePricing, UsageRates } from "./usage-types.js";
 import { priceUsage } from "./usage-pricing.js";
+import { skillReadCalls, successfulSkillResult, type SkillRead } from "./usage-skills.js";
 
 type RecordValue = Record<string, unknown>;
 export interface UsageImportContext {
@@ -200,19 +201,57 @@ export function normalizeUsageRecords(
 ): UsageEvent[] {
   const errors = toolErrorIds(records);
   const events = new Map<string, { event: UsageEvent; tools: Set<string> }>();
+  const pendingReads = new Map<string, SkillRead>();
+  const pendingTools = new Map<string, { eventId: string; startedAt: number }>();
+  const activeReads = new Map<string, SkillRead>();
+  const invocations = new Map<string, SkillRead>();
+  let turn = 0;
   for (const raw of records) {
     const record = object(raw);
+    const message = object(record.message);
+    if (message.role === "user" && !(Array.isArray(message.content) && message.content.some((item: unknown) => ["tool_result", "toolResult"].includes(String(object(item).type))))) {
+      turn++;
+      pendingReads.clear(); activeReads.clear(); invocations.clear();
+      const text = typeof message.content === "string" ? message.content : Array.isArray(message.content)
+        ? message.content.map((item: unknown) => object(item).text).filter((value): value is string => typeof value === "string").join("\n") : "";
+      const explicit = /^\s*\/skill:([a-zA-Z][\w-]{0,99})(?:\s|$)/.exec(text);
+      if (explicit) invocations.set(explicit[1], { id: hash(`invocation:${engine}:${explicit[1]}`), name: explicit[1], version: "unknown" });
+    }
+    for (const [toolId, skill] of pendingReads) {
+      const version = successfulSkillResult(record, toolId);
+      if (version === null) continue;
+      pendingReads.delete(toolId);
+      activeReads.set(skill.id, { ...skill, version });
+    }
+    for (const [toolId, pending] of pendingTools) {
+      const content = message.content;
+      const items = [message, ...(Array.isArray(content) ? content.map(object) : [])];
+      if (!items.some((item) => (item.toolCallId ?? item.tool_use_id ?? item.id) === toolId && (item.type === "toolResult" || item.type === "tool_result" || message.role === "toolResult"))) continue;
+      pendingTools.delete(toolId);
+      const endedAt = timestamp(record, message);
+      const stored = events.get(pending.eventId);
+      if (stored && endedAt && Date.parse(endedAt) >= pending.startedAt) stored.event.toolDurationMs = (stored.event.toolDurationMs ?? 0) + Date.parse(endedAt) - pending.startedAt;
+    }
     const event = engine === "claude"
       ? claudeEvent(sessionId, record, context, pricingResolver)
       : piEvent(sessionId, record, context, pricingResolver);
+    if (event && activeReads.size) event.skillReads = [...activeReads.values()];
+    if (event && invocations.size) event.skillInvocations = [...invocations.values()];
+    if (event && (activeReads.size || invocations.size)) event.skillTurnId = hash(`${sessionId}:${turn}`);
+    for (const { toolId, skill } of skillReadCalls(record)) pendingReads.set(toolId, skill);
     if (!event) continue;
-    const tools = contentToolIds(object(record.message).content);
+    const tools = contentToolIds(message.content);
+    const startedAt = timestamp(record, message);
+    if (startedAt) for (const id of tools) pendingTools.set(id, { eventId: event.id, startedAt: Date.parse(startedAt) });
     const previous = events.get(event.id);
     if (!previous) {
       events.set(event.id, { event, tools });
       continue;
     }
     for (const id of tools) previous.tools.add(id);
+    if (event.skillReads?.length && !previous.event.skillReads?.length) previous.event.skillReads = event.skillReads;
+    if (event.skillInvocations?.length && !previous.event.skillInvocations?.length) previous.event.skillInvocations = event.skillInvocations;
+    if (event.skillTurnId) previous.event.skillTurnId = event.skillTurnId;
     const score = (value: UsageEvent) => (value.usageStatus === "reported" ? 1_000_000 : 0)
       + [value.input, value.output, value.cacheRead, value.cacheWrite5m, value.cacheWrite1h].filter((count) => count !== null).length * 100_000
       + (value.output ?? 0);

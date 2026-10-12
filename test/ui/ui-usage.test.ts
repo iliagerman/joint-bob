@@ -154,6 +154,10 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
       await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
       return;
     }
+    if (request.method() === "GET" && url.pathname === "/api/usage/days") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ days: dayRows, coverage: { missing: 0, refreshing: false, refreshedAt: "2025-06-16T12:00:00.000Z" } }) });
+      return;
+    }
     if (request.method() !== "GET" || url.pathname !== "/api/usage") return route.continue();
     usageGets += 1;
     if (gateRefresh) { await refreshGate; gateRefresh = false; updated = true; }
@@ -337,7 +341,7 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   }
 
   await page.setViewportSize({ width: 1200, height: 800 });
-  const compareRequest = page.waitForRequest((request: any) => new URL(request.url()).searchParams.get("pageSize") === "1" && new URL(request.url()).searchParams.get("from") === isoDate(new Date(today.getFullYear(), today.getMonth() - 3, 1)));
+  const compareRequest = page.waitForRequest((request: any) => new URL(request.url()).pathname === "/api/usage/days" && new URL(request.url()).searchParams.get("from") === isoDate(new Date(today.getFullYear(), today.getMonth() - 3, 1)));
   await dialog.getByTestId("usage-tab-compare").click();
   assert.equal(new URL((await compareRequest).url()).searchParams.get("to"), isoDate(today), "compare reads the three months before this one");
   assert.equal(await dialog.getByTestId("usage-period-filter").isVisible(), false, "the period filter does not apply to comparisons");
@@ -379,6 +383,48 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   await page.waitForFunction(() => true);
   assert.equal(usageGets, requestsAtClose, "closing the dashboard stops polling");
   assert.deepEqual(errors, []);
+});
+
+test("insights shows scoped coverage, calendar hour buckets, and preflight before local analysis", { timeout: 240_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await login(page, environment, node.url);
+  await page.getByTestId("usage-open").click();
+  const dialog = page.getByTestId("usage-dialog");
+  await dialog.getByTestId("usage-tab-insights").click();
+  await dialog.getByTestId("usage-skills").getByText(/No proven skill reads|associated turns/).waitFor();
+  await dialog.getByTestId("usage-calendar").getByText(/requests|Select a date window|No observed requests/).first().waitFor();
+  await dialog.getByTestId("usage-calendar-bucket").selectOption("hour");
+  await dialog.getByTestId("usage-calendar").getByText(/requests|Select a date window|No observed requests/).first().waitFor();
+  await dialog.getByTestId("usage-analysis").click();
+  await dialog.getByTestId("usage-analysis-results").getByText("Select one project before analysis.").waitFor();
+  await dialog.getByTestId("usage-project-filter").selectOption(node.projects[0].id);
+  await dialog.getByTestId("usage-analysis").click();
+  await dialog.getByTestId("usage-analysis-run").waitFor();
+  await dialog.getByTestId("usage-analysis-run").click();
+  await dialog.getByTestId("usage-analysis-results").getByText(/No repeated title patterns|candidate/).first().waitFor();
+});
+
+test("comparison cancels stale scope response without overwriting newer chart", { timeout: 240_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await login(page, environment, node.url);
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let requests = 0;
+  await page.route("**/api/usage/days?*", async (route: any) => {
+    requests++;
+    if (requests === 1) await gate;
+    const today = isoDate(new Date());
+    try { await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ days: [{ key: today, totals: { apiCostUsd: requests === 1 ? 1 : 9, partial: false } }], coverage: { missing: 0, refreshedAt: null, refreshing: false } }) }); }
+    catch { /* canceled first request */ }
+  });
+  await page.getByTestId("usage-open").click();
+  const dialog = page.getByTestId("usage-dialog");
+  await dialog.getByTestId("usage-tab-compare").click();
+  await until(async () => requests === 1, "first comparison request");
+  await dialog.getByTestId("usage-project-filter").selectOption(node.projects[0].id);
+  await dialog.getByTestId("usage-compare-month-value").getByText("$9").waitFor();
+  release?.();
+  assert.equal(await dialog.getByTestId("usage-compare-month-value").textContent(), "$9");
 });
 
 test("subscription prices save while a real usage read is blocked", { timeout: 240_000 }, async (t) => {
