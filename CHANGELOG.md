@@ -3,12 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.77.0 — 2026-10-12
 
-- Fixed the local dev-cluster scratch folder never being cleaned up when a secret key inside it kept sync from deleting it.
-- Fixed a conversation continued on two machines stopping with a "Divergent transcript" review request when the other machine owned it and nothing you sent was lost; the owner's history now loads automatically and this machine's unsent leftovers are saved to a file.
-- Fixed the Costs dashboard timing out on large histories; totals now show first and each breakdown fills in as it loads.
-- Added spend budgets: cluster managers and project owners can cap spending by hour, day, week, month, year or in total, and a turn is refused with the reason once its limit is used up.
+- Added spend budgets: a cluster's manager sets a limit for everything shared into the cluster and defaults for each workspace, project and conversation, per hour, day, week, month, year or in total, and owners can add tighter limits to their own projects, conversations and workspaces.
+- Cluster members see the cluster budget read-only in Settings, and the manager sees which members have not yet confirmed it.
+- Budget warnings appear above the composer from 80% of a limit and say why work stopped; a turn starts only when every applicable budget has room, a running turn is stopped at the next minute check, and a refused scheduled run is recorded without disabling its task.
+- Fixed the Costs dashboard timing out on large histories; totals show at once, each breakdown fills in as it loads, and a breakdown that fails no longer blanks the rest.
+- Fixed a conversation continued on two machines stopping with a "Divergent transcript" review request when nothing you sent was lost; the owner's history now loads automatically and this machine's copy is saved aside.
+- Fixed a deleted dev-cluster scratch folder never being removed on another machine, which left sync reporting folder errors until it was cleaned up by hand.
 
 ## 2.76.1 — 2026-10-12
 
