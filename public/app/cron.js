@@ -99,20 +99,26 @@ async function refreshTasks() {
 
     const actions = document.createElement("div");
     actions.className = "cron-task-actions";
+    const historyButton = action("History", "cron-history", async () => {
+      const history = row.querySelector(".cron-task-history");
+      if (history) {
+        history.remove();
+        historyButton.setAttribute("aria-expanded", "false");
+        return;
+      }
+      const body = await command(task.ownerNodeId, { action: "history", id: task.id, projectId: task.projectId });
+      const panel = document.createElement("pre");
+      panel.className = "cron-task-history";
+      panel.textContent = body.runs.map(run => `${new Date(run.dueAt).toLocaleString(undefined, { timeZone: task.schedule.timezone })} ${run.status}${run.error ? `: ${run.error}` : ""}`).join("\n") || "Not run yet";
+      row.append(panel);
+      historyButton.setAttribute("aria-expanded", "true");
+    });
+    historyButton.setAttribute("aria-expanded", "false");
     actions.append(action("Edit schedule", "cron-edit", () => editTask(task)), action("Run now", "cron-run", async () => {
       await command(task.ownerNodeId, { action: "run", id: task.id, projectId: task.projectId }); await refreshTasks();
     }), action(task.enabled ? "Pause schedule" : "Resume schedule", "cron-toggle", async () => {
       await command(task.ownerNodeId, { action: "update", id: task.id, input: { ...inputOf(task), enabled: !task.enabled } }); await refreshTasks();
-    }), action("History", "cron-history", async () => {
-      const body = await command(task.ownerNodeId, { action: "history", id: task.id, projectId: task.projectId });
-      let history = row.querySelector(".cron-task-history");
-      if (!history) {
-        history = document.createElement("pre");
-        history.className = "cron-task-history";
-        row.append(history);
-      }
-      history.textContent = body.runs.map(run => `${new Date(run.dueAt).toLocaleString(undefined, { timeZone: task.schedule.timezone })} ${run.status}${run.error ? `: ${run.error}` : ""}`).join("\n") || "Not run yet";
-    }), action("Delete", "cron-delete", async () => {
+    }), historyButton, action("Delete", "cron-delete", async () => {
       if (!await confirmAction({ title: `Delete ${task.name}?`, message: "Run history is retained. Conversations are not deleted.", confirmLabel: "Delete", destructive: true })) return;
       await command(task.ownerNodeId, { action: "delete", id: task.id, projectId: task.projectId }); await refreshTasks();
     }));

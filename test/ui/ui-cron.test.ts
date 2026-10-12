@@ -57,8 +57,13 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Next run"));
   await page.locator('[data-testid="cron-toggle"]').click();
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Paused"));
-  await page.locator('[data-testid="cron-history"]').click();
-  await page.waitForFunction(() => document.querySelector("#cronList pre")?.textContent === "Not run yet");
+  const historyButton = page.getByTestId("cron-history");
+  await historyButton.click();
+  await page.waitForFunction(() => document.querySelector("#cronList .cron-task-history")?.textContent === "Not run yet");
+  assert.equal(await historyButton.getAttribute("aria-expanded"), "true", "History button reflects open state");
+  await historyButton.click();
+  assert.equal(await page.locator("#cronList .cron-task-history").count(), 0, "Second click closes history");
+  assert.equal(await historyButton.getAttribute("aria-expanded"), "false", "History button reflects closed state");
   await page.locator("#cronClose").click();
   await page.locator("#projectList .list-row", { hasText: "Internal Assistant" }).locator("button").first().click();
   await page.locator('[data-filter="all"]').click();
