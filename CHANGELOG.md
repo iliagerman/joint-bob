@@ -3,13 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.77.4 — 2026-10-12
 
-- Stopped repeating the agent resource conflict warning every 30 seconds; it is now logged once and again only when the number of conflicts changes.
-- Added a Node button to focus mode's quick actions that shows the active execution node and opens the node picker when tapped.
-- Added offline sign-in on cluster nodes with your home authenticator, so you can sign in there while your home node is offline.
-- Made focus mode's Node button show the name of the active execution node, so you can see which node a conversation runs on.
-- Stopped usage from running conversations reloading every project's conversation list, so lists stay steady while work runs and refresh only when something in them changes.
+- Stopped the agent resource conflict warning from repeating every 30 seconds; it is now logged once and again only when the number of waiting conflicts changes.
+- Made the running and review lists quicker again: a project that has not changed is now reused for up to a minute instead of ten seconds, and sign-ins, settings and other changes that do not affect conversations no longer make every project's list reload.
 
 ## 2.77.3 — 2026-10-12
 
