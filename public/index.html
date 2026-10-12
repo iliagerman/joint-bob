@@ -499,12 +499,6 @@
           New password
           <input id="newPasswordInput" name="newPassword" type="password" autocomplete="new-password" minlength="16" data-testid="login-new-password-input" />
         </label>
-        <label id="loginMfaSetupLabel" hidden>Authenticator setup key
-          <input id="loginMfaSetupKey" class="mfa-key" readonly autocomplete="off" spellcheck="false" data-testid="login-mfa-setup-key" />
-        </label>
-        <label id="loginMfaRecoveryLabel" hidden>Save these recovery codes now; they will not be shown again.
-          <textarea id="loginMfaRecoveryCodes" readonly spellcheck="false" data-testid="login-mfa-recovery-codes"></textarea>
-        </label>
         <label id="loginMfaCodeLabel" hidden>
           Authenticator or recovery code
           <input id="loginMfaCodeInput" autocomplete="one-time-code" maxlength="64" spellcheck="false" autocapitalize="off" data-testid="login-mfa-code-input" />
@@ -822,13 +816,6 @@
           <fieldset class="phase-settings">
             <legend>Account</legend>
             <p>Signed in as <output id="settingsUsername" data-testid="settings-username"></output>.</p>
-            <div id="settingsEmailField" data-testid="settings-email-field">
-              <label>Email
-                <input id="settingsEmail" type="email" autocomplete="email" maxlength="254" required data-testid="settings-email-input" />
-              </label>
-              <button class="ghost" id="settingsChangeEmailButton" type="button" data-testid="settings-change-email-button">Change email</button>
-              <p class="settings-hint" id="settingsEmailStatus" role="status" data-testid="settings-email-status"></p>
-            </div>
             <div class="account-password-fields">
               <label>Current password
                 <input id="settingsCurrentPassword" type="password" autocomplete="current-password" data-testid="settings-current-password-input" />
