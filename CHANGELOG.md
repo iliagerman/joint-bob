@@ -3,12 +3,17 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.77.3 — 2026-10-12
 
-- Made the running and review lists quicker to refresh when a conversation changes, since only the project that changed is reloaded instead of every project.
-- Changed the sign-in notice for a browser login in another conversation to name its project and conversation and point you to that conversation's Browser panel.
-- Stopped background sync from repeatedly contacting a machine that is switched off; it is checked less often, queued changes reach it as soon as it is back, and repeated failures are logged once instead of on every attempt.
-- Updated each machine on its own, so a machine still finishing a conversation turn that an earlier update interrupted no longer holds the others back or drops open pages; it is updated automatically once that turn ends.
+- Made the running and review lists quicker to refresh, since a change now rebuilds only the project it belongs to instead of every project.
+- Stopped background sync from repeatedly contacting a machine that is switched off, and now check it less often, logging repeated failures once instead of on every attempt.
+- Made queued changes reach a machine as soon as it returns, instead of waiting for each item's own retry time.
+- Made a machine that starts or wakes from sleep tell its cluster and twins it is back, and catch up on their conversations at once.
+- Stopped retrying a machine that is reachable only through a relay on every request; its address is now tried once an hour.
+- Fixed syncing between machines failing with "database is locked" when a running conversation saved at the same moment.
+- Updated each machine on its own, so a machine still finishing a conversation turn that an earlier update interrupted no longer holds the others back; it is retried every three minutes and updated once that turn ends.
+- Stopped a machine that refuses an update from telling open pages it is restarting and dropping their connections.
+- Fixed an interrupted update leaving a lock behind that made the next update wait five minutes before giving up.
 
 ## 2.77.2 — 2026-10-12
 
