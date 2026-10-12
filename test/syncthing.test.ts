@@ -31,6 +31,8 @@ const managedIgnorePatterns = [
   "(?d)**/.ruff_cache/",
   "(?d)__pycache__/",
   "(?d).DS_Store",
+  "(?d).dev-env/",
+  "(?d)**/.dev-env/",
   ".env",
   ".env.*",
   "**/.env",
@@ -46,8 +48,6 @@ const managedIgnorePatterns = [
   "**/.joint-bob/",
   ".pi-mobile-web/",
   "**/.pi-mobile-web/",
-  "(?d).dev-env/",
-  "(?d)**/.dev-env/",
   "(?d)aidlc/.aidlc-*",
   "(?d)**/aidlc/.aidlc-*",
   "(?d)aidlc/spaces/*/intents/.aidlc-*",
@@ -230,6 +230,10 @@ test("Syncthing ignores the local dev-cluster scratch directory as deletable", a
   });
   assert.ok(postedIgnore?.includes("(?d).dev-env/"));
   assert.ok(postedIgnore?.includes("(?d)**/.dev-env/"));
+  // Syncthing applies the first matching rule: a secret under .dev-env that met `*.key`
+  // first would be kept forever and block deleting the directory.
+  const secrets = postedIgnore!.findIndex((rule) => !rule.startsWith("(?d)") && !rule.includes(".git"));
+  assert.ok(postedIgnore!.indexOf("(?d)**/.dev-env/") < secrets, "the scratch directory rules come before the rules that keep secrets");
 });
 
 test("Syncthing treats a null ignore list as empty", async () => {

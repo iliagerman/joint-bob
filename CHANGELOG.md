@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the local dev-cluster scratch folder never being cleaned up when a secret key inside it kept sync from deleting it.
+
 ## 2.76.1 — 2026-10-12
 
 - Fixed the last word of a labeled conversation title showing in a different size and colour from the rest of the title.

@@ -80,6 +80,10 @@ const projectIgnorePatterns = [
   "(?d)**/.ruff_cache/",
   "(?d)__pycache__/",
   "(?d).DS_Store",
+  // The first matching rule wins. A dev node's secret.key under .dev-env must meet
+  // this rule before `*.key`, or the scratch directory can never be deleted.
+  "(?d).dev-env/",
+  "(?d)**/.dev-env/",
   ".env",
   ".env.*",
   "**/.env",
@@ -95,8 +99,6 @@ const projectIgnorePatterns = [
   "**/.joint-bob/",
   ".pi-mobile-web/",
   "**/.pi-mobile-web/",
-  "(?d).dev-env/",
-  "(?d)**/.dev-env/",
   "(?d)aidlc/.aidlc-*",
   "(?d)**/aidlc/.aidlc-*",
   "(?d)aidlc/spaces/*/intents/.aidlc-*",
