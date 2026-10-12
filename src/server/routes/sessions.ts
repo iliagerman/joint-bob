@@ -38,7 +38,7 @@ import { broadcastToAllClients, broadcastToProject, scheduleReviewNotifications,
 import { disposeHarnessSession, findHarnessSession, harnessSessionBusy } from "../harness-sessions.js";
 import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionNtfySchema, sessionRecoverySchema, sessionReviewedSchema, sessionReviewNotificationsSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
 import { stopConversationBackgroundTasks } from "../background-tasks.js";
-import { listProjectSessionsWithReviewState, listReviewScopeSessions, requireLocalConversationOwner, sharedProjectSessions, unannouncedRunState } from "../sessions-helpers.js";
+import { listProjectSessionsWithReviewState, listReviewScopeSessions, requireLocalConversationOwner, noteUnannouncedRunChanges, sharedProjectSessions } from "../sessions-helpers.js";
 import { app } from "../state.js";
 
 app.get("/api/projects/:projectId/sessions", async (request, response, next) => {
@@ -591,9 +591,9 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
 app.get("/api/reviews/pending", async (_request, response, next) => {
   try {
     const authSession = response.locals.authSession as AuthSession;
-    const [projects, runState] = await Promise.all([projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false }), unannouncedRunState()]);
+    const [projects] = await Promise.all([projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false }), noteUnannouncedRunChanges()]);
     const groups = await Promise.all(projects.map(async (project) => {
-      const sessions = await sharedProjectSessions(project, authSession.userId, authSession.accountId, runState);
+      const sessions = await sharedProjectSessions(project, authSession.userId, authSession.accountId);
       return {
         projectId: project.id,
         projectName: project.name,
@@ -618,9 +618,9 @@ app.get("/api/reviews/pending", async (_request, response, next) => {
 app.get("/api/running", async (_request, response, next) => {
   try {
     const authSession = response.locals.authSession as AuthSession;
-    const [projects, runState] = await Promise.all([projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false }), unannouncedRunState()]);
+    const [projects] = await Promise.all([projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false }), noteUnannouncedRunChanges()]);
     const groups = await Promise.all(projects.map(async (project) => {
-      const sessions = await sharedProjectSessions(project, authSession.userId, authSession.accountId, runState);
+      const sessions = await sharedProjectSessions(project, authSession.userId, authSession.accountId);
       return {
         projectId: project.id,
         projectName: project.name,

@@ -1,6 +1,6 @@
 import { getClusterNode, updateClusterNode } from "../../cluster.js";
 import { getConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
-import { applyRuntimeLeaseSnapshot, conversationRuntimeDatabase, holdEndedRun, liveRuntimeLeases, releaseEndedRun, type RuntimeLeaseInput } from "../../conversation-runtime.js";
+import { applyRuntimeLeaseSnapshot, conversationOfKey, conversationRuntimeDatabase, holdEndedRun, liveRuntimeLeases, releaseEndedRun, type RuntimeLeaseInput } from "../../conversation-runtime.js";
 import { receiveReplicationBatch, type ReplicationBatch } from "../../replication.js";
 import { removeTranscriptsDeletedBy } from "../deleted-transcripts.js";
 import { catchUpSharedTranscript } from "../shared-transcripts.js";
@@ -13,7 +13,7 @@ import type { HarnessId, TaskRecord } from "../../types.js";
 import { type PreparedTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree } from "../../worktrees.js";
 import { assertTaskFilesReady, taskConversationIdentity, taskHandoffEligibility } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
-import { broadcastReplicationInvalidations, broadcastSessionsChangedToAllProjects, broadcastToProject } from "../realtime.js";
+import { announceConversationsChanged, broadcastReplicationInvalidations, broadcastSessionsChangedToAllProjects, broadcastToProject } from "../realtime.js";
 import { clusterNodeSchema, preparedTaskSchema, pushSubscriptionBatchSchema, replicationBatchSchema, runtimeSnapshotSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
 import { app } from "../state.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
@@ -95,7 +95,7 @@ async function catchUpEndedRuns(nodeId: string, ended: RuntimeLeaseInput[]): Pro
     catch (error) { console.warn(`Transcript catch-up for ${lease.engine} conversation ${lease.sessionId} failed: ${error instanceof Error ? error.message : "transfer failed"}`); }
     finally { releaseEndedRun(lease.engine, lease.sessionId); }
   }));
-  broadcastSessionsChangedToAllProjects();
+  announceConversationsChanged(ended);
 }
 
 /** A peer's current conversation running set; see conversation-runtime.ts for the lease rules. */
@@ -128,7 +128,7 @@ app.post(["/api/cluster/sessions/runtime-snapshot", "/api/cluster/v2/runtime/ses
     const continuing = new Set(leases.map((lease) => `${lease.engine}\n${lease.sessionId}`));
     const ended = before.filter((lease) => changed.has(`${lease.engine}\n${lease.sessionId}`) && !continuing.has(`${lease.engine}\n${lease.sessionId}`));
     if (ended.length) catchUpEndedRuns(snapshot.nodeId, ended).catch((error) => console.warn("Ended run catch-up failed", error));
-    if (changed.size) broadcastSessionsChangedToAllProjects();
+    if (changed.size) announceConversationsChanged([...changed].map(conversationOfKey));
     response.json({ ok: true });
   } catch (error) {
     next(error);

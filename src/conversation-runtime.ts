@@ -223,6 +223,12 @@ export function conversationLeaseState(engine: ConversationEngine, sessionId: st
   return { running: false, backgroundRunning: false };
 }
 
+/** The conversation named by a lease key (`engine`, newline, `sessionId`, and possibly more fields). */
+export function conversationOfKey(key: string): { engine: string; sessionId: string } {
+  const [engine = "", sessionId = ""] = key.split("\n");
+  return { engine, sessionId };
+}
+
 /** Every conversation a lease or a held ended run says is running. A peer's lease expires
     by the clock and nothing announces it, so a listing kept for reuse compares this. */
 export function leasedConversationKeys(now = new Date()): string[] {

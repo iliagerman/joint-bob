@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Made sign-ins on other cluster nodes check your home authenticator code, and let synced codes work while your home node is offline.
+- Made a machine whose local git commits were replaced by synced files catch up to the cluster's version, keeping the abandoned commits recoverable from its git history.
+- Made the running and review lists update only the project a changed conversation belongs to, so an agent's progress no longer reloads every project's list.
+
 ## 2.77.4 — 2026-10-12
 
 - Stopped the agent resource conflict warning from repeating every 30 seconds; it is now logged once and again only when the number of waiting conflicts changes.

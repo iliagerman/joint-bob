@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resetSharedProjectListings, sessionListingChanged, sharedProjectListing } from "../src/session-listing-revisions.js";
+import { conversationProjects, conversationsChanged, placeConversationsWith, resetSharedProjectListings, sessionListingChanged, sharedProjectListing } from "../src/session-listing-revisions.js";
 
 function counter() {
   const computed: string[] = [];
@@ -64,4 +64,29 @@ test("an unannounced change is seen within a minute, or at once when the caller 
   const failing = () => sharedProjectListing("z", "z", async () => { attempts += 1; if (attempts === 1) throw new Error("disk went away"); return "ok"; });
   await assert.rejects(failing(), /disk went away/);
   assert.equal(await failing(), "ok");
+});
+
+// With a few conversations running, something starts, stops or reports progress every few
+// seconds. Marking every project for it threw every kept answer away on almost every request.
+test("a change to one conversation recomputes only the project it belongs to", async (t) => {
+  resetSharedProjectListings();
+  placeConversationsWith((engine, sessionId) => engine === "pi" && sessionId === "in-b" ? ["b"] : engine === "claude" && sessionId === "in-a-and-c" ? ["a", "c"] : []);
+  t.after(() => placeConversationsWith(undefined));
+  const { computed, list } = counter();
+  await Promise.all([list("a"), list("b"), list("c")]);
+
+  conversationsChanged([{ engine: "pi", sessionId: "in-b" }]);
+  await Promise.all([list("a"), list("b"), list("c")]);
+  assert.deepEqual(computed.slice(3), ["b:ilia"]);
+  conversationsChanged([{ engine: "claude", sessionId: "in-a-and-c" }]);
+  await Promise.all([list("a"), list("b"), list("c")]);
+  assert.deepEqual(computed.slice(4).sort(), ["a:ilia", "c:ilia"]);
+
+  assert.equal(conversationProjects([{ engine: "pi", sessionId: "in-b" }, { engine: "pi", sessionId: "unknown" }]), undefined);
+  conversationsChanged([{ engine: "pi", sessionId: "unknown" }]);
+  await Promise.all([list("a"), list("b"), list("c")]);
+  assert.equal(computed.length, 9, "a conversation that cannot be placed reaches every project, as before");
+  conversationsChanged([]);
+  await Promise.all([list("a"), list("b"), list("c")]);
+  assert.equal(computed.length, 9, "nothing changed, nothing recomputed");
 });

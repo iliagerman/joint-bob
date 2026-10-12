@@ -7,13 +7,13 @@ import { claimConversationNotification, conversationNotifications, finishConvers
 import { listPushSubscriberUserIds, notifyConversationReview, reviewNotificationBody } from "../push.js";
 import { type ReplicationBatch, replicationInvalidations } from "../replication.js";
 import { getHarness, refreshHarnessSessions } from "../harnesses.js";
-import { getProject, projectVisible } from "../store.js";
+import { getProject, listProjects, projectVisible } from "../store.js";
 import { listPendingUpdateRecoveries, saveUpdateRecoveries, type UpdateRecoveryRecord } from "../update-recovery.js";
 import { UpdateRefusalError } from "../updater.js";
 import { harnessChatConnections, drainHarnessPromptQueue } from "./harness-chat.js";
 import { disposeHarnessSession, harnessSessionBusy, harnessSessions, refreshHarnessTranscripts, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
-import { sessionListingChanged } from "../session-listing-revisions.js";
+import { conversationProjects, conversationsChanged, sessionListingChanged } from "../session-listing-revisions.js";
 import { flushReplicationOutbox } from "./maintenance.js";
 import { flags, server, socketAccounts, watchClients, webSocketServer } from "./state.js";
 import { harnessTaskRuns } from "./task-runs.js";
@@ -95,6 +95,17 @@ export async function projectAudience(projectId: string): Promise<(payload: unkn
   return (payload) => { for (const socket of audience) send(socket, payload); };
 }
 export function broadcastSessionsChangedToAllProjects(): void { broadcastToAllClients({ type: "sessionsChanged" }); }
+/** Tells every page that conversations changed, as above, but marks only the lists of the
+    projects those conversations belong to (session-listing-revisions.ts). */
+export function announceConversationsChanged(conversations: Iterable<{ engine: string; sessionId: string }>): void {
+  conversationsChanged(conversations);
+  announceToAllClients({ type: "sessionsChanged" });
+}
+/** Review notifications for the projects these conversations belong to; for every project when one cannot be placed. */
+export async function scheduleReviewNotificationsFor(conversations: Iterable<{ engine: string; sessionId: string }>): Promise<void> {
+  const placed = conversationProjects(conversations);
+  for (const projectId of placed ?? (await listProjects()).map((project) => project.id)) scheduleReviewNotifications(projectId);
+}
 export function wakeQueuedConversations(): void {
   for (const connection of harnessChatConnections) void drainHarnessPromptQueue(connection)
     .catch((error) => send(connection.socket, { type: "error", error: chatErrorMessage(error) }));

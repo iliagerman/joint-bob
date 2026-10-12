@@ -10,7 +10,7 @@ import { getRuntimePeer } from "./runtime-peers.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
 import { conversationReviewNotificationPaths, setConversationReviewNotifications, syncConversationReviewDetails } from "../conversation-reviews.js";
 import { conversationNotifications, notificationConversationId, setConversationNotification } from "../conversation-notifications.js";
-import { conversationLeaseState, leasedConversationKeys } from "../conversation-runtime.js";
+import { conversationLeaseState, conversationOfKey, leasedConversationKeys } from "../conversation-runtime.js";
 import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions, type HarnessProject } from "../harnesses.js";
 import { getUserPreferences } from "../preferences.js";
 import { migratePushConversationSubscriptions, ntfySubscribedSessionPaths } from "../push.js";
@@ -25,7 +25,7 @@ import { sessionWatcher } from "./chat.js";
 import { findHarnessSession, harnessTurnBusy } from "./harness-sessions.js";
 import { taskConfig, taskPhase } from "./task-runs.js";
 import { measureOperation } from "./performance-diagnostics.js";
-import { sharedProjectListing } from "../session-listing-revisions.js";
+import { conversationsChanged, sessionListingChanged, sharedProjectListing } from "../session-listing-revisions.js";
 
 /**
  * Shared by the per-project conversation list and the cross-project review inbox, so both
@@ -185,28 +185,43 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
 /**
  * What is running, as far as another process can change it without telling this one: a
  * terminal session's heartbeat, a peer's lease running out, a supervised command ending.
- * Pages hear of it up to two seconds later. Read once per request, it lets a list that spans
- * every project reuse kept answers and still be right the moment it is asked.
+ * Pages hear of it up to two seconds later. A list that spans every project reads it once
+ * per request, and whatever differs from the last reading marks the lists of the projects
+ * concerned, so kept answers are reused and the list is still right the moment it is asked.
  */
-export async function unannouncedRunState(): Promise<string> {
+let lastRunState: { conversations: Set<string>; backgroundTasks: Set<string> } | undefined;
+export async function noteUnannouncedRunChanges(): Promise<void> {
   const external = await Promise.all(listHarnesses().map(async (adapter) => {
     if (!adapter.runtime) return [];
     const runtime = await getHarnessRuntime(adapter.id);
-    return runtime.externalRunning ? (await runtime.externalRunning()).map((run) => `${adapter.id}:${run.sessionId}:${run.runId}`) : [];
+    return runtime.externalRunning ? (await runtime.externalRunning()).map((run) => `${adapter.id}\n${run.sessionId}`) : [];
   }));
-  return JSON.stringify([external.flat().sort(), leasedConversationKeys(), [...readActiveBackgroundTaskIdentities(resolveDataDirectory())].sort()]);
+  // Read and compared without yielding: two requests arriving together must not both report the same change.
+  const conversations = new Set([...external.flat(), ...leasedConversationKeys()]);
+  const backgroundTasks = readActiveBackgroundTaskIdentities(resolveDataDirectory());
+  const previous = lastRunState;
+  lastRunState = { conversations, backgroundTasks };
+  if (!previous) return;
+  const differs = <T>(before: Set<T>, after: Set<T>): T[] => [...before, ...after].filter((entry) => !before.has(entry) || !after.has(entry));
+  conversationsChanged(differs(previous.conversations, conversations).map(conversationOfKey));
+  // A supervised task's identity is [projectId, conversationId].
+  for (const identity of differs(previous.backgroundTasks, backgroundTasks)) {
+    let projectId: unknown;
+    try { projectId = (JSON.parse(identity) as unknown[])[0]; } catch { /* marks them all */ }
+    sessionListingChanged(typeof projectId === "string" && projectId ? projectId : undefined);
+  }
 }
 
 /**
  * A project's conversations for the lists that span every project. The answer is shared
  * between the pages and lists asking for it and kept until the project changes; see
- * session-listing-revisions.ts. `runState` is unannouncedRunState(), read once by the caller.
- * Code that acts on one conversation's state at that moment (a takeover, a scheduled run, a
- * review notification) calls listProjectSessionsWithReviewState itself.
+ * session-listing-revisions.ts. The caller runs noteUnannouncedRunChanges() first. Code that
+ * acts on one conversation's state at that moment (a takeover, a scheduled run, a review
+ * notification) calls listProjectSessionsWithReviewState itself.
  */
-export function sharedProjectSessions(project: ProjectRecord, userId: string, username: string, runState: string): Promise<SessionSummary[]> {
+export function sharedProjectSessions(project: ProjectRecord, userId: string, username: string): Promise<SessionSummary[]> {
   const key = JSON.stringify([project.id, userId, username, getSettings().conversationHistoryDays, project.path, project.macPath ?? "", project.locations ?? []]);
-  return sharedProjectListing(project.id, key, () => listProjectSessionsWithReviewState(project, userId, username), runState);
+  return sharedProjectListing(project.id, key, () => listProjectSessionsWithReviewState(project, userId, username));
 }
 
 // A leftover `claiming` record is a crashed two-phase claim from this node; no

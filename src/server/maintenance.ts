@@ -1,11 +1,11 @@
-import { agentWorkActive, failStaleConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
+import { agentWorkActive, failStaleConversationWork, listConversationWork, refreshConversationWork, takeChangedConversationWork } from "../conversation-work.js";
 import { reconcileAgentResources } from "../agent-resources.js";
 import { getClusterNode } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { abandonedShellReason, backgroundTaskConversationId, readActiveBackgroundTaskIdentities, readImplicitShellTasks } from "../background-tasks.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { ensureConversationRecord, latestConversationSegment } from "../conversation-records.js";
-import { conversationLeaseRunning, conversationRuntimeDatabase, type RuntimeLeaseInput, sweepExpiredRuntimeLeases } from "../conversation-runtime.js";
+import { conversationOfKey, conversationLeaseRunning, conversationRuntimeDatabase, type RuntimeLeaseInput, sweepExpiredRuntimeLeases } from "../conversation-runtime.js";
 import { getHarnessRuntime, harnessForSessionPath, listHarnesses } from "../harnesses.js";
 import { eventsForPeer, recordPeerFailure, recordPeerReceipt } from "../replication.js";
 import { currentRoutingConfigTarget, dueRoutingConfigDeliveries, dropRoutingConfigDelivery, recordRoutingConfigDeliveryFailure, recordRoutingConfigDeliverySuccess, routingConfigDatabase, type PendingRoutingConfigDelivery } from "../routing-configs.js";
@@ -22,7 +22,7 @@ import { reconcileSyncthingProjectFolders } from "../syncthing.js";
 import { ensureLegacySkillSyncPaused, refreshSharedSkills } from "./skill-sharing.js";
 import { listTasks, listUnfinishedOutgoingTaskHandoffs, releaseStaleTaskLease } from "../tasks.js";
 import type { HarnessId } from "../types.js";
-import { broadcastSessionsChangedToAllProjects, broadcastToProject, scheduleReviewNotifications, wakeQueuedConversations } from "./realtime.js";
+import { announceConversationsChanged, broadcastSessionsChangedToAllProjects, broadcastToProject, scheduleReviewNotifications, scheduleReviewNotificationsFor, wakeQueuedConversations } from "./realtime.js";
 import { replicationReceiptSchema } from "./schemas.js";
 import { dropZombieHarnessSessions, harnessSessions, harnessTurnBusy, reapInactiveHarnessSessions } from "./harness-sessions.js";
 import { flags } from "./state.js";
@@ -166,9 +166,11 @@ const RUNTIME_LEASE_TTL_MS = 15_000;
 
 export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<RuntimeLeaseInput[]> {
   if (await refreshConversationWork()) {
-    broadcastSessionsChangedToAllProjects();
+    // An agent's progress concerns its conversation's project, not every project's list.
+    const changed = takeChangedConversationWork();
+    announceConversationsChanged(changed);
     wakeQueuedConversations();
-    for (const project of await listProjects()) scheduleReviewNotifications(project.id);
+    await scheduleReviewNotificationsFor(changed);
   }
   const now = new Date();
   const updatedAt = now.toISOString();
@@ -275,9 +277,14 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
       .map(({ engine, sessionId, runId, ownershipEpoch, backgroundRunning }) => [engine, sessionId, runId, ownershipEpoch, Boolean(backgroundRunning)])
       .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
     if (signature !== localRuntimeLeaseSignature) {
+      // Only the conversations that started, stopped or changed kind concern their projects' lists.
+      const before = new Set(JSON.parse(localRuntimeLeaseSignature).map((entry: unknown[]) => JSON.stringify(entry)));
+      const after = new Set(JSON.parse(signature).map((entry: unknown[]) => JSON.stringify(entry)));
+      const changed = [...before, ...after].filter((entry) => !before.has(entry) || !after.has(entry))
+        .map((entry) => { const [engine, sessionId] = JSON.parse(entry as string) as [string, string]; return { engine, sessionId }; });
       localRuntimeLeaseSignature = signature;
-      broadcastSessionsChangedToAllProjects();
-      for (const project of await listProjects()) scheduleReviewNotifications(project.id);
+      announceConversationsChanged(changed);
+      await scheduleReviewNotificationsFor(changed);
     }
     // A machine that is switched off needs no running set; it gets one as soon as it answers again.
     const peers = (await listRuntimePeers()).filter((peer) => !peerAway(peer.id));
@@ -388,7 +395,8 @@ export async function sweepStaleConversations(now = Date.now()): Promise<number>
 
 /** Notify browsers of expired crash heartbeats. */
 export function sweepRuntimeLeases(): void {
-  if (sweepExpiredRuntimeLeases(conversationRuntimeDatabase()).length) broadcastSessionsChangedToAllProjects();
+  const expired = sweepExpiredRuntimeLeases(conversationRuntimeDatabase());
+  if (expired.length) announceConversationsChanged(expired.map(conversationOfKey));
 }
 
 export async function flushReplicationOutbox(): Promise<void> {

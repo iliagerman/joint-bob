@@ -24,6 +24,34 @@ export function sessionListingChanged(projectId?: string): void {
   else everywhere += 1;
 }
 
+/**
+ * Which projects a conversation belongs to. Most of what changes is one conversation (it
+ * started, stopped, or its agents reported progress); marking every project for that threw
+ * every kept answer away on almost every request once a few conversations were running.
+ */
+type ConversationProjects = (engine: string, sessionId: string) => string[];
+let projectsOfConversation: ConversationProjects | undefined;
+export function placeConversationsWith(resolver: ConversationProjects | undefined): void { projectsOfConversation = resolver; }
+
+/** The projects these conversations belong to, or undefined when one of them cannot be placed. */
+export function conversationProjects(conversations: Iterable<{ engine: string; sessionId: string }>): Set<string> | undefined {
+  const found = new Set<string>();
+  for (const { engine, sessionId } of conversations) {
+    let ids: string[] = [];
+    try { ids = projectsOfConversation?.(engine, sessionId) ?? []; } catch { /* treated as not placed */ }
+    if (!ids.length) return undefined;
+    for (const id of ids) found.add(id);
+  }
+  return found;
+}
+
+/** Marks the conversation lists of the projects these conversations belong to; every project's when one cannot be placed. */
+export function conversationsChanged(conversations: Iterable<{ engine: string; sessionId: string }>): void {
+  const placed = conversationProjects(conversations);
+  if (!placed) sessionListingChanged();
+  else for (const id of placed) sessionListingChanged(id);
+}
+
 function revision(projectId: string): string { return `${everywhere}:${projects.get(projectId) ?? 0}`; }
 
 /**

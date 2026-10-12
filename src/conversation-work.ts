@@ -117,6 +117,14 @@ export function refreshConversationWork(): Promise<boolean> {
   return refreshInFlight ??= refreshObservedWork().finally(() => { refreshInFlight = undefined; });
 }
 
+const changedSinceTaken = new Map<string, { engine: HarnessId; sessionId: string }>();
+/** The conversations whose agent runs changed since this was last asked, so that only their projects are told. */
+export function takeChangedConversationWork(): Array<{ engine: HarnessId; sessionId: string }> {
+  const changed = [...changedSinceTaken.values()];
+  changedSinceTaken.clear();
+  return changed;
+}
+
 /** Persist descriptors independently of socket/session handles, including across node restarts. */
 async function refreshObservedWork(): Promise<boolean> {
   let changed = false;
@@ -128,6 +136,7 @@ async function refreshObservedWork(): Promise<boolean> {
       const summary = await refreshAgentRun({ ...work.descriptor!, summary: work.summary });
       if (JSON.stringify(summary) === JSON.stringify(work.summary)) return;
       recordConversationWork({ ...work, summary });
+      changedSinceTaken.set(`${work.engine}\n${work.sessionId}`, { engine: work.engine, sessionId: work.sessionId });
       changed = true;
     } catch {
       // An unreachable observer is not evidence that children finished.

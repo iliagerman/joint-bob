@@ -11,6 +11,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
 import { inBackground } from "./peer-presence.js";
+import { placeConversationsWith } from "./session-listing-revisions.js";
+import { ensureConversationRecordSchema } from "./conversation-records.js";
+import { clusterV2Database } from "./cluster-v2-store.js";
 import { announceReturn, resumeDeliveriesOnReturn } from "./server/peer-return.js";
 import { runReplicationHousekeeping } from "./server/replication-housekeeping.js";
 import { removeAllDeletedTranscripts } from "./server/deleted-transcripts.js";
@@ -143,6 +146,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     void startBrowserMonitors().catch(error => console.error("Browser monitor startup failed", error));
     // Relays connect out at once: a machine without a direct URL is reachable only through them.
     void startRelay().catch(error => console.error("Relay startup failed", error));
+    // A change to one conversation marks its own project's list, not every project's (session-listing-revisions.ts).
+    void clusterV2Database().then((db) => {
+      ensureConversationRecordSchema(db);
+      const placed = db.prepare("SELECT DISTINCT project_id FROM conversation_records WHERE engine=? AND session_id=?");
+      placeConversationsWith((engine, sessionId) => (placed.all(engine, sessionId) as Array<{ project_id: string }>).map((row) => row.project_id));
+    }).catch((error) => console.warn("Conversations cannot be placed in their projects; every change will reload every list", error));
     // Cluster work waits for startup reconciliation: run alongside it, it kept a restarting
     // node too busy to become ready within its release health check.
     const flushClusterWork = (): void => {
