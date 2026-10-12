@@ -7,6 +7,16 @@ BASE_URL="${BASE_URL%/}"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
+# An update that replaces the supervisor restarts the service a few seconds after the
+# installer returns. Checking at once met that restart ("Empty reply from server"), which
+# ended the deployment before the next machine. Wait until this release answers as healthy.
+for _ in {1..90}; do
+  if curl -fsS -m 10 -o "${work}/health.json" -- "${BASE_URL}/api/health" 2>/dev/null \
+    && grep -q "\"release\":\"${EXPECTED_RELEASE}\"" "${work}/health.json" && grep -q '"status":"ok"' "${work}/health.json"; then
+    break
+  fi
+  sleep 2
+done
 curl -fsS -o "${work}/health.json" -- "${BASE_URL}/api/health"
 curl -fsS -o "${work}/index.html" -- "${BASE_URL}/"
 for asset in boot.js app.js styles.css sw.js vendor/xterm/xterm.js; do

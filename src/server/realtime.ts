@@ -195,17 +195,23 @@ export function prepareForUpdate(): Promise<number> {
 }
 async function performUpdatePreparation(): Promise<number> {
   flags.updatePreparing = true;
-  broadcastUpdatePreparing();
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  // Open pages get half a second to show that work will resume, counted from now.
+  const shown = new Promise((resolve) => setTimeout(resolve, 500));
   let active: ReturnType<typeof activeUpdateRecoveries>;
+  let announced = false;
   try {
+    // Asked before anyone is told. A refusal used to tell every open page that the node was
+    // restarting and then drop its connection, each time a deployment found the node busy.
     if ((await listPendingUpdateRecoveries()).length) throw new UpdateRefusalError("Interrupted work is still recovering; wait before updating again");
+    announced = true;
+    broadcastUpdatePreparing();
+    await shown;
     active = activeUpdateRecoveries();
     await saveUpdateRecoveries(active.map(({ record }) => record));
   } catch (error) {
     flags.updatePreparing = false;
     flags.updatePreparation = null;
-    for (const client of webSocketServer.clients) client.close(1012, "Update preparation failed; reconnecting");
+    if (announced) for (const client of webSocketServer.clients) client.close(1012, "Update preparation failed; reconnecting");
     throw error;
   }
   const busySessions = [...harnessSessions.values()].filter(harnessSessionBusy);
