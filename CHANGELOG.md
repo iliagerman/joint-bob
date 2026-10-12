@@ -3,10 +3,8 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.77.5 — 2026-10-13
 
-- Made sign-ins on other cluster nodes check your home authenticator code, and let synced codes work while your home node is offline.
-- Made a machine whose local git commits were replaced by synced files catch up to the cluster's version, keeping the abandoned commits recoverable from its git history.
 - Made the running and review lists update only the project a changed conversation belongs to, so an agent's progress no longer reloads every project's list.
 - Made a scheduled task's History button open and close its run history in place, so a second click hides it.
 
