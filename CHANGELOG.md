@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Stopped repeating the agent resource conflict warning every 30 seconds; it is now logged once and again only when the number of conflicts changes.
+
 ## 2.77.3 — 2026-10-12
 
 - Made the running and review lists quicker to refresh, since a change now rebuilds only the project it belongs to instead of every project.

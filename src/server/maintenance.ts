@@ -60,7 +60,9 @@ export async function reconcileManagedAgentResources(): Promise<void> {
   // must stay paused: selective skill grants are the only publishing path now.
   await ensureLegacySkillSyncPaused();
   const resources = await reconcileAgentResources();
-  if (resources.conflicts.length) console.warn(`Agent resource reconciliation found ${resources.conflicts.length} conflict(s)`);
+  // Checked every 30 seconds; conflicts that wait for a person are reported when their number changes.
+  if (resources.conflicts.length) warnOnChange("agent-resources", `Agent resource reconciliation found ${resources.conflicts.length} conflict(s)`);
+  else settled("agent-resources");
   try { await refreshSharedSkills(); }
   catch (error) { console.warn("Selective skill refresh failed", error); }
 }
