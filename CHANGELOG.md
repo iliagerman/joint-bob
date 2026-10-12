@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Made the running and review lists quicker to refresh when a conversation changes, since only the project that changed is reloaded instead of every project.
+
 ## 2.77.2 — 2026-10-12
 
 - Fixed old sync conflict copies, more than a day old, being merged back into files that have changed since; they are now listed for you to choose a version by hand.

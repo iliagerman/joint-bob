@@ -13,6 +13,7 @@ import { UpdateRefusalError } from "../updater.js";
 import { harnessChatConnections, drainHarnessPromptQueue } from "./harness-chat.js";
 import { disposeHarnessSession, harnessSessionBusy, harnessSessions, refreshHarnessTranscripts, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
+import { sessionListingChanged } from "../session-listing-revisions.js";
 import { flushReplicationOutbox } from "./maintenance.js";
 import { flags, server, socketAccounts, watchClients, webSocketServer } from "./state.js";
 import { harnessTaskRuns } from "./task-runs.js";
@@ -54,6 +55,8 @@ export async function reloadSharedSkills(): Promise<{ reloaded: number; skipped:
 }
 
 export function broadcastToProject(projectId: string, payload: unknown): void {
+  // Whatever pages are told about a project may have changed its conversation list.
+  sessionListingChanged(projectId);
   const sockets = new Set<WebSocket>(watchClients.get(projectId) ?? []);
   for (const session of harnessSessions.values()) if (session.projectId === projectId) for (const client of session.clients) sockets.add(client);
   // A page rescans every project for a conversation notice that names none.
@@ -63,6 +66,10 @@ export function broadcastToProject(projectId: string, payload: unknown): void {
 /** `accountId` limits an event to one person's sockets: their pins, recents and shortcuts
     are nobody else's business, not even that they changed. */
 export function broadcastToAllClients(payload: unknown, accountId?: string): void {
+  sessionListingChanged();
+  announceToAllClients(payload, accountId);
+}
+function announceToAllClients(payload: unknown, accountId?: string): void {
   const sockets = new Set<WebSocket>();
   for (const clients of watchClients.values()) for (const client of clients) sockets.add(client);
   for (const session of harnessSessions.values()) for (const client of session.clients) sockets.add(client);
@@ -92,7 +99,19 @@ export function wakeQueuedConversations(): void {
   for (const connection of harnessChatConnections) void drainHarnessPromptQueue(connection)
     .catch((error) => send(connection.socket, { type: "error", error: chatErrorMessage(error) }));
 }
-export function broadcastReplicationInvalidations(events: ReplicationBatch["events"]): void { for (const type of replicationInvalidations(events)) broadcastToAllClients({ type }); }
+/* A twin replicates a usage record for every model call of every conversation it runs, and
+   each batch used to mark every project's conversation list as changed. Usage totals are not
+   part of the lists kept in session-listing-revisions.ts, and most other events name their
+   project; only an event that names none marks them all. Pages are told as before. */
+const USAGE_EVENTS = new Set(["model.usage", "usage.difficulty"]);
+export function broadcastReplicationInvalidations(events: ReplicationBatch["events"]): void {
+  for (const event of events) {
+    if (USAGE_EVENTS.has(event.entityType)) continue;
+    const projectId = (event.payload as { projectId?: unknown } | null)?.projectId;
+    sessionListingChanged(typeof projectId === "string" && projectId ? projectId : undefined);
+  }
+  for (const type of replicationInvalidations(events)) announceToAllClients({ type });
+}
 
 const REVIEW_NOTIFICATION_QUIET_MS = 10_000;
 const reviewNotificationTimers = new Map<string, NodeJS.Timeout>();

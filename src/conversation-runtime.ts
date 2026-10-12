@@ -223,6 +223,15 @@ export function conversationLeaseState(engine: ConversationEngine, sessionId: st
   return { running: false, backgroundRunning: false };
 }
 
+/** Every conversation a lease or a held ended run says is running. A peer's lease expires
+    by the clock and nothing announces it, so a listing kept for reuse compares this. */
+export function leasedConversationKeys(now = new Date()): string[] {
+  const rows = runtimeDatabase().prepare("SELECT engine, session_id, owner_node_id, ownership_epoch, run_id, background_running, updated_at, expires_at FROM conversation_runtime_leases").all() as unknown as LeaseRow[];
+  const leased = rows.filter((row) => leaseLive(rowToLease(row), now)).map((row) => `${row.engine}\n${row.session_id}\n${row.background_running ? 1 : 0}`);
+  const held = [...endedRunHolds].filter(([, hold]) => hold.until > now.getTime()).map(([key, hold]) => `${key}\n${hold.backgroundRunning ? 1 : 0}\nheld`);
+  return [...leased, ...held].sort();
+}
+
 /** A conversation is remotely running when a live lease says so. */
 export function conversationLeaseRunning(engine: ConversationEngine, sessionId: string, now = new Date()): boolean {
   return conversationLeaseState(engine, sessionId, now).running;

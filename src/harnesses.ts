@@ -10,6 +10,7 @@ import type { HarnessModel, HarnessRuntime } from "./harnesses/runtime.js";
 import type { HarnessId, SessionSummary } from "./types.js";
 import { conversationUsage, usageTotals } from "./usage-ledger.js";
 import { scheduleUsageIngest } from "./usage-ingest.js";
+import { sessionListingChanged } from "./session-listing-revisions.js";
 
 export { defineHarness } from "./harnesses/contract.js";
 export type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
@@ -193,7 +194,8 @@ export function harnessForSessionPath(sessionPath: string): HarnessAdapter {
 }
 
 export function refreshHarnessSessions(projectId: string, changedFiles: string[]): Promise<void> {
-  return sessionCatalog.refresh(projectId, changedFiles);
+  // Marked once the catalog holds the change, so a listing computed meanwhile is not kept as current.
+  return sessionCatalog.refresh(projectId, changedFiles).finally(() => sessionListingChanged(projectId));
 }
 
 export function findHarnessSession(project: HarnessProject, harnessId: HarnessId, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
@@ -202,6 +204,7 @@ export function findHarnessSession(project: HarnessProject, harnessId: HarnessId
 
 export function clearHarnessSessionCache(projectId?: string): void {
   sessionCatalog.clear(projectId);
+  sessionListingChanged(projectId);
 }
 
 function transcriptName(sessionPath: string): string {

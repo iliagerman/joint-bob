@@ -10,7 +10,7 @@ import { getRuntimePeer } from "./runtime-peers.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
 import { conversationReviewNotificationPaths, setConversationReviewNotifications, syncConversationReviewDetails } from "../conversation-reviews.js";
 import { conversationNotifications, notificationConversationId, setConversationNotification } from "../conversation-notifications.js";
-import { conversationLeaseState } from "../conversation-runtime.js";
+import { conversationLeaseState, leasedConversationKeys } from "../conversation-runtime.js";
 import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions, type HarnessProject } from "../harnesses.js";
 import { getUserPreferences } from "../preferences.js";
 import { migratePushConversationSubscriptions, ntfySubscribedSessionPaths } from "../push.js";
@@ -25,6 +25,7 @@ import { sessionWatcher } from "./chat.js";
 import { findHarnessSession, harnessTurnBusy } from "./harness-sessions.js";
 import { taskConfig, taskPhase } from "./task-runs.js";
 import { measureOperation } from "./performance-diagnostics.js";
+import { sharedProjectListing } from "../session-listing-revisions.js";
 
 /**
  * Shared by the per-project conversation list and the cross-project review inbox, so both
@@ -179,6 +180,33 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
       executionNodeId: ownership[index]?.ownerNodeId,
     };
   });
+}
+
+/**
+ * What is running, as far as another process can change it without telling this one: a
+ * terminal session's heartbeat, a peer's lease running out, a supervised command ending.
+ * Pages hear of it up to two seconds later. Read once per request, it lets a list that spans
+ * every project reuse kept answers and still be right the moment it is asked.
+ */
+export async function unannouncedRunState(): Promise<string> {
+  const external = await Promise.all(listHarnesses().map(async (adapter) => {
+    if (!adapter.runtime) return [];
+    const runtime = await getHarnessRuntime(adapter.id);
+    return runtime.externalRunning ? (await runtime.externalRunning()).map((run) => `${adapter.id}:${run.sessionId}:${run.runId}`) : [];
+  }));
+  return JSON.stringify([external.flat().sort(), leasedConversationKeys(), [...readActiveBackgroundTaskIdentities(resolveDataDirectory())].sort()]);
+}
+
+/**
+ * A project's conversations for the lists that span every project. The answer is shared
+ * between the pages and lists asking for it and kept until the project changes; see
+ * session-listing-revisions.ts. `runState` is unannouncedRunState(), read once by the caller.
+ * Code that acts on one conversation's state at that moment (a takeover, a scheduled run, a
+ * review notification) calls listProjectSessionsWithReviewState itself.
+ */
+export function sharedProjectSessions(project: ProjectRecord, userId: string, username: string, runState: string): Promise<SessionSummary[]> {
+  const key = JSON.stringify([project.id, userId, username, getSettings().conversationHistoryDays, project.path, project.macPath ?? "", project.locations ?? []]);
+  return sharedProjectListing(project.id, key, () => listProjectSessionsWithReviewState(project, userId, username), runState);
 }
 
 // A leftover `claiming` record is a crashed two-phase claim from this node; no
