@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.76.1 — 2026-10-12
 
 - Fixed the last word of a labeled conversation title showing in a different size and colour from the rest of the title.
 
