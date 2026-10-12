@@ -397,6 +397,13 @@ async function loadSettings() {
   elements.settingsShellTimeoutSeconds.value = settings.shellCommandTimeoutSeconds ?? 600;
   elements.settingsSubprocessMaxLifetimeMinutes.value = settings.subprocessMaxLifetimeMinutes ?? 360;
   elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
+  // A node that predates the limits sends neither field.
+  elements.settingsConversationCpuLimitEnabled.checked = settings.conversationCpuLimitCores != null;
+  elements.settingsConversationCpuLimitCores.value = settings.conversationCpuLimitCores ?? 2;
+  elements.settingsConversationCpuLimitCores.disabled = !elements.settingsConversationCpuLimitEnabled.checked;
+  elements.settingsConversationMemoryLimitEnabled.checked = settings.conversationMemoryLimitGb != null;
+  elements.settingsConversationMemoryLimitGb.value = settings.conversationMemoryLimitGb ?? 8;
+  elements.settingsConversationMemoryLimitGb.disabled = !elements.settingsConversationMemoryLimitEnabled.checked;
   renderSyncCheckSettings(settings);
   elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
   elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
@@ -462,6 +469,8 @@ async function saveSettings(event) {
       autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
       shellCommandTimeoutSeconds: elements.settingsShellTimeoutEnabled.checked ? Number(elements.settingsShellTimeoutSeconds.value) : null,
       subprocessMaxLifetimeMinutes: Number(elements.settingsSubprocessMaxLifetimeMinutes.value),
+      conversationCpuLimitCores: elements.settingsConversationCpuLimitEnabled.checked ? Number(elements.settingsConversationCpuLimitCores.value) : null,
+      conversationMemoryLimitGb: elements.settingsConversationMemoryLimitEnabled.checked ? Number(elements.settingsConversationMemoryLimitGb.value) : null,
       digestAttachments: elements.settingsDigestAttachments.checked,
       showProjectsOnOtherNodes: document.querySelector("#settingsShowProjectsOnOtherNodes").checked,
       newConversationWorktree: elements.settingsNewConversationWorktree.checked,
@@ -518,6 +527,8 @@ elements.settingsReloadSkillsButton.addEventListener("click", () => runSkillOper
 elements.settingsCheckRuntimePathsButton.addEventListener("click", () => checkRuntimePaths().catch((error) => toast(error.message)));
 elements.settingsAutoCompactEnabled.addEventListener("change", () => { elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked; });
 elements.settingsShellTimeoutEnabled.addEventListener("change", () => { elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked; });
+elements.settingsConversationCpuLimitEnabled.addEventListener("change", () => { elements.settingsConversationCpuLimitCores.disabled = !elements.settingsConversationCpuLimitEnabled.checked; });
+elements.settingsConversationMemoryLimitEnabled.addEventListener("change", () => { elements.settingsConversationMemoryLimitGb.disabled = !elements.settingsConversationMemoryLimitEnabled.checked; });
 for (const tab of elements.settingsTabs) {
   tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
   tab.addEventListener("keydown", (event) => {

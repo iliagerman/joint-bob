@@ -86,6 +86,8 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.doesNotMatch(savedText, /secret-api-key/);
     assert.deepEqual(JSON.parse(savedText), {
       subprocessMaxLifetimeMinutes: 360,
+      conversationCpuLimitCores: null,
+      conversationMemoryLimitGb: null,
       conversationDefaults,
       conversationHistoryDays: 45,
       conversationRetentionDays: 60,
@@ -124,6 +126,8 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.doesNotMatch(readText, /secret-api-key/);
     assert.deepEqual(JSON.parse(readText), {
       subprocessMaxLifetimeMinutes: 360,
+      conversationCpuLimitCores: null,
+      conversationMemoryLimitGb: null,
       conversationDefaults,
       conversationHistoryDays: 45,
       conversationRetentionDays: 60,

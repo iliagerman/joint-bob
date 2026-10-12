@@ -386,6 +386,8 @@ export const settingsSchema = z.object({
   autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
   shellCommandTimeoutSeconds: z.number().int().min(1).max(86_400).nullable().optional(),
   subprocessMaxLifetimeMinutes: z.number().int().min(1).max(10_080).optional(),
+  conversationCpuLimitCores: z.number().min(0.1).max(1024).nullable().optional(),
+  conversationMemoryLimitGb: z.number().min(0.1).max(4096).nullable().optional(),
   digestAttachments: z.boolean().optional(),
   showProjectsOnOtherNodes: z.boolean().optional(),
   newConversationWorktree: z.boolean().optional(),

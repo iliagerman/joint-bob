@@ -36,7 +36,7 @@ let cachedTable;
 let cachedTableAt = 0;
 let pendingTable;
 let pendingFreshTable;
-function processTable() {
+export function processTable() {
   // Many owned processes may have staggered timers. Share a bounded snapshot so
   // normal monitoring runs at most two machine-wide ps scans per second.
   if (cachedTable && Date.now() - cachedTableAt < PROCESS_TABLE_CACHE_MS) return Promise.resolve(cachedTable);
@@ -53,18 +53,20 @@ function freshProcessTable() {
   return pendingFreshTable;
 }
 async function readProcessTable() {
-  const output = await new Promise((resolve, reject) => execFile("/bin/ps", ["-axo", "pid=,ppid=,uid=,stat=,lstart="], {
+  const output = await new Promise((resolve, reject) => execFile("/bin/ps", ["-axo", "pid=,ppid=,uid=,stat=,rss=,time=,lstart="], {
     timeout: 2000, maxBuffer: 8 * 1024 * 1024, env: { PATH: "/usr/bin:/bin", LC_ALL: "C" },
   }, (error, stdout) => error ? reject(error) : resolve(stdout)));
   const rows = new Map();
   for (const line of output.split("\n")) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
     if (!match || /^[ZX]/.test(match[4])) continue;
     const pid = Number(match[1]);
     let parent = Number(match[2]);
     let uid = Number(match[3]);
     if (uid !== process.getuid?.()) continue;
-    let birth = match[5];
+    const rssKb = Number(match[5]);
+    let cpuMs = cpuTimeMs(match[6]);
+    let birth = match[7];
     if (process.platform === "linux") {
       let fd;
       try {
@@ -76,13 +78,25 @@ async function readProcessTable() {
         if (/^[ZX]/.test(fields[0])) continue;
         birth = fields[19];
         parent = Number(fields[1]);
+        // ps rounds CPU time to whole seconds here; the tick counters do not.
+        cpuMs = (Number(fields[11]) + Number(fields[12])) * 1000 / LINUX_CLOCK_TICKS;
         uid = fstatSync(fd).uid;
       } catch { continue; }
       finally { if (fd !== undefined) closeSync(fd); }
     }
-    rows.set(pid, { pid, parent, uid, birth });
+    rows.set(pid, { pid, parent, uid, birth, rssKb, cpuMs });
   }
+  // A shared snapshot is up to half a second old: rates need when it was taken, not when it was read.
+  rows.capturedAt = Date.now();
   return rows;
+}
+
+const LINUX_CLOCK_TICKS = 100;
+/** ps prints CPU time as [[days-]hours:]minutes:seconds[.hundredths]. */
+function cpuTimeMs(value) {
+  const [days, clock] = value.includes("-") ? value.split("-") : ["0", value];
+  const seconds = clock.split(":").reduce((total, part) => total * 60 + Number(part), 0);
+  return (Number(days) * 86_400 + seconds) * 1000;
 }
 
 function sameProcess(left, right) {
@@ -184,5 +198,5 @@ export function watchSubprocess(child, options = {}) {
   timer = setInterval(() => void tick(), options.pollMs ?? 1000);
   timer.unref();
   void tick();
-  return { dispose, get active() { return state.active; }, get descendantCount() { return state.descendants.size; }, exited: onExit };
+  return { dispose, get active() { return state.active; }, get descendantCount() { return state.descendants.size; }, get descendants() { return [...state.descendants.values()]; }, exited: onExit };
 }
