@@ -14,17 +14,23 @@ BUSY=75
 
 remote_main() { git -C "${ROOT}" ls-remote "${REMOTE}" refs/heads/main | awk '{print $1}'; }
 
+LOCK="${HOME}/.joint-bob/deploy.lock"
+lock_held=false
+# A deployment that is killed must not leave its lock behind: the next push would wait five minutes and give up.
+trap '[ "${lock_held}" != true ] || rmdir "${LOCK}" 2>/dev/null || true' EXIT
+
 deploy_once() {
-  local lock="${HOME}/.joint-bob/deploy.lock" acquired=false status=0
+  local status=0
   for _ in {1..150}; do
-    if mkdir "${lock}" 2>/dev/null; then acquired=true; break; fi
+    if mkdir "${LOCK}" 2>/dev/null; then lock_held=true; break; fi
     sleep 2
   done
-  [ "${acquired}" = true ] || { echo "Could not acquire deployment lock" >&2; return 1; }
+  [ "${lock_held}" = true ] || { echo "Could not acquire deployment lock" >&2; return 1; }
   # The lock is held only while deploying, never while waiting for a busy machine: a newer
   # push must be able to deploy meanwhile.
   "${ROOT}/scripts/deploy-installed-nodes.sh" "${COMMIT}" || status=$?
-  rmdir "${lock}" 2>/dev/null || true
+  rmdir "${LOCK}" 2>/dev/null || true
+  lock_held=false
   return "${status}"
 }
 
