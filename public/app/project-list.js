@@ -158,24 +158,39 @@ function projectRow(project) {
     const heading = document.createElement("div");
     heading.className = "project-card-heading";
     heading.append(name);
+    const badges = document.createElement("span");
+    badges.className = "project-card-badges";
     const runningCount = runningCountForProject(project.id);
     if (runningCount) {
       const runningBadge = document.createElement("em");
       runningBadge.className = "project-running-badge";
       runningBadge.dataset.testid = "project-running-badge";
-      runningBadge.textContent = `${runningCount > 99 ? "99+" : runningCount} running`;
+      const runningValue = document.createElement("span");
+      runningValue.className = "project-badge-count";
+      runningValue.textContent = runningCount > 99 ? "99+" : String(runningCount);
+      const runningLabel = document.createElement("span");
+      runningLabel.className = "project-badge-label";
+      runningLabel.textContent = " running";
+      runningBadge.append(runningValue, runningLabel);
       runningBadge.setAttribute("aria-label", `${runningCount} conversations running in ${project.name}`);
-      heading.append(runningBadge);
+      badges.append(runningBadge);
     }
     const reviewCount = pendingReviewCountForProject(project.id);
     if (reviewCount) {
       const reviewBadge = document.createElement("em");
       reviewBadge.className = "project-review-badge";
       reviewBadge.dataset.testid = "project-review-badge";
-      reviewBadge.textContent = `${reviewCount > 99 ? "99+" : reviewCount} to review`;
+      const reviewValue = document.createElement("span");
+      reviewValue.className = "project-badge-count";
+      reviewValue.textContent = reviewCount > 99 ? "99+" : String(reviewCount);
+      const reviewLabel = document.createElement("span");
+      reviewLabel.className = "project-badge-label";
+      reviewLabel.textContent = " to review";
+      reviewBadge.append(reviewValue, reviewLabel);
       reviewBadge.setAttribute("aria-label", `${reviewCount} conversations need review in ${project.name}`);
-      heading.append(reviewBadge);
+      badges.append(reviewBadge);
     }
+    if (badges.childElementCount) heading.append(badges);
     const projectPath = document.createElement("span");
     projectPath.textContent = project.path;
     // The sync status is a sibling of the path, not a child: the path truncates,

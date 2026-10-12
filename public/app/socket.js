@@ -570,7 +570,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "agent_start") {
     if (state.scheduledTurn) state.scheduledAssistantText = "";
     state.assistantRawText = "";
-    setStatus(`${harnessLabel(state.harnesses, state.engine)} is working`, true);
+    setStatus(`${harnessLabel(state.harnesses, state.engine)} is working`, true, false, true);
     const startedAt = Date.parse(payload.timestamp || "");
     startTurnTimer(Number.isFinite(startedAt) ? startedAt : Date.now());
     state.sessionBusy = true;

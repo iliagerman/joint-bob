@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { harnessLabel } from "../harness-metadata.js";
 import { isNodeAdmin } from "./node-admin.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { syncBrowserButton } from "./browser.js";
@@ -185,7 +186,7 @@ export function updateStatus(status) {
   const turnBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
   state.sessionBusy = turnBusy;
   elements.abortButton.disabled = !turnBusy;
-  if (!turnBusy) setStatus(status.backgroundRunning ? "Background tasks running" : "Connected", true);
+  setStatus(turnBusy ? `${harnessLabel(state.harnesses, state.engine)} is working` : status.backgroundRunning ? "Background tasks running" : "Connected", true, false, turnBusy);
   if (status.sessionName) syncChatTitleFromSessions(status.sessionName);
   state.activeModelKey = status.model ? `${status.model.provider}/${status.model.id}` : "";
   state.activeModelLabel = status.model ? status.model.label : "";
