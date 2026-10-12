@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed settings saved with a model the picker no longer offers being rejected, so turns interrupted by an update can resume on the model they were using.
+
 ## 2.77.0 — 2026-10-12
 
 - Added spend budgets: a cluster's manager sets a limit for everything shared into the cluster and defaults for each workspace, project and conversation, per hour, day, week, month, year or in total, and owners can add tighter limits to their own projects, conversations and workspaces.

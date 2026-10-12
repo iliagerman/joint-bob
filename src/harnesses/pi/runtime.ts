@@ -273,8 +273,7 @@ const runtime: HarnessRuntime = {
   },
 
   async validateSettings(settings) {
-    const available = await service.listAvailableModels();
-    if (!available.some((model) => model.provider === settings.provider && model.id === settings.modelId)) {
+    if (!await service.modelIsRunnable(settings.provider, settings.modelId)) {
       throw new Error(`Model not found: ${settings.provider}/${settings.modelId}`);
     }
     if (!service.modelThinkingLevels(settings.provider, settings.modelId).includes(settings.reasoning)) {

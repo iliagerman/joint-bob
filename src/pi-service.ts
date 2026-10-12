@@ -283,6 +283,13 @@ export async function listAvailableModels(): Promise<ModelSummary[]> {
     .map((model) => ({ ...model, thinkingLevels: modelThinkingLevels(model.provider, model.id) }));
 }
 
+/** Whether settings may name this model: every model its provider can run here, including the
+    families listAvailableModels keeps out of pickers. Settings saved before a family was retired
+    still name them, and a turn interrupted by an update resumes on the model it was using. */
+export async function modelIsRunnable(provider: string, modelId: string): Promise<boolean> {
+  return (await modelRuntime.getAvailable()).some((model) => model.provider === provider && model.id === modelId);
+}
+
 export function modelThinkingLevels(provider: string, modelId: string): string[] {
   const model = modelRuntime.getModel(provider, modelId);
   if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
