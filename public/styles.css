@@ -907,8 +907,8 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   vertical-align: middle;
   overflow-wrap: anywhere;
 }
-/* The last title word and its label wrap together; `.session-card span` would clamp this span, so it resets that. */
-.session-card .session-title-tail { display: inline; -webkit-line-clamp: none; overflow: visible; white-space: nowrap; }
+/* Keep the last word with its label without inheriting the metadata span's layout or typography. */
+.session-card .session-title-tail { display: inline; -webkit-line-clamp: none; overflow: visible; white-space: nowrap; font: inherit; color: inherit; }
 /* `.session-card span` makes spans clamped line boxes; a label badge must stay inline beside the title. */
 .session-card .session-classification {
   display: inline-block;

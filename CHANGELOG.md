@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the last word of a labeled conversation title showing in a different size and colour from the rest of the title.
+
 ## 2.76.0 — 2026-10-12
 
 - Focused mode now offers one-tap buttons for Agent, Model, Effort, Mark done, and Tools, each with its own icon and colour; the menu closes as soon as you pick one.
