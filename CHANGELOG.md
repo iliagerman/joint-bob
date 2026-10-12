@@ -3,11 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.77.2 — 2026-10-12
 
-- Fixed old sync conflict copies, left more than a day ago, being merged back into files that have changed since; they are now listed for you to choose a version by hand.
-- Fixed open pages rescanning every project and slowing down while a Claude conversation was running, since each save now refreshes only the project that owns that conversation and long conversations are no longer re-read in full.
-- Changed worktrees to leave out more bulky package folders and binary packages, such as Python site packages and NuGet files, so they are smaller and quicker to create.
+- Fixed old sync conflict copies, more than a day old, being merged back into files that have changed since; they are now listed for you to choose a version by hand.
+- Fixed open pages rescanning every project while a Claude conversation was running; each save now refreshes only the project that owns that conversation, and a growing conversation is read only from where it last stopped.
+- Worktrees now leave out bulky package folders such as Python site packages and NuGet files, so they are smaller and quicker to create.
 
 ## 2.77.1 — 2026-10-12
 
