@@ -6,7 +6,9 @@ import test from "node:test";
 import { conflictOriginalPath, conflictsForNode, CONFLICT_SETTLE_MS, findSyncConflicts, resolveTrivialConflict, syncResolverPrompt } from "../src/server/sync-check.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 
-const STAMP = "sync-conflict-20260920-112403-5CHB2CY";
+// Syncthing stamps a copy with the time the conflict was found.
+const stamp = (at: Date): string => `sync-conflict-${at.toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-")}-5CHB2CY`;
+const STAMP = stamp(new Date());
 const old = new Date(Date.now() - CONFLICT_SETTLE_MS - 60_000);
 
 async function present(file: string): Promise<boolean> {
@@ -33,6 +35,7 @@ test("conflict scan skips dependency folders and marks git leftovers", async () 
     await writeOld(path.join(root, "node_modules", "pkg", `index.${STAMP}.js`), "a");
     await writeOld(path.join(root, ".git", `index.${STAMP}`), "a");
     await writeOld(path.join(root, ".git", "objects", "ab", `cd.${STAMP}`), "a");
+    await writeOld(path.join(root, ".test-build-0123abcd", `usage.${STAMP}.js`), "a");
     const found = (await findSyncConflicts("p", root)).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
     assert.deepEqual(found.map((conflict) => [conflict.relativePath, Boolean(conflict.gitMetadata)]), [[path.join(".git", "index"), true], [path.join("docs", "notes.md"), false]]);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -66,6 +69,17 @@ test("obvious conflicts are fixed without a model and real edits are left for th
     await writeOld(edited.originalPath, "one");
     await writeOld(edited.conflictPath, "two");
     assert.equal(await resolveTrivialConflict(edited), "needs-agent");
+
+    // A copy nobody merged in time is not merged into a file that has moved on since.
+    const stale = conflict(`stale.${stamp(new Date(Date.now() - 3 * 24 * 60 * 60_000))}.txt`);
+    await writeOld(stale.originalPath, "newer work");
+    await writeOld(stale.conflictPath, "last week's version");
+    assert.equal(await resolveTrivialConflict(stale), "stale");
+    assert.equal(await present(stale.conflictPath), true, "old copies stay for the user");
+    const staleDuplicate = conflict(`stale-same.${stamp(new Date(Date.now() - 3 * 24 * 60 * 60_000))}.txt`);
+    await writeOld(staleDuplicate.originalPath, "same");
+    await writeOld(staleDuplicate.conflictPath, "same");
+    assert.equal(await resolveTrivialConflict(staleDuplicate), "removed-duplicate", "an old copy that matches its original still goes");
 
     const gitIndex = { ...conflict(`index.${STAMP}`), gitMetadata: true };
     await writeOld(gitIndex.originalPath, Buffer.from([1, 0, 2]));

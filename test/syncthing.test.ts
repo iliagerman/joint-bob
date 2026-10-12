@@ -33,6 +33,7 @@ const managedIgnorePatterns = [
   "(?d).DS_Store",
   "(?d).dev-env/",
   "(?d)**/.dev-env/",
+  "(?d).test-build-*",
   ".env",
   ".env.*",
   "**/.env",

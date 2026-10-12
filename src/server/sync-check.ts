@@ -32,9 +32,15 @@ const AGENT_RETRY_MS = 60 * 60_000;
 const AGENT_TIMEOUT_MS = 10 * 60_000;
 const MAX_AGENT_TEXT_BYTES = 512 * 1024;
 const FOLDER_RESCAN_MS = 10 * 60_000;
+/* A copy the fixer did not reach in time. Its original has moved on since, so merging the
+   old version back in could undo newer work; a person chooses. The stamp in the name is
+   the creating machine's local time, hence the margin on top of a day. */
+const STALE_CONFLICT_MS = 36 * 60 * 60_000;
+/** The test runner's build output: regenerated on every run, never worth merging. */
+const TEST_BUILD_PREFIX = ".test-build-";
 
 export interface SyncConflict { projectId: string; root: string; conflictPath: string; originalPath: string; relativePath: string; gitMetadata?: boolean; }
-export type SyncConflictOutcome = "kept-copy" | "removed-duplicate" | "removed-stale-git" | "needs-agent" | "manual" | "settling";
+export type SyncConflictOutcome = "kept-copy" | "removed-duplicate" | "removed-stale-git" | "needs-agent" | "manual" | "stale" | "settling";
 
 export interface SyncResolverInput {
   projectId: string;
@@ -81,7 +87,7 @@ export async function findSyncConflicts(projectId: string, root: string): Promis
       scanned += 1;
       const full = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (git ? !SKIPPED_GIT_DIRECTORIES.has(entry.name) : !SKIPPED_DIRECTORIES.has(entry.name)) pending.push({ directory: full, git: git || entry.name === ".git" });
+        if (git ? !SKIPPED_GIT_DIRECTORIES.has(entry.name) : !SKIPPED_DIRECTORIES.has(entry.name) && !entry.name.startsWith(TEST_BUILD_PREFIX)) pending.push({ directory: full, git: git || entry.name === ".git" });
         continue;
       }
       if (!entry.isFile()) continue;
@@ -93,6 +99,11 @@ export async function findSyncConflicts(projectId: string, root: string): Promis
 }
 
 function binary(bytes: Buffer): boolean { return bytes.subarray(0, 8192).includes(0); }
+
+function conflictCreatedAt(conflictPath: string): number | undefined {
+  const stamp = /\.sync-conflict-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-/.exec(path.basename(conflictPath));
+  return stamp ? Date.UTC(Number(stamp[1]), Number(stamp[2]) - 1, Number(stamp[3]), Number(stamp[4]), Number(stamp[5]), Number(stamp[6])) : undefined;
+}
 
 async function readIfExists(file: string): Promise<Buffer | undefined> {
   try { return await fs.readFile(file); } catch (error) {
@@ -120,6 +131,7 @@ export async function resolveTrivialConflict(conflict: SyncConflict, now = Date.
     return "removed-stale-git";
   }
   if (binary(copy) || binary(original) || copy.length > MAX_AGENT_TEXT_BYTES || original.length > MAX_AGENT_TEXT_BYTES) return "manual";
+  if (now - (conflictCreatedAt(conflict.conflictPath) ?? now) > STALE_CONFLICT_MS) return "stale";
   return "needs-agent";
 }
 
@@ -204,6 +216,7 @@ async function checkProjectConflicts(project: ProjectRecord, settings: SyncCheck
     }
     if (outcome === "kept-copy" || outcome === "removed-duplicate" || outcome === "removed-stale-git") resolved += 1;
     else if (outcome === "manual") unresolved.push({ projectId: project.id, path: path.relative(project.path, conflict.conflictPath), reason: "Binary or large file; choose a version by hand" });
+    else if (outcome === "stale") unresolved.push({ projectId: project.id, path: path.relative(project.path, conflict.conflictPath), reason: "Left from more than a day ago and the file has changed since; choose a version by hand" });
     else if (outcome === "needs-agent") needsAgent.push(conflict);
   }
   const due = needsAgent.filter((conflict) => now - (agentAttempts.get(conflict.conflictPath) ?? 0) >= AGENT_RETRY_MS);

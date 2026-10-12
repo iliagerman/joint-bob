@@ -84,6 +84,8 @@ const projectIgnorePatterns = [
   // this rule before `*.key`, or the scratch directory can never be deleted.
   "(?d).dev-env/",
   "(?d)**/.dev-env/",
+  // Test runs build into .test-build-<hash> in the checkout; two machines running tests left conflict copies of it.
+  "(?d).test-build-*",
   ".env",
   ".env.*",
   "**/.env",
