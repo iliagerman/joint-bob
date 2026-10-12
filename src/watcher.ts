@@ -9,6 +9,7 @@ const DEBOUNCE_MS = 750;
 const RESCAN_MS = 15_000;
 /** The longest a directory whose watcher keeps failing is left unwatched. */
 const MAX_RETRY_MS = 10 * 60_000;
+const MAX_KNOWN_OWNERS = 5_000;
 export type SessionChangeListener = (projectId: string, changedFiles: string[]) => void;
 interface WatchedProject { paths: SessionProjectPaths; directories: Set<string>; pendingFiles: Map<string, ReturnType<typeof listDiscoveredHarnesses>[number]>; needsFullRefresh: boolean; debounceTimer: NodeJS.Timeout | null; runtime: RuntimeAccount; }
 interface SharedWatch { watcher: FSWatcher; projects: Set<string>; openedAt: number; }
@@ -26,6 +27,9 @@ export class SessionWatcher {
   // rescan and kept the node saturated, so each failure waits longer than the last.
   private failures = new Map<string, { count: number; retryAt: number }>();
   private ownerReads = new Map<string, Promise<string | null>>();
+  // A transcript's header never changes once written, and every project watching the shared
+  // root asks for it on every write.
+  private owners = new Map<string, string>();
   private rescanTimer: NodeJS.Timeout;
   constructor(private listener: SessionChangeListener) { this.rescanTimer = setInterval(() => this.rescan(), RESCAN_MS); this.rescanTimer.unref(); }
 
@@ -51,6 +55,7 @@ export class SessionWatcher {
     clearInterval(this.rescanTimer);
     for (const projectId of this.projects.keys()) this.removeProject(projectId);
     this.ownerReads.clear();
+    this.owners.clear();
   }
   private unsubscribe(projectId: string, dir: string): void {
     const shared = this.directories.get(dir)!;
@@ -103,9 +108,17 @@ export class SessionWatcher {
   private async ownerCwd(adapter: ReturnType<typeof listDiscoveredHarnesses>[number], filePath: string): Promise<string | null> {
     if (!adapter.sync.transcriptCwd) return null;
     const key = `${adapter.id}:${path.resolve(filePath)}`;
+    const known = this.owners.get(key);
+    if (known) return known;
     const existing = this.ownerReads.get(key);
     if (existing) return existing;
-    const reading = adapter.sync.transcriptCwd(filePath).catch((error) => {
+    const reading = adapter.sync.transcriptCwd(filePath).then((cwd) => {
+      if (cwd) {
+        if (this.owners.size >= MAX_KNOWN_OWNERS) this.owners.clear();
+        this.owners.set(key, cwd);
+      }
+      return cwd;
+    }).catch((error) => {
       console.error(`Session watcher could not read transcript owner for ${filePath}:`, error);
       return null;
     }).finally(() => this.ownerReads.delete(key));
@@ -141,6 +154,8 @@ export class SessionWatcher {
       const adapter = runInRuntime(project.runtime, () => listDiscoveredHarnesses().find((candidate) => candidate.paths.ownsTranscript(file)));
       if (!adapter) return;
       const canonicalFile = runInRuntime(project.runtime, () => adapter.paths.canonicalTranscript?.(file) ?? file);
+      // Dropped before the debounce: another project's write must not keep postponing this project's refresh.
+      if (adapter.sync.transcriptBelongs && !runInRuntime(project.runtime, () => adapter.sync.transcriptBelongs!(project.paths, canonicalFile))) return;
       project.pendingFiles.set(canonicalFile, adapter);
     }
     if (this.projects.get(projectId) !== project) return;

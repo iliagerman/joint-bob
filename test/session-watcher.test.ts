@@ -267,6 +267,45 @@ test("Claude root watcher observes the first transcript in a new project directo
   }
 });
 
+// Every project watches the shared Claude root. Without this, each write of one running
+// conversation refreshed every project and made every open page rescan them all.
+test("a Claude transcript write is announced only to the project whose folder holds it", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-claude-owner-"));
+  const previousHome = process.env.HOME;
+  const projectsRoot = path.join(home, ".claude/projects");
+  let watcher: SessionWatcher | undefined;
+
+  try {
+    process.env.HOME = home;
+    await mkdir(projectsRoot, { recursive: true });
+    const callbacks = new Map<string, string[]>();
+    watcher = new SessionWatcher((projectId, changedFiles) => callbacks.set(projectId, changedFiles));
+    const mine = path.join(home, "work", "mine");
+    watcher.ensureProject(project("mine", mine));
+    watcher.ensureProject(project("other", path.join(home, "elsewhere", "other")));
+    await waitForCallbacks(callbacks, [], 2);
+    callbacks.clear();
+
+    const transcriptDir = claudeProjectDir(mine, projectsRoot);
+    await mkdir(path.join(transcriptDir, "abc", "subagents"), { recursive: true });
+    const transcript = path.join(transcriptDir, "abc.jsonl");
+    await writeFile(transcript, `${JSON.stringify({ type: "user", cwd: mine })}\n`);
+    await waitForCallback(callbacks, "mine", transcript);
+    const subagent = path.join(transcriptDir, "abc", "subagents", "agent-1.jsonl");
+    callbacks.clear();
+    await writeFile(subagent, `${JSON.stringify({ type: "user", cwd: mine })}\n`);
+    await waitForCallback(callbacks, "mine", subagent);
+    // Past the debounce, so a notice for the other project would have arrived by now.
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    assert.equal(callbacks.has("other"), false, "a project is not told about another project's conversation");
+  } finally {
+    watcher?.close();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("shared flat Pi session watcher notifies only the transcript project", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-"));
   const previousHome = process.env.HOME;

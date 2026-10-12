@@ -2,13 +2,13 @@ import { failUnobservedConversationWork, recordConversationWork } from "./conver
 import { claudeSubscriptionEnvironment, currentRuntime, spawnInRuntime } from "./account-runtime.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { isInternalSession } from "./internal-sessions.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { parseCompletedJsonl } from "./jsonl.js";
 import type { Stats } from "node:fs";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { spawn } from "./subprocess.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { access, copyFile, mkdir, readdir, readFile, rename, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, open, readdir, readFile, rename, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./harnesses/shared-paths.js";
@@ -257,6 +257,8 @@ interface ClaudeSessionFacts {
   firstEventAt: string;
   lastEventAt: string;
   contextUsage?: ContextUsage;
+  /** Where the next read continues when the file has only grown. Facts stored before this existed have none. */
+  resume?: { dev: number; ino: number; consumed: number; tailHash: string; customTitle: string; aiTitle: string };
 }
 
 const claudeSessionFactsCache = new Map<string, ClaudeSessionFacts>();
@@ -313,7 +315,7 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats, startPrompt
   if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size && cached.startPrompt === startPrompt) { claudeSessionFactsCache.set(filePath, cached); return cached; }
   const pending = claudeSessionFactsInFlight.get(filePath);
   if (pending && pending.mtimeMs === fileStat.mtimeMs && pending.size === fileStat.size && pending.startPrompt === startPrompt) return pending.promise;
-  const promise = readClaudeSessionFacts(filePath, fileStat, startPrompt);
+  const promise = readClaudeSessionFacts(filePath, fileStat, startPrompt, cached);
   const entry = { mtimeMs: fileStat.mtimeMs, size: fileStat.size, startPrompt, promise };
   claudeSessionFactsInFlight.set(filePath, entry);
   try {
@@ -329,27 +331,78 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats, startPrompt
   }
 }
 
-async function readClaudeSessionFacts(filePath: string, fileStat: Stats, startPrompt: string): Promise<ClaudeSessionFacts> {
-  const records = parseCompletedJsonl(await readFile(filePath, "utf8")) as UnknownRecord[];
-  let customTitle = "";
-  let aiTitle = "";
-  let prompt = "";
+/** The bytes before the resume point that must be unchanged for a read to continue from it. */
+const RESUME_CHECK_BYTES = 4096;
+const resumeHash = (bytes: Buffer): string => createHash("sha1").update(bytes).digest("hex");
+
+interface ClaudeFactsFold { customTitle: string; aiTitle: string; prompt: string; cwds: Set<string>; firstEventAt: string; lastEventAt: string; contextUsage?: ContextUsage }
+
+/** Applies records in transcript order. Applying a record twice changes nothing, so a last
+    line read before its newline arrived can be read again once it is complete. */
+function foldClaudeRecords(fold: ClaudeFactsFold, records: UnknownRecord[], startPrompt: string): void {
   for (const record of records) {
-    if (record.type === "custom-title") customTitle = cleanClaudeTitle(record.customTitle) || customTitle;
-    if (record.type === "ai-title") aiTitle = cleanClaudeTitle(record.aiTitle) || aiTitle;
-    if (!prompt && record.type === "user") prompt = meaningfulClaudePrompt(record, startPrompt);
+    if (record.type === "custom-title") fold.customTitle = cleanClaudeTitle(record.customTitle) || fold.customTitle;
+    if (record.type === "ai-title") fold.aiTitle = cleanClaudeTitle(record.aiTitle) || fold.aiTitle;
+    if (!fold.prompt && record.type === "user") fold.prompt = meaningfulClaudePrompt(record, startPrompt);
+    fold.cwds.add(String(record.cwd ?? ""));
+    // Compaction ends the window every earlier usage number described; see claudeContextUsage.
+    if (record.isCompactSummary === true) fold.contextUsage = undefined;
+    else fold.contextUsage = claudeContextUsage([record]) ?? fold.contextUsage;
   }
+  const first = transcriptEventTime(records, "first"), last = transcriptEventTime(records, "last");
+  if (first && (!fold.firstEventAt || first < fold.firstEventAt)) fold.firstEventAt = first;
+  if (last && last > fold.lastEventAt) fold.lastEventAt = last;
+}
+
+/**
+ * A running conversation appends to its transcript every few seconds, and each write used to
+ * cost a read and parse of the whole file: 14 MB at a time for a long conversation, on the
+ * thread that serves every request. A file that has only grown is now read from where the
+ * last read stopped. Anything else (another file under the same name, a rewrite, a different
+ * start prompt) is read whole as before.
+ */
+async function appendedClaudeFacts(filePath: string, fileStat: Stats, previous: ClaudeSessionFacts): Promise<{ fold: ClaudeFactsFold; consumed: number; tail: Buffer } | undefined> {
+  const resume = previous.resume;
+  // Appending always grows the file; a new time on the same size is a rewrite or a touch.
+  if (!resume || resume.dev !== fileStat.dev || resume.ino !== fileStat.ino || fileStat.size <= previous.size || fileStat.size < resume.consumed) return undefined;
+  const handle = await open(filePath, "r");
+  try {
+    const before = Buffer.alloc(Math.min(RESUME_CHECK_BYTES, resume.consumed));
+    if ((await handle.read(before, 0, before.length, resume.consumed - before.length)).bytesRead !== before.length || resumeHash(before) !== resume.tailHash) return undefined;
+    const appended = Buffer.alloc(fileStat.size - resume.consumed);
+    if ((await handle.read(appended, 0, appended.length, resume.consumed)).bytesRead !== appended.length) return undefined;
+    // Complete lines must parse; a last record without its newline counts once it parses (see parseCompletedJsonl).
+    const consumed = appended.lastIndexOf(10) + 1;
+    const records = parseCompletedJsonl(appended.toString("utf8")) as UnknownRecord[];
+    const fold: ClaudeFactsFold = { customTitle: resume.customTitle, aiTitle: resume.aiTitle, prompt: previous.prompt, cwds: new Set(previous.cwds), firstEventAt: previous.firstEventAt, lastEventAt: previous.lastEventAt, contextUsage: previous.contextUsage };
+    foldClaudeRecords(fold, records, previous.startPrompt);
+    return { fold, consumed: resume.consumed + consumed, tail: Buffer.concat([before, appended.subarray(0, consumed)]) };
+  } finally { await handle.close(); }
+}
+
+async function readClaudeSessionFacts(filePath: string, fileStat: Stats, startPrompt: string, previous?: ClaudeSessionFacts): Promise<ClaudeSessionFacts> {
+  let read = previous?.startPrompt === startPrompt ? await appendedClaudeFacts(filePath, fileStat, previous) : undefined;
+  if (!read) {
+    const text = await readFile(filePath, "utf8");
+    const complete = text.slice(0, text.lastIndexOf("\n") + 1);
+    const fold: ClaudeFactsFold = { customTitle: "", aiTitle: "", prompt: "", cwds: new Set(), firstEventAt: "", lastEventAt: "" };
+    foldClaudeRecords(fold, parseCompletedJsonl(text) as UnknownRecord[], startPrompt);
+    // A few characters more than the checked bytes, so a character cut in half at the front never reaches them.
+    read = { fold, consumed: Buffer.byteLength(complete), tail: Buffer.from(complete.slice(-(RESUME_CHECK_BYTES + 4))) };
+  }
+  const { fold, consumed, tail } = read;
   const facts: ClaudeSessionFacts = {
     mtimeMs: fileStat.mtimeMs,
     size: fileStat.size,
     startPrompt,
-    internal: isInternalSession(path.basename(filePath, ".jsonl"), prompt),
-    cwds: new Set(records.map((record) => String(record.cwd ?? ""))),
-    prompt,
-    title: customTitle || aiTitle || prompt.split("\n")[0].slice(0, 80) || "Claude conversation",
-    firstEventAt: transcriptEventTime(records, "first"),
-    lastEventAt: transcriptEventTime(records, "last"),
-    contextUsage: claudeContextUsage(records),
+    internal: isInternalSession(path.basename(filePath, ".jsonl"), fold.prompt),
+    cwds: fold.cwds,
+    prompt: fold.prompt,
+    title: fold.customTitle || fold.aiTitle || fold.prompt.split("\n")[0].slice(0, 80) || "Claude conversation",
+    firstEventAt: fold.firstEventAt,
+    lastEventAt: fold.lastEventAt,
+    contextUsage: fold.contextUsage,
+    resume: { dev: fileStat.dev, ino: fileStat.ino, consumed, tailHash: resumeHash(tail.subarray(Math.max(0, tail.length - RESUME_CHECK_BYTES))), customTitle: fold.customTitle, aiTitle: fold.aiTitle },
   };
   return facts;
 }

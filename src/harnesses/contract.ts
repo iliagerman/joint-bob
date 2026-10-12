@@ -44,6 +44,11 @@ export interface HarnessAdapter<TId extends HarnessId = HarnessId> {
     /** Whether a transcript entry holds something a person sent. A conversation continued on
         two machines settles itself only for a harness that can tell. */
     sentByPerson?: (entry: Record<string, unknown>) => boolean;
+    /** Whether a transcript can be one of a project's, judged from its path alone. A harness
+        that keeps each working directory's transcripts in its own folder answers here, so a
+        write is announced to the projects it concerns rather than to every project watching
+        the shared root. */
+    transcriptBelongs?: (project: SessionProjectPaths, filePath: string) => boolean;
   };
   sessions: {
     files: (project: HarnessProject) => Promise<string[]>;

@@ -291,3 +291,66 @@ test("a restart resumes Claude session facts from node.db instead of re-reading 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// A running conversation appends to its transcript every few seconds. Each append used to
+// cost a read and parse of the whole file, on the thread that serves every request.
+test("a Claude transcript that only grew is read from where the last read stopped", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-claude-append-"));
+  const settings = await import("../src/settings.js");
+  const previous = settings.getSettings();
+  const claude = await import("../src/claude-service.js");
+  settings.updateSettings({ ...previous, claude: { ...previous.claude, sessionPath: root } });
+  const file = claude.claudeSessionFilePath(root, "growing"), copy = claude.claudeSessionFilePath(root, "copy");
+  await mkdir(path.dirname(file), { recursive: true });
+  const line = (record: Record<string, unknown>): string => `${JSON.stringify(record)}\n`;
+  const usage = (tokens: number, timestamp: string) => ({ type: "assistant", cwd: root, timestamp, message: { usage: { input_tokens: tokens } } });
+  await writeFile(file, line({ type: "user", cwd: root, timestamp: "2026-10-12T10:00:00.000Z", message: { role: "user", content: "Growing work" } }) + line(usage(42, "2026-10-12T10:00:05.000Z")));
+  const session = `claude:${file}`;
+  assert.equal(await claude.claudeSessionTitle(session), "Growing work");
+  assert.equal((await claude.claudeSessionContextUsage(session))?.usedTokens, 42);
+
+  let wholeReads = 0;
+  const realRead = fs.readFile;
+  const readMock = t.mock.method(fs, "readFile", (...args: Parameters<typeof fs.readFile>) => {
+    if (args[0] === file) wholeReads += 1;
+    return realRead(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(async () => {
+    readMock.mock.restore();
+    syncBuiltinESMExports();
+    settings.updateSettings(previous);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  // Out-of-order times, a title, and a last record whose newline has not been written yet.
+  await fs.appendFile(file, line({ type: "ai-title", aiTitle: "Named by the model" }) + line(usage(100, "2026-10-12T09:59:00.000Z")) + line({ type: "custom-title", customTitle: "Renamed" })
+    + JSON.stringify(usage(7, "2026-10-12T10:03:00.000Z")));
+  assert.equal(await claude.claudeSessionTitle(session), "Renamed");
+  assert.equal((await claude.claudeSessionContextUsage(session))?.usedTokens, 7, "a complete last record counts before its newline arrives");
+  // Its newline arrives with a compaction, which ends the window the earlier numbers described.
+  await fs.appendFile(file, "\n" + line({ type: "user", cwd: root, isCompactSummary: true, timestamp: "2026-10-12T10:04:00.000Z", message: { role: "user", content: "Summary so far" } }));
+  assert.equal(await claude.claudeSessionContextUsage(session), undefined);
+  // A record still being written is not read as text, and is picked up once it is whole.
+  await fs.appendFile(file, '{"type":"custom-title","customTitle":"Half wri');
+  assert.equal(await claude.claudeSessionTitle(session), "Renamed");
+  await fs.appendFile(file, 'tten"}\n' + line(usage(9, "2026-10-12T10:05:00.000Z")));
+  assert.equal(await claude.claudeSessionTitle(session), "Half written");
+  assert.equal(wholeReads, 0, "appends are read from where the last read stopped");
+
+  // The same bytes read whole, as a first read is, give the same answer.
+  await fs.copyFile(file, copy);
+  const listed = new Map((await claude.listClaudeSessions({ path: root })).map((entry: { id: string }) => [entry.id, entry]));
+  const { id: _id, path: _path, ...grown } = listed.get("growing") as Record<string, unknown>;
+  const { id: _copyId, path: _copyPath, ...whole } = listed.get("copy") as Record<string, unknown>;
+  assert.deepEqual(grown, whole);
+  assert.equal(grown.createdAt, "2026-10-12T09:59:00.000Z", "the earliest time wins wherever it was written");
+  assert.equal(grown.updatedAt, "2026-10-12T10:05:00.000Z");
+  assert.equal((await claude.claudeSessionContextUsage(session))?.usedTokens, 9);
+
+  // Anything other than growth is read whole: here the same name holds a different conversation.
+  wholeReads = 0;
+  await writeFile(file, line({ type: "user", cwd: root, message: { role: "user", content: "A different conversation, long enough that the file is larger than the one it replaces ".repeat(20) } }));
+  assert.equal((await claude.claudeSessionTitle(session)).startsWith("A different conversation"), true);
+  assert.equal(wholeReads, 1);
+});
