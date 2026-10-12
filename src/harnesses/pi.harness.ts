@@ -49,6 +49,8 @@ export default defineHarness({
     transcriptRoot: piSessionsRoot,
     watchDirs: (project) => [piSessionsRoot(), ...projectCwds(project).map(sessionDir)],
     transcriptCwd: (filePath) => readTranscriptCwd(filePath, "session"),
+    // Prompts, and the shell commands a person runs with `!`.
+    sentByPerson: (entry) => ["user", "bashExecution"].includes((entry.message as { role?: unknown } | undefined)?.role as string),
   },
   sessions: {
     files: async (project) => (await import("../pi-service.js")).piSessionFiles(project),

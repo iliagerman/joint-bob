@@ -48,7 +48,17 @@ export default defineHarness({
       return file;
     },
   },
-  sync: { transcriptRoot: claudeProjectsRoot, watchDirs },
+  sync: {
+    transcriptRoot: claudeProjectsRoot,
+    watchDirs,
+    // Claude files tool results under the user role; a queued prompt is a person's too.
+    sentByPerson: (entry) => {
+      if (entry.type === "queue-operation") return true;
+      if (entry.type !== "user") return false;
+      const content = (entry.message as { content?: unknown } | undefined)?.content;
+      return !Array.isArray(content) || content.some((block) => (block as { type?: unknown } | null)?.type !== "tool_result");
+    },
+  },
   sessions: {
     files: async (project) => (await import("../claude-service.js")).claudeSessionFiles(project),
     list: async (project) => (await import("../claude-service.js")).listClaudeSessions(project),

@@ -14,7 +14,9 @@ import { recordPeerEndpoint } from "../src/cluster-peer-endpoints.js";
 import { verifyClusterRequest } from "../src/cluster-protocol.js";
 import { clusterV2Database } from "../src/cluster-v2-store.js";
 import { applyTwinCertificate, confirmTwinAcceptance, createTwinInvitation, prepareTwinAcceptance } from "../src/cluster-twins.js";
+import { claimConversationOwnership } from "../src/conversation-ownership.js";
 import { ensureConversationRecord } from "../src/conversation-records.js";
+import { resolveDataDirectory } from "../src/data-directory.js";
 import { getHarness } from "../src/harnesses.js";
 import { markPeerReachable, resetPeerAvailability } from "../src/server/peer-availability.js";
 import { acceptOwnerTranscript, catchUpSharedTranscript, flushSharedTranscripts, resetSharedTranscriptPulls, setTranscriptStallTimeout, sharedTranscriptInventory, sharedTranscriptStatus } from "../src/server/shared-transcripts.js";
@@ -281,6 +283,78 @@ test("a conversation both machines continued is fetched once, kept for review, a
   theirs += JSON.stringify({ type: "message", id: "later", parentId: "theirs", message: { role: "assistant", content: [{ type: "text", text: "Owner reply" }] } }) + "\n";
   await catchUpSharedTranscript(f.peer, "pi", f.sessionId);
   assert.equal(await readFile(f.destination, "utf8"), theirs, "later turns from the owner arrive as usual");
+});
+
+const piEntry = (id: string, message: Record<string, unknown>): string => JSON.stringify({ type: "message", id, parentId: "first", message }) + "\n";
+const savedCopies = async (f: Fixture): Promise<string[]> => {
+  const kept = path.join(resolveDataDirectory(), "transcript-conflicts", f.peer);
+  return Promise.all((await readdir(kept)).filter(name => name.includes(".local-")).map(name => readFile(path.join(kept, name), "utf8")));
+};
+
+test("a conversation both machines continued settles itself when only the owner's history holds what a person sent", async (t) => {
+  const f = await fixture(t);
+  await claimConversationOwnership("pi", f.sessionId, f.peer);
+  const theirs = f.content + piEntry("theirs", { role: "user", content: [{ type: "text", text: "Continue" }] });
+  // The end of a run the owner never received: a tool call, its result, and a failed model call.
+  const unsent = piEntry("call", { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "bash", arguments: {} }] })
+    + piEntry("result", { role: "toolResult", toolCallId: "c1", content: [{ type: "text", text: "ok" }] })
+    + piEntry("failed", { role: "assistant", content: [], stopReason: "error" });
+  let downloads = 0;
+  await owner(t, f, () => theirs, (request, response) => { downloads++; response.end(ranged(request, response, Buffer.from(theirs))); });
+  await mkdir(path.dirname(f.destination), { recursive: true });
+  await writeFile(f.destination, f.content + unsent);
+
+  await catchUpSharedTranscript(f.peer, "pi", f.sessionId);
+  assert.equal(await readFile(f.destination, "utf8"), theirs, "the owner's history is installed without review");
+  assert.deepEqual(await savedCopies(f), [f.content + unsent], "this machine's version is saved first");
+  assert.equal(f.db.prepare("SELECT 1 FROM cluster_v2_transcript_conflicts WHERE peer_id=?").get(f.peer), undefined);
+  assert.equal(sharedTranscriptStatus(f.db, f.local.id, f.peer).conflicts, undefined);
+  assert.deepEqual(await partials(f), []);
+
+  // Something a person sent here is never replaced unseen, however the rest of the tail looks.
+  const typed = theirs.replace("Continue", "Local turn") + unsent;
+  await writeFile(f.destination, typed);
+  await assert.rejects(catchUpSharedTranscript(f.peer, "pi", f.sessionId), /Divergent transcript requires review/);
+  await assert.rejects(catchUpSharedTranscript(f.peer, "pi", f.sessionId), /Divergent transcript requires review/);
+  assert.equal(await readFile(f.destination, "utf8"), typed);
+  assert.equal((await savedCopies(f)).length, 1);
+  assert.equal(downloads, 2, "a fork left for review is not fetched again while neither side changes");
+  // Nor is an entry that cannot be read.
+  await writeFile(f.destination, f.content + "cut off mid-wri");
+  await assert.rejects(catchUpSharedTranscript(f.peer, "pi", f.sessionId), /Divergent transcript requires review/);
+});
+
+test("a fork kept for review settles itself once the other machine is known to own the conversation", async (t) => {
+  const f = await fixture(t);
+  const theirs = f.content + piEntry("theirs", { role: "user", content: [{ type: "text", text: "Continue" }] });
+  const mine = f.content + piEntry("failed", { role: "assistant", content: [], stopReason: "error" });
+  let downloads = 0;
+  await owner(t, f, () => theirs, (request, response) => { downloads++; response.end(ranged(request, response, Buffer.from(theirs))); });
+  await mkdir(path.dirname(f.destination), { recursive: true });
+  await writeFile(f.destination, mine);
+
+  // Without an owner both machines would take each other's history.
+  await assert.rejects(catchUpSharedTranscript(f.peer, "pi", f.sessionId), /Divergent transcript requires review/);
+  assert.equal(await readFile(f.destination, "utf8"), mine);
+  await claimConversationOwnership("pi", f.sessionId, f.peer);
+  await catchUpSharedTranscript(f.peer, "pi", f.sessionId);
+  assert.equal(await readFile(f.destination, "utf8"), theirs);
+  assert.deepEqual(await savedCopies(f), [mine]);
+  assert.equal(downloads, 1, "the copy kept for review is the one installed");
+});
+
+test("each harness tells what a person sent from what the agent wrote", () => {
+  const pi = getHarness("pi").sync.sentByPerson!, claude = getHarness("claude").sync.sentByPerson!;
+  assert.equal(pi({ type: "message", message: { role: "user", content: [] } }), true);
+  assert.equal(pi({ type: "message", message: { role: "bashExecution", command: "ls" } }), true);
+  assert.equal(pi({ type: "message", message: { role: "toolResult" } }), false);
+  assert.equal(pi({ type: "context_edit" }), false);
+  assert.equal(claude({ type: "user", message: { role: "user", content: "Continue" } }), true);
+  assert.equal(claude({ type: "user", message: { role: "user", content: [{ type: "tool_result" }, { type: "text", text: "and this" }] } }), true);
+  assert.equal(claude({ type: "user", message: { role: "user", content: [{ type: "tool_result" }] } }), false);
+  assert.equal(claude({ type: "queue-operation", operation: "enqueue", content: "next" }), true);
+  assert.equal(claude({ type: "assistant", message: { role: "assistant", content: [] } }), false);
+  assert.equal(getHarness("kiro").sync.sentByPerson, undefined, "a harness that cannot tell leaves every fork for review");
 });
 
 test("a conflict over a conversation its owner no longer offers is dropped", async (t) => {

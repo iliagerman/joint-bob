@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Fixed the local dev-cluster scratch folder never being cleaned up when a secret key inside it kept sync from deleting it.
+- Fixed a conversation continued on two machines stopping with a "Divergent transcript" review request when the other machine owned it and nothing you sent was lost; the owner's history now loads automatically and this machine's unsent leftovers are saved to a file.
 
 ## 2.76.1 — 2026-10-12
 

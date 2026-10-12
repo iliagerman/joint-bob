@@ -19,7 +19,7 @@ import { resolveDataDirectory } from "../data-directory.js";
 import { clearHarnessSessionCache, getHarness, harnessForSessionPath, listHarnessSessions } from "../harnesses.js";
 import { getProject } from "../store.js";
 import { listTasks } from '../tasks.js';
-import { getConversationOwnership } from "../conversation-ownership.js";
+import { getConversationOwnership, type ConversationOwnership } from "../conversation-ownership.js";
 import { deletedConversationKeys, ensureConversationRecord, ensureConversationRecordSchema } from "../conversation-records.js";
 import { replicationPeers } from "./replication-v2.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
@@ -153,10 +153,56 @@ function conflictFile(peer:string,engine:string,sessionId:string,suffix=''):stri
  return path.join(resolveDataDirectory(),'transcript-conflicts',peer,`${engine}-${encodeURIComponent(sessionId)}${suffix}.jsonl`);
 }
 async function clearConflict(db:DatabaseSync,peer:string,projectId:string,engine:string,sessionId:string):Promise<void>{
+ needsReview.delete(JSON.stringify([peer,projectId,engine,sessionId]));
  const row=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peer,projectId,engine,sessionId) as ConflictRow|undefined;
  if(!row)return;
  db.prepare(`DELETE FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).run(peer,projectId,engine,sessionId);
  await rm(row.artifact,{force:true});
+}
+const FORK_TAIL_LIMIT=32*1024*1024;
+/** This machine's entries from the first line where its history and the kept one part.
+    Undefined when there is too much to judge here. */
+async function entriesSinceFork(mine:string,theirs:string):Promise<string[]|undefined>{
+ const left=await open(mine,'r'),right=await open(theirs,'r');
+ try{
+  const size=(await left.stat()).size,a=Buffer.alloc(65536),b=Buffer.alloc(65536);
+  let start=0;
+  for(let offset=0;offset<size;offset+=65536){
+   const old=await left.read(a,0,65536,offset),next=await right.read(b,0,65536,offset);
+   let same=Math.min(old.bytesRead,next.bytesRead);
+   if(!a.subarray(0,same).equals(b.subarray(0,same))){same=0;while(a[same]===b[same])same++;}
+   const newline=a.subarray(0,same).lastIndexOf(10);
+   if(newline>=0)start=offset+newline+1;
+   if(same<old.bytesRead)break;
+  }
+  if(size-start>FORK_TAIL_LIMIT)return undefined;
+  const tail=Buffer.alloc(size-start);
+  await left.read(tail,0,tail.length,start);
+  return tail.toString('utf8').split('\n').filter(line=>line.trim());
+ }finally{await left.close();await right.close();}
+}
+// Forks a person has to settle, by the two hashes compared: an unchanged one is not read again on every pull.
+const needsReview=new Map<string,string>();
+/** A conversation continued on two machines settles itself when the peer owns it and nothing
+    a person sent is only in this machine's history: what stays behind is the end of a run its
+    owner never received. That history is saved to a file first, as when a person settles it. */
+async function settleForkUnreviewed(db:DatabaseSync,peer:string,projectId:string,engine:string,sessionId:string,ownership:ConversationOwnership|undefined):Promise<boolean>{
+ const sentByPerson=getHarness(engine).sync.sentByPerson;
+ if(!sentByPerson||ownership?.ownerNodeId!==peer||!['owned','transferring'].includes(ownership.status))return false;
+ const row=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peer,projectId,engine,sessionId) as ConflictRow|undefined;
+ if(!row)return false;
+ const key=JSON.stringify([peer,projectId,engine,sessionId]),compared=`${row.remoteHash}\n${row.localHash}`;
+ if(needsReview.get(key)===compared)return false;
+ // An entry that cannot be read counts as a person's, so it is never dropped unseen.
+ const fromPerson=(line:string):boolean=>{
+  try{const entry:unknown=JSON.parse(line);return !entry||typeof entry!=='object'||Array.isArray(entry)||sentByPerson(entry as Record<string,unknown>);}
+  catch{return true;}
+ };
+ const mine=await entriesSinceFork(row.path,row.artifact);
+ if(!mine||mine.some(fromPerson)){needsReview.set(key,compared);return false;}
+ const {saved}=await acceptOwnerTranscriptNow(db,peer,projectId,engine,sessionId);
+ console.log(`${engine} conversation ${sessionId} was continued on two machines; its owner's history was taken and this machine's ${mine.length} unsent entries were saved to ${saved}`);
+ return true;
 }
 // The background flush and a takeover can fetch the same transcript at once; the loser would
 // see the winner's rename as a local edit. One receive per conversation at a time.
@@ -189,7 +235,10 @@ async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,proj
  // Neither side has changed since this conversation was found to differ. Its owner's copy is
  // already kept for review, so it is not downloaded again on every pull only to be refused.
  const conflict=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peer.nodeId,projectId,entry.engine,entry.sessionId) as ConflictRow|undefined;
- if(conflict&&conflict.remoteHash===entry.hash&&conflict.localHash===localHash)throw new DivergentTranscriptError();
+ if(conflict&&conflict.remoteHash===entry.hash&&conflict.localHash===localHash){
+  if(await settleForkUnreviewed(db,peer.nodeId,projectId,entry.engine,entry.sessionId,ownership).catch(()=>false))return;
+  throw new DivergentTranscriptError();
+ }
  await safeParent(root,destination);
  const target='/api/cluster/v2/transcripts/file?'+new URLSearchParams({projectId,engine:entry.engine,sessionId:entry.sessionId});
  // A transfer that was cut off continues from the bytes already held instead of starting
@@ -231,6 +280,8 @@ async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,proj
     await mkdir(path.dirname(artifact),{recursive:true,mode:0o700});
     await copyFile(partial,artifact);
     db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_conflicts VALUES(?,?,?,?,?,?,?,?,?)').run(peer.nodeId,projectId,entry.engine,entry.sessionId,destination,entry.hash,localHash!,artifact,new Date().toISOString());
+    // A settlement that fails leaves the conflict recorded for review.
+    if(await settleForkUnreviewed(db,peer.nodeId,projectId,entry.engine,entry.sessionId,ownership).catch(()=>false))return;
     throw error;
    }
    if(existing.size>entry.size){await clearConflict(db,peer.nodeId,projectId,entry.engine,entry.sessionId);return;}
@@ -325,36 +376,38 @@ export function sharedTranscriptStatus(db:DatabaseSync,local:string,peer:string)
     This machine's version is saved next to the kept copy first, so nothing is lost. */
 export async function acceptOwnerTranscript(peerId:string,projectId:string,engine:string,sessionId:string):Promise<{saved:string}>{
  const db=await clusterV2Database();ensureSchema(db);
- return oneAtATime(peerId,engine,sessionId,async()=>{
-  await sharedTranscriptProject(peerId,projectId);
-  const row=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peerId,projectId,engine,sessionId) as ConflictRow|undefined;
-  if(!row)throw new ClusterV2HttpError(404,'This conversation no longer needs review');
-  const ownership=await getConversationOwnership(engine,sessionId);
-  if(ownership&&ownership.ownerNodeId!==peerId)throw new ClusterV2HttpError(409,'This conversation now belongs to another machine; check again');
-  const existing=await lstat(row.path).catch(()=>undefined),held=await lstat(row.artifact).catch(()=>undefined);
-  if(!existing?.isFile()||await fileHash(row.path,existing)!==row.localHash)throw new ClusterV2HttpError(409,'This machine\'s copy changed since it was compared; check again');
-  if(!held?.isFile()||await fileHash(row.artifact,held)!==row.remoteHash){
-   // Without the kept copy there is nothing to install; the next pull fetches it again.
-   await clearConflict(db,peerId,projectId,engine,sessionId);
-   throw new ClusterV2HttpError(409,'The other machine\'s copy is being fetched again; check again shortly');
-  }
-  const saved=conflictFile(peerId,engine,sessionId,`.local-${new Date().toISOString().replace(/[:.]/g,'-')}`),temporary=`${row.path}.${randomUUID()}.tmp`;
-  await copyFile(row.path,saved,constants.COPYFILE_EXCL);
-  try{
-   await copyFile(row.artifact,temporary,constants.COPYFILE_EXCL);
-   const current=await stat(row.path);
-   if(current.size!==existing.size||current.mtimeMs!==existing.mtimeMs)throw new ClusterV2HttpError(409,'This machine\'s copy changed since it was compared; check again');
-   await rename(temporary,row.path);
-  }finally{await rm(temporary,{force:true});}
-  db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_receipts VALUES(?,?,?,?,?,?)').run(peerId,projectId,engine,sessionId,row.path,row.remoteHash);
+ return oneAtATime(peerId,engine,sessionId,()=>acceptOwnerTranscriptNow(db,peerId,projectId,engine,sessionId));
+}
+/** For a caller that already holds this conversation's turn in oneAtATime. */
+async function acceptOwnerTranscriptNow(db:DatabaseSync,peerId:string,projectId:string,engine:string,sessionId:string):Promise<{saved:string}>{
+ await sharedTranscriptProject(peerId,projectId);
+ const row=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peerId,projectId,engine,sessionId) as ConflictRow|undefined;
+ if(!row)throw new ClusterV2HttpError(404,'This conversation no longer needs review');
+ const ownership=await getConversationOwnership(engine,sessionId);
+ if(ownership&&ownership.ownerNodeId!==peerId)throw new ClusterV2HttpError(409,'This conversation now belongs to another machine; check again');
+ const existing=await lstat(row.path).catch(()=>undefined),held=await lstat(row.artifact).catch(()=>undefined);
+ if(!existing?.isFile()||await fileHash(row.path,existing)!==row.localHash)throw new ClusterV2HttpError(409,'This machine\'s copy changed since it was compared; check again');
+ if(!held?.isFile()||await fileHash(row.artifact,held)!==row.remoteHash){
+  // Without the kept copy there is nothing to install; the next pull fetches it again.
   await clearConflict(db,peerId,projectId,engine,sessionId);
-  // The project's report clears now rather than at its next pull, unless another conversation still differs.
-  if(!db.prepare('SELECT 1 FROM cluster_v2_transcript_conflicts WHERE peer_id=? AND project_id=?').get(peerId,projectId))
-   db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=? AND error=?').run(peerId,projectId,new DivergentTranscriptError().message);
-  pulledAt.delete(`${peerId}\n${projectId}`);
-  clearHarnessSessionCache(projectId);
-  return {saved};
- });
+  throw new ClusterV2HttpError(409,'The other machine\'s copy is being fetched again; check again shortly');
+ }
+ const saved=conflictFile(peerId,engine,sessionId,`.local-${new Date().toISOString().replace(/[:.]/g,'-')}`),temporary=`${row.path}.${randomUUID()}.tmp`;
+ await copyFile(row.path,saved,constants.COPYFILE_EXCL);
+ try{
+  await copyFile(row.artifact,temporary,constants.COPYFILE_EXCL);
+  const current=await stat(row.path);
+  if(current.size!==existing.size||current.mtimeMs!==existing.mtimeMs)throw new ClusterV2HttpError(409,'This machine\'s copy changed since it was compared; check again');
+  await rename(temporary,row.path);
+ }finally{await rm(temporary,{force:true});}
+ db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_receipts VALUES(?,?,?,?,?,?)').run(peerId,projectId,engine,sessionId,row.path,row.remoteHash);
+ await clearConflict(db,peerId,projectId,engine,sessionId);
+ // The project's report clears now rather than at its next pull, unless another conversation still differs.
+ if(!db.prepare('SELECT 1 FROM cluster_v2_transcript_conflicts WHERE peer_id=? AND project_id=?').get(peerId,projectId))
+  db.prepare('DELETE FROM cluster_v2_transcript_errors WHERE peer_id=? AND project_id=? AND error=?').run(peerId,projectId,new DivergentTranscriptError().message);
+ pulledAt.delete(`${peerId}\n${projectId}`);
+ clearHarnessSessionCache(projectId);
+ return {saved};
 }
 /** Each inventory makes the peer build that project's full conversation catalog, and the
     administration flush runs every 2 s: pulling on every flush kept a large project's

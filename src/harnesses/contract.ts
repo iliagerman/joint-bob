@@ -41,6 +41,9 @@ export interface HarnessAdapter<TId extends HarnessId = HarnessId> {
     watchDirs?: (project: SessionProjectPaths) => string[];
     /** Returns the owning cwd when a shared transcript directory carries a reliable header. */
     transcriptCwd?: (filePath: string) => Promise<string | null>;
+    /** Whether a transcript entry holds something a person sent. A conversation continued on
+        two machines settles itself only for a harness that can tell. */
+    sentByPerson?: (entry: Record<string, unknown>) => boolean;
   };
   sessions: {
     files: (project: HarnessProject) => Promise<string[]>;
