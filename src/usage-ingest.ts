@@ -15,6 +15,7 @@ import { saveUsageEvents, saveUsageIngestFingerprint, upsertUsageInventory, usag
 export const USAGE_REIMPORT_INTERVAL_MS = 60_000;
 const fingerprints = new Map<string, { fingerprint: string; status: string; importedAt?: number }>();
 const inFlight = new Map<string, Promise<string>>();
+let forcedRefreshes = 0;
 
 function nativePath(session: SessionSummary): string | null {
   if (session.draft || !["pi", "claude"].includes(session.harnessId)) return null;
@@ -46,7 +47,7 @@ async function importSession(project: ProjectRecord, session: SessionSummary, co
     const cached: { fingerprint: string; status: string; importedAt?: number } | undefined = fingerprints.get(key) ?? usageIngestFingerprint(key);
     if (cached) fingerprints.set(key, cached);
     if (cached?.fingerprint === fingerprint) return cached.status;
-    if (cached?.importedAt && Date.now() - cached.importedAt < USAGE_REIMPORT_INTERVAL_MS) return cached.status;
+    if (!forcedRefreshes && cached?.importedAt && Date.now() - cached.importedAt < USAGE_REIMPORT_INTERVAL_MS) return cached.status;
     let contents: string;
     try { contents = await readFile(file, "utf8"); }
     catch (error) {
@@ -117,4 +118,11 @@ function startDrain(): void {
 /** Resolves once every scheduled import has finished, for callers that report totals. */
 export async function usageIngestIdle(): Promise<void> {
   while (draining) await draining;
+}
+
+/** A requested refresh bypasses the live-transcript debounce but keeps fingerprint dedup. */
+export async function withFreshUsage<T>(work: () => Promise<T>): Promise<T> {
+  forcedRefreshes++;
+  try { const value = await work(); await usageIngestIdle(); return value; }
+  finally { forcedRefreshes--; }
 }

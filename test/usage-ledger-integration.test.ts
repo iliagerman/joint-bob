@@ -6,7 +6,7 @@ import test, { beforeEach } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationRecord } from "../src/conversation-records.js";
 import { applyUsageEvent, clearUsageTotalsCache, ensureUsageSchema, latestDifficultyForConversation, saveDifficulty, saveUsageEvent, saveUsageEvents, usageBreakdown, usageCalendarBreakdown, usageSkillBreakdown, usageTurnTiming, usageConversations, usageDatabase, usageInventoryCoverage, usageTotals, upsertUsageInventory } from "../src/usage-ledger.js";
-import { ingestUsageSessions, scheduleUsageIngest, USAGE_REIMPORT_INTERVAL_MS, usageIngestIdle } from "../src/usage-ingest.js";
+import { ingestUsageSessions, scheduleUsageIngest, USAGE_REIMPORT_INTERVAL_MS, usageIngestIdle, withFreshUsage } from "../src/usage-ingest.js";
 import { ensureReplicationSchema } from "../src/replication.js";
 import type { ProjectRecord, SessionSummary } from "../src/types.js";
 import type { UsageEvent } from "../src/usage-types.js";
@@ -142,6 +142,8 @@ test("file ingestion imports many sessions, switched segments, subagents, and ap
   await appendFile(sessions[0].path, `${JSON.stringify(piRecord("appended-response", "2025-01-01T00:00:02.000Z"))}\n`);
   await ingestUsageSessions(project, sessions, records);
   assert.equal(usageTotals({ projectIds: [project.id] }).requests, 67, "a transcript still being written is not re-read on every listing");
+  await withFreshUsage(() => ingestUsageSessions(project, sessions, records));
+  assert.equal(usageTotals({ projectIds: [project.id] }).requests, 68, "explicit refresh bypasses the reimport debounce");
   t.mock.timers.tick(USAGE_REIMPORT_INTERVAL_MS);
   await ingestUsageSessions(project, sessions, records);
   assert.equal(usageTotals({ projectIds: [project.id] }).requests, 68);
