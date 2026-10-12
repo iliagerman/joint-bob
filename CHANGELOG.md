@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.78.0 — 2026-10-13
 
 - Added a Node button to focus mode's quick actions on phones that names the node a conversation runs on and lets you switch to another one.
+- Clarified the browser sign-in alert, which now names the browser, project and conversation that need you and points to that conversation's Browser panel.
 - Made a machine whose local git commits were replaced by synced files catch up to the cluster's version, keeping the abandoned commits recoverable from its git history.
 
 ## 2.77.5 — 2026-10-13
