@@ -3,7 +3,7 @@ import { type PeerEndpoint } from "../cluster-peer-endpoints.js";
 import { isTrustedTwin } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { pushSubscriptionEventsForPeer, recordPushSubscriptionFailure, recordPushSubscriptionReceipt } from "../push.js";
-import { replicationPeers, signedPeerPost } from "./replication-v2.js";
+import { presentReplicationPeers, signedPeerPost } from "./replication-v2.js";
 import { replicationReceiptSchema } from "./schemas.js";
 
 let flushInProgress = false;
@@ -35,7 +35,7 @@ export async function flushPushSubscriptionOutbox(): Promise<void> {
   flushInProgress = true;
   try {
     const db = await clusterV2Database(), local = await getClusterNode();
-    for (const peer of replicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId))) {
+    for (const peer of presentReplicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId))) {
       await sendPushSubscriptionEventsToTwin(peer);
     }
   } finally {

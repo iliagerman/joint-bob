@@ -11,12 +11,21 @@ import http, { type IncomingMessage } from "node:http";
 import net, { type Socket } from "node:net";
 import { Readable } from "node:stream";
 import WebSocket, { type ClientOptions } from "ws";
+import { afterPeerRequest, beforePeerRequest } from "../peer-presence.js";
 import { virtualRelayNodeId, virtualRelayUrl } from "./protocol.js";
 import type { RelayRuntime } from "./runtime.js";
 import type { RelayStream } from "./stream.js";
 
 /** After a direct connection fails, prefer the relay for this long before trying direct again. */
 const DIRECT_RETRY_MS = 5 * 60_000;
+/**
+ * A peer on another network advertises an address that does not exist here: its name does not
+ * resolve and it is only ever reached through a relay. Such an address is looked up again
+ * once an hour, not every five minutes. One that has worked before is a machine on this
+ * network that is asleep, and keeps the short retry.
+ */
+const UNKNOWN_ADDRESS_RETRY_MS = 60 * 60_000;
+const UNRESOLVED = new Set(["ENOTFOUND", "EAI_AGAIN"]);
 /** How long a direct address may take to accept a TCP connection before the relay is used. */
 const PROBE_TIMEOUT_MS = 3_000;
 const CONNECT_FAILURES = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "EHOSTDOWN", "UND_ERR_CONNECT_TIMEOUT", "ETIMEDOUT"]);
@@ -25,11 +34,13 @@ const NULL_BODY = new Set([101, 103, 204, 205, 304]);
 
 let runtime: RelayRuntime | undefined;
 const directFailedUntil = new Map<string, number>();
+const directWorked = new Set<string>();
 const agents = new Map<string, http.Agent>();
 
 export function setRelayTransport(active: RelayRuntime | undefined): void {
   runtime = active;
   directFailedUntil.clear();
+  directWorked.clear();
   probes.clear();
   for (const agent of agents.values()) agent.destroy();
   agents.clear();
@@ -54,20 +65,30 @@ function chooseRoute(url: URL, peerId: string | undefined): Route {
   // Without relays, or without knowing which peer is meant, the request goes direct as before relays existed.
   if (!peerId || !runtime?.hasAnyRelay()) return { kind: "direct" };
   runtime.ensureWatched(peerId);
-  if (directFailedRecently(url.origin) && runtime.hasRoute(peerId)) return { kind: "relay", nodeId: peerId };
+  if (directFailedRecently(url.origin)) {
+    if (runtime.hasRoute(peerId)) return { kind: "relay", nodeId: peerId };
+    // Reached through a relay before, its own address not working, and no relay reporting it
+    // now: the machine is off. Its address is not tried again on every request.
+    if (runtime.reachedBefore(peerId)) return { kind: "unreachable", nodeId: peerId };
+  }
   return { kind: "direct", nodeId: peerId };
 }
 
 function directFailedRecently(origin: string): boolean { return (directFailedUntil.get(origin) ?? 0) > Date.now(); }
 
-function markDirectFailed(origin: string): void {
+function retryAfter(origin: string, code: unknown): number {
+  return typeof code === "string" && UNRESOLVED.has(code) && !directWorked.has(origin) ? UNKNOWN_ADDRESS_RETRY_MS : DIRECT_RETRY_MS;
+}
+
+function markDirectFailed(origin: string, code?: unknown): void {
   const fresh = !directFailedRecently(origin);
-  directFailedUntil.set(origin, Date.now() + DIRECT_RETRY_MS);
+  directFailedUntil.set(origin, Date.now() + retryAfter(origin, code));
   // A peer that moved to the relay may now need a Syncthing tunnel.
   if (fresh) runtime?.changed();
 }
 
 function markDirectWorked(origin: string): void {
+  directWorked.add(origin);
   if (directFailedUntil.delete(origin)) runtime?.changed();
   probes.set(origin, { ok: true, until: Date.now() + DIRECT_RETRY_MS });
 }
@@ -83,26 +104,32 @@ function directReachable(url: URL): Promise<boolean> {
   const cached = probes.get(url.origin);
   if (cached?.pending) return cached.pending;
   if (cached && cached.until > Date.now()) return Promise.resolve(cached.ok);
-  const pending = new Promise<boolean>((resolve) => {
+  const pending = new Promise<true | { code?: unknown }>((resolve) => {
     const socket = net.connect({ host: url.hostname.replace(/^\[|\]$/g, ""), port: Number(url.port || (url.protocol === "https:" ? 443 : 80)) });
-    const finish = (ok: boolean): void => { socket.destroy(); resolve(ok); };
+    let code: unknown;
+    const finish = (ok: boolean): void => { socket.destroy(); resolve(ok ? true : { code }); };
     socket.setTimeout(PROBE_TIMEOUT_MS, () => finish(false));
     socket.once("connect", () => finish(true));
-    socket.once("error", () => finish(false));
-  }).then((ok) => {
-    probes.set(url.origin, { ok, until: Date.now() + DIRECT_RETRY_MS });
-    if (!ok) markDirectFailed(url.origin);
+    socket.once("error", (error) => { code = (error as { code?: unknown }).code; finish(false); });
+  }).then((result) => {
+    const ok = result === true;
+    probes.set(url.origin, { ok, until: Date.now() + (ok ? DIRECT_RETRY_MS : retryAfter(url.origin, (result as { code?: unknown }).code)) });
+    if (!ok) markDirectFailed(url.origin, (result as { code?: unknown }).code);
     return ok;
   });
   probes.set(url.origin, { ok: true, until: 0, pending });
   return pending;
 }
 
+function failureCode(error: unknown): unknown {
+  if (!(error instanceof TypeError) || error.message !== "fetch failed") return undefined;
+  const cause = (error as { cause?: { code?: unknown; errors?: Array<{ code?: unknown }> } }).cause;
+  return cause?.code ?? cause?.errors?.[0]?.code;
+}
+
 /** A failure before any byte of the request left this machine; safe to try another path. */
 export function isConnectFailure(error: unknown): boolean {
-  if (!(error instanceof TypeError) || error.message !== "fetch failed") return false;
-  const cause = (error as { cause?: { code?: unknown; errors?: Array<{ code?: unknown }> } }).cause;
-  const code = cause?.code ?? cause?.errors?.[0]?.code;
+  const code = failureCode(error);
   return typeof code === "string" && CONNECT_FAILURES.has(code);
 }
 
@@ -110,10 +137,27 @@ function replayable(body: unknown): boolean {
   return body === undefined || body === null || typeof body === "string" || body instanceof Uint8Array || body instanceof ArrayBuffer || body instanceof URLSearchParams;
 }
 
-/** `fetch` to a peer machine. `peerId` is the node the caller means to reach. */
+/**
+ * `fetch` to a peer machine. `peerId` is the node the caller means to reach. Whether it
+ * answered is recorded, and background sync is refused before anything is sent to a peer
+ * that is away (peer-presence.ts).
+ */
 export async function peerFetch(input: string | URL, init: RequestInit = {}, peerId?: string): Promise<Response> {
   const url = new URL(input);
   if (url.protocol !== "http:" && url.protocol !== "https:") return fetch(input, init);
+  if (!peerId) return routedFetch(url, input, init, undefined);
+  beforePeerRequest(peerId);
+  try {
+    const response = await routedFetch(url, input, init, peerId);
+    afterPeerRequest(peerId);
+    return response;
+  } catch (error) {
+    afterPeerRequest(peerId, error);
+    throw error;
+  }
+}
+
+async function routedFetch(url: URL, input: string | URL, init: RequestInit, peerId: string | undefined): Promise<Response> {
   const route = chooseRoute(url, peerId);
   if (route.kind === "relay") return relayFetch(route.nodeId, url, init, 0);
   if (route.kind === "unreachable") throw new TypeError("fetch failed", { cause: Object.assign(new Error("No relay can reach that machine right now"), { code: "ERELAYUNREACHABLE" }) });
@@ -125,9 +169,10 @@ export async function peerFetch(input: string | URL, init: RequestInit = {}, pee
     return response;
   } catch (error) {
     const nodeId = route.nodeId;
+    // A timeout before any answer also means the direct path is not working right now. It is
+    // remembered whether or not a relay can step in, so an address that cannot work is left alone.
+    if (nodeId && (isConnectFailure(error) || (error instanceof Error && error.name === "TimeoutError"))) markDirectFailed(url.origin, failureCode(error));
     if (!nodeId || !runtime?.hasRoute(nodeId)) throw error;
-    // A timeout before any answer also means the direct path is not working right now.
-    if (isConnectFailure(error) || (error instanceof Error && error.name === "TimeoutError")) markDirectFailed(url.origin);
     if (init.signal?.aborted || !isConnectFailure(error) || !replayable(init.body)) throw error;
     return relayFetch(nodeId, url, init, 0);
   }
@@ -236,7 +281,7 @@ export function peerUsesRelay(nodeId: string, peerUrl: string | undefined): bool
   try { return directFailedRecently(new URL(peerUrl).origin); } catch { return true; }
 }
 
-export function resetDirectFailures(): void { directFailedUntil.clear(); probes.clear(); }
+export function resetDirectFailures(): void { directFailedUntil.clear(); directWorked.clear(); probes.clear(); }
 
 export { virtualRelayUrl };
 export type { RelayStream };

@@ -9,7 +9,8 @@ import { isTrustedTwin, mayReceiveResource } from "../cluster-sharing-policy.js"
 import { ClusterV2HttpError } from '../cluster-v2-errors.js';
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { replicationEventProjectId, type ReplicationEvent } from "../replication.js";
-import { fetchPeer } from "./peer-availability.js";
+import { fetchPeer, peerAway } from "./peer-availability.js";
+import { settled, warnOnChange } from "./quiet-log.js";
 import { nodesBlockedBetween } from "../node-blocks.js";
 
 export function replicationPeers(db: DatabaseSync, local: string): PeerEndpoint[] {
@@ -24,6 +25,12 @@ export function replicationPeers(db: DatabaseSync, local: string): PeerEndpoint[
         WHERE a.cluster_id=e.context_id AND a.node_id=? AND b.node_id=e.node_id)))
     ORDER BY e.context_kind,e.context_id`).all(local, local) as unknown as PeerEndpoint[];
   return [...new Map(rows.filter((row) => !nodesBlockedBetween(db, local, row.nodeId)).map((row) => [row.nodeId, row])).values()];
+}
+
+/** The replication peers to send to now. One that stopped answering is left alone until it is
+    heard from again or its next probe is due; what was meant for it stays queued. */
+export function presentReplicationPeers(db: DatabaseSync, local: string): PeerEndpoint[] {
+  return replicationPeers(db, local).filter((peer) => !peerAway(peer.nodeId));
 }
 
 /** The project an event belongs to, resolving conversation events through their record. */
@@ -169,7 +176,7 @@ export async function signedPeerPost(peer: PeerEndpoint, target: string, payload
 
 export async function flushTwinCredentials(): Promise<void> {
   const db = await clusterV2Database(), local = await getClusterNode();
-  const peers = replicationPeers(db, local.id).filter(peer => isTrustedTwin(db, local.id, peer.nodeId));
+  const peers = presentReplicationPeers(db, local.id).filter(peer => isTrustedTwin(db, local.id, peer.nodeId));
   if (!peers.length) return;
   await enqueueSecretCredentialSync(peers.map(peer => peer.nodeId), undefined, true);
   for (const peer of peers) {
@@ -180,10 +187,11 @@ export async function flushTwinCredentials(): Promise<void> {
       const reply = await signedPeerPost(peer, "/api/cluster/v2/twins/credentials", { events, activeIds }) as { received: string[] };
       if (!Array.isArray(reply.received) || reply.received.some(id => !events.some(event => event.id === id))) throw new Error("Invalid credential receipt");
       await recordSecretCredentialReceipt(peer.nodeId, reply.received);
+      settled(`twin-credentials:${peer.nodeId}`);
     } catch (error) {
       const message=error instanceof Error?error.message:'Invalid credential response';
       await recordSecretCredentialFailure(peer.nodeId,events.map(event=>event.id),message);
-      console.warn(`Twin credential delivery to ${peer.nodeId} failed: ${message}`);
+      warnOnChange(`twin-credentials:${peer.nodeId}`, `Twin credential delivery to ${peer.nodeId} failed: ${message}`);
     }
   }
 }

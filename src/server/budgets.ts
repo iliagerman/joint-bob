@@ -5,6 +5,7 @@ import { ensurePeerEndpointSchema, type PeerEndpoint } from "../cluster-peer-end
 import { getSharingCluster, listSharingClusterMembers, listSharingMemberships } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { signedPeerPost } from "./replication-v2.js";
+import { peerAway } from "../peer-presence.js";
 
 export interface ClusterBudgetView {
   id: string; name: string; managerNodeId: string | null; isManager: boolean;
@@ -65,7 +66,7 @@ export async function flushBudgetPolicies(): Promise<void> {
       const known = endpoints(db, cluster.id);
       for (const peerId of peersMissingPolicy(db, cluster.id, otherMembers(db, cluster.id, local.id))) {
         const peer = known.get(peerId);
-        if (!peer) continue;
+        if (!peer || peerAway(peerId)) continue;
         try {
           await signedPeerPost(peer, "/api/cluster/v2/budgets/policy", { clusterId: cluster.id, revision: stored.revision, policy: stored.policy });
           recordPolicyAck(db, peerId, cluster.id, stored.revision);

@@ -5,7 +5,8 @@ import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { applyBlockNotice, ensureNodeBlockSchema, pendingBlockNotices, recordBlockNoticeDelivered, setNodeBlock } from "../node-blocks.js";
 import { accountSnapshotsDue, ensureAccountReplicationSchema, recordAccountSnapshotDelivered, removeReplicatedUsersFromNode } from "../user-replication.js";
-import { replicationPeers, signedPeerPost } from "./replication-v2.js";
+import { presentReplicationPeers, replicationPeers, signedPeerPost } from "./replication-v2.js";
+import { peerAway } from "../peer-presence.js";
 import { refreshLocalAccountIds } from "../auth.js";
 import { migrateAccountKeys, remapAccountKey } from "../account-keys.js";
 import { accountClusterIds } from "../cluster-accounts.js";
@@ -31,7 +32,7 @@ export async function flushAccountReplication(force = false): Promise<void> {
   try {
     await syncLocalAccountIds();
     const db = await clusterV2Database(), local = await getClusterNode();
-    const peers = replicationPeers(db, local.id);
+    const peers = presentReplicationPeers(db, local.id);
     for (const due of accountSnapshotsDue(db, local.id, peers.map((peer) => peer.nodeId))) {
       const peer = peers.find((row) => row.nodeId === due.peer)!;
       try {
@@ -87,6 +88,7 @@ export async function flushBlockNotices(): Promise<void> {
   for (const notice of pendingBlockNotices(db)) {
     const peer = endpoints.get(notice.peerId);
     if (!peer) { recordBlockNoticeDelivered(db, notice.peerId, notice.blockedNodeId, notice.updatedAt); continue; }
+    if (peerAway(notice.peerId)) continue;
     try {
       await signedPeerPost(peer, "/api/cluster/v2/blocks/notice", { blockedNodeId: notice.blockedNodeId, blocked: notice.blocked, updatedAt: notice.updatedAt });
       recordBlockNoticeDelivered(db, notice.peerId, notice.blockedNodeId, notice.updatedAt);

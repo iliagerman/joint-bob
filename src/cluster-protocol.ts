@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { recordSignedPeerSeen } from './cluster-peer-endpoints.js';
 import { pinnedClusterPublicKey, signClusterMessage, verifyClusterMessage } from "./cluster-identity.js";
+import { peerContacted } from "./peer-presence.js";
 
 export class ClusterProtocolError extends Error { readonly statusCode = 401; }
 
@@ -140,5 +141,7 @@ export function verifyClusterRequest(
   if (!publicKey || !verifyClusterMessage(publicKey, "http-request", signaturePayload(envelope), signature)) throw invalid();
   consumeNonce(db, envelope.senderNodeId, envelope.nonce, now);
   recordSignedPeerSeen(db,envelope.senderNodeId,new Date(now).toISOString());
+  // A peer that was away and is now calling in is asked again without waiting out its backoff.
+  peerContacted(envelope.senderNodeId, now);
   return envelope.senderNodeId;
 }

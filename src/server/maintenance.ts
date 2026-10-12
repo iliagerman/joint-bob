@@ -13,7 +13,9 @@ import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
 import { signedPost } from "./cluster-v2.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { isTrustedTwin } from "../cluster-sharing-policy.js";
-import { accountEventPeers, mayReplicateEvent, visitorEventRoute, replicationPeers, sendReplicationV2, signedPeerPost } from "./replication-v2.js";
+import { accountEventPeers, mayReplicateEvent, visitorEventRoute, presentReplicationPeers, sendReplicationV2, signedPeerPost } from "./replication-v2.js";
+import { peerAway } from "../peer-presence.js";
+import { settled, warnOnChange } from "./quiet-log.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
 import { listProjects } from "../store.js";
 import { reconcileSyncthingProjectFolders } from "../syncthing.js";
@@ -87,6 +89,7 @@ export async function reconcileTaskHandoffs(): Promise<void> {
   flags.taskHandoffReconciliationInProgress = true;
   try {
     for (const record of await listUnfinishedOutgoingTaskHandoffs()) {
+      if (peerAway(record.destinationNodeId)) continue;
       const peer = await getRuntimePeer(record.destinationNodeId);
       if (!peer) {
         console.warn(`Task handoff ${record.handoffId} reconciliation failed: peer not found`);
@@ -133,6 +136,8 @@ export async function flushRoutingConfigDeliveries(configId?: string): Promise<A
     const db = routingConfigDatabase();
     const results: Array<{ nodeId: string; name: string; delivered: boolean; error?: string }> = [];
     for (const delivery of dueRoutingConfigDeliveries(db, new Date(), configId)) {
+      // Someone distributing one configuration gets a real attempt; the periodic pass leaves a machine that is away alone.
+      if (!configId && peerAway(delivery.nodeId)) continue;
       try {
         await pushPendingRoutingConfigDelivery(local.id, delivery);
         recordRoutingConfigDeliverySuccess(db, delivery.id);
@@ -240,8 +245,9 @@ async function pushRuntimeLeaseSnapshot(peer: { id: string; url: string }, body:
       signal: AbortSignal.timeout(5_000),
     });
     if (!response.ok) throw new Error(`Peer returned ${response.status}`);
+    settled(`lease:${peer.id}`);
   } catch (error) {
-    console.warn(`Runtime lease push to ${peer.id} failed: ${error instanceof Error ? error.message : "lease replication failed"}`);
+    warnOnChange(`lease:${peer.id}`, `Runtime lease push to ${peer.id} failed: ${error instanceof Error ? error.message : "lease replication failed"}`);
   }
 }
 
@@ -271,7 +277,8 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
       broadcastSessionsChangedToAllProjects();
       for (const project of await listProjects()) scheduleReviewNotifications(project.id);
     }
-    const peers = await listRuntimePeers();
+    // A machine that is switched off needs no running set; it gets one as soon as it answers again.
+    const peers = (await listRuntimePeers()).filter((peer) => !peerAway(peer.id));
     if (!peers.length) return;
     const generatedAt = leases.length ? leases[0].updatedAt : new Date().toISOString();
     const body = JSON.stringify({ nodeId: local.id, generatedAt, leases });
@@ -390,17 +397,18 @@ export async function flushReplicationOutbox(): Promise<void> {
     // Twins get every event directly; cluster members get project events through the hubs
     // (cluster-hubs.ts). A visitor's own pins and recents go straight to their home node.
     const own = accountEventPeers(db);
-    for (const peer of replicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId) || own.has(peer.nodeId))) {
+    for (const peer of presentReplicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId) || own.has(peer.nodeId))) {
       const twin = isTrustedTwin(db, local.id, peer.nodeId);
       const events = await eventsForPeer(peer.nodeId, new Date(), (event) => event.originNodeId === local.id && (twin || visitorEventRoute(db, local.id, peer.nodeId, event)) && mayReplicateEvent(db, local.id, peer.nodeId, event));
       if (!events.length) continue;
       try {
         const receipt = replicationReceiptSchema.parse(await sendReplicationV2(peer, events));
         await recordPeerReceipt(peer.nodeId, receipt.received);
+        settled(`replication:${peer.nodeId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Peer replication failed";
         await recordPeerFailure(peer.nodeId, events.map((event) => event.id), message);
-        console.warn(`Replication to ${peer.nodeId} failed: ${message}`);
+        warnOnChange(`replication:${peer.nodeId}`, `Replication to ${peer.nodeId} failed: ${message}`);
       }
     }
   } finally {

@@ -23,6 +23,7 @@ import { flushScopedCredentials } from "./scoped-credentials.js";
 import { flushSharedTranscripts } from "./shared-transcripts.js";
 import { syncSharedQuickNotes } from "./shared-quick-notes.js";
 import { flushTwinCredentials } from "./replication-v2.js";
+import { peerAway } from "../peer-presence.js";
 import { flushResourcePolicyDeliveries } from "./resource-policy.js";
 import { peerFetch } from "../relay/transport.js";
 
@@ -69,8 +70,8 @@ export async function flushV2ClusterAdministration(): Promise<void> {
     const local = await getClusterNode();
     const steps = db.prepare("SELECT cluster_id,transfer_id,step,peer_id,url,payload FROM cluster_v2_manager_steps ORDER BY cluster_id,transfer_id,step")
       .all() as unknown as Array<{cluster_id:string;transfer_id:string;step:"offer"|"acceptance";peer_id:string;url:string;payload:string}>;
-    for (const step of steps) await deliverStep(db, local.id, step);
-    for (const delivery of listManagerTransferDeliveries(db)) await deliverCertificate(db, local.id, delivery);
+    for (const step of steps) if (!peerAway(step.peer_id)) await deliverStep(db, local.id, step);
+    for (const delivery of listManagerTransferDeliveries(db)) if (!peerAway(delivery.peerId)) await deliverCertificate(db, local.id, delivery);
     await flushV2MembershipOutbox();
     await flushResourcePolicyDeliveries();
     await flushProjectMetadataDeliveries();

@@ -6,6 +6,8 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Made the running and review lists quicker to refresh when a conversation changes, since only the project that changed is reloaded instead of every project.
+- Changed the sign-in notice for a browser login in another conversation to name its project and conversation and point you to that conversation's Browser panel.
+- Stopped background sync from repeatedly contacting a machine that is switched off; it is checked less often, queued changes reach it as soon as it is back, and repeated failures are logged once instead of on every attempt.
 
 ## 2.77.2 — 2026-10-12
 

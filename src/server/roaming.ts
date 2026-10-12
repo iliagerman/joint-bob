@@ -11,9 +11,9 @@ import { applyUserRecentSessionEvent, deleteUserRecents, userRecentEvents } from
 import { deletePersonalSettings, personalSettings, replacePersonalSettings, updatePersonalSettings, type PersonalSettings } from "../settings.js";
 import { applyUserPinEvent, deleteUserPins, userPinEvents } from "../user-pins.js";
 import { accountSnapshotFor } from "../user-replication.js";
-import { peerReachable } from "./peer-availability.js";
+import { peerAway } from "./peer-availability.js";
 import { broadcastToAllClients } from "./realtime.js";
-import { replicationPeers, signedPeerPost, visitedNodeSeesProject } from "./replication-v2.js";
+import { presentReplicationPeers, replicationPeers, signedPeerPost, visitedNodeSeesProject } from "./replication-v2.js";
 import { userPreferencesSchema } from "./schemas.js";
 
 /**
@@ -144,7 +144,7 @@ export function flushProfiles(force = false): Promise<void> {
 async function deliverProfiles(): Promise<void> {
   const db = await clusterV2Database(), local = await getClusterNode();
   ensureRoamingSchema(db);
-  const peers = new Map(replicationPeers(db, local.id).map((peer) => [peer.nodeId, peer]));
+  const peers = new Map(presentReplicationPeers(db, local.id).map((peer) => [peer.nodeId, peer]));
   const rows = db.prepare("SELECT account_id, node_id FROM account_roaming_nodes").all() as unknown as Array<{ account_id: string; node_id: string }>;
   for (const row of rows) {
     // Left the clusters it shares with that node, blocked, or gone: the copy goes too.
@@ -205,7 +205,7 @@ const noticeSentAt = new Map<string, number>();
 export async function sendSignInNotices(): Promise<void> {
   const db = await clusterV2Database(), local = await getClusterNode();
   ensureRoamingSchema(db);
-  const peers = new Map(replicationPeers(db, local.id).map((peer) => [peer.nodeId, peer]));
+  const peers = new Map(presentReplicationPeers(db, local.id).map((peer) => [peer.nodeId, peer]));
   const pending = db.prepare("SELECT account_id, home_node_id FROM visitor_profiles WHERE received_at IS NULL AND requested_at IS NOT NULL").all() as unknown as Array<{ account_id: string; home_node_id: string }>;
   for (const row of pending) {
     const peer = peers.get(row.home_node_id);
@@ -271,7 +271,7 @@ export async function visitorProfileStatus(id: string): Promise<{ homeNodeId: st
   ensureRoamingSchema(db);
   const row = db.prepare("SELECT received_at FROM visitor_profiles WHERE account_id = ?").get(id) as { received_at: string | null } | undefined;
   const peer = replicationPeers(db, local.id).find((candidate) => candidate.nodeId === visitor.homeNodeId);
-  return { homeNodeId: visitor.homeNodeId, homeName: peer?.name ?? null, loaded: Boolean(row?.received_at), homeOnline: Boolean(peer) && peerReachable(visitor.homeNodeId) };
+  return { homeNodeId: visitor.homeNodeId, homeName: peer?.name ?? null, loaded: Boolean(row?.received_at), homeOnline: Boolean(peer) && !peerAway(visitor.homeNodeId) };
 }
 
 export class HomeOfflineError extends Error {

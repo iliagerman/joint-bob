@@ -16,7 +16,8 @@ import { listDifficultyClassifiers } from "../classifiers/registry.js";
 import { applyUserReplication } from "../user-replication.js";
 import { advertisedNodeUrl } from "../relay/index.js";
 import { peerFetch } from "../relay/transport.js";
-import { fetchPeer, PeerUnreachableError, whilePeerOptional } from "./peer-availability.js";
+import { fetchPeer, isPeerUnreachable, PeerUnreachableError, whilePeerOptional } from "./peer-availability.js";
+import { settled, warnOnChange } from "./quiet-log.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const origin = z.string().transform((value, context) => {
@@ -226,10 +227,12 @@ export async function flushV2MembershipOutbox(): Promise<void> {
             acknowledgeMembershipDelivery(db, pending.clusterId, pending.peerId, pending.revision);
           }
         }
+        settled(`membership:${delivery.clusterId}:${delivery.peerId}`);
       } catch (error) {
         if (error instanceof PeerUnreachableError) continue;
-        const status = error instanceof ClusterV2HttpError ? error.statusCode : 500;
-        console.warn(`V2 membership delivery to ${delivery.peerId} failed (${status})`);
+        // A machine that does not answer is "unreachable", not an HTTP 500 it never sent.
+        const reason = error instanceof ClusterV2HttpError ? String(error.statusCode) : isPeerUnreachable(error) ? "unreachable" : "500";
+        warnOnChange(`membership:${delivery.clusterId}:${delivery.peerId}`, `V2 membership delivery to ${delivery.peerId} failed (${reason})`);
       }
     }
   } finally { flushing = false; }

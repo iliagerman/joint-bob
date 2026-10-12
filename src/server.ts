@@ -10,6 +10,8 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
+import { inBackground } from "./peer-presence.js";
+import { announceReturn, resumeDeliveriesOnReturn } from "./server/peer-return.js";
 import { runReplicationHousekeeping } from "./server/replication-housekeeping.js";
 import { removeAllDeletedTranscripts } from "./server/deleted-transcripts.js";
 import { flushSuccessionNotices } from "./server/succession.js";
@@ -162,23 +164,26 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       if (!clusterWorkAllowed()) return;
       if (!clusterStarted) {
         clusterStarted = true;
-        pullFromHubs().catch((error) => console.warn("Hub pull failed", error));
+        resumeDeliveriesOnReturn();
+        // Tells every peer this machine is back and catches up from them, hubs included.
+        announceReturn(false).catch((error) => console.warn("Announcing this machine's return failed", error));
         removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
         syncNtfyServiceShares().catch((error) => console.warn("ntfy service share sync failed", error));
       }
       flushClusterWork();
     };
+    // The periodic passes run as background sync: they send nothing to a peer that is away (peer-presence.ts).
     initializeStartupReadiness()
-      .then(runClusterWork)
+      .then(() => inBackground(runClusterWork))
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTaskConversationRecords(); })
       .catch((error) => console.warn("Startup recovery failed", error));
-    setInterval(() => { if (clusterWorkAllowed()) pullFromHubs().catch((error) => console.warn("Hub pull failed", error)); }, 60_000).unref();
+    setInterval(() => { if (clusterWorkAllowed()) inBackground(() => pullFromHubs()).catch((error) => console.warn("Hub pull failed", error)); }, 60_000).unref();
     setInterval(() => reapInactiveConversations().catch((error) => console.warn("Inactive conversation reap failed", error)), 60_000).unref();
     setInterval(() => sweepStaleConversations().catch((error) => console.warn("Stale conversation sweep failed", error)), 60_000).unref();
     setInterval(() => void runSyncCheck(), 5 * 60_000).unref();
     // First run comes a quarter hour after start, clear of the release health check.
-    setInterval(() => { if (clusterWorkAllowed()) runReplicationHousekeeping().catch((error) => console.warn("Replication housekeeping failed", error)); }, 15 * 60_000).unref();
-    setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
+    setInterval(() => { if (clusterWorkAllowed()) inBackground(() => runReplicationHousekeeping()).catch((error) => console.warn("Replication housekeeping failed", error)); }, 15 * 60_000).unref();
+    setInterval(() => inBackground(() => reconcileManagedAgentResources()).catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
     // Empty drafts go an hour after their last activity; the first sweep waits out the release health check.
     const sweepRetention = (): void => { sweepConversationRetention().catch((error) => console.warn("Conversation retention sweep failed", error)); };
     setTimeout(sweepRetention, 5 * 60_000).unref();
@@ -187,10 +192,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const sweepWorktreeFolders = (): void => { sweepWorktrees().catch((error) => console.warn("Worktree sweep failed", error)); };
     setTimeout(sweepWorktreeFolders, 5 * 60_000).unref();
     setInterval(sweepWorktreeFolders, 30 * 60_000).unref();
+    // Timers do not run while a machine sleeps. A tick this late means it slept: its view of
+    // its peers is stale and they have stopped sending to it, so it says it is back.
+    let lastTick = Date.now();
     setInterval(() => {
+      const now = Date.now(), slept = now - lastTick > 30_000;
+      lastTick = now;
       void initializeStartupReadiness();
       sweepRuntimeLeases();
-      runClusterWork();
+      if (slept && clusterStarted && clusterWorkAllowed()) announceReturn(true).catch((error) => console.warn("Announcing this machine's return failed", error));
+      inBackground(runClusterWork);
     }, 2_000).unref();
   });
   })

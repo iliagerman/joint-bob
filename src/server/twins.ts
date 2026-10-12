@@ -13,6 +13,7 @@ import { localMembershipDescriptor } from "./cluster-v2.js";
 import { clusterRequestRawBody, isClusterOriginUrl, assertRelayChannelSender } from "./http-auth.js";
 import { flushTwinSharing, scheduleTwinSharing } from './twin-sharing.js';
 import { peerFetch } from "../relay/transport.js";
+import { peerAway } from "../peer-presence.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const endpointSchema = z.object({ nodeId: uuid, name: z.string().trim().min(1).max(80), url: z.string().transform((value, context) => {
@@ -158,6 +159,7 @@ export async function flushTwinDeliveries():Promise<void> {
   const db=await clusterV2Database(), local=await getClusterNode(); ensureTwinHttpSchema(db);
   const rows=db.prepare("SELECT relationship_id,peer_id,kind,payload FROM cluster_v2_twin_deliveries ORDER BY relationship_id,peer_id,kind").all() as unknown as Array<{relationship_id:string;peer_id:string;kind:"certificate"|"revocation";payload:string}>;
   for(const row of rows) try {
+    if(peerAway(row.peer_id)) continue;
     const endpoint=peerEndpoint(db,"twin",row.relationship_id,row.peer_id), target=`/api/cluster/v2/twins/${row.kind}`;
     const body=Buffer.from(JSON.stringify({[row.kind]:JSON.parse(row.payload)}));
     const result=await peerFetch(new URL(target,endpoint.url),{method:"POST",redirect:"error",signal:AbortSignal.timeout(10_000),body,headers:{"Content-Type":"application/json",Authorization:signClusterRequest(db,local.id,row.peer_id,"POST",target,body)}}, endpoint.nodeId);

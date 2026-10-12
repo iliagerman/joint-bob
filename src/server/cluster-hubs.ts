@@ -19,6 +19,8 @@ import { ensureReplicationSchema, receiveReplicationBatch, type ReplicationEvent
 import { removeTranscriptsDeletedBy } from "./deleted-transcripts.js";
 import { ensureResourceSharingSchema } from "../cluster-sharing.js";
 import { signedPost } from "./cluster-v2.js";
+import { peerAway } from "../peer-presence.js";
+import { settled, warnOnChange } from "./quiet-log.js";
 import { broadcastReplicationInvalidations } from "./realtime.js";
 import { EVENT_SCOPES, mayReplicateEvent, replicationEventProject } from "./replication-v2.js";
 import { replicationReceiptSchema } from "./schemas.js";
@@ -107,6 +109,11 @@ function enqueueOwnEvents(db: DatabaseSync, local: string): boolean {
   const added = [...shared].filter((pair) => !known.has(pair));
   db.exec("SAVEPOINT hub_enqueue");
   try {
+    // Take the write lock before reading. Running conversations write to this database from
+    // their own processes, and a transaction that read first and wrote its cursor last failed
+    // at once with "database is locked" whenever one of them committed in between; the busy
+    // timeout does not apply to that case. Writing first makes the other writer wait instead.
+    db.prepare("INSERT INTO cluster_v2_hub_cursor VALUES(1,0) ON CONFLICT(singleton) DO UPDATE SET outbox_rowid=outbox_rowid").run();
     for (const pair of known) if (!shared.has(pair)) {
       const [clusterId, projectId] = pair.split("\n");
       db.prepare("DELETE FROM cluster_v2_hub_projects WHERE cluster_id=? AND project_id=?").run(clusterId, projectId);
@@ -171,6 +178,7 @@ async function deliverToHubs(db: DatabaseSync, local: string): Promise<void> {
     let pending = rows;
     let lastError = "No hub answered";
     for (const hub of candidates) {
+      if (peerAway(hub)) continue;
       // The high hub must differ from the node that already holds an event as its low hub.
       const sendable = pending.filter((row) => slot === "low" || (db.prepare("SELECT node_id FROM cluster_v2_hub_queue WHERE event_id=? AND cluster_id=? AND slot='low'").get(row.event_id, clusterId) as { node_id: string | null } | undefined)?.node_id !== hub);
       if (!sendable.length) continue;
@@ -192,7 +200,9 @@ async function deliverToHubs(db: DatabaseSync, local: string): Promise<void> {
       db.prepare("UPDATE cluster_v2_hub_queue SET attempts=?,next_attempt_at=?,last_error=? WHERE event_id=? AND cluster_id=? AND slot=?")
         .run(attempts, new Date(Date.now() + Math.min(300, 2 ** Math.min(attempts, 8)) * 1000).toISOString(), lastError, row.event_id, clusterId, slot);
     }
-    if (pending.length) console.warn(`Hub delivery for cluster ${clusterId} (${slot}) is pending: ${lastError}`);
+    // With one other member online the second copy has nowhere to go; that is said once, not on every pass.
+    if (pending.length) warnOnChange(`hub:${key}`, `Hub delivery for cluster ${clusterId} (${slot}) is pending: ${lastError}`);
+    else settled(`hub:${key}`);
   }
 }
 
@@ -312,11 +322,12 @@ export async function receiveRelay(sender: string, input: z.infer<typeof relayRe
 }
 
 async function forward(db: DatabaseSync, local: string, clusterId: string, origin: string, envelopes: RelayEnvelope[]): Promise<void> {
-  for (const member of otherMembers(db, clusterId, local).filter((member) => member !== origin)) {
+  // A member that is away pulls the change when it returns.
+  for (const member of otherMembers(db, clusterId, local).filter((member) => member !== origin && !peerAway(member))) {
     const allowed = envelopes.filter((envelope) => mayReplicateEvent(db, local, member, envelope.event));
     if (!allowed.length) continue;
-    try { await signedPost(db, local, member, clusterId, "/api/cluster/v2/relay", { clusterId, relay: false, envelopes: allowed }); }
-    catch (error) { console.warn(`Hub forward to ${member} failed; it will pull the change: ${error instanceof Error ? error.message : error}`); }
+    try { await signedPost(db, local, member, clusterId, "/api/cluster/v2/relay", { clusterId, relay: false, envelopes: allowed }); settled(`hub-forward:${member}`); }
+    catch (error) { warnOnChange(`hub-forward:${member}`, `Hub forward to ${member} failed; it will pull the change: ${error instanceof Error ? error.message : error}`); }
   }
 }
 
@@ -351,7 +362,7 @@ export async function pullFromHubs(): Promise<void> {
     const db = await clusterV2Database(), local = (await getClusterNode()).id;
     ensureHubSchema(db);
     for (const { clusterId } of listSharingMemberships(db, local)) {
-      const members = otherMembers(db, clusterId, local);
+      const members = otherMembers(db, clusterId, local).filter((member) => !peerAway(member));
       let low: string | undefined;
       for (const candidate of members) {
         try { await pullFrom(db, local, clusterId, candidate); low = candidate; break; } catch { /* The next member in line takes its place. */ }

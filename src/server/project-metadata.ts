@@ -11,6 +11,7 @@ import { resourcePolicyDeliveryIsCurrent } from "../cluster-sharing.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { listProjects } from "../store.js";
 import { peerFetch } from "../relay/transport.js";
+import { peerAway } from "../peer-presence.js";
 
 const acknowledgementSchema = z.object({
   operationId: z.string().uuid(), revision: z.number().int().safe().positive(),
@@ -33,6 +34,7 @@ export async function flushProjectMetadataDeliveries(): Promise<void> {
   const db = await clusterV2Database();
   for (const delivery of listProjectMetadataDeliveries(db, local.id)) {
     if (!resourcePolicyDeliveryIsCurrent(db, local.id, delivery.statement)) continue;
+    if (peerAway(delivery.peerId)) continue;
     const request = requestFor(db, local.id, delivery);
     try {
       const response = await peerFetch(request.url, { method: "POST", redirect: "error",

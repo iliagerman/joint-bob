@@ -10,6 +10,7 @@ import { storedTwinCertificate, twinCertificateSchema } from "../cluster-twins.j
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { flushV2MembershipOutbox, signedPost } from "./cluster-v2.js";
+import { peerAway } from "../peer-presence.js";
 import { flushProjectMetadataDeliveries } from "./project-metadata.js";
 import { flushResourcePolicyDeliveries } from "./resource-policy.js";
 import { revokeTwinHttp } from "./twins.js";
@@ -95,6 +96,7 @@ export async function flushSuccessionNotices(): Promise<void> {
     ensureSchema(db);
     const rows = db.prepare("SELECT d.cluster_id,d.peer_id,d.lost_node_id,s.certificate FROM cluster_v2_succession_deliveries d JOIN cluster_v2_successions s ON s.lost_node_id=d.lost_node_id").all() as unknown as Array<{ cluster_id: string; peer_id: string; lost_node_id: string; certificate: string }>;
     for (const row of rows) {
+      if (peerAway(row.peer_id)) continue;
       try {
         await signedPost(db, local, row.peer_id, row.cluster_id, "/api/cluster/v2/succession", { clusterId: row.cluster_id, lostNodeId: row.lost_node_id, certificate: JSON.parse(row.certificate) });
         db.prepare("DELETE FROM cluster_v2_succession_deliveries WHERE cluster_id=? AND peer_id=? AND lost_node_id=?").run(row.cluster_id, row.peer_id, row.lost_node_id);

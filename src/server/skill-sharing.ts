@@ -20,6 +20,7 @@ import { mayShareProject } from "./sharing-files.js";
 import { sendError } from "./http-auth.js";
 import { app } from "./state.js";
 import { peerFetch } from "../relay/transport.js";
+import { peerAway } from "../peer-presence.js";
 
 const nameSchema = z.string().min(1).max(200).refine((value) => { try { validateSkillName(value); return true; } catch { return false; } });
 const conversationGrantSchema = z.object({ projectId: z.string().min(1).max(200), conversationId: z.string().min(1).max(300) }).strict();
@@ -375,7 +376,8 @@ async function syncSkills(): Promise<void> {
     }
   });
   // No mutation lock spans network I/O: two owners can pull from one another.
-  try { await Promise.all([...peers].map(([owner, cluster]) => syncOwner(db, local, owner, cluster))); }
+  // An owner that is away keeps what it shared here; it is asked again when it returns.
+  try { await Promise.all([...peers].filter(([owner]) => !peerAway(owner)).map(([owner, cluster]) => syncOwner(db, local, owner, cluster))); }
   finally { writeScopedIndex(db); }
 }
 export async function refreshSharedSkills(): Promise<void> {

@@ -433,6 +433,9 @@ export class RelayRuntime extends EventEmitter {
 
   hasRoute(nodeId: string): boolean { return this.routes(nodeId).length > 0; }
 
+  /** Whether a relay has carried a channel to this peer before: the way it is reached when its own address does not work. */
+  reachedBefore(nodeId: string): boolean { return this.lastRoutes.has(nodeId); }
+
   /** False when this machine serves no relay and has no live relay connection: every peer is direct. */
   hasAnyRelay(): boolean {
     if (this.relayServer.enabled) return true;

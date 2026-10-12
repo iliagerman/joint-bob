@@ -4,6 +4,7 @@ import { applyRuntimeLeaseSnapshot, conversationRuntimeDatabase, holdEndedRun, l
 import { receiveReplicationBatch, type ReplicationBatch } from "../../replication.js";
 import { removeTranscriptsDeletedBy } from "../deleted-transcripts.js";
 import { catchUpSharedTranscript } from "../shared-transcripts.js";
+import { resumeDeliveriesTo } from "../peer-return.js";
 import { type PushSubscriptionEvent, receivePushSubscriptionEvents } from "../../push.js";
 import { getProject } from "../../store.js";
 import { abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, commitPreparedTaskHandoff, getTaskHandoff, isTaskHandoffRejected, listTasks, prepareTaskHandoff, rejectTaskHandoff, reserveTaskHandoff, taskHandoffDeletion } from "../../tasks.js";
@@ -128,6 +129,18 @@ app.post(["/api/cluster/sessions/runtime-snapshot", "/api/cluster/v2/runtime/ses
     const ended = before.filter((lease) => changed.has(`${lease.engine}\n${lease.sessionId}`) && !continuing.has(`${lease.engine}\n${lease.sessionId}`));
     if (ended.length) catchUpEndedRuns(snapshot.nodeId, ended).catch((error) => console.warn("Ended run catch-up failed", error));
     if (changed.size) broadcastSessionsChangedToAllProjects();
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** A peer saying it is back after being off or asleep. Checking its signature already noted
+    it as heard from; here what is queued for it becomes due, so it goes out on the next pass. */
+app.post("/api/cluster/v2/hello", async (_request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    await resumeDeliveriesTo(response.locals.machineNodeId as string);
     response.json({ ok: true });
   } catch (error) {
     next(error);

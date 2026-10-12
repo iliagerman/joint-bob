@@ -4,6 +4,7 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { getQuickNote, listQuickNotes, type QuickNote } from "../quick-notes.js";
 import { replicationPeers, signedPeerPost } from "./replication-v2.js";
+import { peerAway } from "../peer-presence.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
 import { quickNoteSchema } from "./schemas.js";
 
@@ -44,7 +45,8 @@ const syncing = new Map<string, Promise<void>>();
 /** Only the original node offers a draft. Cached copies never dispatch or relay it. */
 export async function syncSharedQuickNotes(projectId?: string): Promise<void> {
   const { db, local, peers } = await context();
-  await Promise.all(peers.flatMap(peer => sharedProjectIds(db, local.id, peer.nodeId)
+  // A peer that is away keeps its cached drafts readable; it is asked again when it returns.
+  await Promise.all(peers.filter(peer => !peerAway(peer.nodeId)).flatMap(peer => sharedProjectIds(db, local.id, peer.nodeId)
     .filter(id => !projectId || id === projectId).map(id => {
       const key = `${peer.nodeId}:${id}`;
       let pending = syncing.get(key);

@@ -13,6 +13,7 @@ import { getProject, updateProjectSyncFolderId } from "../store.js";
 import { ensureSyncthingDevice, ensureSharedProjectFolder, removeSyncthingDevices, pauseSyncthingFolders, syncthingConnectionGeneration, syncthingDeviceId, syncthingPeerCaughtUp } from "../syncthing.js";
 import { expectedTaskWorkspacePath, projectTicketSyncFolderId, TICKET_WORKSPACE_FOLDER_ID } from "../task-workspaces.js";
 import { replicationPeers } from "./replication-v2.js";
+import { peerAway } from "../peer-presence.js";
 import { projectWorktreeRoot, projectWorktreeSyncFolderId } from "../project-worktrees.js";
 import { WORKTREE_FOLDER_PREFIX } from "../worktree-filters.js";
 import { peerFetch } from "../relay/transport.js";
@@ -138,7 +139,7 @@ export async function flushSharingFiles():Promise<void>{
  await revokeFiles(db,local.id);
  const peers=replicationPeers(db,local.id),now=Date.now();
  for(const known of [enrolled,retries])for(const peerId of known.keys())if(!peers.some(peer=>peer.nodeId===peerId))known.delete(peerId);
- const due=peers.flatMap(peer=>{
+ const due=peers.filter(peer=>!peerAway(peer.nodeId)).flatMap(peer=>{
   const projects=sharedProjectIds(db,local.id,peer.nodeId),state=enrollmentState(db,projects),retry=retries.get(peer.nodeId);
   return enrolled.get(peer.nodeId)===state||(retry?.state===state&&retry.at>now)?[]:[{peer,projects,state}];
  });

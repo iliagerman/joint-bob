@@ -21,7 +21,7 @@ import { getProject } from "../store.js";
 import { listTasks } from '../tasks.js';
 import { getConversationOwnership, type ConversationOwnership } from "../conversation-ownership.js";
 import { deletedConversationKeys, ensureConversationRecord, ensureConversationRecordSchema } from "../conversation-records.js";
-import { replicationPeers } from "./replication-v2.js";
+import { presentReplicationPeers, replicationPeers } from "./replication-v2.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
 import { fetchPeer, isPeerUnreachable, PeerUnreachableError, whilePeerOptional } from "./peer-availability.js";
 
@@ -418,7 +418,7 @@ export function resetSharedTranscriptPulls():void{pulledAt.clear();}
 async function runSharedTranscripts():Promise<void>{
  const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);
  const eligible=async(peer:string,id:string)=>mayShareProject(db,local.id,peer,id)&&Boolean(await getProject(id));
- for(const peer of replicationPeers(db,local.id))for(const projectId of sharedProjectIds(db,local.id,peer.nodeId)){const key=`${peer.nodeId}\n${projectId}`;try{
+ for(const peer of presentReplicationPeers(db,local.id))for(const projectId of sharedProjectIds(db,local.id,peer.nodeId)){const key=`${peer.nodeId}\n${projectId}`;try{
   if(!await getProject(projectId))continue;
   if(Date.now()-(pulledAt.get(key)??0)<PULL_INTERVAL_MS)continue;
   pulledAt.set(key,Date.now());

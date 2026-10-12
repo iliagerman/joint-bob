@@ -8,7 +8,7 @@ import { ClusterV2HttpError } from '../cluster-v2-errors.js';
 import {clearSecretAccountFiles,decryptSecretValue,encryptSecretValue,ensureSecretSchema,normalizeWebsiteOrigin} from '../secrets.js';
 import {ensureSelectedSharingSchema} from '../selected-sharing.js';
 import {mayShareProject,sharedProjectIds} from './sharing-files.js';
-import {replicationPeers,signedPeerPost} from './replication-v2.js';
+import {presentReplicationPeers,replicationPeers,signedPeerPost} from './replication-v2.js';
 
 const scopeSchema=z.object({type:z.enum(['workspace','project','conversation']),id:z.string().min(1).max(300),projectIds:z.array(z.string().min(1).max(300)).min(1).max(10000),clusterIds:z.array(z.string().uuid()).max(100).optional()}).strict();
 const grantSchema=z.object({clusterId:z.string().uuid(),nodeId:z.string().min(1).max(300).nullable()}).strict();
@@ -159,7 +159,7 @@ export async function flushScopedCredentials():Promise<void>{
   const active=grants.some(grant=>db.prepare('SELECT 1 FROM sharing_memberships a JOIN sharing_memberships b ON a.cluster_id=b.cluster_id WHERE a.cluster_id=? AND a.node_id=? AND b.node_id=?').get(grant.clusterId,local.id,copy.peer_id)&&(!copy.project_id||db.prepare("SELECT 1 FROM sharing_resource_shares WHERE kind='project' AND resource_id=? AND cluster_id=?").get(copy.project_id,grant.clusterId)));
   if(!active&&(copy.project_id||scopes.every(scope=>scope.projectIds.every(id=>!mayShareProject(db,local.id,copy.peer_id,id)))))removeCopy(db,copy.peer_id,copy.account_id);
  }
- for(const peer of replicationPeers(db,local.id)){
+ for(const peer of presentReplicationPeers(db,local.id)){
   const twin=isTrustedTwin(db,local.id,peer.nodeId);
   const accounts=snapshot(db,local.id,peer.nodeId).filter(account=>!twin || (db.prepare('SELECT replicate FROM secret_accounts WHERE id=?').get(account.id) as {replicate:number}).replicate===0);
   try{await signedPeerPost(peer,'/api/cluster/v2/credentials/scoped',{accounts});db.prepare('DELETE FROM cluster_v2_scoped_secret_errors WHERE peer_id=?').run(peer.nodeId);}
