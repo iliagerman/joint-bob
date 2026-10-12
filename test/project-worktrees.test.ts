@@ -193,8 +193,8 @@ test("deleting a worktree removes its folder, so Syncthing removes it from every
 
 test("the worktree filter keeps code and text and drops heavy paths", () => {
   const root = "/p";
-  for (const kept of ["/p/src/a.ts", "/p/docs/readme.md", "/p/app/icon.svg", "/p/backend/main.py"]) assert.ok(worktreePathAllowed(root, kept), kept);
-  for (const dropped of ["/p/node_modules/a.js", "/p/x/.venv/y.py", "/p/a.png", "/p/B.JPG", "/p/build.zip", "/p/target/x", "/p/a.egg-info/b", "/p/.git/HEAD", "/p/.env.local"]) {
+  for (const kept of ["/p/src/a.ts", "/p/docs/readme.md", "/p/app/icon.svg", "/p/backend/main.py", "/p/packages/ui/index.ts", "/p/bin/start.sh", "/p/NuGet.Config", "/p/backend/uv.lock"]) assert.ok(worktreePathAllowed(root, kept), kept);
+  for (const dropped of ["/p/node_modules/a.js", "/p/x/.venv/y.py", "/p/a.png", "/p/B.JPG", "/p/build.zip", "/p/target/x", "/p/a.egg-info/b", "/p/.git/HEAD", "/p/.env.local", "/p/backend/__pypackages__/3.12/lib/pkg.py", "/p/env/lib/dist-packages/pkg.py", "/p/api/.nuget/packages/pkg/README.md", "/p/api/pkg.NUPKG", "/p/api/pkg.snupkg"]) {
     assert.equal(worktreePathAllowed(root, dropped), false, dropped);
   }
 });

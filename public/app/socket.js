@@ -10,6 +10,7 @@ import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThin
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
+import { syncQuickActionLabels } from "./focus-ui.js";
 import { setMobileView, shortSessionTitle, syncChatTitleFromSessions } from "./layout.js";
 import { refreshProjectsQuietly } from "./project-selection.js";
 import { loadRecentSessions } from "./recents.js";
@@ -220,6 +221,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   renderConversationLock();
   if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
   state.engine = harnessIdFromPath(state.harnesses, state.activeSessionPath);
+  syncQuickActionLabels();
   elements.sessionTitle.textContent = title;
   renderSessions();
   // A reconnect reuses this function. Switching panels there would yank the user
@@ -283,6 +285,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     state.conversationCommands = payload.conversationCommands || null;
     if (!payload.engine) throw new Error("Ready payload is missing its harness engine");
     state.engine = payload.engine;
+    syncQuickActionLabels();
     if (payload.executionNodeId) {
       state.activeNodeId = payload.executionNodeId;
       if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: payload.executionNodeId });
@@ -390,6 +393,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const oldEngine = state.engine;
     if (!payload.engine) throw new Error("Harness change payload is missing its engine");
     state.engine = payload.engine;
+    syncQuickActionLabels();
     state.activeSessionId = payload.sessionId || null;
     state.activeConversationId = payload.conversationId || state.activeConversationId;
     state.conversationSegments = payload.segments || [...(state.conversationSegments || [{ engine: oldEngine }]), { engine: state.engine }];

@@ -51,14 +51,22 @@ test("the terminal button follows whether the execution node allows terminal acc
   assert.equal(await button.isDisabled(), false, "this node's own terminal stays available");
 });
 
-test("settings show twins allowed and other nodes blocked by default, and save changes", { timeout: 120_000 }, async (t) => {
+test("terminal access settings are together under Node and save remote access", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await signIn(page, node.url, environment.username, environment.password);
+  const settingsLoaded = page.waitForResponse((response) => response.url().endsWith("/api/settings") && response.request().method() === "GET");
   await page.getByTestId("settings-open-button").click();
   await page.locator("#settingsDialog[open]").waitFor();
+  await settingsLoaded;
+  await page.getByTestId("settings-tab-node").click();
 
+  const policy = page.getByTestId("settings-terminal-policy");
   const twins = page.getByTestId("settings-remote-terminal-twins");
   const others = page.getByTestId("settings-remote-terminal-other-nodes");
+  await policy.waitFor({ state: "visible" });
+  assert.equal(await policy.evaluate((element) => Boolean(element.closest("#settingsPanel-node"))), true);
+  assert.equal(await twins.evaluate((element) => Boolean(element.closest("#settingsPanel-node"))), true);
+  assert.equal(await others.evaluate((element) => Boolean(element.closest("#settingsPanel-node"))), true);
   await twins.waitFor({ state: "visible" });
   assert.equal(await twins.isChecked(), true);
   assert.equal(await others.isChecked(), false);

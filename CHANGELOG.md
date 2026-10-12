@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed focused mode to show Agent, Model, Effort, Mark done, and Tools as one-tap buttons, and grouped terminal access settings under Node settings.
+
 ## 2.75.0 — 2026-10-12
 
 - Fixed Compare periods requests aborting while loading; comparisons now use focused daily totals, preserve snapshots, and support cancellation and timeout retries.

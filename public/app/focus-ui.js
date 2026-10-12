@@ -39,13 +39,12 @@ function showSection(section) {
   menu.dataset.section = section;
   const inChat = currentView() === "chat";
   document.querySelector("#focusBack").hidden = !section;
-  document.querySelector("#focusChatSections").hidden = !inChat || Boolean(section);
+  document.querySelector("#focusChatQuickActions").hidden = !inChat || Boolean(section);
   context.hidden = Boolean(section);
   chatHost.hidden = !section;
-  document.querySelector("#focusAgent").setAttribute("aria-expanded", String(section === "agent"));
   document.querySelector("#focusTools").setAttribute("aria-expanded", String(section === "tools"));
   document.querySelector("#focusContextTitle").textContent = section
-    ? { agent: "Agent & model", tools: "Tools & actions" }[section]
+    ? { tools: "Tools & actions" }[section]
     : { projects: "Projects", sessions: "This project", chat: "This conversation", board: "Project board", canvas: "Canvas" }[currentView()];
   elements.chatMoreMenu.open = section === "tools";
   placeMenu();
@@ -84,6 +83,20 @@ function syncView() {
   if (state.activeProjectId && view === "projects") proxyAction("Project notes", document.querySelector("#projectNotesButton"), "file");
   if (view === "board") proxyAction("New task", elements.newTaskButton, "pencil");
   if (view === "canvas") proxyAction("Add conversation", elements.canvasAddButton, "chat");
+  syncQuickActionLabels();
+}
+
+export function syncQuickActionLabels() {
+  if (!enabled) return;
+  const agentLabel = document.querySelector("#focusAgentLabel");
+  const modelLabel = document.querySelector("#focusModelLabel");
+  const effortLabel = document.querySelector("#focusEffortLabel");
+  if (!agentLabel || !modelLabel || !effortLabel) return;
+
+  const harness = state.harnesses.find(h => h.id === state.engine);
+  agentLabel.textContent = harness?.label || "Agent";
+  modelLabel.textContent = state.activeModelLabel || "Model";
+  effortLabel.textContent = state.thinkingLevel || "Effort";
 }
 
 /** Layout only: never reload a session or change the user's panel-collapse preferences.
@@ -140,7 +153,10 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   document.querySelector("#focusNewConversation").onclick = start;
   document.querySelector("#conversationSearchCreateButton").onclick = start;
   decorateControls();
-  document.querySelector("#focusAgent").onclick = () => { showSection("agent"); document.querySelector("#focusBack").focus(); };
+  document.querySelector("#focusMarkDone").onclick = () => { showMenu(false); elements.chatDoneButton.click(); };
+  document.querySelector("#focusAgent").onclick = () => { showMenu(false); if (typeof elements.chatHarnessSelect.showPicker === "function") elements.chatHarnessSelect.showPicker(); else elements.chatHarnessSelect.focus(); };
+  document.querySelector("#focusModel").onclick = () => { showMenu(false); elements.modelButton.click(); };
+  document.querySelector("#focusEffort").onclick = () => { showMenu(false); if (typeof elements.reasoningLevelSelect.showPicker === "function") elements.reasoningLevelSelect.showPicker(); else elements.reasoningLevelSelect.focus(); };
   document.querySelector("#focusTools").onclick = () => { showSection("tools"); document.querySelector("#focusBack").focus(); };
   document.querySelector("#focusBack").onclick = backToControls;
   for (const [id, action] of [["focusNewNote", createNote], ["focusRecents", openRecentSessions], ["focusReviews", inspectReviews], ["focusRunning", inspectRunning]]) {
@@ -169,13 +185,12 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
 }
 
 function backToControls() {
-  const section = menu.dataset.section;
   showSection("");
-  document.querySelector(section === "agent" ? "#focusAgent" : "#focusTools").focus();
+  document.querySelector("#focusTools").focus();
 }
 function decorateControls() {
   for (const [id, icon] of Object.entries({
-    focusBack: "back", focusClose: "close", focusAgent: "sliders", focusTools: "terminal",
+    focusBack: "back", focusClose: "close",
     focusNewConversation: "chat", focusNewNote: "pencil", focusRecents: "clock", focusReviews: "archive", focusRunning: "play",
     focusProjects: "folder", focusConversations: "chat", focusSettings: "sliders",
     openTerminalButton: "terminal", openBrowserButton: "globe", chatFilesButton: "folder", chatGitButton: "merge",

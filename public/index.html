@@ -46,9 +46,12 @@
       </header>
       <div class="focus-context-scroll">
         <div id="focusContextActions"></div>
-        <div id="focusChatSections" hidden>
-          <button type="button" id="focusAgent" data-testid="focus-agent" aria-controls="focusChatControls" aria-expanded="false">Agent &amp; model</button>
-          <button type="button" id="focusTools" data-testid="focus-tools" aria-controls="focusChatControls" aria-expanded="false">Tools &amp; actions</button>
+        <div id="focusChatQuickActions" hidden>
+          <button type="button" id="focusMarkDone" class="focus-quick-action" data-testid="focus-mark-done" title="Mark conversation done"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.3 2.4 2.4 4.8-5"/></svg>Mark done</button>
+          <button type="button" id="focusAgent" class="focus-quick-action focus-agent-btn" data-testid="focus-agent" title="Select agent"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span id="focusAgentLabel">Agent</span></button>
+          <button type="button" id="focusModel" class="focus-quick-action focus-model-btn" data-testid="focus-model" title="Select model"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v14a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M12 2a3 3 0 0 1 3 3v14a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M12 2v20M9 5h6M9 19h6"/></svg><span id="focusModelLabel">Model</span></button>
+          <button type="button" id="focusEffort" class="focus-quick-action focus-effort-btn" data-testid="focus-effort" title="Select reasoning level"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span id="focusEffortLabel">Effort</span></button>
+          <button type="button" id="focusTools" class="focus-quick-action focus-tools-btn" data-testid="focus-tools" title="More tools & actions"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 5 5-5 5"/><path d="M12.5 17h6.5"/></svg>Tools</button>
         </div>
         <div id="focusChatControls" hidden></div>
       </div>
@@ -648,7 +651,7 @@
         <section class="settings-panel" id="settingsPanel-node" role="tabpanel" aria-labelledby="settingsTab-node" tabindex="0" data-testid="settings-panel-node" data-admin-only hidden>
           <p class="settings-hint">Only you, the admin of this node, see this section.</p>
           <fieldset class="phase-settings" data-testid="settings-terminal-policy">
-            <legend>Terminal</legend>
+            <legend>Terminal access on this node</legend>
             <label>Who may open a terminal on this node
               <select id="terminalPolicyMode" data-testid="terminal-policy-mode">
                 <option value="off">Nobody</option>
@@ -670,6 +673,18 @@
             <p class="settings-hint">A terminal runs as its person, in their project folder. Visitors signed in from other nodes never get one. Every open and close is recorded in the node's audit log.</p>
             <div class="node-block-add"><button class="ghost compact" type="button" id="terminalPolicySave" data-testid="terminal-policy-save">Save terminal settings</button></div>
             <p class="settings-hint" id="terminalPolicyStatus" role="status" data-testid="terminal-policy-status"></p>
+          </fieldset>
+          <fieldset class="phase-settings" data-admin-only>
+            <legend>Terminal access from other nodes</legend>
+            <label class="checkbox-row">
+              <input id="settingsRemoteTerminalTwins" type="checkbox" data-testid="settings-remote-terminal-twins" />
+              Allow twins to open a terminal on this node
+            </label>
+            <label class="checkbox-row">
+              <input id="settingsRemoteTerminalOtherNodes" type="checkbox" data-testid="settings-remote-terminal-other-nodes" />
+              Allow other nodes to open a terminal on this node
+            </label>
+            <p class="settings-hint">These apply when you are signed in to another node and open a terminal for a conversation or ticket running here. Signing in to this node directly always gives you its terminal.</p>
           </fieldset>
           <fieldset class="phase-settings" data-testid="settings-node-blocks">
             <legend>Blocked nodes</legend>
@@ -784,18 +799,6 @@
             <div id="settingsSyncCheckModel"></div>
             <output id="settingsSyncCheckStatus" class="engine-readiness" data-testid="settings-sync-check-status"></output>
             <p class="settings-hint">Every few minutes this node looks for Syncthing conflict copies in the projects it owns and for folders stuck in an error state. It removes duplicate copies, restores copies whose original is gone, rescans broken folders, and asks the chosen harness and model to merge real two-sided edits. Binary and very large files are left for you.</p>
-          </fieldset>
-          <fieldset class="phase-settings" data-admin-only>
-            <legend>Terminal access</legend>
-            <label class="checkbox-row">
-              <input id="settingsRemoteTerminalTwins" type="checkbox" data-testid="settings-remote-terminal-twins" />
-              Allow twins to open a terminal on this node
-            </label>
-            <label class="checkbox-row">
-              <input id="settingsRemoteTerminalOtherNodes" type="checkbox" data-testid="settings-remote-terminal-other-nodes" />
-              Allow other nodes to open a terminal on this node
-            </label>
-            <p class="settings-hint">These apply when you are signed in to another node and open a terminal for a conversation or ticket running here. Signing in to this node directly always gives you its terminal.</p>
           </fieldset>
           <fieldset class="phase-settings" data-admin-only>
             <legend>Shell commands</legend>

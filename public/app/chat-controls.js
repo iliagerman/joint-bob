@@ -5,6 +5,7 @@ import { syncBrowserButton } from "./browser.js";
 import { clearThinkingBubble } from "./chat-transcript.js";
 import { changeReasoningLevel, hideCommandAutocomplete, renderReasoningOptions, renderToolsDialog, syncModelButton } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
+import { syncQuickActionLabels } from "./focus-ui.js";
 import { shortSessionTitle, syncChatTitleFromSessions } from "./layout.js";
 import { renderSessions } from "./session-list.js";
 import { setStatus, toast } from "./shell.js";
@@ -148,6 +149,7 @@ function syncReasoningControls(status) {
   state.thinkingLevel = status.thinkingLevel;
   state.availableThinkingLevels = status.availableThinkingLevels;
   renderReasoningOptions();
+  syncQuickActionLabels();
 }
 
 // Harnesses report a comparable percentage; providers include token counts only when known.
@@ -190,6 +192,7 @@ export function updateStatus(status) {
   syncReasoningControls(status);
   syncContextUsage(status.contextUsage);
   syncModelButton();
+  syncQuickActionLabels();
   if (elements.toolsDialog.open) renderToolsDialog();
 }
 
