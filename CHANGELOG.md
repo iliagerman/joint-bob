@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.77.1 — 2026-10-12
 
 - Fixed settings saved with a model the picker no longer offers being rejected, so turns interrupted by an update can resume on the model they were using.
 - Fixed project running and review badges splitting across lines in narrow project cards, and the connection dot now pulses only while a conversation is working.
