@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Fixed a webhook call whose agent could not start opening a blank conversation; the reason now shows in that conversation.
+- Fixed open pages rescanning every project each second while a conversation ran in the open project, which kept the server busy and made everything slow.
 
 ## 2.73.0 — 2026-10-11
 

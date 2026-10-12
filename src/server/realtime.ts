@@ -56,7 +56,9 @@ export async function reloadSharedSkills(): Promise<{ reloaded: number; skipped:
 export function broadcastToProject(projectId: string, payload: unknown): void {
   const sockets = new Set<WebSocket>(watchClients.get(projectId) ?? []);
   for (const session of harnessSessions.values()) if (session.projectId === projectId) for (const client of session.clients) sockets.add(client);
-  for (const socket of sockets) send(socket, payload);
+  // A page rescans every project for a conversation notice that names none.
+  const scoped = (payload as { type?: unknown }).type === "sessionsChanged" ? { ...(payload as object), projectId } : payload;
+  for (const socket of sockets) send(socket, scoped);
 }
 /** `accountId` limits an event to one person's sockets: their pins, recents and shortcuts
     are nobody else's business, not even that they changed. */
