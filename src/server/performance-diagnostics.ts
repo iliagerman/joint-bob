@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { appendFile, chmod, mkdir, rename, stat } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { Session } from "node:inspector/promises";
 import path from "node:path";
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import type { RequestHandler } from "express";
@@ -9,7 +10,13 @@ type Fields = Record<string, string | number | boolean>;
 const requestContext = new AsyncLocalStorage<string>();
 
 /** Bounded, private diagnostics. Never accepts request bodies, queries, headers or error messages. */
-export function createPerformanceDiagnostics(directory: string, options: { slowMs?: number; intervalMs?: number; maxBytes?: number; waitingMs?: number; totalsMs?: number } = {}) {
+export interface ProfileOptions {
+  /** Share of the time the event loop must stay busy, over `samples` runtime samples in a row. */
+  busy?: number; samples?: number;
+  seconds?: number; cooldownMs?: number; warmupMs?: number;
+}
+
+export function createPerformanceDiagnostics(directory: string, options: { slowMs?: number; intervalMs?: number; maxBytes?: number; waitingMs?: number; totalsMs?: number; profile?: ProfileOptions } = {}) {
   const slowMs = options.slowMs ?? 500;
   const waitingMs = options.waitingMs ?? 10_000;
   const maxBytes = options.maxBytes ?? 5 * 1024 * 1024;
@@ -34,6 +41,57 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
     let entry = totals.get(key);
     if (!entry) totals.set(key, entry = { event, labels, count: 0, totalMs: 0, maxMs: 0 });
     entry.count++; entry.totalMs += durationMs; entry.maxMs = Math.max(entry.maxMs, durationMs);
+  }
+
+  /*
+   * The log says which requests are slow, not which code is running. A CPU profile does, and
+   * taking one used to need a signal sent to the process. One is now taken, for half a minute,
+   * when the server has been busy for a whole minute (at most every six hours, and not while
+   * it is still starting), or when a file named cpu-profile.request appears beside the log;
+   * the file may hold the number of seconds. The profile replaces the previous one. It holds
+   * function names, files and line numbers of this server's code, and no data.
+   */
+  const profileBusy = options.profile?.busy ?? 0.7, profileSamples = options.profile?.samples ?? 6;
+  const profileSeconds = options.profile?.seconds ?? 30, profileCooldownMs = options.profile?.cooldownMs ?? 6 * 60 * 60_000, profileWarmupMs = options.profile?.warmupMs ?? 10 * 60_000;
+  const profileRequest = path.join(directory, "cpu-profile.request"), profileFile = path.join(directory, "cpu-profile.cpuprofile");
+  const recentlyBusy: number[] = [];
+  const startedAt = performance.now();
+  let profiling: Promise<void> | undefined;
+  let profiledAt = -Infinity;
+
+  function takeProfile(seconds: number, reason: string): Promise<void> {
+    return profiling ??= (async () => {
+      profiledAt = performance.now();
+      const session = new Session();
+      try {
+        session.connect();
+        await session.post("Profiler.enable");
+        await session.post("Profiler.setSamplingInterval", { interval: 1000 });
+        await session.post("Profiler.start");
+        await new Promise<void>((resolve) => { setTimeout(resolve, seconds * 1000).unref(); });
+        const { profile } = await session.post("Profiler.stop");
+        await mkdir(directory, { recursive: true, mode: 0o700 });
+        await writeFile(profileFile, JSON.stringify(profile), { mode: 0o600 });
+        await chmod(profileFile, 0o600);
+        log("cpu_profile", { reason, seconds, samples: profile.samples?.length ?? 0 });
+      } catch { /* Diagnostics never disturb the server. */ }
+      finally { try { session.disconnect(); } catch { /* never connected */ } profiling = undefined; }
+    })();
+  }
+
+  async function considerProfile(now: number, busy: number): Promise<void> {
+    recentlyBusy.push(busy);
+    if (recentlyBusy.length > profileSamples) recentlyBusy.shift();
+    if (profiling) return;
+    const asked = await readFile(profileRequest, "utf8").catch(() => undefined);
+    if (asked !== undefined) {
+      await rm(profileRequest, { force: true });
+      const seconds = Number(asked.trim());
+      await takeProfile(Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 120) : profileSeconds, "requested");
+      return;
+    }
+    const sustained = recentlyBusy.length >= profileSamples && recentlyBusy.every((share) => share >= profileBusy);
+    if (sustained && now - startedAt >= profileWarmupMs && now - profiledAt >= profileCooldownMs) await takeProfile(profileSeconds, "busy");
   }
 
   function writeTotals(now: number): void {
@@ -127,6 +185,7 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
       });
       cpu = nextCpu; last = now; utilization = nextUtilization; delay.reset();
       if (now - totalsSince >= totalsMs) writeTotals(now);
+      void considerProfile(now, loop.utilization).catch(() => undefined);
     }, options.intervalMs ?? 10_000);
     timer.unref();
   }

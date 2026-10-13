@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -141,4 +141,40 @@ test("fast operations do not generate noisy logs", async (t) => {
   assert.equal(await diagnostics.measure("test.fast", () => 42), 42);
   await diagnostics.flush();
   await assert.rejects(stat(path.join(root, "performance.jsonl")), { code: "ENOENT" });
+});
+
+test("a CPU profile is taken on request and when the server stays busy, never while it is merely starting", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-profile-"));
+  const profile = path.join(root, "cpu-profile.cpuprofile"), request = path.join(root, "cpu-profile.request");
+  const taken = async (): Promise<Array<{ reason: string; seconds: number }>> => (await readFile(path.join(root, "performance.jsonl"), "utf8").catch(() => ""))
+    .split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(event => event.event === "cpu_profile");
+  const until = async (check: () => Promise<boolean>): Promise<void> => { for (let tries = 0; tries < 200 && !await check(); tries++) await pause(20); assert.equal(await check(), true); };
+  const spin = (): NodeJS.Timeout => setInterval(() => { const end = Date.now() + 8; while (Date.now() < end) { /* keeps the event loop busy */ } }, 1);
+
+  // Busy from the first sample, but still inside its warm-up: only the request is honoured.
+  const starting = createPerformanceDiagnostics(root, { intervalMs: 10, profile: { busy: 0.5, samples: 3, seconds: 0.05, warmupMs: 60_000 } });
+  let busy = spin();
+  t.after(async () => { clearInterval(busy); await starting.stop(); await settled.stop(); await rm(root, { recursive: true, force: true }); });
+  starting.start();
+  await pause(150);
+  assert.deepEqual(await taken(), []);
+  await writeFile(request, "0.05");
+  await until(async () => (await taken()).length === 1);
+  clearInterval(busy);
+  await starting.stop();
+  assert.deepEqual((await taken()).map(event => event.reason), ["requested"]);
+  await assert.rejects(stat(request), { code: "ENOENT" }, "the request is consumed");
+  assert.equal((await stat(profile)).mode & 0o777, 0o600);
+  const saved = JSON.parse(await readFile(profile, "utf8"));
+  assert.ok(Array.isArray(saved.nodes) && saved.nodes.length > 0 && Array.isArray(saved.samples));
+
+  // Past its warm-up and busy for several samples in a row: one profile, then the cooldown holds.
+  const settled = createPerformanceDiagnostics(root, { intervalMs: 10, profile: { busy: 0.5, samples: 3, seconds: 0.05, warmupMs: 0, cooldownMs: 60_000 } });
+  busy = spin();
+  settled.start();
+  await until(async () => (await taken()).length === 2);
+  await pause(250);
+  clearInterval(busy);
+  await settled.stop();
+  assert.deepEqual((await taken()).map(event => event.reason), ["requested", "busy"]);
 });
