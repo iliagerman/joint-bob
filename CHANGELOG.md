@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.86.3 — 2026-10-13
 
-- Made the chat's Story button reopen a conversation's saved story on the page you left, write a conversation's first story only once, and show a Back to story button after you jump to a turn in the chat.
+- Made the chat's Story button open a conversation's saved story on the section and page you left, reopen a story that is still being written, and write a story only when the conversation has none, instead of writing a new one on every press; the story now includes the pending files the conversation claimed.
+- Added a Back to story button after you jump to a turn in the chat, which returns you to the same story page and disappears once another conversation is opened.
+- Made a conversation's commits appear even when Git printed no confirmation for them, by matching commits made during the turn's tool calls.
+- Made the Components tab explain why a story has no files.
 
 ## 2.86.2 — 2026-10-13
 
