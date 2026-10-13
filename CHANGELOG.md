@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.90.0 — 2026-10-13
 
-- Added an Auto badge to each conversation in the list while auto respond is answering in it, showing how many replies it has written against its limit, and a stopped badge that says why it ended.
+- Added an Auto badge to each conversation row in the list that shows how many replies auto respond has written while it answers, or says Auto stopped with the reason on hover, and the list now refreshes as that state changes.
 
 ## 2.89.0 — 2026-10-13
 
