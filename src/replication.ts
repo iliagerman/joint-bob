@@ -102,11 +102,18 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
-// Where the search for events a peer has no delivery row for resumes. Events the sharing
-// filter refused stay behind the mark; a full search every few minutes (and after a
-// restart) offers them again, so a later grant still reaches the peer.
-const unallocatedScan = new Map<string, { rowid: number; fullAt: number }>();
+// Where the search for events a peer has no delivery row for stands. Events newer than
+// `tail` are looked at on every pass. Events the sharing filter refused stay unallocated, and
+// a search of everything older offers them again every few minutes and after a restart, so a
+// later grant still reaches the peer. That search used to run in one go: for a peer that may
+// see little, it read and judged every event in the outbox, a few hundred thousand on a busy
+// node, and froze the server for nine seconds each time. It now advances for a few
+// milliseconds on every pass, behind the new events, and starts again five minutes after it
+// last finished.
+interface OutboxScan { tail: number; older?: { cursor: number; end: number }; finishedAt: number }
+const unallocatedScan = new Map<string, OutboxScan>();
 const FULL_SCAN_MS = 5 * 60_000;
+const SCAN_BUDGET_MS = 40;
 
 function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
   const selected: ReplicationEvent[] = [];
@@ -117,39 +124,51 @@ function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, fi
     if (filter(event)) selected.push(event);
   }
   const page = db.prepare(`SELECT o.rowid cursor, o.* FROM replication_outbox o
-    WHERE o.rowid>? AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)
+    WHERE o.rowid>? AND o.rowid<=? AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)
     ORDER BY o.rowid LIMIT 100`);
   const allocate = db.prepare(`INSERT OR IGNORE INTO replication_deliveries
     (event_id,peer_id,attempts,next_attempt_at,delivered_at,last_error) VALUES (?,?,0,?,NULL,NULL)`);
-  const now = Date.parse(at), previous = unallocatedScan.get(peerId);
-  const full = !previous || now - previous.fullAt >= FULL_SCAN_MS;
-  let cursor = full ? 0 : previous.rowid;
-  const fullAt = full ? now : previous.fullAt;
+  const now = Date.parse(at), started = Date.now();
   // Taken before searching: an event added meanwhile has a higher rowid and is found next time.
   const newest = (db.prepare("SELECT max(rowid) id FROM replication_outbox").get() as { id: number | null }).id ?? 0;
-  while (selected.length < 100) {
-    const rows = page.all(cursor, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
-    if (!rows.length) { cursor = Math.max(cursor, newest); break; }
-    for (const row of rows) {
-      cursor = row.cursor;
-      const event = eventFromRow(row);
-      if (!filter(event)) continue;
-      allocate.run(event.id, peerId, at);
-      selected.push(event);
-      if (selected.length === 100) break;
+  // After a restart what is already there is searched like any other older event, so that
+  // events added from now on do not wait behind it.
+  const scan = unallocatedScan.get(peerId) ?? { tail: newest, older: { cursor: 0, end: newest }, finishedAt: now };
+  if (!scan.older && now - scan.finishedAt >= FULL_SCAN_MS) scan.older = { cursor: 0, end: scan.tail };
+  /** Allocates what the filter accepts in (from, to] and returns how far it got. */
+  const search = (from: number, to: number): number => {
+    let cursor = from;
+    while (cursor < to && selected.length < 100 && Date.now() - started < SCAN_BUDGET_MS) {
+      const rows = page.all(cursor, to, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
+      if (!rows.length) return to;
+      for (const row of rows) {
+        cursor = row.cursor;
+        const event = eventFromRow(row);
+        if (!filter(event)) continue;
+        allocate.run(event.id, peerId, at);
+        selected.push(event);
+        if (selected.length === 100) break;
+      }
     }
+    return cursor;
+  };
+  scan.tail = search(scan.tail, newest);
+  if (scan.older) {
+    scan.older.cursor = search(scan.older.cursor, scan.older.end);
+    if (scan.older.cursor >= scan.older.end) { scan.older = undefined; scan.finishedAt = now; }
   }
-  unallocatedScan.set(peerId, { rowid: cursor, fullAt });
+  unallocatedScan.set(peerId, scan);
   return selected;
 }
 
 export async function pendingEventsForPeer(peerId:string,filter:(event:ReplicationEvent)=>boolean):Promise<{pending:number;error?:string}>{
   const db=await replicationDatabase();
-  // Undelivered rows, plus events the poll has not reached yet.
+  // Undelivered rows, plus events the poll has not reached yet. Older events the background
+  // search has still to offer again are not counted.
   const rows=db.prepare(`SELECT o.*,d.last_error FROM replication_deliveries d JOIN replication_outbox o ON o.event_id=d.event_id
     WHERE d.peer_id=? AND d.delivered_at IS NULL
     UNION ALL SELECT o.*,NULL FROM replication_outbox o WHERE o.rowid>?
-      AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)`).iterate(peerId,unallocatedScan.get(peerId)?.rowid??0,peerId);
+      AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)`).iterate(peerId,unallocatedScan.get(peerId)?.tail??0,peerId);
   let pending=0,error:string|undefined;
   for(const row of rows)if(filter(eventFromRow(row as unknown as OutboxRow))){
     pending++;
