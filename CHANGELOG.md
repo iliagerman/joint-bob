@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Made the open project's conversation list build once when several open pages and panels ask for it at the same moment, so a slow machine no longer stalls while it repeats the same work.
+
 ## 2.80.0 — 2026-10-13
 
 - Added a once-a-minute performance total of every request and step, fast ones included, and a report that summarises a chosen time window so the effect of a change can be measured.

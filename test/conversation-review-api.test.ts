@@ -152,6 +152,35 @@ test("session API persists automatic review transitions for the signed-in accoun
       body: JSON.stringify({ sessions: [{ sessionPath: "missing", updatedAt: pendingAfterClick.updatedAt }] }),
     });
     assert.equal(missing.status, 409);
+
+    // Requests for the same list that overlap share one listing; the open project's own list never takes a finished one.
+    const { sharedProjectListingUse, resetSharedProjectListings } = await import("../src/session-listing-revisions.js");
+    const get = async (route: string) => {
+      const response = await fetch(`${node.baseUrl}${route}`, { headers: { Cookie: cookie } });
+      assert.equal(response.status, 200, route);
+      return response.json() as Promise<unknown>;
+    };
+    const sessions = `/api/projects/${fixture.projectId}/sessions`;
+    // A notice from the file watcher for the transcript written above may land in the middle and
+    // rightly build the list again, so the counts are taken on a pass that no notice interrupted.
+    let counts: number[][] = [];
+    for (let attempt = 0; attempt < 6 && JSON.stringify(counts) !== "[[1,3],[1,0],[0,1]]"; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      resetSharedProjectListings();
+      const taken = [sharedProjectListingUse()];
+      const [first] = await Promise.all([get(sessions), get(sessions), get("/api/running"), get("/api/reviews/pending")]);
+      taken.push(sharedProjectListingUse());
+      assert.deepEqual(await get(sessions), first);
+      taken.push(sharedProjectListingUse());
+      await get("/api/running");
+      taken.push(sharedProjectListingUse());
+      counts = taken.slice(1).map((use, index) => [use.computed - taken[index].computed, use.reused - taken[index].reused]);
+    }
+    assert.deepEqual(counts, [
+      [1, 3], // two pages, the running list and the review inbox asking together share one listing
+      [1, 0], // the open project's list is built again once that one has finished
+      [0, 1], // and the lists spanning every project still have the one they keep
+    ]);
   } finally {
     await new Promise<void>((resolve) => node.server.close(() => resolve()));
     node.restoreEnvironment();

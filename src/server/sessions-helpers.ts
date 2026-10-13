@@ -219,9 +219,9 @@ export async function noteUnannouncedRunChanges(): Promise<void> {
  * acts on one conversation's state at that moment (a takeover, a scheduled run, a review
  * notification) calls listProjectSessionsWithReviewState itself.
  */
-export function sharedProjectSessions(project: ProjectRecord, userId: string, username: string): Promise<SessionSummary[]> {
+export function sharedProjectSessions(project: ProjectRecord, userId: string, username: string, onlyInFlight = false): Promise<SessionSummary[]> {
   const key = JSON.stringify([project.id, userId, username, getSettings().conversationHistoryDays, project.path, project.macPath ?? "", project.locations ?? []]);
-  return sharedProjectListing(project.id, key, () => listProjectSessionsWithReviewState(project, userId, username));
+  return sharedProjectListing(project.id, key, () => listProjectSessionsWithReviewState(project, userId, username), "", Date.now(), onlyInFlight);
 }
 
 // A leftover `claiming` record is a crashed two-phase claim from this node; no

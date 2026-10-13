@@ -52,7 +52,12 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
     const authSession = response.locals.authSession as AuthSession;
     const token = typeof request.query.byTheWayToken === "string" ? request.query.byTheWayToken : undefined;
     const temporary = token ? await getByTheWayLeaseByToken(project.id, token) : undefined;
-    response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId, authSession.accountId, undefined, temporary?.sessionId) });
+    // Every open page asks for this after each change and every two seconds while something
+    // runs, alongside the running list and the review inbox. Requests that overlap share one
+    // listing, so a slow machine no longer builds the same list several times at once.
+    response.json({ sessions: temporary
+      ? await listProjectSessionsWithReviewState(project, authSession.userId, authSession.accountId, undefined, temporary.sessionId)
+      : await sharedProjectSessions(project, authSession.userId, authSession.accountId, true) });
   } catch (error) {
     next(error);
   }
