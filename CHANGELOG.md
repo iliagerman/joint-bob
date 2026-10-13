@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.86.1 — 2026-10-13
 
-- Stopped resending synced events every few minutes to a machine that keeps refusing them, which had frozen slower machines for seconds at a time; such a machine is now asked again within an hour, or as soon as it comes back online.
+- Stopped resending synced events every few minutes to a machine that keeps refusing them, which had frozen slower machines for seconds at a time; such a machine is now left alone for an hour, or until it comes back online.
 - Made open pages check for browser sign-ins every fifteen seconds instead of every two while no browser is running, so idle pages ask each machine far less often; checking speeds back up as soon as a browser starts.
 - Stopped the server freezing for seconds at a time while it searched for older synced items to offer a machine that may be allowed to see little; new items now go out right away, and the older ones are picked up gradually in the background.
 
