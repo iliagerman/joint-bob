@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.88.0 — 2026-10-13
 
-- Added auto respond, which writes your next message when the agent stops, within the limit and stop conditions you set; its replies carry an Auto badge.
+- Added auto respond, which hands a conversation's turn-taking to a second model: when the agent stops with nothing queued, it writes your next message within the stop instructions and response limit you set, and its replies carry an Auto badge that stays after reopening.
+- Made auto respond stop with a stated reason when its stop instructions or response limit are reached, when you press Stop or type a message, when a turn fails, when the responder fails, or when its budget runs out, and let Resume restart the count.
 
 ## 2.87.0 — 2026-10-13
 
