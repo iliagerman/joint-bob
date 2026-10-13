@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.84.0 — 2026-10-13
 
-- Added a PR file limit setting in Settings' Git tab, so admins can raise the number of changed files shown for a pull request and allowed in a worktree pull request beyond the old fixed 500 (the default is now 1,000, up to 3,000).
+- Added an admin-only PR file limit in Settings' Git tab, which sets how many changed files a pull request shows, explains, and can carry, from 1 to 3,000 (the default is 1,000, up from a fixed 500).
 
 ## 2.83.0 — 2026-10-13
 
