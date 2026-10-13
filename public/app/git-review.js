@@ -717,6 +717,11 @@ elements.chatGitButton.addEventListener("click", () => {
   const session = activeChatSession();
   void openGitReview(session?.conversationId ?? session?.id ?? null);
 });
+elements.chatStoryButton.addEventListener("click", () => {
+  const session = activeChatSession();
+  if (!session) { toast("Open a conversation first"); return; }
+  generateConversationStory(session.conversationId ?? session.id).catch((error) => toast(error.message));
+});
 elements.gitReviewCloseButton.addEventListener("click", () => elements.gitReviewDialog.close());
 elements.gitReviewDialog.addEventListener("close", () => { git.scopeRequest += 1; git.selection = null; git.thread = null; });
 for (const button of [elements.gitReviewTabChanges, elements.gitReviewTabStory, elements.gitReviewTabHistory, elements.gitReviewTabReviews, elements.gitReviewTabPulls, elements.gitReviewTabPipelines]) {

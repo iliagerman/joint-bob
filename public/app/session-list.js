@@ -12,7 +12,6 @@ import { keepListScroll, renderProjects } from "./project-list.js";
 import { syncRecentSessionActivity } from "./recents.js";
 import { openListedSession, reviewableSessions } from "./reviews.js";
 import { conversationBudgetTarget, openBudgetDialog } from "./budget-dialog.js";
-import { generateConversationStory } from "./git-review.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { openSecretScope } from "./secrets.js";
 import { labelIcon, labelOptionText } from "./classification.js";
@@ -368,13 +367,6 @@ function sessionMenuItems(session, sessionActive) {
       testid: "session-fork-button",
       title: "Copy history and settings into an independent conversation",
       onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
-    },
-    {
-      label: "Change story…",
-      icon: "copy",
-      testid: "session-story-button",
-      title: "Explain what this conversation did, from its own turns and commits",
-      onSelect: () => generateConversationStory(session.conversationId || session.id).catch((error) => toast(error.message)),
     },
     {
       label: "Move or copy to project…",

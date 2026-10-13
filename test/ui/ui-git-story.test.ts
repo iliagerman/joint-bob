@@ -248,6 +248,43 @@ test("Story tab opens each section while the reviewer is still writing the rest"
   assert.equal(await page.getByTestId("git-review-story-dot").isVisible(), true);
 });
 
+test("Story tab opens on the first finished section even when the overview is still being written", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.addInitScript(`
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (!new URL(String(input), location.href).pathname.endsWith("/git/story")) return realFetch(input, init);
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({ start(controller) {
+        window.storyStream = { push: (line) => controller.enqueue(encoder.encode(JSON.stringify(line) + "\\n")), end: () => controller.close() };
+      } });
+      return Promise.resolve(new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }));
+    };
+  `);
+  await page.route("**/api/projects/*/git/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/status")) return route.fulfill({ json: status });
+    if (url.pathname.endsWith("/scope")) return route.fulfill({ json: { paths: ["app.ts", "app.test.ts"], lastHarness: "claude" } });
+    if (url.pathname.endsWith("/guide-latest")) return route.fulfill({ json: { latest: null } });
+    if (url.pathname.endsWith("/story-latest")) return route.fulfill({ json: { latest: null, commits: [{ shortHash: "abc1234", subject: "feat: greet" }] } });
+    return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
+  });
+  await mockReviewers(page);
+  await openGit(page, environment, node.url);
+  await page.getByTestId("git-review-tab-story").click();
+  await page.getByTestId("git-story-generate").click();
+  await page.getByTestId("git-story-writing").waitFor();
+  await page.waitForFunction(() => Boolean((window as unknown as { storyStream?: unknown }).storyStream));
+  await page.evaluate((items) => {
+    const win = window as unknown as { storyStream: { push: (line: unknown) => void } };
+    for (const line of items) win.storyStream.push(line);
+  }, [{ type: "facts", facts, patches, sources: saved.sources }, { type: "section", section: "diagram", data: written.diagram }, { type: "section", section: "timeline", data: written.timeline }]);
+  // No title and no overview yet: the conversation section is finished, so it opens instead of the progress card.
+  await page.getByTestId("git-story-progress").waitFor();
+  assert.match(await page.getByTestId("git-story-panel").innerText(), /Added the greeting/);
+  assert.equal(await page.getByTestId("git-story-writing").count(), 0);
+});
+
 test("Story tab marks a saved story outdated and offers Regenerate", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await page.route("**/api/projects/*/git/**", async (route) => {

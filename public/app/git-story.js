@@ -21,6 +21,8 @@ const story = {
   implTab: "components",
   pages: {},
   jumpPhase: false,
+  // True once the reader opens a section themselves, so a section finishing never moves them.
+  chose: false,
   // Picking commits from history instead of explaining the conversation.
   picking: false,
   pick: { tab: "pushes", pushes: null, history: null, error: "", selected: new Map(), typed: "", typedError: "", adding: false },
@@ -76,6 +78,7 @@ export function resetStory(ctx) {
   story.step = 0;
   story.implTab = "components";
   story.pages = {};
+  story.chose = false;
   story.picking = false;
   story.pick = { tab: "pushes", pushes: null, history: null, error: "", selected: new Map(), typed: "", typedError: "", adding: false };
   story.draft = null;
@@ -156,6 +159,7 @@ export async function generateStory(payload) {
   story.error = "";
   story.draft = { facts: null, patches: [], sources: null, story: {}, checking: false };
   story.section = "overview";
+  story.chose = false;
   story.phase = 0;
   story.example = 0;
   story.step = 0;
@@ -335,7 +339,10 @@ export function renderStory() {
   container.replaceChildren();
   if (story.state === "idle" || story.state === "loading") { container.append(loadingPanel("Loading the saved story…")); return; }
   if (story.state === "writing") {
-    if (!story.draft?.facts || !story.draft.story.title || !story.draft.story.overview) { container.append(writingPanel()); return; }
+    // The first finished section opens the story; the rest fill in behind it.
+    const firstReady = story.draft?.facts ? storySections().find((item) => sectionReady(item.id)) : null;
+    if (!firstReady) { container.append(writingPanel()); return; }
+    if (!story.chose && !sectionReady(story.section)) story.section = firstReady.id;
     container.append(draftBanner(), storyHead(), storyBody());
     renderSection();
     return;
@@ -423,7 +430,7 @@ function storyHead() {
   const { facts } = saved;
   const pending = facts.files.filter((file) => file.where.includes("pending")).length;
   return h("header", { class: "gs-head" },
-    h("div", { class: "gs-title" }, h("span", { class: "gs-pill is-accent" }, saved.story.kind), h("h3", { "data-testid": "git-story-title" }, saved.story.title)),
+    h("div", { class: "gs-title" }, h("span", { class: "gs-pill is-accent" }, saved.story.kind ?? "Story"), h("h3", { "data-testid": "git-story-title" }, saved.story.title ?? "Writing the story…")),
     draft ? h("div", { class: "gs-actions" }, h("span", { class: "gs-pill is-info" }, "Being written")) : h("div", { class: "gs-actions" },
       h("span", { class: freshness.fresh ? "gs-pill is-accent" : "gs-pill is-amber" }, freshness.fresh ? "Fresh" : "Outdated"),
       storyPullNumber() ? h("span", { class: "gs-pill is-info" }, `PR #${storyPullNumber()}`) : null,
@@ -451,12 +458,13 @@ function storyBody() {
     storySections().map((section, index, sections) => h("button", {
       class: "gs-rail-item", type: "button", role: "tab", id: `gitStoryRail-${section.id}`, "data-testid": `git-story-section-${section.id}`,
       "aria-selected": String(story.section === section.id), tabindex: story.section === section.id ? "0" : "-1",
-      onclick: () => { story.section = section.id; renderStory(); document.getElementById(`gitStoryRail-${section.id}`)?.focus(); },
+      onclick: () => { story.section = section.id; story.chose = true; renderStory(); document.getElementById(`gitStoryRail-${section.id}`)?.focus(); },
       onkeydown: (event) => {
         const move = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
         if (!move) return;
         event.preventDefault();
         story.section = sections[(index + move + sections.length) % sections.length].id;
+        story.chose = true;
         renderStory();
         document.getElementById(`gitStoryRail-${story.section}`)?.focus();
       },

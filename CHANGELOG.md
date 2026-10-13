@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Moved Change story… out of the conversation menu into a Story button in the chat toolbar, and the story now opens on its first finished section instead of waiting for the overview.
+
 ## 2.84.0 — 2026-10-13
 
 - Added an admin-only PR file limit in Settings' Git tab, which sets how many changed files a pull request shows, explains, and can carry, from 1 to 3,000 (the default is 1,000, up from a fixed 500).

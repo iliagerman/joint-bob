@@ -444,6 +444,7 @@ export const elements = {
   fileEditorPreview: document.querySelector("#fileEditorPreview"),
   chatFilesButton: document.querySelector("#chatFilesButton"),
   chatGitButton: document.querySelector("#chatGitButton"),
+  chatStoryButton: document.querySelector("#chatStoryButton"),
   gitReviewDialog: document.querySelector("#gitReviewDialog"),
   gitReviewContext: document.querySelector("#gitReviewContext"),
   gitReviewBranch: document.querySelector("#gitReviewBranch"),
