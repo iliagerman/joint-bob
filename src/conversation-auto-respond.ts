@@ -241,3 +241,15 @@ export async function attachAutoReplies<T extends ChatMessage>(projectId: string
     return auto ? { ...message, auto } : message;
   });
 }
+
+/** The responders on in this project, keyed by conversation, for the conversation list. */
+export async function autoRespondListing(projectId: string): Promise<Record<string, { status: "active" | "stopped"; responses: number; maxResponses: number | null; stopReason: string | null }>> {
+  const rows = (await database()).prepare("SELECT conversation_id, status, stop_reason, config, responses FROM conversation_auto_responders WHERE project_id = ? AND status <> 'off'")
+    .all(projectId) as unknown as Array<Pick<Row, "conversation_id" | "status" | "stop_reason" | "config" | "responses">>;
+  return Object.fromEntries(rows.map((row) => [row.conversation_id, {
+    status: row.status === "active" ? "active" : "stopped",
+    responses: row.responses,
+    maxResponses: (JSON.parse(row.config) as AutoRespondConfig).maxResponses,
+    stopReason: row.stop_reason,
+  }]));
+}

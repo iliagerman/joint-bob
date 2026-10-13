@@ -4407,3 +4407,5 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .chat-action.active { color: var(--accent, #2563eb); }
 .message.auto-reply .auto-badge { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line, #8885); opacity: .8; }
 #autoRespondDialog textarea { width: 100%; resize: vertical; }
+.session-auto-badge { display: inline-block; padding: 0 6px; border-radius: 999px; border: 1px solid var(--accent, #2563eb); color: var(--accent, #2563eb); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.session-auto-badge.stopped { border-color: #b9770e; color: #b9770e; }

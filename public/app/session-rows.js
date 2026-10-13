@@ -67,6 +67,17 @@ export function ticketBadge(task) {
   return badge;
 }
 
+/** Shows that auto respond answers for this conversation, or stopped and why. */
+export function autoRespondBadge(autoRespond) {
+  const badge = document.createElement("em");
+  badge.className = `session-auto-badge${autoRespond.status === "stopped" ? " stopped" : ""}`;
+  badge.dataset.testid = "session-auto-respond-badge";
+  const limit = autoRespond.maxResponses ? `/${autoRespond.maxResponses}` : "";
+  badge.textContent = autoRespond.status === "stopped" ? "Auto stopped" : `Auto ${autoRespond.responses}${limit}`;
+  badge.title = autoRespond.status === "stopped" ? `Auto respond stopped: ${autoRespond.stopReason || "stopped"}` : "Auto respond is answering for you in this conversation";
+  return badge;
+}
+
 /** The quick jump: one tap from the conversations list into the ticket itself. */
 export function ticketRowButton(task) {
   const button = document.createElement("button");

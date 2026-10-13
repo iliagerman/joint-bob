@@ -105,6 +105,14 @@ test("auto respond answers for the user until a limit or a stop instruction ends
     await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "ready"));
     assert.equal(chat.messages.find((message) => message.type === "ready")!.autoRespond, null);
 
+    const conversationId = String(chat.messages.find((message) => message.type === "ready")!.conversationId);
+    // The conversation list carries the responder's state, so the sidebar can show its badge.
+    const listedState = async () => {
+      const response = await fetch(`${node.url}/api/projects/${project.id}/sessions`, { headers: { Cookie: auth.cookie } });
+      const listing = (await response.json()) as { sessions: Array<{ conversationId?: string; id: string; autoRespond?: { status: string; responses: number; maxResponses: number | null; stopReason: string | null } }> };
+      return listing.sessions.find((session) => session.conversationId === conversationId || session.id === conversationId)?.autoRespond ?? null;
+    };
+    assert.equal(await listedState(), null, "a conversation with auto respond off carries no badge");
     chat.socket.send(JSON.stringify({ type: "prompt", message: "start the work" }));
     await waitFor(chat.messages, () => chat.messages.filter((message) => message.type === "agent_end").length === 1);
 
@@ -115,6 +123,7 @@ test("auto respond answers for the user until a limit or a stop instruction ends
     assert.deepEqual(replies.map((message) => message.text), ["continue 1", "continue 2"]);
     assert.equal(chat.messages.filter((message) => message.type === "agent_end").length, 3);
     assert.equal(chat.messages.some((message) => message.type === "textDelta" && message.text === "agent heard: continue 2"), true);
+    assert.deepEqual(await listedState(), { status: "stopped", responses: 2, maxResponses: 2, stopReason: "Reached the limit of 2 responses" });
 
     // The badge outlives the live socket: a reopened conversation still marks what the responder wrote.
     await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "sessionFile"));
@@ -134,9 +143,10 @@ test("auto respond answers for the user until a limit or a stop instruction ends
     await waitFor(chat.messages, () => autoStates(chat.messages).some((state) => state?.stopKind === "stop-instruction"));
     const answered = chat.messages.filter((message) => message.type === "userMessage" && message.auto).length;
 
-    // Off means off: nothing more is written for the user.
+    // Off means off: nothing more is written for the user, and the badge goes.
     chat.socket.send(JSON.stringify({ type: "autoRespond", autoRespond: { enabled: false } }));
     await waitFor(chat.messages, () => autoStates(chat.messages).at(-1)?.status === "off");
+    assert.equal(await listedState(), null);
     chat.socket.send(JSON.stringify({ type: "prompt", message: "one more" }));
     await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "textDelta" && message.text === "agent heard: one more"));
     await new Promise((resolve) => setTimeout(resolve, 500));

@@ -11,6 +11,7 @@ import type { HarnessId, SessionSummary } from "./types.js";
 import { conversationUsage, usageTotals } from "./usage-ledger.js";
 import { scheduleUsageIngest } from "./usage-ingest.js";
 import { sessionListingChanged } from "./session-listing-revisions.js";
+import { autoRespondListing } from "./conversation-auto-respond.js";
 
 export { defineHarness } from "./harnesses/contract.js";
 export type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
@@ -253,11 +254,12 @@ export function orderSessionFamilies(sessions: SessionSummary[], rootLimit = Inf
 
 /** Lists every registered harness through the shared catalog, then applies Joint Bob metadata. */
 export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = [], pinnedSessionIds: string[] = []): Promise<SessionSummary[]> {
-  const [overrides, colors, classifications, doneMarks, initialSessions, records] = await Promise.all([
+  const [overrides, colors, classifications, doneMarks, autoResponders, initialSessions, records] = await Promise.all([
     sessionTitleOverrides(),
     sessionColorOverrides(),
     sessionClassificationOverrides(),
     sessionDoneOverrides(),
+    autoRespondListing(project.id),
     sessionCatalog.list(project),
     listConversationRecords(project.id),
   ]);
@@ -390,6 +392,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
       ...(classifications[conversationId] ? { classification: classifications[conversationId] } : {}),
       ...(doneMarks[conversationId] ? { doneAt: doneMarks[conversationId] } : {}),
+      ...(autoResponders[conversationId] ? { autoRespond: autoResponders[conversationId] } : {}),
       ...(createdAt ? { createdAt } : {}),
     };
   }).sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));

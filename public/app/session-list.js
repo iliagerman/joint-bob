@@ -16,7 +16,7 @@ import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { openSecretScope } from "./secrets.js";
 import { labelIcon, labelOptionText } from "./classification.js";
 import { openConversationClassificationDialog, openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
-import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
+import { autoRespondBadge, isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
 import { loadWorktrees, otherWorktreesSection, worktreeBadge, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
 import { confirmAction, enableNotifications, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
@@ -196,6 +196,7 @@ function sessionCard(session, sessionActive, sessionPinned, ticketTask) {
     doneBadge.textContent = "Done";
     meta.append(" ", doneBadge);
   }
+  if (session.autoRespond) meta.append(" ", autoRespondBadge(session.autoRespond));
   if (ticketTask) meta.append(" ", ticketBadge(ticketTask));
   if (session.worktree) meta.append(" ", worktreeBadge(session.worktree));
   button.addEventListener("click", () => openListedSession(session));

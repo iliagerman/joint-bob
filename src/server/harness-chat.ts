@@ -129,10 +129,8 @@ function publishAutoRespond(connection: HarnessChatConnection, state: AutoRespon
 
 async function stopAutoRespondFor(connection: HarnessChatConnection, kind: AutoRespondStopKind, reason: string): Promise<void> {
   const state = await stopAutoRespond(connection.project.id, connection.conversationId, kind, reason);
-  if (state?.status === "stopped") {
-    publishAutoRespond(connection, state);
-    broadcastToProject(connection.project.id, { type: "sessionsChanged" });
-  }
+  if (state?.status === "stopped") publishAutoRespond(connection, state);
+  broadcastToProject(connection.project.id, { type: "sessionsChanged" });
 }
 
 function runtimeSettings(settings: QueuedSettings): HarnessModelSettings {
@@ -534,6 +532,7 @@ async function runAutoResponse(connection: HarnessChatConnection): Promise<boole
     shared.turnInFlight -= 1;
     sendHarnessStatus(shared);
     publishAutoRespond(connection, await getAutoRespond(projectId, connection.conversationId));
+    broadcastToProject(projectId, { type: "sessionsChanged" });
   }
 }
 
@@ -836,6 +835,7 @@ async function autoRespondCommand(connection: HarnessChatConnection, request: No
   if (!request.enabled) {
     autoAborts.get(key)?.abort("user-stop");
     publishAutoRespond(connection, await disableAutoRespond(connection.project.id, connection.conversationId));
+    broadcastToProject(connection.project.id, { type: "sessionsChanged" });
     return;
   }
   const config = autoRespondConfigSchema.parse(request.config);
@@ -845,6 +845,7 @@ async function autoRespondCommand(connection: HarnessChatConnection, request: No
   if (readiness.length) throw new Error(readiness.join("\n"));
   autoAborts.get(key)?.abort("settings-changed");
   publishAutoRespond(connection, await enableAutoRespond(connection.project.id, connection.conversationId, config, connection.author ?? null));
+  broadcastToProject(connection.project.id, { type: "sessionsChanged" });
   void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
 }
 
