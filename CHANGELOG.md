@@ -3,9 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.79.0 — 2026-10-13
 
-- Replaced the Costs dashboard's insights panel with a Skills & time tab that shows which skills agents load, what those turns cost and how long they run, which installed skills go unused, and cost and turn times by day and hour.
+- Rebuilt the Costs dashboard's Skills & time tab as a sortable table with one row per skill, combining every folder and node that loaded it, showing turns, conversations, cost, cost per turn, failed tool calls, median turn time and last use; selecting a row shows the models it ran on.
+- Added totals that compare turns which loaded a skill with the rest of the period, and up to four cards that call out the most used skill and any skill whose turns fail, run longer or cost clearly more.
+- Added a "Not used" list of installed skills that no agent loaded during the period.
+- Added a Days view that sets each day's cost beside its turns, failures, median turn time, queue time and tool time, and an Hours of day view that totals the period by local hour.
+- Made the skill tables fit the window and page instead of running on as one long list.
+- Made each report on the tab load separately, so one that fails leaves the others in place.
+- Counted skills Claude loads through its Skill tool, reading earlier Claude transcripts in the background to find loads made before this update.
+- Made the skill report read only the requests that use skills, so a month loads in under a second and the full history, which it used to refuse, loads in about 2.7 seconds.
 
 ## 2.78.0 — 2026-10-13
 
