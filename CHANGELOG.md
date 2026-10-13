@@ -3,11 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.86.0 — 2026-10-13
 
-- Made background refreshes of running work and transcript lists read far less data, so busy nodes respond faster and conversation lists load sooner.
-- Made quick notes shared from another machine arrive when that machine changes them, and when it comes back online, instead of re-checking every two seconds.
-- Made a machine's answers to another machine's catch-up requests reuse each project's conversation list until that project's conversations change, so busy nodes spend less time re-listing shared transcripts.
+- Made busy nodes respond faster by skipping repeated database and file lookup work on every conversation listing and background refresh, so conversation lists load sooner.
+- Made quick notes shared from another machine update when that machine changes them and when it comes back online, instead of being re-checked every two seconds.
+- Made a machine's answers to another machine's catch-up requests reuse each project's shared conversation list until that project's conversations change, so catching up spends less time re-listing transcripts.
 - Made the server save a 30-second CPU profile of itself when it stays busy, or when an operator asks for one, so a slow server can be traced to the code using its time.
 
 ## 2.85.1 — 2026-10-13
