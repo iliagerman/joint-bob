@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.80.1 — 2026-10-13
 
-- Made the open project's conversation list build once when several open pages and panels ask for it at the same moment, so a slow machine no longer stalls while it repeats the same work.
+- Made the open project's conversation list share one build in progress when several pages and panels ask for it at the same moment, so a slow machine no longer repeats the same work; each request still gets a fresh list.
 
 ## 2.80.0 — 2026-10-13
 
