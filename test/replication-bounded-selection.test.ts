@@ -66,3 +66,35 @@ test("the search of older events advances a little on each pass and never holds 
   }
 });
 
+test("a peer that already has every event costs one bounded look per pass, and a full batch is never exceeded", async () => {
+  const db = new DatabaseSync(path.join(resolveDataDirectory(), "node.db"));
+  ensureReplicationSchema(db);
+  const peer = "caught-up-peer", ids: string[] = [];
+  db.exec("BEGIN");
+  for (let i = 0; i < 2600; i++) ids.push(enqueueReplicationEvent(db, { originNodeId: "local", entityType: "project.lock", entityKey: `full-${i}`, operation: "upsert", payload: { projectId: `full-${i}` } }).id);
+  db.exec("COMMIT");
+  const mine = new Set(ids);
+  const start = Date.now();
+  try {
+    // Everything is allowed: batches of a hundred, in order, none skipped and none repeated.
+    const delivered: string[] = [];
+    for (let pass = 0; pass < 40 && delivered.length < ids.length; pass++) {
+      const batch = (await eventsForPeer(peer, new Date(start + pass * 2_000), (event) => mine.has(event.id))).map((event) => event.id);
+      assert.ok(batch.length <= 100, `a batch holds a hundred events at most (${batch.length})`);
+      await recordPeerReceipt(peer, batch);
+      delivered.push(...batch);
+    }
+    assert.deepEqual(delivered, ids);
+    // Caught up: the search of older events, minutes later, finds nothing to offer.
+    let judged = 0;
+    assert.deepEqual(await eventsForPeer(peer, new Date(start + 10 * 60_000), () => { judged++; return true; }), []);
+    assert.equal(judged, 0, "events it already has are not read again");
+  } finally {
+    db.prepare("DELETE FROM replication_deliveries WHERE peer_id=?").run(peer);
+    db.exec("BEGIN");
+    for (const id of ids) db.prepare("DELETE FROM replication_outbox WHERE event_id=?").run(id);
+    db.exec("COMMIT");
+    db.close();
+  }
+});
+

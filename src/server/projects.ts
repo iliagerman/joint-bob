@@ -49,6 +49,15 @@ export async function projectsWithSharedNames(includeSyncStatusOrOptions?: boole
   }
 
   const hidden = await hiddenFromOtherNodes();
+  // A project's totals are computed again after each of its model calls, tens of milliseconds
+  // for a large one. All of them in a row held the server for over a second on a slow machine,
+  // so other work gets a turn after each project that took time.
+  const usage = new Map<string, ReturnType<typeof projectUsage>>();
+  if (includeUsage) for (const project of visibleProjects) {
+    const started = performance.now();
+    usage.set(project.id, projectUsage(project.id));
+    if (performance.now() - started > 5) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
   return visibleProjects.map((project) => {
     const lock = locks[project.id];
     return {
@@ -58,7 +67,7 @@ export async function projectsWithSharedNames(includeSyncStatusOrOptions?: boole
       syncStatus: project.syncFolderId
         ? statuses[project.syncFolderId] ?? unavailableProjectStatus("Loading sync status")
         : unavailableProjectStatus(),
-      ...(includeUsage ? { usage: projectUsage(project.id) } : {}),
+      ...(includeUsage ? { usage: usage.get(project.id) } : {}),
       ...(lock ? { lock, lockedElsewhere: lock.nodeId !== local.id } : {}),
     };
   });

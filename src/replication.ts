@@ -114,6 +114,9 @@ interface OutboxScan { tail: number; older?: { cursor: number; end: number }; fi
 const unallocatedScan = new Map<string, OutboxScan>();
 const FULL_SCAN_MS = 5 * 60_000;
 const SCAN_BUDGET_MS = 40;
+// One query looks at this many events at most. Asking only for "the next hundred without a
+// delivery row" read the whole outbox in a single query for a peer that already has them all.
+const SCAN_WINDOW = 2_000;
 
 function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
   const selected: ReplicationEvent[] = [];
@@ -135,20 +138,25 @@ function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, fi
   // events added from now on do not wait behind it.
   const scan = unallocatedScan.get(peerId) ?? { tail: newest, older: { cursor: 0, end: newest }, finishedAt: now };
   if (!scan.older && now - scan.finishedAt >= FULL_SCAN_MS) scan.older = { cursor: 0, end: scan.tail };
+  const take = (row: OutboxRow): void => {
+    const event = eventFromRow(row);
+    if (!filter(event)) return;
+    allocate.run(event.id, peerId, at);
+    selected.push(event);
+  };
   /** Allocates what the filter accepts in (from, to] and returns how far it got. */
   const search = (from: number, to: number): number => {
     let cursor = from;
     while (cursor < to && selected.length < 100 && Date.now() - started < SCAN_BUDGET_MS) {
-      const rows = page.all(cursor, to, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
-      if (!rows.length) return to;
+      const upTo = Math.min(to, cursor + SCAN_WINDOW);
+      const rows = page.all(cursor, upTo, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
       for (const row of rows) {
         cursor = row.cursor;
-        const event = eventFromRow(row);
-        if (!filter(event)) continue;
-        allocate.run(event.id, peerId, at);
-        selected.push(event);
+        take(row);
         if (selected.length === 100) break;
       }
+      // A page that was not full, and was read to its end, leaves nothing in this window.
+      if (rows.length < 100 && selected.length < 100) cursor = upTo;
     }
     return cursor;
   };
