@@ -9,7 +9,7 @@ type Fields = Record<string, string | number | boolean>;
 const requestContext = new AsyncLocalStorage<string>();
 
 /** Bounded, private diagnostics. Never accepts request bodies, queries, headers or error messages. */
-export function createPerformanceDiagnostics(directory: string, options: { slowMs?: number; intervalMs?: number; maxBytes?: number; waitingMs?: number } = {}) {
+export function createPerformanceDiagnostics(directory: string, options: { slowMs?: number; intervalMs?: number; maxBytes?: number; waitingMs?: number; totalsMs?: number } = {}) {
   const slowMs = options.slowMs ?? 500;
   const waitingMs = options.waitingMs ?? 10_000;
   const maxBytes = options.maxBytes ?? 5 * 1024 * 1024;
@@ -22,6 +22,27 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
   let activeRequests = 0;
   let timer: NodeJS.Timeout | undefined;
   const delay = monitorEventLoopDelay({ resolution: 20 });
+  /* Slow events alone cannot say what a change saved: a route that became fast simply stops
+     appearing. Every request and stage is therefore also counted, and the sums are written
+     once a minute for whatever cost at least TOTAL_FLOOR_MS in that minute. */
+  const totalsMs = options.totalsMs ?? 60_000;
+  const TOTAL_FLOOR_MS = 50;
+  const totals = new Map<string, { event: string; labels: Fields; count: number; totalMs: number; maxMs: number }>();
+  let totalsSince = performance.now();
+
+  function count(event: string, key: string, labels: Fields, durationMs: number): void {
+    let entry = totals.get(key);
+    if (!entry) totals.set(key, entry = { event, labels, count: 0, totalMs: 0, maxMs: 0 });
+    entry.count++; entry.totalMs += durationMs; entry.maxMs = Math.max(entry.maxMs, durationMs);
+  }
+
+  function writeTotals(now: number): void {
+    const intervalMs = Math.round(now - totalsSince);
+    for (const entry of totals.values()) {
+      if (entry.totalMs >= TOTAL_FLOOR_MS) log(entry.event, { ...entry.labels, count: entry.count, totalMs: Math.round(entry.totalMs), maxMs: Math.round(entry.maxMs), intervalMs });
+    }
+    totals.clear(); totalsSince = now;
+  }
 
   function log(event: string, fields: Fields): void {
     if (pending >= 128) { dropped++; return; }
@@ -56,6 +77,8 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
       completed = true;
       clearTimeout(waiting);
       activeRequests--;
+      const route = typeof request.route?.path === "string" ? request.route.path : "unmatched";
+      count("route_total", `${request.method} ${route}`, { method: request.method, route }, performance.now() - started);
       if (performance.now() - started >= slowMs || !response.writableFinished) log("slow_request", { ...fields(), aborted: !response.writableFinished });
     };
     response.once("finish", finish);
@@ -73,6 +96,7 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
     finally {
       clearTimeout(waiting);
       const durationMs = Math.round(performance.now() - started);
+      count("operation_total", operation, { operation }, performance.now() - started);
       if (durationMs >= slowMs) log("slow_operation", { operation, durationMs, requestId });
     }
   }
@@ -102,6 +126,7 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
         rssMb: Math.round(memory.rss / 1048576), heapMb: Math.round(memory.heapUsed / 1048576), activeRequests,
       });
       cpu = nextCpu; last = now; utilization = nextUtilization; delay.reset();
+      if (now - totalsSince >= totalsMs) writeTotals(now);
     }, options.intervalMs ?? 10_000);
     timer.unref();
   }

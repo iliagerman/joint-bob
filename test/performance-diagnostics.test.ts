@@ -100,6 +100,40 @@ test("WebSocket stages share a private trace ID and report a pending operation b
   assert.notEqual(events.find(event => event.operation === "chat.failure").requestId, pending[0].requestId);
 });
 
+test("every request and stage is counted, fast ones included, so a change can be measured", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-totals-"));
+  const diagnostics = createPerformanceDiagnostics(root, { slowMs: 10_000, intervalMs: 10, totalsMs: 60 });
+  const app = express();
+  app.use(diagnostics.middleware);
+  app.get("/projects/:projectId", async (_request, response) => {
+    // Longer than the floor below which a minute's sum is left out, whichever window it lands in.
+    await diagnostics.measure("sessions.transcript_catalog", () => pause(70));
+    response.json({});
+  });
+  app.get("/cheap", (_request, response) => { response.json({}); });
+  const server = createServer(app);
+  t.after(async () => { await new Promise<void>(resolve => server.close(() => resolve())); await diagnostics.stop(); await rm(root, { recursive: true, force: true }); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  diagnostics.start();
+  for (const id of ["private-a", "private-b"]) await (await fetch(`http://127.0.0.1:${address.port}/projects/${id}`)).text();
+  await (await fetch(`http://127.0.0.1:${address.port}/cheap`)).text();
+  await pause(150);
+  await diagnostics.stop();
+  const text = await readFile(path.join(root, "performance.jsonl"), "utf8");
+  assert.doesNotMatch(text, /private-/);
+  const events = text.trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(events.some(event => event.event === "slow_request" || event.event === "slow_operation"), false, "nothing here was slow");
+  const routes = events.filter(event => event.event === "route_total");
+  const listed = routes.filter(event => event.route === "/projects/:projectId");
+  assert.equal(listed.reduce((sum, event) => sum + event.count, 0), 2);
+  assert.ok(listed.reduce((sum, event) => sum + event.totalMs, 0) >= 130);
+  assert.ok(listed.every(event => event.method === "GET" && event.maxMs >= 65 && event.intervalMs > 0));
+  assert.equal(routes.some(event => event.route === "/cheap"), false, "a route that cost almost nothing is left out");
+  const stages = events.filter(event => event.event === "operation_total");
+  assert.equal(stages.filter(event => event.operation === "sessions.transcript_catalog").reduce((sum, event) => sum + event.count, 0), 2);
+});
+
 test("fast operations do not generate noisy logs", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-fast-"));
   const diagnostics = createPerformanceDiagnostics(root, { slowMs: 10_000 });

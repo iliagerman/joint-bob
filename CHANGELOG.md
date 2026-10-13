@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a once-a-minute performance total of every request and step that cost time, fast ones included, and a report that summarises a chosen window so a change's effect can be measured.
+
 ## 2.79.0 — 2026-10-13
 
 - Rebuilt the Costs dashboard's Skills & time tab as a sortable table with one row per skill, combining every folder and node that loaded it, showing turns, conversations, cost, cost per turn, failed tool calls, median turn time and last use; selecting a row shows the models it ran on.
