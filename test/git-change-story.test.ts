@@ -128,6 +128,20 @@ test("sources include conversation commits and pending files, and the fingerprin
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("a conversation with no commits or pending files still makes a story from its turns", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-story-"));
+  try {
+    await git("git", ["init", "-q", root]);
+    const messages = [{ id: "1", role: "user", text: "Explain how retries work" }, { id: "2", role: "assistant", text: "Retries back off exponentially." }];
+    const sources = { scope: "conversation" as const, pendingPaths: [], includeCommits: true };
+    const sourced = await sourcesFromTurns(root, buildTurns(messages), true, sources);
+    assert.deepEqual(sourced.patches, []);
+    assert.deepEqual(sourced.facts.files, []);
+    assert.equal(sourced.facts.turns.length, 1);
+    await assert.rejects(sourcesFromTurns(root, [], true, sources), /Nothing to explain/, "no turns and no changes still has nothing to explain");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("pending changes past the review limit still make a story, with the largest diffs left out", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-story-"));
   try {

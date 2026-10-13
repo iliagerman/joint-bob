@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a Change story… item to each conversation's menu that explains what the conversation did from its own turns, so a conversation with no commits or pending files gets a story instead of a "Nothing to explain" error.
+
 ## 2.81.0 — 2026-10-13
 
 - Added a skill page that opens when a skill is selected, with its usage statistics beside the same figures across all skill turns and its SKILL.md as installed on this node.

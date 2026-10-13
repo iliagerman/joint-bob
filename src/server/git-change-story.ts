@@ -214,7 +214,8 @@ export async function sourcesFromTurns(cwd: string, turns: ConversationTurn[], c
     patches.push({ path: change.path, source: "pending", patch: pending.patches[change.path] ?? "" });
     note(change.path, change.kind);
   }
-  if (!patches.length) throw new GitReviewError(400, "Nothing to explain. This scope has no commits and no pending files.");
+  // A conversation with no code changes still has its turns to explain.
+  if (!patches.length && !(conversation && turns.length)) throw new GitReviewError(400, "Nothing to explain. This scope has no commits and no pending files.");
   const files: StoryFile[] = [];
   for (const [path, history] of kinds) {
     const own = patches.filter((patch) => patch.path === path);
@@ -349,6 +350,7 @@ export async function generateChangeStory(input: GenerateChangeStoryInput): Prom
     `Turns: ${facts.turns.length}`,
     commits ? `Commits, oldest first:\n${commits}` : "Commits: none included",
     facts.omitted ? `Diffs left out for size: ${JSON.stringify(facts.omitted)}. Describe these files only from the conversation, commit messages and line counts; never guess their contents.` : "",
+    !patches.length ? "No code changes: explain what the conversation worked out, from its digest alone. Allowed paths are empty, so diagram files, implementation and tests stay empty." : "",
     sources.kind === "pull" && input.pull ? `Pull request #${input.pull.pull.number}: ${input.pull.pull.title}\nBase: ${input.pull.pull.base.ref}\nDescription: ${(input.pull.pull.body ?? "").slice(0, 8000)}\nNo conversation: explain the PR changes. The timeline must be empty.` :
     facts.conversation ? `Conversation digest:\n${turnDigest(collected.turns, facts)}`
       : sources.kind === "commits" ? "No conversation: explain the picked commits from their messages and diff. The timeline must be empty."

@@ -661,13 +661,28 @@ async function openStoryTab() {
   syncStoryChrome();
 }
 
-async function generateStoryFromView({ conversation = false } = {}) {
-  if (!git.harnesses.length) { toast("Git review is still loading"); return; }
+/** The reviewer chosen in the bar, or null while the pickers are still loading or the reviewer is unavailable. */
+function storyReviewer() {
+  if (!git.harnesses.length) { toast("Git review is still loading"); return null; }
   const harness = selectedHarness();
-  if (!harness?.ready) { toast("Selected reviewer is unavailable on this node"); return; }
+  if (!harness?.ready) { toast("Selected reviewer is unavailable on this node"); return null; }
   const model = selectedModel(elements.gitReviewModel);
   const provider = model.provider || harness.configuration?.fixedProvider;
-  const reviewer = { harnessId: harness.id, ...(provider ? { provider } : {}), modelId: model.modelId, thinkingLevel: elements.gitReviewThinking.value };
+  return { harnessId: harness.id, ...(provider ? { provider } : {}), modelId: model.modelId, thinkingLevel: elements.gitReviewThinking.value };
+}
+
+/** A story from the conversation alone: its turns and any commits it printed, with no picks, PRs or pending files. */
+export async function generateConversationStory(conversationId) {
+  await openGitReview(conversationId);
+  const reviewer = storyReviewer();
+  if (!reviewer) return;
+  applyTab("story");
+  await generateStory({ conversationId, source: "conversation", scope: "conversation", paths: [], includeCommits: true, ...reviewer });
+}
+
+async function generateStoryFromView({ conversation = false } = {}) {
+  const reviewer = storyReviewer();
+  if (!reviewer) return;
   const pullNumber = conversation ? null : storyPullNumber();
   if (pullNumber) {
     await generateStory({ conversationId: git.conversationId, source: "pull", pullNumber, ...(storyPullUrl() ? { pullUrl: storyPullUrl() } : {}), scope: "all", paths: [], includeCommits: false, ...reviewer });
