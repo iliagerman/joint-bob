@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.91.0 — 2026-10-13
 
-- Added a search box to Settings that finds any setting by name across every section and opens it, and grouped the section list with icons so it is easier to scan.
+- Added a search box to the top of Settings that finds any section, field label, or heading and opens it, and Cmd/Ctrl+F focuses it; on a phone the search box has its own row.
+- Grouped the Settings sections into You, Workspace, Agents, Network, and This node, each with an icon, so they are easier to scan.
+- Added a search box to Settings > Secrets and to the secret account picker, which can also filter by provider.
+- Fixed the Settings dialog, whose panels and buttons had been laid out inside the sidebar since 2.89.0.
+- Removed a secret search box that had appeared in the Add project dialog, and fixed the sign-in MFA labels, which had been nested inside each other.
 
 ## 2.90.0 — 2026-10-13
 
