@@ -312,6 +312,11 @@ function medianOf(values: Iterable<number>): number | null {
   const ordered = [...values].sort((a, b) => a - b);
   return ordered.length ? ordered[Math.floor((ordered.length - 1) / 2)] : null;
 }
+/** The nearest-rank percentile; null without values. */
+function percentileOf(values: Iterable<number>, fraction: number): number | null {
+  const ordered = [...values].sort((a, b) => a - b);
+  return ordered.length ? ordered[Math.min(ordered.length - 1, Math.ceil(ordered.length * fraction) - 1)] : null;
+}
 export interface SkillUsage {
   /** The skill's name: one row per skill, whichever folder or node it was loaded from. */
   id: string; name: string;
@@ -323,6 +328,15 @@ export interface SkillUsage {
   medianDurationMs: number | null; timedTurns: number;
   firstUsedAt: string; lastUsedAt: string;
   models: Array<{ modelId: string; requests: number; toolErrors: number; knownCostUsd: number }>;
+  /** Tokens by kind over every request in the skill's turns, and the share of input served from cache. */
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number };
+  p90DurationMs: number | null;
+  engines: Array<{ engine: string; turns: number }>;
+  projects: Array<{ projectId: string; turns: number; conversations: number; knownCostUsd: number }>;
+  /** Turns and known cost per local day, oldest first; days without a use are left out. */
+  daily: Array<{ key: string; turns: number; knownCostUsd: number }>;
+  /** The costliest conversations that loaded the skill. */
+  topConversations: Array<{ projectId: string; conversationId: string; turns: number; knownCostUsd: number }>;
 }
 export interface SkillUsageGroup { requests: number; pricedRequests: number; costUsd: number; toolCalls: number; toolErrors: number }
 export interface SkillUsageBreakdown {
@@ -341,15 +355,17 @@ const SKILL_REQUEST_LIMIT = 200_000;
  * during the period, is still one skill to the person reading the list. Only requests that carry
  * skill evidence are read one by one; the rest of the scope is a single aggregate.
  */
-export function usageSkillBreakdown(filters: UsageFilters): SkillUsageBreakdown {
+export function usageSkillBreakdown(filters: UsageFilters, timeZone = "UTC"): SkillUsageBreakdown {
   const db = usageDatabase();
   const condition = where(db, filters);
   const scope = usageTotals(filters);
   const rows = db.prepare(`SELECT e.id,e.project_id projectId,e.conversation_id conversationId,e.session_id sessionId,e.engine,e.occurred_at occurredAt,
     json_extract(e.payload,'$.modelId') modelId,json_extract(e.payload,'$.apiCostUsd') cost,json_extract(e.payload,'$.toolCalls') toolCalls,json_extract(e.payload,'$.toolErrors') toolErrors,
-    json_extract(e.payload,'$.skillTurnId') turnId,json_extract(e.payload,'$.skillReads') reads,json_extract(e.payload,'$.skillInvocations') invocations
+    json_extract(e.payload,'$.skillTurnId') turnId,json_extract(e.payload,'$.skillReads') reads,json_extract(e.payload,'$.skillInvocations') invocations,
+    COALESCE(json_extract(e.payload,'$.input'),0) tIn,COALESCE(json_extract(e.payload,'$.output'),0) tOut,COALESCE(json_extract(e.payload,'$.cacheRead'),0) tCacheRead,
+    COALESCE(json_extract(e.payload,'$.cacheWrite5m'),0)+COALESCE(json_extract(e.payload,'$.cacheWrite1h'),0)+COALESCE(json_extract(e.payload,'$.cacheWriteUnknown'),0) tCacheWrite,COALESCE(json_extract(e.payload,'$.reasoning'),0) tReasoning
     FROM ${source(db, filters)} WHERE 1=1${condition.sql} AND (json_extract(e.payload,'$.skillReads') IS NOT NULL OR json_extract(e.payload,'$.skillInvocations') IS NOT NULL)
-    ORDER BY e.occurred_at LIMIT ${SKILL_REQUEST_LIMIT + 1}`).all(...condition.args) as unknown as Array<{ id: string; projectId: string; conversationId: string; sessionId: string; engine: string; occurredAt: string; modelId: string | null; cost: number | null; toolCalls: number | null; toolErrors: number | null; turnId: string | null; reads: string | null; invocations: string | null }>;
+    ORDER BY e.occurred_at LIMIT ${SKILL_REQUEST_LIMIT + 1}`).all(...condition.args) as unknown as Array<{ id: string; projectId: string; conversationId: string; sessionId: string; engine: string; occurredAt: string; modelId: string | null; cost: number | null; toolCalls: number | null; toolErrors: number | null; turnId: string | null; reads: string | null; invocations: string | null; tIn: number; tOut: number; tCacheRead: number; tCacheWrite: number; tReasoning: number }>;
   if (rows.length > SKILL_REQUEST_LIMIT) throw new RangeError("Too many requests; select a shorter window");
 
   // Turns record a project, conversation, agent and node, so only those filters reach them.
@@ -373,7 +389,9 @@ export function usageSkillBreakdown(filters: UsageFilters): SkillUsageBreakdown 
     const ranges = intervals.get(key) ?? []; ranges.push({ start, end, duration: end - start }); intervals.set(key, ranges);
   }
 
-  type Tally = { name: string; version: string; turns: Set<string>; readTurns: Set<string>; invokedTurns: Set<string>; conversations: Set<string>; durations: Map<string, number>; requests: number; priced: number; cost: number; toolCalls: number; errors: number; first: string; last: string; models: Map<string, { requests: number; toolErrors: number; knownCostUsd: number }> };
+  type Tally = { name: string; version: string; turns: Set<string>; readTurns: Set<string>; invokedTurns: Set<string>; conversations: Set<string>; durations: Map<string, number>; requests: number; priced: number; cost: number; toolCalls: number; errors: number; first: string; last: string; models: Map<string, { requests: number; toolErrors: number; knownCostUsd: number }>;
+    tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number }; engines: Map<string, Set<string>>;
+    projects: Map<string, { turns: Set<string>; conversations: Set<string>; cost: number }>; daily: Map<string, { turns: Set<string>; cost: number }>; byConversation: Map<string, { projectId: string; conversationId: string; turns: Set<string>; cost: number }> };
   const skills = new Map<string, Tally>();
   const used: SkillUsageGroup = { requests: 0, pricedRequests: 0, costUsd: 0, toolCalls: 0, toolErrors: 0 };
   const usedTurns = new Set<string>();
@@ -400,7 +418,8 @@ export function usageSkillBreakdown(filters: UsageFilters): SkillUsageBreakdown 
     if (duration !== undefined && !usedDurations.has(turnId)) usedDurations.set(turnId, duration);
     for (const [name, seen] of named) {
       let tally = skills.get(name);
-      if (!tally) { tally = { name, version: "unknown", turns: new Set(), readTurns: new Set(), invokedTurns: new Set(), conversations: new Set(), durations: new Map(), requests: 0, priced: 0, cost: 0, toolCalls: 0, errors: 0, first: row.occurredAt, last: row.occurredAt, models: new Map() }; skills.set(name, tally); }
+      if (!tally) { tally = { name, version: "unknown", turns: new Set(), readTurns: new Set(), invokedTurns: new Set(), conversations: new Set(), durations: new Map(), requests: 0, priced: 0, cost: 0, toolCalls: 0, errors: 0, first: row.occurredAt, last: row.occurredAt, models: new Map(),
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }, engines: new Map(), projects: new Map(), daily: new Map(), byConversation: new Map() }; skills.set(name, tally); }
       if (seen.version !== "unknown") tally.version = seen.version;
       tally.turns.add(turnId);
       if (seen.read) tally.readTurns.add(turnId);
@@ -412,6 +431,17 @@ export function usageSkillBreakdown(filters: UsageFilters): SkillUsageBreakdown 
       const model = tally.models.get(modelId) ?? { requests: 0, toolErrors: 0, knownCostUsd: 0 };
       model.requests++; model.toolErrors += toolErrors; model.knownCostUsd += row.cost ?? 0;
       tally.models.set(modelId, model);
+      tally.tokens.input += Number(row.tIn); tally.tokens.output += Number(row.tOut); tally.tokens.cacheRead += Number(row.tCacheRead);
+      tally.tokens.cacheWrite += Number(row.tCacheWrite); tally.tokens.reasoning += Number(row.tReasoning);
+      const engineTurns = tally.engines.get(row.engine) ?? new Set<string>(); engineTurns.add(turnId); tally.engines.set(row.engine, engineTurns);
+      const project = tally.projects.get(row.projectId) ?? { turns: new Set<string>(), conversations: new Set<string>(), cost: 0 };
+      project.turns.add(turnId); project.conversations.add(row.conversationId); project.cost += row.cost ?? 0; tally.projects.set(row.projectId, project);
+      const dayKey = calendarKey(row.occurredAt, timeZone);
+      const day = tally.daily.get(dayKey) ?? { turns: new Set<string>(), cost: 0 };
+      day.turns.add(turnId); day.cost += row.cost ?? 0; tally.daily.set(dayKey, day);
+      const conversationKey = `${row.projectId}\0${row.conversationId}`;
+      const conversation = tally.byConversation.get(conversationKey) ?? { projectId: row.projectId, conversationId: row.conversationId, turns: new Set<string>(), cost: 0 };
+      conversation.turns.add(turnId); conversation.cost += row.cost ?? 0; tally.byConversation.set(conversationKey, conversation);
     }
   }
   const turnFiltersApply = !filters.provider && !filters.modelId && !filters.classification && !filters.difficulty && !filters.sessionId;
@@ -421,7 +451,13 @@ export function usageSkillBreakdown(filters: UsageFilters): SkillUsageBreakdown 
       observedReads: tally.readTurns.size, explicitInvocations: tally.invokedTurns.size, conversations: tally.conversations.size,
       associatedRequests: tally.requests, pricedRequests: tally.priced, apiEquivalentCostUsd: tally.cost, toolCalls: tally.toolCalls, toolErrors: tally.errors,
       timedTurns: tally.durations.size, medianDurationMs: medianOf(tally.durations.values()), firstUsedAt: tally.first, lastUsedAt: tally.last,
-      models: [...tally.models].map(([modelId, totals]) => ({ modelId, ...totals })).sort((a, b) => b.requests - a.requests) }))
+      models: [...tally.models].map(([modelId, totals]) => ({ modelId, ...totals })).sort((a, b) => b.requests - a.requests),
+      tokens: tally.tokens, p90DurationMs: percentileOf(tally.durations.values(), 0.9),
+      engines: [...tally.engines].map(([engine, turns]) => ({ engine, turns: turns.size })).sort((a, b) => b.turns - a.turns),
+      projects: [...tally.projects].map(([projectId, value]) => ({ projectId, turns: value.turns.size, conversations: value.conversations.size, knownCostUsd: value.cost })).sort((a, b) => b.knownCostUsd - a.knownCostUsd || b.turns - a.turns),
+      daily: [...tally.daily].map(([key, value]) => ({ key, turns: value.turns.size, knownCostUsd: value.cost })).sort((a, b) => a.key.localeCompare(b.key)),
+      topConversations: [...tally.byConversation.values()].map((value) => ({ projectId: value.projectId, conversationId: value.conversationId, turns: value.turns.size, knownCostUsd: value.cost }))
+        .sort((a, b) => b.knownCostUsd - a.knownCostUsd || b.turns - a.turns).slice(0, 8) }))
       .sort((a, b) => b.apiEquivalentCostUsd - a.apiEquivalentCostUsd),
     unattributedRequests: Math.max(0, scope.requests - used.requests), scopeRequests: scope.requests,
     withSkill: { ...used, turns: usedTurns.size, timedTurns: usedDurations.size, medianDurationMs: medianOf(usedDurations.values()) },
@@ -515,6 +551,19 @@ export function upsertUsageInventory(value: { projectId: string; conversationId:
     .run(value.projectId, value.conversationId, value.sessionId, value.engine, value.title, value.classification, value.usageStatus);
   // The row may have moved between conversations, so drop the whole project's session totals.
   if (Number(changes)) invalidateTotals([{ projectId: value.projectId, sessionId: value.sessionId, engine: value.engine }]);
+}
+/** The costliest conversations in a scope with when they ran and what they cost, for grouping by title. */
+export function usageConversationSummaries(filters: UsageFilters, limit: number): Array<{ projectId: string; conversationId: string; costUsd: number | null; requests: number; firstAt: string; lastAt: string }> {
+  const db = usageDatabase();
+  const condition = where(db, filters);
+  const rows = db.prepare(`SELECT ${canonicalProject(db, "e")} projectId,e.conversation_id conversationId,SUM(json_extract(e.payload,'$.apiCostUsd')) cost,COUNT(*) requests,MIN(e.occurred_at) firstAt,MAX(e.occurred_at) lastAt
+    FROM ${source(db, filters)} WHERE 1=1${condition.sql} GROUP BY projectId,conversationId ORDER BY cost DESC,conversationId LIMIT ?`)
+    .all(...condition.args, limit) as unknown as Array<{ projectId: string; conversationId: string; cost: number | null; requests: number; firstAt: string; lastAt: string }>;
+  return rows.map((row) => ({ projectId: row.projectId, conversationId: row.conversationId, costUsd: row.cost === null ? null : Number(row.cost), requests: Number(row.requests), firstAt: row.firstAt, lastAt: row.lastAt }));
+}
+/** When the ledger's first request was recorded, or null for an empty ledger. */
+export function usageObservedSince(): string | null {
+  return (usageDatabase().prepare("SELECT MIN(occurred_at) since FROM model_usage_events").get() as { since: string | null }).since;
 }
 export function usageConversations(projectIds: string[], conversationIds?: string[]): unknown[] {
   if (!projectIds.length || conversationIds && !conversationIds.length) return [];

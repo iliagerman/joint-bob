@@ -7,7 +7,10 @@ import { accountInCluster } from "../../cluster-accounts.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { getProject } from "../../store.js";
 import { deleteSubscriptionPlan, listSubscriptionPlans, saveSubscriptionPlan, subscriptionPlanInputSchema } from "../../subscription-usage.js";
-import { usageBreakdown, usageCalendarBreakdown, usageConversationPage, usageConversations, usageInventoryCoverage, usageLedgerRevision, usageSkillBreakdown, usageTurnTiming, usageTotals } from "../../usage-ledger.js";
+import { usageBreakdown, usageCalendarBreakdown, usageConversationPage, usageConversationSummaries, usageConversations, usageInventoryCoverage, usageLedgerRevision, usageObservedSince, usageSkillBreakdown, usageTurnTiming, usageTotals } from "../../usage-ledger.js";
+import { resourceInventory } from "../../resource-inventory.js";
+import { suggestNewSkills, suggestRemovals } from "../../usage-skill-suggestions.js";
+import { readSkillContents } from "../../skill-contents.js";
 import { calendarBounds } from "../../usage-calendar.js";
 import { suggestRepeatableFlows, suggestSkillImprovements } from "../../usage-analysis.js";
 import { usageDatabase } from "../../usage-ledger.js";
@@ -172,7 +175,76 @@ app.get("/api/usage/skills", async (request, response, next) => {
       to: query.to ? new Date(Date.parse(`${query.to}T00:00:00Z`) + 86_400_000 - utcOffset * 60_000).toISOString() : undefined,
     };
     const scope: UsageFilters = { ...rest, ...bounds, projectIds: ids, ...(clusters ? { originNodeIds: await originNodeIds(clusters) } : {}) };
-    response.json({ ...usageSkillBreakdown(scope), coverage: { ...usageInventoryCoverage(ids), ...usageRefreshStatus() } });
+    const report = usageSkillBreakdown(scope, timeZone);
+    // Names for the ids a skill's detail shows, so the page needs no second lookup.
+    const wanted = [...new Set(report.skills.flatMap((skill) => skill.topConversations.map((item) => item.conversationId)))];
+    const titles = wanted.length ? usageConversations(scope.projectId ? [scope.projectId] : ids, wanted) as Array<{ conversationId: string; title: string }> : [];
+    response.json({ ...report, projectNames: Object.fromEntries(projects.map((item) => [item.id, item.name])),
+      conversationTitles: Object.fromEntries(titles.filter((row) => row.title !== row.conversationId).map((row) => [row.conversationId, row.title])),
+      coverage: { ...usageInventoryCoverage(ids), ...usageRefreshStatus() } });
+  } catch (error) {
+    if (error instanceof z.ZodError || error instanceof RangeError) { sendError(response, 400, error instanceof z.ZodError ? error.errors.map((issue) => issue.message).join(", ") : error.message); return; }
+    if ((error as { statusCode?: number }).statusCode === 404) { sendError(response, 404, (error as Error).message); return; }
+    next(error);
+  }
+});
+const skillContentSchema = z.object({ name: z.string().min(1).max(200), origin: z.enum(["shared", "scoped", "user", "project"]).optional(), projectId: z.string().min(1).max(200).optional() }).strict();
+/** The text of an installed skill, for reading what an agent is told when it loads one. */
+app.get("/api/usage/skills/content", async (request, response, next) => {
+  try {
+    const query = skillContentSchema.parse(request.query);
+    const project = query.projectId ? await getProject(query.projectId) : undefined;
+    if (query.projectId && !project) { sendError(response, 404, "Project not found"); return; }
+    const inventory = await resourceInventory(project ? { projectPath: project.path, projectId: project.id } : {});
+    const bare = (name: string) => name.split(":").at(-1)!;
+    const copies = inventory.skills.filter((skill) => skill.name === query.name || bare(skill.name) === bare(query.name));
+    const chosen = copies.find((skill) => !query.origin || skill.origin === query.origin);
+    if (!chosen) { sendError(response, 404, "That skill is not installed on this node"); return; }
+    response.json({ name: chosen.name, description: chosen.description, origin: chosen.origin, harnesses: chosen.harnesses,
+      copies: copies.map(({ origin, harnesses }) => ({ origin, harnesses })), ...await readSkillContents(chosen.path) });
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
+    next(error);
+  }
+});
+const SUGGESTION_CONVERSATIONS = 2000;
+/**
+ * Skills to drop and kinds of work that could use one, from usage and conversation titles on this
+ * node. Heuristic and local: no model, no transcript text. Removal is judged over everything
+ * recorded, not the period on screen; new-skill ideas follow the filters.
+ */
+app.get("/api/usage/skills/suggestions", async (request, response, next) => {
+  try {
+    const query = await validatedQuery(request.query);
+    const projects = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
+    const ids = projects.map(({ id }) => id);
+    if (query.projectId && !ids.includes(query.projectId)) { sendError(response, 404, "Project not found"); return; }
+    const { page: _page, pageSize: _size, refresh: _refresh, clusters, utcOffset, timeZone, bucket: _bucket, ...rest } = query;
+    const bounds = timeZone ? calendarBounds(query.from, query.to, timeZone) : {
+      from: query.from ? new Date(Date.parse(`${query.from}T00:00:00Z`) - utcOffset * 60_000).toISOString() : undefined,
+      to: query.to ? new Date(Date.parse(`${query.to}T00:00:00Z`) + 86_400_000 - utcOffset * 60_000).toISOString() : undefined,
+    };
+    const scope: UsageFilters = { ...rest, ...bounds, projectIds: ids, ...(clusters ? { originNodeIds: await originNodeIds(clusters) } : {}) };
+    const project = query.projectId ? await getProject(query.projectId) : undefined;
+    const installed = (await resourceInventory(project ? { projectPath: project.path, projectId: project.id } : {})).skills;
+    const everything = usageSkillBreakdown({ projectIds: ids, ...(clusters ? { originNodeIds: scope.originNodeIds } : {}) }, timeZone);
+    const rows = usageConversationSummaries(scope, SUGGESTION_CONVERSATIONS);
+    const titles = new Map((usageConversations(scope.projectId ? [scope.projectId] : ids, rows.map((row) => row.conversationId)) as Array<{ projectId: string; conversationId: string; title: string }>)
+      .map((row) => [`${row.projectId}\0${row.conversationId}`, row.title]));
+    const names = new Map(projects.map((item) => [item.id, item.name]));
+    const creations = suggestNewSkills(rows.flatMap((row) => {
+      const title = titles.get(`${row.projectId}\0${row.conversationId}`);
+      return title && title !== row.conversationId ? [{ ...row, title }] : [];
+    }), installed);
+    response.json({
+      scope: "usage, turn results and conversation titles saved on this node; no model and no transcript text",
+      removals: suggestRemovals({ installed, used: everything.skills, observedSince: usageObservedSince(),
+        baselineErrorRate: everything.withSkill.toolCalls ? everything.withSkill.toolErrors / everything.withSkill.toolCalls : null }),
+      creations: creations.map((item) => ({ ...item, examples: item.examples.map((example) => ({ ...example, projectName: names.get(example.projectId) ?? example.projectId })),
+        draftProjectName: item.draftProjectId ? names.get(item.draftProjectId) ?? item.draftProjectId : null })),
+      installedSkills: new Set(installed.map((skill) => skill.name)).size, conversationsConsidered: rows.length, truncated: rows.length >= SUGGESTION_CONVERSATIONS,
+      coverage: { ...usageInventoryCoverage(ids), ...usageRefreshStatus() },
+    });
   } catch (error) {
     if (error instanceof z.ZodError || error instanceof RangeError) { sendError(response, 400, error instanceof z.ZodError ? error.errors.map((issue) => issue.message).join(", ") : error.message); return; }
     if ((error as { statusCode?: number }).statusCode === 404) { sendError(response, 404, (error as Error).message); return; }

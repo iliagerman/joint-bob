@@ -8,6 +8,7 @@ import { comparePeriods, isoDate, localeWeekStart, periodWindows, presetRange } 
 import { renderComparison } from "./usage-compare.js";
 import { requestComparison } from "./usage-request.js";
 import { initUsageInsights } from "./usage-insights.js";
+import { initUsageChanges } from "./usage-changes.js";
 
 const dialog = document.querySelector("#usageDialog");
 const filters = document.querySelector("#usageFilters");
@@ -653,7 +654,9 @@ async function loadCompare({ force = false } = {}) {
     const data = await requestComparison(`/api/usage/days?${parameters}`, api, controller.signal);
     if (generation !== compareGeneration || controller.signal.aborted) return;
     compareHost.replaceChildren();
-    compareViews = ["month", "week"].map((kind) => renderComparison(compareHost, comparePeriods(data.days, kind, today, weekStart)));
+    const comparisons = Object.fromEntries(["month", "week"].map((kind) => [kind, comparePeriods(data.days, kind, today, weekStart)]));
+    compareViews = ["month", "week"].map((kind) => renderComparison(compareHost, comparisons[kind]));
+    changes.show(comparisons, { force });
     compareCoverage = data.coverage;
     const filtered = scopeFilterCount();
     const gaps = `${data.coverage.missing} sessions unavailable${data.days.some((row) => row.totals.partial) ? " · some requests unpriced" : ""}`;
@@ -668,6 +671,7 @@ async function loadCompare({ force = false } = {}) {
     if (compareAbort === controller) compareAbort = null;
   }
 }
+const changes = initUsageChanges({ host: document.querySelector("#usageChanges"), scopeParameters });
 const insights = initUsageInsights({
   scopeParameters, periodRange,
   clusterValues: () => clusterValues,

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a What changed panel under the Costs period cards that set this month or week so far against the same days of the previous period, with the cost change and what drove it, a table of totals, and the projects, models and skills that moved most.
+
 ## 2.80.1 — 2026-10-13
 
 - Made the open project's conversation list share one build in progress when several pages and panels ask for it at the same moment, so a slow machine no longer repeats the same work; each request still gets a fresh list.

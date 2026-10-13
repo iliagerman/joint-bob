@@ -3,7 +3,9 @@ import { state } from "./state.js";
 import { confirmAction } from "./shell.js";
 import { harnessLabel } from "../harness-metadata.js";
 import { formatUsageCost } from "./usage-format.js";
-import { renderModelSplit, renderUsageTrend } from "./usage-charts.js";
+import { renderUsageTrend } from "./usage-charts.js";
+import { renderSkillDetail } from "./usage-skill-detail.js";
+import { buildDraftForm, renderSuggestions, suggestedName } from "./usage-skill-suggestions-view.js";
 import { failsMore, formatDuration, hoursOfDay, mergeDays, money, percent, ratio, runsSlower, skillFindings, unusedSkills } from "./usage-insight-data.js";
 
 /**
@@ -23,6 +25,7 @@ const shortDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "num
 
 const count = (value, noun) => `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
 const missing = (value) => value === null || value === undefined;
+const compact = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(2)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(2)}M` : value >= 1e4 ? `${(value / 1e3).toFixed(1)}K` : value.toLocaleString();
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -43,6 +46,7 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
   const viewsNav = document.querySelector("#usageInsightViews");
   const focusHost = document.querySelector("#usageInsightFocus");
   const body = document.querySelector("#usageInsightBody");
+  const panel = document.querySelector("#usageInsightsPanel");
   const foot = document.querySelector("#usageInsightFoot");
   const countNote = document.querySelector("#usageInsightCount");
   const sortNote = document.querySelector("#usageInsightSort");
@@ -56,8 +60,9 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
   // Each report: undefined until asked for, then { loading }, { value }, { error } or { unavailable }.
   let data = {};
   let view = "skills";
-  let selectedSkill = "";
-  let reveal = "";
+  // The skill open on its own page: { name, tab: "stats" | "contents" }, or null for the list.
+  let detail = null;
+  const suggestionPages = { removals: 1, creations: 1 };
   let pageSize = 12;
   const pages = new Map();
   const sorts = new Map();
@@ -93,6 +98,29 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     void request("cluster", `/api/usage/clusters/${encodeURIComponent(chosen[0])}/report?${scope}`);
   }
 
+  /** Suggestions are read only when asked for: they scan every conversation title in the scope. */
+  async function loadSuggestions() {
+    suggestionPages.removals = suggestionPages.creations = 1;
+    const pending = request("suggest", `/api/usage/skills/suggestions?${scopeQuery()}`);
+    render();
+    await pending;
+  }
+  /** SKILL.md of an installed skill, read once and kept until the filters change. */
+  function ensureContent(name) {
+    const section = `content:${name}`;
+    if (data[section]) return;
+    const query = new URLSearchParams({ name });
+    if (projectId()) query.set("projectId", projectId());
+    void request(section, `/api/usage/skills/content?${query}`);
+  }
+  function openSkill(name, tab = "stats") {
+    // The page opens over whichever view it was opened from, and Back returns there.
+    if (view !== "unused" && view !== "suggest") view = "skills";
+    detail = { name, tab };
+    if (tab === "contents") ensureContent(name);
+    render();
+  }
+
   /** Coming back to the tab within a minute, with the same filters, shows what is already here. */
   function load({ force = false } = {}) {
     const scope = scopeQuery();
@@ -102,7 +130,7 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     data = {};
     loadedScope = scope.toString();
     loadedAt = Date.now();
-    selectedSkill = "";
+    detail = null;
     pages.clear();
     const { from, to } = periodRange();
     void request("skills", `/api/usage/skills?${scope}`);
@@ -148,32 +176,40 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
 
   function skillsTable(report) {
     const most = Math.max(1, ...report.skills.map((skill) => skill.associatedTurns));
+    const tokens = (skill) => skill.tokens.input + skill.tokens.output + skill.tokens.cacheRead + skill.tokens.cacheWrite;
+    const cache = (skill) => { const input = skill.tokens.input + skill.tokens.cacheRead + skill.tokens.cacheWrite; return input ? skill.tokens.cacheRead / input : null; };
+    const engines = (skill) => skill.engines.map((entry) => harnessLabel(state.harnesses || [], entry.engine)).join(", ");
     return {
       noun: "skills", caption: "Skills agents loaded, with what their turns cost and how they ran", selectable: true,
       empty: report.scopeRequests ? "No agent loaded a skill in this period." : "No usage in this scope.",
       rows: report.skills.map((skill) => ({ ...skill, key: skill.name })), defaultSort: { key: "turns", direction: -1 },
       columns: [
-        { key: "name", label: "Skill", width: "24%", value: (skill) => skill.name, text: (skill) => skill.name,
-          detail: (skill) => `${count(skill.conversations, "conversation")}${skill.explicitInvocations ? ` · asked for ${skill.explicitInvocations}×` : ""}` },
-        { key: "turns", label: "Turns", width: "8%", value: (skill) => skill.associatedTurns, text: (skill) => skill.associatedTurns.toLocaleString(),
+        { key: "name", label: "Skill", width: "16%", value: (skill) => skill.name, text: (skill) => skill.name,
+          detail: (skill) => `${count(skill.conversations, "conversation")} · ${engines(skill)}${skill.explicitInvocations ? ` · typed ${skill.explicitInvocations}×` : ""}` },
+        { key: "turns", label: "Turns", width: "6%", value: (skill) => skill.associatedTurns, text: (skill) => skill.associatedTurns.toLocaleString(),
           title: (skill) => `${count(skill.associatedRequests, "request")} in those turns` },
-        { key: "share", label: "Of skill turns", width: "15%", bar: (skill) => skill.associatedTurns / most, text: (skill) => percent(ratio(skill.associatedTurns, report.withSkill.turns)) },
-        { key: "cost", label: "Cost", width: "11%", strong: true, value: (skill) => skill.pricedRequests ? skill.apiEquivalentCostUsd : null,
+        { key: "share", label: "Of skill turns", width: "10%", bar: (skill) => skill.associatedTurns / most, text: (skill) => percent(ratio(skill.associatedTurns, report.withSkill.turns)) },
+        { key: "trend", label: "Trend", width: "8%", spark: (skill) => skill.daily, title: (skill) => `Turns per day, ${skill.daily.length} days with a use` },
+        { key: "cost", label: "Cost", width: "8%", strong: true, value: (skill) => skill.pricedRequests ? skill.apiEquivalentCostUsd : null,
           text: (skill) => skill.pricedRequests ? money(skill.apiEquivalentCostUsd) : "—", partial: (skill) => skill.pricedRequests < skill.associatedRequests },
-        { key: "perTurn", label: "Per turn", width: "10%", value: (skill) => skill.pricedRequests ? skill.apiEquivalentCostUsd / skill.associatedTurns : null,
+        { key: "perTurn", label: "Per turn", width: "7%", value: (skill) => skill.pricedRequests ? skill.apiEquivalentCostUsd / skill.associatedTurns : null,
           text: (skill) => skill.pricedRequests ? money(skill.apiEquivalentCostUsd / skill.associatedTurns) : "—" },
-        { key: "errors", label: "Failed tools", width: "11%", value: (skill) => ratio(skill.toolErrors, skill.toolCalls), text: (skill) => percent(ratio(skill.toolErrors, skill.toolCalls)),
+        { key: "requests", label: "Requests", width: "7%", value: (skill) => skill.associatedRequests, text: (skill) => skill.associatedRequests.toLocaleString() },
+        { key: "tokens", label: "Tokens", width: "7%", value: tokens, text: (skill) => compact(tokens(skill)), title: (skill) => `${tokens(skill).toLocaleString()} tokens; in ${skill.tokens.input.toLocaleString()}, out ${skill.tokens.output.toLocaleString()}` },
+        { key: "cache", label: "Cache", width: "5%", value: cache, text: (skill) => percent(cache(skill)), title: () => "Share of input tokens read from cache" },
+        { key: "errors", label: "Failed tools", width: "7%", value: (skill) => ratio(skill.toolErrors, skill.toolCalls), text: (skill) => percent(ratio(skill.toolErrors, skill.toolCalls)),
           title: (skill) => `${skill.toolErrors.toLocaleString()} of ${count(skill.toolCalls, "tool call")} failed${failsMore(skill, report) ? "; clearly more than across all turns with a skill" : ""}`, flag: (skill) => failsMore(skill, report) },
-        { key: "time", label: "Median turn", width: "11%", value: (skill) => skill.medianDurationMs, text: (skill) => formatDuration(skill.medianDurationMs),
+        { key: "time", label: "Median turn", width: "7%", value: (skill) => skill.medianDurationMs, text: (skill) => formatDuration(skill.medianDurationMs),
           title: (skill) => `${skill.timedTurns.toLocaleString()} of ${count(skill.associatedTurns, "turn")} timed${runsSlower(skill, report) ? "; at least twice the median of all turns with a skill" : ""}`, flag: (skill) => runsSlower(skill, report) },
-        { key: "last", label: "Last used", width: "10%", value: (skill) => skill.lastUsedAt, text: (skill) => shortDate.format(new Date(skill.lastUsedAt)), title: (skill) => new Date(skill.lastUsedAt).toLocaleString() },
+        { key: "projects", label: "Projects", width: "6%", value: (skill) => skill.projects.length, text: (skill) => skill.projects.length.toLocaleString() },
+        { key: "last", label: "Last used", width: "6%", value: (skill) => skill.lastUsedAt, text: (skill) => shortDate.format(new Date(skill.lastUsedAt)), title: (skill) => `First ${new Date(skill.firstUsedAt).toLocaleString()}\nLast ${new Date(skill.lastUsedAt).toLocaleString()}` },
       ],
     };
   }
 
   function unusedTable(rows) {
     return {
-      noun: "skills", caption: "Installed skills no agent loaded in this period", rows, defaultSort: { key: "name", direction: 1 },
+      noun: "skills", caption: "Installed skills no agent loaded in this period", rows, selectable: true, defaultSort: { key: "name", direction: 1 },
       empty: "Every installed skill was loaded in this period.",
       columns: [
         { key: "name", label: "Skill", width: "22%", value: (skill) => skill.name, text: (skill) => skill.name },
@@ -311,6 +347,7 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
       { key: "days", label: "Days", detail: size(days, "days") },
       { key: "hours", label: "Hours of day" },
       ...(state.clusters?.length ? [{ key: "cluster", label: "Cluster" }] : []),
+      { key: "suggest", label: "Suggestions" },
       { key: "flows", label: "Repeated work" },
     ];
     if (!choices.some((choice) => choice.key === view)) view = "skills";
@@ -326,19 +363,10 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     }));
   }
 
-  /** Beside the views: the selected skill's cost by model, or the daily cost trend. */
+  /** Beside the views: a hint on the skills list, or the daily cost trend. */
   function renderFocus() {
     const report = data.skills?.value;
-    const skill = view === "skills" && selectedSkill ? report?.skills.find((item) => item.name === selectedSkill) : null;
-    if (skill) {
-      const head = element("div", undefined, "usage-focus-head");
-      head.append(element("span", "Cost by model", "usage-trend-label"), element("strong", skill.name, "usage-focus-name"));
-      const close = element("button", "Clear", "ghost usage-focus-close");
-      close.type = "button";
-      close.dataset.testid = "usage-insight-focus-close";
-      close.setAttribute("aria-label", `Clear ${skill.name}`);
-      focusHost.replaceChildren(head, renderModelSplit(skill.models.map((model) => ({ key: model.modelId, totals: { apiCostUsd: model.knownCostUsd } }))), close);
-    } else if (view === "skills" && report?.skills.length) focusHost.replaceChildren(element("span", "Select a skill to see which models ran it.", "usage-trend-label"));
+    if (view === "skills" && !detail && report?.skills.length) focusHost.replaceChildren(element("span", "Select a skill for its statistics and contents.", "usage-trend-label"));
     else if (view === "days" && data.days?.value) renderUsageTrend(focusHost, data.days.value.days);
     else focusHost.replaceChildren();
   }
@@ -363,7 +391,6 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     if (selectable) {
       target.type = "button";
       target.dataset.select = row.key;
-      target.setAttribute("aria-pressed", String(selectedSkill === row.key));
     }
     const line = element("span", undefined, "usage-name-line");
     line.append(element("span", column.text(row), "usage-name"));
@@ -372,10 +399,26 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     cell.append(target);
     return cell;
   }
+  /** Turns per day over the last month of use, as a line with no axes. */
+  function sparkline(daily) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 60 18"); svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("aria-hidden", "true");
+    const points = daily.slice(-30);
+    if (points.length < 2) { const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle"); dot.setAttribute("cx", "30"); dot.setAttribute("cy", "9"); dot.setAttribute("r", "2"); svg.append(dot); return svg; }
+    const top = Math.max(...points.map((day) => day.turns));
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", points.map((day, index) => `${index ? "L" : "M"}${(index / (points.length - 1) * 60).toFixed(1)} ${(17 - day.turns / top * 16).toFixed(1)}`).join(" "));
+    path.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.append(path);
+    return svg;
+  }
   function valueCell(column, row) {
     const cell = element("td");
     cell.dataset.label = column.label;
-    if (column.bar) {
+    if (column.spark) {
+      cell.className = "usage-skill-spark";
+      cell.append(sparkline(column.spark(row)));
+    } else if (column.bar) {
       cell.className = "usage-share-cell";
       const track = element("i", undefined, "usage-share-track");
       const fill = element("b");
@@ -411,9 +454,18 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
   }
 
   function renderBody() {
-    body.classList.toggle("usage-insight-panel", view === "flows");
-    foot.hidden = view === "flows";
+    panel.dataset.detail = detail ? "1" : "";
+    const own = view === "flows" || view === "suggest" || Boolean(detail);
+    body.classList.toggle("usage-insight-panel", own);
+    foot.hidden = own;
+    if (detail) {
+      const report = data.skills?.value;
+      body.replaceChildren(renderSkillDetail({ name: detail.name, skill: report?.skills.find((item) => item.name === detail.name) ?? null, report: report ?? { withSkill: {} },
+        tab: detail.tab, content: data[`content:${detail.name}`], names: { projects: report?.projectNames ?? {}, conversations: report?.conversationTitles ?? {} } }));
+      return;
+    }
     if (view === "flows") { body.replaceChildren(flows); return; }
+    if (view === "suggest") { body.replaceChildren(renderSuggestions(data.suggest, suggestionPages)); return; }
     const table = tableFor(view);
     if (table.message) {
       body.replaceChildren(element("p", table.message));
@@ -426,11 +478,6 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     const sorted = table.columns.find((column) => column.key === sort.key && column.value) || table.columns[0];
     const rows = [...table.rows].sort((left, right) => order(sorted.value(left), sorted.value(right), sort.direction) || table.tiebreak?.(left, right) || String(left.key).localeCompare(String(right.key)));
     const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-    if (reveal) {
-      const index = rows.findIndex((row) => row.key === reveal);
-      if (index >= 0) pages.set(view, Math.floor(index / pageSize) + 1);
-      reveal = "";
-    }
     const page = Math.min(pages.get(view) || 1, pageCount);
     pages.set(view, page);
     const start = (page - 1) * pageSize;
@@ -450,7 +497,6 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     for (const row of shown) {
       const line = element("tr");
       line.dataset.testid = "usage-insight-row";
-      if (table.selectable && selectedSkill === row.key) line.className = "selected";
       line.append(nameCell(table.columns[0], row, table.selectable), ...table.columns.slice(1).map((column) => valueCell(column, row)));
       tbody.append(line);
     }
@@ -483,7 +529,9 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
       hours: "Your local time, added up across the period. Hours without a request are left out.",
       cluster: report ? `Only projects explicitly shared with ${report.cluster.name}. ${count(report.coverage.missingNodeIds.length, "node")} not seen yet · ${count(report.coverage.missing, "session")} could not be read. Skill costs overlap.` : "",
       flows: "",
+      suggest: "Heuristics over local usage and conversation titles; nothing is installed or removed. Kiro sessions and skills that exist only on other nodes are not covered.",
     }[view];
+    if (detail) footnote.textContent = "Figures compare the skill with every turn that loaded any skill in the same scope. A turn that loads several skills counts under each, and observed use does not show that a skill caused a result.";
   }
 
   function render() {
@@ -534,31 +582,7 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
       const link = element("a", evidence.conversationId); link.href = evidence.href; link.target = "_blank"; link.rel = "noopener noreferrer";
       card.append(link);
     }
-    const form = element("form", undefined, "usage-analysis-draft");
-    const name = element("input"); name.name = "name"; name.placeholder = "new-skill-name"; name.required = true; name.pattern = "[a-z][a-z0-9-]{1,59}"; name.dataset.testid = "usage-draft-name";
-    const contents = element("textarea"); contents.name = "content"; contents.placeholder = "Write instructions or a script after reviewing the evidence (20–10000 characters)."; contents.required = true; contents.minLength = 20; contents.maxLength = 10000; contents.dataset.testid = "usage-draft-content";
-    const save = element("button", "Save draft for review", "ghost"); save.type = "submit"; save.dataset.testid = "usage-draft-save";
-    form.append(name, contents, save);
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      if (!form.reportValidity()) return;
-      save.disabled = true;
-      try {
-        const draft = await api("/api/usage/analysis/drafts", { method: "POST", body: JSON.stringify({ projectId: project, name: name.value, kind: suggestion.kind, content: contents.value, evidenceConversationIds: suggestion.evidence.map((item) => item.conversationId) }) });
-        const review = element("pre", draft.content); review.dataset.testid = "usage-draft-review";
-        const install = element("button", "Approve and install locally", "ghost"); install.type = "button"; install.dataset.testid = "usage-draft-approve";
-        form.replaceChildren(element("p", `Draft saved. Review exact content below. SHA-256: ${draft.reviewedSha256}. Never shared automatically.`), review, install);
-        install.addEventListener("click", async () => {
-          if (!await confirmAction({ title: `Install reviewed ${draft.kind} ${draft.name} in this project?`, confirmLabel: "Install locally" })) return;
-          install.disabled = true;
-          try {
-            const result = await api(`/api/usage/analysis/drafts/${encodeURIComponent(draft.id)}/install`, { method: "POST", body: JSON.stringify({ approved: true, reviewedSha256: draft.reviewedSha256 }) });
-            form.append(element("p", `Installed locally: ${result.path}. Sharing requires separate approval.`));
-            install.remove();
-          } catch (error) { form.append(element("p", `Installation failed: ${error.message}`)); install.disabled = false; }
-        });
-      } catch (error) { form.append(element("p", `Draft unavailable: ${error.message}`)); save.disabled = false; }
-    });
+    const form = buildDraftForm({ project, kind: suggestion.kind, evidenceIds: suggestion.evidence.map((item) => item.conversationId) });
     card.append(form);
     return card;
   }
@@ -589,23 +613,21 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
 
   function show(next, skill = "") {
     view = next;
-    selectedSkill = skill;
-    reveal = skill;
+    detail = skill && next === "skills" ? { name: skill, tab: "stats" } : null;
     ensure(view);
     render();
   }
   viewsNav.addEventListener("click", (event) => {
     const button = event.target.closest("[data-view]");
-    if (button && button.dataset.view !== view) show(button.dataset.view);
+    if (!button) return;
+    if (button.dataset.view !== view) show(button.dataset.view);
+    else if (detail) { detail = null; render(); }
   });
   findingsHost.addEventListener("click", (event) => {
     const button = event.target.closest("[data-view]");
-    if (button) show(button.dataset.view, button.dataset.skill || "");
-  });
-  focusHost.addEventListener("click", (event) => {
-    if (!event.target.closest("[data-testid='usage-insight-focus-close']")) return;
-    selectedSkill = "";
-    render();
+    if (!button) return;
+    if (button.dataset.skill) openSkill(button.dataset.skill);
+    else show(button.dataset.view);
   });
   body.addEventListener("click", (event) => {
     const sort = event.target.closest("[data-sort]");
@@ -621,9 +643,25 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
       return;
     }
     const toggle = event.target.closest("[data-select]");
-    if (!toggle) return;
-    selectedSkill = selectedSkill === toggle.dataset.select ? "" : toggle.dataset.select;
-    render();
+    if (toggle) { openSkill(toggle.dataset.select, view === "unused" ? "contents" : "stats"); return; }
+    if (event.target.closest("[data-detail-back]")) { detail = null; render(); return; }
+    const tab = event.target.closest("[data-detail-tab]");
+    if (tab && detail) { detail.tab = tab.dataset.detailTab; if (detail.tab === "contents") ensureContent(detail.name); render(); return; }
+    const copy = event.target.closest("[data-copy]");
+    if (copy) { void navigator.clipboard?.writeText(body.querySelector("[data-testid='usage-skill-text']")?.textContent ?? "").then(() => { copy.textContent = "Copied"; }); return; }
+    const open = event.target.closest("[data-open-skill]");
+    if (open) { openSkill(open.dataset.openSkill, "contents"); return; }
+    const run = event.target.closest("[data-suggest-run]");
+    if (run) { void loadSuggestions(); return; }
+    const flip = event.target.closest("[data-suggest-page]");
+    if (flip) { const [key, step] = flip.dataset.suggestPage.split(":"); suggestionPages[key] = Math.max(1, suggestionPages[key] + Number(step)); renderBody(); return; }
+    const draft = event.target.closest("[data-draft]");
+    if (draft) {
+      const item = data.suggest?.value?.creations[Number(draft.dataset.draft)];
+      const card = draft.closest(".usage-suggest-card");
+      if (!item || card.querySelector("form")) return;
+      card.append(buildDraftForm({ project: item.draftProjectId, kind: item.kind, evidenceIds: item.draftEvidenceIds, name: suggestedName(item.phrase) }));
+    }
   });
   pagination.addEventListener("click", (event) => {
     const direction = event.target.closest("button")?.dataset.page;

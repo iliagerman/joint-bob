@@ -162,6 +162,73 @@ button.usage-select:hover .usage-name { text-decoration: underline; text-decorat
 .usage-analysis-draft textarea { min-height: 120px; }
 .usage-analysis-draft pre { margin: 0; max-height: 240px; overflow: auto; white-space: pre-wrap; }
 
+/* Skills & time: a skill's own page, the suggestions view, and the sparkline column. */
+.usage-insights[data-detail="1"] > :is(.usage-strip, .usage-findings) { display: none; }
+.usage-skill-spark svg { display: block; width: 60px; height: 18px; margin-left: auto; }
+.usage-skill-spark path { fill: none; stroke: var(--usage-series-0); stroke-width: 1.5; stroke-linejoin: round; }
+.usage-skill-spark circle { fill: var(--usage-series-0); }
+.usage-skill-detail { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; height: 100%; padding: 10px 12px; }
+.usage-skill-detail > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-width: 0; }
+.usage-skill-detail h3 { margin: 0; font-size: 16px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.usage-skill-tabs { display: flex; gap: 2px; margin-left: auto; }
+.usage-skill-stats { display: grid; align-content: start; gap: 12px; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.usage-skill-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.usage-skill-tiles .usage-stat:nth-child(6n + 1) { border-left: 0; }
+.usage-skill-tiles .usage-stat:nth-child(n + 7) { border-top: 1px solid var(--line); }
+.usage-skill-tiles .usage-stat > small { white-space: normal; overflow: visible; }
+.usage-skill-charts { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+.usage-skill-tables { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.usage-skill-list { display: grid; align-content: start; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.usage-skill-list h4 { margin: 0; color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.usage-skill-list table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.usage-skill-list :is(th, td) { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.usage-skill-list th { color: var(--muted); font-size: 10.5px; font-weight: 600; text-transform: uppercase; }
+.usage-skill-list :is(th, td).usage-text-cell { max-width: 0; width: 60%; overflow: hidden; text-align: left; text-overflow: ellipsis; }
+.usage-skill-chart svg { display: block; width: 100%; height: 110px; }
+.usage-skill-chart rect { fill: var(--usage-series-0); }
+.usage-skill-axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+.usage-skill-contents { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 8px; min-width: 0; min-height: 0; }
+.usage-skill-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); font-size: 12px; }
+.usage-skill-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.usage-skill-path { flex: 1; min-width: 0; overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.usage-skill-contents pre { min-height: 0; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.usage-suggest { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; height: 100%; padding: 12px; }
+.usage-suggest-intro { display: flex; align-items: center; gap: 16px; }
+.usage-suggest-intro p { flex: 1; margin: 0; color: var(--muted); font-size: 12.5px; }
+.usage-suggest-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-height: 0; }
+.usage-suggest-column { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; min-width: 0; min-height: 0; }
+.usage-suggest-column > header { display: flex; align-items: baseline; gap: 8px; }
+.usage-suggest-column h4 { margin: 0; font-size: 13px; }
+.usage-suggest-column header small { color: var(--muted); }
+.usage-suggest-count { margin-left: 6px; color: var(--muted); font-weight: 400; }
+.usage-suggest-cards { display: grid; align-content: start; gap: 8px; min-height: 0; overflow-y: auto; }
+.usage-suggest-card { display: grid; gap: 4px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); font-size: 12.5px; }
+.usage-suggest-card > header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.usage-suggest-card p, .usage-suggest-card ul { margin: 0; }
+.usage-suggest-card small, .usage-suggest-note { color: var(--muted); font-size: 11.5px; }
+.usage-suggest-kind { margin-left: auto; padding: 0 6px; border-radius: 5px; background: var(--field); color: var(--muted); font: 600 10px/16px var(--mono); }
+.usage-suggest-kind.unused { color: var(--accent); }
+.usage-suggest-kind.failing { color: var(--amber); }
+.usage-suggest-examples { padding-left: 16px; color: var(--muted); font-size: 12px; }
+.usage-suggest-examples li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-suggest-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.usage-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; box-shadow: none; }
+
+/* Costs: what changed between periods. */
+.usage-changes { display: grid; gap: 10px; min-width: 0; }
+.usage-changes > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.usage-changes h3 { margin: 0; font-size: 14px; }
+.usage-changes-headline { flex: 1; min-width: 0; margin: 0; color: var(--muted); font-size: 12.5px; }
+.usage-changes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 12px; }
+.usage-changes-card { display: grid; align-content: start; gap: 4px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.usage-changes-card h4 { margin: 0 0 4px; color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.usage-changes-card table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.usage-changes-card :is(th, td) { padding: 4px 4px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.usage-changes-card th { color: var(--muted); font-size: 10.5px; font-weight: 600; text-transform: uppercase; }
+.usage-changes-card :is(th, td):first-child { max-width: 0; width: 40%; overflow: hidden; text-align: left; text-overflow: ellipsis; }
+.usage-changes .worse { color: var(--amber); font-weight: 600; }
+.usage-changes .better { color: var(--accent); font-weight: 600; }
+
 /* Compare periods */
 .usage-compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; min-width: 0; }
 .usage-compare-card { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
@@ -221,8 +288,8 @@ button.usage-select:hover .usage-name { text-decoration: underline; text-decorat
   #usageDialog .usage-card { height: calc(100dvh - 24px); grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; }
   #usageDialog .usage-card:has(.usage-toolbar[hidden]) { grid-template-rows: auto minmax(0, 1fr); }
   .usage-overview { grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; }
-  .usage-compare { grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; overflow: hidden; }
-  .usage-compare-grid { align-content: start; min-height: 0; overflow: hidden; }
+  .usage-compare { grid-template-rows: auto auto auto auto; align-content: start; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .usage-compare-grid { align-content: start; }
   .usage-insights { min-height: 0; overflow: hidden; }
   .usage-subscriptions { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 }

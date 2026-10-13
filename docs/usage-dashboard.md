@@ -10,6 +10,10 @@ Subscription prices are grouped by the actual harness you select, not inferred f
 
 Conversation costs are paged 20 at a time and ordered by known cost, then stable conversation ID. Charts show only positive known API-equivalent cost: the eight largest projects, five largest models, and populated days from the last 30 days. Remaining known cost is preserved as Other. Missing and unpriced usage is labeled and is never drawn as zero.
 
+## Compare periods
+
+Under the month and week cards, **What changed** sets the period so far against the previous one over the same days: a sentence on the cost change and what drove it, a table of totals (cost, requests, tokens, cost per request, cache read, failed tool calls, turns, median turn, failed turns, skill turns) with rises that are bad news marked, and the projects, models and skills that moved most. It follows the filters, and turn figures are left out under a model, provider, label or difficulty filter.
+
 ## Skills & time
 
 The **Skills & time** tab uses the same filters and answers two questions: which skills do agents load and what do those turns look like, and when and how long do turns run.
@@ -19,6 +23,10 @@ A skill counts as used when an agent loads it: a successful read of its `SKILL.m
 The totals above the list compare turns that loaded a skill with the rest of the period. The cards under them say what stands out: the most used skill, and a skill whose turns fail, run or cost clearly more than turns with any skill (at least five turns; one and a half times the comparison for failures and cost, twice for time). These are observations; they do not show that a skill caused anything.
 
 **Not used** lists the skills installed on this node that no agent loaded in the period and scope. Kiro sessions and skills that exist only on another node are not covered. **Days** joins cost and requests with turns, failed turns, and the median turn, queue and tool-call time for each day. **Hours of day** adds the period up by local hour. Both need a period of 151 days or less, and turn times cannot be filtered by model, provider, label or difficulty. **Cluster**, shown on a node that is in one, reports the projects explicitly shared with the cluster chosen in the filter. **Repeated work** looks for repeated conversation titles in one project and drafts a skill or script for you to review; it reads saved titles, turn times and usage only, and installs nothing without approval.
+
+Selecting a skill opens its own page. **Statistics** shows turns, conversations, requests, cost and cost per turn, tokens and cache share, failed tool calls, median and slowest-10% turn time, tool calls per turn, the days it was used, its first and last use, the models and projects behind it and its costliest conversations, each beside the same figure across all skill turns. **Contents** shows the skill's `SKILL.md` as installed on this node (up to 200 KB), where it lives, its size and the other files beside it, and a Copy button. Skills nobody loaded open straight on Contents. A skill that exists only on another node cannot be read here.
+
+**Suggestions** reads nothing until you select Find suggestions. It then lists installed skills to remove or review (never loaded in the usage this node has recorded, not loaded for 90 days, loaded but failing clearly more often than other skill turns, or described almost the same as another skill) and kinds of work worth a skill: a pair of words that appears in the titles of at least three conversations on at least two different days, with the conversations behind it and a note when an installed skill may already cover it. Removal is judged over everything recorded, and ideas for new skills follow the filters. It uses local usage and conversation titles only: no model and no transcript text. It never installs or removes anything. Draft a skill from a suggestion, read the exact text, and approve it to add it to the project.
 
 Lists fit the window and page instead of scrolling. Each report is read separately, so one that fails says so and leaves the others in place.
 

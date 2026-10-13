@@ -425,7 +425,11 @@ test("skills and time lists one row per skill, says what stands out, and pages i
     id: name, name, version: "unknown", associatedTurns: turns, observedReads: turns, explicitInvocations: 0, conversations: Math.ceil(turns / 2),
     associatedRequests: turns * 20, pricedRequests: turns * 20, apiEquivalentCostUsd: turns * 2, toolCalls: turns * 10, toolErrors: Math.round(turns / 2),
     medianDurationMs: 60_000, timedTurns: turns, firstUsedAt: "2026-10-01T08:00:00.000Z", lastUsedAt: "2026-10-12T08:00:00.000Z",
-    models: [{ modelId: "model-one", requests: turns * 15, toolErrors: 0, knownCostUsd: turns * 1.5 }, { modelId: "model-two", requests: turns * 5, toolErrors: 0, knownCostUsd: turns * 0.5 }], ...overrides,
+    models: [{ modelId: "model-one", requests: turns * 15, toolErrors: 0, knownCostUsd: turns * 1.5 }, { modelId: "model-two", requests: turns * 5, toolErrors: 0, knownCostUsd: turns * 0.5 }],
+    tokens: { input: turns * 1000, output: turns * 500, cacheRead: turns * 9000, cacheWrite: 0, reasoning: 0 }, p90DurationMs: 120_000,
+    engines: [{ engine: "pi", turns }], projects: [{ projectId: "p1", turns, conversations: Math.ceil(turns / 2), knownCostUsd: turns * 2 }],
+    daily: [{ key: "2026-10-10", turns: Math.ceil(turns / 2), knownCostUsd: turns }, { key: "2026-10-12", turns: Math.floor(turns / 2), knownCostUsd: turns }],
+    topConversations: [{ projectId: "p1", conversationId: "c1", turns, knownCostUsd: turns * 2 }], ...overrides,
   });
   const skills = {
     skills: [
@@ -437,6 +441,7 @@ test("skills and time lists one row per skill, says what stands out, and pages i
     withSkill: { turns: 300, requests: 6000, pricedRequests: 6000, costUsd: 600, toolCalls: 3000, toolErrors: 150, timedTurns: 280, medianDurationMs: 120_000 },
     withoutSkill: { requests: 4000, pricedRequests: 4000, costUsd: 400, toolCalls: 2000, toolErrors: 100 },
     turnTiming: { timedTurns: 500, medianDurationMs: 60_000 }, coverage: { missing: 3 },
+    projectNames: { p1: "Billing" }, conversationTitles: { c1: "Fix the invoice export" },
   };
   const installed = [
     { name: "ponytail", description: "Write less code", origin: "user", path: "/skills/ponytail", harnesses: ["pi"] },
@@ -447,6 +452,9 @@ test("skills and time lists one row per skill, says what stands out, and pages i
   let timingFails = false;
   const hourRequests: string[] = [];
   await page.route("**/api/usage/skills?*", (route: any) => route.fulfill({ json: skills }));
+  await page.route("**/api/usage/skills/content?*", (route: any) => new URL(route.request().url()).searchParams.get("name") === "ponytail"
+    ? route.fulfill({ json: { name: "ponytail", description: "Write less code", origin: "user", harnesses: ["pi"], copies: [{ origin: "user", harnesses: ["pi"] }], path: "/skills/ponytail", content: "---\nname: ponytail\n---\nWrite less code.", truncated: false, bytes: 40, lines: 4, modifiedAt: "2026-10-01T00:00:00.000Z", files: ["scripts/"] } })
+    : route.fulfill({ status: 404, json: { error: "That skill is not installed on this node" } }));
   await page.route("**/api/resources/inventory*", (route: any) => route.fulfill({ json: { nodes: [{ node: { id: "this", name: "This", local: true, online: true }, inventory: { skills: installed, mcpServers: [], harnesses: [] } }] } }));
   await page.route("**/api/usage/timing?*", (route: any) => timingFails ? route.fulfill({ status: 500, json: { error: "Timing broke" } }) : route.fulfill({ json: {
     days: [
@@ -481,7 +489,9 @@ test("skills and time lists one row per skill, says what stands out, and pages i
 
   // One row per skill, most used first; the list pages, and neither it nor the dialog scrolls.
   assert.deepEqual((await names()).slice(0, 4), ["ponytail", "caveman", "flaky", "slow"]);
-  assert.equal(await rows.first().locator(".usage-name-detail").textContent(), "59 conversations · asked for 4×");
+  assert.equal(await rows.first().locator(".usage-name-detail").textContent(), "59 conversations · Pi · typed 4×");
+  assert.deepEqual(await body.locator("thead th").allTextContents(), ["Skill", "Turns", "Of skill turns", "Trend", "Cost", "Per turn", "Requests", "Tokens", "Cache", "Failed tools", "Median turn", "Projects", "Last used"]);
+  assert.deepEqual(await rows.first().locator("td").allTextContents(), ["ponytail59 conversations · Pi · typed 4×", "118", "39%", "", "$236", "$2", "2,360", "1.24M", "90%", "5.0%", "1m 00s", "1", "Oct 12"]);
   const shown = await rows.count();
   assert.ok(shown >= 3 && shown < 24, `the list pages to what fits: ${shown} rows`);
   assert.equal(await dialog.locator("#usageInsightCount").textContent(), `1–${shown} of 24 skills`);
@@ -501,17 +511,30 @@ test("skills and time lists one row per skill, says what stands out, and pages i
   assert.ok(!(await names()).includes("ponytail"), "the next page shows other skills");
   assert.match(await dialog.getByTestId("usage-insight-pagination").locator("span").textContent() ?? "", /^Page 2 of \d+$/);
 
-  // A finding opens its skill: the row is selected on whichever page holds it, and its models are shown.
+  // A finding opens the skill's own page, which replaces the totals while it is open.
   await findings.nth(1).click();
-  const flaky = rows.filter({ hasText: "flaky" });
-  assert.match(await flaky.getAttribute("class") ?? "", /selected/);
-  assert.deepEqual(await flaky.locator(".usage-flag").allTextContents(), ["25%"], "only the clearly worse number is marked");
-  assert.deepEqual(await rows.filter({ hasText: "slow" }).locator(".usage-flag").allTextContents(), ["10m 00s"]);
-  const focus = dialog.getByTestId("usage-insight-focus");
-  await focus.getByText("Cost by model").waitFor();
-  assert.deepEqual(await focus.locator(".usage-split-legend span").allTextContents(), ["model-one", "model-two"]);
-  await dialog.getByTestId("usage-insight-focus-close").click();
-  await focus.getByText("Select a skill to see which models ran it.").waitFor();
+  const detail = dialog.getByTestId("usage-skill-detail");
+  await detail.getByRole("heading", { name: "flaky" }).waitFor();
+  assert.equal(await dialog.getByTestId("usage-insight-stats").isVisible(), false);
+  const tiles = detail.locator(".usage-skill-tiles .usage-stat");
+  assert.deepEqual(await tiles.locator("span").allTextContents().then((labels: string[]) => labels.slice(0, 8)), ["Turns", "Conversations", "Requests", "Cost", "Cost per turn", "Tokens", "Cache read", "Failed tools"]);
+  assert.deepEqual(await tiles.locator("strong").allTextContents().then((values: string[]) => values.slice(0, 8)), ["12", "6", "240", "$24", "$2", "126.0K", "90%", "25%"]);
+  assert.equal(await tiles.nth(7).locator("small").textContent(), "30 of 120 calls · 5.0% across all skill turns");
+  await detail.getByText("Fix the invoice export").waitFor();
+  await detail.getByText("Billing").first().waitFor();
+  assert.deepEqual(await detail.locator(".usage-split-legend span").allTextContents(), ["model-one", "model-two"]);
+  assert.equal(await detail.locator(".usage-skill-chart rect").count(), 3, "two days of use and the empty day between them");
+  await detail.getByTestId("usage-skill-tab-contents").click();
+  await detail.getByText("That skill is not installed on this node").waitFor();
+  await detail.getByTestId("usage-skill-back").click();
+  assert.equal(await dialog.getByTestId("usage-insight-stats").isVisible(), true);
+  await rows.filter({ hasText: "ponytail" }).first().locator("[data-select]").click();
+  await detail.getByTestId("usage-skill-tab-contents").click();
+  await detail.getByTestId("usage-skill-text").getByText("Write less code.").waitFor();
+  assert.match(await detail.locator(".usage-skill-meta").textContent() ?? "", /4 lines · 0\.0 KB/);
+  assert.match(await detail.locator(".usage-source").textContent() ?? "", /Beside it: scripts\//);
+  await detail.getByTestId("usage-skill-back").click();
+  await dialog.getByText("Select a skill for its statistics and contents.").waitFor();
 
   await body.locator('[data-sort="cost"]').click();
   assert.equal((await names())[0], "ponytail");
@@ -528,7 +551,7 @@ test("skills and time lists one row per skill, says what stands out, and pages i
   assert.match((await names())[0], /Oct 12/, "latest day first");
   assert.equal(await rows.nth(1).locator(".usage-partial").count(), 1, "a day with unpriced requests is marked as a lower bound");
   assert.equal(await rows.nth(1).locator("td").nth(7).textContent(), "—", "no queue time was recorded that day");
-  await focus.getByText("Daily cost").waitFor();
+  await dialog.getByTestId("usage-insight-focus").getByText("Daily cost").waitFor();
 
   assert.equal(hourRequests.length, 0, "hours are read only when asked for");
   await dialog.getByTestId("usage-insight-view-hours").click();
@@ -544,6 +567,91 @@ test("skills and time lists one row per skill, says what stands out, and pages i
   await dialog.getByTestId("usage-insight-view-days").click();
   assert.deepEqual((await rows.first().locator("td").allTextContents()).map((text: string) => text.trim()).slice(1), ["$254.46", "69%", "1,965", "—", "—", "—", "—", "—"]);
   assert.deepEqual(errors, []);
+});
+
+test("suggestions stay unread until asked, then list skills to remove and kinds of work to add, with a reviewed draft", { timeout: 240_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await login(page, environment, node.url);
+  let suggestionRequests = 0;
+  const drafts: any[] = [];
+  const empty = { skills: [], scopeRequests: 0, unattributedRequests: 0, withSkill: { turns: 0, requests: 0, pricedRequests: 0, costUsd: 0, toolCalls: 0, toolErrors: 0, timedTurns: 0, medianDurationMs: null },
+    withoutSkill: { requests: 0, pricedRequests: 0, costUsd: 0, toolCalls: 0, toolErrors: 0 }, turnTiming: null, coverage: { missing: 0 } };
+  await page.route("**/api/usage/skills?*", (route: any) => route.fulfill({ json: empty }));
+  await page.route("**/api/usage/skills/suggestions?*", (route: any) => {
+    suggestionRequests++;
+    return route.fulfill({ json: {
+      installedSkills: 9, conversationsConsidered: 120, truncated: false,
+      removals: [
+        { kind: "unused", name: "old-skill", reason: "No agent has loaded it in the 120 days of usage recorded on this node.", turns: 0, lastUsedAt: null, knownCostUsd: 0 },
+        { kind: "overlap", name: "copy-skill", other: "main-skill", reason: "Its description is 80% the same as main-skill.", turns: 2, lastUsedAt: "2026-10-01T00:00:00.000Z", knownCostUsd: 3 },
+        ...Array.from({ length: 4 }, (_, index) => ({ kind: "failing", name: `flaky-${index}`, reason: "30% of tool calls fail.", turns: 12, lastUsedAt: "2026-10-12T00:00:00.000Z", knownCostUsd: 10 })),
+      ],
+      creations: [{ phrase: "deploy staging", kind: "script", confidence: 0.45, conversations: 4, projects: 1, days: 4, knownCostUsd: 8, requests: 40, firstAt: "2026-10-01T00:00:00.000Z", lastAt: "2026-10-12T00:00:00.000Z", coveredBy: "ship-it",
+        examples: [{ projectId: "p1", projectName: "Billing", conversationId: "a", title: "Deploy staging cluster", knownCostUsd: 2 }], draftProjectId: "p1", draftProjectName: "Billing", draftEvidenceIds: ["a", "b", "c"] }],
+    } });
+  });
+  await page.route("**/api/usage/analysis/drafts", (route: any) => { drafts.push(route.request().postDataJSON()); return route.fulfill({ status: 201, json: { id: "d1", ...drafts.at(-1), reviewedSha256: "f".repeat(64), status: "draft" } }); });
+  await page.getByTestId("usage-open").click();
+  const dialog = page.getByTestId("usage-dialog");
+  await dialog.getByTestId("usage-tab-insights").click();
+  await dialog.getByTestId("usage-insight-view-suggest").click();
+  await dialog.getByTestId("usage-suggest-run").waitFor();
+  assert.equal(suggestionRequests, 0, "nothing is read until the person asks");
+  await dialog.getByTestId("usage-suggest-run").click();
+  const removals = dialog.getByTestId("usage-suggest-removals");
+  await removals.getByTestId("usage-suggest-removal").first().waitFor();
+  assert.equal(suggestionRequests, 1);
+  assert.equal(await removals.getByTestId("usage-suggest-removal").count(), 3, "three to a page");
+  assert.deepEqual(await removals.locator(".usage-suggest-kind").allTextContents(), ["Unused", "Overlaps", "Fails often"]);
+  await removals.getByText("Page 1 of 2").waitFor();
+  await removals.locator('[data-suggest-page="removals:1"]').click();
+  assert.equal(await removals.getByTestId("usage-suggest-removal").count(), 3);
+  const creations = dialog.getByTestId("usage-suggest-creations");
+  await creations.getByText("May already be covered by").waitFor();
+  assert.equal(await creations.locator("header .usage-suggest-kind").textContent(), "script · 45%");
+  await creations.getByTestId("usage-suggest-draft").click();
+  assert.equal(await creations.getByTestId("usage-draft-name").inputValue(), "deploy-staging");
+  await creations.getByTestId("usage-draft-content").fill("Run the staging deploy script and check the health endpoint.");
+  await creations.getByTestId("usage-draft-save").click();
+  await creations.getByTestId("usage-draft-review").waitFor();
+  assert.deepEqual(drafts, [{ projectId: "p1", name: "deploy-staging", kind: "script", content: "Run the staging deploy script and check the health endpoint.", evidenceConversationIds: ["a", "b", "c"] }]);
+  // Reading an unused skill opens its page over the suggestions, and Back returns to them.
+  await page.route("**/api/usage/skills/content?*", (route: any) => route.fulfill({ status: 404, json: { error: "That skill is not installed on this node" } }));
+  await removals.locator('[data-page="x"], [data-suggest-page="removals:-1"]').click();
+  await removals.getByTestId("usage-suggest-open").first().click();
+  await dialog.getByTestId("usage-skill-detail").getByText("That skill is not installed on this node").waitFor();
+  await dialog.getByTestId("usage-skill-back").click();
+  await dialog.getByTestId("usage-suggest-removals").waitFor();
+});
+
+test("the comparison says what changed against the previous period, by totals, project, model and skill", { timeout: 240_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await login(page, environment, node.url);
+  const today = new Date();
+  const firstOfMonth = isoDate(new Date(today.getFullYear(), today.getMonth(), 1));
+  const totals = (cost: number, requests: number) => ({ apiCostUsd: cost, partial: false, input: 100, output: 50, cacheRead: 900, cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteUnknown: 0, totalTokens: requests * 1000, pricedRequests: requests, requests, toolCalls: 100, toolErrors: cost > 1000 ? 20 : 5, reasoning: 0, missingRequests: 0, unavailableSessions: 0 });
+  const side = (current: boolean) => ({ summary: totals(current ? 1500 : 1000, 100), projects: [{ id: "x", name: "Contigos" }, { id: "y", name: "Guitar" }],
+    breakdowns: { projects: [{ key: "x", totals: totals(current ? 1200 : 500, 1) }, { key: "y", totals: totals(current ? 300 : 500, 1) }], models: [{ key: "gpt-big", totals: totals(current ? 1000 : 700, 1) }] }, coverage: { missing: 0 } });
+  const isCurrent = (route: any) => new URL(route.request().url()).searchParams.get("from") === firstOfMonth;
+  await page.route("**/api/usage/days?*", (route: any) => route.fulfill({ json: { days: [{ key: isoDate(today), totals: { apiCostUsd: 3, partial: false } }], coverage: { missing: 0, refreshedAt: null, refreshing: false } } }));
+  await page.route("**/api/usage?*", (route: any) => new URL(route.request().url()).searchParams.get("sections") === "summary,projects,models" ? route.fulfill({ json: side(isCurrent(route)) }) : route.fallback());
+  await page.route("**/api/usage/skills?*", (route: any) => route.fulfill({ json: { skills: [{ name: "ponytail", associatedTurns: isCurrent(route) ? 40 : 10 }], withSkill: { turns: isCurrent(route) ? 40 : 10 }, coverage: { missing: 0 } } }));
+  await page.route("**/api/usage/timing?*", (route: any) => route.fulfill({ json: { days: [], totals: { turns: isCurrent(route) ? 60 : 50, failed: isCurrent(route) ? 4 : 1, medianAgentMs: 60_000, medianQueueMs: null, medianToolMs: null }, unknownHistoricalTiming: 0 } }));
+  await page.getByTestId("usage-open").click();
+  const dialog = page.getByTestId("usage-dialog");
+  await dialog.getByTestId("usage-tab-compare").click();
+  const changes = dialog.getByTestId("usage-changes");
+  const headline = changes.getByTestId("usage-changes-headline");
+  await headline.waitFor();
+  assert.match(await headline.textContent() ?? "", /^Cost is up 50% on .+, same \d+ days?\. Biggest rises: Contigos \(\+\$700\), gpt-big \(\+\$300\)\.$/);
+  const totalsRows = changes.getByTestId("usage-changes-totals").locator("tbody tr");
+  assert.deepEqual(await totalsRows.first().locator("td").allTextContents(), ["Cost", "$1,500", "$1,000", "▲ 50%"]);
+  assert.match(await totalsRows.first().locator("td").nth(3).getAttribute("class") ?? "", /worse/);
+  assert.deepEqual(await changes.getByTestId("usage-changes-totals").locator("tbody tr td:first-child").allTextContents(), ["Cost", "Requests", "Tokens", "Cost per request", "Cache read", "Failed tool calls", "Turns", "Median turn", "Failed turns", "Skill turns"]);
+  assert.deepEqual(await changes.getByTestId("usage-changes-projects").locator("tbody tr").first().locator("td").allTextContents(), ["Contigos", "$1,200", "$500", "+$700 · ▲ 140%"]);
+  assert.deepEqual(await changes.getByTestId("usage-changes-skills").locator("tbody tr").first().locator("td").allTextContents(), ["ponytail", "40", "10", "+30 · ▲ 300%"]);
+  await changes.getByTestId("usage-changes-week").click();
+  await changes.getByTestId("usage-changes-week").and(page.locator('[aria-pressed="true"]')).waitFor();
 });
 
 test("comparison cancels stale scope response without overwriting newer chart", { timeout: 240_000 }, async (t) => {

@@ -85,6 +85,13 @@ test("a skill loaded from two folders, in two versions, is one row", () => {
   assert.deepEqual([skill.associatedRequests, skill.pricedRequests, skill.apiEquivalentCostUsd, skill.toolCalls, skill.toolErrors], [3, 3, 7, 6, 1]);
   assert.deepEqual([skill.firstUsedAt, skill.lastUsedAt], [at(1), at(3)]);
   assert.deepEqual(skill.models.map((model) => [model.modelId, model.requests, model.knownCostUsd]), [["m", 2, 5], ["other", 1, 2]]);
+  assert.deepEqual(skill.tokens, { input: 300, output: 30, cacheRead: 0, cacheWrite: 0, reasoning: 0 });
+  assert.deepEqual(skill.engines, [{ engine: "pi", turns: 3 }]);
+  assert.deepEqual(skill.projects, [{ projectId: "p", turns: 3, conversations: 2, knownCostUsd: 7 }]);
+  assert.deepEqual(skill.daily, [{ key: "2025-01-01", turns: 3, knownCostUsd: 7 }]);
+  assert.deepEqual(skill.topConversations.map((item) => [item.conversationId, item.turns, item.knownCostUsd]), [["c", 2, 5], ["c2", 1, 2]]);
+  assert.equal(skill.p90DurationMs, null, "no turn was timed");
+  assert.deepEqual(usageSkillBreakdown({ projectIds: ["p"] }, "Pacific/Kiritimati").skills[0].daily.map((day) => day.key), ["2025-01-01"], "a zone fourteen hours ahead still sees these minutes on the same local day");
 });
 test("skill turns are compared with the rest of the scope and with every timed turn", () => {
   const turn = (turnId: string, sessionId: string, startedAt: string, endedAt: string) => saveDifficulty({ turnId, projectId: "p", conversationId: "c", sessionId, engine: "pi", occurredAt: startedAt, status: "disabled", level: null, confidence: null, startedAt, endedAt }, "n");
