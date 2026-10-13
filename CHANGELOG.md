@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.82.0 — 2026-10-13
 
 - Added a Change story… item to each conversation's menu that explains what the conversation did from its own turns, so a conversation with no commits or pending files gets a story instead of a "Nothing to explain" error.
 
