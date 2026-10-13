@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.87.0 — 2026-10-13
 
-- Made worktree pull requests leave out files your project's git ignores, and made a retry after an interrupted pull request reuse its branch and open pull request instead of failing.
+- Made worktree pull requests leave out files your project's git ignores, and upload their files eight at a time.
+- Made a retry after an interrupted worktree pull request reuse its branch and open pull request instead of failing.
+- Added a Git setting for the worktree command timeout, which defaults to 360 seconds and can be set from 60 to 3,600; agents receive it when they start.
 
 ## 2.86.3 — 2026-10-13
 
