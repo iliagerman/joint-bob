@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added an Auto respond button to the chat toolbar that opens a dialog for turning auto respond on in a conversation and setting its model, effort, instructions, stop conditions, and response limit, with a status note in the toolbar while it is active.
+
 ## 2.88.0 — 2026-10-13
 
 - Added auto respond, which hands a conversation's turn-taking to a second model: when the agent stops with nothing queued, it writes your next message within the stop instructions and response limit you set, and its replies carry an Auto badge that stays after reopening.
