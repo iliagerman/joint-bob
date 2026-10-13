@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.82.1 — 2026-10-13
 
-- Removed Automations, the project menu's browser monitors that watched a signed-in page for new messages, so they no longer run or appear in any project.
+- Removed Automations and the browser monitors that watched a signed-in page for new messages, so they no longer run or appear in any project.
 
 ## 2.82.0 — 2026-10-13
 
