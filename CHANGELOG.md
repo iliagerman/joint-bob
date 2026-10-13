@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Made background refreshes of running work and transcript lists read far less data, so busy nodes respond faster and conversation lists load sooner.
 - Made quick notes shared from another machine arrive when that machine changes them, and when it comes back online, instead of re-checking every two seconds.
+- Made a machine's answers to another machine's catch-up requests reuse each project's conversation list until that project's conversations change, so busy nodes spend less time re-listing shared transcripts.
 
 ## 2.85.1 — 2026-10-13
 

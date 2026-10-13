@@ -24,6 +24,7 @@ import { deletedConversationKeys, ensureConversationRecord, ensureConversationRe
 import { presentReplicationPeers, replicationPeers } from "./replication-v2.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
 import { fetchPeer, isPeerUnreachable, PeerUnreachableError, whilePeerOptional } from "./peer-availability.js";
+import { projectListingRevision } from "../session-listing-revisions.js";
 
 export const transcriptQuery=z.object({projectId:z.string().min(1).max(300),engine:z.string().min(1).max(80).optional(),sessionId:z.string().min(1).max(300).optional()}).strict();
 const entrySchema=z.object({engine:z.string().min(1).max(80),sessionId:z.string().min(1).max(300),relativePath:z.string().min(1).max(4096),size:z.number().int().min(0).max(1024*1024*1024),hash:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
@@ -94,9 +95,24 @@ async function localTranscriptFile(session:{engine:string;path:string}):Promise<
  return file;
 }
 /** A peer catching up on one conversation names it, so only that transcript is hashed and sent. */
-export function sharedTranscriptInventory(peer:string,projectId:string,only?:{engine:string;sessionId:string}):Promise<Entry[]>{
- return withProjectRuntime(projectId,()=>sharedTranscriptInventoryNow(peer,projectId,only));
+export async function sharedTranscriptInventory(peer:string,projectId:string,only?:{engine:string;sessionId:string}):Promise<Entry[]>{
+ const build=()=>withProjectRuntime(projectId,()=>sharedTranscriptInventoryNow(peer,projectId,only));
+ if(only)return build();
+ // Whether the project is still shared with this peer is settled on every request.
+ await sharedTranscriptProject(peer,projectId);
+ const key=`${peer}\n${projectId}`,revision=projectListingRevision(projectId),kept=inventories.get(key);
+ if(kept&&kept.revision===revision&&Date.now()-kept.at<INVENTORY_MAX_AGE_MS)return kept.entries;
+ const entry={revision,at:Date.now(),entries:build()};
+ inventories.set(key,entry);
+ entry.entries.catch(()=>{if(inventories.get(key)===entry)inventories.delete(key);});
+ return entry.entries;
 }
+/** A twin asks for every shared project's inventory twice a minute, and each answer listed the
+    project's whole history. An answer is kept until the project's conversations change, and
+    for two minutes at most: on Linux the file watcher can miss a change. */
+const INVENTORY_MAX_AGE_MS=120_000;
+const inventories=new Map<string,{revision:string;at:number;entries:Promise<Entry[]>}>();
+export function forgetSharedTranscriptInventories():void{inventories.clear();}
 async function sharedTranscriptInventoryNow(peer:string,projectId:string,only?:{engine:string;sessionId:string}):Promise<Entry[]>{
  const entries:Entry[]=[];
  for(const session of await sourceTranscripts(peer,projectId)){

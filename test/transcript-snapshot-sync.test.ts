@@ -41,6 +41,28 @@ async function fixture(t: TestContext) {
   return { db, local, peer, remote, relationshipId: invite.body.relationshipId, project, sessionId, destination, content };
 }
 
+// First in this file: the tests below leave transcripts that are not valid ones in the shared folder.
+test("a project's inventory is kept until its conversations change, while a named conversation is always read afresh", async (t) => {
+  const { sessionListingChanged } = await import("../src/session-listing-revisions.js");
+  const f = await fixture(t);
+  await mkdir(path.dirname(f.destination), { recursive: true });
+  await writeFile(f.destination, f.content);
+  const mine = (entries: Awaited<ReturnType<typeof sharedTranscriptInventory>>) => entries.find((entry) => entry.sessionId === f.sessionId);
+  const first = await sharedTranscriptInventory(f.peer, f.project.id);
+  assert.equal(mine(first)?.hash, hash(f.content));
+
+  // Appended without anything announcing it, as a file watcher that missed the write leaves it.
+  const later = JSON.stringify({ type: "message", id: "second", parentId: "first", timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "text", text: "A later turn" }] } }) + "\n";
+  appendFileSync(f.destination, later);
+  assert.equal(await sharedTranscriptInventory(f.peer, f.project.id), first, "the twin's next poll costs no listing");
+  const named = await sharedTranscriptInventory(f.peer, f.project.id, { engine: "pi", sessionId: f.sessionId });
+  assert.equal(named[0].hash, hash(f.content + later), "catching up on one conversation reads it now");
+  await assert.rejects(sharedTranscriptInventory(randomUUID(), f.project.id), /not shared/, "a kept answer is not handed to a node the project is not shared with");
+
+  sessionListingChanged(f.project.id);
+  assert.equal(mine(await sharedTranscriptInventory(f.peer, f.project.id))?.hash, hash(f.content + later), "a change in the project is listed again");
+});
+
 test("transcript inventory hashes only the advertised bytes when the owner appends during hashing", async (t) => {
   const f = await fixture(t);
   await mkdir(path.dirname(f.destination), { recursive: true });

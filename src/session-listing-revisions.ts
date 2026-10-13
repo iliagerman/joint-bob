@@ -54,6 +54,8 @@ export function conversationsChanged(conversations: Iterable<{ engine: string; s
 }
 
 function revision(projectId: string): string { return `${everywhere}:${projects.get(projectId) ?? 0}`; }
+/** A value that changes whenever a project's conversations are marked changed, for answers kept elsewhere. */
+export function projectListingRevision(projectId: string): string { return revision(projectId); }
 
 /**
  * `compute`'s answer for `key`, shared with every caller until the project is marked changed.
