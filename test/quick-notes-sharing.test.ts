@@ -80,6 +80,8 @@ test("shared project notes can be read, edited, started and deleted from either 
     const created = await api<{ note: QuickNote }>(a, sa, "POST", "/quick-notes", input);
     assert.equal(created.status, 201);
     const id = created.body.note.id;
+    // Nobody has opened the notes on B: it has the draft because A said its drafts changed.
+    await eventually(async () => assert.equal((await api(b, sb, "GET", `/quick-notes/${id}`)).status, 200));
     const listing = await api<{ notes: QuickNote[] }>(b, sb, "GET", `/projects/${projectId}/quick-notes`);
     assert.equal(listing.status, 200);
     assert.equal(listing.body.notes.find(n => n.id === id)?.content, "Original", "notes must follow the shared project");
@@ -94,6 +96,7 @@ test("shared project notes can be read, edited, started and deleted from either 
       assert.deepEqual(ordered.body.notes.map(note => note.id), [second.body.note.id, id], "both nodes display the owner's reordered queue");
     }
     await fetch(`${a.url}/api/quick-notes/${second.body.note.id}`, { method: "DELETE", headers: { Cookie: sa.cookie, "x-csrf-token": sa.csrfToken } });
+    await eventually(async () => assert.equal((await api(b, sb, "GET", `/quick-notes/${second.body.note.id}`)).status, 404, "a draft deleted on its home node leaves the peer's copy without a listing there"));
     const edited = await api<{ note: QuickNote }>(b, sb, "PATCH", `/quick-notes/${id}`, { ...input, title: "Edited on peer", content: "Peer edit" });
     assert.equal(edited.status, 200, JSON.stringify(edited.body));
     assert.equal((await api<{ note: QuickNote }>(a, sa, "GET", `/quick-notes/${id}`)).body.note.content, "Peer edit");

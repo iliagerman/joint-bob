@@ -2,7 +2,7 @@ import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
-import { getQuickNote, listQuickNotes, type QuickNote } from "../quick-notes.js";
+import { getQuickNote, listQuickNotes, quickNoteFingerprints, type QuickNote } from "../quick-notes.js";
 import { replicationPeers, signedPeerPost } from "./replication-v2.js";
 import { peerAway } from "../peer-presence.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
@@ -42,12 +42,20 @@ async function context() {
 
 const syncing = new Map<string, Promise<void>>();
 
-/** Only the original node offers a draft. Cached copies never dispatch or relay it. */
-export async function syncSharedQuickNotes(projectId?: string): Promise<void> {
+/**
+ * Only the original node offers a draft. Cached copies never dispatch or relay it.
+ *
+ * Copies are fetched when someone opens the notes, when this machine starts, when the owner
+ * comes back, and when the owner says its drafts changed (announceQuickNoteChanges). They used
+ * to be fetched for every shared project every two seconds as well: five hundred requests a
+ * minute between two machines to learn that nothing had changed.
+ */
+export async function syncSharedQuickNotes(projectId?: string | string[], ownerNodeId?: string): Promise<void> {
   const { db, local, peers } = await context();
+  const wanted = projectId === undefined ? undefined : new Set([projectId].flat());
   // A peer that is away keeps its cached drafts readable; it is asked again when it returns.
-  await Promise.all(peers.filter(peer => !peerAway(peer.nodeId)).flatMap(peer => sharedProjectIds(db, local.id, peer.nodeId)
-    .filter(id => !projectId || id === projectId).map(id => {
+  await Promise.all(peers.filter(peer => !peerAway(peer.nodeId) && (!ownerNodeId || peer.nodeId === ownerNodeId)).flatMap(peer => sharedProjectIds(db, local.id, peer.nodeId)
+    .filter(id => !wanted || wanted.has(id)).map(id => {
       const key = `${peer.nodeId}:${id}`;
       let pending = syncing.get(key);
       if (!pending) {
@@ -79,6 +87,36 @@ export async function syncSharedQuickNotes(projectId?: string): Promise<void> {
       }
       return pending;
     })));
+}
+
+let announced: Map<string, string> | undefined;
+/**
+ * Tells the peers a project is shared with that this machine's drafts for it changed, so they
+ * fetch them then. Called on the cluster pass; what it compares is read from this machine's
+ * own database, and nothing is sent while nothing changed. A peer that is away, or that the
+ * notice does not reach, fetches when it is back (quickNotesAfterReturn).
+ */
+export async function announceQuickNoteChanges(): Promise<void> {
+  const current = quickNoteFingerprints(), previous = announced;
+  announced = current;
+  // Peers fetch everything when this machine starts, so the first reading is only remembered.
+  if (!previous) return;
+  const changed = [...new Set([...current.keys(), ...previous.keys()])].filter(id => current.get(id) !== previous.get(id));
+  if (changed.length) await tellPeersQuickNotesChanged(changed);
+}
+
+async function tellPeersQuickNotesChanged(projectIds?: string[], peerId?: string): Promise<void> {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  await Promise.all(replicationPeers(db, local.id).filter(peer => !peerAway(peer.nodeId) && (!peerId || peer.nodeId === peerId)).map(async peer => {
+    const shared = sharedProjectIds(db, local.id, peer.nodeId).filter(id => !projectIds || projectIds.includes(id));
+    // A peer running an older version has no such route; it still fetches on its own timer.
+    if (shared.length) await signedPeerPost(peer, "/api/cluster/v2/quick-notes/changed", { projectIds: shared }).catch(() => undefined);
+  }));
+}
+
+/** A peer is back: fetch its drafts, and have it fetch this machine's, in case either changed meanwhile. */
+export async function quickNotesAfterReturn(peerId: string): Promise<void> {
+  await Promise.all([syncSharedQuickNotes(undefined, peerId), tellPeersQuickNotesChanged(undefined, peerId)]);
 }
 
 /** Listing waits this long for fresh copies. A slow or offline owner keeps its cached drafts

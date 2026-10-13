@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { authorizeQuickNotePeer, forwardQuickNote, listSharedQuickNotes, offeredQuickNotes, sharedQuickNote } from "../shared-quick-notes.js";
+import { authorizeQuickNotePeer, forwardQuickNote, listSharedQuickNotes, offeredQuickNotes, sharedQuickNote, syncSharedQuickNotes } from "../shared-quick-notes.js";
 import { mapV2Error } from "../cluster-v2.js";
 import { secretHiddenFromActor } from "../../secrets.js";
 import { getProject, projectVisible } from "../../store.js";
@@ -155,6 +155,15 @@ app.post("/api/cluster/v2/quick-notes/list", async (request, response, next) => 
   try {
     const { projectId } = z.object({ projectId: z.string().min(1).max(120) }).strict().parse(request.body);
     response.json({ notes: await offeredQuickNotes(response.locals.machineNodeId, projectId) });
+  } catch (error) { mapV2Error(error, response, next); }
+});
+
+/** A peer saying its drafts for these projects changed. Only projects it shares with this node are fetched, and only from it. */
+app.post("/api/cluster/v2/quick-notes/changed", async (request, response, next) => {
+  try {
+    const { projectIds } = z.object({ projectIds: z.array(z.string().min(1).max(120)).min(1).max(500) }).strict().parse(request.body);
+    void syncSharedQuickNotes(projectIds, response.locals.machineNodeId as string).catch((error) => console.warn("Fetching a peer's changed quick notes failed", error));
+    response.json({ ok: true });
   } catch (error) { mapV2Error(error, response, next); }
 });
 

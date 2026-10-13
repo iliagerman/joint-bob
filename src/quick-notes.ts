@@ -237,6 +237,14 @@ export function listQuickNotes(projectId: string): QuickNote[] {
   return (db().prepare("SELECT * FROM quick_notes WHERE project_id = ? AND status IN ('pending', 'failed') ORDER BY position, created_at, id").all(projectId) as unknown as QuickNoteRow[]).map(row => fromRow(row, true));
 }
 
+/** One value per project that changes whenever the notes this node shows for it change. */
+export function quickNoteFingerprints(): Map<string, string> {
+  const rows = db().prepare("SELECT project_id, id, status, position, updated_at, dispatched_at, error FROM quick_notes WHERE status IN ('pending', 'failed') ORDER BY project_id, id").all() as Array<Record<string, unknown>>;
+  const fingerprints = new Map<string, string>();
+  for (const row of rows) fingerprints.set(String(row.project_id), `${fingerprints.get(String(row.project_id)) ?? ""}${JSON.stringify(Object.values(row))}`);
+  return fingerprints;
+}
+
 /** Visible notes across every project on this node. */
 export function listAllQuickNotes(): QuickNote[] {
   return (db().prepare("SELECT * FROM quick_notes WHERE status IN ('pending', 'failed') ORDER BY position, created_at, id").all() as unknown as QuickNoteRow[]).map(row => fromRow(row, true));

@@ -21,7 +21,7 @@ import { flushSharingFiles } from "./sharing-files.js";
 import { disconnectRevokedRuntimeSockets } from "./runtime-peers.js";
 import { flushScopedCredentials } from "./scoped-credentials.js";
 import { flushSharedTranscripts } from "./shared-transcripts.js";
-import { syncSharedQuickNotes } from "./shared-quick-notes.js";
+import { announceQuickNoteChanges } from "./shared-quick-notes.js";
 import { flushTwinCredentials } from "./replication-v2.js";
 import { peerAway } from "../peer-presence.js";
 import { flushResourcePolicyDeliveries } from "./resource-policy.js";
@@ -78,7 +78,7 @@ export async function flushV2ClusterAdministration(): Promise<void> {
     await flushSharingFiles();
     await flushTwinCredentials();
     await flushSharedTranscripts();
-    await syncSharedQuickNotes();
+    await announceQuickNoteChanges();
     await flushScopedCredentials();
   } finally { flushing = false; }
 }

@@ -5,6 +5,7 @@ import { receiveReplicationBatch, type ReplicationBatch } from "../../replicatio
 import { removeTranscriptsDeletedBy } from "../deleted-transcripts.js";
 import { catchUpSharedTranscript } from "../shared-transcripts.js";
 import { resumeDeliveriesTo } from "../peer-return.js";
+import { syncSharedQuickNotes } from "../shared-quick-notes.js";
 import { type PushSubscriptionEvent, receivePushSubscriptionEvents } from "../../push.js";
 import { getProject } from "../../store.js";
 import { abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, commitPreparedTaskHandoff, getTaskHandoff, isTaskHandoffRejected, listTasks, prepareTaskHandoff, rejectTaskHandoff, reserveTaskHandoff, taskHandoffDeletion } from "../../tasks.js";
@@ -140,7 +141,10 @@ app.post(["/api/cluster/sessions/runtime-snapshot", "/api/cluster/v2/runtime/ses
 app.post("/api/cluster/v2/hello", async (_request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    await resumeDeliveriesTo(response.locals.machineNodeId as string);
+    const sender = response.locals.machineNodeId as string;
+    await resumeDeliveriesTo(sender);
+    // Its drafts are fetched when it says they changed; one it sent while unreachable is made up for here.
+    void syncSharedQuickNotes(undefined, sender).catch((error) => console.warn(`Fetching quick notes from ${sender} failed`, error));
     response.json({ ok: true });
   } catch (error) {
     next(error);

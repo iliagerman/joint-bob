@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Made background refreshes of running work and transcript lists read far less data, so busy nodes respond faster and conversation lists load sooner.
+- Made quick notes shared from another machine arrive when that machine changes them, and when it comes back online, instead of re-checking every two seconds.
 
 ## 2.85.1 — 2026-10-13
 

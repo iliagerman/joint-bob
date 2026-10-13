@@ -5,6 +5,7 @@ import { onPeerReturned, resetPeerAvailability } from "../peer-presence.js";
 import { resetDirectFailures } from "../relay/transport.js";
 import { pullFromHubs } from "./cluster-hubs.js";
 import { replicationPeers, signedPeerPost } from "./replication-v2.js";
+import { quickNotesAfterReturn, syncSharedQuickNotes } from "./shared-quick-notes.js";
 import { resetSharedTranscriptPulls } from "./shared-transcripts.js";
 
 /**
@@ -38,7 +39,10 @@ let listening = false;
 export function resumeDeliveriesOnReturn(): void {
   if (listening) return;
   listening = true;
-  onPeerReturned((peerId) => { void resumeDeliveriesTo(peerId).catch((error) => console.warn(`Resuming deliveries to ${peerId} failed`, error)); });
+  onPeerReturned((peerId) => {
+    void resumeDeliveriesTo(peerId).catch((error) => console.warn(`Resuming deliveries to ${peerId} failed`, error));
+    void quickNotesAfterReturn(peerId).catch((error) => console.warn(`Fetching quick notes from ${peerId} failed`, error));
+  });
 }
 
 let announcing: Promise<void> | undefined;
@@ -53,6 +57,8 @@ export function announceReturn(slept: boolean): Promise<void> {
     // A real attempt at every peer: one that answers is known to be there, one that does not is left alone from here on.
     await Promise.all(replicationPeers(db, local.id).map((peer) => signedPeerPost(peer, "/api/cluster/v2/hello", {}).catch(() => undefined)));
     resetSharedTranscriptPulls();
+    // Drafts are no longer fetched on a timer: what peers offer is fetched now.
+    await syncSharedQuickNotes().catch((error) => console.warn("Fetching peers' quick notes failed", error));
     await pullFromHubs().catch((error) => console.warn("Hub pull failed", error));
   })().finally(() => { announcing = undefined; });
   return announcing;
