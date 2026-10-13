@@ -44,6 +44,7 @@ export function ensureHubSchema(db: DatabaseSync): void {
   ensureResourceSharingSchema(db);
   db.exec(`CREATE TABLE IF NOT EXISTS cluster_v2_relay_log(seq INTEGER PRIMARY KEY AUTOINCREMENT, cluster_id TEXT NOT NULL, event_id TEXT NOT NULL, event TEXT NOT NULL, signature TEXT NOT NULL, from_node_id TEXT NOT NULL, UNIQUE(cluster_id,event_id));
 CREATE TABLE IF NOT EXISTS cluster_v2_hub_queue(event_id TEXT NOT NULL, cluster_id TEXT NOT NULL, slot TEXT NOT NULL CHECK(slot IN ('low','high')), node_id TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, delivered_at TEXT, last_error TEXT, PRIMARY KEY(event_id,cluster_id,slot));
+CREATE INDEX IF NOT EXISTS cluster_v2_hub_queue_due ON cluster_v2_hub_queue(next_attempt_at) WHERE delivered_at IS NULL;
 CREATE TABLE IF NOT EXISTS cluster_v2_hub_cursor(singleton INTEGER PRIMARY KEY CHECK(singleton=1), outbox_rowid INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS cluster_v2_hub_projects(cluster_id TEXT NOT NULL, project_id TEXT NOT NULL, PRIMARY KEY(cluster_id,project_id));
 CREATE TABLE IF NOT EXISTS cluster_v2_pull_cursors(source_node_id TEXT NOT NULL, cluster_id TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(source_node_id,cluster_id));
@@ -160,10 +161,43 @@ async function sendToHub(db: DatabaseSync, local: string, clusterId: string, hub
   replicationReceiptSchema.parse(await signedPost(db, local, hub, clusterId, "/api/cluster/v2/relay", { clusterId, relay: true, envelopes }));
 }
 
+/**
+ * A hub that answers and refuses (an older version that does not know an event, a block) will
+ * refuse the next batch as well. It is left alone for an hour, or until it says it is back:
+ * a node that restarts may have been updated. Before, a few thousand events queued for such a
+ * hub were all sent again every four minutes, and each was then written back in a transaction
+ * of its own; on a slow machine that froze the server for seconds at a time.
+ */
+const REFUSAL_MS = 60 * 60_000;
+const refusals = new Map<string, { until: number; message: string }>();
+/** Why this hub is being left alone, if it is. */
+export function hubRefusal(hub: string, now = Date.now()): string | undefined {
+  const entry = refusals.get(hub);
+  if (entry && now >= entry.until) refusals.delete(hub);
+  return refusals.get(hub)?.message;
+}
+/** Remembers a hub that answered with a refusal. One that did not answer, or was only busy, is not refusing. */
+export function noteHubFailure(hub: string, error: unknown, now = Date.now()): void {
+  if (!(error instanceof ClusterV2HttpError) || error.statusCode < 400 || error.statusCode >= 500 || [408, 429].includes(error.statusCode)) return;
+  refusals.set(hub, { until: now + REFUSAL_MS, message: `${error.message}; this hub is asked again in an hour, or when it says it is back` });
+}
+/** A hub that said it is back is asked again at once. */
+export function forgetHubRefusal(hub?: string): void { if (hub) refusals.delete(hub); else refusals.clear(); }
+
+/** Several rows change together in one transaction: one write to disk instead of one per row. */
+function together(db: DatabaseSync, change: () => void): void {
+  db.exec("SAVEPOINT hub_delivery");
+  try { change(); db.exec("RELEASE hub_delivery"); }
+  catch (error) { db.exec("ROLLBACK TO hub_delivery; RELEASE hub_delivery"); throw error; }
+}
+
+/** Seconds until a pending event is looked at again. A peer that returns makes them due at once (peer-return.ts). */
+export function hubRetrySeconds(attempts: number): number { return Math.min(15 * 60, 2 ** Math.min(attempts, 10)); }
+
 /** Delivers queued events to the hubs. A hub that does not answer is skipped: the next
     member in line takes its place, from the low end or the high end. */
 async function deliverToHubs(db: DatabaseSync, local: string): Promise<void> {
-  const due = db.prepare("SELECT event_id,cluster_id,slot,attempts FROM cluster_v2_hub_queue WHERE delivered_at IS NULL AND next_attempt_at<=? ORDER BY rowid LIMIT 500")
+  const due = db.prepare("SELECT event_id,cluster_id,slot,attempts FROM cluster_v2_hub_queue INDEXED BY cluster_v2_hub_queue_due WHERE delivered_at IS NULL AND next_attempt_at<=? ORDER BY rowid LIMIT 500")
     .all(new Date().toISOString()) as unknown as QueueRow[];
   const groups = new Map<string, QueueRow[]>();
   for (const row of due) groups.set(`${row.cluster_id}\n${row.slot}`, [...(groups.get(`${row.cluster_id}\n${row.slot}`) ?? []), row]);
@@ -179,6 +213,8 @@ async function deliverToHubs(db: DatabaseSync, local: string): Promise<void> {
     let lastError = "No hub answered";
     for (const hub of candidates) {
       if (peerAway(hub)) continue;
+      const refused = hubRefusal(hub);
+      if (refused) { lastError = refused; continue; }
       // The high hub must differ from the node that already holds an event as its low hub.
       const sendable = pending.filter((row) => slot === "low" || (db.prepare("SELECT node_id FROM cluster_v2_hub_queue WHERE event_id=? AND cluster_id=? AND slot='low'").get(row.event_id, clusterId) as { node_id: string | null } | undefined)?.node_id !== hub);
       if (!sendable.length) continue;
@@ -187,19 +223,22 @@ async function deliverToHubs(db: DatabaseSync, local: string): Promise<void> {
           const batch = sendable.slice(index, index + BATCH);
           await sendToHub(db, local, clusterId, hub, batch.map((row) => row.event_id));
           const delivered = new Date().toISOString();
-          for (const row of batch) db.prepare("UPDATE cluster_v2_hub_queue SET node_id=?,delivered_at=?,last_error=NULL WHERE event_id=? AND cluster_id=? AND slot=?").run(hub, delivered, row.event_id, clusterId, slot);
+          together(db, () => { for (const row of batch) db.prepare("UPDATE cluster_v2_hub_queue SET node_id=?,delivered_at=?,last_error=NULL WHERE event_id=? AND cluster_id=? AND slot=?").run(hub, delivered, row.event_id, clusterId, slot); });
         }
         pending = pending.filter((row) => !sendable.includes(row));
         if (!pending.length) break;
       } catch (error) {
         lastError = error instanceof Error ? error.message : "Hub delivery failed";
+        noteHubFailure(hub, error);
       }
     }
-    for (const row of pending) {
-      const attempts = row.attempts + 1;
-      db.prepare("UPDATE cluster_v2_hub_queue SET attempts=?,next_attempt_at=?,last_error=? WHERE event_id=? AND cluster_id=? AND slot=?")
-        .run(attempts, new Date(Date.now() + Math.min(300, 2 ** Math.min(attempts, 8)) * 1000).toISOString(), lastError, row.event_id, clusterId, slot);
-    }
+    together(db, () => {
+      for (const row of pending) {
+        const attempts = row.attempts + 1;
+        db.prepare("UPDATE cluster_v2_hub_queue SET attempts=?,next_attempt_at=?,last_error=? WHERE event_id=? AND cluster_id=? AND slot=?")
+          .run(attempts, new Date(Date.now() + hubRetrySeconds(attempts) * 1000).toISOString(), lastError, row.event_id, clusterId, slot);
+      }
+    });
     // With one other member online the second copy has nowhere to go; that is said once, not on every pass.
     if (pending.length) warnOnChange(`hub:${key}`, `Hub delivery for cluster ${clusterId} (${slot}) is pending: ${lastError}`);
     else settled(`hub:${key}`);

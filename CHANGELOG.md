@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Stopped resending synced events every few minutes to a machine that keeps refusing them, which had frozen slower machines for seconds at a time; such a machine is now asked again within an hour, or as soon as it comes back online.
+
 ## 2.86.0 — 2026-10-13
 
 - Made busy nodes respond faster by skipping repeated database and file lookup work on every conversation listing and background refresh, so conversation lists load sooner.

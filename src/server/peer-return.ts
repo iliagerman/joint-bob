@@ -3,7 +3,7 @@ import { getClusterNode } from "../cluster.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { onPeerReturned, resetPeerAvailability } from "../peer-presence.js";
 import { resetDirectFailures } from "../relay/transport.js";
-import { pullFromHubs } from "./cluster-hubs.js";
+import { forgetHubRefusal, pullFromHubs } from "./cluster-hubs.js";
 import { replicationPeers, signedPeerPost } from "./replication-v2.js";
 import { quickNotesAfterReturn, syncSharedQuickNotes } from "./shared-quick-notes.js";
 import { resetSharedTranscriptPulls } from "./shared-transcripts.js";
@@ -27,6 +27,8 @@ function makeDue(db: DatabaseSync, sql: string, ...values: SQLInputValue[]): voi
 /** Makes everything queued for a peer due now: replicated events, push subscriptions, routing configurations and hub deliveries. */
 export async function resumeDeliveriesTo(peerId: string): Promise<void> {
   const db = await clusterV2Database(), now = new Date().toISOString();
+  // It may have been updated since it last refused this node's events as a hub.
+  forgetHubRefusal(peerId);
   makeDue(db, "UPDATE replication_deliveries SET next_attempt_at=? WHERE peer_id=? AND delivered_at IS NULL AND next_attempt_at>?", now, peerId, now);
   makeDue(db, "UPDATE push_subscription_deliveries SET next_attempt_at=? WHERE peer_id=? AND delivered_at IS NULL AND next_attempt_at>?", now, peerId, now);
   makeDue(db, "UPDATE routing_config_deliveries SET next_attempt_at=? WHERE target_node_id=? AND next_attempt_at>?", now, peerId, now);
