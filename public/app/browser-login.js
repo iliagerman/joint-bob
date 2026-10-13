@@ -6,6 +6,12 @@ import { state } from "./state.js";
 
 const dismissed = new Set(), announced = new Set();
 let popup = null, discovering = false, discoveryOutage = false, timer = null;
+// Every open page asked for the browser list every two seconds, and each answer asks every
+// browser machine in turn. While no browser is running anywhere there is no sign-in to find,
+// so the page then asks four times a minute. A browser that starts announces itself
+// (browserSessionsChanged), and the two-second pace returns as soon as one is running.
+const QUIET_POLL_MS = 15000;
+let quietUntil = 0;
 
 function identity() {
   const conversationId = state.activeConversationId || state.activeSessionId;
@@ -108,6 +114,7 @@ async function discover() {
   try {
     const result = await api("/api/browser/sessions");
     discoveryOutage = false;
+    quietUntil = (result.sessions || []).some(row => row.state === "running") ? 0 : Date.now() + QUIET_POLL_MS;
     if (!state.authenticated) return;
     if (identityKey(identity()) !== currentIdentityKey || popup || document.hidden) return;
     const pending = (result.sessions || []).filter(row => row.projectId && row.engine && row.conversationId && row.appNodeId
@@ -129,6 +136,7 @@ async function discover() {
 }
 
 function schedule() { void discover(); }
+function poll() { if (Date.now() >= quietUntil) schedule(); }
 // Selecting another conversation must take its sign-in away immediately, not on the next poll.
 // The signal arrives as a DOM event so chat rendering never has to import this module.
 function syncBrowserLogin() {
@@ -139,7 +147,7 @@ document.addEventListener("activeConversationChanged", syncBrowserLogin);
 document.addEventListener("browserSessionsChanged", schedule);
 window.addEventListener("focus", schedule);
 document.addEventListener("visibilitychange", schedule);
-timer = setInterval(schedule, 2000);
+timer = setInterval(poll, 2000);
 window.addEventListener("pagehide", () => {
   clearInterval(timer); timer = null;
   document.removeEventListener("activeConversationChanged", syncBrowserLogin);

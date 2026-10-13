@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Stopped resending synced events every few minutes to a machine that keeps refusing them, which had frozen slower machines for seconds at a time; such a machine is now asked again within an hour, or as soon as it comes back online.
+- Made open pages check for browser sign-ins every fifteen seconds instead of every two while no browser is running, so idle pages ask each machine far less often; checking speeds back up as soon as a browser starts.
 
 ## 2.86.0 — 2026-10-13
 
