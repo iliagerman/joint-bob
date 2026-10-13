@@ -241,7 +241,7 @@ function commentEntry(entry, label) {
 }
 
 function renderPullDetail() {
-  const { pull, comments, reviews, inline, files, truncated } = detail;
+  const { pull, comments, reviews, inline, files, fileLimit, truncated } = detail;
   hosting.append(node("h3", "git-hosting-title", `#${pull.number} · ${pull.title}`));
   hosting.append(node("p", "git-hosting-note", `${pull.user.login} · ${pull.head.ref} → ${pull.base.ref} · ${pull.merged ? "merged" : pull.state}${pull.draft ? " · draft" : ""}`));
   hosting.append(button("Explain this PR", () => explainPull?.(pull.number), "ghost compact", "git-hosting-explain-pull"));
@@ -261,7 +261,7 @@ function renderPullDetail() {
     item.append(node("pre", "git-hosting-log", file.patch ?? "Binary file or patch unavailable"));
     changes.append(item);
   }
-  if (truncated.files) changes.append(node("p", "git-hosting-note", "Only the first 500 files are shown. Open GitHub for the rest."));
+  if (truncated.files) changes.append(node("p", "git-hosting-note", `Only the first ${(fileLimit ?? files.length).toLocaleString()} files are shown. Open GitHub for the rest.`));
   hosting.append(changes);
   renderPullActions(pull);
 }

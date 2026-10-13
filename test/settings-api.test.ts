@@ -44,6 +44,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
   try {
     node = await startNode(root);
     const headers = await authenticatedHeaders(node.baseUrl);
+    assert.equal((await (await fetch(`${node.baseUrl}/api/settings`, { headers })).json()).gitPullFileLimit, 1000);
     const piRuntime = { configPath: path.join(root, "pi-config"), sessionPath: path.join(root, "pi-sessions") };
     const claudeRuntime = { configPath: path.join(root, "claude-config"), sessionPath: path.join(root, "claude-sessions") };
     const defaults = await fetch(`${node.baseUrl}/api/settings/runtime-defaults`, { headers });
@@ -75,6 +76,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
         conversationDefaults,
         conversationCommands,
         newConversationWorktree: true,
+        gitPullFileLimit: 750,
         conversationHistoryDays: 45,
         conversationRetentionDays: 60,
         projects: { homePath: path.join(root, "JointBob") },
@@ -85,6 +87,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     const savedText = await saved.text();
     assert.doesNotMatch(savedText, /secret-api-key/);
     assert.deepEqual(JSON.parse(savedText), {
+      gitPullFileLimit: 750,
       subprocessMaxLifetimeMinutes: 360,
       conversationCpuLimitCores: null,
       conversationMemoryLimitGb: null,
@@ -125,6 +128,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     const readText = await read.text();
     assert.doesNotMatch(readText, /secret-api-key/);
     assert.deepEqual(JSON.parse(readText), {
+      gitPullFileLimit: 750,
       subprocessMaxLifetimeMinutes: 360,
       conversationCpuLimitCores: null,
       conversationMemoryLimitGb: null,
@@ -173,6 +177,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.equal(preservedResources.status, 200);
     const preserved = await preservedResources.json();
     assert.equal(preserved.conversationHistoryDays, 45);
+    assert.equal(preserved.gitPullFileLimit, 750, "omitting PR file limit preserves it");
     assert.deepEqual(preserved.conversationCommands, conversationCommands, "omitting commands preserves them");
     assert.deepEqual(preserved.resources, { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] });
 
@@ -195,6 +200,14 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.equal(relativeProjectResources.status, 400);
     const missingProjectPaths = await fetch(`${node.baseUrl}/api/projects/missing/resource-paths`, { headers });
     assert.equal(missingProjectPaths.status, 404);
+
+    for (const limit of [0, 3001, 1.5]) {
+      const invalidLimit = await fetch(`${node.baseUrl}/api/settings`, {
+        method: "PUT", headers,
+        body: JSON.stringify({ syncthing: { endpoint: "http://127.0.0.1:8384" }, gitPullFileLimit: limit }),
+      });
+      assert.equal(invalidLimit.status, 400);
+    }
 
     const remoteEndpoint = await fetch(`${node.baseUrl}/api/settings`, {
       method: "PUT",

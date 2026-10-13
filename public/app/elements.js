@@ -476,6 +476,7 @@ export const elements = {
   settingsGitReviewerHarness: document.querySelector("#settingsGitReviewerHarness"),
   settingsGitReviewerModel: document.querySelector("#settingsGitReviewerModel"),
   settingsGitReviewerThinking: document.querySelector("#settingsGitReviewerThinking"),
+  settingsGitPullFileLimit: document.querySelector("#settingsGitPullFileLimit"),
   settingsGitReviewerModelLabel: document.querySelector("#settingsGitReviewerModelLabel"),
   settingsGitReviewerThinkingLabel: document.querySelector("#settingsGitReviewerThinkingLabel"),
   gitReviewStatus: document.querySelector("#gitReviewStatus"),

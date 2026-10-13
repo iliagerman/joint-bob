@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { createGitHubReview, githubRepository } from "../src/server/github-review.js";
+import { nodeSettings, updateSettings } from "../src/settings.js";
 
 const exec = promisify(execFile);
 
@@ -144,20 +145,81 @@ test("pull request detail includes later comment pages", async () => {
   });
 });
 
+test("pull request detail loads up to 1,000 files and marks larger diffs truncated", async () => {
+  await fixture("https://github.com/acme/widget.git", async (dir) => {
+    let changedFiles = 1_000;
+    const pages: number[] = [];
+    const github = await createGitHubReview(dir, "test-token", async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/repos/acme/widget/pulls/42") return Response.json({ number: 42, changed_files: changedFiles });
+      if (url.pathname.endsWith("/files")) {
+        pages.push(Number(url.searchParams.get("page")));
+        return Response.json(Array.from({ length: 100 }, (_, id) => ({ filename: `src/${pages.length}-${id}.ts` })));
+      }
+      return Response.json([]);
+    });
+    const detail = await github.pull(42);
+    assert.equal((detail.files as unknown[]).length, 1_000);
+    assert.equal(detail.truncated.files, false);
+    assert.equal(pages.length, 10);
+    changedFiles = 1_001;
+    pages.length = 0;
+    const larger = await github.pull(42);
+    assert.equal((larger.files as unknown[]).length, 1_000);
+    assert.equal(larger.truncated.files, true);
+    assert.equal(pages.length, 10);
+  });
+});
+
 test("PR story reads every changed file and rejects incomplete diffs", async () => {
   await fixture("https://github.com/acme/widget.git", async (dir) => {
     let count = 2;
+    let filePages = 0;
     const github = await createGitHubReview(dir, "test-token", async (input) => {
       const url = new URL(String(input));
-      if (url.pathname.endsWith("/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new" }, { filename: "src/b.ts", status: "added", additions: 1, deletions: 0 }]);
+      if (url.pathname.endsWith("/files")) {
+        if (count === 1_000) {
+          filePages += 1;
+          return Response.json(Array.from({ length: 100 }, (_, id) => ({ filename: `src/${filePages}-${id}.ts`, status: "modified", additions: 1, deletions: 1 })));
+        }
+        return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new" }, { filename: "src/b.ts", status: "added", additions: 1, deletions: 0 }]);
+      }
       return Response.json({ number: 42, title: "Change", body: "Why", html_url: "https://github.com/acme/widget/pull/42", head: { sha: "a".repeat(40) }, base: { ref: "main" }, changed_files: count });
     });
     assert.equal((await github.storyPull(42)).files.length, 2);
     count = 3;
     await assert.rejects(github.storyPull(42), /every PR file/);
-    count = 501;
-    await assert.rejects(github.storyPull(42), /more than 500/);
+    count = 1_000;
+    assert.equal((await github.storyPull(42)).files.length, 1_000);
+    assert.equal(filePages, 10);
+    count = 1_001;
+    await assert.rejects(github.storyPull(42), /more than 1000/);
   });
+});
+
+test("PR details and stories respect the configured file limit", async () => {
+  const original = nodeSettings();
+  try {
+    updateSettings({ syncthing: { endpoint: original.syncthing.endpoint }, gitPullFileLimit: 150 });
+    await fixture("https://github.com/acme/widget.git", async (dir) => {
+      const pages: number[] = [];
+      const github = await createGitHubReview(dir, "test-token", async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/files")) {
+          pages.push(Number(url.searchParams.get("page")));
+          return Response.json(Array.from({ length: 100 }, (_, index) => ({ filename: `src/${pages.length}-${index}.ts` })));
+        }
+        if (url.pathname.endsWith("/pulls/42")) return Response.json({ changed_files: 151 });
+        return Response.json([]);
+      });
+      const detail = await github.pull(42);
+      assert.equal(detail.fileLimit, 150);
+      assert.equal(detail.files.length, 150);
+      assert.equal(detail.truncated.files, true);
+      assert.deepEqual(pages, [1, 2]);
+      await assert.rejects(github.storyPull(42), /more than 150 files/);
+    });
+  } finally { updateSettings({ syncthing: { endpoint: original.syncthing.endpoint }, gitPullFileLimit: original.gitPullFileLimit }); }
 });
 
 test("job logs follow HTTPS redirects without forwarding the GitHub token", async () => {

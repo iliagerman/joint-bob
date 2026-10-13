@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { openWorktreePullRequest } from "../src/server/github-pull-request.ts";
+import { nodeSettings, updateSettings } from "../src/settings.ts";
 
 const BASE = "a".repeat(40);
 const MAIN = "b".repeat(40);
@@ -99,6 +100,36 @@ test("an open pull request gets a new commit on its branch; a merged one refuses
     const merged = fakeGitHub({ pull: { state: "closed", merged: true } });
     await assert.rejects(openWorktreePullRequest({ projectPath, branchName: "joint-bob/fix-1", title: "Fix", body: "", changes: changes(BASE), previous }, credentials, merged.request), /already merged/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("worktree pull requests allow up to 1,000 changed files", async () => {
+  const { root, projectPath } = await repository();
+  try {
+    const github = fakeGitHub({ knownCommits: [BASE] });
+    const changesFor = (count: number) => ({
+      gitBase: BASE,
+      writes: Array.from({ length: count }, (_, index) => ({ path: `files/${index}.txt`, content: Buffer.from("x"), executable: false })),
+      deletes: [],
+    });
+    const result = await openWorktreePullRequest({ projectPath, branchName: "joint-bob/large-pr", title: "Large PR", body: "", changes: changesFor(1_000), previous: null }, credentials, github.request);
+    assert.equal(result.files, 1_000);
+    await assert.rejects(openWorktreePullRequest({ projectPath, branchName: "joint-bob/too-large", title: "Too large", body: "", changes: changesFor(1_001), previous: null }, credentials, github.request), /at most 1000 files/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("worktree pull requests enforce the configured file limit", async () => {
+  const original = nodeSettings();
+  const { root, projectPath } = await repository();
+  try {
+    updateSettings({ syncthing: { endpoint: original.syncthing.endpoint }, gitPullFileLimit: 1 });
+    const github = fakeGitHub({ knownCommits: [BASE] });
+    const request = (writes: ReturnType<typeof changes>["writes"]) => openWorktreePullRequest({ projectPath, branchName: "joint-bob/configured", title: "Fix", body: "", changes: { gitBase: BASE, writes, deletes: [] }, previous: null }, credentials, github.request);
+    assert.equal((await request(changes(BASE).writes.slice(0, 1))).files, 1);
+    await assert.rejects(request(changes(BASE).writes), /at most 1 files/);
+  } finally {
+    updateSettings({ syncthing: { endpoint: original.syncthing.endpoint }, gitPullFileLimit: original.gitPullFileLimit });
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("a pull request needs changes and a GitHub token", async () => {

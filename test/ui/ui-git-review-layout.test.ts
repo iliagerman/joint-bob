@@ -97,6 +97,24 @@ test("Ask AI composer fits the Git dialog without clipping or empty space below"
   assert.ok(mobileSubmit.y + mobileSubmit.height <= mobileForm.y + mobileForm.height, "mobile Ask button stays visible");
 });
 
+test("Settings Git PR file limit saves and reloads", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-git").click();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+  const limit = page.getByTestId("settings-git-pull-file-limit");
+  assert.equal(await limit.inputValue(), "1000");
+  await limit.fill("750");
+  await page.getByTestId("settings-save-button").click();
+  await page.waitForFunction(async () => (await (await fetch("/api/settings")).json()).gitPullFileLimit === 750);
+  await page.reload();
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-git").click();
+  await page.waitForFunction(() => document.querySelector<HTMLInputElement>("#settingsGitPullFileLimit")?.value === "750");
+  assert.equal(await limit.inputValue(), "750");
+});
+
 test("Settings default Git reviewer overrides the conversation-based choice", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await routeFixtures(page);

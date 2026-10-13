@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { GitReviewError } from "../git-review.js";
+import { nodeSettings } from "../settings.js";
 import type { WorktreeChanges, WorktreePullRequest } from "../project-worktrees.js";
 import { execFile } from "../subprocess.js";
 import { githubRepository, githubRequest, type GithubCredentials } from "./github-review.js";
 
 const exec = promisify(execFile);
-const MAX_FILES = 500;
 const BRANCH = /^(?!\/)(?!.*\/\/)(?!.*\.\.)(?!.*\.lock$)[A-Za-z0-9._/-]{1,200}(?<!\/)$/;
 const COMMIT = /^[0-9a-f]{40}$/;
 
@@ -87,7 +87,8 @@ export async function openWorktreePullRequest(input: WorktreePullRequestInput, c
   const { writes } = input.changes;
   let deletes = input.changes.deletes;
   if (!writes.length && !deletes.length) throw new GitReviewError(409, "The worktree has no changes to put in a pull request");
-  if (writes.length + deletes.length > MAX_FILES) throw new GitReviewError(413, `A worktree pull request carries at most ${MAX_FILES} files`);
+  const maxFiles = nodeSettings().gitPullFileLimit;
+  if (writes.length + deletes.length > maxFiles) throw new GitReviewError(413, `A worktree pull request carries at most ${maxFiles} files`);
   const { owner, repo, host } = await githubRepository(input.projectPath, credentials, request);
   const token = credentials.tokenFor({ owner, host });
   if (!token) throw new GitReviewError(403, "Attach a GitHub account with write access to this project to open pull requests");

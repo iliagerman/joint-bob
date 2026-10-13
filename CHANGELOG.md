@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a PR file limit setting in Settings' Git tab, so admins can raise the number of changed files shown for a pull request and allowed in a worktree pull request beyond the old fixed 500 (the default is now 1,000, up to 3,000).
+
 ## 2.83.0 — 2026-10-13
 
 - Added performance-log entries that show whether each project's conversation list was built fresh or reused from one already in progress, so the time that sharing saves can be measured.

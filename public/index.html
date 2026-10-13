@@ -1290,10 +1290,12 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-git" role="tabpanel" aria-labelledby="settingsTab-git" tabindex="0" hidden>
-          <p>Choose the default reviewer for Git review comments. Automatic picks the opposite harness to the one used last in the conversation. Changes save immediately.</p>
+          <p>Choose the default reviewer for Git review comments. Automatic picks the opposite harness to the one used last in the conversation. Reviewer changes save immediately.</p>
           <label>Reviewer<select id="settingsGitReviewerHarness" data-testid="settings-git-reviewer-harness"></select></label>
           <label id="settingsGitReviewerModelLabel">Model<select id="settingsGitReviewerModel" data-testid="settings-git-reviewer-model"></select></label>
           <label id="settingsGitReviewerThinkingLabel">Effort<select id="settingsGitReviewerThinking" data-testid="settings-git-reviewer-thinking"></select></label>
+          <label data-admin-only>PR file limit<input type="number" id="settingsGitPullFileLimit" min="1" max="3000" step="1" value="1000" required data-testid="settings-git-pull-file-limit" /></label>
+          <p class="settings-hint" data-admin-only>Maximum changed files in worktree PRs, PR details, and PR explanations on this node. Default 1,000; GitHub lists at most 3,000. Save settings to apply.</p>
         </section>
         <section class="settings-panel" id="settingsPanel-classifiers" role="tabpanel" aria-labelledby="settingsTab-classifiers" tabindex="0" hidden>
           <p>Named routing configurations choose the model and reasoning for each prompt by difficulty. Each node keeps its own configurations, picks the active one independently, and can share one with the eligible nodes of its clusters. The classifier's API key comes from the matching variable on an attached secret account.</p>

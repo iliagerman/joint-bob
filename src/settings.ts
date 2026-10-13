@@ -184,6 +184,7 @@ export interface SettingsInput {
   showProjectsOnOtherNodes?: boolean;
   /** Start each new conversation in a Joint Bob worktree of its own. */
   newConversationWorktree?: boolean;
+  gitPullFileLimit?: number;
   syncCheck?: SyncCheckSettings;
   /** Which other nodes may open a terminal on this node through a signed peer socket. */
   remoteTerminal?: RemoteTerminalSettings;
@@ -211,6 +212,7 @@ export interface SettingsResponse {
   digestAttachments: boolean;
   showProjectsOnOtherNodes: boolean;
   newConversationWorktree: boolean;
+  gitPullFileLimit: number;
   syncCheck: SyncCheckSettings;
   remoteTerminal: RemoteTerminalSettings;
   conversationCommands: ConversationCommandsSettings;
@@ -460,6 +462,7 @@ export function nodeSettings(): SettingsResponse {
     digestAttachments: value("digestAttachments", "false") === "true",
     showProjectsOnOtherNodes: value("showProjectsOnOtherNodes", "true") === "true",
     newConversationWorktree: value("newConversationWorktree", "false") === "true",
+    gitPullFileLimit: Number(value("gitPullFileLimit", "1000")),
     syncCheck: syncCheck(conversationDefaults),
     remoteTerminal: remoteTerminalSettings(),
     conversationCommands: conversationCommands(),
@@ -568,6 +571,8 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
   const showProjectsOnOtherNodes = input.showProjectsOnOtherNodes ?? previous.showProjectsOnOtherNodes;
   const newConversationWorktree = input.newConversationWorktree ?? previous.newConversationWorktree;
+  const gitPullFileLimit = input.gitPullFileLimit ?? previous.gitPullFileLimit;
+  if (!Number.isInteger(gitPullFileLimit) || gitPullFileLimit < 1 || gitPullFileLimit > 3000) throw new Error("Git PR file limit must be between 1 and 3000");
   const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
   const conversationCommands = input.conversationCommands ?? previous.conversationCommands;
@@ -594,6 +599,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "digestAttachments", String(digestAttachments));
     save(db, "showProjectsOnOtherNodes", String(showProjectsOnOtherNodes));
     save(db, "newConversationWorktree", String(newConversationWorktree));
+    save(db, "gitPullFileLimit", String(gitPullFileLimit));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
     save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));
@@ -623,6 +629,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         shellCommandTimeoutChanged: previous.shellCommandTimeoutSeconds !== settings.shellCommandTimeoutSeconds,
         subprocessMaxLifetimeChanged: previous.subprocessMaxLifetimeMinutes !== settings.subprocessMaxLifetimeMinutes,
         conversationLimitsChanged: previous.conversationCpuLimitCores !== settings.conversationCpuLimitCores || previous.conversationMemoryLimitGb !== settings.conversationMemoryLimitGb,
+        gitPullFileLimitChanged: previous.gitPullFileLimit !== settings.gitPullFileLimit,
         digestAttachmentsChanged: previous.digestAttachments !== settings.digestAttachments,
         syncCheckChanged: JSON.stringify(previous.syncCheck) !== JSON.stringify(settings.syncCheck),
         remoteTerminalChanged: JSON.stringify(previous.remoteTerminal) !== JSON.stringify(settings.remoteTerminal),

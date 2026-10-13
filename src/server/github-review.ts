@@ -3,10 +3,12 @@ import { execFile } from "../subprocess.js";
 import { promisify } from "node:util";
 import { parse } from "yaml";
 import { GitReviewError } from "../git-review.js";
+import { nodeSettings } from "../settings.js";
 
 const exec = promisify(execFile);
 const API = "https://api.github.com";
 const MAX_LOG_BYTES = 1024 * 1024;
+const MAX_COLLECTION_PAGES = 5;
 const BRANCH = /^(?!\/)(?!.*\/\/)(?!.*\.\.)(?!.*\.lock$)[A-Za-z0-9._/-]{1,200}(?<!\/)$/;
 type GithubCall = (route: string, method?: string, body?: object) => Promise<unknown>;
 /** Picks a token per repository, so two GitHub accounts can serve different remotes. */
@@ -85,9 +87,9 @@ export async function githubRequest(base: string, token: string | undefined, req
   try { return await response.json(); } catch { throw new GitReviewError(502, "GitHub returned invalid JSON"); }
 }
 
-async function collection(call: GithubCall, route: string): Promise<{ items: unknown[]; truncated: boolean }> {
+async function collection(call: GithubCall, route: string, maxPages = MAX_COLLECTION_PAGES): Promise<{ items: unknown[]; truncated: boolean }> {
   const items: unknown[] = [];
-  for (let page = 1; page <= 5; page += 1) {
+  for (let page = 1; page <= maxPages; page += 1) {
     const batch = await call(`${route}${route.includes("?") ? "&" : "?"}per_page=100&page=${page}`) as unknown[];
     items.push(...batch);
     if (batch.length < 100) return { items, truncated: false };
@@ -98,11 +100,15 @@ async function collection(call: GithubCall, route: string): Promise<{ items: unk
 async function pullDetail(call: GithubCall, number: number) {
   assertId(number, "pull request");
   const route = `/pulls/${number}`;
+  const fileLimit = nodeSettings().gitPullFileLimit;
   const [pull, comments, reviews, inline, files] = await Promise.all([
     call(route), collection(call, `/issues/${number}/comments`), collection(call, `${route}/reviews`),
-    collection(call, `${route}/comments`), collection(call, `${route}/files`),
+    collection(call, `${route}/comments`), collection(call, `${route}/files`, Math.ceil(fileLimit / 100)),
   ]);
-  return { pull, comments: comments.items, reviews: reviews.items, inline: inline.items, files: files.items, truncated: { comments: comments.truncated, reviews: reviews.truncated, inline: inline.truncated, files: files.truncated } };
+  const changedFiles = (pull as { changed_files?: unknown }).changed_files;
+  const shownFiles = files.items.slice(0, fileLimit);
+  const filesTruncated = typeof changedFiles === "number" ? shownFiles.length < changedFiles : files.truncated || files.items.length > fileLimit;
+  return { pull, comments: comments.items, reviews: reviews.items, inline: inline.items, files: shownFiles, fileLimit, truncated: { comments: comments.truncated, reviews: reviews.truncated, inline: inline.truncated, files: filesTruncated } };
 }
 
 async function runDetails(call: GithubCall, id: number) {
@@ -203,9 +209,10 @@ export async function createGitHubReview(cwd: string, credentials: Credentials, 
     storyPull: async (number: number) => {
       assertId(number, "pull request");
       const pull = await call(`/pulls/${number}`) as { number: number; title: string; body: string | null; html_url: string; head: { sha: string }; base: { ref: string }; changed_files: number };
-      if (pull.changed_files > 500) throw new GitReviewError(413, "This PR changes more than 500 files; it is too large for one story");
-      const files = await collection(call, `/pulls/${number}/files`);
-      if (files.truncated || files.items.length !== pull.changed_files) throw new GitReviewError(413, "Could not read every PR file for the story");
+      const fileLimit = nodeSettings().gitPullFileLimit;
+      if (pull.changed_files > fileLimit) throw new GitReviewError(413, `This PR changes more than ${fileLimit} files; it is too large for one story`);
+      const files = await collection(call, `/pulls/${number}/files`, Math.ceil(fileLimit / 100));
+      if (files.items.length !== pull.changed_files) throw new GitReviewError(413, "Could not read every PR file for the story");
       return { pull, files: files.items as Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string }> };
     },
     runs: (page: number) => call(`/actions/runs?per_page=30&page=${page}`),
