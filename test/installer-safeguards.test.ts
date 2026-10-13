@@ -204,6 +204,7 @@ test("direct service installer shares the CLI lock", async () => {
     await cp("scripts/install-service.sh", path.join(entry, "scripts/install-service.sh"));
     await cp("bin/joint-bob.mjs", path.join(entry, "bin/joint-bob.mjs"));
     await writeFile(path.join(entry, "scripts/install-node-runtime.sh"), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+    await writeFile(path.join(entry, "scripts/check-host.sh"), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
     await assert.rejects(execFileAsync("bash", [path.join(entry, "scripts/install-service.sh")], { env: f.env }), (error: unknown) => {
       assert.match((error as Error & { stderr: string }).stderr, /Another installation is running/);
       return true;

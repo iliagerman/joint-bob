@@ -8,7 +8,7 @@ Want an AI coding agent to perform the installation? Give it [agents_readme.md](
 
 ## Requirements
 
-- macOS or Linux with `launchd` or user `systemd`
+- macOS or Linux with `launchd` or user `systemd`, or Windows 10 (build 19041 or later) or Windows 11 with WSL 2 (see [Install on Windows](#install-on-windows))
 - An Intel/AMD 64-bit or ARM64 machine
 - `curl`, `tar`, `perl` for OS-level installer locking, and internet access during installation
 - A non-root user account
@@ -106,6 +106,57 @@ sudo loginctl enable-linger "$USER"
 
 This is the only installation step that may need `sudo`.
 
+## Install on Windows
+
+Joint Bob is not a native Windows program. On Windows it runs inside a WSL 2 Linux distribution, as the Linux user of that distribution, and you open it from any Windows browser. Git Bash, MSYS, Cygwin, and WSL 1 are not supported; the installer stops there and points here.
+
+1. Open a normal PowerShell window, not an administrator one, and run:
+
+   ```powershell
+   irm https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install-windows.ps1 | iex
+   ```
+
+If WSL is not installed, the script installs WSL and Ubuntu itself, after asking you. Windows then asks for administrator approval (UAC). If Windows needs a restart to finish, it stops and says so: restart Windows and run the same command again. Ubuntu is the default distribution and the one Joint Bob is tested on.
+
+The Linux user is created automatically, named after your Windows user in lowercase, with no password. Run `passwd` inside the distribution if you want `sudo`. Use `-SkipWslInstall` to stop instead of installing WSL.
+
+The script uses your default WSL distribution and:
+
+- refuses WSL 1, a root default user, and Docker Desktop's internal distribution;
+- turns on systemd in `/etc/wsl.conf` when it is off, after asking, and restarts the distribution (a copy of the old file is kept as `/etc/wsl.conf.joint-bob-backup`);
+- enables lingering for your Linux user, so the services start with the distribution;
+- runs the normal Linux installer inside the distribution;
+- registers a Windows logon task, `Joint Bob WSL (<distribution>)`, that keeps the distribution running. Without it WSL stops the distribution, and Joint Bob with it, shortly after its last terminal closes.
+
+To choose the distribution or the port of a new installation, or to answer the prompts yourself:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install-windows.ps1))) -Distro Ubuntu -Port 9000 -Force
+```
+
+`-Force` answers yes to the prompts for installing WSL and turning on systemd. `-KeepAliveOnly` registers the logon task without installing, and `-NoKeepAlive` installs without it. Run the same command again to upgrade or repair; **Settings > Updates** works as on Linux.
+
+When it finishes, open `http://127.0.0.1:8787/` in a Windows browser and create the administrator. Everything else in this document applies inside the distribution, exactly as on Linux: open it with `wsl -d Ubuntu`, sign in to Pi and Claude there, and use the Linux commands under **Service management**.
+
+To install by hand, enable systemd, restart WSL, then use the Linux installer:
+
+```bash
+printf '[boot]\nsystemd=true\n' | sudo tee -a /etc/wsl.conf   # inside the distribution; then run 'wsl --shutdown' in PowerShell and reopen it
+curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash
+sudo loginctl enable-linger "$USER"
+```
+
+Then register the logon task from PowerShell with the `-KeepAliveOnly` form of the command above.
+
+What differs from a Linux machine:
+
+- **Startup.** Joint Bob starts when you sign in to Windows, not at boot: WSL runs only inside a signed-in Windows session. `wsl --shutdown` stops it; signing in again, or `Start-ScheduledTask -TaskName "Joint Bob WSL (Ubuntu)"`, starts it. Remove the task with `Unregister-ScheduledTask -TaskName "Joint Bob WSL (Ubuntu)"`.
+- **Files.** Keep the Joint Bob home folder and every project in the Linux filesystem, for example `/home/<user>/joint-bob`. Folders under `/mnt/c` are slow, do not report file changes, and do not keep Unix permissions. Explorer and Windows editors reach the Linux files at `\\wsl$\<distribution>\home\<user>`.
+- **Local access.** WSL forwards `127.0.0.1` from Windows to the distribution. If the Windows browser cannot open the local URL while `curl -fsS http://127.0.0.1:8787/api/health` works inside the distribution, `localhostForwarding` was turned off in `%UserProfile%\.wslconfig`.
+- **Tailscale.** Install the Linux Tailscale inside the distribution and run `serve-https.sh` there. The distribution joins your tailnet as its own machine. The Tailscale app for Windows is a separate machine and does not serve Joint Bob.
+- **Other machines.** By default WSL sits behind the Windows host's address, so machines on your network cannot reach the distribution's ports. Tailscale inside the distribution and a Joint Bob relay both work unchanged. For a cluster behind your own reverse proxy, run the proxy on Windows and point it at `http://127.0.0.1:8787`, or set `networkingMode=mirrored` under `[wsl2]` in `%UserProfile%\.wslconfig` on Windows 11 22H2 or later.
+- **Browsers.** Conversation browsers run Chromium inside the distribution and need the Ubuntu system libraries described under **Conversation browsers**.
+
 ## Upgrade or repair an installation
 
 Run the same installation command again:
@@ -153,7 +204,7 @@ Do not expose Joint Bob's plain HTTP port `8787` to the internet. The repository
 
 ## Install Tailscale
 
-Joint Bob does not install Tailscale. Install and sign in to it yourself on every node that will use tailnet HTTPS.macOS: install the Tailscale app from https://tailscale.com/download (or `brew install --cask tailscale`) and sign in from the menu-bar app. Linux: `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up` and complete the printed sign-in URL. Verify with `tailscale status` — it must list this machine before `serve-https.sh` or `bootstrap.sh` can configure Serve. Tailscale has its own account; sign-in is a human step.
+Joint Bob does not install Tailscale. Install and sign in to it yourself on every node that will use tailnet HTTPS. On Windows, follow the Linux steps inside the WSL distribution. macOS: install the Tailscale app from https://tailscale.com/download (or `brew install --cask tailscale`) and sign in from the menu-bar app. Linux: `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up` and complete the printed sign-in URL. Verify with `tailscale status` — it must list this machine before `serve-https.sh` or `bootstrap.sh` can configure Serve. Tailscale has its own account; sign-in is a human step.
 
 ## Private access with Tailscale
 
@@ -424,7 +475,7 @@ For UI-only work, use the existing browser CLI rather than adding another automa
 
 ## Service management
 
-Linux:
+Linux, and Windows inside the WSL distribution:
 
 ```bash
 systemctl --user status joint-bob.service

@@ -6,6 +6,7 @@ mode="${1:-}"
 case "${mode}" in
   --build-only|--prepare-only|--activate-only|--restart-only) ;;
   "")
+    bash "${REPO_ROOT}/scripts/check-host.sh"
     runtime_bin="$("${REPO_ROOT}/scripts/install-node-runtime.sh")"
     if [ -n "${runtime_bin}" ]; then export PATH="${runtime_bin}:${PATH}"; fi
     exec node "${REPO_ROOT}/bin/joint-bob.mjs" install
@@ -188,6 +189,9 @@ if [ "${service_platform}" = Linux ]; then
   systemctl --user daemon-reload
   if command -v loginctl >/dev/null 2>&1 && [ "$(loginctl show-user "${USER}" -p Linger --value 2>/dev/null || true)" != yes ]; then
     echo "Warning: run 'sudo loginctl enable-linger ${USER}' for startup before login." >&2
+  fi
+  if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+    echo "Note: WSL stops this distribution when its last terminal closes. Run scripts/install-windows.ps1 from PowerShell to keep it running (README: Install on Windows)." >&2
   fi
 else
   rm -f "${HOME}/Library/LaunchAgents/com.master-bob.node.plist"

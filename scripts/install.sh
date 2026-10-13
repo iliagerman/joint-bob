@@ -66,6 +66,8 @@ shopt -s nullglob dotglob
 entries=("${extract_dir}"/*)
 if [ "${#entries[@]}" -eq 1 ] && [ -d "${entries[0]}" ]; then verified_source="${entries[0]}"; else verified_source="${extract_dir}"; fi
 [ -f "${verified_source}/package.json" ] && [ -f "${verified_source}/scripts/install-service.sh" ] || { echo "Archive is missing required installer files" >&2; exit 1; }
+# Older releases carry no host check; they fail later with the service manager's own error.
+[ ! -f "${verified_source}/scripts/check-host.sh" ] || bash "${verified_source}/scripts/check-host.sh"
 
 if [ -e "${INSTALL_DIR}" ]; then
   if [ ! -d "${INSTALL_DIR}" ] || { [ ! -f "${INSTALL_DIR}/.joint-bob-release" ] && [ ! -f "${INSTALL_DIR}/.master-bob-release" ]; }; then

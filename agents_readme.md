@@ -18,13 +18,15 @@ Treat Joint Bob HTTPS and Syncthing file transport as separate network paths. Ev
 
 Ask the human to choose one option before running commands:
 
-1. **Local single node, no Tailscale.** Install on the current macOS or Linux computer and use `http://127.0.0.1:8787`.
+1. **Local single node, no Tailscale.** Install on the current macOS, Linux, or Windows computer and use `http://127.0.0.1:8787`.
 2. **Remote or EC2 single node, no Tailscale.** Install over SSH and use an SSH tunnel. Keep Joint Bob's HTTP port private.
 3. **Remote or EC2 single node with Tailscale.** Install over SSH, then configure Tailscale Serve for private HTTPS.
 4. **Multiple nodes with Tailscale.** Install every node, configure Tailscale Serve on every node, then pair them. This is the recommended cluster route.
 5. **Multiple nodes without Tailscale.** Use an existing private network and a trusted HTTPS reverse proxy for every node, then pair them.
 6. **Temporary EC2 smoke test.** Use `scripts/ec2-smoke-test.sh` to provision, test, and destroy an isolated test instance. This is not a persistent deployment.
 7. **Multiple nodes through a Joint Bob relay.** One node with a public HTTPS address (for example an EC2 or Lightsail instance behind Caddy) turns on **Settings > Relay > Serving**; the other nodes need no Tailscale or public URL and join it from **Settings > Relay > Joined relays**. See "Access through a Joint Bob relay" in README.md.
+
+Windows is supported only through WSL 2: Joint Bob is installed inside a WSL distribution and every option above then applies inside it as on Linux. See "Windows targets" below.
 
 If the human wants a persistent EC2 node but has no instance yet, explain that this repository only contains Terraform for the temporary smoke test. Ask them to provide an existing supported Linux instance or separately approve and define persistent AWS infrastructure work.
 
@@ -85,7 +87,7 @@ command -v tar
 
 Continue only when:
 
-- OS is `Darwin` or `Linux`.
+- OS is `Darwin` or `Linux`. `MINGW`, `MSYS`, or `CYGWIN` means a Windows shell: stop and use "Windows targets" below.
 - Architecture is `x86_64`, `amd64`, `arm64`, or `aarch64`.
 - `id -u` does not return `0`.
 - `curl` and `tar` exist.
@@ -101,6 +103,40 @@ grep '^PORT=' "$HOME/.joint-bob/env" 2>/dev/null || true
 ```
 
 Existing installation and state are expected during upgrades.
+
+## Windows targets
+
+Joint Bob does not run natively on Windows, in Git Bash, or under WSL 1. Install it inside a WSL 2 distribution. Read "Install on Windows" in README.md first.
+
+From PowerShell on the Windows machine, inspect before changing anything:
+
+```powershell
+wsl --status
+wsl --list --verbose
+```
+
+- If WSL or a distribution is missing, the Windows installer below installs WSL and Ubuntu. Get the human's agreement first: the installer asks before changing the system, and Windows then asks for administrator approval, which only the human can give. A restart may be needed; if the installer says so, the human restarts Windows and runs the same command again. The Linux user is created automatically from the Windows user name, with no password.
+- If the distribution shows `VERSION 1`, ask before converting it with `wsl --set-version <distribution> 2`.
+- Ask which distribution to use when there is more than one. Never use `docker-desktop` or `docker-desktop-data`.
+
+Then run the Windows installer as the human's normal Windows user, not as administrator:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install-windows.ps1))) -Distro '<distribution>' -Port <port>
+```
+
+When systemd is off, the script asks before editing `/etc/wsl.conf` and restarting the distribution, which stops everything running in it. Get the human's agreement first, then add `-Force` if your session cannot answer the prompts. Add `-SkipWslInstall` if the human wants WSL installed by hand instead. The script also enables lingering, runs the Linux installer in the distribution, and registers the logon task `Joint Bob WSL (<distribution>)` that keeps the distribution running.
+
+If your agent session is already inside the distribution, use the normal Linux steps in this file instead. The installer stops with instructions when systemd is off; enabling it needs `sudo` and a `wsl --shutdown` from Windows, so hand that to the human. Afterwards ask the human to run the PowerShell command with `-KeepAliveOnly`; without the logon task Joint Bob stops when the last WSL terminal closes.
+
+Run every later check in this file inside the distribution (`wsl -d <distribution>`), with the Linux commands. Also verify from Windows:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:<port>/api/health
+Get-ScheduledTask -TaskName 'Joint Bob WSL (<distribution>)'
+```
+
+Tell the human that Joint Bob starts when they sign in to Windows, not at boot, and that the Joint Bob home folder and projects must be in the Linux filesystem, not under `/mnt/c`. For Tailscale routes, Tailscale must be installed and signed in inside the distribution.
 
 ## Install or upgrade each node
 
@@ -324,7 +360,7 @@ Report:
 
 - Chosen deployment option
 - New install or upgrade for each node
-- Target OS and architecture for each node
+- Target OS and architecture for each node; for Windows, the WSL distribution and whether the logon task is registered
 - Local URL and private HTTPS origin where applicable
 - Joint Bob and Syncthing health and service names for each node
 - Install path: `~/.local/share/joint-bob/app`
