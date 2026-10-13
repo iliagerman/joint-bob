@@ -392,6 +392,7 @@ async function loadSettings() {
   syncNotifyButton();
   if (!admin) return;
   elements.settingsGitPullFileLimit.value = settings.gitPullFileLimit ?? 1000;
+  elements.settingsGitPullTimeoutSeconds.value = settings.gitPullTimeoutSeconds ?? 360;
   elements.settingsProjectHome.value = settings.projects.homePath;
   document.querySelector("#settingsConversationRetentionDays").value = settings.conversationRetentionDays;
   elements.settingsShellTimeoutEnabled.checked = settings.shellCommandTimeoutSeconds !== null;
@@ -476,6 +477,7 @@ async function saveSettings(event) {
       showProjectsOnOtherNodes: document.querySelector("#settingsShowProjectsOnOtherNodes").checked,
       newConversationWorktree: elements.settingsNewConversationWorktree.checked,
       gitPullFileLimit: Number(elements.settingsGitPullFileLimit.value),
+      gitPullTimeoutSeconds: Number(elements.settingsGitPullTimeoutSeconds.value),
       ...(syncCheck ? { syncCheck } : {}),
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
       conversationCommands: {

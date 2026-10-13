@@ -8,7 +8,7 @@ import { applyMergeTransaction, recordMergeTransaction, rollbackMergeTransaction
 import { getSettings } from "./settings.js";
 import { listSyncthingFolders, rescanSyncthingFolder } from "./syncthing.js";
 import { promisify } from "node:util";
-import { execFile } from "./subprocess.js";
+import { execFile, spawn } from "./subprocess.js";
 import { captureBaseline, copyAllowed, listTreeEntries, TICKET_BASELINE_DIR, TICKET_MERGE_DIR } from "./task-workspaces.js";
 import { prepareTicketMerge, readBaseline } from "./ticket-merge-ops.js";
 import { PROJECT_COLORS, type ProjectColor, type ProjectRecord } from "./types.js";
@@ -513,6 +513,35 @@ export async function worktreeChanges(projectId: string, worktreeId: string, roo
   const uncommittedPaths = [...changedPaths].filter((p) => uncommittedAtCreation.has(p)).sort();
 
   return { gitBase: metadata.gitBase ?? null, writes, deletes, uncommittedPaths };
+}
+
+/** Paths the project's git ignores (.gitignore, .git/info/exclude, global excludes), tracked files excepted. */
+function gitIgnoredPaths(projectPath: string, paths: string[]): Promise<Set<string>> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", ["-C", projectPath, "check-ignore", "-z", "--stdin"]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      // Exit status 1 means no path matched; anything else (not a repository, git missing) must not pass silently.
+      if (code === 0 || code === 1) resolve(new Set(stdout.split("\0").filter(Boolean)));
+      else reject(new Error(stderr.trim() || `git check-ignore exited with status ${code}`));
+    });
+    child.stdin.end(paths.map((file) => `${file}\0`).join(""));
+  });
+}
+
+/** Drops changes the project's git ignores. A worktree copy has no repository of its own, so its changes are
+    filtered the way git would before they reach a pull request. */
+export async function withoutGitIgnored(projectPath: string, changes: WorktreeChanges): Promise<WorktreeChanges> {
+  const ignored = await gitIgnoredPaths(projectPath, [...changes.writes.map((file) => file.path), ...changes.deletes]);
+  return {
+    ...changes,
+    writes: changes.writes.filter((file) => !ignored.has(file.path)),
+    deletes: changes.deletes.filter((file) => !ignored.has(file)),
+  };
 }
 
 export async function recordWorktreePullRequest(projectId: string, worktreeId: string, pullRequest: WorktreePullRequest, root = worktreeRoot()): Promise<ProjectWorktree> {

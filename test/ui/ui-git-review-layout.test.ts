@@ -113,6 +113,15 @@ test("Settings Git PR file limit saves and reloads", { timeout: 120_000 }, async
   await page.getByTestId("settings-tab-git").click();
   await page.waitForFunction(() => document.querySelector<HTMLInputElement>("#settingsGitPullFileLimit")?.value === "750");
   assert.equal(await limit.inputValue(), "750");
+  const timeout = page.getByTestId("settings-git-pull-timeout-seconds");
+  assert.equal(await timeout.inputValue(), "360");
+  await timeout.fill("600");
+  await page.getByTestId("settings-save-button").click();
+  await page.waitForFunction(async () => (await (await fetch("/api/settings")).json()).gitPullTimeoutSeconds === 600);
+  await page.reload();
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-git").click();
+  await page.waitForFunction(() => document.querySelector<HTMLInputElement>("#settingsGitPullTimeoutSeconds")?.value === "600");
 });
 
 test("Settings default Git reviewer overrides the conversation-based choice", { timeout: 120_000 }, async (t) => {

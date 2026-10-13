@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { DatabaseSync } from "node:sqlite";
 import type { AgentCapabilityIdentity } from "./agent-capabilities.js";
+import { nodeSettings } from "./settings.js";
 import { settingsDatabase } from "./settings-store.js";
 import { isHarnessId, type HarnessId } from "./types.js";
 
@@ -31,6 +32,7 @@ export function worktreeAgentEnvironment(projectId: string, engine: HarnessId, c
     JOINT_BOB_WORKTREE_CLI: fileURLToPath(new URL("../bin/joint-bob-worktree.mjs", import.meta.url)),
     JOINT_BOB_WORKTREE_URL: `http://127.0.0.1:${process.env.PORT || 8790}/api/worktrees/agent`,
     JOINT_BOB_WORKTREE_TOKEN: token,
+    JOINT_BOB_WORKTREE_TIMEOUT_SECONDS: String(nodeSettings().gitPullTimeoutSeconds),
   };
 }
 

@@ -44,7 +44,9 @@ test("settings API persists runtime and Syncthing choices without returning secr
   try {
     node = await startNode(root);
     const headers = await authenticatedHeaders(node.baseUrl);
-    assert.equal((await (await fetch(`${node.baseUrl}/api/settings`, { headers })).json()).gitPullFileLimit, 1000);
+    const initialSettings = await (await fetch(`${node.baseUrl}/api/settings`, { headers })).json();
+    assert.equal(initialSettings.gitPullFileLimit, 1000);
+    assert.equal(initialSettings.gitPullTimeoutSeconds, 360);
     const piRuntime = { configPath: path.join(root, "pi-config"), sessionPath: path.join(root, "pi-sessions") };
     const claudeRuntime = { configPath: path.join(root, "claude-config"), sessionPath: path.join(root, "claude-sessions") };
     const defaults = await fetch(`${node.baseUrl}/api/settings/runtime-defaults`, { headers });
@@ -88,6 +90,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.doesNotMatch(savedText, /secret-api-key/);
     assert.deepEqual(JSON.parse(savedText), {
       gitPullFileLimit: 750,
+      gitPullTimeoutSeconds: 360,
       subprocessMaxLifetimeMinutes: 360,
       conversationCpuLimitCores: null,
       conversationMemoryLimitGb: null,
@@ -129,6 +132,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.doesNotMatch(readText, /secret-api-key/);
     assert.deepEqual(JSON.parse(readText), {
       gitPullFileLimit: 750,
+      gitPullTimeoutSeconds: 360,
       subprocessMaxLifetimeMinutes: 360,
       conversationCpuLimitCores: null,
       conversationMemoryLimitGb: null,
@@ -208,6 +212,19 @@ test("settings API persists runtime and Syncthing choices without returning secr
       });
       assert.equal(invalidLimit.status, 400);
     }
+    for (const timeout of [59, 3601, 90.5]) {
+      const invalidTimeout = await fetch(`${node.baseUrl}/api/settings`, {
+        method: "PUT", headers,
+        body: JSON.stringify({ syncthing: { endpoint: "http://127.0.0.1:8384" }, gitPullTimeoutSeconds: timeout }),
+      });
+      assert.equal(invalidTimeout.status, 400);
+    }
+    const timeoutSaved = await fetch(`${node.baseUrl}/api/settings`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ syncthing: { endpoint: "http://127.0.0.1:8384" }, gitPullTimeoutSeconds: 600 }),
+    });
+    assert.equal(timeoutSaved.status, 200);
+    assert.equal((await (await fetch(`${node.baseUrl}/api/settings`, { headers })).json()).gitPullTimeoutSeconds, 600);
 
     const remoteEndpoint = await fetch(`${node.baseUrl}/api/settings`, {
       method: "PUT",

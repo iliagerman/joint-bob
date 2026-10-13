@@ -6,7 +6,7 @@ import { githubAccountFor } from "../github-credentials.js";
 import { ensureSessionTitle } from "../names.js";
 import {
   createProjectWorktree, deleteProjectWorktree, getProjectWorktree, listProjectWorktrees, ProjectWorktreeError,
-  recordWorktreePullRequest, worktreeChanges, worktreeConversationIndex, type ProjectWorktree,
+  recordWorktreePullRequest, withoutGitIgnored, worktreeChanges, worktreeConversationIndex, type ProjectWorktree,
 } from "../project-worktrees.js";
 import { conversationLeaseRunning } from "../conversation-runtime.js";
 import { conversationScopeId, genericSecretEnvironment, getScopeSecretAccounts, githubAccountsForProject, persistConversationSecretAccounts } from "../secrets.js";
@@ -86,7 +86,7 @@ async function openPullRequest(identity: WorktreeAgentIdentity, project: Project
   const fallback = genericSecretEnvironment(project.id, conversation).GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
   const result = await openWorktreePullRequest({
     projectPath: project.path, branchName: pullRequestBranch(worktree), title: input.title, body: input.body, base: input.base,
-    changes: await worktreeChanges(project.id, worktree.id), previous: worktree.pullRequest,
+    changes: await withoutGitIgnored(project.path, await worktreeChanges(project.id, worktree.id)), previous: worktree.pullRequest,
   }, {
     tokenFor: (repository) => githubAccountFor(accounts, repository)?.token ?? fallback,
     sshHosts: accounts.filter((account) => account.sshKey).map((account) => account.sshHost),

@@ -3,6 +3,8 @@ import { parseArgs } from "node:util";
 
 const token = process.env.JOINT_BOB_WORKTREE_TOKEN;
 const endpoint = process.env.JOINT_BOB_WORKTREE_URL;
+// Set from the node's Git setting when the conversation's agent starts; 360 seconds if an older agent lacks it.
+const timeoutSeconds = Number(process.env.JOINT_BOB_WORKTREE_TIMEOUT_SECONDS) || 360;
 const usage = `Usage:
   list
   create --name NAME [--color COLOR]
@@ -48,7 +50,7 @@ async function request(body) {
   if (!token || !endpoint) throw new Error("Worktree environment missing; run inside a Joint Bob conversation");
   let response;
   try {
-    response = await fetch(endpoint, { method: "POST", redirect: "error", signal: AbortSignal.timeout(180_000), headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    response = await fetch(endpoint, { method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutSeconds * 1000), headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
   } catch {
     throw new Error(body.operation === "list" ? "Worktree bridge unreachable or timed out" : "Worktree request failed or timed out; its outcome is unknown. Run list before retrying.");
   }

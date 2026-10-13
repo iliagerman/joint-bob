@@ -392,6 +392,7 @@ export const settingsSchema = z.object({
   showProjectsOnOtherNodes: z.boolean().optional(),
   newConversationWorktree: z.boolean().optional(),
   gitPullFileLimit: z.number().int().min(1).max(3000).optional(),
+  gitPullTimeoutSeconds: z.number().int().min(60).max(3600).optional(),
   syncCheck: syncCheckSchema.optional(),
   remoteTerminal: z.object({ twins: z.boolean(), otherNodes: z.boolean() }).strict().optional(),
   conversationCommands: conversationCommandsSchema.optional(),

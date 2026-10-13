@@ -6,6 +6,8 @@ import type { WorktreeChanges, WorktreePullRequest } from "../project-worktrees.
 import { execFile } from "../subprocess.js";
 import { githubRepository, githubRequest, type GithubCredentials } from "./github-review.js";
 
+type GithubCall = (route: string, method?: string, body?: object) => Promise<unknown>;
+
 const exec = promisify(execFile);
 const BRANCH = /^(?!\/)(?!.*\/\/)(?!.*\.\.)(?!.*\.lock$)[A-Za-z0-9._/-]{1,200}(?<!\/)$/;
 const COMMIT = /^[0-9a-f]{40}$/;
@@ -34,6 +36,26 @@ function assertBranch(branch: string, label: string): void {
 
 const refRoute = (branch: string) => branch.split("/").map(encodeURIComponent).join("/");
 const unknownCommit = (error: unknown) => error instanceof GitReviewError && (error.status === 404 || /HTTP 422/.test(error.message));
+const BLOB_CONCURRENCY = 8;
+
+/** Runs work over items with a bounded number of requests in flight, keeping input order in the results. */
+async function inParallel<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]);
+    }
+  }));
+  return results;
+}
+
+/** The branch's head commit, or null when no such branch exists yet. */
+async function branchHead(call: GithubCall, branch: string): Promise<string | null> {
+  try { return (await call(`/git/ref/heads/${refRoute(branch)}`) as { object: { sha: string } }).object.sha; }
+  catch (error) { if (error instanceof GitReviewError && error.status === 404) return null; throw error; }
+}
 
 async function remoteMergeBase(projectPath: string, commit: string, base: string): Promise<string | null> {
   try {
@@ -132,22 +154,30 @@ export async function openWorktreePullRequest(input: WorktreePullRequestInput, c
     deletes = deletes.filter((file) => tracked.has(file));
   }
 
-  const entries: Array<{ path: string; mode: string; type: "blob"; sha: string | null }> = [];
-  for (const file of writes) {
+  const blobs = await inParallel(writes, BLOB_CONCURRENCY, async (file) => {
     const blob = await call("/git/blobs", "POST", { content: file.content.toString("base64"), encoding: "base64" }) as { sha: string };
-    entries.push({ path: file.path, mode: file.executable ? "100755" : "100644", type: "blob", sha: blob.sha });
-  }
+    return { path: file.path, mode: file.executable ? "100755" : "100644", type: "blob" as const, sha: blob.sha };
+  });
+  const entries: Array<{ path: string; mode: string; type: "blob"; sha: string | null }> = [...blobs];
   for (const file of deletes) entries.push({ path: file, mode: "100644", type: "blob", sha: null });
   if (!entries.length) throw new GitReviewError(409, "The worktree has no changes to put in a pull request");
   const tree = await call("/git/trees", "POST", { base_tree: baseTree, tree: entries }) as { sha: string };
-  const parent = previous ? (await call(`/git/ref/heads/${refRoute(branch)}`) as { object: { sha: string } }).object.sha : baseCommit;
-  const commit = await call("/git/commits", "POST", { message: input.body ? `${input.title}\n\n${input.body}` : input.title, tree: tree.sha, parents: [parent] }) as { sha: string };
+  // A branch that already exists was left by an earlier attempt that did not finish. Its tree is replaced
+  // by this one, so the new commit goes on top of it and the update is a fast-forward.
+  const existingHead = await branchHead(call, branch);
+  const commit = await call("/git/commits", "POST", { message: input.body ? `${input.title}\n\n${input.body}` : input.title, tree: tree.sha, parents: [existingHead ?? baseCommit] }) as { sha: string };
 
   if (previous) {
     await call(`/git/refs/heads/${refRoute(branch)}`, "PATCH", { sha: commit.sha, force: false });
     return { pullRequest: previous, updated: true, files: writes.length, deleted: deletes.length, ...(warning ? { warning } : {}) };
   }
-  await call("/git/refs", "POST", { ref: `refs/heads/${branch}`, sha: commit.sha });
+  if (existingHead) {
+    await call(`/git/refs/heads/${refRoute(branch)}`, "PATCH", { sha: commit.sha, force: false });
+    const open = await call(`/pulls?head=${encodeURIComponent(`${owner}:${branch}`)}&state=open`) as Array<{ number: number; html_url: string }>;
+    if (open[0]) return { pullRequest: { number: open[0].number, url: open[0].html_url, branch, base, baseCommit }, updated: true, files: writes.length, deleted: deletes.length, ...(warning ? { warning } : {}) };
+  } else {
+    await call("/git/refs", "POST", { ref: `refs/heads/${branch}`, sha: commit.sha });
+  }
   const body = warning ? `${input.body}\n\n> ${warning}`.trim() : input.body;
   const pull = await call("/pulls", "POST", { title: input.title, head: branch, base, body }) as { number: number; html_url: string };
   return {

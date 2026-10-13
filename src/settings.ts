@@ -185,6 +185,8 @@ export interface SettingsInput {
   /** Start each new conversation in a Joint Bob worktree of its own. */
   newConversationWorktree?: boolean;
   gitPullFileLimit?: number;
+  /** How long a worktree command waits for the node before reporting that its outcome is unknown. */
+  gitPullTimeoutSeconds?: number;
   syncCheck?: SyncCheckSettings;
   /** Which other nodes may open a terminal on this node through a signed peer socket. */
   remoteTerminal?: RemoteTerminalSettings;
@@ -213,6 +215,7 @@ export interface SettingsResponse {
   showProjectsOnOtherNodes: boolean;
   newConversationWorktree: boolean;
   gitPullFileLimit: number;
+  gitPullTimeoutSeconds: number;
   syncCheck: SyncCheckSettings;
   remoteTerminal: RemoteTerminalSettings;
   conversationCommands: ConversationCommandsSettings;
@@ -463,6 +466,7 @@ export function nodeSettings(): SettingsResponse {
     showProjectsOnOtherNodes: value("showProjectsOnOtherNodes", "true") === "true",
     newConversationWorktree: value("newConversationWorktree", "false") === "true",
     gitPullFileLimit: Number(value("gitPullFileLimit", "1000")),
+    gitPullTimeoutSeconds: Number(value("gitPullTimeoutSeconds", "360")),
     syncCheck: syncCheck(conversationDefaults),
     remoteTerminal: remoteTerminalSettings(),
     conversationCommands: conversationCommands(),
@@ -573,6 +577,8 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const newConversationWorktree = input.newConversationWorktree ?? previous.newConversationWorktree;
   const gitPullFileLimit = input.gitPullFileLimit ?? previous.gitPullFileLimit;
   if (!Number.isInteger(gitPullFileLimit) || gitPullFileLimit < 1 || gitPullFileLimit > 3000) throw new Error("Git PR file limit must be between 1 and 3000");
+  const gitPullTimeoutSeconds = input.gitPullTimeoutSeconds ?? previous.gitPullTimeoutSeconds;
+  if (!Number.isInteger(gitPullTimeoutSeconds) || gitPullTimeoutSeconds < 60 || gitPullTimeoutSeconds > 3600) throw new Error("Git PR timeout must be between 60 and 3600 seconds");
   const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
   const conversationCommands = input.conversationCommands ?? previous.conversationCommands;
@@ -600,6 +606,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "showProjectsOnOtherNodes", String(showProjectsOnOtherNodes));
     save(db, "newConversationWorktree", String(newConversationWorktree));
     save(db, "gitPullFileLimit", String(gitPullFileLimit));
+    save(db, "gitPullTimeoutSeconds", String(gitPullTimeoutSeconds));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
     save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));
@@ -630,6 +637,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         subprocessMaxLifetimeChanged: previous.subprocessMaxLifetimeMinutes !== settings.subprocessMaxLifetimeMinutes,
         conversationLimitsChanged: previous.conversationCpuLimitCores !== settings.conversationCpuLimitCores || previous.conversationMemoryLimitGb !== settings.conversationMemoryLimitGb,
         gitPullFileLimitChanged: previous.gitPullFileLimit !== settings.gitPullFileLimit,
+        gitPullTimeoutChanged: previous.gitPullTimeoutSeconds !== settings.gitPullTimeoutSeconds,
         digestAttachmentsChanged: previous.digestAttachments !== settings.digestAttachments,
         syncCheckChanged: JSON.stringify(previous.syncCheck) !== JSON.stringify(settings.syncCheck),
         remoteTerminalChanged: JSON.stringify(previous.remoteTerminal) !== JSON.stringify(settings.remoteTerminal),

@@ -12,7 +12,7 @@ const MAIN = "b".repeat(40);
 
 interface Call { method: string; route: string; body?: any; authorization?: string }
 
-function fakeGitHub(options: { knownCommits?: string[]; pull?: { state: string; merged: boolean } } = {}) {
+function fakeGitHub(options: { knownCommits?: string[]; pull?: { state: string; merged: boolean }; existingBranch?: boolean; openPulls?: Array<{ number: number; html_url: string }> } = {}) {
   const calls: Call[] = [];
   const known = new Set([MAIN, ...(options.knownCommits ?? [])]);
   const request = (async (url: string, init: RequestInit = {}) => {
@@ -25,7 +25,8 @@ function fakeGitHub(options: { knownCommits?: string[]; pull?: { state: string; 
     if (method === "GET" && route === "") return json({ default_branch: "main" });
     if (method === "GET" && commit) return known.has(commit[1]) ? json({ tree: { sha: `tree-${commit[1].slice(0, 1)}` } }) : json({ message: "No commit found" }, 422);
     if (method === "GET" && route === "/git/ref/heads/main") return json({ object: { sha: MAIN } });
-    if (method === "GET" && route.startsWith("/git/ref/heads/joint-bob/")) return json({ object: { sha: "branch-head" } });
+    if (method === "GET" && route.startsWith("/git/ref/heads/joint-bob/")) return options.existingBranch ? json({ object: { sha: "branch-head" } }) : json({ message: "Not Found" }, 404);
+    if (method === "GET" && route.startsWith("/pulls?")) return json(options.openPulls ?? []);
     if (method === "GET" && route.startsWith("/git/trees/")) return json({ truncated: false, tree: [{ path: "src/tracked.ts", type: "blob" }] });
     if (method === "GET" && route.startsWith("/pulls/")) return json(options.pull ?? { state: "open", merged: false });
     if (method === "POST" && route === "/git/blobs") return json({ sha: `blob-${calls.length}` }, 201);
@@ -85,11 +86,24 @@ test("an unpublished base falls back to the branch head and says so", async () =
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("a retry after an unfinished attempt reuses its branch and open pull request", async () => {
+  const { root, projectPath } = await repository();
+  try {
+    const github = fakeGitHub({ knownCommits: [BASE], existingBranch: true, openPulls: [{ number: 15, html_url: "https://github.com/o/r/pull/15" }] });
+    const result = await openWorktreePullRequest({ projectPath, branchName: "joint-bob/fix-1", title: "Fix", body: "", changes: changes(BASE), previous: null }, credentials, github.request);
+    assert.deepEqual(result.pullRequest, { number: 15, url: "https://github.com/o/r/pull/15", branch: "joint-bob/fix-1", base: "main", baseCommit: BASE });
+    assert.equal(result.updated, true);
+    assert.deepEqual(github.calls.find((call) => call.route === "/git/commits" && call.method === "POST")!.body.parents, ["branch-head"]);
+    assert.equal(github.calls.some((call) => call.route === "/git/refs" && call.method === "POST"), false, "does not recreate the branch");
+    assert.equal(github.calls.some((call) => call.route === "/pulls" && call.method === "POST"), false, "does not open a second pull request");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("an open pull request gets a new commit on its branch; a merged one refuses", async () => {
   const { root, projectPath } = await repository();
   const previous = { number: 12, url: "https://github.com/o/r/pull/12", branch: "joint-bob/fix-1", base: "main", baseCommit: BASE };
   try {
-    const github = fakeGitHub({ knownCommits: [BASE] });
+    const github = fakeGitHub({ knownCommits: [BASE], existingBranch: true });
     const result = await openWorktreePullRequest({ projectPath, branchName: "joint-bob/fix-1", title: "Fix again", body: "", changes: changes(BASE), previous }, credentials, github.request);
     assert.equal(result.updated, true);
     assert.deepEqual(result.pullRequest, previous);
