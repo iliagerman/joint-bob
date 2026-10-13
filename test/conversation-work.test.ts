@@ -160,3 +160,19 @@ for (const engine of ["pi", "claude", "future-harness"]) {
     assert.equal(observe(), "needs_review");
   });
 }
+
+test("only runs that are still going are read for the passes that repeat every few seconds", async () => {
+  const { listUnfinishedConversationWork, unfinishedConversationWorkPlan } = await import("../src/conversation-work.js");
+  const mine = (): string[] => listUnfinishedConversationWork().filter((work) => work.sessionId.startsWith("unfinished-")).map((work) => work.summary.runId).sort();
+  const started = { runId: "finished-with-dashboard", status: "running" as const, tasks: [{ name: "default", role: "worker", status: "queued" as const, task: "its starting state" }] };
+  // A finished run keeps the summary it started with inside its descriptor: that one is over.
+  recordConversationWork({ engine: "future", sessionId: "unfinished-a", summary: { ...started, status: "succeeded", tasks: [{ ...started.tasks[0], status: "succeeded" }] },
+    descriptor: { runId: started.runId, dashboardUrl: "http://127.0.0.1:1", stateUrl: "http://127.0.0.1:1/api/state", summary: started } as never });
+  recordConversationWork({ engine: "future", sessionId: "unfinished-b", summary: { runId: "run-going", status: "running", tasks: [] } });
+  recordConversationWork({ engine: "future", sessionId: "unfinished-c", summary: { runId: "task-going", status: "succeeded", tasks: [{ name: "late", role: "worker", status: "running", task: 'mentions "status":"queued" in its text' }] } as never });
+  recordConversationWork({ engine: "future", sessionId: "unfinished-d", summary: { runId: "text-only", status: "failed", tasks: [{ name: "done", role: "worker", status: "failed", task: 'mentions "status":"running" in its text' }] } as never });
+  assert.deepEqual(mine(), ["run-going", "task-going"]);
+  assert.match(unfinishedConversationWorkPlan().join(" "), /USING INDEX conversation_work_unfinished/, "found through the index, not by reading every finished run");
+  recordConversationWork({ engine: "future", sessionId: "unfinished-b", summary: { runId: "run-going", status: "succeeded", tasks: [] } });
+  assert.deepEqual(mine(), ["task-going"], "a run that ends leaves the index");
+});

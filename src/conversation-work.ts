@@ -20,8 +20,34 @@ function database(): ReturnType<typeof conversationRuntimeDatabase> {
     engine TEXT NOT NULL, session_id TEXT NOT NULL, run_id TEXT NOT NULL,
     payload TEXT NOT NULL, PRIMARY KEY (engine, session_id, run_id)
   )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS conversation_work_unfinished ON conversation_work(engine, session_id) WHERE ${MAY_BE_UNFINISHED}`);
   ensured.add(db);
   return db;
+}
+
+/**
+ * Finished runs stay in the table as their conversation's history, thousands of them, while
+ * a handful are still going. The passes that only care about those (the lease snapshot every
+ * two seconds, the refresh before every listing) used to read and parse every row. A run that
+ * is still going has a queued or running status in its summary, its own or a task's, so an
+ * index over the rows whose summary holds one finds the candidates and agentWorkActive
+ * decides among them. (A record's descriptor keeps the summary it started with, "running"
+ * for good, so the whole record cannot be searched.)
+ */
+const SUMMARY = "json_extract(payload, '$.summary')";
+// A record that is not JSON counts as a candidate, so building the index can never fail on one.
+const MAY_BE_UNFINISHED = `CASE WHEN json_valid(payload) THEN instr(${SUMMARY}, '"status":"queued"') + instr(${SUMMARY}, '"status":"running"') ELSE 1 END > 0`;
+
+/** How SQLite finds them, one line per step. */
+export function unfinishedConversationWorkPlan(): string[] {
+  return (database().prepare(`EXPLAIN QUERY PLAN SELECT payload FROM conversation_work WHERE ${MAY_BE_UNFINISHED}`).all() as Array<{ detail: string }>).map((row) => row.detail);
+}
+
+/** The runs that are queued or running, or have a task that is. */
+export function listUnfinishedConversationWork(): ConversationWork[] {
+  return database().prepare(`SELECT payload FROM conversation_work WHERE ${MAY_BE_UNFINISHED}`).all()
+    .map((row) => JSON.parse(String(row.payload)) as ConversationWork)
+    .filter((work) => agentWorkActive(work.summary));
 }
 
 export function agentWorkActive(run: AgentRunSummary): boolean {
@@ -62,8 +88,8 @@ function failActiveTasks(summary: AgentRunSummary, error: string): AgentRunSumma
  */
 export function failStaleConversationWork(alive: (engine: HarnessId, sessionId: string) => boolean, staleMs: number, now = Date.now()): Array<{ engine: HarnessId; sessionId: string }> {
   const stale = new Map<string, { engine: HarnessId; sessionId: string }>();
-  for (const work of listConversationWork()) {
-    if (work.descriptor || !agentWorkActive(work.summary) || alive(work.engine, work.sessionId)) continue;
+  for (const work of listUnfinishedConversationWork()) {
+    if (work.descriptor || alive(work.engine, work.sessionId)) continue;
     const observedAt = work.observedAt ? Date.parse(work.observedAt) : 0;
     if (now - observedAt < staleMs) continue;
     stale.set(`${work.engine}\n${work.sessionId}`, { engine: work.engine, sessionId: work.sessionId });
@@ -88,7 +114,7 @@ export function failUnobservedConversationWork(engine: HarnessId, sessionId: str
  */
 export async function retireUnreachableConversationWorkAfterRestart(): Promise<number> {
   let retired = 0;
-  await Promise.all(listConversationWork().filter((work) => work.descriptor && agentWorkActive(work.summary)).map(async (work) => {
+  await Promise.all(listUnfinishedConversationWork().filter((work) => work.descriptor).map(async (work) => {
     let summary: AgentRunSummary;
     try {
       summary = await refreshAgentRun({ ...work.descriptor!, summary: work.summary });
@@ -128,10 +154,8 @@ export function takeChangedConversationWork(): Array<{ engine: HarnessId; sessio
 /** Persist descriptors independently of socket/session handles, including across node restarts. */
 async function refreshObservedWork(): Promise<boolean> {
   let changed = false;
-  // Every listing refreshes; only runs with a dashboard can be refreshed, so parse just those.
-  const described = database().prepare("SELECT payload FROM conversation_work WHERE json_extract(payload, '$.descriptor') IS NOT NULL").all()
-    .map((row) => JSON.parse(String(row.payload)) as ConversationWork);
-  await Promise.all(described.filter((work) => work.descriptor && agentWorkActive(work.summary)).map(async (work) => {
+  // Every listing refreshes; only a run that is still going and has a dashboard can be refreshed.
+  await Promise.all(listUnfinishedConversationWork().filter((work) => work.descriptor).map(async (work) => {
     try {
       const summary = await refreshAgentRun({ ...work.descriptor!, summary: work.summary });
       if (JSON.stringify(summary) === JSON.stringify(work.summary)) return;

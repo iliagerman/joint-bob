@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Made background refreshes of running work and transcript lists read far less data, so busy nodes respond faster and conversation lists load sooner.
+
 ## 2.85.1 — 2026-10-13
 
 - Made the performance log record separately whether the open conversation list and the spanning list were built fresh or reused, so a slow list can be traced to whether it was rebuilt.

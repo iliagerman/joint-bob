@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import "../src/sqlite-statements.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { ensureScriptCounts } from "../src/sqlite-statements.js";
 
 function fixture(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -58,4 +61,52 @@ test("closing a connection drops its statements, and the least recently used are
   db.open();
   assert.notEqual(db.prepare("SELECT 1 AS value"), kept, "a reopened connection compiles afresh");
   assert.deepEqual({ ...db.prepare("SELECT 1 AS value").get() }, { value: 1 });
+});
+
+test("a script that only makes sure tables exist runs once, and again whenever the schema has changed", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "jb-ensure-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const db = new DatabaseSync(path.join(root, "node.db")), other = new DatabaseSync(path.join(root, "node.db"));
+  t.after(() => { db.close(); other.close(); });
+  const ensure = "CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY, body TEXT);\n CREATE INDEX IF NOT EXISTS notes_body ON notes(body);";
+  const counted = (run: () => void): { ran: number; skipped: number } => {
+    const before = ensureScriptCounts();
+    run();
+    const after = ensureScriptCounts();
+    return { ran: after.ran - before.ran, skipped: after.skipped - before.skipped };
+  };
+  const exists = (): boolean => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='notes'").get());
+
+  assert.deepEqual(counted(() => { for (let call = 0; call < 50; call++) db.exec(ensure); }), { ran: 1, skipped: 49 });
+  db.prepare("INSERT INTO notes(body) VALUES('kept')").run();
+  assert.deepEqual(counted(() => db.exec(ensure)), { ran: 0, skipped: 1 }, "writing rows is not a schema change");
+
+  db.exec("DROP TABLE notes");
+  assert.deepEqual(counted(() => db.exec(ensure)), { ran: 1, skipped: 0 }, "dropped on this connection");
+  assert.equal(exists(), true);
+  other.exec("DROP TABLE notes");
+  assert.deepEqual(counted(() => db.exec(ensure)), { ran: 1, skipped: 0 }, "dropped by another connection");
+  assert.equal(exists(), true);
+  assert.deepEqual(counted(() => other.exec(ensure)), { ran: 1, skipped: 0 }, "each connection learns for itself");
+
+  // A rollback takes the tables away again; nothing run inside a transaction is remembered.
+  db.exec("DROP TABLE notes");
+  db.exec("BEGIN");
+  assert.deepEqual(counted(() => db.exec(ensure)), { ran: 0, skipped: 0 });
+  db.exec("ROLLBACK");
+  assert.equal(exists(), false);
+  db.exec(ensure);
+  assert.equal(exists(), true);
+});
+
+test("a script that does anything else runs every time", () => {
+  const db = new DatabaseSync(":memory:");
+  const before = ensureScriptCounts();
+  for (let call = 0; call < 3; call++) db.exec("CREATE TABLE IF NOT EXISTS log(line TEXT); INSERT INTO log VALUES('started')");
+  assert.equal((db.prepare("SELECT count(*) total FROM log").get() as { total: number }).total, 3);
+  db.exec("CREATE TEMP TABLE IF NOT EXISTS scratch(x)");
+  db.exec("ATTACH ':memory:' AS aside");
+  for (let call = 0; call < 2; call++) db.exec("CREATE TABLE IF NOT EXISTS aside.items(x)");
+  for (let call = 0; call < 2; call++) db.exec("CREATE TABLE IF NOT EXISTS copy AS SELECT * FROM log");
+  assert.deepEqual(ensureScriptCounts(), before, "none of these is counted as a make-sure script");
 });

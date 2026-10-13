@@ -3,7 +3,7 @@ import { runtimeHome } from "../account-runtime.js";
 import path from "node:path";
 import { claudeConversationDefault } from "./claude.defaults.js";
 import { defineHarness } from "./contract.js";
-import { configuredRuntime, detectExecutable, localizeTranscript, type HarnessConfiguration } from "./runtime-configuration.js";
+import { configuredSessionPath, detectExecutable, localizeTranscript, type HarnessConfiguration } from "./runtime-configuration.js";
 
 const configuration: HarnessConfiguration = {
   defaults: (home) => ({ executable: detectExecutable("claude"), configPath: path.join(home, ".claude"), sessionPath: path.join(home, ".claude/projects") }),
@@ -12,7 +12,7 @@ const configuration: HarnessConfiguration = {
   update: { type: "npm", packageName: "@anthropic-ai/claude-code", binaryName: "claude" },
   restartFields: ["executable", "configPath"],
 };
-function claudeProjectsRoot(): string { return configuredRuntime("claude", configuration.defaults(runtimeHome())).sessionPath; }
+function claudeProjectsRoot(): string { return configuredSessionPath("claude", path.join(runtimeHome(), ".claude/projects")); }
 function projectCwds(project: import("../session-paths.js").SessionProjectPaths): string[] { return [...new Set([project.path, ...(project.macPath ? [project.macPath] : []), ...(project.locations ?? []).map((location) => location.path), ...(project.additionalPaths ?? [])].map((cwd) => path.resolve(cwd)))]; }
 function projectDir(cwd: string): string { return path.join(claudeProjectsRoot(), cwd.replace(/^\//, "-").replace(/[\s_.\/]+/g, "-")); }
 /** The folders a project's conversations are listed from: one per working directory and its parent. */

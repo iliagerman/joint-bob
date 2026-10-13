@@ -81,7 +81,12 @@ export function value(keyName: string, fallback = ""): string {
   return found.isSecret ? decrypt(found.value) : found.value;
 }
 
+let saves = 0;
+/** Changes whenever a setting is saved, so a value kept in memory can tell it is out of date. */
+export function settingsGeneration(): number { return saves; }
+
 export function save(db: DatabaseSync, keyName: string, settingValue: string, isSecret = false): void {
+  saves++;
   db.prepare(`
     INSERT INTO node_settings (key, value, is_secret, updated_at) VALUES (?, ?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, is_secret = excluded.is_secret, updated_at = excluded.updated_at

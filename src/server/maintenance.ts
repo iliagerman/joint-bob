@@ -1,4 +1,4 @@
-import { agentWorkActive, failStaleConversationWork, listConversationWork, refreshConversationWork, takeChangedConversationWork } from "../conversation-work.js";
+import { failStaleConversationWork, listUnfinishedConversationWork, refreshConversationWork, takeChangedConversationWork } from "../conversation-work.js";
 import { reconcileAgentResources } from "../agent-resources.js";
 import { getClusterNode } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
@@ -191,8 +191,7 @@ export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<Ru
     if (ownershipEpoch === null) continue;
     entries.set(key, { engine: shared.engine, sessionId, ownerNodeId: localNodeId, ownershipEpoch, runId: sessionId, updatedAt, expiresAt });
   }
-  for (const work of listConversationWork()) {
-    if (!agentWorkActive(work.summary)) continue;
+  for (const work of listUnfinishedConversationWork()) {
     const key = `${work.engine}\n${work.sessionId}`;
     if (entries.has(key)) continue;
     const ownershipEpoch = await epochFor(work.engine, work.sessionId);

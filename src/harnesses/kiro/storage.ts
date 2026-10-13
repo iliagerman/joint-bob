@@ -9,7 +9,7 @@ import { sessionCwds } from "../shared-paths.js";
 import type { ChatMessage, SessionSummary } from "../../types.js";
 import type { HarnessProject } from "../contract.js";
 import type { HarnessModelSettings, HarnessOpenOptions } from "../runtime.js";
-import { configuredRuntime } from "../runtime-configuration.js";
+import { configuredSessionPath } from "../runtime-configuration.js";
 
 const safeId = /^[a-zA-Z0-9_-]+$/;
 type KiroRecord = Record<string, unknown>;
@@ -37,7 +37,7 @@ function defaults(home: string) {
 }
 
 function sessionRoot(): string {
-  return configuredRuntime("kiro", defaults(runtimeHome())).sessionPath;
+  return configuredSessionPath("kiro", defaults(runtimeHome()).sessionPath);
 }
 
 function aliasRoot(): string {

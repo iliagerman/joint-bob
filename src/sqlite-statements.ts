@@ -43,5 +43,50 @@ StatementSync.prototype.iterate = function (this: StatementSync, ...parameters: 
 // Closing finalizes every statement of the connection; a reopened one must compile afresh.
 DatabaseSync.prototype.close = function (this: DatabaseSync): void {
   statements.delete(this);
+  ensured.delete(this);
   close.call(this);
 };
+
+/**
+ * Runs a "make sure these tables exist" script once per connection and schema.
+ *
+ * Some fifty helpers run `CREATE TABLE IF NOT EXISTS …` each time they are called, many of
+ * them on every request, so SQLite parsed the same scripts thousands of times a minute to
+ * learn again that nothing was missing. A script made only of `CREATE TABLE` and
+ * `CREATE INDEX` statements with `IF NOT EXISTS` changes nothing unless the schema changed
+ * since it last ran, and SQLite counts schema changes (`PRAGMA schema_version`, which any
+ * connection's change advances). Such a script is skipped while that count stands still.
+ *
+ * Inside a transaction it always runs and is not remembered: a rollback can return the count
+ * to a value seen before with the tables gone. Any other script runs as it always did.
+ */
+const exec = DatabaseSync.prototype.exec;
+const ONLY_ENSURES = /^CREATE\s+(?:TABLE|(?:UNIQUE\s+)?INDEX)\s+IF\s+NOT\s+EXISTS\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:\(|ON\b)/i;
+const ensuring = new Map<string, boolean>();
+const ensured = new WeakMap<DatabaseSync, Map<string, number>>();
+
+function onlyEnsures(sql: string): boolean {
+  let known = ensuring.get(sql);
+  if (known === undefined) {
+    const parts = sql.split(";").map((part) => part.trim()).filter(Boolean);
+    known = parts.length > 0 && parts.every((part) => ONLY_ENSURES.test(part));
+    if (ensuring.size >= 1024) ensuring.clear();
+    ensuring.set(sql, known);
+  }
+  return known;
+}
+
+DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string): void {
+  if (typeof sql !== "string" || this.isTransaction !== false || !onlyEnsures(sql)) { exec.call(this, sql); return; }
+  let ran = ensured.get(this);
+  if (!ran) ensured.set(this, ran = new Map());
+  const version = (): number => Number((this.prepare("PRAGMA schema_version").get() as { schema_version: number }).schema_version);
+  if (ran.get(sql) === version()) { scripts.skipped++; return; }
+  scripts.ran++;
+  exec.call(this, sql);
+  ran.set(sql, version());
+};
+
+const scripts = { ran: 0, skipped: 0 };
+/** How many such scripts were run and how many were skipped, since this process started. */
+export function ensureScriptCounts(): { ran: number; skipped: number } { return { ...scripts }; }

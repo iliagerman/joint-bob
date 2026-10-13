@@ -1,7 +1,7 @@
 import { accessSync, constants as fsConstants } from "node:fs";
 import path from "node:path";
 import type { RuntimeSettings } from "../settings.js";
-import { value } from "../settings-store.js";
+import { settingsGeneration, value } from "../settings-store.js";
 import { confinedToRuntime, currentRuntime, usingServiceRuntime } from "../account-runtime.js";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -31,6 +31,26 @@ export function configuredRuntime(id: string, defaults: RuntimeSettings): Runtim
     configPath: (service && overrides.configPath) || confined(defaults.configPath),
     sessionPath: (service && overrides.sessionPath) || confined(defaults.sessionPath),
   };
+}
+
+/**
+ * Where a harness keeps its transcripts. Every listed transcript asks, several times per
+ * listing, and each answer used to read the harness's three overrides from the settings
+ * table and look its executable up on PATH: a tenth of a busy node's time. Only the
+ * transcript folder's override is read here, and it is kept until a setting is saved; the
+ * age limit covers a write that does not go through the settings store.
+ */
+const SESSION_PATH_TTL_MS = 2_000;
+const sessionPathOverrides = new Map<string, { value: string; generation: number; at: number }>();
+function sessionPathOverride(id: string): string {
+  const generation = settingsGeneration(), now = Date.now(), kept = sessionPathOverrides.get(id);
+  if (kept && kept.generation === generation && now - kept.at < SESSION_PATH_TTL_MS) return kept.value;
+  const found = value(`${id}.sessionPath`);
+  sessionPathOverrides.set(id, { value: found, generation, at: now });
+  return found;
+}
+export function configuredSessionPath(id: string, defaultSessionPath: string): string {
+  return (usingServiceRuntime() && sessionPathOverride(id)) || confined(defaultSessionPath);
 }
 
 /** The service reads a person's harness folders for them. One they turned into a link out of
