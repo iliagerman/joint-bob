@@ -225,8 +225,9 @@ export function sharedProjectSessions(project: ProjectRecord, userId: string, us
   const listing = sharedProjectListing(project.id, key, () => listProjectSessionsWithReviewState(project, userId, username), "", Date.now(), onlyInFlight);
   // Counted in the performance log, so what sharing saves can be read there: how many requests
   // built a list, and how many took one that was being built or kept.
-  const source = sharedProjectListingUse().reused > reusedBefore ? "reused" : "built";
-  return measureOperation(`sessions.${onlyInFlight ? "open_list" : "spanning_list"}.${source}`, () => listing);
+  const reused = sharedProjectListingUse().reused > reusedBefore;
+  if (onlyInFlight) return reused ? measureOperation("sessions.open_list.reused", () => listing) : measureOperation("sessions.open_list.built", () => listing);
+  return reused ? measureOperation("sessions.spanning_list.reused", () => listing) : measureOperation("sessions.spanning_list.built", () => listing);
 }
 
 // A leftover `claiming` record is a crashed two-phase claim from this node; no

@@ -24,6 +24,8 @@ test("project session stages use only static, code-owned timing labels", async (
     "sessions.review_scope", "sessions.transcript_catalog", "sessions.agent_dashboards",
     "sessions.supervisor_tasks", "sessions.external_runtime", "sessions.decoration_review",
     "sessions.ownership", "sessions.notifications", "sessions.worktrees",
+    // How a shared listing was answered; these wrap the whole listing, not a stage of it.
+    "sessions.open_list.reused", "sessions.open_list.built", "sessions.spanning_list.reused", "sessions.spanning_list.built",
   ]);
   for (const [stage, calls] of Object.entries({
     "sessions.external_runtime": ["Promise.all", "getHarnessRuntime", "runtime.externalRunning"],

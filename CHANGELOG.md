@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Split the performance-log entries for shared conversation lists into built and reused counts for both the open list and the spanning list, so slow lists can be traced to whether they were rebuilt.
+
 ## 2.85.0 — 2026-10-13
 
 - Moved Change story… out of the conversation menu into a Story button beside Tasks in the chat toolbar.
