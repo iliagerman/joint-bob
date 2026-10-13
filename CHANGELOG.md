@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.81.0 — 2026-10-13
 
-- Added a What changed panel under the Costs period cards that set this month or week so far against the same days of the previous period, with the cost change and what drove it, a table of totals, and the projects, models and skills that moved most.
+- Added a skill page that opens when a skill is selected, with its usage statistics beside the same figures across all skill turns and its SKILL.md as installed on this node.
+- Added a trend line, request count, token count, cache share, project count and the agents that loaded each skill to the skills table.
+- Added a What changed panel under the Costs period cards, which compares this month or week so far with the same days of the previous period and explains the cost change, with a table of totals and the projects, models and skills that moved most.
+- Added a Suggestions view, read only when opened, that lists installed skills to remove or review (never or long unused, failing or overlapping) and recurring kinds of work that could use a skill, with a draft to review; nothing is installed or removed without your approval.
 
 ## 2.80.1 — 2026-10-13
 
