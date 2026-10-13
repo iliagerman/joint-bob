@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.89.0 — 2026-10-13
 
 - Added an Auto respond button to the chat toolbar that opens a dialog for turning auto respond on in a conversation and setting its model, effort, instructions, stop conditions, and response limit, with a status note in the toolbar while it is active.
 
