@@ -133,6 +133,7 @@ body.booting :is(#focusControlsButton, #focusControls) { visibility: hidden; }
 
 /* The same toolbar is shown as two submenus, never cloned or reconnected. */
 #focusChatControls #chatToolbar { display: grid; grid-template-columns: 1fr 1fr; padding: 12px 4px; border: 0; gap: 12px; }
+#focusChatControls .chat-toolbar-actions { display: none; }
 #focusChatControls .chat-session-controls { display: contents; }
 #focusChatControls .chat-control { min-width: 0; width: auto; }
 #focusChatControls .chat-control > span { display: block; font-size: 10px; }

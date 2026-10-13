@@ -218,13 +218,12 @@ function backToControls() {
   document.querySelector("#focusTools").focus();
 }
 function decorateControls() {
+  // Only add icons to buttons that don't already have icons in the HTML.
+  // Toolbar buttons (.chat-action) already have .chat-toolbar-icon; skip them.
   for (const [id, icon] of Object.entries({
     focusBack: "back", focusClose: "close",
     focusNewConversation: "chat", focusNewNote: "pencil", focusRecents: "clock", focusReviews: "archive", focusRunning: "play",
     focusProjects: "folder", focusConversations: "chat", focusSettings: "sliders",
-    openTerminalButton: "terminal", openBrowserButton: "globe", chatFilesButton: "folder", chatGitButton: "merge",
-    notifyButton: "sliders", addToCanvasButton: "canvas", renameSessionButton: "pencil", chatCronButton: "clock",
-    chatDoneButton: "check", chatSessionMenuButton: "menu", installAppButton: "transfer",
   })) {
     const svg = menuIcon(icon);
     svg.classList.add("focus-action-icon");

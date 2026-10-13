@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.91.1 — 2026-10-13
+
+- Fixed the mobile Tools & actions menu, which showed two icons on each row and put the Story button and the Auto stopped badge at the top right, out of line with the rest of the menu.
+
 ## 2.91.0 — 2026-10-13
 
 - Added a search box to the top of Settings that finds any section, field label, or heading and opens it, and Cmd/Ctrl+F focuses it; on a phone the search box has its own row.
