@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.85.1 — 2026-10-13
 
-- Split the performance-log entries for shared conversation lists into built and reused counts for both the open list and the spanning list, so slow lists can be traced to whether they were rebuilt.
+- Made the performance log record separately whether the open conversation list and the spanning list were built fresh or reused, so a slow list can be traced to whether it was rebuilt.
 
 ## 2.85.0 — 2026-10-13
 
