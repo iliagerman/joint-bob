@@ -1,6 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { openScheduledTasks } from "./cron.js";
-import { openAutomations } from "./automations.js";
 import { elements } from "./elements.js";
 import { filteredProjects } from "./layout.js";
 import { loadProjects, refreshProjectsQuietly, selectProject } from "./project-selection.js";
@@ -273,7 +272,6 @@ function projectMenuItems(project) {
   return [
     ...mobileProjectFilterActions(project),
     { label: "Scheduled tasks", icon: "refresh", testid: "project-cron-button", onSelect: () => openScheduledTasks(project.id).catch(error => toast(error.message)) },
-    { label: "Automations", icon: "refresh", testid: "project-automations-button", onSelect: () => openAutomations(project.id).catch(error => toast(error.message)) },
     { label: "Skills & tools", icon: "sliders", testid: "project-resources-button", onSelect: () => openResources({ scope: "project", projectId: project.id }) },
     ...(project.locallyOwned !== false ? [{
       label: "Budget…", icon: "sliders", testid: "project-budget-button",

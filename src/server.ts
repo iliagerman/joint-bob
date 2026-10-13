@@ -31,7 +31,6 @@ import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { activateManagedHarnesses, startHarnessUpdateScheduler } from "./harness-updater.js";
 import { clusterWorkAllowed, flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
-import { startBrowserMonitors, stopBrowserMonitors } from "./server/browser-monitors.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
 import { startRelay, stopRelay } from "./relay/index.js";
 import "./server/schemas.js";
@@ -61,7 +60,6 @@ import "./server/routes/platform.js";
 import "./server/routes/secrets.js";
 import "./server/routes/browser.js";
 import "./server/routes/background-tasks.js";
-import "./server/routes/browser-monitors.js";
 import "./server/routes/projects.js";
 import "./server/routes/resources.js";
 import "./server/routes/quick-notes.js";
@@ -94,7 +92,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     server.close();
     stopRelay();
     const timeout = setTimeout(() => process.exit(0), 8000); timeout.unref();
-    stopBrowserMonitors();
     void closeBrowserRuntime().catch(error => console.warn("Browser shutdown failed", error)).finally(() => process.exit(0));
   });
   flags.startupReady = false;
@@ -143,7 +140,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     startHarnessUpdateScheduler();
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
     void startQuickNoteScheduler().catch(error => console.error("Quick note recovery failed; scheduler not started", error));
-    void startBrowserMonitors().catch(error => console.error("Browser monitor startup failed", error));
     // Relays connect out at once: a machine without a direct URL is reachable only through them.
     void startRelay().catch(error => console.error("Relay startup failed", error));
     // A change to one conversation marks its own project's list, not every project's (session-listing-revisions.ts).

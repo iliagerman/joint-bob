@@ -1652,47 +1652,6 @@ console.log(profile.id);`], { cwd: process.cwd(), env: { ...process.env, HOME: e
   }
 });
 
-test("a profile shared only on its own machine refuses remote browser monitor reads while the owner node's monitors pass the gate", { timeout: 90_000 }, async () => {
-  const project = nodeA.projects[0];
-  const conversation = randomUUID();
-  const projectsOnB = await api<{ projects: Array<{ id: string; name: string }> }>(nodeB, sessionB, "GET", "/projects");
-  const projectOnB = projectsOnB.body.projects.find((candidate) => candidate.name === project.name)!;
-  const issue = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts';
-const store = new BrowserStore();
-const profile = store.createProfile(${JSON.stringify(projectOnB.id)}, 'Monitored login');
-store.grantProfileAccess(profile.id, { scope: 'conversation', projectId: ${JSON.stringify(projectOnB.id)}, conversationId: ${JSON.stringify(conversation)} });
-store.close();
-console.log(profile.id);`], { cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: nodeB.dataDir }, timeout: 15000 });
-  const profileId = issue.stdout.trim();
-  const checker = { id: "fixture-page", version: 1, name: "Fixture page change", origins: ["https://example.com"], kind: "page-change", readySelector: "body", loginSelector: null, loadingSelector: null, emptySelector: null, account: { selector: "body", attribute: null, format: "text" }, target: { selector: "body", attribute: null, format: "text" }, targetLabel: { selector: "body", attribute: null, format: "text" }, itemsSelector: "body", itemId: null, sender: null, text: { selector: "body", attribute: null, format: "text" }, incomingSelector: null, outgoingSelector: null };
-  const binding = { nodeId: nodeB.nodeId, sessionId: randomUUID(), profileId, pageId: randomUUID(), engine: "pi", conversationId: conversation };
-  const input = { projectId: project.id, name: "Cross-node monitor", checkerId: checker.id, checkerVersion: checker.version, origin: "https://example.com", accountId: "fixture-account", targetIds: ["fixture-target"], intervalSeconds: 3600, binding, readAcknowledged: true };
-  // The monitor row lives on A; its browser binding points at B.
-  assert.equal((await api(nodeA, sessionA, "POST", "/browser/monitors", { nodeId: nodeA.nodeId, command: { action: "installChecker", projectId: project.id, definition: checker } })).status, 200);
-  const created = await api<{ monitor: { id: string; generation: number } }>(nodeA, sessionA, "POST", "/browser/monitors", { nodeId: nodeA.nodeId, command: { action: "create", input } });
-  assert.equal(created.status, 200, JSON.stringify(created.body));
-  const monitorId = created.body.monitor.id;
-  const generation = created.body.monitor.generation;
-  // Shared with the conversation wherever it runs: the read passes the gate and fails on the absent browser.
-  const allowed = await api(nodeA, sessionA, "POST", "/browser/monitors", { nodeId: nodeA.nodeId, command: { action: "enable", projectId: project.id, id: monitorId, generation, enabled: true } });
-  assert.equal(allowed.status, 409, JSON.stringify(allowed.body));
-  assert.match(allowed.body.error, /browser-stopped|not running/i, "with cross-node access the read must reach the browser, not be refused at the gate");
-  // Pinning the share to B refuses the remote monitor read at the gate.
-  const pin = (body: unknown) => api(nodeB, sessionB, "POST", `/browser/directory/${nodeB.nodeId}/${profileId}`, body);
-  assert.equal((await pin({ grant: { scope: "conversation", projectId: projectOnB.id, conversationId: conversation, nodeId: nodeB.nodeId } })).status, 200);
-  assert.equal((await pin({ revoke: { scope: "conversation", projectId: projectOnB.id, conversationId: conversation } })).status, 200);
-  const denied = await api(nodeA, sessionA, "POST", "/browser/monitors", { nodeId: nodeA.nodeId, command: { action: "enable", projectId: project.id, id: monitorId, generation, enabled: true } });
-  assert.equal(denied.status, 403, JSON.stringify(denied.body));
-  assert.match(denied.body.error, /not shared with this node/i);
-  // The owner node's own monitor on the same pinned profile passes the gate.
-  assert.equal((await api(nodeB, sessionB, "POST", "/browser/monitors", { nodeId: nodeB.nodeId, command: { action: "installChecker", projectId: projectOnB.id, definition: checker } })).status, 200);
-  const localMonitor = await api<{ monitor: { id: string; generation: number } }>(nodeB, sessionB, "POST", "/browser/monitors", { nodeId: nodeB.nodeId, command: { action: "create", input: { ...input, projectId: projectOnB.id, name: "Owner node monitor" } } });
-  assert.equal(localMonitor.status, 200, JSON.stringify(localMonitor.body));
-  const localEnable = await api(nodeB, sessionB, "POST", "/browser/monitors", { nodeId: nodeB.nodeId, command: { action: "enable", projectId: projectOnB.id, id: localMonitor.body.monitor.id, generation: localMonitor.body.monitor.generation, enabled: true } });
-  assert.equal(localEnable.status, 409, JSON.stringify(localEnable.body));
-  assert.match(localEnable.body.error, /browser-stopped|not running/i, "the owner node's own monitor is not refused by the cross-node gate");
-});
-
 test("a remote start without an explicit profile never reopens a profile its conversation used only on the owner", { timeout: 90_000 }, async () => {
   const project = nodeA.projects[0];
   const conversation = randomUUID();

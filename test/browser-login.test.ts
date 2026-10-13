@@ -8,7 +8,6 @@ import { chromium } from "playwright-core";
 import { BrowserRuntime } from "../src/browser-runtime.js";
 import { BrowserStore } from "../src/browser-store.js";
 import { resolveDataDirectory } from "../src/data-directory.js";
-import type { MonitorReadInput } from "../src/browser-monitor-checkers.js";
 import { browserLoginDetectionScript } from "../src/browser-login-detection.js";
 import { waitForAssertion } from "./async-assertion.js";
 
@@ -355,17 +354,6 @@ test("delayed completion is fenced by navigation, silent URL changes, and contro
       await assert.rejects(completing, /could not be verified/); assert.equal((await runtime.get(session.id)).loginRequest?.id, pending.id);
     } finally { gate?.release.resolve(); await cleanup(runtime, session.id); }
   }
-});
-
-const monitorInput: MonitorReadInput = { origin: "https://mail.google.com", accountId: "a@example.test", targetIds: ["target"], checkpoint: {}, checker: { id: "mail", version: 1, name: "Mail", origins: ["https://mail.google.com"], kind: "messages", readySelector: "#ready", loginSelector: "#login", loadingSelector: null, emptySelector: "#empty", account: { selector: "#account", attribute: null, format: "email" }, target: { selector: "#target", attribute: null, format: "text" }, targetLabel: { selector: "#label", attribute: null, format: "text" }, itemsSelector: ".item", itemId: { selector: ":scope", attribute: "data-message-id", format: "text" }, sender: { selector: ".sender", attribute: null, format: "email" }, text: { selector: ".text", attribute: null, format: "text" }, incomingSelector: ".incoming", outgoingSelector: ".outgoing" } };
-
-test("monitor reads fail needs-login before native evaluation", async t => {
-  const f = fixture(t), runtime = f.runtime(); const session = await runtime.create(start()); const page = f.pages.at(-1)!;
-  try {
-    await runtime.execute(session.id, request, agent); const view = await runtime.get(session.id);
-    const grant = { sessionId: session.id, projectId: session.projectId, conversationId: session.conversationId, profileId: session.profileId!, pageId: view.activePageId!, assertValid: () => {} };
-    await assert.rejects(runtime.inspectMonitor(grant, monitorInput), (error: any) => error.health === "needs-login"); assert.equal(page.calls.evaluate, 0);
-  } finally { await cleanup(runtime, session.id, "cleanup"); }
 });
 
 test("login request is shared, survives checkpoints, and corrupt storage fails closed", async t => {

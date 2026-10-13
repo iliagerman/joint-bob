@@ -326,10 +326,14 @@ test("project resource path fields save and reload", async () => {
   await page.locator("#projectRenameDialog").waitFor({ state: "hidden" });
 });
 
-test("the project list shows every seeded project", async () => {
+test("the project list shows every seeded project without browser automations", async () => {
   for (const project of node.projects) {
     await page.locator(".project-card", { hasText: project.name }).first().waitFor({ timeout: 15_000 });
   }
+  await page.locator('[aria-label="Actions for Internal Assistant"]').click();
+  await page.getByTestId("project-cron-button").waitFor();
+  assert.equal(await page.getByTestId("project-automations-button").count(), 0);
+  assert.equal(await page.locator("#automationsDialog").count(), 0);
 });
 
 test("opening a conversation renders its transcript", async () => {
