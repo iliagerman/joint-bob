@@ -507,14 +507,14 @@
           New password
           <input id="newPasswordInput" name="newPassword" type="password" autocomplete="new-password" minlength="16" data-testid="login-new-password-input" />
         </label>
-        <label id="loginMfaCodeLabel" hidden>
-          Authenticator or recovery code
         <label id="loginMfaSetupLabel" hidden>Authenticator setup key
           <input id="loginMfaSetupKey" class="mfa-key" readonly autocomplete="off" spellcheck="false" data-testid="login-mfa-setup-key" />
         </label>
         <label id="loginMfaRecoveryLabel" hidden>Save these recovery codes now; they will not be shown again.
           <textarea id="loginMfaRecoveryCodes" readonly spellcheck="false" data-testid="login-mfa-recovery-codes"></textarea>
         </label>
+        <label id="loginMfaCodeLabel" hidden>
+          Authenticator or recovery code
           <input id="loginMfaCodeInput" autocomplete="one-time-code" maxlength="64" spellcheck="false" autocapitalize="off" data-testid="login-mfa-code-input" />
         </label>
         <p id="loginError" role="alert" hidden></p>
@@ -646,33 +646,39 @@
           <option value="users" data-admin-only>Users</option>
         </select>
 
-        <div class="settings-tabs settings-tabs--sidebar" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
-          <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
         <div class="settings-sidebar">
         <div class="settings-search">
           <input id="settingsSearchInput" type="search" class="settings-search-input" placeholder="Search settings" aria-label="Search settings" autocomplete="off" spellcheck="false" data-testid="settings-search-input" aria-autocomplete="list" />
           <div id="settingsSearchResults" class="settings-search-results" role="listbox" aria-label="Matching settings" data-testid="settings-search-results" hidden></div>
         </div>
-          <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
-          <button class="settings-tab" type="button" data-settings-tab="labels" role="tab" id="settingsTab-labels" aria-controls="settingsPanel-labels" aria-selected="false" tabindex="-1" data-testid="settings-tab-labels">Labels</button>
-          <button class="settings-tab" type="button" data-settings-tab="conversations" role="tab" id="settingsTab-conversations" aria-controls="settingsPanel-conversations" aria-selected="false" tabindex="-1" data-testid="settings-tab-conversations">Conversations</button>
-          <button class="settings-tab" type="button" data-settings-tab="commands" role="tab" id="settingsTab-commands" aria-controls="settingsPanel-commands" aria-selected="false" tabindex="-1" data-testid="settings-tab-commands">Commands</button>
-          <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
-          <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
-          <button class="settings-tab" type="button" data-settings-tab="relay" role="tab" id="settingsTab-relay" aria-controls="settingsPanel-relay" aria-selected="false" tabindex="-1" data-requires-settings data-testid="settings-tab-relay">Relay</button>
-          <button class="settings-tab" type="button" data-settings-tab="webhooks" role="tab" id="settingsTab-webhooks" aria-controls="settingsPanel-webhooks" aria-selected="false" tabindex="-1" data-requires-settings data-testid="settings-tab-webhooks">Webhooks</button>
-          <button class="settings-tab" type="button" data-settings-tab="browser" role="tab" id="settingsTab-browser" aria-controls="settingsPanel-browser" aria-selected="false" tabindex="-1" data-testid="settings-tab-browser">Browser</button>
-          <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
-          <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Harnesses</button>
-          <button class="settings-tab" type="button" data-settings-tab="git" role="tab" id="settingsTab-git" aria-controls="settingsPanel-git" aria-selected="false" tabindex="-1" data-testid="settings-tab-git">Git</button>
-          <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers">Classifiers</button>
-          <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources" data-admin-only>Resources</button>
-          <button class="settings-tab" type="button" data-settings-tab="shortcuts" role="tab" id="settingsTab-shortcuts" aria-controls="settingsPanel-shortcuts" aria-selected="false" tabindex="-1" data-testid="settings-tab-shortcuts">Shortcuts</button>
-          <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates" data-admin-only>Updates</button>
-          <button class="settings-tab" type="button" data-settings-tab="logs" role="tab" id="settingsTab-logs" aria-controls="settingsPanel-logs" aria-selected="false" tabindex="-1" data-testid="settings-tab-logs">Client logs</button>
-          <button class="settings-tab" type="button" data-settings-tab="changelog" role="tab" id="settingsTab-changelog" aria-controls="settingsPanel-changelog" aria-selected="false" tabindex="-1" data-testid="settings-tab-changelog">Changelog</button>
-          <button class="settings-tab" type="button" data-settings-tab="node" role="tab" id="settingsTab-node" aria-controls="settingsPanel-node" aria-selected="false" tabindex="-1" data-testid="settings-tab-node" data-admin-only>Node</button>
-          <button class="settings-tab" type="button" data-settings-tab="users" role="tab" id="settingsTab-users" aria-controls="settingsPanel-users" aria-selected="false" tabindex="-1" data-testid="settings-tab-users" data-admin-only>Users</button>
+        <div class="settings-tabs settings-tabs--sidebar" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
+          <div class="settings-group-label" role="presentation">You</div>
+          <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account"><span class="settings-tab-icon" style="--tile:#3b82f6" aria-hidden="true">👤</span><span class="settings-tab-label">Account</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications"><span class="settings-tab-icon" style="--tile:#ef4444" aria-hidden="true">🔔</span><span class="settings-tab-label">Notifications</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="shortcuts" role="tab" id="settingsTab-shortcuts" aria-controls="settingsPanel-shortcuts" aria-selected="false" tabindex="-1" data-testid="settings-tab-shortcuts"><span class="settings-tab-icon" style="--tile:#8b5cf6" aria-hidden="true">⌨️</span><span class="settings-tab-label">Shortcuts</span></button>
+          <div class="settings-group-label" role="presentation">Workspace</div>
+          <button class="settings-tab" type="button" data-settings-tab="conversations" role="tab" id="settingsTab-conversations" aria-controls="settingsPanel-conversations" aria-selected="false" tabindex="-1" data-testid="settings-tab-conversations"><span class="settings-tab-icon" style="--tile:#10b981" aria-hidden="true">💬</span><span class="settings-tab-label">Conversations</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="labels" role="tab" id="settingsTab-labels" aria-controls="settingsPanel-labels" aria-selected="false" tabindex="-1" data-testid="settings-tab-labels"><span class="settings-tab-icon" style="--tile:#f59e0b" aria-hidden="true">🏷️</span><span class="settings-tab-label">Labels</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="commands" role="tab" id="settingsTab-commands" aria-controls="settingsPanel-commands" aria-selected="false" tabindex="-1" data-testid="settings-tab-commands"><span class="settings-tab-icon" style="--tile:#eab308" aria-hidden="true">⚡</span><span class="settings-tab-label">Commands</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces"><span class="settings-tab-icon" style="--tile:#06b6d4" aria-hidden="true">🗂️</span><span class="settings-tab-label">Workspaces</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="git" role="tab" id="settingsTab-git" aria-controls="settingsPanel-git" aria-selected="false" tabindex="-1" data-testid="settings-tab-git"><span class="settings-tab-icon" style="--tile:#f97316" aria-hidden="true">🌿</span><span class="settings-tab-label">Git</span></button>
+          <div class="settings-group-label" role="presentation">Agents</div>
+          <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines"><span class="settings-tab-icon" style="--tile:#a855f7" aria-hidden="true">🤖</span><span class="settings-tab-label">Harnesses</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers"><span class="settings-tab-icon" style="--tile:#14b8a6" aria-hidden="true">🧭</span><span class="settings-tab-label">Classifiers</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets"><span class="settings-tab-icon" style="--tile:#37cfab" aria-hidden="true">🔑</span><span class="settings-tab-label">Secrets</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="browser" role="tab" id="settingsTab-browser" aria-controls="settingsPanel-browser" aria-selected="false" tabindex="-1" data-testid="settings-tab-browser"><span class="settings-tab-icon" style="--tile:#3b82f6" aria-hidden="true">🌐</span><span class="settings-tab-label">Browser</span></button>
+          <div class="settings-group-label" role="presentation">Network</div>
+          <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster"><span class="settings-tab-icon" style="--tile:#0ea5e9" aria-hidden="true">🕸️</span><span class="settings-tab-label">Cluster</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="relay" role="tab" id="settingsTab-relay" aria-controls="settingsPanel-relay" aria-selected="false" tabindex="-1" data-requires-settings data-testid="settings-tab-relay"><span class="settings-tab-icon" style="--tile:#6366f1" aria-hidden="true">📡</span><span class="settings-tab-label">Relay</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="webhooks" role="tab" id="settingsTab-webhooks" aria-controls="settingsPanel-webhooks" aria-selected="false" tabindex="-1" data-requires-settings data-testid="settings-tab-webhooks"><span class="settings-tab-icon" style="--tile:#ec4899" aria-hidden="true">🪝</span><span class="settings-tab-label">Webhooks</span></button>
+          <div class="settings-group-label" role="presentation">This node</div>
+          <button class="settings-tab" type="button" data-settings-tab="node" role="tab" id="settingsTab-node" aria-controls="settingsPanel-node" aria-selected="false" tabindex="-1" data-testid="settings-tab-node" data-admin-only><span class="settings-tab-icon" style="--tile:#64748b" aria-hidden="true">🖥️</span><span class="settings-tab-label">Node</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources" data-admin-only><span class="settings-tab-icon" style="--tile:#84cc16" aria-hidden="true">📊</span><span class="settings-tab-label">Resources</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="users" role="tab" id="settingsTab-users" aria-controls="settingsPanel-users" aria-selected="false" tabindex="-1" data-testid="settings-tab-users" data-admin-only><span class="settings-tab-icon" style="--tile:#f43f5e" aria-hidden="true">👥</span><span class="settings-tab-label">Users</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates" data-admin-only><span class="settings-tab-icon" style="--tile:#22c55e" aria-hidden="true">⬇️</span><span class="settings-tab-label">Updates</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="logs" role="tab" id="settingsTab-logs" aria-controls="settingsPanel-logs" aria-selected="false" tabindex="-1" data-testid="settings-tab-logs"><span class="settings-tab-icon" style="--tile:#78716c" aria-hidden="true">📜</span><span class="settings-tab-label">Client logs</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="changelog" role="tab" id="settingsTab-changelog" aria-controls="settingsPanel-changelog" aria-selected="false" tabindex="-1" data-testid="settings-tab-changelog"><span class="settings-tab-icon" style="--tile:#78716c" aria-hidden="true">🗒️</span><span class="settings-tab-label">Changelog</span></button>
+        </div>
         </div>
 
         <section class="settings-panel" id="settingsPanel-node" role="tabpanel" aria-labelledby="settingsTab-node" tabindex="0" data-testid="settings-panel-node" data-admin-only hidden>
@@ -983,7 +989,7 @@
 
         <section class="settings-panel" id="settingsPanel-secrets" role="tabpanel" aria-labelledby="settingsTab-secrets" tabindex="0" hidden>
           <p>Named service, database, website, and custom accounts are encrypted and stay on this node unless you mark one to replicate. Attach them to a workspace, a project, or a single conversation.</p>
-          <div class="secret-type-toolbar"><div id="secretTypePicker" class="secret-type-picker"></div><button class="ghost secret-type-add" type="button" id="secretAccountAddButton" aria-label="Add secret account" title="Add secret account" data-testid="secret-account-add-button">+</button></div>
+          <div class="secret-type-toolbar"><div id="secretTypePicker" class="secret-type-picker"></div><input id="secretAccountSearch" type="search" class="secret-account-search" placeholder="Search secret accounts" aria-label="Search secret accounts" autocomplete="off" spellcheck="false" data-testid="secret-account-search" /><button class="ghost secret-type-add" type="button" id="secretAccountAddButton" aria-label="Add secret account" title="Add secret account" data-testid="secret-account-add-button">+</button></div>
           <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div></fieldset>
         </section>
 
@@ -2074,6 +2080,10 @@
     <dialog id="secretScopeDialog" data-testid="secret-scope-dialog">
       <form method="dialog" class="dialog-card" id="secretScopeForm">
         <div><span class="eyebrow">Secret credentials</span><h2 id="secretScopeTitle">Secret accounts</h2><p>Select accounts available to new agent sessions in this scope.</p></div>
+        <div class="secret-scope-filters">
+          <input id="secretScopeSearch" type="search" class="secret-scope-search" placeholder="Search secret accounts" aria-label="Search secret accounts" autocomplete="off" spellcheck="false" data-testid="secret-scope-search" />
+          <select id="secretScopeTypeFilter" aria-label="Filter by secret type" data-testid="secret-scope-type-filter"><option value="all">All types</option></select>
+        </div>
         <div id="secretScopeList" class="secret-scope-list" data-testid="secret-scope-list"></div>
         <button type="button" class="ghost" id="secretScopeAddButton" data-testid="secret-scope-add-button" hidden>New project secret</button>
         <div class="dialog-actions"><button type="button" class="ghost" id="secretScopeCancelButton" data-testid="secret-scope-cancel-button">Cancel</button><button type="submit" class="primary" data-testid="secret-scope-save-button">Save accounts</button></div>
@@ -2097,10 +2107,6 @@
           <input id="projectNameInput" name="name" autocomplete="off" placeholder="Home assistant plugins" required data-testid="project-form-name-input" />
         </label>
         <div class="field-group">
-        <div class="secret-scope-filters">
-          <input id="secretScopeSearch" type="search" class="secret-scope-search" placeholder="Search secret accounts" aria-label="Search secret accounts" autocomplete="off" spellcheck="false" data-testid="secret-scope-search" />
-          <select id="secretScopeTypeFilter" aria-label="Filter by secret type" data-testid="secret-scope-type-filter"><option value="all">All types</option></select>
-        </div>
           <span class="field-label">Colour</span>
           <div class="color-swatches" id="newProjectColorSwatches" role="radiogroup" aria-label="Project colour" data-testid="new-project-color-swatches"></div>
         </div>

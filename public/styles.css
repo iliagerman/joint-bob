@@ -2122,6 +2122,35 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 }
 .settings-tab:hover { color: var(--text); }
 .settings-tab[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.18)); }
+/* Settings sidebar (design A): a search box over grouped sections, each with a coloured icon tile. */
+.settings-sidebar { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.settings-sidebar > .settings-tabs--sidebar { flex: 1 1 auto; height: auto; gap: 2px; }
+/* Rows a little shorter than the tab strip's, so the grouped list fits a laptop screen without scrolling. */
+.settings-sidebar .settings-tab { min-height: 30px; padding: 0 9px; }
+.settings-search { position: relative; flex: none; }
+.settings-search-input { width: 100%; min-height: 34px; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); color: var(--text); font-size: 12.5px; }
+.settings-search-input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); outline: 0; }
+/* Wider than the sidebar it hangs from, so a setting's full name and path are readable. */
+.settings-search-results { position: absolute; left: 0; top: calc(100% + 6px); z-index: 20; display: grid; gap: 2px; width: max(100%, min(420px, calc(100vw - 72px))); max-height: 360px; overflow-y: auto; padding: 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-ctl); background: var(--surface); box-shadow: var(--shadow); }
+.settings-search-results[hidden] { display: none; }
+.settings-search-result { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.settings-search-result:hover, .settings-search-result.active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.settings-search-result .settings-tab-icon { margin-left: 0; }
+.settings-search-text { display: grid; min-width: 0; }
+.settings-search-text strong { overflow: hidden; font-size: 13px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.settings-search-text small { overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-search-empty { margin: 0; padding: 10px; color: var(--muted); font-size: 12.5px; }
+.settings-group-label { padding: 9px 10px 3px; color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.settings-group-label:first-child { padding-top: 6px; }
+.settings-tab { display: flex; align-items: center; gap: 9px; }
+.settings-tab-icon { display: inline-grid; flex: none; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: color-mix(in srgb, var(--tile, var(--accent)) 22%, transparent); font-size: 12px; line-height: 1; }
+.settings-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The row a search picked: a short accent flash so the eye finds it after the scroll. */
+.settings-hit { animation: settings-hit 1.6s ease-out; }
+@keyframes settings-hit {
+  0%, 40% { box-shadow: 0 0 0 2px var(--accent); background-color: color-mix(in srgb, var(--accent) 14%, transparent); }
+  100% { box-shadow: none; background-color: transparent; }
+}
 /* Harness sub-tabs use the same segmented control as the outer tab strip, one size down. */
 .settings-subtabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .settings-subtab { flex: 0 0 auto; min-height: 32px; padding: 0 12px; border: 0; border-radius: calc(var(--radius-ctl) - 3px); background: transparent; color: var(--muted); font-size: 12px; font-weight: 550; cursor: pointer; transition: color 140ms ease, background-color 140ms ease; }
@@ -2181,6 +2210,7 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 
 .secret-type-toolbar { display: flex; align-items: stretch; gap: 8px; }
 .secret-type-picker { width: min(240px, calc(100% - 48px)); }
+.secret-account-search { flex: 1 1 200px; min-width: 0; max-width: 360px; }
 .secret-type-add { width: 40px; min-width: 40px; padding: 0; font-size: 21px; line-height: 1; }
 .secret-provider-field { display: grid; gap: 6px; color: var(--text); font-size: 12px; font-weight: 550; }
 #secretAccountProviderPicker { width: 100%; }
@@ -2240,13 +2270,18 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 .secret-variable-row textarea { grid-column: 1 / -1; min-height: 78px; resize: vertical; }
 .secret-variable-row input[data-secret-value] { grid-column: 1 / -1; }
 .secret-scope-list { max-height: 280px; overflow-y: auto; padding: 2px; }
+.secret-scope-filters { display: flex; gap: 8px; align-items: center; }
+.secret-scope-search { flex: 1; min-width: 0; }
+.secret-scope-filters select { width: auto; max-width: 42%; }
+.secret-scope-row[hidden] { display: none; }
 .secret-scope-row { display: flex; align-items: center; gap: 8px; }
 .secret-scope-row .secret-provider-badge { width: 28px; height: 28px; }
 
 /* Too narrow for a side-by-side split: the sidebar folds back into the strip above. */
 @media (max-width: 720px) {
   .settings-card { width: calc(100vw - 24px); height: calc(100dvh - 24px); }
-  .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 12px; }
+  /* Three rows: the section dropdown, the search box, then the panel, which takes the rest. */
+  .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); gap: 12px; }
   /* On phones the section list becomes a dropdown instead of a horizontal strip. */
   .settings-tabs--sidebar { display: none; }
   .settings-tabs-select {
@@ -2271,6 +2306,7 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .settings-tab { transition: none; }
+  .settings-hit { animation: none; }
 }
 
 .settings-session-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }

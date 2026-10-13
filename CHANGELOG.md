@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a search box to Settings that finds any setting by name across every section and opens it, and grouped the section list with icons so it is easier to scan.
+
 ## 2.90.0 — 2026-10-13
 
 - Added an Auto badge to each conversation row in the list that shows how many replies auto respond has written while it answers, or says Auto stopped with the reason on hover, and the list now refreshes as that state changes.

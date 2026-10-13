@@ -25,6 +25,7 @@ import { refreshSessionsQuietly } from "./socket.js";
 import { loadWorkspaces } from "./workspaces.js";
 import { loadGitReviewerSettings } from "./git-reviewer-options.js";
 import { labelIconsValue, loadLabelIcons } from "./label-icons.js";
+import { createSettingsSearch } from "./settings-search.js";
 
 /** Compares two "major.minor.patch" strings; anything else never counts as newer. */
 function isNewerVersion(candidate, baseline) {
@@ -549,6 +550,26 @@ for (const tab of elements.settingsTabs) {
   });
 }
 elements.settingsTabsSelect.addEventListener("change", () => selectSettingsTab(elements.settingsTabsSelect.value));
+// Search every section by name. A pick opens its tab and flashes the matching row.
+const settingsSearch = createSettingsSearch({
+  input: elements.settingsSearchInput,
+  results: elements.settingsSearchResults,
+  tabs: elements.settingsTabs,
+  panels: elements.settingsPanels,
+  isAvailable: (tab) => !tab.hidden && (isNodeAdmin() || !tab.hasAttribute("data-admin-only")),
+  onPick(tab, element) {
+    selectSettingsTab(tab.dataset.settingsTab);
+    if (element === tab) return;
+    element.scrollIntoView({ block: "center", behavior: "smooth" });
+    element.classList.remove("settings-hit");
+    void element.offsetWidth;
+    element.classList.add("settings-hit");
+  },
+});
+elements.settingsDialog.addEventListener("keydown", (event) => {
+  // ⌘F inside Settings jumps to the search box instead of the browser's find bar.
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") { event.preventDefault(); settingsSearch.focus(); }
+});
 elements.cancelSettingsButton.addEventListener("click", () => elements.settingsDialog.close());
 elements.settingsClientLogsCopyButton.addEventListener("click", async () => {
   try {

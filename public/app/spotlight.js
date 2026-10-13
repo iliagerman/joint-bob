@@ -25,7 +25,7 @@ const workspaceDestinations = [
   { kind: "destination", title: "Recent conversations", subtitle: "Recently opened conversations", action: () => document.querySelector("[data-recent-sessions-open]").click() },
   ...elements.settingsTabs.map((tab) => ({
     kind: "settings",
-    title: tab.textContent.trim(),
+    title: (tab.querySelector(".settings-tab-label") ?? tab).textContent.trim(),
     subtitle: "Settings tab",
     action: () => openSettings(tab.dataset.settingsTab),
   })),

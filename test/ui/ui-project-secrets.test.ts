@@ -104,8 +104,29 @@ test("a secret account created from the project picker belongs to that project o
       variables: [{ name: "WORKSPACE_TOKEN", kind: "value", value: "synthetic-other-token" }],
     });
     assert.equal(conflict.status, 201);
+    const aws = await api<{ account: { id: string } }>(node, session, "POST", "/secrets/accounts", {
+      label: "AWS backup", provider: "aws",
+      variables: [{ name: "AWS_ACCESS_KEY_ID", kind: "value", value: "synthetic-key" }, { name: "AWS_SECRET_ACCESS_KEY", kind: "value", value: "synthetic-secret" }],
+    });
+    assert.equal(aws.status, 201);
     await page.getByTestId("workspace-secrets-button").first().click();
     await picker.waitFor();
+    const type = picker.getByTestId("secret-scope-type-filter");
+    const workspaceToken = picker.locator(`.secret-scope-row:has(input[value="${workspaceBody.account.id}"])`);
+    const awsRow = picker.locator(".secret-scope-row", { hasText: "AWS backup" });
+    await type.selectOption("aws");
+    assert.equal(await awsRow.isVisible(), true);
+    assert.equal(await workspaceToken.isVisible(), false);
+    await picker.getByTestId("secret-scope-search").fill("no such account");
+    await picker.getByText("No matching accounts.").waitFor();
+    await picker.getByTestId("secret-scope-search").fill("backup");
+    assert.equal(await awsRow.isVisible(), true);
+    await type.selectOption("custom");
+    assert.equal(await awsRow.isVisible(), false, "search and provider filter combine");
+    await picker.getByTestId("secret-scope-search").fill("");
+    assert.equal(await workspaceToken.isVisible(), true);
+    assert.equal(await workspaceToken.getByTestId("secret-scope-account-checkbox").isChecked(), true, "filtering does not clear selections");
+    await type.selectOption("all");
     const conflictRow = picker.locator(".secret-scope-row", { hasText: "Other workspace token" });
     await conflictRow.getByTestId("secret-scope-account-checkbox").check();
     const saved = page.waitForResponse((response) => response.url().includes("/api/secrets/scopes/workspace/") && response.request().method() === "PUT");

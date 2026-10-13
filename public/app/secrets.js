@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { brandIcon, brandIconPaths, menuIcon } from "./icons.js";
+import { fuzzyMatch } from "./fuzzy.js";
 import { createSearchableSelect } from "./searchable-select.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -218,9 +219,11 @@ function githubVariables() {
 
 function renderSecretAccounts() {
   elements.secretAccountList.replaceChildren();
-  const visible = secretAccounts.filter((account) => secretTypeFilter === "all" || account.provider === secretTypeFilter);
+  const query = elements.secretAccountSearch.value;
+  const visible = secretAccounts.filter((account) => (secretTypeFilter === "all" || account.provider === secretTypeFilter)
+    && (!query.trim() || fuzzyMatch(query, account.label, providerLabels[account.provider] ?? account.provider, account.websiteOrigin, account.variables.map((item) => item.name).join(" ")) !== null));
   if (!visible.length) {
-    elements.secretAccountList.textContent = secretTypeFilter === "all" ? "No secret accounts." : `No ${providerLabels[secretTypeFilter] ?? secretTypeFilter} accounts.`;
+    elements.secretAccountList.textContent = query.trim() ? "No matching accounts." : secretTypeFilter === "all" ? "No secret accounts." : `No ${providerLabels[secretTypeFilter] ?? secretTypeFilter} accounts.`;
     return;
   }
   for (const account of visible) {
@@ -308,6 +311,7 @@ const providerOptions = Object.entries(providerLabels).map(([value, label]) => (
 secretTypePicker.setOptions([{ value: "all", label: "All types" }, ...providerOptions]);
 // Icons are initialized after the module graph finishes loading (icons.js is cyclic).
 queueMicrotask(() => secretTypePicker.setValue("all"));
+elements.secretAccountSearch.addEventListener("input", renderSecretAccounts);
 secretTypePicker.onChange((name) => { secretTypeFilter = name; renderSecretAccounts(); });
 elements.secretTypePicker.append(secretTypePicker.root);
 
@@ -388,14 +392,37 @@ function renderSecretScopeList(accountIds) {
   const { scopeType, scopeId } = secretScopeTarget;
   const visible = secretAccounts.filter((account) => scopeType === "workspace" ? !account.projectId : !account.projectId || account.projectId === scopeId);
   elements.secretScopeList.replaceChildren();
+  const selectedType = elements.secretScopeTypeFilter.value;
+  elements.secretScopeTypeFilter.replaceChildren(new Option("All types", "all"));
+  for (const provider of [...new Set(visible.map((account) => account.provider))].sort((a, b) => (providerLabels[a] ?? a).localeCompare(providerLabels[b] ?? b))) {
+    elements.secretScopeTypeFilter.add(new Option(providerLabels[provider] ?? provider, provider));
+  }
+  elements.secretScopeTypeFilter.value = [...elements.secretScopeTypeFilter.options].some((option) => option.value === selectedType) ? selectedType : "all";
   if (!visible.length) elements.secretScopeList.textContent = scopeType === "project" ? "No secret accounts yet. Create one below or in Settings." : "No secret accounts. Add one in Settings.";
   for (const account of visible) {
     const item = document.createElement("label"); item.className = "checkbox-row secret-scope-row";
     const input = document.createElement("input"); input.type = "checkbox"; input.value = account.id; input.checked = accountIds.includes(account.id); input.dataset.testid = "secret-scope-account-checkbox";
     const detail = account.websiteOrigin ? ` — ${account.websiteOrigin}` : "";
+    item.dataset.provider = account.provider;
+    item.dataset.search = `${account.label} ${providerLabels[account.provider] ?? account.provider} ${account.websiteOrigin ?? ""}`;
     item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}${detail}${account.readOnly ? " · Shared, read-only" : account.shared ? " · Shared" : ""}`)); elements.secretScopeList.append(item);
   }
+  filterSecretScopeList();
 }
+
+/** Hides rows the search box rules out; ticked accounts stay ticked while hidden. */
+function filterSecretScopeList() {
+  const query = elements.secretScopeSearch.value;
+  const rows = [...elements.secretScopeList.querySelectorAll(".secret-scope-row")];
+  for (const row of rows) row.hidden = (elements.secretScopeTypeFilter.value !== "all" && row.dataset.provider !== elements.secretScopeTypeFilter.value)
+    || (Boolean(query.trim()) && fuzzyMatch(query, row.dataset.search) === null);
+  let empty = elements.secretScopeList.querySelector(".secret-scope-empty");
+  const none = rows.length > 0 && rows.every((row) => row.hidden);
+  if (none && !empty) { empty = document.createElement("p"); empty.className = "secret-scope-empty settings-hint"; empty.textContent = "No matching accounts."; elements.secretScopeList.append(empty); }
+  if (empty) empty.hidden = !none;
+}
+elements.secretScopeSearch.addEventListener("input", filterSecretScopeList);
+elements.secretScopeTypeFilter.addEventListener("change", filterSecretScopeList);
 
 function checkedSecretScopeIds() {
   return [...elements.secretScopeList.querySelectorAll("input:checked")].map((input) => input.value);
@@ -410,9 +437,12 @@ export async function openSecretScope(scopeType, scopeId, label) {
   // a workspace or conversation picker creates an ordinary node-local account.
   elements.secretScopeAddButton.hidden = false;
   elements.secretScopeAddButton.textContent = scopeType === "project" ? "New project secret" : "New secret account";
+  elements.secretScopeSearch.value = "";
+  elements.secretScopeTypeFilter.value = "all";
   renderSecretScopeList(accountIds);
   secretScopeError.hidden = true;
   elements.secretScopeDialog.showModal();
+  elements.secretScopeSearch.focus();
 }
 
 const secretScopeError = document.createElement("p");
