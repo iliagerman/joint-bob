@@ -507,6 +507,12 @@
         </label>
         <label id="loginMfaCodeLabel" hidden>
           Authenticator or recovery code
+        <label id="loginMfaSetupLabel" hidden>Authenticator setup key
+          <input id="loginMfaSetupKey" class="mfa-key" readonly autocomplete="off" spellcheck="false" data-testid="login-mfa-setup-key" />
+        </label>
+        <label id="loginMfaRecoveryLabel" hidden>Save these recovery codes now; they will not be shown again.
+          <textarea id="loginMfaRecoveryCodes" readonly spellcheck="false" data-testid="login-mfa-recovery-codes"></textarea>
+        </label>
           <input id="loginMfaCodeInput" autocomplete="one-time-code" maxlength="64" spellcheck="false" autocapitalize="off" data-testid="login-mfa-code-input" />
         </label>
         <p id="loginError" role="alert" hidden></p>
@@ -640,6 +646,11 @@
 
         <div class="settings-tabs settings-tabs--sidebar" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
           <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
+        <div class="settings-sidebar">
+        <div class="settings-search">
+          <input id="settingsSearchInput" type="search" class="settings-search-input" placeholder="Search settings" aria-label="Search settings" autocomplete="off" spellcheck="false" data-testid="settings-search-input" aria-autocomplete="list" />
+          <div id="settingsSearchResults" class="settings-search-results" role="listbox" aria-label="Matching settings" data-testid="settings-search-results" hidden></div>
+        </div>
           <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
           <button class="settings-tab" type="button" data-settings-tab="labels" role="tab" id="settingsTab-labels" aria-controls="settingsPanel-labels" aria-selected="false" tabindex="-1" data-testid="settings-tab-labels">Labels</button>
           <button class="settings-tab" type="button" data-settings-tab="conversations" role="tab" id="settingsTab-conversations" aria-controls="settingsPanel-conversations" aria-selected="false" tabindex="-1" data-testid="settings-tab-conversations">Conversations</button>
@@ -2063,6 +2074,10 @@
           <input id="projectNameInput" name="name" autocomplete="off" placeholder="Home assistant plugins" required data-testid="project-form-name-input" />
         </label>
         <div class="field-group">
+        <div class="secret-scope-filters">
+          <input id="secretScopeSearch" type="search" class="secret-scope-search" placeholder="Search secret accounts" aria-label="Search secret accounts" autocomplete="off" spellcheck="false" data-testid="secret-scope-search" />
+          <select id="secretScopeTypeFilter" aria-label="Filter by secret type" data-testid="secret-scope-type-filter"><option value="all">All types</option></select>
+        </div>
           <span class="field-label">Colour</span>
           <div class="color-swatches" id="newProjectColorSwatches" role="radiogroup" aria-label="Project colour" data-testid="new-project-color-swatches"></div>
         </div>

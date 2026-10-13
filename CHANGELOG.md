@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added auto respond, which writes your next message when the agent stops, within the limit and stop conditions you set; its replies carry an Auto badge.
+
 ## 2.87.0 — 2026-10-13
 
 - Made worktree pull requests leave out files your project's git ignores, and upload their files eight at a time.

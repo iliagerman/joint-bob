@@ -4400,3 +4400,10 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .budget-notice { margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; font-size: 13px; border: 1px solid currentColor; }
 .budget-notice[data-state="over"] { color: var(--danger, #c0392b); }
 .budget-notice[data-state="warning"] { color: #b9770e; }
+
+.auto-respond-pill { display: inline-block; min-width: 64px; padding: 2px 8px; border-radius: 999px; font-size: 12px; line-height: 20px; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; border: 1px solid var(--line, #8885); }
+.auto-respond-pill[data-state="active"] { color: var(--accent, #2563eb); }
+.auto-respond-pill[data-state="stopped"] { color: #b9770e; }
+.chat-action.active { color: var(--accent, #2563eb); }
+.message.auto-reply .auto-badge { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line, #8885); opacity: .8; }
+#autoRespondDialog textarea { width: 100%; resize: vertical; }

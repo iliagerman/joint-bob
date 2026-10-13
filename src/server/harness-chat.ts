@@ -14,6 +14,9 @@ import { getDifficultyClassifier } from "../classifiers/registry.js";
 import { automaticRoutingModelAllowed, routingEvalDue } from "../routing-policy.js";
 import { activeRoutingConfig, routingConfigDatabase, routingConfigWarning, type StoredRoutingConfig } from "../routing-configs.js";
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
+import { attachAutoReplies, recordAutoReply, DEFAULT_AUTO_RESPOND_INSTRUCTIONS, DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, assistantMessageKey, autoRespondConfigSchema, autoRespondMessage, disableAutoRespond, enableAutoRespond, getAutoRespond, parseAutoRespondDecision, recordAutoResponse, resetAutoRespondCount, responderPrompt, stopAutoRespond, type AutoRespondState, type AutoRespondStopKind } from "../conversation-auto-respond.js";
+import { BudgetExceededError } from "../budgets.js";
+import { runAutoResponder } from "./auto-respond-run.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
 import { getHarness, getHarnessRuntime, harnessForProvider, listHarnesses, listHarnessModels, listHarnessSessions } from "../harnesses.js";
@@ -61,6 +64,8 @@ const drains = new Map<string, Promise<void>>();
 const idleWakes = new Map<string, () => void>();
 const pausedDrains = new Set<string>();
 const startingIds = new Set<string>();
+// A responder decision in progress, so a person typing, Stop, or a settings change can cancel it.
+const autoAborts = new Map<string, AbortController>();
 // Keyed by conversation, not session object: a reopened session must not retry a
 // compaction that already ran or failed since the last prompt.
 const autoCompacted = new Set<string>();
@@ -116,6 +121,18 @@ function publish(connection: HarnessChatConnection, event: Record<string, unknow
 
 function publishGoal(connection: HarnessChatConnection, goal: ConversationGoal | undefined, announce = true): void {
   publish(connection, { type: "bobGoal", goal: goal ?? null, message: goalStatusMessage(goal), announce });
+}
+
+function publishAutoRespond(connection: HarnessChatConnection, state: AutoRespondState | undefined, phase: "deciding" | "idle" = "idle"): void {
+  publish(connection, { type: "autoRespond", state: state ?? null, phase, message: autoRespondMessage(state) });
+}
+
+async function stopAutoRespondFor(connection: HarnessChatConnection, kind: AutoRespondStopKind, reason: string): Promise<void> {
+  const state = await stopAutoRespond(connection.project.id, connection.conversationId, kind, reason);
+  if (state?.status === "stopped") {
+    publishAutoRespond(connection, state);
+    broadcastToProject(connection.project.id, { type: "sessionsChanged" });
+  }
 }
 
 function runtimeSettings(settings: QueuedSettings): HarnessModelSettings {
@@ -188,6 +205,9 @@ async function resumeReviewedTask(connection: HarnessChatConnection): Promise<vo
 async function enqueue(connection: HarnessChatConnection, message: string, images: Array<{ name: string; mimeType: string; data: string }>, files: Array<{ name: string; mimeType: string; data: string }>, requestId?: string, settings?: QueuedSettings | null): Promise<void> {
   if (!message.trim()) throw new Error("Prompt cannot be empty");
   await writable(connection);
+  // A person's message goes first: it cancels a pending auto response and restarts the unattended count.
+  autoAborts.get(queueKey(connection))?.abort("person-typed");
+  await resetAutoRespondCount(connection.project.id, connection.conversationId);
   await resumeReviewedTask(connection);
   if (settings) await (await getHarnessRuntime(selectedHarness(settings))).validateSettings(runtimeSettings(settings));
   const saved = await persistTaskAttachments(connection.cwd, images, files);
@@ -453,6 +473,70 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
   }
 }
 
+/** When the agent has stopped and auto respond is on, writes the next user message in its place. Returns true when it queued one. */
+async function runAutoResponse(connection: HarnessChatConnection): Promise<boolean> {
+  const projectId = connection.project.id;
+  const state = await getAutoRespond(projectId, connection.conversationId);
+  if (state?.status !== "active") return false;
+  const shared = connection.shared;
+  if (harnessSessionBusy(shared) || listQueuedPrompts(queueKey(connection)).length) return false;
+  try { await writable(connection); } catch { return false; }
+  const turns = shared.session.messages
+    .filter((message): message is typeof message & { role: "user" | "assistant" } => (message.role === "user" || message.role === "assistant") && Boolean(message.text.trim()))
+    .map((message) => ({ role: message.role, text: message.text }));
+  const last = turns.at(-1);
+  if (last?.role !== "assistant") return false;
+  const key = assistantMessageKey(turns.filter((turn) => turn.role === "user").length, last.text);
+  if (key === state.answeredKey) return false;
+  if (state.maxResponses !== null && state.responses >= state.maxResponses) {
+    await stopAutoRespondFor(connection, "limit", `Reached the limit of ${state.maxResponses} responses`);
+    return false;
+  }
+  const controller = new AbortController();
+  autoAborts.set(queueKey(connection), controller);
+  shared.turnInFlight += 1;
+  markHarnessInput(shared);
+  sendHarnessStatus(shared);
+  publishAutoRespond(connection, state, "deciding");
+  try {
+    let decision = null;
+    for (let attempt = 0; attempt < 2 && !decision; attempt++) {
+      const output = await runAutoResponder({ projectId, conversationId: connection.conversationId, cwd: connection.cwd, accountIds: connection.accountIds, config: state, prompt: responderPrompt(state, turns, state.responses + 1), signal: controller.signal });
+      decision = parseAutoRespondDecision(output);
+    }
+    if (controller.signal.aborted) throw new Error("aborted");
+    if (!decision) {
+      await stopAutoRespondFor(connection, "responder-failed", "The responder did not give a usable decision");
+      return false;
+    }
+    const latest = await getAutoRespond(projectId, connection.conversationId);
+    if (latest?.status !== "active" || latest.revision !== state.revision) return false;
+    if (decision.decision === "stop") {
+      await stopAutoRespondFor(connection, "stop-instruction", decision.reason);
+      return false;
+    }
+    if (listQueuedPrompts(queueKey(connection)).length) return true;
+    const queued = enqueuePrompt(queueKey(connection), decision.reply, decision.reply, { ...(state.enabledBy ? { author: state.enabledBy } : {}), messageText: decision.reply, promptSuffix: "", displaySuffix: "", attachmentPaths: [], images: [], settings: null });
+    markHarnessInput(shared);
+    await recordAutoReply(projectId, connection.conversationId, decision.reply, state.modelId, decision.reason);
+    publish(connection, { type: "userMessage", text: decision.reply, timestamp: queued.createdAt, ...(queued.author ? { author: queued.author } : {}), queued: true, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, auto: { modelId: state.modelId, reason: decision.reason } });
+    refreshHarnessPromptQueue(connection);
+    publishAutoRespond(connection, await recordAutoResponse(projectId, connection.conversationId, state.revision, key));
+    return true;
+  } catch (error) {
+    if (controller.signal.aborted) return controller.signal.reason !== "user-stop";
+    if (error instanceof ConversationOwnershipError) throw error;
+    if (error instanceof BudgetExceededError) await stopAutoRespondFor(connection, "budget", chatErrorMessage(error));
+    else await stopAutoRespondFor(connection, "responder-failed", chatErrorMessage(error));
+    return false;
+  } finally {
+    if (autoAborts.get(queueKey(connection)) === controller) autoAborts.delete(queueKey(connection));
+    shared.turnInFlight -= 1;
+    sendHarnessStatus(shared);
+    publishAutoRespond(connection, await getAutoRespond(projectId, connection.conversationId));
+  }
+}
+
 function wakeWhenHarnessIdle(connection: HarnessChatConnection): void {
   const key = queueKey(connection);
   if (idleWakes.has(key)) return;
@@ -496,14 +580,18 @@ async function drainLoop(connection: HarnessChatConnection): Promise<void> {
     if (next) {
       try { await dispatch(connection, next); }
       catch (error) {
-        if (!next.systemEventId) throw error;
+        if (!next.systemEventId) {
+          if (!pausedDrains.has(queueKey(connection))) await stopAutoRespondFor(connection, "turn-failed", chatErrorMessage(error));
+          throw error;
+        }
         console.warn("Background completion dispatch failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
         publish(connection, { type: "error", error: chatErrorMessage(error) });
         return;
       }
       continue;
     }
-    if (!await runGoalTurn(connection)) return;
+    if (await runGoalTurn(connection)) continue;
+    if (!await runAutoResponse(connection)) return;
   }
 }
 export function harnessPromptQueueIsDraining(key: string): boolean { return drains.has(key) || mutations.has(key); }
@@ -625,6 +713,10 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
   await writable(connection);
   if (message.type === "setEngine") { if (!message.engine) throw new Error("Engine is required"); await switchHarness(connection, message.engine); return true; }
   if (message.type === "abort" || message.type === "stop") {
+    // Stop must also end auto respond, or the responder would restart the agent a moment later.
+    const deciding = autoAborts.get(queueKey(connection));
+    await stopAutoRespondFor(connection, "user-stopped", "You stopped the turn");
+    if (deciding) { deciding.abort("user-stop"); return true; }
     await cancelCurrentAndResumeQueue(connection);
     return true;
   }
@@ -738,6 +830,24 @@ async function bobGoalCommand(connection: HarnessChatConnection, text: string, h
   publishGoal(connection, await cancelConversationGoal(connection.project.id, connection.conversationId, local.id));
 }
 
+async function autoRespondCommand(connection: HarnessChatConnection, request: NonNullable<ReturnType<typeof socketMessageSchema.parse>["autoRespond"]>): Promise<void> {
+  await writable(connection);
+  const key = queueKey(connection);
+  if (!request.enabled) {
+    autoAborts.get(key)?.abort("user-stop");
+    publishAutoRespond(connection, await disableAutoRespond(connection.project.id, connection.conversationId));
+    return;
+  }
+  const config = autoRespondConfigSchema.parse(request.config);
+  const runtime = await getHarnessRuntime(config.harnessId as HarnessId);
+  await runtime.validateSettings({ provider: config.provider, modelId: config.modelId, reasoning: config.thinkingLevel });
+  const readiness = await runtime.readiness(connection.cwd);
+  if (readiness.length) throw new Error(readiness.join("\n"));
+  autoAborts.get(key)?.abort("settings-changed");
+  publishAutoRespond(connection, await enableAutoRespond(connection.project.id, connection.conversationId, config, connection.author ?? null));
+  void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
+}
+
 export async function handleHarnessChatMessage(connection: HarnessChatConnection, raw: Buffer): Promise<void> {
   const message = socketMessageSchema.parse(JSON.parse(raw.toString()));
   if (message.type === "prompt") {
@@ -747,6 +857,11 @@ export async function handleHarnessChatMessage(connection: HarnessChatConnection
       return;
     }
     await serializeMutation(connection, () => enqueue(connection, message.message ?? "", message.images ?? [], message.files ?? [], message.requestId, message.queueSettings)); return;
+  }
+  if (message.type === "autoRespond") {
+    if (!message.autoRespond) throw new Error("Auto respond settings are required");
+    await serializeMutation(connection, () => autoRespondCommand(connection, message.autoRespond!));
+    return;
   }
   if (["forceStartQueuedPrompt", "editQueuedPrompt", "cancelQueuedPrompt", "swapQueuedPrompts", "mergeQueuedPrompts"].includes(message.type)) {
     await serializeMutation(connection, () => queueCommand(connection, message));
@@ -782,7 +897,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const scheduled = Boolean(record?.cronTaskId);
   const beforeLiveTurn = historyBeforeLiveTurn(transcript.messages, shared);
   const turnFailures = listTurnFailures(options.engine, shared.session.id);
-  const history = withTurnFailures(attachMessageAuthors(options.project.id, conversationId, beforeLiveTurn), turnFailures);
+  const history = withTurnFailures(await attachAutoReplies(options.project.id, conversationId, attachMessageAuthors(options.project.id, conversationId, beforeLiveTurn)), turnFailures);
   const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
   // Every step that can add or drop messages, so a client seeing a transcript shrink or change can name the step.
   const diagnostics = {
@@ -797,6 +912,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     busy: harnessSessionBusy(shared),
   };
   const goal = await getConversationGoal(options.project.id, conversationId);
+  const autoRespond = await getAutoRespond(options.project.id, conversationId);
   const routing = await routingClientState(connection, local.id);
   const routingMode = routing ? routing.mode : "manual";
   const conversationCommands = getSettings().conversationCommands;
@@ -806,7 +922,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     .filter((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)))
     .sort((left, right) => Date.parse(left) - Date.parse(right));
   const conversationStartedAt = startedCandidates[0] ?? null;
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {

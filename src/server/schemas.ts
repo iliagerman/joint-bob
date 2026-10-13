@@ -1,4 +1,5 @@
 import path from "node:path";
+import { autoRespondConfigSchema } from "../conversation-auto-respond.js";
 import { conversationDefaultsSchema } from "../harnesses/defaults.js";
 import { queuedSettingsSchema } from "../prompt-queue.js";
 import { z } from "zod";
@@ -580,4 +581,5 @@ export const socketMessageSchema = z.object({
   files: z.array(fileAttachmentSchema).max(6).optional(),
   safeguardsEnabled: z.boolean().optional(),
   toolNames: z.array(z.string().trim().min(1).max(120)).max(100).optional(),
+  autoRespond: z.object({ enabled: z.boolean(), config: autoRespondConfigSchema.optional() }).strict().optional(),
 });

@@ -18,6 +18,7 @@ import { loadRecentSessions } from "./recents.js";
 import { reviewableSessions, schedulePendingReviewsRefresh } from "./reviews.js";
 import { scheduleRunningRefresh } from "./running.js";
 import { saveSessionColor, saveSessionTitle } from "./session-identity.js";
+import { markAutoReply, setAutoRespond } from "./auto-respond.js";
 import { renderSessions } from "./session-list.js";
 import { maybeNotifyTurnComplete, playCompletionSound, setConnecting, setStatus, subscribeToPush, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -283,6 +284,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const openingDraft = state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath);
     state.conversationLock = payload.ownership ?? null;
     state.conversationReadOnly = payload.readOnly === true;
+    setAutoRespond(payload.autoRespond ?? null, "idle", payload.autoRespondDefaults);
     state.conversationCommands = payload.conversationCommands || null;
     if (!payload.engine) throw new Error("Ready payload is missing its harness engine");
     state.engine = payload.engine;
@@ -434,6 +436,12 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     if (payload.announce) toast(payload.message, 6000);
     return;
   }
+  if (payload.type === "autoRespond") {
+    const stopped = payload.state?.status === "stopped" && state.autoRespond?.status !== "stopped";
+    setAutoRespond(payload.state, payload.phase);
+    if (stopped) toast(payload.message, 8000);
+    return;
+  }
   if (payload.type === "userMessage") {
     finalizeAssistantBubble();
     // A scheduled task's trigger prompt is the scheduler talking; a person's own
@@ -443,6 +451,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const sentAt = payload.timestamp ? new Date(payload.timestamp) : true;
     const bubble = appendMessage("user", payload.text, sentAt, payload.attachments, false, undefined, payload.author);
     if (payload.queued) markMessageQueued(bubble, payload.queueId, payload.editableText, payload.settings, payload.revision);
+    if (payload.auto) markAutoReply(bubble, payload.auto);
     state.thinkingBubble = null;
     return;
   }

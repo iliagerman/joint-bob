@@ -3,6 +3,7 @@ import { savePreferencesInBackground } from "./api.js";
 import { completedConversationDuration, formatDateTime, formatDuration } from "./chat-time.js";
 import { openQueuedModelPicker, queuedReasoningLevels } from "./composer-dialogs.js";
 import { renderMarkdown } from "../markdown.js";
+import { markAutoReply } from "./auto-respond.js";
 import { elements } from "./elements.js";
 import { brandIcon, menuIcon } from "./icons.js";
 import { openFileAction, projectFileUrl } from "./project-files.js";
@@ -974,7 +975,9 @@ function appendTranscript(messages, segments, conversationStartedAt) {
     const engine = segments?.[segment]?.engine || state.engine;
     const currentSegment = !segments?.length || segment === segments.length - 1;
     const attribution = role === "assistant" ? message.attribution || (currentSegment ? undefined : { harnessId: engine }) : undefined;
-    markPendingReview(appendMessage(role, message.text, recorded, [], read, attribution, role === "user" ? message.author : undefined), recorded);
+    const bubble = appendMessage(role, message.text, recorded, [], read, attribution, role === "user" ? message.author : undefined);
+    if (role === "user" && message.auto) markAutoReply(bubble, message.auto);
+    markPendingReview(bubble, recorded);
   }
   // A freshly switched segment has no messages yet, but its seam still shows
   // where the conversation changed harness.
