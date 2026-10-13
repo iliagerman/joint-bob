@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Made the chat's Story button reopen a conversation's saved story on the page you left, write a conversation's first story only once, and show a Back to story button after you jump to a turn in the chat.
+
 ## 2.86.2 — 2026-10-13
 
 - Stopped the server freezing for seconds at a time while it searched for older items to sync to a machine that already had them all, and while it totalled usage across many projects in the project list.

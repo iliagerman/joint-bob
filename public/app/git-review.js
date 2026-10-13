@@ -4,7 +4,7 @@ import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { renderSideBySideDiff } from "./git-diff-view.js";
-import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyCommitsToExplain, storyHasSaved, storyHidesScope, storyIsFresh, storyPicking, storyPullNumber, storyPullUrl, selectStoryPull } from "./git-story.js";
+import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyCommitsToExplain, storyHasSaved, storyHidesScope, storyIsBeingWritten, storyIsFresh, storyIsMissing, storyPicking, storyPullNumber, storyPullUrl, selectStoryPull } from "./git-story.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel, selectModel } from "./git-reviewer-options.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -28,6 +28,11 @@ const git = {
   focusIndex: 0,
   scopeRequest: 0,
   reviewerTouched: false,
+  // Why the conversation's pending files could not be identified, when they could not.
+  scopeError: "",
+  // Opened for the conversation's own story: an empty claim must not widen the scope to everyone's pending files.
+  ownScope: false,
+  storyLoad: null,
 };
 
 function gitApiUrl(route, params = {}) {
@@ -47,10 +52,13 @@ const KIND_LABEL = {
   copied: "copied", type_changed: "type", unmerged: "conflict", untracked: "untracked", unknown: "changed",
 };
 
-export async function openGitReview(conversationId = null) {
+export async function openGitReview(conversationId = null, { tab = "changes", ownScope = false } = {}) {
   if (!state.activeProjectId) { toast("Open a project conversation first"); return; }
+  hideStoryReturn();
   git.conversationId = conversationId;
-  git.tab = "changes";
+  git.tab = tab;
+  git.ownScope = ownScope;
+  git.scopeError = "";
   git.selection = null;
   git.thread = null;
   git.scopePaths = null;
@@ -82,11 +90,11 @@ export async function openGitReview(conversationId = null) {
     coverage: storyCoverage,
     hasCoverage: storyCoverageReady,
     focusReviewer: () => elements.gitReviewHarness.focus(),
-    closeDialog: () => elements.gitReviewDialog.close(),
+    closeDialog: () => { elements.gitReviewDialog.close(); offerStoryReturn(); },
   });
-  applyTab("changes");
+  applyTab(tab);
   elements.gitReviewDialog.showModal();
-  void loadStory();
+  git.storyLoad = loadStory();
   await loadCurrentTab();
   try { await ensurePickers(); elements.gitReviewGenerate.disabled = false; syncStoryChrome(); } catch (error) { toast(error.message, 8000); }
 }
@@ -200,12 +208,14 @@ async function loadConversationScope(refresh = false) {
     if (request !== git.scopeRequest || !elements.gitReviewDialog.open) return;
     git.scopePaths = scope.paths;
     git.lastHarness = scope.lastHarness;
+    git.scopeError = "";
     // An empty claim would hide every pending file, so show them all instead.
-    if (!scope.paths.length) elements.gitReviewAllChanges.checked = true;
+    if (!scope.paths.length && !git.ownScope) elements.gitReviewAllChanges.checked = true;
     renderAmbiguity();
     if (git.harnesses.length && !git.reviewerTouched) chooseReviewer();
   } catch (error) {
     git.scopePaths = null;
+    git.scopeError = error.message;
     setStatus(`Could not identify conversation files: ${error.message}`);
   }
 }
@@ -671,14 +681,62 @@ function storyReviewer() {
   return { harnessId: harness.id, ...(provider ? { provider } : {}), modelId: model.modelId, thinkingLevel: elements.gitReviewThinking.value };
 }
 
-/** A story from the conversation alone: its turns and any commits it printed, with no picks, PRs or pending files. */
-export async function generateConversationStory(conversationId) {
-  await openGitReview(conversationId);
-  const reviewer = storyReviewer();
-  if (!reviewer) return;
+function reopenStory() {
+  hideStoryReturn();
   applyTab("story");
-  await generateStory({ conversationId, source: "conversation", scope: "conversation", paths: [], includeCommits: true, ...reviewer });
+  if (!elements.gitReviewDialog.open) elements.gitReviewDialog.showModal();
+  renderStory();
+  syncStoryChrome();
 }
+
+/**
+ * The toolbar's Story button. A saved story opens where the reader left it. Only a conversation with
+ * no story gets one written, from its own commits, the pending files it claimed, and its turns.
+ */
+export async function openConversationStory(conversationId) {
+  if (!state.activeProjectId) { toast("Open a project conversation first"); return; }
+  // A story still being written keeps arriving in the closed view; opening must not start another.
+  if (git.conversationId === conversationId && storyIsBeingWritten()) { reopenStory(); return; }
+  const loaded = openGitReview(conversationId, { tab: "story", ownScope: true });
+  await git.storyLoad;
+  if (git.conversationId !== conversationId || !storyIsMissing()) { await loaded; return; }
+  await generateStory(async () => {
+    // Status, the files the coding agent says it changed, and the reviewer pickers.
+    await loaded;
+    if (git.conversationId !== conversationId || !elements.gitReviewDialog.open) return null;
+    const reviewer = storyReviewer();
+    if (!reviewer) return null;
+    if (git.scopePaths === null) toast(`Pending files are left out of this story: ${git.scopeError || "the conversation's file list is unavailable"}. It covers the conversation's commits and turns.`, 9000);
+    const pending = git.status ? [...git.status.staged, ...git.status.unstaged, ...git.status.untracked].map(({ path }) => path) : [];
+    return { conversationId, source: "conversation", scope: "conversation", paths: [...new Set(pending.filter((path) => git.scopePaths?.includes(path)))], includeCommits: true, ...reviewer };
+  });
+}
+
+// A story can send the reader to a turn in the chat; this brings them back to the page they left.
+let storyReturn = null;
+
+function offerStoryReturn() {
+  if (!storyReturn) {
+    storyReturn = document.createElement("button");
+    storyReturn.type = "button";
+    storyReturn.className = "story-return";
+    storyReturn.dataset.testid = "git-story-return";
+    storyReturn.textContent = "← Back to story";
+    storyReturn.addEventListener("click", reopenStory);
+    elements.messagesWrap.append(storyReturn);
+  }
+  storyReturn.hidden = false;
+}
+
+function hideStoryReturn() {
+  if (storyReturn) storyReturn.hidden = true;
+}
+
+// The story belongs to one conversation; the way back goes when another one is opened.
+document.addEventListener("activeConversationChanged", () => {
+  const session = activeChatSession();
+  if ((session?.conversationId ?? session?.id ?? null) !== git.conversationId) hideStoryReturn();
+});
 
 async function generateStoryFromView({ conversation = false } = {}) {
   const reviewer = storyReviewer();
@@ -701,7 +759,8 @@ async function generateStoryFromView({ conversation = false } = {}) {
   } catch (error) { toast(error.message, 8000); return; }
   const includeCommits = Boolean(git.conversationId) && elements.gitReviewStoryCommits.checked;
   const paths = selectedPaths();
-  if (!paths.length && !(includeCommits && storyCommitCount())) { toast("Nothing to explain: the selected scope has no pending files and no commits"); return; }
+  // A conversation still has its turns to explain; without one there must be something pending.
+  if (!paths.length && !git.conversationId) { toast("Nothing to explain: the selected scope has no pending files and no commits"); return; }
   await generateStory({
     conversationId: git.conversationId,
     scope: git.conversationId && !elements.gitReviewAllChanges.checked ? "conversation" : "all",
@@ -720,7 +779,7 @@ elements.chatGitButton.addEventListener("click", () => {
 elements.chatStoryButton.addEventListener("click", () => {
   const session = activeChatSession();
   if (!session) { toast("Open a conversation first"); return; }
-  generateConversationStory(session.conversationId ?? session.id).catch((error) => toast(error.message));
+  openConversationStory(session.conversationId ?? session.id).catch((error) => toast(error.message));
 });
 elements.gitReviewCloseButton.addEventListener("click", () => elements.gitReviewDialog.close());
 elements.gitReviewDialog.addEventListener("close", () => { git.scopeRequest += 1; git.selection = null; git.thread = null; });

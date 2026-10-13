@@ -1500,6 +1500,24 @@ select.chat-toolbar-control {
 }
 .jump-to-bottom:hover { color: var(--accent); border-color: var(--accent); }
 .jump-to-bottom[hidden] { display: none; }
+.story-return {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 3;
+  transform: translateX(-50%);
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--field);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 28%);
+  font-size: 13px;
+  font-weight: 600;
+}
+.story-return:hover { color: var(--accent); }
+.story-return[hidden] { display: none; }
 .messages { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; background: transparent; padding-block: 18px; padding-inline: max(clamp(12px, 2.5vw, 40px), calc((100% - 1100px) / 2)); display: flex; flex-direction: column; gap: 10px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .empty-state { margin: auto; max-width: 480px; text-align: center; display: grid; gap: 14px; place-items: center; padding: 12px; }
 .empty-state h2 { font-size: 24px; line-height: 1.25; letter-spacing: -0.01em; }

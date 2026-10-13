@@ -285,6 +285,64 @@ test("Story tab opens on the first finished section even when the overview is st
   assert.equal(await page.getByTestId("git-story-writing").count(), 0);
 });
 
+test("the toolbar Story button writes a conversation's first story once, and a jump to the chat leads back to the same page", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const posts: Array<Record<string, unknown>> = [];
+  let latest: unknown = null;
+  await page.route("**/api/projects/*/git/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/status")) return route.fulfill({ json: status });
+    if (url.pathname.endsWith("/scope")) return route.fulfill({ json: { paths: ["app.ts", "app.test.ts"], lastHarness: "claude" } });
+    if (url.pathname.endsWith("/guide-latest")) return route.fulfill({ json: { latest: null } });
+    if (url.pathname.endsWith("/story-latest")) return route.fulfill({ json: { latest, commits: [{ shortHash: "abc1234", subject: "feat: greet" }] } });
+    if (url.pathname.endsWith("/story")) {
+      posts.push(route.request().postDataJSON());
+      latest = { thread, saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } };
+      return route.fulfill({ json: latest });
+    }
+    return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
+  });
+  await mockReviewers(page);
+  await openGit(page, environment, node.url);
+  await page.getByTestId("git-review-close-button").click();
+
+  // No story yet: one click writes it from the files the conversation claimed and its commits.
+  await page.getByTestId("chat-story-button").click();
+  await page.getByTestId("git-story-title").waitFor();
+  const { conversationId, ...request } = posts[0] as { conversationId: string };
+  assert.ok(conversationId);
+  assert.deepEqual(request, { source: "conversation", scope: "conversation", paths: ["app.ts", "app.test.ts"], includeCommits: true, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" });
+  assert.equal(await page.locator("#gitReviewAllChanges").isChecked(), false, "the story stays on this conversation's own files");
+
+  await page.getByTestId("git-story-section-conversation").click();
+  await page.getByTestId("git-story-phase").nth(1).click();
+  assert.match(await page.getByTestId("git-story-panel").innerText(), /Errors show inline instead of in a dialog/);
+  // The chat needs the turn's bubble on screen for the jump to find it.
+  await page.evaluate(() => {
+    const bubble = document.createElement("div");
+    bubble.className = "message user";
+    bubble.innerHTML = '<div class="message-content">Show an error when the name is empty</div>';
+    document.querySelector("#messages")!.append(bubble);
+  });
+  await page.getByTestId("git-story-open-turn").click();
+  await page.getByTestId("git-story-return").waitFor();
+  assert.equal(await page.locator("#gitReviewDialog").evaluate((dialog: HTMLDialogElement) => dialog.open), false, "the jump shows the chat");
+
+  await page.getByTestId("git-story-return").click();
+  assert.equal(await page.locator("#gitReviewDialog").evaluate((dialog: HTMLDialogElement) => dialog.open), true);
+  assert.match(await page.getByTestId("git-story-panel").innerText(), /Errors show inline instead of in a dialog/, "back on the phase the reader left");
+  assert.equal(await page.getByTestId("git-story-return").isVisible(), false);
+
+  // Closing and using the button again opens the saved story on the same page; nothing is written twice.
+  await page.getByTestId("git-review-close-button").click();
+  await page.getByTestId("chat-story-button").click();
+  await page.getByTestId("git-story-title").waitFor();
+  await page.getByTestId("git-story-phase").nth(1).waitFor();
+  assert.match(await page.getByTestId("git-story-panel").innerText(), /Errors show inline instead of in a dialog/);
+  assert.equal(await page.getByTestId("git-review-generate").innerText(), "Regenerate story");
+  assert.equal(posts.length, 1, "a saved story is opened, not regenerated");
+});
+
 test("Story tab marks a saved story outdated and offers Regenerate", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await page.route("**/api/projects/*/git/**", async (route) => {

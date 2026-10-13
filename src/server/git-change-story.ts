@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { gitCommitDetail, gitCommitFileDiff, GitReviewError, type GitChangeKind, type GitCommitDetail } from "../git-review.js";
+import { gitCommitDetail, gitCommitFileDiff, gitLocalCommits, GitReviewError, type GitChangeKind, type GitCommitDetail } from "../git-review.js";
 import type { HarnessId, ProjectRecord } from "../types.js";
 import { buildTurns, loadConversationMessages, type ConversationTurn } from "./conversation-turns.js";
 import { pendingReviewDiff } from "./git-review-guide.js";
@@ -176,19 +176,56 @@ export async function collectStorySources(project: ProjectRecord, cwd: string, c
   return { ...await sourcesFromTurns(cwd, buildTurns(loaded.messages), conversation, sources), lastHarness: loaded.lastHarness };
 }
 
-/** Commits the turns printed (and Git still has), plus the selected pending files. */
-export async function sourcesFromTurns(cwd: string, turns: ConversationTurn[], conversation: boolean, sources: StorySources): Promise<Omit<CollectedSources, "lastHarness">> {
-  const commits: Array<StoryCommit & { files: Array<{ path: string; kind: GitChangeKind }> }> = [];
-  if (sources.includeCommits) {
-    for (const turn of turns) {
-      for (const hash of turn.commits) {
-        if (commits.length >= COMMIT_LIMIT) break;
-        const detail = await gitCommitDetail(cwd, hash).catch(() => null);
-        if (!detail || commits.some((commit) => commit.hash === detail.hash)) continue;
-        commits.push({ ...commitFacts(detail), turn: turn.n, files: detail.files });
-      }
+// Git stamps a commit to the second and a transcript stamps a record when it is written, so allow a little either side.
+const RAN_SLACK_MS = 2_000;
+
+function printedHash(turn: ConversationTurn, hash: string): boolean {
+  for (let length = 7; length <= hash.length; length += 1) if (turn.printed.has(hash.slice(0, length))) return true;
+  return false;
+}
+
+/** Hashes a turn printed that this clone's reflog says were committed while one of the turn's tool calls was running, by turn number. */
+async function quietCommits(cwd: string, turns: ConversationTurn[]): Promise<Map<number, string[]>> {
+  const quiet = new Map<number, string[]>();
+  const first = turns.reduce((earliest, turn) => turn.ran.reduce((least, call) => Math.min(least, call.from), earliest), Infinity);
+  if (!Number.isFinite(first)) return quiet;
+  const local = await gitLocalCommits(cwd, new Date(first - RAN_SLACK_MS)).catch(() => []);
+  // Oldest first, so a turn lists its commits in the order it made them.
+  for (const commit of local.reverse()) {
+    const at = Date.parse(commit.at);
+    const turn = turns.find((item) => item.ran.some((call) => at >= call.from - RAN_SLACK_MS && at <= call.to + RAN_SLACK_MS) && printedHash(item, commit.hash));
+    if (turn) quiet.set(turn.n, [...quiet.get(turn.n) ?? [], commit.hash]);
+  }
+  return quiet;
+}
+
+/**
+ * The commits the turns made, oldest turn first, each read back from Git. A line `git commit` printed
+ * counts when Git has that commit under the same subject, so text that only looks like one does not.
+ * A hash the turn printed some other way counts when this clone's reflog says it was committed while
+ * one of the turn's tool calls was running: that finds a quiet `git commit -q` whose hash only shows
+ * in a later `git log` or `git push`, and leaves out commits by others that a turn merely listed.
+ */
+export async function turnCommits(cwd: string, turns: ConversationTurn[], limit = COMMIT_LIMIT): Promise<Array<{ turn: number; detail: GitCommitDetail }>> {
+  const quiet = await quietCommits(cwd, turns);
+  const made: Array<{ turn: number; detail: GitCommitDetail }> = [];
+  for (const turn of turns) {
+    for (const hash of [...turn.commits, ...quiet.get(turn.n) ?? []]) {
+      if (made.length >= limit) return made;
+      const detail = await gitCommitDetail(cwd, hash).catch(() => null);
+      if (!detail || made.some((commit) => commit.detail.hash === detail.hash)) continue;
+      const announced = turn.subjects.get(hash);
+      if (announced !== undefined && announced !== detail.subject.trim()) continue;
+      made.push({ turn: turn.n, detail });
     }
   }
+  return made;
+}
+
+/** Commits the turns made (and Git still has), plus the selected pending files. */
+export async function sourcesFromTurns(cwd: string, turns: ConversationTurn[], conversation: boolean, sources: StorySources): Promise<Omit<CollectedSources, "lastHarness">> {
+  const commits: Array<StoryCommit & { files: Array<{ path: string; kind: GitChangeKind }> }> = [];
+  if (sources.includeCommits) for (const { turn, detail } of await turnCommits(cwd, turns)) commits.push({ ...commitFacts(detail), turn, files: detail.files });
   const picked: typeof commits = [];
   for (const hash of sources.commits ?? []) {
     if (commits.length + picked.length >= COMMIT_LIMIT) throw new GitReviewError(413, `A story covers at most ${COMMIT_LIMIT} commits. Pick fewer commits.`);
@@ -391,14 +428,8 @@ export async function storyFreshness(project: ProjectRecord, cwd: string, conver
   }
 }
 
-/** Commits this conversation printed in its git output and that still exist, for the toolbar count. */
+/** Commits this conversation made and that still exist, for the toolbar count. */
 export async function conversationCommits(project: ProjectRecord, cwd: string, conversationId: string): Promise<Array<{ shortHash: string; subject: string }>> {
   const turns = buildTurns((await loadConversationMessages(project, conversationId)).messages);
-  const found: Array<{ hash: string; shortHash: string; subject: string }> = [];
-  for (const hash of turns.flatMap((turn) => turn.commits)) {
-    if (found.length >= COMMIT_LIMIT) break;
-    const detail = await gitCommitDetail(cwd, hash).catch(() => null);
-    if (detail && !found.some((commit) => commit.hash === detail.hash)) found.push({ hash: detail.hash, shortHash: detail.shortHash, subject: detail.subject });
-  }
-  return found.map(({ shortHash, subject }) => ({ shortHash, subject }));
+  return (await turnCommits(cwd, turns)).map(({ detail }) => ({ shortHash: detail.shortHash, subject: detail.subject }));
 }

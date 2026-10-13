@@ -33,6 +33,9 @@ const story = {
   pullDraft: "",
 };
 
+// Where the reader was in a story, so closing the Git view and opening it again lands on the same page.
+let kept = null;
+
 const PICK_LIMIT = 20;
 
 const SECTIONS = [
@@ -65,6 +68,7 @@ const turnsLabel = (turns) => turns.length > 1 ? `Turns ${turns[0]}-${turns.at(-
 
 /** Called when the Git view opens, so a story never leaks between conversations. */
 export function resetStory(ctx) {
+  if (story.latest && story.state === "ready") kept = { threadId: story.latest.thread.id, section: story.section, phase: story.phase, example: story.example, step: story.step, implTab: story.implTab, pages: story.pages };
   story.ctx = ctx;
   story.state = "idle";
   story.latest = null;
@@ -100,6 +104,9 @@ export function storyPullUrl() { return story.pullUrl; }
 export function storyCommitCount() { return story.commits.length; }
 export function storyIsFresh() { return Boolean(story.latest?.freshness.fresh); }
 export function storyHasSaved() { return Boolean(story.latest); }
+/** True when the saved story was looked up and there is none. */
+export function storyIsMissing() { return story.state === "empty"; }
+export function storyIsBeingWritten() { return story.state === "writing"; }
 export function storyPicking() { return story.picking; }
 export function storyFromCommits() { return shown()?.saved.sources?.kind === "commits"; }
 /** The commits to explain on Generate: picked ones, or the shown commits story's own when regenerating it. */
@@ -141,10 +148,13 @@ export async function loadStory(threadId) {
     story.commits = body.commits ?? [];
     story.latest = body.latest;
     story.state = body.latest ? "ready" : "empty";
-    story.phase = 0;
-    story.example = 0;
-    story.step = 0;
-    story.pages = {};
+    const place = body.latest && kept?.threadId === body.latest.thread.id ? kept : null;
+    if (place) story.section = place.section;
+    story.phase = place?.phase ?? 0;
+    story.example = place?.example ?? 0;
+    story.step = place?.step ?? 0;
+    story.implTab = place?.implTab ?? story.implTab;
+    story.pages = place?.pages ?? {};
   } catch (error) {
     if (request !== story.request) return;
     story.state = "error";
@@ -153,6 +163,7 @@ export async function loadStory(threadId) {
   changed();
 }
 
+/** `payload` may be a function that gathers what to explain; the writing panel shows while it runs, and null from it calls the story off. */
 export async function generateStory(payload) {
   const request = ++story.request;
   story.state = "writing";
@@ -167,7 +178,15 @@ export async function generateStory(payload) {
   changed();
   let finished = false;
   try {
-    await apiLines(story.ctx.apiUrl("story"), { method: "POST", body: JSON.stringify(payload) }, (line) => {
+    const body = typeof payload === "function" ? await payload() : payload;
+    if (request !== story.request) return;
+    if (!body) {
+      story.state = story.latest ? "ready" : "empty";
+      story.draft = null;
+      changed();
+      return;
+    }
+    await apiLines(story.ctx.apiUrl("story"), { method: "POST", body: JSON.stringify(body) }, (line) => {
       if (request !== story.request) return;
       if (line.type === "error") throw new Error(line.error);
       if (line.type === "facts") Object.assign(story.draft, { facts: line.facts, patches: line.patches, sources: line.sources });
@@ -734,7 +753,10 @@ function renderImplementation(section) {
       onclick: () => { story.implTab = tab.id; renderSection(); },
     }, tab.label, h("span", { class: "gs-count" }, String(tab.count))))),
     box);
-  if (story.implTab === "components") fillComponents(box);
+  if (story.implTab === "components") {
+    if (facts.files.length) fillComponents(box);
+    else box.append(h("p", { class: "gs-muted", "data-testid": "git-story-no-files" }, "No changed files. Git shows no commits or pending files from this conversation, so the story explains the conversation alone."));
+  }
   else if (story.implTab === "decisions") fillDecisions(box);
   else if (story.implTab === "checks") { if (impl.checks.length) pagedList(box, "checks", impl.checks, () => 44, checkRow, "checks"); else box.append(h("p", { class: "gs-muted" }, "The reviewer listed nothing to check.")); }
   else if (impl.tests.length) pagedList(box, "tests", impl.tests, () => 44, testRow, "tests");

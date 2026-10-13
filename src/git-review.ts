@@ -284,6 +284,30 @@ export async function gitPushHistory(cwd: string, limit = 60): Promise<GitPush[]
   return pushes;
 }
 
+export interface GitLocalCommit {
+  hash: string;
+  /** When this clone's HEAD moved to the commit, which is when it was made here. */
+  at: string;
+}
+
+const LOCAL_COMMIT_LIMIT = 2000;
+
+/**
+ * Commits made in this clone since `since`, newest first, read from HEAD's reflog. A commit that
+ * arrived by pull, fetch or checkout is not listed: Git logs those as moves, not as commits.
+ */
+export async function gitLocalCommits(cwd: string, since: Date): Promise<GitLocalCommit[]> {
+  const root = await gitRepositoryRoot(cwd);
+  const output = await git(root, ["log", "-g", "-n", String(LOCAL_COMMIT_LIMIT), `--since=${since.toISOString()}`, "--date=iso-strict", `--format=%H${LOG_FIELD}%gs${LOG_FIELD}%gd`, "HEAD", "--"]);
+  const commits: GitLocalCommit[] = [];
+  for (const line of output.split("\n")) {
+    const [hash, action, selector] = line.split(LOG_FIELD);
+    const at = /@\{(.+)\}$/.exec(selector ?? "")?.[1];
+    if (hash && at && /^(commit(?: \([^)]*\))?|cherry-pick|revert): /.test(action ?? "")) commits.push({ hash, at });
+  }
+  return commits;
+}
+
 export interface GitCommitDetail extends GitCommit {
   files: GitFileChange[];
   diff: GitDiff;

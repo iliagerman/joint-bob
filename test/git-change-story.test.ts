@@ -7,7 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { gitPushHistory } from "../src/git-review.js";
 import { buildTurns, commitHashesIn } from "../src/server/conversation-turns.js";
-import { checkStory, fileArea, fitPatches, lineCounts, sourcesFromPull, sourcesFromTurns, turnDigest, type ChangeStory } from "../src/server/git-change-story.js";
+import { checkStory, fileArea, fitPatches, lineCounts, sourcesFromPull, sourcesFromTurns, turnCommits, turnDigest, type ChangeStory } from "../src/server/git-change-story.js";
 import { createTopLevelFieldScanner } from "../src/server/story-json-scanner.js";
 
 const git = promisify(execFile);
@@ -139,6 +139,53 @@ test("a conversation with no commits or pending files still makes a story from i
     assert.deepEqual(sourced.facts.files, []);
     assert.equal(sourced.facts.turns.length, 1);
     await assert.rejects(sourcesFromTurns(root, [], true, sources), /Nothing to explain/, "no turns and no changes still has nothing to explain");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a quiet commit counts for the turn that made it and printed its hash, and listed commits by others do not", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-story-quiet-"));
+  // The committer date is what Git writes to the reflog, so each commit gets a known time.
+  const commit = async (name: string, at: string) => {
+    await writeFile(path.join(root, name), `export const made = "${name}";\n`);
+    await git("git", ["-C", root, "add", name]);
+    await git("git", ["-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", `add ${name}`], { env: { ...process.env, GIT_COMMITTER_DATE: at } });
+    return (await git("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
+  };
+  try {
+    await git("git", ["init", "-q", root]);
+    const earlier = await commit("earlier.ts", "2026-10-05T09:00:00Z");
+    const mine = await commit("mine.ts", "2026-10-05T10:00:30Z");
+    const unprinted = await commit("unprinted.ts", "2026-10-05T10:00:40Z");
+    const later = await commit("later.ts", "2026-10-05T10:20:00Z");
+    const turns = buildTurns([
+      { id: "1", role: "user", text: "Add mine.ts and push", timestamp: "2026-10-05T10:00:00.000Z" },
+      // `git commit -q` prints nothing; the hash shows only in the log and push output that follow.
+      { id: "2", role: "toolResult", toolName: "Bash", text: `${mine} add mine.ts\n${earlier.slice(0, 8)} add earlier.ts`, timestamp: "2026-10-05T10:00:31.000Z", durationMs: 2_000 },
+      { id: "3", role: "toolResult", toolName: "Bash", text: `   ${earlier.slice(0, 8)}..${mine.slice(0, 8)}  main -> main`, timestamp: "2026-10-05T10:00:50.000Z", durationMs: 15_000 },
+      { id: "4", role: "user", text: "Show the log", timestamp: "2026-10-05T10:30:00.000Z" },
+      { id: "5", role: "toolResult", toolName: "Bash", text: `${later.slice(0, 8)} add later.ts\n${mine.slice(0, 8)} add mine.ts`, timestamp: "2026-10-05T10:30:05.000Z", durationMs: 1_000 },
+    ]);
+    assert.deepEqual(turns.map((turn) => turn.commits), [[], []], "nothing announced a commit");
+    const made = async (items: typeof turns) => (await turnCommits(root, items)).map(({ turn, detail }) => [turn, detail.hash]);
+    // `unprinted` was made meanwhile but never printed, `earlier` and `later` were printed but made at other times.
+    assert.deepEqual(await made(turns), [[1, mine]], "only the commit made while the turn's own call ran, and printed by it");
+
+    const sourced = await sourcesFromTurns(root, turns, true, { scope: "conversation", pendingPaths: [], includeCommits: true });
+    assert.deepEqual(sourced.facts.commits.map((item) => [item.subject, item.turn]), [["add mine.ts", 1]]);
+    assert.deepEqual(sourced.facts.files.map((file) => file.path), ["mine.ts"]);
+
+    // A transcript with no recorded tool runtime still counts the call from the turn's start.
+    const legacy = buildTurns([
+      { id: "1", role: "user", text: "Add mine.ts", timestamp: "2026-10-05T10:00:00.000Z" },
+      { id: "2", role: "toolResult", toolName: "Bash", text: mine.slice(0, 10), timestamp: "2026-10-05T10:01:00.000Z" },
+    ]);
+    assert.deepEqual(await made(legacy), [[1, mine]]);
+    // Without any times there is nothing to place a commit in, so only announced commits count.
+    assert.deepEqual(await made(buildTurns([{ id: "1", role: "user", text: "Add mine.ts" }, { id: "2", role: "toolResult", toolName: "Bash", text: mine }])), []);
+    // A line that only looks like `git commit` output names a real commit under another subject, so it is not this turn's.
+    const quoted = buildTurns([{ id: "1", role: "user", text: "Read the fixture" }, { id: "2", role: "toolResult", toolName: "Bash", text: `[main ${later.slice(0, 8)}] feat: greet\n[main ${unprinted.slice(0, 8)}] add unprinted.ts` }]);
+    assert.deepEqual(quoted[0].commits, [later.slice(0, 8), unprinted.slice(0, 8)]);
+    assert.deepEqual(await made(quoted), [[1, unprinted]]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
