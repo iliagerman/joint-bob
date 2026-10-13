@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.83.0 — 2026-10-13
 
 - Added performance-log entries that show whether each project's conversation list was built fresh or reused from one already in progress, so the time that sharing saves can be measured.
 
