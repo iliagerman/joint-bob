@@ -201,7 +201,7 @@ export function normalizeUsageRecords(
 ): UsageEvent[] {
   const errors = toolErrorIds(records);
   const events = new Map<string, { event: UsageEvent; tools: Set<string> }>();
-  const pendingReads = new Map<string, SkillRead>();
+  const pendingReads = new Map<string, { skill: SkillRead; versioned: boolean }>();
   const pendingTools = new Map<string, { eventId: string; startedAt: number }>();
   const activeReads = new Map<string, SkillRead>();
   const invocations = new Map<string, SkillRead>();
@@ -209,7 +209,8 @@ export function normalizeUsageRecords(
   for (const raw of records) {
     const record = object(raw);
     const message = object(record.message);
-    if (message.role === "user" && !(Array.isArray(message.content) && message.content.some((item: unknown) => ["tool_result", "toolResult"].includes(String(object(item).type))))) {
+    // Claude marks text it adds itself, such as a loaded skill's body, as meta: the turn goes on.
+    if (message.role === "user" && record.isMeta !== true && !(Array.isArray(message.content) && message.content.some((item: unknown) => ["tool_result", "toolResult"].includes(String(object(item).type))))) {
       turn++;
       pendingReads.clear(); activeReads.clear(); invocations.clear();
       const text = typeof message.content === "string" ? message.content : Array.isArray(message.content)
@@ -217,11 +218,11 @@ export function normalizeUsageRecords(
       const explicit = /^\s*\/skill:([a-zA-Z][\w-]{0,99})(?:\s|$)/.exec(text);
       if (explicit) invocations.set(explicit[1], { id: hash(`invocation:${engine}:${explicit[1]}`), name: explicit[1], version: "unknown" });
     }
-    for (const [toolId, skill] of pendingReads) {
+    for (const [toolId, { skill, versioned }] of pendingReads) {
       const version = successfulSkillResult(record, toolId);
       if (version === null) continue;
       pendingReads.delete(toolId);
-      activeReads.set(skill.id, { ...skill, version });
+      activeReads.set(skill.id, versioned ? { ...skill, version } : skill);
     }
     for (const [toolId, pending] of pendingTools) {
       const content = message.content;
@@ -238,7 +239,7 @@ export function normalizeUsageRecords(
     if (event && activeReads.size) event.skillReads = [...activeReads.values()];
     if (event && invocations.size) event.skillInvocations = [...invocations.values()];
     if (event && (activeReads.size || invocations.size)) event.skillTurnId = hash(`${sessionId}:${turn}`);
-    for (const { toolId, skill } of skillReadCalls(record)) pendingReads.set(toolId, skill);
+    for (const { toolId, skill, versioned } of skillReadCalls(record)) pendingReads.set(toolId, { skill, versioned });
     if (!event) continue;
     const tools = contentToolIds(message.content);
     const startedAt = timestamp(record, message);

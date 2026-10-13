@@ -319,7 +319,8 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
     const cardBox = await card.boundingBox();
     assert.ok(cardBox && cardBox.x >= 0 && cardBox.x + cardBox.width <= viewport.width);
     assert.equal(await card.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth), true);
-    for (const region of await dialog.locator(".usage-toolbar, .usage-strip, .usage-ledger, .usage-breakdown").all()) {
+    // Skills & time has a strip and a ledger of its own, hidden while the overview is open.
+    for (const region of await dialog.locator(".usage-toolbar:visible, .usage-strip:visible, .usage-ledger:visible, .usage-breakdown:visible").all()) {
       const box = await region.boundingBox();
       assert.ok(box && cardBox && box.x >= cardBox.x && box.x + box.width <= cardBox.x + cardBox.width + 1, `region fits the card at ${viewport.width}px`);
       assert.equal(await region.evaluate((element: HTMLElement) => element.scrollWidth <= element.clientWidth + 1), true, `no sideways scrolling at ${viewport.width}px`);
@@ -385,16 +386,25 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   assert.deepEqual(errors, []);
 });
 
-test("insights shows scoped coverage, calendar hour buckets, and preflight before local analysis", { timeout: 240_000 }, async (t) => {
+test("skills and time reads the seeded node's reports, by day and hour, and asks before local analysis", { timeout: 240_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
+  const errors: string[] = [];
+  page.on("pageerror", (error: Error) => errors.push(error.message));
   await login(page, environment, node.url);
   await page.getByTestId("usage-open").click();
   const dialog = page.getByTestId("usage-dialog");
   await dialog.getByTestId("usage-tab-insights").click();
-  await dialog.getByTestId("usage-skills").getByText(/No proven skill reads|associated turns/).waitFor();
-  await dialog.getByTestId("usage-calendar").getByText(/requests|Select a date window|No observed requests/).first().waitFor();
-  await dialog.getByTestId("usage-calendar-bucket").selectOption("hour");
-  await dialog.getByTestId("usage-calendar").getByText(/requests|Select a date window|No observed requests/).first().waitFor();
+  await dialog.getByTestId("usage-insight-stats").getByText("Skills used").waitFor();
+  const body = dialog.getByTestId("usage-insight-body");
+  await body.getByText(/No agent loaded a skill|No usage in this scope/).or(body.getByTestId("usage-insight-row").first()).waitFor();
+  await dialog.getByTestId("usage-insight-view-unused").click();
+  await body.getByText("Every installed skill was loaded in this period.").or(body.getByTestId("usage-insight-row").first()).waitFor();
+  for (const view of ["days", "hours"]) {
+    await dialog.getByTestId(`usage-insight-view-${view}`).click();
+    await body.getByText("No requests in this period.").or(body.getByTestId("usage-insight-row").first()).waitFor();
+  }
+  assert.equal(await dialog.getByTestId("usage-insight-view-cluster").count(), 0, "a node in no cluster has no cluster report to offer");
+  await dialog.getByTestId("usage-insight-view-flows").click();
   await dialog.getByTestId("usage-analysis").click();
   await dialog.getByTestId("usage-analysis-results").getByText("Select one project before analysis.").waitFor();
   await dialog.getByTestId("usage-project-filter").selectOption(node.projects[0].id);
@@ -402,6 +412,138 @@ test("insights shows scoped coverage, calendar hour buckets, and preflight befor
   await dialog.getByTestId("usage-analysis-run").waitFor();
   await dialog.getByTestId("usage-analysis-run").click();
   await dialog.getByTestId("usage-analysis-results").getByText(/No repeated title patterns|candidate/).first().waitFor();
+  assert.deepEqual(errors, []);
+});
+
+test("skills and time lists one row per skill, says what stands out, and pages instead of scrolling", { timeout: 240_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const errors: string[] = [];
+  page.on("pageerror", (error: Error) => errors.push(error.message));
+  await login(page, environment, node.url);
+
+  const skill = (name: string, turns: number, overrides: Record<string, unknown> = {}) => ({
+    id: name, name, version: "unknown", associatedTurns: turns, observedReads: turns, explicitInvocations: 0, conversations: Math.ceil(turns / 2),
+    associatedRequests: turns * 20, pricedRequests: turns * 20, apiEquivalentCostUsd: turns * 2, toolCalls: turns * 10, toolErrors: Math.round(turns / 2),
+    medianDurationMs: 60_000, timedTurns: turns, firstUsedAt: "2026-10-01T08:00:00.000Z", lastUsedAt: "2026-10-12T08:00:00.000Z",
+    models: [{ modelId: "model-one", requests: turns * 15, toolErrors: 0, knownCostUsd: turns * 1.5 }, { modelId: "model-two", requests: turns * 5, toolErrors: 0, knownCostUsd: turns * 0.5 }], ...overrides,
+  });
+  const skills = {
+    skills: [
+      skill("ponytail", 118, { explicitInvocations: 4 }), skill("caveman", 100),
+      skill("flaky", 12, { toolCalls: 120, toolErrors: 30 }), skill("slow", 9, { medianDurationMs: 600_000 }),
+      ...Array.from({ length: 20 }, (_, index) => skill(`skill-${String(index + 1).padStart(2, "0")}`, 3)),
+    ],
+    scopeRequests: 10_000, unattributedRequests: 4000,
+    withSkill: { turns: 300, requests: 6000, pricedRequests: 6000, costUsd: 600, toolCalls: 3000, toolErrors: 150, timedTurns: 280, medianDurationMs: 120_000 },
+    withoutSkill: { requests: 4000, pricedRequests: 4000, costUsd: 400, toolCalls: 2000, toolErrors: 100 },
+    turnTiming: { timedTurns: 500, medianDurationMs: 60_000 }, coverage: { missing: 3 },
+  };
+  const installed = [
+    { name: "ponytail", description: "Write less code", origin: "user", path: "/skills/ponytail", harnesses: ["pi"] },
+    { name: "never-loaded", description: "A skill nobody loads", origin: "user", path: "/skills/never-loaded", harnesses: ["pi"] },
+    { name: "idle-too", description: "Also idle", origin: "shared", path: "/skills/idle-too", harnesses: ["claude", "pi"] },
+  ];
+  const day = (apiCostUsd: number, requests: number, partial = false) => ({ apiCostUsd, requests, partial });
+  let timingFails = false;
+  const hourRequests: string[] = [];
+  await page.route("**/api/usage/skills?*", (route: any) => route.fulfill({ json: skills }));
+  await page.route("**/api/resources/inventory*", (route: any) => route.fulfill({ json: { nodes: [{ node: { id: "this", name: "This", local: true, online: true }, inventory: { skills: installed, mcpServers: [], harnesses: [] } }] } }));
+  await page.route("**/api/usage/timing?*", (route: any) => timingFails ? route.fulfill({ status: 500, json: { error: "Timing broke" } }) : route.fulfill({ json: {
+    days: [
+      { key: "2026-10-11", turns: 58, failed: 0, medianAgentMs: 112_000, medianQueueMs: null, medianToolMs: 1000, toolTimedRequests: 1272, toolRequestsUnknown: 4 },
+      { key: "2026-10-12", turns: 101, failed: 2, medianAgentMs: 57_000, medianQueueMs: 2000, medianToolMs: 1000, toolTimedRequests: 1805, toolRequestsUnknown: 9 },
+    ],
+    totals: { turns: 159, failed: 2, medianAgentMs: 74_000, medianQueueMs: 2000, medianToolMs: 1000 }, unknownHistoricalTiming: 3998,
+  } }));
+  await page.route("**/api/usage/days?*", (route: any) => {
+    const hourly = new URL(route.request().url()).searchParams.get("bucket") === "hour";
+    if (hourly) hourRequests.push(route.request().url());
+    return route.fulfill({ json: { coverage: { missing: 0, refreshedAt: null, refreshing: false }, days: hourly
+      ? [{ key: "2026-10-11T09+03:00", totals: day(10, 100) }, { key: "2026-10-12T09+03:00", totals: day(30, 200) }, { key: "2026-10-12T22+03:00", totals: day(60, 300) }]
+      : [{ key: "2026-10-11", totals: day(113.93, 1345, true) }, { key: "2026-10-12", totals: day(254.46, 1965) }] } });
+  });
+
+  await page.getByTestId("usage-open").click();
+  const dialog = page.getByTestId("usage-dialog");
+  await dialog.getByTestId("usage-tab-insights").click();
+  const body = dialog.getByTestId("usage-insight-body");
+  const rows = body.getByTestId("usage-insight-row");
+  const names = () => rows.locator(".usage-name").allTextContents();
+  await rows.first().waitFor();
+  await dialog.getByTestId("usage-insight-stats").getByText("3 installed here").waitFor();
+
+  const stats = dialog.getByTestId("usage-insight-stats").locator(".usage-stat");
+  assert.deepEqual(await stats.locator("strong").allTextContents(), ["24", "300", "$600", "5.0%", "1m 00s", "2"]);
+  assert.deepEqual(await stats.locator("small").allTextContents(), ["3 installed here", "60% of requests", "60% of $1,000", "5.0% without a skill", "2m 00s with a skill", "of 159 turns · 2s queued"]);
+  const findings = dialog.getByTestId("usage-finding");
+  assert.deepEqual(await findings.locator(".usage-finding-kind").allTextContents(), ["Most used", "Fails more", "Slower", "Not used"]);
+  assert.equal(await findings.nth(1).locator(".usage-finding-text").textContent(), "25% of tool calls fail in turns that load flaky, against 5.0% across all turns with a skill.");
+
+  // One row per skill, most used first; the list pages, and neither it nor the dialog scrolls.
+  assert.deepEqual((await names()).slice(0, 4), ["ponytail", "caveman", "flaky", "slow"]);
+  assert.equal(await rows.first().locator(".usage-name-detail").textContent(), "59 conversations · asked for 4×");
+  const shown = await rows.count();
+  assert.ok(shown >= 3 && shown < 24, `the list pages to what fits: ${shown} rows`);
+  assert.equal(await dialog.locator("#usageInsightCount").textContent(), `1–${shown} of 24 skills`);
+  assert.equal(await dialog.locator("#usageInsightSort").textContent(), "Sorted by turns, highest first");
+  const overflow = () => dialog.evaluate((element: HTMLElement) => {
+    const host = element.querySelector("#usageInsightBody") as HTMLElement, card = element.querySelector(".usage-card") as HTMLElement;
+    const last = [...host.querySelectorAll("tbody tr")].at(-1)!.getBoundingClientRect(), box = host.getBoundingClientRect();
+    return { card: card.scrollHeight - card.clientHeight, cutOff: last.bottom - box.bottom };
+  });
+  assert.deepEqual(await overflow().then((over: { card: number; cutOff: number }) => [over.card <= 1, over.cutOff <= 1]), [true, true], "the dialog does not scroll and the last row is whole");
+  await page.setViewportSize({ width: 1100, height: 700 });
+  await until(async () => (await rows.count()) < shown, "a shorter window shows fewer rows");
+  await until(async () => { const over = await overflow(); return over.card <= 1 && over.cutOff <= 1; }, "the shorter window still fits without scrolling");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await until(async () => (await rows.count()) === shown, "the rows return with the height");
+  await dialog.getByTestId("usage-insight-page-next").click();
+  assert.ok(!(await names()).includes("ponytail"), "the next page shows other skills");
+  assert.match(await dialog.getByTestId("usage-insight-pagination").locator("span").textContent() ?? "", /^Page 2 of \d+$/);
+
+  // A finding opens its skill: the row is selected on whichever page holds it, and its models are shown.
+  await findings.nth(1).click();
+  const flaky = rows.filter({ hasText: "flaky" });
+  assert.match(await flaky.getAttribute("class") ?? "", /selected/);
+  assert.deepEqual(await flaky.locator(".usage-flag").allTextContents(), ["25%"], "only the clearly worse number is marked");
+  assert.deepEqual(await rows.filter({ hasText: "slow" }).locator(".usage-flag").allTextContents(), ["10m 00s"]);
+  const focus = dialog.getByTestId("usage-insight-focus");
+  await focus.getByText("Cost by model").waitFor();
+  assert.deepEqual(await focus.locator(".usage-split-legend span").allTextContents(), ["model-one", "model-two"]);
+  await dialog.getByTestId("usage-insight-focus-close").click();
+  await focus.getByText("Select a skill to see which models ran it.").waitFor();
+
+  await body.locator('[data-sort="cost"]').click();
+  assert.equal((await names())[0], "ponytail");
+  await body.locator('[data-sort="cost"]').click();
+  assert.equal((await names())[0], "skill-01", "ascending, ties in name order");
+  assert.equal(await dialog.locator("#usageInsightSort").textContent(), "Sorted by cost, lowest first");
+
+  await dialog.getByTestId("usage-insight-view-unused").click();
+  assert.deepEqual(await names(), ["idle-too", "never-loaded"]);
+  assert.deepEqual(await rows.first().locator("td").allTextContents(), ["idle-too", "Also idle", "Managed", "Claude, Pi"]);
+
+  await dialog.getByTestId("usage-insight-view-days").click();
+  assert.deepEqual((await rows.first().locator("td").allTextContents()).map((text: string) => text.trim()).slice(1), ["$254.46", "69%", "1,965", "101", "2", "57s", "2s", "1s"]);
+  assert.match((await names())[0], /Oct 12/, "latest day first");
+  assert.equal(await rows.nth(1).locator(".usage-partial").count(), 1, "a day with unpriced requests is marked as a lower bound");
+  assert.equal(await rows.nth(1).locator("td").nth(7).textContent(), "—", "no queue time was recorded that day");
+  await focus.getByText("Daily cost").waitFor();
+
+  assert.equal(hourRequests.length, 0, "hours are read only when asked for");
+  await dialog.getByTestId("usage-insight-view-hours").click();
+  await rows.first().waitFor();
+  assert.deepEqual(await names(), ["09:00 – 09:59", "22:00 – 22:59"]);
+  assert.deepEqual((await rows.first().locator("td").allTextContents()).slice(1), ["$40", "40%", "300", "2"]);
+
+  // One report failing leaves the others standing.
+  timingFails = true;
+  await dialog.getByTestId("usage-project-filter").selectOption(node.projects[0].id);
+  await dialog.getByTestId("usage-insight-stats").getByText("unavailable", { exact: true }).waitFor();
+  assert.deepEqual((await stats.locator("strong").allTextContents()).slice(0, 2), ["24", "300"]);
+  await dialog.getByTestId("usage-insight-view-days").click();
+  assert.deepEqual((await rows.first().locator("td").allTextContents()).map((text: string) => text.trim()).slice(1), ["$254.46", "69%", "1,965", "—", "—", "—", "—", "—"]);
+  assert.deepEqual(errors, []);
 });
 
 test("comparison cancels stale scope response without overwriting newer chart", { timeout: 240_000 }, async (t) => {

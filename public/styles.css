@@ -138,6 +138,30 @@ button.usage-select:hover .usage-name { text-decoration: underline; text-decorat
 .usage-pagination { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .usage-pagination button { padding: 3px 10px; font-size: 12px; }
 
+/* Skills & time: the overview's strip and ledger, with what stands out between them. */
+.usage-insights { display: flex; flex-direction: column; min-width: 0; gap: 10px; }
+.usage-insights > * { flex: none; }
+.usage-insights > .usage-ledger { flex: 1 1 auto; min-height: 0; }
+.usage-findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 8px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.usage-findings:empty { display: none; }
+.usage-findings li { display: grid; min-width: 0; }
+.usage-finding { display: grid; align-content: start; gap: 2px; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); color: var(--text); font-size: 12.5px; font-weight: 400; line-height: 1.35; text-align: left; box-shadow: none; }
+.usage-finding:hover { border-color: var(--line-strong); }
+.usage-finding-kind { color: var(--accent); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.usage-finding-text { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+/* Each view sets its own column widths. */
+.usage-insight-table :is(th, td):nth-child(n) { width: auto; }
+.usage-breakdown :is(th, td).usage-text-cell { text-align: left; }
+.usage-flag { color: var(--amber); font-weight: 600; }
+.usage-insight-panel { overflow-y: auto; overscroll-behavior: contain; }
+.usage-insight-flows { display: grid; gap: 10px; max-width: 760px; padding: 14px; }
+.usage-insight-flows p { margin: 0; color: var(--muted); font-size: 12.5px; }
+.usage-insight-flows button { justify-self: start; }
+.usage-insight-flows > div { display: grid; gap: 10px; min-width: 0; }
+.usage-analysis-draft { display: grid; gap: 8px; min-width: 0; padding-top: 8px; }
+.usage-analysis-draft textarea { min-height: 120px; }
+.usage-analysis-draft pre { margin: 0; max-height: 240px; overflow: auto; white-space: pre-wrap; }
+
 /* Compare periods */
 .usage-compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; min-width: 0; }
 .usage-compare-card { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
@@ -199,6 +223,7 @@ button.usage-select:hover .usage-name { text-decoration: underline; text-decorat
   .usage-overview { grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; }
   .usage-compare { grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; overflow: hidden; }
   .usage-compare-grid { align-content: start; min-height: 0; overflow: hidden; }
+  .usage-insights { min-height: 0; overflow: hidden; }
   .usage-subscriptions { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 }
 @media (max-width: 1040px) {

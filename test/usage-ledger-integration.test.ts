@@ -52,7 +52,8 @@ test("skill evidence survives quality upgrades and project-scoped replication", 
   saveUsageEvent(event({ id: "skill-replica", apiCostUsd: 1, skillReads: [skill], skillTurnId: "turn-1" }), "node-a");
   const storedEvent = stored("skill-replica");
   assert.deepEqual(storedEvent.skillReads, [skill]);
-  const outbox = db.prepare("SELECT payload FROM replication_outbox WHERE entity_key='skill-replica' ORDER BY created_at DESC LIMIT 1").get() as { payload: string };
+  // Both saves can land in the same millisecond, so the row order settles which is newer.
+  const outbox = db.prepare("SELECT payload FROM replication_outbox WHERE entity_key='skill-replica' ORDER BY created_at DESC, rowid DESC LIMIT 1").get() as { payload: string };
   const payload = JSON.parse(outbox.payload) as { event: UsageEvent; projectId: string; originNodeId: string };
   const replica = new DatabaseSync(":memory:"); ensureUsageSchema(replica); ensureReplicationSchema(replica);
   applyUsageEvent(replica, { id: "replicated", originNodeId: "node-a", entityType: "model.usage", entityKey: payload.event.id, operation: "upsert", payload, createdAt: now });
@@ -70,12 +71,51 @@ test("skill costs overlap, unattributed and unpriced coverage remain explicit", 
   assert.deepEqual(result.skills.map((skill) => [skill.name, skill.associatedTurns, skill.associatedRequests, skill.pricedRequests, skill.apiEquivalentCostUsd]), [["Review", 1, 2, 1, 2], ["Other", 1, 1, 1, 2]]);
   assert.equal(usageCalendarBreakdown({ projectIds: ["p"] }, "UTC")[0].totals.partial, true);
 });
+test("a skill loaded from two folders, in two versions, is one row", () => {
+  const at = (minute: number) => `2025-01-01T00:${String(minute).padStart(2, "0")}:00.000Z`;
+  const mac = { id: "path-on-mac", name: "review", version: "v1" }, server = { id: "path-on-server", name: "review", version: "v2" };
+  // One request lists the skill twice, read from both folders in the same turn.
+  saveUsageEvent(event({ id: "a", apiCostUsd: 1, toolCalls: 4, toolErrors: 1, skillReads: [mac, server], skillTurnId: "turn-1", occurredAt: at(1) }), "n");
+  saveUsageEvent(event({ id: "b", apiCostUsd: 2, toolCalls: 2, modelId: "other", skillReads: [server], skillTurnId: "turn-2", conversationId: "c2", sessionId: "s2", occurredAt: at(2) }), "n");
+  saveUsageEvent(event({ id: "c", apiCostUsd: 4, skillInvocations: [{ id: "typed", name: "review", version: "unknown" }], skillTurnId: "turn-3", occurredAt: at(3) }), "n");
+  const [skill, ...others] = usageSkillBreakdown({ projectIds: ["p"] }).skills;
+  assert.equal(others.length, 0, "path and version do not split a skill");
+  assert.deepEqual([skill.id, skill.name, skill.version], ["review", "review", "v2"]);
+  assert.deepEqual([skill.associatedTurns, skill.observedReads, skill.explicitInvocations, skill.conversations], [3, 2, 1, 2]);
+  assert.deepEqual([skill.associatedRequests, skill.pricedRequests, skill.apiEquivalentCostUsd, skill.toolCalls, skill.toolErrors], [3, 3, 7, 6, 1]);
+  assert.deepEqual([skill.firstUsedAt, skill.lastUsedAt], [at(1), at(3)]);
+  assert.deepEqual(skill.models.map((model) => [model.modelId, model.requests, model.knownCostUsd]), [["m", 2, 5], ["other", 1, 2]]);
+});
+test("skill turns are compared with the rest of the scope and with every timed turn", () => {
+  const turn = (turnId: string, sessionId: string, startedAt: string, endedAt: string) => saveDifficulty({ turnId, projectId: "p", conversationId: "c", sessionId, engine: "pi", occurredAt: startedAt, status: "disabled", level: null, confidence: null, startedAt, endedAt }, "n");
+  turn("with-skill", "s", "2025-01-01T00:00:00.000Z", "2025-01-01T00:05:00.000Z");
+  turn("plain", "s2", "2025-01-01T01:00:00.000Z", "2025-01-01T01:01:00.000Z");
+  turn("plain-too", "s3", "2025-01-01T02:00:00.000Z", "2025-01-01T02:02:00.000Z");
+  const skillA = { id: "a", name: "review", version: "v1" }, skillB = { id: "b", name: "deploy", version: "v1" };
+  saveUsageEvent(event({ id: "both", apiCostUsd: 3, toolCalls: 10, toolErrors: 2, skillReads: [skillA, skillB], skillTurnId: "t", occurredAt: "2025-01-01T00:01:00.000Z" }), "n");
+  saveUsageEvent(event({ id: "plain", sessionId: "s2", apiCostUsd: 1, toolCalls: 20, toolErrors: 1, occurredAt: "2025-01-01T01:00:30.000Z" }), "n");
+  const report = usageSkillBreakdown({ projectIds: ["p"] });
+  assert.deepEqual(report.withSkill, { requests: 1, pricedRequests: 1, costUsd: 3, toolCalls: 10, toolErrors: 2, turns: 1, timedTurns: 1, medianDurationMs: 300_000 }, "a request with two skills is counted once");
+  assert.deepEqual(report.withoutSkill, { requests: 1, pricedRequests: 1, costUsd: 1, toolCalls: 20, toolErrors: 1 });
+  assert.deepEqual(report.turnTiming, { timedTurns: 3, medianDurationMs: 120_000 });
+  assert.deepEqual(report.skills.map((skill) => [skill.name, skill.medianDurationMs, skill.timedTurns]), [["review", 300_000, 1], ["deploy", 300_000, 1]]);
+  assert.equal(usageSkillBreakdown({ projectIds: ["p"], modelId: "m" }).turnTiming, null, "turns record no model, so a model filter leaves no comparison");
+});
 test("turn timing separates queue and agent and marks historical timing unknown", () => {
   saveUsageEvent(event({ apiCostUsd: 1, toolCalls: 1, toolDurationMs: 1200, occurredAt: "2025-01-01T00:00:03.000Z" }), "n");
   saveDifficulty({ turnId: "timed", projectId: "p", conversationId: "c", sessionId: "s", engine: "pi", occurredAt: "2025-01-01T00:00:02.000Z", status: "disabled", level: null, confidence: null, queuedAt: now, startedAt: "2025-01-01T00:00:02.000Z", endedAt: "2025-01-01T00:00:06.000Z", outcome: "failed", turnKind: "scheduled" }, "n");
   const result = usageTurnTiming({ projectIds: ["p"] }, "UTC");
   assert.deepEqual(result.days, [{ key: "2025-01-01", turns: 1, failed: 1, medianAgentMs: 4000, medianQueueMs: 2000, medianToolMs: 1200, toolTimedRequests: 1, toolRequestsUnknown: 0 }]);
   assert.equal(result.unknownHistoricalTiming, 0);
+  assert.deepEqual(result.totals, { turns: 1, failed: 1, medianAgentMs: 4000, medianQueueMs: 2000, medianToolMs: 1200 });
+});
+test("a period's turn median is taken over its turns, not its days", () => {
+  const turn = (turnId: string, day: string, seconds: number) => saveDifficulty({ turnId, projectId: "p", conversationId: "c", sessionId: turnId, engine: "pi", occurredAt: `${day}T00:00:00.000Z`, status: "disabled", level: null, confidence: null, startedAt: `${day}T00:00:00.000Z`, endedAt: new Date(Date.parse(`${day}T00:00:00.000Z`) + seconds * 1000).toISOString() }, "n");
+  turn("a", "2025-01-01", 10); turn("b", "2025-01-01", 20); turn("c", "2025-01-01", 30); turn("d", "2025-01-02", 600);
+  const result = usageTurnTiming({ projectIds: ["p"] }, "UTC");
+  assert.deepEqual(result.days.map((day) => day.medianAgentMs), [20_000, 600_000]);
+  assert.deepEqual(result.totals, { turns: 4, failed: 0, medianAgentMs: 20_000, medianQueueMs: null, medianToolMs: null });
+  assert.deepEqual(usageTurnTiming({ projectIds: [] }, "UTC").totals, { turns: 0, failed: 0, medianAgentMs: null, medianQueueMs: null, medianToolMs: null });
 });
 test("an event id cannot move to another session", () => { saveUsageEvent(event({ apiCostUsd: 1 }), "n"); saveUsageEvent(event({ sessionId: "other", output: 999, apiCostUsd: 9 }), "n"); assert.equal(stored().sessionId, "s"); assert.equal(usageTotals({ projectIds: ["p"] }).apiCostUsd, 1); });
 

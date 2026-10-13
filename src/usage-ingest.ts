@@ -42,7 +42,9 @@ async function importSession(project: ProjectRecord, session: SessionSummary, co
       throw error;
     }
     // Schema revision forces one bounded reparse of old transcripts for provable read evidence.
-    const fingerprint = `skills-v1:${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${project.id}:${conversationId}`;
+    // Claude's went up again: skills it loads through its Skill tool were not counted before.
+    const revision = session.harnessId === "claude" ? "skills-v2" : "skills-v1";
+    const fingerprint = `${revision}:${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${project.id}:${conversationId}`;
     // The persisted fingerprint keeps a restart from re-reading every transcript on disk.
     const cached: { fingerprint: string; status: string; importedAt?: number } | undefined = fingerprints.get(key) ?? usageIngestFingerprint(key);
     if (cached) fingerprints.set(key, cached);

@@ -39,6 +39,32 @@ test('skill read attribution requires successful linked tool result and later mo
   assert.equal(failed[1].skillReads, undefined);
 });
 
+test('a skill Claude loads through its Skill tool is attributed for the rest of the turn', () => {
+  const assistant = (id: string, content: unknown[] = []) => ({ type: 'assistant', timestamp: '2025-01-01T00:00:00Z', message: { role: 'assistant', id, model: 'claude-test', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, content } });
+  const result = (toolId: string, content: string, failed = false) => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content, ...(failed ? { is_error: true } : {}) }] } });
+  const user = (text: string, isMeta = false) => ({ type: 'user', ...(isMeta ? { isMeta: true } : {}), message: { role: 'user', content: [{ type: 'text', text }] } });
+  const context = { projectId: 'p', conversationId: 'c', createdAt: '2025-01-01T00:00:00Z' };
+  const events = normalizeUsageRecords('claude', 'session', [
+    user('ship it'),
+    assistant('first', [{ type: 'tool_use', id: 'skill-1', name: 'Skill', input: { skill: 'push-code' } }]),
+    result('skill-1', 'Launching skill: push-code'),
+    // Claude adds the skill's body as a meta message; that is not the person starting a new turn.
+    user('Base directory for this skill: /home/me/.claude/skills/push-code', true),
+    assistant('second'),
+    user('thanks'),
+    assistant('third'),
+  ], context);
+  assert.deepEqual(events.map((event) => event.skillReads?.map((skill) => [skill.name, skill.version])), [undefined, [['push-code', 'unknown']], undefined]);
+  assert.equal(events[1].skillTurnId?.length, 64);
+
+  const failed = normalizeUsageRecords('claude', 'session', [user('ship it'), assistant('first', [{ type: 'tool_use', id: 'skill-1', name: 'Skill', input: { skill: 'push-code' } }]), result('skill-1', 'Unknown skill', true), assistant('second')], context);
+  assert.equal(failed[1].skillReads, undefined, 'a skill that failed to load is not attributed');
+
+  const read = normalizeUsageRecords('claude', 'session', [user('review'), assistant('first', [{ type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: '/home/me/.claude/skills/review/SKILL.md' } }]), result('read-1', 'the skill text'), assistant('second')], context);
+  assert.equal(read[1].skillReads?.[0].name, 'review');
+  assert.match(read[1].skillReads?.[0].version ?? '', /^[a-f0-9]{16}$/, 'a file read still records which content was read');
+});
+
 test('only explicit skill command, not an arbitrary slash command, counts as invocation', () => {
   const assistant = { timestamp: '2025-01-01T00:00:00Z', message: { role: 'assistant', id: 'r', provider: 'test', model: 'm', usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } } };
   const context = { projectId: 'p', conversationId: 'c', createdAt: '2025-01-01T00:00:00Z' };

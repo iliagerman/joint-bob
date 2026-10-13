@@ -580,7 +580,17 @@
           <div id="usageCompare" class="usage-compare-grid" data-testid="usage-compare"></div>
           <p class="usage-source">Known API-equivalent cost through the same day of each period, in your local time. Uses the filters above except the period.</p>
         </section>
-        <section class="usage-subscriptions" id="usageInsightsPanel" data-usage-panel="insights" hidden><h3>Observed skill reads</h3><p id="usageInsightsStatus" role="status" aria-live="polite"></p><div id="usageSkills" data-testid="usage-skills"></div><h3>Calendar usage &amp; timing</h3><label>Cost buckets <select id="usageCalendarBucket" data-testid="usage-calendar-bucket"><option value="day">Day</option><option value="hour">Hour</option></select></label><div id="usageCalendar" data-testid="usage-calendar"></div><div id="usageTiming" data-testid="usage-timing"></div><h3>Cluster-shared project costs</h3><div id="usageClusterReport" data-testid="usage-cluster-report"></div><h3>Repeatable flows</h3><p>Local metadata only; no model or transcript sent. Suggestions are review-only and never installed or shared automatically.</p><button type="button" id="usageAnalysis" data-testid="usage-analysis">Preview analysis</button><div id="usageAnalysisResults" data-testid="usage-analysis-results"></div></section>
+        <section class="usage-insights" id="usageInsightsPanel" data-usage-panel="insights" hidden>
+          <div id="usageInsightStats" class="usage-strip" data-testid="usage-insight-stats" aria-label="Skill and turn totals"><p>Loading totals…</p></div>
+          <ul id="usageFindings" class="usage-findings" data-testid="usage-findings" aria-label="What stands out"></ul>
+          <section class="usage-ledger" aria-labelledby="usageInsightTitle">
+            <h3 id="usageInsightTitle" class="sr-only">Skills and time</h3>
+            <div class="usage-ledger-head"><span class="usage-ledger-label" id="usageInsightViewLabel">Show</span><div id="usageInsightViews" class="usage-dimensions" role="group" aria-labelledby="usageInsightViewLabel" data-testid="usage-insight-views"></div><div id="usageInsightFocus" class="usage-trend" data-testid="usage-insight-focus"></div></div>
+            <div id="usageInsightBody" class="usage-table-host" data-testid="usage-insight-body"><p>Loading skills…</p></div>
+            <footer class="usage-ledger-foot" id="usageInsightFoot"><span id="usageInsightCount"></span><span id="usageInsightSort"></span><div id="usageInsightPagination" class="usage-pagination" data-testid="usage-insight-pagination"><button type="button" data-page="previous" data-testid="usage-insight-page-previous">Previous</button><span>Page 1 of 1</span><button type="button" data-page="next" data-testid="usage-insight-page-next">Next</button></div></footer>
+          </section>
+          <p class="usage-source" id="usageInsightsStatus"></p>
+        </section>
         <section class="usage-subscriptions" id="usageSubscriptionsPanel" data-usage-panel="subscriptions" hidden>
           <div class="usage-section-heading"><div><h3>Subscription prices by harness</h3><p>Choose a harness and enter the price you actually pay. Fees are not calculated from token usage.</p></div><button type="button" id="subscriptionAdd" data-testid="subscription-add">Add price</button></div>
           <div id="subscriptionPlanStatus" role="status"></div><div id="subscriptionList"></div>

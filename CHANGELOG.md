@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Replaced the Costs dashboard's insights panel with a Skills & time tab that shows which skills agents load, what those turns cost and how long they run, which installed skills go unused, and cost and turn times by day and hour.
+
 ## 2.78.0 — 2026-10-13
 
 - Added a Node button to focus mode's quick actions on phones that names the node a conversation runs on and lets you switch to another one.

@@ -307,61 +307,142 @@ export function usageCalendarBreakdown(filters: UsageFilters, timeZone: string, 
   }
   return [...buckets].map(([key, totals]) => ({ key, totals })).sort((a, b) => a.key.localeCompare(b.key));
 }
-export function usageSkillBreakdown(filters: UsageFilters): { skills: Array<{ id: string; name: string; version: string; associatedTurns: number; observedReads: number; explicitInvocations: number; associatedRequests: number; pricedRequests: number; apiEquivalentCostUsd: number; models: Array<{ modelId: string; requests: number; toolErrors: number; knownCostUsd: number }>; toolErrors: number; medianDurationMs: number | null; timedTurns: number }>; unattributedRequests: number; scopeRequests: number; note: string } {
+/** The middle value, the lower of the two for an even count; null without values. */
+function medianOf(values: Iterable<number>): number | null {
+  const ordered = [...values].sort((a, b) => a - b);
+  return ordered.length ? ordered[Math.floor((ordered.length - 1) / 2)] : null;
+}
+export interface SkillUsage {
+  /** The skill's name: one row per skill, whichever folder or node it was loaded from. */
+  id: string; name: string;
+  /** The newest observed content hash, or "unknown". */
+  version: string;
+  associatedTurns: number; observedReads: number; explicitInvocations: number; conversations: number;
+  associatedRequests: number; pricedRequests: number; apiEquivalentCostUsd: number;
+  toolCalls: number; toolErrors: number;
+  medianDurationMs: number | null; timedTurns: number;
+  firstUsedAt: string; lastUsedAt: string;
+  models: Array<{ modelId: string; requests: number; toolErrors: number; knownCostUsd: number }>;
+}
+export interface SkillUsageGroup { requests: number; pricedRequests: number; costUsd: number; toolCalls: number; toolErrors: number }
+export interface SkillUsageBreakdown {
+  skills: SkillUsage[];
+  unattributedRequests: number; scopeRequests: number;
+  /** Requests in turns that loaded any skill, each counted once, and the rest of the scope. */
+  withSkill: SkillUsageGroup & { turns: number; timedTurns: number; medianDurationMs: number | null };
+  withoutSkill: SkillUsageGroup;
+  /** Every timed turn in scope; null under a filter that turns do not record. */
+  turnTiming: { timedTurns: number; medianDurationMs: number | null } | null;
+  note: string;
+}
+const SKILL_REQUEST_LIMIT = 200_000;
+/**
+ * One row per skill name. The same skill installed under two folders, or on two nodes, or edited
+ * during the period, is still one skill to the person reading the list. Only requests that carry
+ * skill evidence are read one by one; the rest of the scope is a single aggregate.
+ */
+export function usageSkillBreakdown(filters: UsageFilters): SkillUsageBreakdown {
   const db = usageDatabase();
   const condition = where(db, filters);
-  const records = db.prepare(`SELECT e.payload FROM ${source(db, filters)} WHERE 1=1${condition.sql} ORDER BY e.occurred_at LIMIT 50001`).all(...condition.args) as unknown as Array<{ payload: string }>;
-  if (records.length > 50000) throw new RangeError("Too many requests; select a shorter window");
-  const scoped = records.map(({ payload }) => usageEventSchema.parse(JSON.parse(payload)));
+  const scope = usageTotals(filters);
+  const rows = db.prepare(`SELECT e.id,e.project_id projectId,e.conversation_id conversationId,e.session_id sessionId,e.engine,e.occurred_at occurredAt,
+    json_extract(e.payload,'$.modelId') modelId,json_extract(e.payload,'$.apiCostUsd') cost,json_extract(e.payload,'$.toolCalls') toolCalls,json_extract(e.payload,'$.toolErrors') toolErrors,
+    json_extract(e.payload,'$.skillTurnId') turnId,json_extract(e.payload,'$.skillReads') reads,json_extract(e.payload,'$.skillInvocations') invocations
+    FROM ${source(db, filters)} WHERE 1=1${condition.sql} AND (json_extract(e.payload,'$.skillReads') IS NOT NULL OR json_extract(e.payload,'$.skillInvocations') IS NOT NULL)
+    ORDER BY e.occurred_at LIMIT ${SKILL_REQUEST_LIMIT + 1}`).all(...condition.args) as unknown as Array<{ id: string; projectId: string; conversationId: string; sessionId: string; engine: string; occurredAt: string; modelId: string | null; cost: number | null; toolCalls: number | null; toolErrors: number | null; turnId: string | null; reads: string | null; invocations: string | null }>;
+  if (rows.length > SKILL_REQUEST_LIMIT) throw new RangeError("Too many requests; select a shorter window");
+
+  // Turns record a project, conversation, agent and node, so only those filters reach them.
   const ids = rawProjectIds(db, filters);
-  const timingRows = ids.length ? db.prepare(`SELECT payload FROM usage_difficulty WHERE project_id IN (${ids.map(() => "?").join(",")})${filters.from ? " AND occurred_at>=?" : ""}${filters.to ? " AND occurred_at<?" : ""} LIMIT 50001`)
-    .all(...ids, ...(filters.from ? [filters.from] : []), ...(filters.to ? [filters.to] : [])) as unknown as Array<{ payload: string }> : [];
+  const turnClauses = [`project_id IN (${ids.map(() => "?").join(",")})`, "json_extract(payload,'$.startedAt') IS NOT NULL", "json_extract(payload,'$.endedAt') IS NOT NULL"];
+  const turnArgs = [...ids];
+  for (const [key, column] of [["conversationId", "conversation_id"], ["engine", "engine"]] as const) if (filters[key]) { turnClauses.push(`${column}=?`); turnArgs.push(filters[key]!); }
+  if (filters.from) { turnClauses.push("occurred_at>=?"); turnArgs.push(filters.from); }
+  if (filters.to) { turnClauses.push("occurred_at<?"); turnArgs.push(filters.to); }
+  if (filters.originNodeIds?.length) { turnClauses.push(`origin_node_id IN (${filters.originNodeIds.map(() => "?").join(",")})`); turnArgs.push(...filters.originNodeIds); }
+  const turns = ids.length && (!filters.originNodeIds || filters.originNodeIds.length)
+    ? db.prepare(`SELECT session_id sessionId,engine,json_extract(payload,'$.startedAt') startedAt,json_extract(payload,'$.endedAt') endedAt FROM usage_difficulty WHERE ${turnClauses.join(" AND ")}`)
+      .all(...turnArgs) as unknown as Array<{ sessionId: string; engine: string; startedAt: string; endedAt: string }>
+    : [];
   const intervals = new Map<string, Array<{ start: number; end: number; duration: number }>>();
-  if (timingRows.length <= 50000) for (const { payload } of timingRows) {
-    const turn = usageDifficultySchema.parse(JSON.parse(payload));
-    if (!turn.startedAt || !turn.endedAt) continue;
+  for (const turn of turns) {
     const start = Date.parse(turn.startedAt), end = Date.parse(turn.endedAt);
-    if (end < start) continue;
-    const key = `${turn.projectId}:${turn.engine}:${turn.sessionId}`;
-    const rows = intervals.get(key) ?? []; rows.push({ start, end, duration: end - start }); intervals.set(key, rows);
+    if (!(end >= start)) continue;
+    // A session belongs to one project, which an alias may have renamed on either table.
+    const key = `${turn.engine}:${turn.sessionId}`;
+    const ranges = intervals.get(key) ?? []; ranges.push({ start, end, duration: end - start }); intervals.set(key, ranges);
   }
-  const skills = new Map<string, { id: string; name: string; version: string; turns: Set<string>; readTurns: Set<string>; invokedTurns: Set<string>; durations: Map<string, number>; requests: number; priced: number; cost: number; errors: number; models: Map<string, { requests: number; toolErrors: number; knownCostUsd: number }> }>();
-  for (const event of scoped) for (const [kind, skill] of [...(event.skillReads ?? []).map((item) => ["read", item] as const), ...(event.skillInvocations ?? []).map((item) => ["invoked", item] as const)]) {
-    const key = JSON.stringify([skill.id, skill.version]);
-    let row = skills.get(key);
-    if (!row) { row = { ...skill, turns: new Set(), readTurns: new Set(), invokedTurns: new Set(), durations: new Map(), requests: 0, priced: 0, cost: 0, errors: 0, models: new Map() }; skills.set(key, row); }
-    const turnId = event.skillTurnId ?? `${event.sessionId}:${event.id}`;
-    row.turns.add(turnId);
-    const timestamp = Date.parse(event.occurredAt);
-    const interval = intervals.get(`${event.projectId}:${event.engine}:${event.sessionId}`)?.find(({ start, end }) => timestamp >= start && timestamp <= end);
-    if (interval && !row.durations.has(turnId)) row.durations.set(turnId, interval.duration);
-    (kind === "read" ? row.readTurns : row.invokedTurns).add(turnId);
-    row.requests++;
-    if (event.apiCostUsd !== null) { row.priced++; row.cost += event.apiCostUsd; }
-    row.errors += event.toolErrors;
-    const model = row.models.get(event.modelId) ?? { requests: 0, toolErrors: 0, knownCostUsd: 0 };
-    model.requests++; model.toolErrors += event.toolErrors; model.knownCostUsd += event.apiCostUsd ?? 0;
-    row.models.set(event.modelId, model);
+
+  type Tally = { name: string; version: string; turns: Set<string>; readTurns: Set<string>; invokedTurns: Set<string>; conversations: Set<string>; durations: Map<string, number>; requests: number; priced: number; cost: number; toolCalls: number; errors: number; first: string; last: string; models: Map<string, { requests: number; toolErrors: number; knownCostUsd: number }> };
+  const skills = new Map<string, Tally>();
+  const used: SkillUsageGroup = { requests: 0, pricedRequests: 0, costUsd: 0, toolCalls: 0, toolErrors: 0 };
+  const usedTurns = new Set<string>();
+  const usedDurations = new Map<string, number>();
+  const evidence = (raw: string | null): Array<{ name?: unknown; version?: unknown }> => { const value: unknown = raw ? JSON.parse(raw) : []; return Array.isArray(value) ? value : []; };
+  for (const row of rows) {
+    // A request that lists one skill twice, read from two folders, still counts once for it.
+    const named = new Map<string, { read: boolean; invoked: boolean; version: string }>();
+    for (const [kind, items] of [["read", evidence(row.reads)], ["invoked", evidence(row.invocations)]] as const) for (const item of items) {
+      if (typeof item.name !== "string" || !item.name) continue;
+      const entry = named.get(item.name) ?? { read: false, invoked: false, version: "unknown" };
+      entry[kind] = true;
+      if (typeof item.version === "string" && item.version !== "unknown") entry.version = item.version;
+      named.set(item.name, entry);
+    }
+    if (!named.size) continue;
+    const turnId = row.turnId ?? `${row.sessionId}:${row.id}`;
+    const timestamp = Date.parse(row.occurredAt);
+    const duration = intervals.get(`${row.engine}:${row.sessionId}`)?.find(({ start, end }) => timestamp >= start && timestamp <= end)?.duration;
+    const toolCalls = Number(row.toolCalls ?? 0), toolErrors = Number(row.toolErrors ?? 0), modelId = row.modelId ?? "unknown";
+    used.requests++; used.toolCalls += toolCalls; used.toolErrors += toolErrors;
+    if (row.cost !== null) { used.pricedRequests++; used.costUsd += row.cost; }
+    usedTurns.add(turnId);
+    if (duration !== undefined && !usedDurations.has(turnId)) usedDurations.set(turnId, duration);
+    for (const [name, seen] of named) {
+      let tally = skills.get(name);
+      if (!tally) { tally = { name, version: "unknown", turns: new Set(), readTurns: new Set(), invokedTurns: new Set(), conversations: new Set(), durations: new Map(), requests: 0, priced: 0, cost: 0, toolCalls: 0, errors: 0, first: row.occurredAt, last: row.occurredAt, models: new Map() }; skills.set(name, tally); }
+      if (seen.version !== "unknown") tally.version = seen.version;
+      tally.turns.add(turnId);
+      if (seen.read) tally.readTurns.add(turnId);
+      if (seen.invoked) tally.invokedTurns.add(turnId);
+      tally.conversations.add(`${row.projectId}:${row.conversationId}`);
+      if (duration !== undefined && !tally.durations.has(turnId)) tally.durations.set(turnId, duration);
+      tally.requests++; tally.toolCalls += toolCalls; tally.errors += toolErrors; tally.last = row.occurredAt;
+      if (row.cost !== null) { tally.priced++; tally.cost += row.cost; }
+      const model = tally.models.get(modelId) ?? { requests: 0, toolErrors: 0, knownCostUsd: 0 };
+      model.requests++; model.toolErrors += toolErrors; model.knownCostUsd += row.cost ?? 0;
+      tally.models.set(modelId, model);
+    }
   }
-  return { skills: [...skills.values()].map((row) => ({ id: row.id, name: row.name, version: row.version, associatedTurns: row.turns.size,
-    observedReads: row.readTurns.size, explicitInvocations: row.invokedTurns.size,
-    associatedRequests: row.requests, pricedRequests: row.priced, apiEquivalentCostUsd: row.cost, toolErrors: row.errors,
-    timedTurns: row.durations.size, medianDurationMs: row.durations.size ? [...row.durations.values()].sort((a, b) => a - b)[Math.floor((row.durations.size - 1) / 2)] : null,
-    models: [...row.models].map(([modelId, totals]) => ({ modelId, ...totals })).sort((a, b) => b.requests - a.requests) })).sort((a, b) => b.apiEquivalentCostUsd - a.apiEquivalentCostUsd),
-    unattributedRequests: scoped.filter((event) => !event.skillReads?.length && !event.skillInvocations?.length).length, scopeRequests: scoped.length,
-    note: "Overlapping associated request costs are not additive. Historical attribution and duration are unknown unless observed." };
+  const turnFiltersApply = !filters.provider && !filters.modelId && !filters.classification && !filters.difficulty && !filters.sessionId;
+  const everyDuration = [...intervals.values()].flat().map(({ duration }) => duration);
+  return {
+    skills: [...skills.values()].map((tally) => ({ id: tally.name, name: tally.name, version: tally.version, associatedTurns: tally.turns.size,
+      observedReads: tally.readTurns.size, explicitInvocations: tally.invokedTurns.size, conversations: tally.conversations.size,
+      associatedRequests: tally.requests, pricedRequests: tally.priced, apiEquivalentCostUsd: tally.cost, toolCalls: tally.toolCalls, toolErrors: tally.errors,
+      timedTurns: tally.durations.size, medianDurationMs: medianOf(tally.durations.values()), firstUsedAt: tally.first, lastUsedAt: tally.last,
+      models: [...tally.models].map(([modelId, totals]) => ({ modelId, ...totals })).sort((a, b) => b.requests - a.requests) }))
+      .sort((a, b) => b.apiEquivalentCostUsd - a.apiEquivalentCostUsd),
+    unattributedRequests: Math.max(0, scope.requests - used.requests), scopeRequests: scope.requests,
+    withSkill: { ...used, turns: usedTurns.size, timedTurns: usedDurations.size, medianDurationMs: medianOf(usedDurations.values()) },
+    withoutSkill: { requests: Math.max(0, scope.requests - used.requests), pricedRequests: Math.max(0, scope.pricedRequests - used.pricedRequests),
+      costUsd: Math.max(0, (scope.apiCostUsd ?? 0) - used.costUsd), toolCalls: Math.max(0, scope.toolCalls - used.toolCalls), toolErrors: Math.max(0, scope.toolErrors - used.toolErrors) },
+    turnTiming: turnFiltersApply ? { timedTurns: everyDuration.length, medianDurationMs: medianOf(everyDuration) } : null,
+    note: "A turn that loads several skills counts under each, so rows overlap and do not add up. Use and duration are unknown unless observed." };
 }
-export function usageTurnTiming(filters: UsageFilters, timeZone: string): { days: Array<{ key: string; turns: number; failed: number; medianAgentMs: number; medianQueueMs: number | null; medianToolMs: number | null; toolTimedRequests: number; toolRequestsUnknown: number }>; unknownHistoricalTiming: number } {
+export interface TurnTimingTotals { turns: number; failed: number; medianAgentMs: number | null; medianQueueMs: number | null; medianToolMs: number | null }
+export function usageTurnTiming(filters: UsageFilters, timeZone: string): { days: Array<{ key: string; turns: number; failed: number; medianAgentMs: number; medianQueueMs: number | null; medianToolMs: number | null; toolTimedRequests: number; toolRequestsUnknown: number }>; totals: TurnTimingTotals; unknownHistoricalTiming: number } {
   const db = usageDatabase();
   const ids = rawProjectIds(db, filters);
-  if (!ids.length) return { days: [], unknownHistoricalTiming: 0 };
+  const none: TurnTimingTotals = { turns: 0, failed: 0, medianAgentMs: null, medianQueueMs: null, medianToolMs: null };
+  if (!ids.length) return { days: [], totals: none, unknownHistoricalTiming: 0 };
   const clauses = [`project_id IN (${ids.map(() => "?").join(",")})`];
   const args = [...ids];
   for (const [key, column] of [["conversationId", "conversation_id"], ["engine", "engine"]] as const) if (filters[key]) { clauses.push(`${column}=?`); args.push(filters[key]!); }
   if (filters.from) { clauses.push("occurred_at>=?"); args.push(filters.from); }
   if (filters.to) { clauses.push("occurred_at<?"); args.push(filters.to); }
   if (filters.originNodeIds) {
-    if (!filters.originNodeIds.length) return { days: [], unknownHistoricalTiming: 0 };
+    if (!filters.originNodeIds.length) return { days: [], totals: none, unknownHistoricalTiming: 0 };
     clauses.push(`origin_node_id IN (${filters.originNodeIds.map(() => "?").join(",")})`); args.push(...filters.originNodeIds);
   }
   const records = db.prepare(`SELECT payload FROM usage_difficulty WHERE ${clauses.join(" AND ")} ORDER BY occurred_at LIMIT 50001`).all(...args) as unknown as Array<{ payload: string }>;
@@ -397,13 +478,17 @@ export function usageTurnTiming(filters: UsageFilters, timeZone: string): { days
     else tool.measured.push(event.toolDurationMs);
     toolDays.set(key, tool);
   }
-  const median = (values: number[]) => { const ordered = values.sort((a, b) => a - b); return ordered.length ? ordered[Math.floor((ordered.length - 1) / 2)] : null; };
+  const everyTurn = [...days.values()].flat();
   return { days: [...new Set([...days.keys(), ...toolDays.keys()])].map((key) => {
     const rows = days.get(key) ?? [], tool = toolDays.get(key);
     return { key, turns: rows.length, failed: rows.filter((row) => row.failed).length,
-      medianAgentMs: median(rows.map((row) => row.agent)) ?? 0, medianQueueMs: median(rows.flatMap((row) => row.queue === null ? [] : [row.queue])),
-      medianToolMs: median(tool?.measured ?? []), toolTimedRequests: tool?.measured.length ?? 0, toolRequestsUnknown: tool?.unknown ?? 0 };
-  }).sort((a, b) => a.key.localeCompare(b.key)), unknownHistoricalTiming };
+      medianAgentMs: medianOf(rows.map((row) => row.agent)) ?? 0, medianQueueMs: medianOf(rows.flatMap((row) => row.queue === null ? [] : [row.queue])),
+      medianToolMs: medianOf(tool?.measured ?? []), toolTimedRequests: tool?.measured.length ?? 0, toolRequestsUnknown: tool?.unknown ?? 0 };
+  }).sort((a, b) => a.key.localeCompare(b.key)),
+    // A period's median is not the median of its days' medians, so it is taken over every turn.
+    totals: { turns: everyTurn.length, failed: everyTurn.filter((row) => row.failed).length, medianAgentMs: medianOf(everyTurn.map((row) => row.agent)),
+      medianQueueMs: medianOf(everyTurn.flatMap((row) => row.queue === null ? [] : [row.queue])), medianToolMs: medianOf([...toolDays.values()].flatMap((tool) => tool.measured)) },
+    unknownHistoricalTiming };
 }
 export function conversationUsage(projectId:string,conversationId:string):UsageTotals{return usageTotals({projectIds:[projectId],projectId,conversationId});} export function projectUsage(projectId:string):UsageTotals{return usageTotals({projectIds:[projectId],projectId});}
 export function latestDifficultyForConversation(projectId: string, conversationId: string, configId: string, configRevision: number): UsageDifficulty | null {
