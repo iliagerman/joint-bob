@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.86.2 — 2026-10-13
 
-- Stopped the server freezing for seconds at a time while it looked for items to sync to a machine that already had them all, and while it totalled usage across many projects.
+- Stopped the server freezing for seconds at a time while it searched for older items to sync to a machine that already had them all, and while it totalled usage across many projects in the project list.
 
 ## 2.86.1 — 2026-10-13
 
