@@ -25,7 +25,7 @@ import { sessionWatcher } from "./chat.js";
 import { findHarnessSession, harnessTurnBusy } from "./harness-sessions.js";
 import { taskConfig, taskPhase } from "./task-runs.js";
 import { measureOperation } from "./performance-diagnostics.js";
-import { conversationsChanged, sessionListingChanged, sharedProjectListing } from "../session-listing-revisions.js";
+import { conversationsChanged, sessionListingChanged, sharedProjectListing, sharedProjectListingUse } from "../session-listing-revisions.js";
 
 /**
  * Shared by the per-project conversation list and the cross-project review inbox, so both
@@ -221,7 +221,12 @@ export async function noteUnannouncedRunChanges(): Promise<void> {
  */
 export function sharedProjectSessions(project: ProjectRecord, userId: string, username: string, onlyInFlight = false): Promise<SessionSummary[]> {
   const key = JSON.stringify([project.id, userId, username, getSettings().conversationHistoryDays, project.path, project.macPath ?? "", project.locations ?? []]);
-  return sharedProjectListing(project.id, key, () => listProjectSessionsWithReviewState(project, userId, username), "", Date.now(), onlyInFlight);
+  const reusedBefore = sharedProjectListingUse().reused;
+  const listing = sharedProjectListing(project.id, key, () => listProjectSessionsWithReviewState(project, userId, username), "", Date.now(), onlyInFlight);
+  // Counted in the performance log, so what sharing saves can be read there: how many requests
+  // built a list, and how many took one that was being built or kept.
+  const source = sharedProjectListingUse().reused > reusedBefore ? "reused" : "built";
+  return measureOperation(`sessions.${onlyInFlight ? "open_list" : "spanning_list"}.${source}`, () => listing);
 }
 
 // A leftover `claiming` record is a crashed two-phase claim from this node; no

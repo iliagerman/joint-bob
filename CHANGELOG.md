@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added performance-log entries that show whether each project's conversation list was built fresh or reused from one already in progress, so the time that sharing saves can be measured.
+
 ## 2.82.1 — 2026-10-13
 
 - Removed Automations and the browser monitors that watched a signed-in page for new messages, so they no longer run or appear in any project.
