@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.85.0 — 2026-10-13
 
-- Moved Change story… out of the conversation menu into a Story button in the chat toolbar, and the story now opens on its first finished section instead of waiting for the overview.
+- Moved Change story… out of the conversation menu into a Story button beside Tasks in the chat toolbar.
+- Made a story open on its first finished section while it is still being written, instead of waiting for the title and overview; unfinished sections are marked as being written in the rail, and a section you pick stays where it is.
 
 ## 2.84.0 — 2026-10-13
 
