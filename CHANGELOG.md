@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.80.0 — 2026-10-13
 
-- Added a once-a-minute performance total of every request and step that cost time, fast ones included, and a report that summarises a chosen window so a change's effect can be measured.
+- Added a once-a-minute performance total of every request and step, fast ones included, and a report that summarises a chosen time window so the effect of a change can be measured.
 
 ## 2.79.0 — 2026-10-13
 
