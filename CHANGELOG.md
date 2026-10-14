@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.92.0 — 2026-10-14
 
-- Made auto respond check the agent's work before it answers: the responder now reads the changed files and runs the tests the agent names, and a new checkbox in the Auto respond dialog turns that off.
+- Made auto respond check the agent's work before it answers: the responder now reads the changed files, looks at the diffs, and runs the tests the agent names, which can take up to 20 minutes, and a checkbox in the Auto respond dialog turns that off.
+- Made auto respond ask the agent for a test, script, test page, or browser check when a change cannot be verified with what already exists, and run it before it answers.
 
 ## 2.91.3 — 2026-10-14
 
