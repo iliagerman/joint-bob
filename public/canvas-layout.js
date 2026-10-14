@@ -192,6 +192,31 @@ export const shortcutFinalMatches = (shortcut, event) => Boolean(shortcutPrefix(
 export const conversationChord = (keymap, key) => normalizeChord([...keymap.base, key]);
 export const conversationChordLabel = (keymap, key, mac = isMacPlatform()) => chordLabel(conversationChord(keymap, key), mac);
 
+// ── Conversation switcher ──────────────────────────────────────────────────────
+// Hold the chord and tap the cycle key to step through the last conversations opened;
+// letting go of the chord opens the one selected. It is fixed rather than in the keymap,
+// because a single-key binding cannot describe a hold. Ctrl+Shift+Space elsewhere, not
+// Ctrl+Alt, because Ctrl+Alt is AltGr on many keyboard layouts.
+const SWITCHER_CHORDS = {
+  mac: { modifiers: ["ctrl", "alt"], code: "Tab", hold: "⌃⌥", cycle: "Tab", back: "⇧Tab" },
+  other: { modifiers: ["ctrl", "shift"], code: "Space", hold: "Ctrl+Shift", cycle: "Space", back: "↑" },
+};
+export const switcherChord = (mac = isMacPlatform()) => SWITCHER_CHORDS[mac ? "mac" : "other"];
+/** True while every modifier of the chord is down; letting any one go ends the hold. */
+export const switcherHeld = (event, mac = isMacPlatform()) => switcherChord(mac).modifiers.every((name) => Boolean(event[`${name}Key`]));
+/** The switcher's own keystroke. A Mac lets Shift join it, which steps back; elsewhere
+ *  Shift is part of the chord, so any other modifier means it is not the switcher. */
+export function isSwitcherKey(event, mac = isMacPlatform()) {
+  const { modifiers, code } = switcherChord(mac);
+  if (event.code !== code || !switcherHeld(event, mac)) return false;
+  return CANVAS_MODIFIERS.every((name) => modifiers.includes(name) || (mac && name === "shift") || !event[`${name}Key`]);
+}
+/** One row forward, or one back when a Mac press carries Shift. */
+export const switcherStep = (event, mac = isMacPlatform()) => (mac && event.shiftKey ? -1 : 1);
+/** Keys an open switcher answers to: digits jump to a row, arrows step, Escape cancels. */
+export const isSwitcherNavigationCode = (code) => /^Digit[0-9]$/.test(code)
+  || ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Escape"].includes(code);
+
 /** Every command the keymap can bind, in collision-priority order: where a stored
  *  keymap hands one chord to two commands, the earlier command keeps it. The first
  *  six and the app toolbar commands answer even while the canvas is closed. */

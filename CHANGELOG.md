@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a conversation switcher: hold Control+Option and tap Tab (Ctrl+Shift and Space on Windows) to step through your last 10 conversations, then let go to open the one selected; a digit opens its row at once, and Escape cancels.
+
 ## 2.94.0 — 2026-10-14
 
 - Added keyboard shortcuts in chat for the conversation actions, Mark done, Auto respond, Git, and Story, using Control+Option+Shift, shown on each button's badge; you can change them in Settings.

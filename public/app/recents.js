@@ -81,6 +81,21 @@ export function rememberRecentSession(session) {
   if (state.preferencesLoaded) saveRecentSessionInBackground(entry);
 }
 
+/** The conversations most recently opened, newest first, one row each: the list the
+ *  conversation switcher steps through. The first row is the one open now. */
+export function lastOpenedConversations(limit) {
+  const seen = new Set();
+  const opened = [];
+  for (const entry of state.recentSessions) {
+    const key = recentSessionKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    opened.push(entry);
+    if (opened.length === limit) break;
+  }
+  return opened;
+}
+
 /** When the conversation last moved, not when this browser last opened it. */
 function recentSessionActivityAt(entry) {
   return entry.updatedAt || entry.openedAt;
@@ -165,7 +180,7 @@ function forgetRecentSession(entry) {
  * The recents list can outlive the conversation or the project it points at, so a stale
  * entry is dropped on the click that discovers it rather than checked up front.
  */
-async function openRecentSession(entry) {
+export async function openRecentSession(entry) {
   elements.recentSessionsDialog.close();
   if (state.activeProjectId !== entry.projectId) await selectProject(entry.projectId);
   const session = state.sessions.find((candidate) => sessionMatchesRecent(candidate, entry));

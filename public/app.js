@@ -2,10 +2,11 @@
 // when they load; this file wires the boot sequence and the canvas pane mode.
 import {
   canvasKeyFromCode, chordFromEvent, chordId, conversationChord, DEFAULT_CANVAS_KEYMAP,
-  isCanvasHelpShortcut, shortcutFinalMatches, shortcutPrefix,
+  isCanvasHelpShortcut, isSwitcherKey, isSwitcherNavigationCode, shortcutFinalMatches, shortcutPrefix, switcherHeld,
 } from "./canvas-layout.js";
 import { createConversationCanvas } from "./canvas.js";
 import { api, savePreferences } from "./app/api.js";
+import { installConversationSwitcher } from "./app/conversation-switcher.js";
 import { initializeApplication, revealApplication } from "./app/auth.js";
 import { openSettings } from "./app/settings.js";
 import { runChatShortcut } from "./app/chat-shortcuts.js";
@@ -123,6 +124,26 @@ if (state.canvasPaneMode) {
       metaKey: event.metaKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey,
     }, location.origin);
   };
+  // The switcher belongs to the top-level app, which is the only window that sees the chord
+  // let go. Its keys are forwarded while the chord is held, and this listener runs before
+  // the shortcut handler below so a forwarded key never also fires a canvas shortcut.
+  let switcherHeldHere = false;
+  const forwardSwitcherKey = (kind, event) => parent.postMessage({
+    type: "conversationSwitcherKey", kind,
+    key: { code: event.code, metaKey: event.metaKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey },
+  }, location.origin);
+  window.addEventListener("keydown", (event) => {
+    if (!isSwitcherKey(event) && !(switcherHeldHere && isSwitcherNavigationCode(event.code))) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    switcherHeldHere = true;
+    forwardSwitcherKey("down", event);
+  });
+  window.addEventListener("keyup", (event) => {
+    if (!switcherHeldHere) return;
+    if (!switcherHeld(event)) switcherHeldHere = false;
+    forwardSwitcherKey("up", event);
+  });
   window.addEventListener("keydown", (event) => {
     if (isCanvasHelpShortcut(event)) {
       event.preventDefault();
@@ -177,6 +198,8 @@ if (state.canvasPaneMode) {
   parent.postMessage({ type: "canvasPaneReady" }, location.origin);
 }
 if (!state.canvasPaneMode) {
+  // Before the canvas, so a switcher key it handles never reaches the canvas shortcuts.
+  installConversationSwitcher();
   state.canvasController = createConversationCanvas({
     api,
     getProjects: () => state.projects,

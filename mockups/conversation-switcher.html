@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversation switcher · mockups</title>
+<style>
+  :root { color-scheme: dark; --bg:#101315; --panel:#1b2023; --raised:#242b2e; --line:#343d41; --text:#ecf0ed; --muted:#9ba8a7; --mint:#a3dfbd; --amber:#f3bd72; font-family: "Avenir Next", "Segoe UI", sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--text); background: radial-gradient(circle at 10% 0%, #23372f 0, transparent 35%), var(--bg); min-height:100vh; }
+  button { font:inherit; color:inherit; cursor:pointer; }
+  button:focus-visible { outline:2px solid var(--mint); outline-offset:2px; }
+  .page { max-width:980px; margin:auto; padding:32px clamp(16px,4vw,48px) 60px; }
+  .eyebrow { margin:0 0 9px; color:var(--mint); font:700 11px/1.2 ui-monospace, monospace; letter-spacing:.16em; text-transform:uppercase; }
+  h1 { font-size:clamp(26px,4vw,38px); line-height:1.05; letter-spacing:-.04em; margin:0 0 8px; font-weight:650; }
+  .sub { color:var(--muted); margin:0 0 20px; font-size:14px; line-height:1.5; max-width:760px; }
+  .bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+  .seg { display:flex; gap:4px; background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:4px; }
+  .seg button { border:0; background:transparent; padding:7px 12px; border-radius:6px; color:var(--muted); font-size:13px; }
+  .seg button[aria-pressed="true"] { background:var(--raised); color:var(--text); }
+  .chord { color:var(--muted); font-size:13px; }
+  kbd { font:600 12px ui-monospace, monospace; background:#15191b; border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:1px 6px; color:var(--text); }
+
+  .app { position:relative; display:grid; grid-template-columns:270px 1fr; height:440px; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--panel); }
+  .side { border-right:1px solid var(--line); padding:14px 10px; overflow:hidden; }
+  .side h2 { margin:4px 8px 10px; font:700 11px/1 ui-monospace, monospace; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
+  .main { padding:22px 26px; }
+  .main .now { color:var(--muted); font-size:13px; margin:0 0 6px; }
+  .main h3 { margin:0 0 14px; font-size:22px; letter-spacing:-.02em; font-weight:620; }
+  .main p { color:var(--muted); font-size:14px; line-height:1.6; max-width:520px; }
+
+  .row { display:grid; grid-template-columns:22px 1fr auto; gap:10px; align-items:center; padding:8px 9px; border-radius:9px; }
+  .row .n { color:var(--muted); font:600 12px ui-monospace, monospace; text-align:center; }
+  .row .t { min-width:0; }
+  .row .t b { display:block; font-size:14px; font-weight:560; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .t span { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+  .dot.running { background:var(--amber); }
+  .dot.review { background:var(--mint); }
+  .tag { color:var(--mint); font:700 10px/1 ui-monospace, monospace; letter-spacing:.08em; text-transform:uppercase; }
+  .side .row { width:100%; border:0; background:transparent; text-align:left; }
+  .side .row.current { background:var(--raised); }
+
+  .overlay { position:absolute; inset:0; display:none; place-items:center; background:rgba(8,10,11,.55); }
+  .overlay.open { display:grid; }
+  .switcher { width:min(540px,92%); background:var(--raised); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow:0 24px 70px rgba(0,0,0,.55); }
+  .switcher .list { display:grid; gap:3px; }
+  .switcher .row { border:0; background:transparent; color:inherit; text-align:left; width:100%; }
+  .switcher .row.sel { background:#2e3b38; box-shadow:inset 0 0 0 1px var(--mint); }
+  .switcher .hint { color:var(--muted); font-size:12px; line-height:1.7; margin:12px 4px 0; border-top:1px solid var(--line); padding-top:10px; }
+
+  .notes { margin-top:26px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 22px; }
+  .notes h2 { margin:0 0 10px; font-size:15px; }
+  .notes ol { margin:0; padding-left:20px; color:var(--muted); font-size:14px; line-height:1.65; }
+  .notes li + li { margin-top:6px; }
+  .notes b { color:var(--text); font-weight:600; }
+  @media (max-width:720px) { .app { grid-template-columns:1fr; height:auto; } .side { border-right:0; border-bottom:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="eyebrow">Mockup · keyboard</p>
+  <h1>Switch between recent conversations</h1>
+  <p class="sub">Hold the chord, tap the cycle key to step through your last 10 conversations, and release to open the one selected. A quick tap toggles between the last two, the way Cmd+Tab does. This page is a mock: it runs on fake data, so you can try the keys here before anything is built.</p>
+
+  <div class="bar">
+    <div class="seg" role="group" aria-label="Platform">
+      <button type="button" data-platform="mac" aria-pressed="true">Mac</button>
+      <button type="button" data-platform="win" aria-pressed="false">Windows</button>
+    </div>
+    <span class="chord" id="chord-label"></span>
+  </div>
+
+  <div class="app" id="app">
+    <aside class="side">
+      <h2>Recent · last 10</h2>
+      <div id="side-list"></div>
+    </aside>
+    <main class="main">
+      <p class="now" id="now-project"></p>
+      <h3 id="now-title"></h3>
+      <p>Chat transcript goes here. The switcher only changes which conversation is open; the page underneath stays as it was.</p>
+    </main>
+
+    <div class="overlay" id="overlay">
+      <div class="switcher" role="dialog" aria-label="Recent conversations">
+        <div class="list" id="switch-list"></div>
+        <div class="hint" id="hint"></div>
+      </div>
+    </div>
+  </div>
+
+  <section class="notes">
+    <h2>Decisions to confirm</h2>
+    <ol>
+      <li><b>Mac chord:</b> Control+Option held, Tab cycles forward, Shift+Tab goes back. It matches the command shortcuts already in the app, and Tab is not used by any of them.</li>
+      <li><b>Windows chord:</b> Ctrl+Shift held, Space cycles (proposed). Ctrl+Tab and Ctrl+Shift+Tab are browser tab keys and cannot be captured. Ctrl+Alt is AltGr on many Windows keyboard layouts, so it would type characters. Pick a different key if you prefer.</li>
+      <li><b>Order:</b> most recently used first. The current conversation is always row 1, and a conversation counts once even if you visit it several times.</li>
+      <li><b>Digits 1–0 (my addition):</b> while the switcher is open, a digit jumps straight to that row and opens it.</li>
+      <li><b>Release commits:</b> letting go of the chord opens the selected row. Escape cancels. Clicking a row also opens it.</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+  const PLATFORMS = {
+    mac: { chord: "⌃⌥", label: "Control+Option, then Tab", cycle: "Tab", isChord: (e) => e.ctrlKey && e.altKey, back: (e) => e.shiftKey, backText: "⇧Tab back", holdText: "Hold ⌃⌥" },
+    win: { chord: "Ctrl+Shift", label: "Ctrl+Shift, then Space", cycle: "Space", isChord: (e) => e.ctrlKey && e.shiftKey, back: () => false, backText: "↑ back", holdText: "Hold Ctrl+Shift" },
+  };
+  // Most recently used first. Index 0 is the conversation that is open now.
+  let mru = [
+    { title: "Multi-user build · phase 3", project: "joint_bob", state: "running" },
+    { title: "Deploy 2.93.0 health check", project: "joint_bob", state: "idle" },
+    { title: "Landing page films feedback", project: "promo-video", state: "review" },
+    { title: "Costs dashboard timeout", project: "joint_bob", state: "idle" },
+    { title: "Homeserver cleanup crons", project: "homeserver", state: "idle" },
+    { title: "ntfy topic grants", project: "ops", state: "idle" },
+    { title: "Browser profile sharing", project: "joint_bob", state: "running" },
+    { title: "Skills & time tab copy", project: "joint_bob", state: "idle" },
+    { title: "Weekly invoice export", project: "finance", state: "review" },
+    { title: "Calendar: Thursday focus block", project: "personal", state: "idle" },
+  ];
+  let platform = "mac";
+  let open = false;
+  let sel = 1;
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const rowHtml = (c, i, extra = "") => `
+    <div class="row ${extra}" data-index="${i}">
+      <span class="n">${i === 9 ? 0 : i + 1}</span>
+      <span class="t"><b>${esc(c.title)}</b><span>${esc(c.project)}${i === 0 ? " · open now" : ""}</span></span>
+      ${i === 0 ? '<span class="tag">current</span>' : `<span class="dot ${c.state}"></span>`}
+    </div>`;
+
+  function render() {
+    const p = PLATFORMS[platform];
+    $("chord-label").innerHTML = `Shortcut: <kbd>${p.chord}</kbd> + <kbd>${p.cycle}</kbd> · release to open`;
+    $("now-project").textContent = mru[0].project;
+    $("now-title").textContent = mru[0].title;
+    $("side-list").innerHTML = mru.map((c, i) => `<button type="button" class="row ${i === 0 ? "current" : ""}" data-index="${i}" style="width:100%;border:0;background:${i === 0 ? "var(--raised)" : "transparent"};color:inherit;text-align:left">
+      <span class="n">${i === 9 ? 0 : i + 1}</span>
+      <span class="t"><b>${esc(c.title)}</b><span>${esc(c.project)}</span></span>
+      <span class="dot ${c.state}"></span></button>`).join("");
+    $("switch-list").innerHTML = mru.map((c, i) => rowHtml(c, i, i === sel ? "sel" : "")).join("");
+    $("hint").innerHTML = `${p.holdText} · <kbd>${p.cycle}</kbd> next · ${p.backText} · <kbd>1</kbd>–<kbd>0</kbd> jump · release to open · <kbd>Esc</kbd> cancel`;
+    $("overlay").classList.toggle("open", open);
+  }
+
+  function step(delta) {
+    sel = (sel + delta + mru.length) % mru.length;
+    render();
+  }
+
+  // Opens the conversation at index i and moves it to the front of the list.
+  function commit(i) {
+    open = false;
+    if (i > 0) {
+      const [c] = mru.splice(i, 1);
+      mru.unshift(c);
+    }
+    render();
+  }
+
+  window.addEventListener("keydown", (e) => {
+    const p = PLATFORMS[platform];
+    if (open && e.code === "Escape") { e.preventDefault(); open = false; render(); return; }
+    if (open && /^Digit[0-9]$/.test(e.code)) {
+      const n = e.code === "Digit0" ? 10 : Number(e.code.slice(5));
+      if (n <= mru.length) { e.preventDefault(); sel = n - 1; commit(sel); }
+      return;
+    }
+    if (open && ["ArrowDown", "ArrowRight"].includes(e.code)) { e.preventDefault(); step(1); return; }
+    if (open && ["ArrowUp", "ArrowLeft"].includes(e.code)) { e.preventDefault(); step(-1); return; }
+    if (e.code === p.cycle && p.isChord(e)) {
+      e.preventDefault();
+      if (!open) { open = true; sel = mru.length > 1 ? 1 : 0; render(); }
+      else step(p.back(e) ? -1 : 1);
+    }
+  });
+
+  // Letting go of any chord key opens the selected row.
+  window.addEventListener("keyup", (e) => {
+    if (open && !PLATFORMS[platform].isChord(e)) commit(sel);
+  });
+  window.addEventListener("blur", () => { if (open) { open = false; render(); } });
+
+  // Mouse: a row in the switcher opens it; a row in the sidebar opens it too.
+  $("switch-list").addEventListener("click", (e) => {
+    const row = e.target.closest(".row");
+    if (row) commit(Number(row.dataset.index));
+  });
+  $("side-list").addEventListener("click", (e) => {
+    const row = e.target.closest(".row");
+    if (row) commit(Number(row.dataset.index));
+  });
+
+  document.querySelectorAll("[data-platform]").forEach((btn) => btn.addEventListener("click", () => {
+    platform = btn.dataset.platform;
+    open = false;
+    document.querySelectorAll("[data-platform]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+    render();
+  }));
+
+  render();
+</script>
+</body>
+</html>
