@@ -14,8 +14,8 @@ import { relayMachine } from "../../relay/store.js";
 import { isWebhookOnlyChannel } from "../../relay/stream.js";
 import { getProject } from "../../store.js";
 import {
-  createWebhook, deleteWebhook, getWebhook, listWebhooks, readWebhookPayload, regenerateWebhookSecret, updateWebhook, WEBHOOK_MAX_BODY_BYTES,
-  webhookDeliveries, webhookForSecret, webhookInputSchema, WebhookError, type WebhookInput,
+  createWebhook, deleteWebhook, getWebhook, listWebhooks, readWebhookPayload, recordWebhookDelivery, regenerateWebhookSecret, updateWebhook,
+  TELEGRAM_SENDER_FIELDS, WEBHOOK_MAX_BODY_BYTES, webhookDeliveries, webhookForSecret, webhookInputSchema, WebhookError, webhookSender, type WebhookInput,
 } from "../../webhooks.js";
 import { Feature, isClusterOriginUrl, requireFeature, sendError } from "../http-auth.js";
 import { listProjectSessionsWithReviewState } from "../sessions-helpers.js";
@@ -60,8 +60,19 @@ async function handleHook(request: IncomingMessage, response: ServerResponse, se
   let payload: Awaited<ReturnType<typeof readWebhookPayload>>;
   try { payload = await readWebhookPayload(String(request.headers["content-type"] ?? ""), body, webhook.attachments); }
   catch (error) { reply(response, error instanceof WebhookError ? error.statusCode : 400, error instanceof Error ? error.message : "The body could not be read"); return; }
+  // A sender off the list never reaches the conversation. The answer is still 2xx, so a sender
+  // such as Telegram does not retry the call and hold up the ones behind it.
+  const sender = webhookSender(webhook.senders, payload.data);
+  if (!sender.allowed) {
+    recordWebhookDelivery(await clusterV2Database(), webhook.id, "refused", sender.value ? `Refused sender ${sender.value}: not on the list` : "Refused: the call names no sender", sender.value);
+    response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store", Connection: "close" }).end('{"accepted":false}');
+    return;
+  }
   const query = (request.url ?? "").split("?", 2)[1] ?? "";
-  acceptWebhookCall(webhook, { method: request.method ?? "POST", headers: flatHeaders(request), query: query.slice(0, 1000), body: payload.text, attachments: payload.attachments });
+  acceptWebhookCall(webhook, {
+    method: request.method ?? "POST", headers: flatHeaders(request), query: query.slice(0, 1000), body: payload.text, attachments: payload.attachments,
+    ...(sender.value ? { sender: { value: sender.value, label: sender.label } } : {}),
+  });
   response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store", Connection: "close" }).end(JSON.stringify({ accepted: true, attachments: payload.attachments.length }));
 }
 
@@ -127,7 +138,7 @@ async function checkTarget(input: WebhookInput): Promise<void> {
 
 app.get("/api/webhooks", handle(async (_request, response) => {
   const db = await clusterV2Database();
-  response.json({ webhooks: listWebhooks(db), bases: await urlBases(), startupReady: flags.startupReady });
+  response.json({ webhooks: listWebhooks(db), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS });
 }));
 
 app.post("/api/webhooks", handle(async (request, response) => {

@@ -1136,6 +1136,17 @@
             <label class="checkbox-row"><input type="checkbox" id="webhooksEnabled" checked data-testid="webhooks-enabled-toggle" /> Accept calls</label>
             <label class="checkbox-row"><input type="checkbox" id="webhooksAttachments" data-testid="webhooks-attachments-toggle" /> Accept attachments</label>
             <p class="settings-hint">Files in a call reach the conversation as attachments: the file parts of a multipart/form-data body, or a JSON body's <code>attachments</code> list of <code>{"name", "mimeType", "data"}</code> with base64 data.</p>
+            <label class="checkbox-row"><input type="checkbox" id="webhooksSendersEnabled" data-testid="webhooks-senders-toggle" /> Only accept calls from listed senders</label>
+            <div id="webhooksSenders" data-testid="webhooks-senders" hidden>
+              <div class="relay-form">
+                <label>Sender field<input id="webhooksSenderFields" autocomplete="off" placeholder="message.from.id" data-testid="webhooks-sender-fields-input" /></label>
+              </div>
+              <button class="ghost compact" type="button" id="webhooksSenderTelegram" data-testid="webhooks-sender-telegram-button">Use Telegram bot fields</button>
+              <label>Allowed senders
+                <textarea id="webhooksAllowedSenders" rows="3" placeholder="123456789 Ilia" data-testid="webhooks-allowed-senders-input"></textarea>
+              </label>
+              <p class="settings-hint">The sender is the first of these fields (dot paths, separated by commas) found in a JSON body or form fields. List one allowed value per line, optionally followed by a name the agent sees. A call from anyone else is refused before it reaches the conversation and shows under Calls, with an Allow button.</p>
+            </div>
             <div class="relay-row-actions">
               <button class="ghost compact" type="button" id="webhooksCancel" data-testid="webhooks-cancel-button">Cancel</button>
               <button class="primary compact" type="button" id="webhooksSave" data-testid="webhooks-save-button">Create webhook</button>

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added an option to accept webhook calls only from listed senders, such as Telegram users; calls from anyone else are refused and listed under Calls, where you can allow them with one click.
+
 ## 2.96.0 — 2026-10-14
 
 - Added an Accept attachments option for webhooks, off by default, so files sent to a webhook, such as screenshots or documents, reach the conversation as attachments; up to 4 images and 6 files travel with the prompt, the rest are saved to the project's attachments folder and listed by path, and the call's reply says how many files it accepted.

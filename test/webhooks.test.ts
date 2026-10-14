@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import {
-  createWebhook, deleteWebhook, listWebhooks, readWebhookPayload, recordWebhookDelivery, regenerateWebhookSecret, updateWebhook, webhookDeliveries,
-  webhookForSecret, webhookInputSchema, webhookMessage,
+  createWebhook, deleteWebhook, listWebhooks, readWebhookPayload, recordWebhookDelivery, regenerateWebhookSecret, TELEGRAM_SENDER_FIELDS, updateWebhook,
+  webhookDeliveries, webhookForSecret, webhookInputSchema, webhookMessage, webhookSender,
 } from "../src/webhooks.js";
 
 const input = (overrides = {}) => webhookInputSchema.parse({ name: "Issues", target: { kind: "project", projectId: "p1" }, context: "Triage.", ...overrides });
@@ -104,10 +104,14 @@ test("with attachments on, multipart file parts and a JSON attachments list beco
 
 test("without the option, or for a sender's own attachments field, the body stays text", async () => {
   const body = Buffer.from(JSON.stringify({ attachments: [{ name: "a.png", data: "eA==" }] }));
-  assert.deepEqual(await readWebhookPayload("application/json", body, false), { text: body.toString(), attachments: [] });
+  const textOnly = async (type: string, raw: Buffer, accept: boolean) => {
+    const { text, attachments } = await readWebhookPayload(type, raw, accept);
+    return { text, attachments };
+  };
+  assert.deepEqual(await textOnly("application/json", body, false), { text: body.toString(), attachments: [] });
   const slack = Buffer.from(JSON.stringify({ text: "hi", attachments: [{ fallback: "x", color: "#36a64f" }] }));
-  assert.deepEqual(await readWebhookPayload("application/json", slack, true), { text: slack.toString(), attachments: [] });
-  assert.deepEqual(await readWebhookPayload("text/plain", Buffer.from("plain"), true), { text: "plain", attachments: [] });
+  assert.deepEqual(await textOnly("application/json", slack, true), { text: slack.toString(), attachments: [] });
+  assert.deepEqual(await textOnly("text/plain", Buffer.from("plain"), true), { text: "plain", attachments: [] });
   await assert.rejects(readWebhookPayload("application/json", Buffer.from(JSON.stringify({ attachments: [{ name: "bad.png", data: "not base64!" }] })), true), /bad\.png" is not valid base64/);
   await assert.rejects(readWebhookPayload("multipart/form-data; boundary=x", Buffer.from("garbage"), true), /multipart body could not be read/);
 });
@@ -116,4 +120,47 @@ test("the input must name a target and stay within limits", () => {
   assert.throws(() => webhookInputSchema.parse({ name: "", target: { kind: "project", projectId: "p" } }));
   assert.throws(() => webhookInputSchema.parse({ name: "x", target: { kind: "conversation", projectId: "p" } }));
   assert.throws(() => webhookInputSchema.parse({ name: "x", target: { kind: "project", projectId: "p" }, context: "y".repeat(10_001) }));
+});
+
+const telegram = { fields: TELEGRAM_SENDER_FIELDS, allowed: [{ value: "111", label: "Ilia" }, { value: "222", label: "" }] };
+
+test("a sender list lets in only the listed senders, found in the first field that names one", () => {
+  assert.deepEqual(webhookSender(null, { message: { from: { id: 999 } } }), { allowed: true, value: null, label: "" }, "no list: anyone with the address");
+  assert.deepEqual(webhookSender(telegram, { update_id: 1, message: { from: { id: 111 }, text: "hi" } }), { allowed: true, value: "111", label: "Ilia" });
+  assert.deepEqual(webhookSender(telegram, { callback_query: { from: { id: 222 } } }), { allowed: true, value: "222", label: "" });
+  assert.deepEqual(webhookSender(telegram, { message: { from: { id: 999 }, text: "let me in" } }), { allowed: false, value: "999", label: "" });
+  assert.deepEqual(webhookSender(telegram, { channel_post: { text: "no person" } }), { allowed: false, value: null, label: "" }, "a call naming no sender is refused");
+  assert.deepEqual(webhookSender(telegram, undefined), { allowed: false, value: null, label: "" }, "a body that is not JSON names no sender");
+  assert.deepEqual(webhookSender(telegram, { message: { from: { id: "111" } } }).allowed, true, "a number and its text compare the same");
+  assert.equal(webhookSender({ fields: ["phone"], allowed: [] }, { phone: "+972500000000" }).allowed, false, "an empty list refuses everyone");
+  assert.equal(webhookSender({ fields: ["message.from"], allowed: [{ value: "[object Object]", label: "" }] }, { message: { from: { id: 1 } } }).allowed, false, "only a string or number counts as a sender");
+});
+
+test("the sender list is stored, added to an older table, and a refused call keeps its sender in the history", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE webhook_deliveries(id INTEGER PRIMARY KEY AUTOINCREMENT, webhook_id TEXT NOT NULL, at TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '')`);
+  const { webhook } = createWebhook(db, input());
+  assert.equal(webhook.senders, null);
+  const updated = updateWebhook(db, webhook.id, input({ senders: { fields: ["message.from.id"], allowed: [{ value: "111", label: "Ilia" }] } }));
+  assert.deepEqual(updated.senders, { fields: ["message.from.id"], allowed: [{ value: "111", label: "Ilia" }] });
+  recordWebhookDelivery(db, webhook.id, "refused", "Refused sender 999: not on the list", "999");
+  recordWebhookDelivery(db, webhook.id, "delivered", "Added to the conversation");
+  assert.deepEqual(webhookDeliveries(db, webhook.id).map(({ status, sender }) => [status, sender]), [["delivered", null], ["refused", "999"]]);
+  assert.throws(() => input({ senders: { fields: ["message from"], allowed: [] } }), /dot path/);
+  assert.throws(() => input({ senders: { fields: [], allowed: [] } }));
+});
+
+test("the sender check reads a JSON body or form fields even without attachments, and the message names the checked sender", async () => {
+  const json = Buffer.from(JSON.stringify({ message: { from: { id: 111 } } }));
+  assert.deepEqual((await readWebhookPayload("application/json", json, false)).data, { message: { from: { id: 111 } } });
+  const form = new FormData();
+  form.append("phone", "+972500000000");
+  const request = new Request("http://x", { method: "POST", body: form });
+  const fields = await readWebhookPayload(request.headers.get("content-type")!, Buffer.from(await request.arrayBuffer()), false);
+  assert.deepEqual(fields.data, { phone: "+972500000000" });
+  assert.match(fields.text, /form-data; name="phone"/, "without attachments a form body still reaches the agent as it came");
+  const message = webhookMessage({ name: "Deals", context: "Store deals." }, { method: "POST", query: "", headers: {}, body: "{}", sender: { value: "111", label: "Ilia" } });
+  assert.match(message, /Sender: Ilia \(111\)\. This sender is on the webhook's list of allowed senders/);
+  assert.ok(message.indexOf("Sender: Ilia") < message.indexOf("comes from an outside sender"), "the checked sender comes before the outside data");
+  assert.doesNotMatch(webhookMessage({ name: "n", context: "" }, { method: "POST", query: "", headers: {}, body: "{}" }), /Sender:/);
 });

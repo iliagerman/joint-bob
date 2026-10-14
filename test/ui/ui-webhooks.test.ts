@@ -14,7 +14,7 @@ import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
 
-interface Hook { id: string; name: string; target: unknown; enabled: boolean; attachments: boolean }
+interface Hook { id: string; name: string; target: unknown; enabled: boolean; attachments: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
 
 let root: string;
 let environment: DevEnvironment;
@@ -85,11 +85,13 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await until(async () => (await hooks())[0].enabled, "the webhook is on again");
 
   await page.getByTestId("webhooks-edit-button").click();
+  await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), true, "the editor shows the stored option");
   await page.getByTestId("webhooks-attachments-toggle").uncheck();
   await page.getByTestId("webhooks-save-button").click();
   await until(async () => (await hooks())[0].attachments === false, "the option is saved off");
   await page.getByTestId("webhooks-edit-button").click();
+  await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await until(async () => (await hooks())[0].attachments, "the option is saved on");
@@ -120,6 +122,45 @@ test("a call to the webhook hands over its files instead of reading them as text
   assert.equal((await api(node, session, "PUT", `/webhooks/${hook.id}`, { name: hook.name, target: hook.target, attachments: false })).status, 200);
   const plain = await fetch(`${node.url}/hooks/${secret}`, { method: "POST", body: form });
   assert.deepEqual(await plain.json(), { accepted: true, attachments: 0 }, "with the option off the same call is all text");
+});
+
+test("a sender list refuses strangers before the conversation, and Allow lets a refused sender in", async () => {
+  const [hook] = await hooks();
+  const { secret } = (await api<{ secret: string }>(node, session, "POST", `/webhooks/${hook.id}/regenerate`, {})).body;
+  const update = (id: number) => fetch(`${node.url}/hooks/${secret}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ update_id: id, message: { message_id: 1, from: { id }, chat: { id }, text: "hi" } }),
+  });
+
+  await page.getByTestId("webhooks-edit-button").click();
+  await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("webhooks-senders").isVisible(), false, "the sender list stays folded away until asked for");
+  await page.getByTestId("webhooks-senders-toggle").check();
+  await page.getByTestId("webhooks-senders").waitFor({ state: "visible" });
+  await page.getByTestId("webhooks-sender-telegram-button").click();
+  assert.match(await page.getByTestId("webhooks-sender-fields-input").inputValue(), /^message\.from\.id, edited_message\.from\.id, callback_query\.from\.id/);
+  await page.getByTestId("webhooks-allowed-senders-input").fill("111 Ilia");
+  await page.getByTestId("webhooks-save-button").click();
+  await until(async () => Boolean((await hooks())[0].senders), "the sender list is saved");
+  assert.deepEqual((await hooks())[0].senders?.allowed, [{ value: "111", label: "Ilia" }]);
+  await page.getByTestId("webhooks-list").getByText("1 allowed sender").waitFor();
+
+  assert.deepEqual(await (await update(111)).json(), { accepted: true, attachments: 0 }, "a listed sender gets through");
+  const stranger = await update(999);
+  assert.equal(stranger.status, 202, "a stranger still gets a 2xx, so Telegram does not keep retrying");
+  assert.deepEqual(await stranger.json(), { accepted: false });
+
+  await page.getByTestId("webhooks-calls-button").click();
+  const refused = page.getByTestId("webhooks-history").locator(".relay-row").filter({ hasText: "Refused sender 999" });
+  await refused.getByText("Refused", { exact: true }).waitFor();
+  await refused.getByTestId("webhooks-allow-sender-button").click();
+  await page.getByTestId("webhooks-status").filter({ hasText: "Sender 999 is allowed" }).waitFor();
+  assert.deepEqual((await hooks())[0].senders?.allowed, [{ value: "111", label: "Ilia" }, { value: "999", label: "" }]);
+  assert.deepEqual(await (await update(999)).json(), { accepted: true, attachments: 0 }, "an allowed sender gets through");
+
+  await page.getByTestId("webhooks-edit-button").click();
+  await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("webhooks-allowed-senders-input").inputValue(), "111 Ilia\n999");
+  await page.getByTestId("webhooks-cancel-button").click();
 });
 
 test("the page logged no errors", () => {
