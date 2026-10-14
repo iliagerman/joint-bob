@@ -269,6 +269,18 @@ Any Joint Bob machine with a public HTTPS address can relay for other machines, 
 
 **Phones.** Every machine on a relay gets a name, and a phone signs in to it at `https://<name>.<relay-domain>` with that machine's own account. **Settings > Relay > Joined relays** lists the phone addresses that work on each relay: this machine, the relay itself, and your other machines there. Each one can be shown as a QR code to scan with the phone's camera. A switch there decides whether other users (accounts whose home is another machine) may sign in to this machine from a phone. Phone sign-in through a relay requires two-factor authentication, is on by default, and can be turned off per relay in **Settings > Relay > Joined relays**. Failed phone sign-ins are throttled on their own and never lock you out of local or Tailscale sign-in. The relay ends TLS for phone traffic, so its operator could read those sessions. Tailscale access keeps working unchanged.
 
+### Accounts and MFA across nodes
+
+Each node starts with one local administrator. **Settings > Users** manages additional people whose accounts live on that machine, not visitors from other nodes. Adding local people requires the optional multi-user setup. You do not need to create another local account to visit a cluster node.
+
+Your home node sends your sign-in record and authenticator key to eligible nodes in clusters you joined. Once synced, sign in there with your home username or email, password, and the **same authenticator**, even when home is offline. Keys travel over the authenticated HTTPS or encrypted relay connection and are encrypted with each receiving node's own storage key. Both nodes must be updated and finish syncing before offline sign-in works. Your unshared projects still need home online because their files and agents stay there. A visitor gains no administrator role on the visited node. Username or email conflicts with another account are rejected, not merged automatically.
+
+TOTP replay protection and attempt limits are per node. The same time-window code can work once on each node; disconnected nodes cannot enforce global one-time use. Recovery codes are **not copied** and require home online, so each remains single-use. Manage MFA at home; changes sync to the other nodes. Older nodes without a synced key still need online home verification. Never fall back to password-only sign-in when MFA is required.
+
+Sharing MFA means trusting the eligible machines with your authenticator key, not just your password verifier. Their OS administrators can access it. A disconnected machine learns about password changes, key changes, disabled accounts, or remote revocations only when it reconnects. Locally blocking a home node takes effect immediately and removes its copied accounts and keys.
+
+When signing into your home node through a phone relay, an account without MFA can enroll it during sign-in. Visitors without MFA must enroll it at home first. **Settings > Relay > Joined relays > Let other users sign in to this machine from a phone** controls visitor phone access only. **Settings > Node > Blocked nodes** blocks another home node in both directions, ending its visitors' sessions and stopping sharing between the pair. Leaving the last shared cluster also removes visitor access. MFA does not override these controls.
+
 ## Clusters, sharing, and twins
 
 Install Joint Bob and configure private HTTPS on every machine first. Tailscale Serve is the easiest option, but any mutually reachable trusted HTTPS origin works. On every node, set its name and private HTTPS origin in **Settings > Cluster**, and select a **Joint Bob home folder** in **Settings > Projects**. Before generating or using an invitation, verify each node's `/api/health` URL from every other node; a URL can be syntactically valid and still refuse connections if Joint Bob or its HTTPS proxy is not running.
@@ -321,7 +333,7 @@ Projects created through the UI synchronize through per-project Syncthing folder
 - **Move into Joint Bob** removes the old path.
 - **Copy into Joint Bob** leaves the original folder unchanged.
 
-Joint Bob copies or moves the complete local folder, including `.git`, `node_modules`, and hidden files. `.git`, `node_modules`, build output, environment files, credentials, and logs are excluded from Syncthing at every depth.
+Joint Bob copies or moves the complete local folder, including `.git`, `node_modules`, and hidden files. `.git`, `node_modules`, build output, environment files, credentials, and logs are excluded from Syncthing at every depth. Python environments and installed packages (`.venv`, `venv`, `site-packages`, `dist-packages`, `__pypackages__`), npm/pnpm/Yarn caches, pip/uv caches, NuGet's `.nuget` cache and package archives, and Gradle/Maven caches also stay node-local. Source directories named `packages` or `bin`, package-manager configuration, and lockfiles still sync; each node installs its own dependencies.
 
 Because `.git` stays on each node, a commit pushed from one node would leave the other nodes' git HEAD behind the files they already received. Before every user message and goal turn, Joint Bob checks whether the project is a git repository. If it is, it runs `git fetch` and moves HEAD and the index, never the files, to the upstream commit. It does that only when the files on disk already match that commit, the node has no unpushed commits, and nothing is staged. Commit and push from the same node: an unpushed commit stays on the node that made it.
 

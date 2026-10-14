@@ -102,14 +102,14 @@ export class CronStore {
   }
   get(id: string): CronTask | null {
     const row = this.db.prepare("SELECT * FROM cron_tasks WHERE id = ?").get(id) as { id: string; input: string; next_run: number } | undefined;
-    return row ? { ...cronInputSchema.parse(JSON.parse(row.input)), id: row.id, nextRun: row.next_run, lastRun: this.history(id)[0] ?? null } : null;
+    return row ? { ...cronInputSchema.parse(JSON.parse(row.input)), id: row.id, nextRun: row.next_run, lastRun: this.history(id, 1)[0] ?? null } : null;
   }
   list(projectId?: string): CronTask[] {
     const rows = (projectId === undefined ? this.db.prepare("SELECT id FROM cron_tasks").all() : this.db.prepare("SELECT id FROM cron_tasks WHERE project_id = ?").all(projectId)) as { id: string }[];
     return rows.map(row => this.get(row.id)!);
   }
-  history(id: string): CronRun[] {
-    return this.db.prepare("SELECT id, task_id AS taskId, due_at AS dueAt, status, error, session_id AS sessionId, finished_at AS finishedAt FROM cron_runs WHERE task_id = ? ORDER BY due_at DESC LIMIT 100").all(id) as unknown as CronRun[];
+  history(id: string, limit = 100): CronRun[] {
+    return this.db.prepare("SELECT id, task_id AS taskId, due_at AS dueAt, status, error, session_id AS sessionId, finished_at AS finishedAt FROM cron_runs WHERE task_id = ? ORDER BY due_at DESC LIMIT ?").all(id, limit) as unknown as CronRun[];
   }
   taskForRun(runId: string, sessionId: string): CronTask | null {
     const run = this.db.prepare("SELECT task_id FROM cron_runs WHERE id = ? AND session_id = ? AND status IN ('waiting', 'running')").get(runId, sessionId) as { task_id: string } | undefined;

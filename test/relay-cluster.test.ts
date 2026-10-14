@@ -10,6 +10,7 @@ import path from "node:path";
 import test from "node:test";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 import { signedNodeRequest } from "./signed-node-request.js";
+import { fixtureTotp } from "./mfa-fixture.js";
 
 /** Authenticated JSON call that also accepts empty (204) answers. */
 async function api<T>(node: SeededNode, session: SignedIn, method: string, endpoint: string, body?: unknown): Promise<{ status: number; body: T }> {
@@ -150,25 +151,45 @@ test("relay-only machines share exactly what their clusters allow, and the relay
     assert.equal(status.status, 200, status.text);
     const login = await throughGateway(r.port, host, "POST", "/api/auth/login", { username: envA.username, password: envA.password });
     const wrong = await throughGateway(r.port, host, "POST", "/api/auth/login", { username: envA.username, password: "not-the-password" });
-    assert.equal(login.status, 401, login.text);
-    assert.match(login.text, /two-factor authentication/, "a phone sign-in needs MFA");
-    assert.equal(login.headers["set-cookie"], undefined, "no session is handed out without MFA");
-    assert.deepEqual([wrong.status, wrong.text], [login.status, login.text], "a right password without MFA looks exactly like a wrong one");
+    assert.equal(wrong.status, 401, wrong.text);
+    assert.equal(wrong.headers["set-cookie"], undefined);
     // Failed phone sign-ins never lock the owner out of direct sign-in.
     for (let attempt = 0; attempt < 6; attempt += 1) await throughGateway(r.port, host, "POST", "/api/auth/login", { username: envA.username, password: "not-the-password" });
     assert.equal((await signIn(envA, a)).cookie.length > 0, true);
+    assert.equal(login.status, 200, login.text);
+    const challenge = JSON.parse(login.text) as { mfaRequired: boolean; mfaSetupRequired: boolean; challenge: string };
+    assert.equal(challenge.mfaSetupRequired, true, "phone sign-in starts MFA enrollment for an account without MFA");
+    assert.equal(login.headers["set-cookie"], undefined, "password proof alone cannot open a session");
+    const pending = await throughGateway(r.port, host, "POST", "/api/auth/login/mfa/setup", { challenge: challenge.challenge });
+    assert.equal(pending.status, 200, pending.text);
+    const secret = (JSON.parse(pending.text) as { secret: string }).secret;
+    const invalid = await throughGateway(r.port, host, "POST", "/api/auth/login/mfa/confirm", { challenge: challenge.challenge, code: "00000" });
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.headers["set-cookie"], undefined);
+    const confirmed = await throughGateway(r.port, host, "POST", "/api/auth/login/mfa/confirm", { challenge: challenge.challenge, code: fixtureTotp(secret) });
+    assert.equal(confirmed.status, 200, confirmed.text);
+    const recoveryCodes = (JSON.parse(confirmed.text) as { recoveryCodes: string[] }).recoveryCodes;
+    assert.equal(recoveryCodes.length, 10);
+    assert.match(String(confirmed.headers["set-cookie"]), /__Host-/, "only verified MFA creates a gateway session");
+    assert.equal((await throughGateway(r.port, host, "POST", "/api/auth/login/mfa/confirm", { challenge: challenge.challenge, code: fixtureTotp(secret) })).status, 401, "enrollment proof is single-use");
     const machineRoute = await throughGateway(r.port, host, "POST", "/api/cluster/v2/membership/redeem", {});
     assert.equal(machineRoute.status, 404, "machine endpoints are not reachable through the phone gateway");
     const unknown = await throughGateway(r.port, `nobody.localhost:${r.port}`, "GET", "/");
     assert.equal(unknown.status, 404);
 
+    // Enrollment revoked the earlier local session. Sign in with MFA for further admin calls.
+    const localPending = await fetch(`${a.url}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: envA.username, password: envA.password }) });
+    const localChallenge = (await localPending.json() as { challenge: string }).challenge;
+    const localCompleted = await fetch(`${a.url}/api/auth/login/mfa`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challenge: localChallenge, code: recoveryCodes[0] }) });
+    assert.equal(localCompleted.status, 200);
+    const localSession: SignedIn = { cookie: localCompleted.headers.get("set-cookie")!.split(";")[0], csrfToken: (await localCompleted.json() as { csrfToken: string }).csrfToken };
     // Turning phone sign-in off for A's relay closes its name.
-    const relays = await api<{ relays: Array<{ id: string }> }>(a, sa, "GET", "/relays");
-    assert.equal((await api(a, sa, "PATCH", `/relays/${relays.body.relays[0].id}`, { phoneSignIn: false })).status, 200);
+    const relays = await api<{ relays: Array<{ id: string }> }>(a, localSession, "GET", "/relays");
+    assert.equal((await api(a, localSession, "PATCH", `/relays/${relays.body.relays[0].id}`, { phoneSignIn: false })).status, 200);
     await eventually(async () => assert.equal((await throughGateway(r.port, host, "GET", "/api/auth/status")).status, 404));
 
     // Webhooks need no phone sign-in: the relay hands the call to A on a webhook-only channel.
-    const hook = await api<{ webhook: { id: string }; secret: string; bases: Array<{ id: string; base: string }> }>(a, sa, "POST", "/webhooks", {
+    const hook = await api<{ webhook: { id: string }; secret: string; bases: Array<{ id: string; base: string }> }>(a, localSession, "POST", "/webhooks", {
       name: "Relay hook", target: { kind: "project", projectId: forX.id }, context: "Triage this.",
     });
     assert.equal(hook.status, 201, JSON.stringify(hook.body));
@@ -184,13 +205,13 @@ test("relay-only machines share exactly what their clusters allow, and the relay
     assert.equal((await throughGateway(r.port, relayHost, "POST", `/hooks/${names.get(a.nodeId)}/${hook.body.secret.slice(1)}x`, {})).status, 404, "a wrong secret finds nothing");
     assert.equal((await throughGateway(r.port, relayHost, "POST", `/hooks/nobody/${hook.body.secret}`, {})).status, 404, "an unknown machine finds nothing");
     await eventually(async () => {
-      const deliveries = await api<{ deliveries: Array<{ status: string }> }>(a, sa, "GET", `/webhooks/${hook.body.webhook.id}/deliveries`);
+      const deliveries = await api<{ deliveries: Array<{ status: string }> }>(a, localSession, "GET", `/webhooks/${hook.body.webhook.id}/deliveries`);
       assert.ok(deliveries.body.deliveries.length >= 1, "the call was recorded");
     });
-    const regenerated = await api<{ secret: string }>(a, sa, "POST", `/webhooks/${hook.body.webhook.id}/regenerate`, {});
+    const regenerated = await api<{ secret: string }>(a, localSession, "POST", `/webhooks/${hook.body.webhook.id}/regenerate`, {});
     assert.equal((await throughGateway(r.port, relayHost, "POST", hookPath, {})).status, 404, "the old address stops working");
     assert.equal((await throughGateway(r.port, relayHost, "POST", `/hooks/${names.get(a.nodeId)}/${regenerated.body.secret}`, {})).status, 202);
-    assert.equal((await api(a, sa, "DELETE", `/webhooks/${hook.body.webhook.id}`)).status, 204);
+    assert.equal((await api(a, localSession, "DELETE", `/webhooks/${hook.body.webhook.id}`)).status, 204);
     assert.equal((await throughGateway(r.port, relayHost, "POST", `/hooks/${names.get(a.nodeId)}/${regenerated.body.secret}`, {})).status, 404, "a deleted webhook finds nothing");
   } finally {
     await Promise.all(children.map(stopDevNode));

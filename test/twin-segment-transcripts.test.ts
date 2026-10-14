@@ -137,6 +137,15 @@ test("one transcript the twin cannot take does not hold back the rest of the pro
       .filter((conflict) => conflict.projectId === projectId).map(({ engine, sessionId }) => ({ engine, sessionId }));
     assert.deepEqual(await conflicts(), [{ engine: "pi", sessionId: blocked }]);
     const settle = { projectId, engine: "pi", sessionId: blocked };
+    const forkEndpoint = `/twins/${invitation.body.relationshipId}/transcript-conflicts/fork`;
+    const forked = await api<{ session: { id: string; path: string; title: string } }>(right, sb, "POST", forkEndpoint, settle);
+    assert.equal(forked.status, 201, JSON.stringify(forked.body));
+    assert.notEqual(forked.body.session.id, blocked);
+    assert.match(forked.body.session.title, /^\[Local fork\]/);
+    assert.match(await readFile(forked.body.session.path, "utf8"), /Local edit/);
+    assert.match(await readFile(path.join(b.home, ".pi", "sessions", `${blocked}.jsonl`), "utf8"), /Local edit/, "fork leaves the original bytes untouched");
+    assert.deepEqual(await conflicts(), [{ engine: "pi", sessionId: blocked }], "fork does not silently settle the conflict");
+    assert.equal((await api(right, sb, "POST", forkEndpoint, { ...settle, sessionId: waiting })).status, 409, "an ordinary remote conversation cannot use the conflict-only fork");
     assert.equal((await api(right, sb, "POST", `/twins/${invitation.body.relationshipId}/transcript-conflicts/accept`, settle)).status, 400, "replacing local history needs explicit confirmation");
     const settled = await api<{ saved: string }>(right, sb, "POST", `/twins/${invitation.body.relationshipId}/transcript-conflicts/accept`, { ...settle, confirmReplaceLocal: true });
     assert.equal(settled.status, 200);

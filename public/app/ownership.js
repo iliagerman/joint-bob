@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { reconcileTranscriptConflict } from "./transcript-conflict.js";
 import { renderConversationLock } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { shortSessionTitle } from "./layout.js";
@@ -52,6 +53,7 @@ function waitForLockOwnershipSync() {
 async function takeLockedConversationOwnership() {
   const session = activeChatSession();
   if (shared.ownershipWait || shared.ownershipTaking || state.activeTaskId || !state.activeProjectId || !session) return;
+  const projectId = state.activeProjectId;
   const destination = state.sessionNodes.find((node) => node.id === state.activeNodeId);
   if (!destination?.mapped) throw new Error("Map project first on this node");
   const proceed = await waitForLockOwnershipSync();
@@ -68,7 +70,10 @@ async function takeLockedConversationOwnership() {
     resetOwnershipWait();
     openSession(result.sessionPath, shortSessionTitle(session));
     toast(result.pendingPeerIds?.length ? "Ownership taken; offline nodes will update when they return" : "Ownership taken");
-  } catch (error) { resetOwnershipWait(); throw error; }
+  } catch (error) {
+    resetOwnershipWait();
+    if (!await reconcileTranscriptConflict(error, { projectId, engine: session.harnessId, sessionId: session.id })) throw error;
+  }
 }
 
 elements.conversationLockTakeButton.addEventListener("click", () => takeLockedConversationOwnership().catch((error) => { resetOwnershipWait(); toast(error.message, 8000); }));

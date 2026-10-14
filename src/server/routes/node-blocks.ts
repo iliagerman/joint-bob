@@ -7,7 +7,8 @@ import { listNodeBlocks } from "../../node-blocks.js";
 import { applyAccountSnapshot } from "../../user-replication.js";
 import { requireAdmin } from "../admin.js";
 import { accountNodes, changeNodeBlock, NodeBlockError, receiveBlockNotice } from "../account-sync.js";
-import type { AuthSession } from "../../auth.js";
+import { AuthError, type AuthSession } from "../../auth.js";
+import { receiveRemoteMfa } from "../remote-mfa.js";
 import { sendError } from "../http-auth.js";
 import { replicationPeers } from "../replication-v2.js";
 import { app } from "../state.js";
@@ -19,13 +20,28 @@ function machineSender(locals: Record<string, unknown>): string | undefined {
   return locals.machineProtocol === 2 && typeof locals.machineNodeId === "string" ? locals.machineNodeId : undefined;
 }
 
-app.post("/api/cluster/v2/accounts", async (request, response, next) => {
+app.post("/api/cluster/v2/accounts/mfa", async (request, response, next) => {
+  try {
+    const sender = machineSender(response.locals);
+    if (!sender) { sendError(response, 401, "Unauthorized"); return; }
+    await receiveRemoteMfa(sender, request.body);
+    response.json({ verified: true });
+  } catch (error) {
+    if (error instanceof AuthError) { sendError(response, error.statusCode, error.message); return; }
+    if (error instanceof z.ZodError) { sendError(response, 400, "Invalid MFA request"); return; }
+    next(error);
+  }
+});
+
+app.post(["/api/cluster/v2/accounts", "/api/cluster/v2/accounts/offline-mfa"], async (request, response, next) => {
   try {
     const sender = machineSender(response.locals);
     if (!sender) { sendError(response, 401, "Unauthorized"); return; }
     const db = await clusterV2Database(), local = await getClusterNode();
     // Sign-in records come only from a twin or a node this one shares a cluster with.
     if (!replicationPeers(db, local.id).some((peer) => peer.nodeId === sender)) { sendError(response, 403, "Not a peer of this node"); return; }
+    const offline = request.path.toLowerCase().replace(/\/+$/, "").endsWith("/offline-mfa");
+    if (request.body?.version !== (offline ? 3 : 2)) { sendError(response, 400, "Invalid account snapshot version"); return; }
     response.json(applyAccountSnapshot(db, local.id, sender, request.body));
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, "Invalid account snapshot"); return; }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, StatementSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
 const input = () => ({ name: "Report", prompt: "Report progress", projectId: "project", ownerNodeId: randomUUID(), engine: "claude" as const, sessionId: null, enabled: true, schedule: { frequency: "daily" as const, hour: 9, minute: 15, weekday: 1, timezone: "America/New_York" } });
@@ -112,6 +112,28 @@ test("SQLite claims are owner-only, unique, non-overlapping and survive reopen; 
     store.delete(task.id);
     assert.equal(store.get(task.id), null);
   } finally { db.close(); }
+});
+
+test("reading a task fetches only its latest run, while history still returns a hundred", async t => {
+  const { CronStore } = await import("../src/cron.js");
+  const db = new DatabaseSync(":memory:");
+  t.after(() => db.close());
+  const store = new CronStore(db), task = store.create(input());
+  const ids = Array.from({ length: 150 }, () => randomUUID());
+  const insert = db.prepare("INSERT INTO cron_runs VALUES(?,?,?,'succeeded',NULL,NULL,?)");
+  ids.forEach((id, due) => insert.run(id, task.id, due, due + 1));
+  let read = 0;
+  const all = StatementSync.prototype.all;
+  const spy = t.mock.method(StatementSync.prototype, "all", function (this: StatementSync, ...args: Parameters<StatementSync["all"]>) {
+    const rows = all.apply(this, args);
+    read += rows.length;
+    return rows;
+  });
+  assert.equal(store.get(task.id)?.lastRun?.id, ids.at(-1));
+  spy.mock.restore();
+  assert.equal(read, 1, "task polls must not load and discard 99 historical runs");
+  assert.equal(store.history(task.id).length, 100);
+  assert.equal(store.history(task.id)[0].id, ids.at(-1));
 });
 
 test("interrupted scheduled runs pause on restart and never replay an uncertain dispatch", async () => {

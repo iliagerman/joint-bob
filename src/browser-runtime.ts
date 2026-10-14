@@ -341,7 +341,8 @@ export class BrowserRuntime {
 
   async list(identity?: { projectId?: string; engine?: string; conversationId?: string }): Promise<BrowserSessionView[]> {
     void this.ready();
-    return Promise.all(this.store.list(identity).map(row => this.view(row.id)));
+    const nodeId = (await getClusterNode()).id;
+    return Promise.all(this.store.list(identity).map(row => this.view(row.id, row, nodeId)));
   }
 
   async get(id: string): Promise<BrowserSessionView> {
@@ -349,13 +350,12 @@ export class BrowserRuntime {
     return this.view(id);
   }
 
-  private async view(id: string): Promise<BrowserSessionView> {
-    const row = this.store.get(id);
+  private async view(id: string, row = this.store.get(id), nodeId?: string): Promise<BrowserSessionView> {
     const live = this.sessions.get(id);
     const profileLabel = row.profileId ? this.store.profileOrNull(row.profileId)?.label : undefined;
     if (live) this.scheduleLoginDetection(live);
     const tabs = live ? await Promise.all([...live.pages].map(async ([id, page]) => ({ id, url: page.url(), title: live.restoring ? page.url() : await page.title().catch(() => page.url()) }))) : [];
-    return { ...row, nodeId: (await getClusterNode()).id, profileLabel, tabs, loginRequest: this.store.loginRequest(id), activePageId: live?.activePageId ?? null, owner: (live ? live.human : row.restoreOnRestart && this.store.recoveryHuman(id)) ? "human" : "agent", fileChooser: Boolean(live?.chooser), fileChooserRequest: live?.chooser ? { id: live.chooser.id, pageId: live.chooser.pageId } : null, dialog: live?.dialog ? { id: live.dialog.id, pageId: live.dialog.pageId, type: live.dialog.dialog.type(), message: live.dialog.dialog.message(), defaultValue: live.dialog.dialog.defaultValue() } : null, downloads: this.store.downloads(id) };
+    return { ...row, nodeId: nodeId ?? (await getClusterNode()).id, profileLabel, tabs, loginRequest: this.store.loginRequest(id), activePageId: live?.activePageId ?? null, owner: (live ? live.human : row.restoreOnRestart && this.store.recoveryHuman(id)) ? "human" : "agent", fileChooser: Boolean(live?.chooser), fileChooserRequest: live?.chooser ? { id: live.chooser.id, pageId: live.chooser.pageId } : null, dialog: live?.dialog ? { id: live.dialog.id, pageId: live.dialog.pageId, type: live.dialog.dialog.type(), message: live.dialog.dialog.message(), defaultValue: live.dialog.dialog.defaultValue() } : null, downloads: this.store.downloads(id) };
   }
 
   /** Conversation-grant gate shared by every start path. Grants are the only way a

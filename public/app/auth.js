@@ -23,6 +23,7 @@ import { watchVisitorProfile } from "./roaming.js";
 
 // A short-lived password proof, held only in memory. It never authorizes app requests.
 let mfaChallenge = "";
+let mfaSetup = false;
 
 async function migrateLegacyPreferences(preferences) {
   if (preferences.legacyMigrated) return preferences;
@@ -111,6 +112,11 @@ export function revealApplication() {
 
 function applyAuthStatus(status) {
   mfaChallenge = "";
+  mfaSetup = false;
+  document.querySelector("#loginMfaSetupKey").value = "";
+  document.querySelector("#loginMfaRecoveryCodes").value = "";
+  document.querySelector("#loginMfaSetupLabel").hidden = true;
+  document.querySelector("#loginMfaRecoveryLabel").hidden = true;
   elements.loginMfaCodeInput.value = "";
   elements.loginMfaCodeInput.required = false;
   elements.loginMfaCodeLabel.hidden = true;
@@ -264,10 +270,22 @@ async function submitLogin(event) {
       await initializeApplication();
       return;
     }
+    if (document.querySelector("#loginMfaRecoveryLabel").hidden === false) {
+      applyAuthStatus({ authenticated: true, setupRequired: false });
+      elements.loginDialog.close();
+      await initializeApplication();
+      return;
+    }
     const response = mfaChallenge
-      ? await api("/api/auth/login/mfa", { method: "POST", body: JSON.stringify({ challenge: mfaChallenge, code: elements.loginMfaCodeInput.value.trim() }) })
+      ? await api(mfaSetup ? "/api/auth/login/mfa/confirm" : "/api/auth/login/mfa", { method: "POST", body: JSON.stringify({ challenge: mfaChallenge, code: elements.loginMfaCodeInput.value.trim() }) })
       : await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: elements.loginUsernameInput.value.trim(), password: elements.loginPasswordInput.value }) });
     if (response.mfaRequired) {
+      if (response.mfaSetupRequired) {
+        const setup = await api("/api/auth/login/mfa/setup", { method: "POST", body: JSON.stringify({ challenge: response.challenge }) });
+        document.querySelector("#loginMfaSetupKey").value = setup.secret;
+        document.querySelector("#loginMfaSetupLabel").hidden = false;
+        mfaSetup = true;
+      }
       mfaChallenge = response.challenge;
       elements.loginPasswordInput.value = "";
       elements.loginPasswordInput.required = false;
@@ -277,9 +295,30 @@ async function submitLogin(event) {
       elements.loginMfaCodeLabel.hidden = false;
       elements.loginMfaCodeInput.required = true;
       elements.loginBackButton.hidden = false;
-      elements.loginMessage.textContent = "Enter a fresh 6-digit authenticator code or an unused recovery code. Sign-in expires after 5 minutes.";
-      elements.loginSubmitButton.textContent = "Verify and sign in";
+      elements.loginMessage.textContent = mfaSetup
+        ? "Add this key to an offline authenticator (6 digits, 30 seconds, SHA-1), then enter its code. Setup expires after 5 minutes."
+        : response.remoteMfa
+        ? response.offlineMfa
+          ? "Use the same authenticator you set up at home. Authenticator codes work even when home is offline; recovery codes need home online. Sign-in expires after 5 minutes."
+          : "Use your home node's authenticator or an unused recovery code. MFA has not synced here yet, so home must be online. Sign-in expires after 5 minutes."
+        : "Enter a fresh 6-digit authenticator code or an unused recovery code. Sign-in expires after 5 minutes.";
+      elements.loginSubmitButton.textContent = mfaSetup ? "Enable MFA and sign in" : "Verify and sign in";
       elements.loginMfaCodeInput.focus();
+      return;
+    }
+    if (response.recoveryCodes) {
+      mfaChallenge = "";
+      mfaSetup = false;
+      document.querySelector("#loginMfaSetupKey").value = "";
+      document.querySelector("#loginMfaSetupLabel").hidden = true;
+      elements.loginMfaCodeInput.value = "";
+      elements.loginMfaCodeLabel.hidden = true;
+      elements.loginMfaCodeInput.required = false;
+      elements.loginBackButton.hidden = true;
+      document.querySelector("#loginMfaRecoveryCodes").value = response.recoveryCodes.join("\n");
+      document.querySelector("#loginMfaRecoveryLabel").hidden = false;
+      elements.loginMessage.textContent = "MFA enabled. Save these recovery codes before continuing.";
+      elements.loginSubmitButton.textContent = "I saved these codes";
       return;
     }
     applyAuthStatus({ authenticated: true, setupRequired: false, ...response });
@@ -295,6 +334,10 @@ async function submitLogin(event) {
   }
 }
 
+elements.loginDialog.addEventListener("close", () => {
+  document.querySelector("#loginMfaSetupKey").value = "";
+  document.querySelector("#loginMfaRecoveryCodes").value = "";
+});
 elements.loginBackButton.addEventListener("click", () => {
   applyAuthStatus({ authenticated: false, setupRequired: false });
   loginError();

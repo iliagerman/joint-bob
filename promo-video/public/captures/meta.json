@@ -1,0 +1,314 @@
+{
+  "laptop": {
+    "file": "laptop.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 29,
+    "events": {
+      "send": 4.121,
+      "serverOpen": 6.454,
+      "phoneOpen": 11.767,
+      "firstTurnDone": 15.584,
+      "phoneSend": 17.64,
+      "phoneFollow": 19.327,
+      "shipped": 26.903
+    }
+  },
+  "server": {
+    "file": "server.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 94.72,
+    "events": {
+      "send": 4.115,
+      "serverOpen": 6.448,
+      "phoneOpen": 11.761,
+      "firstTurnDone": 15.578,
+      "phoneSend": 17.634,
+      "phoneFollow": 19.321,
+      "shipped": 26.897,
+      "teammateSend": 71.231,
+      "teammateAnswered": 74.061,
+      "forkClick": 77.418,
+      "forked": 77.651,
+      "forkSend": 80.946,
+      "forkAnswered": 83.789
+    }
+  },
+  "phone": {
+    "file": "phone.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 45.04,
+    "events": {
+      "send": 4.12,
+      "serverOpen": 6.453,
+      "phoneOpen": 11.766,
+      "firstTurnDone": 15.583,
+      "phoneSend": 17.639,
+      "phoneFollow": 19.326,
+      "shipped": 26.902
+    }
+  },
+  "morning": {
+    "file": "morning.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 4.36,
+    "events": {
+      "inbox": 0.924,
+      "open": 1.877,
+      "report": 2.101
+    }
+  },
+  "costs": {
+    "file": "costs.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 13.89,
+    "events": {
+      "overview": 1.654,
+      "compare": 5.663,
+      "changes": 7.143,
+      "insights": 11.195
+    }
+  },
+  "webhook": {
+    "file": "webhook.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 31.09,
+    "events": {
+      "tab": 3.91,
+      "form": 5.703,
+      "typed": 9.76,
+      "created": 11.415,
+      "closed": 15.54,
+      "alert": 16.819,
+      "appeared": 17.801,
+      "open": 20.013,
+      "reported": 28.767
+    }
+  },
+  "teammate": {
+    "file": "teammate.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 18.1,
+    "events": {
+      "send": -64.647,
+      "serverOpen": -62.314,
+      "phoneOpen": -57.001,
+      "firstTurnDone": -53.184,
+      "phoneSend": -51.128,
+      "phoneFollow": -49.441,
+      "shipped": -41.865,
+      "teammateSend": 2.469,
+      "teammateAnswered": 5.299,
+      "forkClick": 8.656,
+      "forked": 8.889,
+      "forkSend": 12.184,
+      "forkAnswered": 15.027
+    }
+  },
+  "schedule": {
+    "file": "schedule.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 29.86,
+    "events": {
+      "dialog": 3.835,
+      "form": 5.332,
+      "typed": 9.65,
+      "saved": 11.713,
+      "closed": 15.08,
+      "run": 16.403,
+      "appeared": 17.699,
+      "open": 19.665,
+      "reported": 27.205
+    }
+  },
+  "scheduleInbox": {
+    "file": "scheduleInbox.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 4.36,
+    "events": {
+      "inbox": -0.016,
+      "open": 0.92,
+      "report": 1.01
+    }
+  },
+  "moveLaptop": {
+    "file": "moveLaptop.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 37.99,
+    "events": {
+      "pick": 2.079,
+      "locked": 2.163,
+      "take": 4.256,
+      "taken": 9.574,
+      "go": 13.092,
+      "serverOpen": 15.571,
+      "phoneOpen": 19.66,
+      "done": 30.012,
+      "phoneSend": 32.589,
+      "merged": 36.127
+    }
+  },
+  "moveServer": {
+    "file": "moveServer.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 53.94,
+    "events": {
+      "pick": 2.076,
+      "locked": 2.16,
+      "take": 4.253,
+      "taken": 9.571,
+      "go": 13.089,
+      "serverOpen": 15.568,
+      "phoneOpen": 19.657,
+      "done": 30.009,
+      "phoneSend": 32.586,
+      "merged": 36.124
+    }
+  },
+  "movePhone": {
+    "file": "movePhone.mp4",
+    "width": 1206,
+    "height": 2622,
+    "seconds": 73.09,
+    "events": {
+      "pick": 2.075,
+      "locked": 2.159,
+      "take": 4.252,
+      "taken": 9.57,
+      "go": 13.088,
+      "serverOpen": 15.567,
+      "phoneOpen": 19.656,
+      "done": 30.008,
+      "phoneSend": 32.585,
+      "merged": 36.123
+    }
+  },
+  "clusterOwner": {
+    "file": "clusterOwner.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 32.16,
+    "events": {
+      "tab": 2.46,
+      "created": 6.07,
+      "invited": 9.149,
+      "pasted": 14.259,
+      "joined": 15.571,
+      "chosen": 19.024,
+      "shared": 21.574,
+      "received": 28.107,
+      "listed": 30.164
+    }
+  },
+  "clusterMate": {
+    "file": "clusterMate.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 39.92,
+    "events": {
+      "tab": -5.436,
+      "created": -1.826,
+      "invited": 1.253,
+      "pasted": 6.363,
+      "joined": 7.675,
+      "chosen": 11.128,
+      "shared": 13.678,
+      "received": 20.211,
+      "listed": 22.268
+    }
+  },
+  "browser": {
+    "file": "browser.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 37.55,
+    "events": {
+      "send": 2.983,
+      "started": 4.977,
+      "panel": 7.499,
+      "live": 9.058,
+      "adding": 12.452,
+      "checkout": 14.765,
+      "applying": 16.563,
+      "reproduced": 19.891,
+      "retry": 21.725,
+      "applies": 26.62,
+      "done": 29.498,
+      "control": 32.526,
+      "resumed": 35.101
+    }
+  },
+  "secretsOwner": {
+    "file": "secretsOwner.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 52.84,
+    "events": {
+      "tab": 4.773,
+      "form": 6.555,
+      "typed": 11.938,
+      "replicate": 13.614,
+      "saved": 15.619,
+      "twin": 21.854,
+      "shareDialog": 24.733,
+      "shared": 28.572,
+      "mate": 32.106,
+      "scope": 37.458,
+      "attached": 39.97,
+      "send": 44.854,
+      "used": 50.176
+    }
+  },
+  "secretsTwin": {
+    "file": "secretsTwin.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 71.83,
+    "events": {
+      "tab": 4.772,
+      "form": 6.554,
+      "typed": 11.937,
+      "replicate": 13.613,
+      "saved": 15.618,
+      "twin": 21.853,
+      "shareDialog": 24.732,
+      "shared": 28.571,
+      "mate": 32.105,
+      "scope": 37.457,
+      "attached": 39.969,
+      "send": 44.853,
+      "used": 50.175
+    }
+  },
+  "secretsMate": {
+    "file": "secretsMate.mp4",
+    "width": 2560,
+    "height": 1600,
+    "seconds": 93.21,
+    "events": {
+      "tab": -2.691,
+      "form": -0.909,
+      "typed": 4.474,
+      "replicate": 6.15,
+      "saved": 8.155,
+      "twin": 14.39,
+      "shareDialog": 17.269,
+      "shared": 21.108,
+      "mate": 24.642,
+      "scope": 29.994,
+      "attached": 32.506,
+      "send": 37.39,
+      "used": 42.712
+    }
+  }
+}

@@ -65,6 +65,28 @@ const projectIgnorePatterns = [
   "(?d)**/node_modules/**",
   "(?d).venv/",
   "(?d)venv/",
+  "(?d)site-packages",
+  "(?d)dist-packages",
+  "(?d)__pypackages__",
+  "(?d).tox",
+  "(?d).nox",
+  "(?d).eggs",
+  "(?d)*.egg-info",
+  "(?d).npm",
+  "(?d).pnpm-store",
+  "(?d).yarn/cache",
+  "(?d).yarn/unplugged",
+  "(?d).cache/pip",
+  "(?d).cache/uv",
+  "(?d).nuget",
+  "(?d).gradle",
+  "(?d).m2",
+  "(?d)(?i)*.pyc",
+  "(?d)(?i)*.pyo",
+  "(?d)(?i)*.whl",
+  "(?d)(?i)*.egg",
+  "(?d)(?i)*.nupkg",
+  "(?d)(?i)*.snupkg",
   "(?d)dist/",
   "(?d)build/",
   "(?d)coverage/",
@@ -278,8 +300,10 @@ export async function reconcileSyncthingProjectFolders(projects: Array<{ syncFol
   // created must not hold startup readiness; the sync check reports the missing folder.
   const folders = await request<SyncthingFolder[]>("/rest/config/folders");
   const configured = new Set(folders.map((folder) => folder.id));
-  await Promise.all(folderIds.filter((folderId) => configured.has(folderId)).map(setProjectIgnores));
-  await Promise.all(folders.filter((folder) => folder.id.startsWith(WORKTREE_FOLDER_PREFIX) && folder.order !== "smallestFirst").map((folder) =>
+  const worktreeFolders = folders.filter((folder) => folder.id.startsWith(WORKTREE_FOLDER_PREFIX));
+  const managedIds = new Set([...folderIds.filter((id) => configured.has(id)), ...worktreeFolders.map((folder) => folder.id)]);
+  await Promise.all([...managedIds].map(setProjectIgnores));
+  await Promise.all(worktreeFolders.filter((folder) => folder.order !== "smallestFirst").map((folder) =>
     request<void>(`/rest/config/folders/${encodeURIComponent(folder.id)}`, { method: "PUT", body: JSON.stringify({ ...folder, order: "smallestFirst" }) })));
 }
 

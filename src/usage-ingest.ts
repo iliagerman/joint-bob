@@ -122,7 +122,10 @@ export async function usageIngestIdle(): Promise<void> {
   while (draining) await draining;
 }
 
-/** A requested refresh bypasses the live-transcript debounce but keeps fingerprint dedup. */
+/**
+ * Runs work that schedules imports, bypasses the live-transcript debounce, and waits for them,
+ * so budget checks and requested refreshes read current spend while keeping fingerprint dedup.
+ */
 export async function withFreshUsage<T>(work: () => Promise<T>): Promise<T> {
   forcedRefreshes++;
   try { const value = await work(); await usageIngestIdle(); return value; }

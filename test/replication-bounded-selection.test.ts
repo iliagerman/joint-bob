@@ -28,6 +28,39 @@ test("selective outbox allocates only eligible deliveries and revisits future gr
   }
 });
 
+test("revoked queued events cannot starve later eligible retries", async t => {
+  const db = new DatabaseSync(path.join(resolveDataDirectory(), "node.db"));
+  ensureReplicationSchema(db);
+  const peer = "revoked-backlog", ids: string[] = [];
+  const at = new Date("2026-06-01T00:00:00.000Z");
+  db.exec("BEGIN");
+  for (let i = 0; i < 350; i++) {
+    const id = enqueueReplicationEvent(db, { originNodeId: "local", entityType: "project.lock", entityKey: `retry-${i}`, operation: "upsert", payload: { projectId: `p-${i}` } }).id;
+    ids.push(id);
+    db.prepare("INSERT INTO replication_deliveries VALUES(?,?,1,?,NULL,NULL)").run(id, peer, new Date(at.getTime() - (350 - i) * 1000).toISOString());
+  }
+  db.exec("COMMIT");
+  t.after(() => {
+    db.prepare("DELETE FROM replication_deliveries WHERE peer_id=?").run(peer);
+    for (const id of ids) db.prepare("DELETE FROM replication_outbox WHERE event_id=?").run(id);
+    db.close();
+  });
+  let found: string[] = [];
+  // Advance the clock inside a sharing check to prove each pass respects its time budget.
+  t.mock.timers.enable({ apis: ["Date"], now: at.getTime() });
+  for (let pass = 0; pass < 60 && !found.length; pass++) {
+    let checked = 0;
+    found = (await eventsForPeer(peer, at, event => { checked++; t.mock.timers.tick(5); return event.id === ids.at(-1); })).map(event => event.id);
+    assert.ok(checked <= 9, `even retry checks must yield within the 40 ms budget, checked ${checked}`);
+  }
+  assert.deepEqual(found, [ids.at(-1)], "revoked deliveries ahead of a due event must not block it forever");
+  await recordPeerReceipt(peer, found);
+  // A restored grant is still discovered when the retry cursor wraps.
+  let restored: string[] = [];
+  for (let pass = 0; pass < 40 && !restored.length; pass++) restored = (await eventsForPeer(peer, at, event => event.id === ids[0])).map(event => event.id);
+  assert.deepEqual(restored, [ids[0]]);
+});
+
 test("the search of older events advances a little on each pass and never holds up new ones", async () => {
   const db = new DatabaseSync(path.join(resolveDataDirectory(), "node.db"));
   ensureReplicationSchema(db);

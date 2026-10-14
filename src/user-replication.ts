@@ -4,8 +4,9 @@
  * A home node sends every peer one signed snapshot: the local accounts allowed to sign in
  * there. The request signature proves the sender, so the sender is the home node of every
  * account in it. A snapshot replaces the previous one, which is how a removed account, a
- * block or a left cluster takes the copies away again. MFA secrets are encrypted with the
- * home node's key and never travel; a peer only learns that a second factor is required.
+ * block or a left cluster takes the copies away again. Version 3 carries TOTP keys over the
+ * encrypted machine transport; receivers store them under their own key for offline login.
+ * Recovery codes remain at home. Version 2 peers continue to receive only the MFA policy.
  */
 import { adminAccountId } from "./ownership.js";
 import { createHash } from "node:crypto";
@@ -28,14 +29,17 @@ const accountSchema = z.object({
   passwordHash: hex,
   passwordSalt: hex,
   mfaRequired: z.boolean(),
+  mfaSecret: z.string().regex(/^[A-Z2-7]{32}$/).nullable().optional(),
   updatedAt: z.string().max(40),
   clusterIds: z.array(z.string().uuid()).max(200),
 }).strict();
 
 export const accountSnapshotSchema = z.object({
-  version: z.literal(2),
+  version: z.union([z.literal(2), z.literal(3)]),
   accounts: z.array(accountSchema).max(1000),
-}).strict();
+}).strict().refine(snapshot => snapshot.accounts.every(account => snapshot.version === 3
+  ? account.mfaSecret !== undefined && Boolean(account.mfaSecret) === account.mfaRequired
+  : account.mfaSecret === undefined), "Invalid MFA snapshot");
 
 export type AccountSnapshot = z.infer<typeof accountSnapshotSchema>;
 
@@ -48,14 +52,15 @@ export function ensureAccountReplicationSchema(db: DatabaseSync): void {
  * The local accounts allowed to sign in on `peer`: on a twin, everyone (it's the same node);
  * elsewhere, each person who joined a cluster the peer is in, with those clusters named.
  */
-export function accountSnapshotFor(db: DatabaseSync, local: string, peer: string): AccountSnapshot {
-  if (isNodeBlocked(db, local, peer)) return { version: 2, accounts: [] };
+export function accountSnapshotFor(db: DatabaseSync, local: string, peer: string, includeMfa = false): AccountSnapshot {
+  const version = includeMfa ? 3 : 2;
+  if (isNodeBlocked(db, local, peer)) return { version, accounts: [] };
   const twin = isTrustedTwin(db, local, peer), admin = adminAccountId(db);
   const shared = listSharingMemberships(db, local).map((membership) => membership.clusterId)
     .filter((clusterId) => listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === peer));
   return {
-    version: 2,
-    accounts: localAccountsForReplication().filter((account) => account.accountId).map((account) => ({ account, clusterIds: accountClusterIds(db, account.accountId, shared) }))
+    version,
+    accounts: localAccountsForReplication(includeMfa).filter((account) => account.accountId).map((account) => ({ account, clusterIds: accountClusterIds(db, account.accountId, shared) }))
       // A twin is the admin's own second machine: it holds the admin's sign-in record, and a
       // member's only when that member joined a cluster the twin is in, like any other node.
       .filter(({ account, clusterIds }) => (twin && account.accountId === admin) || clusterIds.length).map(({ account, clusterIds }) => ({
@@ -65,6 +70,7 @@ export function accountSnapshotFor(db: DatabaseSync, local: string, peer: string
       passwordHash: account.passwordHash.toString("hex"),
       passwordSalt: account.passwordSalt.toString("hex"),
       mfaRequired: account.mfaEnabled,
+      ...(includeMfa ? { mfaSecret: account.mfaSecret ?? null } : {}),
       updatedAt: account.updatedAt,
       clusterIds,
     })),
@@ -81,7 +87,7 @@ export function accountSnapshotsDue(db: DatabaseSync, local: string, peers: stri
   ensureAccountReplicationSchema(db);
   const due: Array<{ peer: string; snapshot: AccountSnapshot; digest: string }> = [];
   for (const peer of peers) {
-    const snapshot = accountSnapshotFor(db, local, peer);
+    const snapshot = accountSnapshotFor(db, local, peer, true);
     const digest = snapshotDigest(snapshot);
     const delivered = db.prepare("SELECT digest, delivered_at FROM account_replication_deliveries WHERE peer_id = ?").get(peer) as { digest: string; delivered_at: string } | undefined;
     // `now = 0` asks only whether the current snapshot was delivered at all.
@@ -119,6 +125,7 @@ export function applyAccountSnapshot(db: DatabaseSync, local: string, sender: st
         homeNodeId: sender,
         accountId: account.accountId,
         mfaRequired: account.mfaRequired,
+        mfaSecret: account.mfaSecret,
         clusterIds: account.clusterIds,
       });
       applied.push(account.username.toLowerCase());

@@ -1,4 +1,5 @@
 import { reloadTravellingPreferences } from "./roaming.js";
+import { isTranscriptConflict, reconcileTranscriptConflict } from "./transcript-conflict.js";
 import { loadWorktrees } from "./worktrees.js";
 import { harnessIdFromPath, harnessLabel } from "../harness-metadata.js";
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
@@ -245,6 +246,14 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     if (state.socket !== socket) return;
     console.info("Conversation socket closed", { code: event.code, reason: event.reason || "none", engine: state.engine });
     stopHeartbeat();
+    if (isTranscriptConflict(event.reason)) {
+      setStatus("History needs reconciliation", false);
+      setConnecting(false);
+      setComposerEnabled(false);
+      if (elements.messages.querySelector(".empty-state")) showChatEmptyState("Two conversation histories", "Choose how to reconcile them, then reopen this conversation. Both versions are kept until you decide.");
+      void reconcileTranscriptConflict(event.reason, { projectId: state.activeProjectId, engine: state.engine, sessionId: state.activeSessionId });
+      return;
+    }
     const refused = event.code === REFUSED_CLOSE;
     refusedCloses = refused ? refusedCloses + 1 : 0;
     setStatus(refused && event.reason ? event.reason : "Connecting…", false, true);
@@ -638,7 +647,9 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
       state.toolsLoading = false;
       renderToolsDialog();
     }
-    toast(payload.error, 6000);
+    void reconcileTranscriptConflict(payload.error, {
+      projectId: state.activeProjectId, engine: state.engine, sessionId: state.activeSessionId,
+    }).then((handled) => { if (!handled) toast(payload.error, 6000); });
   }
 }
 

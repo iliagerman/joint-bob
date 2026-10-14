@@ -1,5 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
-import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks, loadTerminalPolicy, loadUsers } from "./node-admin.js";
+import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks, loadTerminalPolicy, loadUsers, saveChangedTerminalPolicy } from "./node-admin.js";
 import { loadMyNodes } from "./roaming.js";
 import { loadBrowserStatus } from "./browser.js";
 import { loadBrowserProfileDirectory } from "./browser-profiles-settings.js";
@@ -368,6 +368,10 @@ async function loadSettings() {
   harnessDescriptors = harnessBody.harnesses.filter(({ configuration }) => configuration);
   clearedHarnessesOnSave.clear();
   elements.settingsUsername.textContent = state.username;
+  document.querySelector("#settingsEmailField").hidden = state.isRemoteLogin;
+  document.querySelector("#settingsEmail").value = state.email;
+  document.querySelector("#settingsEmail").disabled = state.isRemoteLogin;
+  document.querySelector("#settingsEmailStatus").textContent = "";
   for (const input of [elements.settingsCurrentPassword, elements.settingsNewPassword, elements.settingsNewPasswordRepeat]) input.value = "";
   renderHarnessSettings(harnessDescriptors, settings, defaults);
   void fillShortcutSettings();
@@ -382,9 +386,6 @@ async function loadSettings() {
   elements.settingsDigestAttachments.checked = settings.digestAttachments;
   document.querySelector("#settingsShowProjectsOnOtherNodes").checked = settings.showProjectsOnOtherNodes !== false;
   elements.settingsNewConversationWorktree.checked = settings.newConversationWorktree;
-  renderSyncCheckSettings(settings);
-  elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
-  elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
   elements.settingsStartConversationEnabled.checked = settings.conversationCommands.start.enabled;
   elements.settingsStartConversationPrompt.value = settings.conversationCommands.start.prompt;
   elements.settingsEndConversationEnabled.checked = settings.conversationCommands.end.enabled;
@@ -392,6 +393,8 @@ async function loadSettings() {
   elements.completionSoundSelect.value = state.completionSound;
   syncNotifyButton();
   if (!admin) return;
+  elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
+  elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
   elements.settingsGitPullFileLimit.value = settings.gitPullFileLimit ?? 1000;
   elements.settingsGitPullTimeoutSeconds.value = settings.gitPullTimeoutSeconds ?? 360;
   elements.settingsProjectHome.value = settings.projects.homePath;
@@ -487,6 +490,7 @@ async function saveSettings(event) {
       },
     }),
   });
+  await saveChangedTerminalPolicy();
   state.conversationLabels = saved.conversationLabels;
   state.conversationLabelIcons = saved.conversationLabelIcons;
   if (state.activeProjectId) await refreshSessionsQuietly();
@@ -587,6 +591,24 @@ elements.settingsLogoutButton.addEventListener("click", async () => {
     showSignedOut();
   } catch (error) {
     toast(error.message);
+  }
+});
+document.querySelector("#settingsChangeEmailButton").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const input = document.querySelector("#settingsEmail");
+  const status = document.querySelector("#settingsEmailStatus");
+  if (!input.reportValidity()) return;
+  button.disabled = true;
+  status.textContent = "";
+  try {
+    const result = await api("/api/auth/email", { method: "PUT", body: JSON.stringify({ email: input.value.trim() }) });
+    state.email = result.email;
+    input.value = result.email;
+    status.textContent = `Email changed to ${result.email}`;
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 });
 elements.settingsChangePasswordButton.addEventListener("click", async () => {

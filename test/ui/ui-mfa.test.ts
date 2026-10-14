@@ -94,7 +94,14 @@ test("account MFA setup, two-step login, recovery rotation and disable work on d
     await page.reload();
     await ready();
     await logout();
+    await page.route("**/api/auth/login", async route => {
+      const response = await route.fetch();
+      await route.fulfill({ response, json: { ...await response.json(), remoteMfa: true, offlineMfa: true } });
+    });
     await passwordLogin();
+    await page.locator("#loginMessage").getByText("Use the same authenticator you set up at home", { exact: false }).waitFor();
+    assert.match(await page.locator("#loginMessage").innerText(), /Authenticator codes work even when home is offline; recovery codes need home online/);
+    await page.unroute("**/api/auth/login");
     await loginCode.fill(codes[0]);
     await page.getByTestId("login-submit-button").click();
     await ready();
@@ -117,6 +124,29 @@ test("account MFA setup, two-step login, recovery rotation and disable work on d
     await passwordLogin();
     await ready();
     assert.equal(await loginCode.isVisible(), false, "disabled MFA restores password-only sign in");
+
+    // The gateway's enrollment responses exercise the phone login UI without a live relay.
+    await logout();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const challenge = "a".repeat(43);
+    await page.route("**/api/auth/login", route => route.fulfill({ json: { mfaRequired: true, mfaSetupRequired: true, challenge } }));
+    await page.route("**/api/auth/login/mfa/setup", route => route.fulfill({ json: { secret: "A".repeat(32) } }));
+    await page.route("**/api/auth/login/mfa/confirm", route => route.fulfill({ json: { recoveryCodes: Array.from({ length: 10 }, (_, i) => `code-${i}`) } }));
+    await passwordLogin();
+    const phoneKey = page.getByTestId("login-mfa-setup-key");
+    await phoneKey.waitFor({ state: "visible" });
+    assert.equal(await phoneKey.inputValue(), "A".repeat(32));
+    const loginBounds = await page.getByTestId("login-dialog").evaluate(dialog => ({ width: dialog.clientWidth, content: dialog.scrollWidth, left: dialog.getBoundingClientRect().left, right: dialog.getBoundingClientRect().right }));
+    assert.ok(loginBounds.content <= loginBounds.width && loginBounds.left >= 0 && loginBounds.right <= 390, "phone MFA setup fits the viewport");
+    assert.equal(await page.getByTestId("login-password-input").inputValue(), "", "password is cleared during phone enrollment");
+    await loginCode.fill("123456");
+    await page.getByTestId("login-submit-button").click();
+    const phoneRecovery = page.getByTestId("login-mfa-recovery-codes");
+    await phoneRecovery.waitFor({ state: "visible" });
+    assert.equal((await phoneRecovery.inputValue()).split("\n").length, 10);
+    assert.equal(await phoneKey.inputValue(), "", "setup key leaves the DOM after enrollment");
+    await page.getByTestId("login-submit-button").click();
+    assert.equal(await phoneRecovery.inputValue(), "", "acknowledgment clears recovery codes");
     assert.deepEqual(errors, []);
   } finally {
     if (browser) await browser.close();

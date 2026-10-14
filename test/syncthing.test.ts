@@ -16,6 +16,28 @@ const managedIgnorePatterns = [
   "(?d)**/node_modules/**",
   "(?d).venv/",
   "(?d)venv/",
+  "(?d)site-packages",
+  "(?d)dist-packages",
+  "(?d)__pypackages__",
+  "(?d).tox",
+  "(?d).nox",
+  "(?d).eggs",
+  "(?d)*.egg-info",
+  "(?d).npm",
+  "(?d).pnpm-store",
+  "(?d).yarn/cache",
+  "(?d).yarn/unplugged",
+  "(?d).cache/pip",
+  "(?d).cache/uv",
+  "(?d).nuget",
+  "(?d).gradle",
+  "(?d).m2",
+  "(?d)(?i)*.pyc",
+  "(?d)(?i)*.pyo",
+  "(?d)(?i)*.whl",
+  "(?d)(?i)*.egg",
+  "(?d)(?i)*.nupkg",
+  "(?d)(?i)*.snupkg",
   "(?d)dist/",
   "(?d)build/",
   "(?d)coverage/",
@@ -655,6 +677,25 @@ test("a new worktree folder pulls smallest files first; a project folder keeps S
     await syncthing.ensureSharedProjectFolder("demo", "Demo", "/tmp/demo", "NODE-B");
   });
   assert.deepEqual(folders.map((folder) => [folder.id, folder.order]), [["joint-bob-worktrees-abc", "smallestFirst"], ["demo", undefined]]);
+});
+
+test("project reconciliation refreshes existing worktree ignores without re-enrollment", async () => {
+  const updated: string[] = [];
+  await withSyncthingApi(withConfiguredFolders(["project", "joint-bob-worktrees-existing", "unrelated"], (request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url?.startsWith("/rest/db/ignores?")) {
+        response.end(JSON.stringify({ ignore: [] }));
+        return;
+      }
+      if (request.method === "POST" && request.url?.startsWith("/rest/db/ignores?")) updated.push(request.url);
+      response.end("{}");
+    });
+  }), async (syncthing) => {
+    await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "project" }]);
+  });
+  assert.deepEqual(updated.sort(), ["/rest/db/ignores?folder=joint-bob-worktrees-existing", "/rest/db/ignores?folder=project"]);
 });
 
 test("worktree folders get deletable ignore rules that keep heavy trees and binaries out", async () => {

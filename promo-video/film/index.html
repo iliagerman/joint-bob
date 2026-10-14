@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Joint Bob teaser</title>
+  <style>
+    html, body { margin: 0; background: #07080a; overflow: hidden; }
+    #frame { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #07080a; }
+    #stage { position: absolute; inset: 0; width: 1920px; height: 1080px; display: block; }
+    #overlay { position: absolute; inset: 0; }
+  </style>
+  <script type="importmap">{ "imports": { "three": "/three/three.module.js" } }</script>
+</head>
+<body>
+  <div id="frame">
+    <canvas id="stage" width="1920" height="1080"></canvas>
+    <div id="overlay"></div>
+  </div>
+  <script type="module" src="/film/film.js"></script>
+</body>
+</html>

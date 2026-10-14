@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed sign-in on cluster machines so you can use your home machine's username or email, password, and authenticator code on another machine in your cluster, even when your home machine is offline, once that machine has synced your account.
+
 ## 2.92.0 — 2026-10-14
 
 - Made auto respond check the agent's work before it answers: the responder now reads the changed files, looks at the diffs, and runs the tests the agent names, which can take up to 20 minutes, and a checkbox in the Auto respond dialog turns that off.

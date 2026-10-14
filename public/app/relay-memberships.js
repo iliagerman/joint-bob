@@ -7,7 +7,7 @@ import { copyText, isRelayOnlyUrl, makeBadge, makeButton, makeNode, makeTwoStepB
 
 const PAGE_SIZE = 3;
 const PHONE_PAGE_SIZE = 3;
-const MFA_HINT = "Phone sign-in through a relay needs two-factor authentication. Set it up under Account.";
+const MFA_HINT = "Phone sign-in through a relay needs two-factor authentication. You can set it up when you sign in, or under Account.";
 const STATUS_LABEL = {
   connecting: "Connecting", pending: "Waiting for approval", admitted: "Admitted", suspended: "Suspended", revoked: "Removed", denied: "Declined",
 };

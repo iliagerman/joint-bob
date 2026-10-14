@@ -3,6 +3,7 @@ import { getClusterNode } from "../cluster.js";
 import { ensurePeerEndpointSchema, type PeerEndpoint } from "../cluster-peer-endpoints.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
+import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { applyBlockNotice, ensureNodeBlockSchema, pendingBlockNotices, recordBlockNoticeDelivered, setNodeBlock } from "../node-blocks.js";
 import { accountSnapshotsDue, ensureAccountReplicationSchema, recordAccountSnapshotDelivered, removeReplicatedUsersFromNode } from "../user-replication.js";
 import { presentReplicationPeers, replicationPeers, signedPeerPost } from "./replication-v2.js";
@@ -36,7 +37,16 @@ export async function flushAccountReplication(force = false): Promise<void> {
     for (const due of accountSnapshotsDue(db, local.id, peers.map((peer) => peer.nodeId))) {
       const peer = peers.find((row) => row.nodeId === due.peer)!;
       try {
-        await signedPeerPost(peer, "/api/cluster/v2/accounts", due.snapshot);
+        try {
+          await signedPeerPost(peer, "/api/cluster/v2/accounts/offline-mfa", due.snapshot);
+        } catch (error) {
+          if (!(error instanceof ClusterV2HttpError) || error.statusCode !== 404) throw error;
+          // Older nodes reject unknown fields. Keep their password/MFA policy current,
+          // but never send them TOTP material they do not understand.
+          await signedPeerPost(peer, "/api/cluster/v2/accounts", {
+            version: 2, accounts: due.snapshot.accounts.map(({ mfaSecret: _secret, ...account }) => account),
+          });
+        }
         recordAccountSnapshotDelivered(db, due.peer, due.digest);
       } catch (error) {
         console.warn(`Account delivery to ${due.peer} failed: ${error instanceof Error ? error.message : "unknown error"}`);

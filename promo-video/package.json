@@ -1,0 +1,17 @@
+{
+  "name": "joint-bob-promo-video",
+  "private": true,
+  "type": "module",
+  "description": "Landing page films for Joint Bob, built from real screen recordings of throwaway nodes.",
+  "scripts": {
+    "capture": "cd .. && for take in handoff webhook costs move cluster schedule browser secrets; do node --import tsx promo-video/capture/record.ts --take $take || exit 1; done",
+    "render": "cd .. && node --import tsx promo-video/render.ts",
+    "render:all": "cd .. && for film in teaser hero lid team schedule alerts browser secrets analytics; do node --import tsx promo-video/render.ts --film $film || exit 1; done",
+    "still": "cd .. && node --import tsx promo-video/render.ts --still",
+    "landing": "sh landing/media.sh",
+    "landing:publish": "sh landing/publish.sh"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  }
+}

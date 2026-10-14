@@ -11,11 +11,12 @@ import {
 } from "../twins.js";
 import { app } from "../state.js";
 import type { HarnessId } from "../../types.js";
+import { ConversationForkError } from "../conversation-fork.js";
 import { declareTwinLost, receiveSuccession, successionNoticeSchema } from "../succession.js";
 import { peerEndpoint, recordPeerEndpoint } from "../../cluster-peer-endpoints.js";
 import { disconnectRevokedRuntimeSockets } from '../runtime-peers.js';
 import { receiveScopedCredentials } from "../scoped-credentials.js";
-import { acceptOwnerTranscript, sharedTranscriptFile, sharedTranscriptInventory, transcriptQuery } from "../shared-transcripts.js";
+import { acceptOwnerTranscript, forkConflictedTranscript, sharedTranscriptFile, sharedTranscriptInventory, transcriptQuery } from "../shared-transcripts.js";
 import { receiveFileEnrollment } from "../sharing-files.js";
 import { isTrustedTwin } from "../../cluster-sharing-policy.js";
 import { receiveSecretCredentialEvents, type SecretCredentialEvent } from "../../secret-replication.js";
@@ -82,6 +83,18 @@ app.post("/api/twins/:relationshipId/sharing",handler(async(request,response)=>{
   const payload=z.object({ownerNodeId:uuid,confirmOwnedData:z.literal(true)}).strict().parse(request.body);
   response.json(await completeTwinSharing(uuid.parse(request.params.relationshipId),payload.ownerNodeId));
 }));
+app.post("/api/twins/:relationshipId/transcript-conflicts/fork",handler(async(request,response)=>{
+  localOnly(response);
+  const payload=z.object({projectId:z.string().min(1).max(300),engine:z.string().min(1).max(80),sessionId:z.string().min(1).max(300)}).strict().parse(request.body);
+  const db=await clusterV2Database(),local=await getClusterNode(),peer=sharingTwin(db,local.id,uuid.parse(request.params.relationshipId));
+  const auth=response.locals.authSession;
+  const session=await forkConflictedTranscript(peer,payload.projectId,payload.engine,payload.sessionId,{userId:auth.userId,username:auth.accountId}).catch(error=>{
+    if(error instanceof ConversationForkError)throw new ClusterV2HttpError(error.status,error.message);
+    throw error;
+  });
+  response.status(201).json({session});
+}));
+
 /** Settles a conversation both twins continued by taking its owner's history. This machine's
     version is saved first; see acceptOwnerTranscript. */
 app.post("/api/twins/:relationshipId/transcript-conflicts/accept",handler(async(request,response)=>{

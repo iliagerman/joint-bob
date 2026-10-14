@@ -65,6 +65,7 @@ function profileFromRow(row: ProfileRow): BrowserProfile {
 /** Node-local metadata. Neither these tables nor encrypted login states replicate. */
 export class BrowserStore {
   private readonly db: DatabaseSync;
+  private ownerMatch?: { schemaVersion: number; sql: string; parameters: number };
 
   constructor() {
     const root = resolveDataDirectory();
@@ -86,7 +87,9 @@ export class BrowserStore {
       );
       CREATE TABLE IF NOT EXISTS browser_downloads (
         id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, name TEXT NOT NULL, ready INTEGER NOT NULL, error TEXT
-      );`);
+      );
+      CREATE INDEX IF NOT EXISTS browser_downloads_session ON browser_downloads(sessionId);
+      CREATE INDEX IF NOT EXISTS browser_sessions_conversation ON browser_sessions(projectId, conversationId, createdAt DESC);`);
     this.migrateProfiles();
   }
 
@@ -194,8 +197,8 @@ export class BrowserStore {
   }
 
   loginRequest(id: string): BrowserLoginRequest | null {
-    this.get(id);
-    const row = this.db.prepare("SELECT loginRequest FROM browser_sessions WHERE id = ?").get(id) as { loginRequest: string | null };
+    const row = this.db.prepare("SELECT loginRequest FROM browser_sessions WHERE id = ?").get(id) as { loginRequest: string | null } | undefined;
+    if (!row) throw new Error("Browser session not found");
     if (row.loginRequest === null) return null;
     try { return browserLoginRequestSchema.parse(JSON.parse(row.loginRequest)); }
     catch { throw new Error("Invalid browser login request"); }
@@ -405,8 +408,14 @@ export class BrowserStore {
       own project and the project using it must have the same owner on this node. */
   private sameOwner(projectId: string): { sql: string; params: string[] } {
     ensureOwnershipSchema(this.db);
-    const used = this.projectOwner("?");
-    return { sql: `${this.projectOwner("(SELECT projectId FROM browser_profiles WHERE id = g.profileId)")} = ${used}`, params: Array.from({ length: used.split("?").length - 1 }, () => projectId) };
+    // Cache only the SQL shape, never an ownership or grant decision. Another connection
+    // can add the sharing/twin tables after startup, so SQLite's schema version guards it.
+    const schemaVersion = Number(this.db.prepare("PRAGMA schema_version").get()!.schema_version);
+    if (this.ownerMatch?.schemaVersion !== schemaVersion) {
+      const used = this.projectOwner("?");
+      this.ownerMatch = { schemaVersion, sql: `${this.projectOwner("(SELECT projectId FROM browser_profiles WHERE id = g.profileId)")} = ${used}`, parameters: used.split("?").length - 1 };
+    }
+    return { sql: this.ownerMatch.sql, params: Array.from({ length: this.ownerMatch.parameters }, () => projectId) };
   }
 
   profileUsable(id: string, access: BrowserAccess): boolean {

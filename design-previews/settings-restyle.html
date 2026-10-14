@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Joint Bob · Settings restyle · 3 directions</title>
+<style>
+:root{--bg:#08090b;--panel:#101215;--surface:#191c20;--field:#212529;--line:rgba(255,255,255,.075);--line2:rgba(255,255,255,.17);--text:#ebeced;--muted:#94999e;--accent:#37cfab;--danger:#e0564e;--amber:#d0a63c;--r:12px;--sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Inter",sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box}body{margin:0;background:#050607;color:var(--text);font:14px/1.45 var(--sans)}
+button,input,select{font:inherit;color:inherit}
+.top{position:sticky;top:0;z-index:50;display:flex;gap:10px;align-items:center;padding:12px 20px;background:#0b0c0e;border-bottom:1px solid var(--line)}
+.top h1{font-size:14px;margin:0 12px 0 0;color:var(--muted);font-weight:500}
+.top button{padding:7px 14px;border-radius:999px;border:1px solid var(--line2);background:transparent;cursor:pointer}
+.top button[aria-pressed=true]{background:var(--text);color:#101215;border-color:var(--text)}
+.note{max-width:1100px;margin:14px auto 0;padding:0 20px;color:var(--muted);font-size:13px}
+.note b{color:var(--text)}
+.stage{max-width:1100px;margin:14px auto 40px;padding:0 20px}
+.win{height:720px;border:1px solid var(--line2);border-radius:16px;background:var(--panel);overflow:hidden;position:relative;display:flex;box-shadow:0 30px 80px #000a}
+kbd{font:11px var(--mono);padding:2px 6px;border:1px solid var(--line2);border-radius:5px;color:var(--muted);background:var(--field)}
+mark{background:none;color:var(--accent);font-weight:700}
+.ico{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;font-size:13px;flex:none}
+/* search */
+.search{position:relative}
+.search input{width:100%;padding:8px 38px 8px 32px;border-radius:10px;border:1px solid var(--line);background:var(--field);outline:0}
+.search input:focus{border-color:color-mix(in srgb,var(--accent) 60%,transparent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+.search .mag{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+.search kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%)}
+.results{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:30;max-height:380px;overflow:auto;background:var(--surface);border:1px solid var(--line2);border-radius:12px;box-shadow:0 20px 50px #000a;padding:6px;min-width:340px}
+.results[hidden]{display:none}
+.res{display:flex;gap:10px;align-items:center;padding:8px 10px;border-radius:8px;cursor:pointer}
+.res.on{background:color-mix(in srgb,var(--accent) 20%,transparent)}
+.res small{display:block;color:var(--muted);font-size:11.5px}
+.res .path{margin-left:auto;color:var(--muted);font-size:11.5px;white-space:nowrap}
+.none{padding:14px;color:var(--muted);text-align:center}
+.flash{animation:fl 1.6s}@keyframes fl{0%,60%{box-shadow:0 0 0 2px var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}100%{box-shadow:none}}
+/* shared controls */
+.sw{width:38px;height:22px;border-radius:99px;background:var(--field);border:1px solid var(--line2);position:relative;flex:none;cursor:pointer}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#aaa;transition:.15s}
+.sw.on{background:var(--accent);border-color:var(--accent)}.sw.on::after{left:18px;background:#06241d}
+.ctl{padding:6px 10px;border-radius:8px;border:1px solid var(--line2);background:var(--field);min-width:120px}
+.btn{padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:var(--field);cursor:pointer}
+.btn.pri{background:var(--accent);color:#06241d;border-color:var(--accent);font-weight:600}
+.btn.dng{color:var(--danger)}
+.hint{color:var(--muted);font-size:12.5px}
+.empty-search{padding:40px;text-align:center;color:var(--muted)}
+/* ===== A: macOS System Settings ===== */
+.A .side{width:250px;flex:none;background:#0d0f11;border-right:1px solid var(--line);padding:14px 12px;overflow:auto}
+.A .side .search{margin-bottom:12px}
+.A .grp{margin:14px 8px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.A .nav{display:flex;gap:10px;align-items:center;width:100%;padding:6px 8px;border:0;border-radius:8px;background:none;cursor:pointer;text-align:left}
+.A .nav:hover{background:var(--field)}.A .nav.on{background:color-mix(in srgb,var(--accent) 24%,transparent)}
+.A main{flex:1;overflow:auto;padding:26px 36px}
+.A h2{font-size:22px;margin:0 0 4px}.A .sub{color:var(--muted);margin:0 0 22px}
+.A .sec{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 6px 8px}
+.A .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.A .row{display:flex;gap:16px;align-items:center;padding:12px 16px;border-top:1px solid var(--line)}
+.A .row:first-child{border-top:0}.A .row .t{flex:1;min-width:0}.A .row .t b{font-weight:500;display:block}
+/* ===== B: tabs + floating spotlight ===== */
+.B{flex-direction:column}
+.B .bar{display:flex;align-items:center;gap:6px;padding:10px 16px;border-bottom:1px solid var(--line);background:#0d0f11}
+.B .tabs{display:flex;gap:2px;flex:1;overflow:auto}
+.B .tab{padding:7px 13px;border:0;background:none;border-radius:8px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.B .tab.on{background:var(--field);color:var(--text)}
+.B .spot{display:flex;gap:8px;align-items:center;padding:7px 12px;border:1px solid var(--line2);border-radius:99px;background:var(--field);color:var(--muted);cursor:pointer}
+.B main{flex:1;overflow:auto;padding:24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:16px;align-content:start}
+.B .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:12px;align-content:start}
+.B .panel>h3{margin:0;font-size:13px;display:flex;gap:8px;align-items:center}
+.B .fld{display:flex;justify-content:space-between;gap:14px;align-items:center}
+.B .ov{position:absolute;inset:0;background:#000a;backdrop-filter:blur(6px);display:grid;justify-items:center;align-items:start;padding-top:90px;z-index:40}
+.B .ov[hidden]{display:none}
+.B .pal{width:min(620px,92%);background:var(--surface);border:1px solid var(--line2);border-radius:16px;box-shadow:0 30px 80px #000;overflow:hidden}
+.B .pal input{width:100%;padding:16px 18px;border:0;border-bottom:1px solid var(--line);background:none;font-size:17px;outline:0}
+.B .pal .list{max-height:340px;overflow:auto;padding:6px}
+.B .pal .foot{display:flex;gap:14px;padding:8px 14px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+/* ===== C: one page, scroll-spy ===== */
+.C .rail{width:200px;flex:none;padding:18px 10px;border-right:1px solid var(--line);overflow:auto;background:#0d0f11}
+.C .rail a{display:block;padding:6px 12px;border-left:2px solid transparent;color:var(--muted);text-decoration:none;cursor:pointer;border-radius:0 8px 8px 0}
+.C .rail a.on{border-color:var(--accent);color:var(--text);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.C .rail .g{margin:14px 12px 4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#5d6268}
+.C .col{flex:1;display:flex;flex-direction:column;min-width:0}
+.C .head{padding:12px 24px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center}
+.C .head .search{flex:1;max-width:520px}.C .head .pill{margin-left:auto;color:var(--muted);font-size:12.5px}
+.C main{flex:1;overflow:auto;padding:0 24px 80px;scroll-behavior:smooth}
+.C section{padding-top:28px}.C section>h2{margin:0 0 4px;font-size:18px;display:flex;gap:10px;align-items:center}
+.C section>p{margin:0 0 12px}
+.C .item{display:grid;grid-template-columns:1fr auto;gap:4px 20px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.C .item b{font-weight:500}.C .item .hint{grid-column:1}
+.C .item.miss{display:none}
+.C .savebar{position:absolute;bottom:0;left:200px;right:0;display:flex;gap:10px;justify-content:flex-end;align-items:center;padding:12px 24px;background:linear-gradient(transparent,var(--panel) 40%);}
+</style></head><body>
+<div class="top"><h1>Settings restyle — pick a direction</h1>
+<button data-v="A" aria-pressed="true">A · System Settings</button><button data-v="B" aria-pressed="false">B · Tabs + ⌘K palette</button><button data-v="C" aria-pressed="false">C · One page + scroll-spy</button></div>
+<div class="note" id="note"></div>
+<div class="stage"><div class="win" id="win"></div></div>
+<script>
+// ---- one shared index: every setting is searchable in all 3 directions ----
+const GROUPS=[
+ {g:"You",items:[["account","Account","👤","#3b82f6"],["notifications","Notifications","🔔","#ef4444"],["shortcuts","Shortcuts","⌨️","#8b5cf6"]]},
+ {g:"Workspace",items:[["conversations","Conversations","💬","#10b981"],["labels","Labels","🏷️","#f59e0b"],["commands","Commands","⚡","#eab308"],["workspaces","Workspaces","🗂️","#06b6d4"],["git","Git","🌿","#f97316"]]},
+ {g:"Agents",items:[["engines","Harnesses","🤖","#a855f7"],["classifiers","Classifiers","🧭","#14b8a6"],["secrets","Secrets","🔑","#37cfab"],["browser","Browser","🌐","#3b82f6"]]},
+ {g:"Network",items:[["cluster","Cluster","🕸️","#0ea5e9"],["relay","Relay","📡","#6366f1"],["webhooks","Webhooks","🪝","#ec4899"]]},
+ {g:"This node",items:[["node","Node","🖥️","#64748b"],["resources","Resources","📊","#84cc16"],["users","Users","👥","#f43f5e"],["updates","Updates","⬇️","#22c55e"],["logs","Client logs","📜","#78716c"],["changelog","Changelog","🗒️","#78716c"]]}];
+const TAB={};GROUPS.forEach(G=>G.items.forEach(i=>TAB[i[0]]={id:i[0],name:i[1],icon:i[2],color:i[3],group:G.g}));
+// [tab, section, label, hint, control, keywords]
+const S=[
+["account","Password","Current password","","input:password","login credentials"],["account","Password","New password","At least 16 characters.","input:password","change"],["account","Password","Change password","","btn","reset"],
+["account","Multi-factor authentication","Set up MFA","An authenticator code after your password.","btn","2fa totp security otp"],["account","Session","Log out","","btn:danger","sign out"],["account","My nodes","Show my projects on other nodes","","sw:on","roaming"],
+["notifications","Alerts","Desktop notifications","Notify when a turn finishes.","sw:on","push toast"],["notifications","Alerts","ntfy topic","Phone push via ntfy.","input","push phone"],
+["shortcuts","Keyboard","Open settings","","kbd:⌘ ,","hotkey binding"],["shortcuts","Keyboard","New conversation","","kbd:⌘ N","hotkey"],
+["conversations","Defaults","Default harness","Used when you start a conversation.","select:Claude","agent engine"],["conversations","History","Conversations kept in list","","input:50","limit cap"],
+["labels","Icons","Label icons","Pick an icon per label.","btn","emoji color"],
+["commands","Slash commands","Custom commands","","btn","skills prompt"],
+["workspaces","Folders","Workspace folders","A folder under the Joint Bob home.","btn","project directory"],
+["git","Hosting","GitHub token","Used for pull requests.","input:password","gh pat"],["git","Review","Reviewer model","","select:Claude","code review pr"],
+["engines","Claude","Claude subscription","","btn","anthropic login token"],["engines","Pi","Pi harness","","sw:on","openai codex"],["engines","Kiro","Kiro harness","","sw","aws bedrock"],
+["classifiers","Routing","Classification on new conversation","Applies only when starting a new conversation.","sw:on","router model"],
+["secrets","Accounts","Secret accounts","AWS, Google, GitHub and custom variables.","btn","credentials api key env token"],["secrets","Accounts","New secret account","","btn","add"],["secrets","Scopes","Workspace secret attachments","","btn","scope project"],
+["browser","Executor","Browser machine","Which machine runs browsers.","select:Ilia's Macbook","chrome playwright default"],["browser","Profiles","Browser profiles","Saved logins and sharing.","btn","cookies login share"],
+["cluster","Pairing","Pair a node","","btn","twin join invite"],["cluster","Budgets","Cluster budget","Spend limits across nodes.","btn","cost money cap"],
+["relay","Serving","Relay memberships","","btn","bobthebot tunnel"],
+["webhooks","Endpoints","Add webhook","","btn","http callback"],
+["node","Terminal","Who may open a terminal on this node","","select:Nobody","shell pty security"],["node","Terminal","Open terminals per person","","input:2","limit"],["node","Terminal","Close an idle terminal after (minutes)","","input:30","timeout"],["node","Blocked nodes","Block a node","Blocked nodes can't connect or sign in.","select:Matans-Sela-MacBook","deny ban"],
+["resources","Limits","CPU limit per conversation","Off by default.","sw","throttle processor"],["resources","Limits","Memory limit per conversation (GB)","","sw","ram oom"],
+["users","People","Add a user","","btn","invite account"],["users","Multi-user","Run agents under each person's OS account","","sw","isolation"],
+["updates","Releases","Check for updates","","btn","upgrade version"],["logs","Diagnostics","Client logs","","btn","debug console"],["changelog","Releases","Changelog","","btn","release notes whats new"]];
+S.forEach((s,i)=>s.id="s"+i);
+
+// ---- fuzzy: same algorithm as public/app/fuzzy.js, plus match positions for highlighting ----
+function fz(q,t){q=q.trim().toLowerCase().replace(/\s+/g,"");if(!q)return{s:0,p:[]};const h=t.toLowerCase();const d=h.indexOf(q);
+ if(d>=0)return{s:1000-d,p:[...Array(q.length)].map((_,i)=>d+i)};let s=0,pos=-1,run=0,p=[];
+ for(const c of q){const n=h.indexOf(c,pos+1);if(n<0)return null;run=n===pos+1?run+1:0;s+=10+run*5+((n===0||/[\s._\-/]/.test(h[n-1]))?8:0)-Math.min(n-pos-1,10);pos=n;p.push(n)}return{s,p}}
+const hl=(t,m)=>{if(!m||!m.p.length)return t;const set=new Set(m.p);return [...t].map((c,i)=>set.has(i)?`<mark>${c}</mark>`:c).join("")};
+function search(q){if(!q.trim())return[];const out=[];
+ for(const s of S){const tab=TAB[s[0]];const a=fz(q,s[2]),b=fz(q,s[3]),k=fz(q,s[5]+" "+s[1]),t=fz(q,tab.name);
+  const best=Math.max(a?a.s*1.2:-1,b?b.s*.6:-1,k?k.s*.8:-1,t?t.s*.5:-1);if(best<0)continue;out.push({s,m:a,score:best})}
+ return out.sort((x,y)=>y.score-x.score).slice(0,8)}
+const ctl=(c)=>{const[k,v]=(c||"").split(":");
+ if(k==="sw")return`<span class="sw ${v==="on"?"on":""}" onclick="this.classList.toggle('on')"></span>`;
+ if(k==="input")return`<input class="ctl" value="${v&&v!=="password"?v:""}" ${v==="password"?'type="password"':""} style="min-width:150px">`;
+ if(k==="select")return`<select class="ctl"><option>${v}</option></select>`;
+ if(k==="kbd")return`<kbd>${v}</kbd>`;
+ if(k==="btn")return`<button class="btn ${v==="danger"?"dng":""}">${({btn:"Manage"})[k]||"Open"}</button>`;return""};
+const rowBtn=(s)=>s[4]==="btn"?`<button class="btn ${s[2].startsWith("Set up")||s[2].startsWith("New")||s[2].startsWith("Add")||s[2].startsWith("Pair")?"pri":""}">${s[2].startsWith("Change")?"Change":s[2].startsWith("Set up")?"Set up":s[2].startsWith("New")||s[2].startsWith("Add")||s[2].startsWith("Pair")?"Add":s[2].startsWith("Check")?"Check":"Manage"}</button>`:ctl(s[4]);
+const ico=(t)=>`<span class="ico" style="background:${t.color}33;color:${t.color}">${t.icon}</span>`;
+const sectionsOf=(tab)=>{const m=new Map();S.filter(s=>s[0]===tab).forEach(s=>{if(!m.has(s[1]))m.set(s[1],[]);m.get(s[1]).push(s)});return m};
+
+function wireSearch(root,{onPick,input,box}){let cur=[],idx=0;
+ const draw=()=>{const q=input.value;cur=search(q);idx=0;box.hidden=!q.trim();
+  box.innerHTML=cur.length?cur.map((r,i)=>{const t=TAB[r.s[0]];return`<div class="res ${i===0?"on":""}" data-i="${i}">${ico(t)}<div><div>${hl(r.s[2],r.m)}</div><small>${r.s[3]||r.s[1]}</small></div><span class="path">${t.name} › ${r.s[1]}</span></div>`}).join(""):`<div class="none">No settings match “${q.replace(/</g,"&lt;")}”</div>`};
+ const mark=()=>[...box.querySelectorAll(".res")].forEach((e,i)=>e.classList.toggle("on",i===idx));
+ input.addEventListener("input",draw);
+ input.addEventListener("keydown",e=>{if(e.key==="ArrowDown"){idx=Math.min(idx+1,cur.length-1);mark();e.preventDefault()}else if(e.key==="ArrowUp"){idx=Math.max(idx-1,0);mark();e.preventDefault()}else if(e.key==="Enter"&&cur[idx]){onPick(cur[idx].s);input.value="";box.hidden=true}else if(e.key==="Escape"){input.value="";box.hidden=true}});
+ box.addEventListener("mousedown",e=>{const r=e.target.closest(".res");if(r){e.preventDefault();onPick(cur[+r.dataset.i].s);input.value="";box.hidden=true}});
+ input.addEventListener("blur",()=>setTimeout(()=>box.hidden=true,120));input.addEventListener("focus",()=>input.value&&draw())}
+const flash=(id)=>{const e=document.getElementById(id);if(!e)return;e.scrollIntoView({block:"center",behavior:"smooth"});e.classList.remove("flash");void e.offsetWidth;e.classList.add("flash")};
+const searchBox=(ph="Search settings")=>`<div class="search"><span class="mag">⌕</span><input placeholder="${ph}" autocomplete="off" spellcheck="false"><kbd>⌘F</kbd><div class="results" hidden></div></div>`;
+
+// ---------- A ----------
+function viewA(){const w=document.getElementById("win");w.className="win A";let tab="secrets";
+ w.innerHTML=`<aside class="side">${searchBox()}<div id="nav"></div></aside><main id="main"></main>`;
+ const nav=()=>w.querySelector("#nav").innerHTML=GROUPS.map(G=>`<div class="grp">${G.g}</div>`+G.items.map(i=>`<button class="nav ${i[0]===tab?"on":""}" data-t="${i[0]}">${ico(TAB[i[0]])}${i[1]}</button>`).join("")).join("");
+ const page=(fl)=>{const t=TAB[tab];let h=`<h2>${t.name}</h2><p class="sub">${t.group}</p>`;const secs=sectionsOf(tab);if(!secs.size)h+=`<div class="empty-search">Nothing here yet.</div>`;
+  secs.forEach((rows,name)=>{h+=`<div class="sec">${name}</div><div class="card">${rows.map(s=>`<div class="row" id="${s.id}"><div class="t"><b>${s[2]}</b>${s[3]?`<span class="hint">${s[3]}</span>`:""}</div>${rowBtn(s)}</div>`).join("")}</div>`});
+  w.querySelector("#main").innerHTML=h;if(fl)flash(fl)};
+ nav();page();
+ w.addEventListener("click",e=>{const n=e.target.closest(".nav");if(n){tab=n.dataset.t;nav();page()}});
+ wireSearch(w,{input:w.querySelector("input"),box:w.querySelector(".results"),onPick:s=>{tab=s[0];nav();page(s.id)}})}
+
+// ---------- B ----------
+function viewB(){const w=document.getElementById("win");w.className="win B";let tab="node";
+ w.innerHTML=`<div class="bar"><div class="tabs" id="tabs"></div><div class="spot" id="spot">⌕ Search settings <kbd>⌘K</kbd></div></div><main id="main"></main>
+ <div class="ov" hidden><div class="pal"><input placeholder="Search every setting…" autocomplete="off" spellcheck="false"><div class="list"></div><div class="foot"><span><kbd>↑</kbd> <kbd>↓</kbd> move</span><span><kbd>↵</kbd> jump</span><span><kbd>esc</kbd> close</span></div></div></div>`;
+ const ov=w.querySelector(".ov"),inp=ov.querySelector("input"),list=ov.querySelector(".list");
+ const tabs=()=>w.querySelector("#tabs").innerHTML=Object.values(TAB).slice(0,12).map(t=>`<button class="tab ${t.id===tab?"on":""}" data-t="${t.id}">${t.name}</button>`).join("");
+ const page=(fl)=>{let h="";sectionsOf(tab).forEach((rows,name)=>{h+=`<div class="panel"><h3>${ico(TAB[tab])}${name}</h3>${rows.map(s=>`<div class="fld" id="${s.id}"><div><b style="font-weight:500">${s[2]}</b>${s[3]?`<div class="hint">${s[3]}</div>`:""}</div>${rowBtn(s)}</div>`).join("")}</div>`});w.querySelector("#main").innerHTML=h||`<div class="empty-search">Nothing here yet.</div>`;if(fl)flash(fl)};
+ tabs();page();
+ w.addEventListener("click",e=>{const t=e.target.closest(".tab");if(t){tab=t.dataset.t;tabs();page()}if(e.target.closest("#spot")){ov.hidden=false;inp.focus()}if(e.target===ov)ov.hidden=true});
+ wireSearch(w,{input:inp,box:list,onPick:s=>{ov.hidden=true;tab=s[0];tabs();page(s.id)}});list.hidden=false;list.className="list";
+ inp.addEventListener("input",()=>{list.hidden=false});inp.addEventListener("keydown",e=>{if(e.key==="Escape")ov.hidden=true});
+ w.keyHandler=e=>{if((e.metaKey||e.ctrlKey)&&e.key==="k"){e.preventDefault();ov.hidden=false;inp.focus()}}}
+
+// ---------- C ----------
+function viewC(){const w=document.getElementById("win");w.className="win C";
+ w.innerHTML=`<nav class="rail" id="rail">${GROUPS.map(G=>`<div class="g">${G.g}</div>`+G.items.map(i=>`<a data-t="${i[0]}">${i[1]}</a>`).join("")).join("")}</nav>
+ <div class="col"><div class="head">${searchBox("Filter every setting")}<span class="pill" id="count"></span></div><main id="main"></main></div><div class="savebar"><span class="hint">Unsaved changes</span><button class="btn">Close</button><button class="btn pri">Save settings</button></div>`;
+ const main=w.querySelector("#main");main.innerHTML=Object.keys(TAB).map(id=>{const t=TAB[id];const rows=S.filter(s=>s[0]===id);if(!rows.length)return"";return`<section id="sec-${id}"><h2>${ico(t)}${t.name}</h2><p class="hint">${t.group}</p>${rows.map(s=>`<div class="item" id="${s.id}"><b>${s[2]}</b>${rowBtn(s)}${s[3]?`<span class="hint">${s[3]}</span>`:""}</div>`).join("")}</section>`}).join("");
+ const spy=()=>{let best=null;main.querySelectorAll("section").forEach(s=>{if(s.offsetTop-main.scrollTop<120&&!s.hidden)best=s.id.slice(4)});w.querySelectorAll("#rail a").forEach(a=>a.classList.toggle("on",a.dataset.t===best))};
+ main.addEventListener("scroll",spy);spy();
+ w.querySelector("#rail").addEventListener("click",e=>{const a=e.target.closest("a");if(a)main.scrollTo({top:document.getElementById("sec-"+a.dataset.t).offsetTop-8})});
+ const inp=w.querySelector("input"),box=w.querySelector(".results");
+ // in-place filtering: the page itself narrows, plus the dropdown for quick jumps
+ inp.addEventListener("input",()=>{const q=inp.value;const hits=new Set(search(q).map(r=>r.s.id));const all=q.trim()?S.filter(s=>{return fz(q,s[2]+" "+s[3]+" "+s[5]+" "+TAB[s[0]].name)}).map(s=>s.id):S.map(s=>s.id);const ok=new Set(q.trim()?all:S.map(s=>s.id));
+  main.querySelectorAll(".item").forEach(i=>i.classList.toggle("miss",!ok.has(i.id)));main.querySelectorAll("section").forEach(s=>s.hidden=!s.querySelector(".item:not(.miss)"));
+  w.querySelector("#count").textContent=q.trim()?`${ok.size} of ${S.length} settings`:"";});
+ wireSearch(w,{input:inp,box,onPick:s=>{inp.value="";inp.dispatchEvent(new Event("input"));flash(s.id)}})}
+
+const VIEWS={A:viewA,B:viewB,C:viewC};
+const NOTES={A:"<b>A · System Settings.</b> Familiar macOS layout: grouped sidebar with coloured icons, search at the top of the sidebar, content as inset cards (label left, control right). Fixes the “wall of text + full-width inputs” problem. Search jumps to the row and flashes it. Try typing <i>“trm”</i>, <i>“mfa”</i>, <i>“secr”</i> or <i>“cpu”</i>.",
+B:"<b>B · Tabs + ⌘K palette.</b> Horizontal tabs and a two-column card grid so wide screens aren't wasted. Search is a Spotlight-style overlay: press ⌘K (or click the pill). Densest layout, fewest clicks for power users.",
+C:"<b>C · One page, scroll-spy.</b> Everything on one scrolling page with a slim rail; the search box filters the page itself in place (and also offers jump-to results). Best for “where is that thing?” — nothing hidden behind tabs. Sticky save bar."};
+function show(v){document.querySelectorAll(".top button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v));document.getElementById("note").innerHTML=NOTES[v];document.getElementById("win").keyHandler=null;VIEWS[v]()}
+document.querySelectorAll(".top button").forEach(b=>b.onclick=()=>show(b.dataset.v));
+addEventListener("keydown",e=>{const w=document.getElementById("win");if(w.keyHandler)w.keyHandler(e);if((e.metaKey||e.ctrlKey)&&e.key==="f"){const i=w.querySelector(".search input");if(i){e.preventDefault();i.focus()}}});
+show("A");
+</script></body></html>

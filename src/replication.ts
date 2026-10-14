@@ -46,7 +46,8 @@ export function ensureReplicationSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS replication_outbox (event_id TEXT PRIMARY KEY, origin_node_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_key TEXT NOT NULL, operation TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS replication_inbox (event_id TEXT PRIMARY KEY, origin_node_id TEXT NOT NULL, received_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS replication_deliveries (event_id TEXT NOT NULL, peer_id TEXT NOT NULL, attempts INTEGER NOT NULL, next_attempt_at TEXT NOT NULL, delivered_at TEXT, last_error TEXT, PRIMARY KEY (event_id, peer_id));
-    CREATE INDEX IF NOT EXISTS replication_deliveries_pending ON replication_deliveries(peer_id, next_attempt_at) WHERE delivered_at IS NULL;`);
+    CREATE INDEX IF NOT EXISTS replication_deliveries_pending ON replication_deliveries(peer_id, next_attempt_at) WHERE delivered_at IS NULL;
+    CREATE INDEX IF NOT EXISTS replication_deliveries_due ON replication_deliveries(peer_id, next_attempt_at, event_id) WHERE delivered_at IS NULL;`);
 }
 
 export function ensureTaskSchema(db: DatabaseSync): void {
@@ -110,7 +111,7 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
 // node, and froze the server for nine seconds each time. It now advances for a few
 // milliseconds on every pass, behind the new events, and starts again five minutes after it
 // last finished.
-interface OutboxScan { tail: number; older?: { cursor: number; end: number }; finishedAt: number }
+interface OutboxScan { tail: number; older?: { cursor: number; end: number }; finishedAt: number; due?: [string, string] }
 const unallocatedScan = new Map<string, OutboxScan>();
 const FULL_SCAN_MS = 5 * 60_000;
 const SCAN_BUDGET_MS = 40;
@@ -120,23 +121,31 @@ const SCAN_WINDOW = 2_000;
 
 function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
   const selected: ReplicationEvent[] = [];
-  const due = db.prepare(`SELECT o.* FROM replication_deliveries d JOIN replication_outbox o ON o.event_id=d.event_id
-    WHERE d.peer_id=? AND d.delivered_at IS NULL AND d.next_attempt_at<=? ORDER BY o.rowid LIMIT 100`).all(peerId, at) as unknown as OutboxRow[];
-  for (const row of due) {
-    const event = eventFromRow(row);
-    if (filter(event)) selected.push(event);
+  const now = Date.parse(at), started = Date.now();
+  const newest = (db.prepare("SELECT max(rowid) id FROM replication_outbox").get() as { id: number | null }).id ?? 0;
+  const scan: OutboxScan = unallocatedScan.get(peerId) ?? { tail: newest, older: { cursor: 0, end: newest }, finishedAt: now };
+  // A revoked grant can leave allocated deliveries in front of eligible ones. Keep a
+  // cursor through retries too; limiting before filtering otherwise starves them forever.
+  const duePage = db.prepare(`SELECT o.*,d.next_attempt_at FROM replication_deliveries d JOIN replication_outbox o ON o.event_id=d.event_id
+    WHERE d.peer_id=? AND d.delivered_at IS NULL AND d.next_attempt_at<=? AND (d.next_attempt_at,d.event_id)>(?,?)
+    ORDER BY d.next_attempt_at,d.event_id LIMIT 100`);
+  while (selected.length < 100 && Date.now() - started < SCAN_BUDGET_MS) {
+    const rows = duePage.all(peerId, at, ...(scan.due ?? ["", ""])) as unknown as Array<OutboxRow & { next_attempt_at: string }>;
+    if (!rows.length) { scan.due = undefined; break; }
+    for (const row of rows) {
+      if (Date.now() - started >= SCAN_BUDGET_MS) break;
+      scan.due = [row.next_attempt_at, row.event_id];
+      const event = eventFromRow(row);
+      if (filter(event)) selected.push(event);
+      if (selected.length === 100) break;
+    }
   }
   const page = db.prepare(`SELECT o.rowid cursor, o.* FROM replication_outbox o
     WHERE o.rowid>? AND o.rowid<=? AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)
     ORDER BY o.rowid LIMIT 100`);
   const allocate = db.prepare(`INSERT OR IGNORE INTO replication_deliveries
     (event_id,peer_id,attempts,next_attempt_at,delivered_at,last_error) VALUES (?,?,0,?,NULL,NULL)`);
-  const now = Date.parse(at), started = Date.now();
-  // Taken before searching: an event added meanwhile has a higher rowid and is found next time.
-  const newest = (db.prepare("SELECT max(rowid) id FROM replication_outbox").get() as { id: number | null }).id ?? 0;
-  // After a restart what is already there is searched like any other older event, so that
-  // events added from now on do not wait behind it.
-  const scan = unallocatedScan.get(peerId) ?? { tail: newest, older: { cursor: 0, end: newest }, finishedAt: now };
+  // After a restart the existing history is searched behind newly appended events.
   if (!scan.older && now - scan.finishedAt >= FULL_SCAN_MS) scan.older = { cursor: 0, end: scan.tail };
   const take = (row: OutboxRow): void => {
     const event = eventFromRow(row);
@@ -151,6 +160,7 @@ function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, fi
       const upTo = Math.min(to, cursor + SCAN_WINDOW);
       const rows = page.all(cursor, upTo, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
       for (const row of rows) {
+        if (Date.now() - started >= SCAN_BUDGET_MS) return cursor;
         cursor = row.cursor;
         take(row);
         if (selected.length === 100) break;

@@ -869,6 +869,13 @@
           <fieldset class="phase-settings">
             <legend>Account</legend>
             <p>Signed in as <output id="settingsUsername" data-testid="settings-username"></output>.</p>
+            <div id="settingsEmailField" data-testid="settings-email-field">
+              <label>Email
+                <input id="settingsEmail" type="email" autocomplete="email" maxlength="254" required data-testid="settings-email-input" />
+              </label>
+              <button class="ghost" id="settingsChangeEmailButton" type="button" data-testid="settings-change-email-button">Change email</button>
+              <p class="settings-hint" id="settingsEmailStatus" role="status" data-testid="settings-email-status"></p>
+            </div>
             <div class="account-password-fields">
               <label>Current password
                 <input id="settingsCurrentPassword" type="password" autocomplete="current-password" data-testid="settings-current-password-input" />

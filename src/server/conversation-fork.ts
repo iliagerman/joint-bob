@@ -29,11 +29,11 @@ function isWithin(filePath: string, root: string): boolean {
  * Listing through the viewer's scope reuses their cached catalog and finds pinned or
  * recent conversations past the history window; a different scope forces a full rescan. */
 /** A fork is written where the project's agents read it: its runtime account's home. */
-export function forkLocalConversation(sourceProject: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix = "[F]", viewer = { userId: "", username: "" }, destination: ProjectRecord = sourceProject): Promise<SessionSummary> {
-  return withProjectRuntime(destination.id, () => forkInRuntime(sourceProject, engine, sessionId, titlePrefix, viewer, destination));
+export function forkLocalConversation(sourceProject: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix = "[F]", viewer = { userId: "", username: "" }, destination: ProjectRecord = sourceProject, conflictSnapshot?: { source: SessionSummary; validate: (source: SessionSummary) => void }): Promise<SessionSummary> {
+  return withProjectRuntime(destination.id, () => forkInRuntime(sourceProject, engine, sessionId, titlePrefix, viewer, destination, conflictSnapshot));
 }
 
-async function forkInRuntime(sourceProject: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix: string, viewer: { userId: string; username: string }, destination: ProjectRecord): Promise<SessionSummary> {
+async function forkInRuntime(sourceProject: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix: string, viewer: { userId: string; username: string }, destination: ProjectRecord, conflictSnapshot?: { source: SessionSummary; validate: (source: SessionSummary) => void }): Promise<SessionSummary> {
   const project = sourceProject;
   await assertProjectEditable(project);
   if (destination.id !== project.id) await assertProjectEditable(destination);
@@ -42,15 +42,15 @@ async function forkInRuntime(sourceProject: ProjectRecord, engine: ConversationE
     if (error instanceof SyntaxError) throw new HarnessForkError(409, "Conversation transcript is incomplete or invalid");
     throw error;
   });
-  const source = sessions.find((session) => session.harnessId === engine && session.id === sessionId);
+  const source = sessions.find((session) => session.harnessId === engine && session.id === sessionId) ?? conflictSnapshot?.source;
   if (!source) throw new HarnessForkError(404, "Conversation not found");
-  if (!source.readOnly) await requireLocalConversationOwner(engine, sessionId);
+  if (!conflictSnapshot && !source.readOnly) await requireLocalConversationOwner(engine, sessionId);
   const targets = source.segments ?? [{ engine, sessionId, path: source.path, draft: source.draft }];
   const queueKey = `${project.id}:${source.conversationId ?? source.id}`;
   const settings = readQueueSettings(queueKey);
   const accounts = await Promise.all(targets.map((target) => getScopeSecretAccounts("conversation", conversationScopeId(target.engine, target.sessionId))));
   const ownership = await getConversationOwnership(engine, sessionId);
-  if (ownership && (ownership.ownerNodeId !== local.id || ownership.status !== "owned")) throw new HarnessForkError(409, "Conversation owner changed; retry on its owner");
+  if (!conflictSnapshot && ownership && (ownership.ownerNodeId !== local.id || ownership.status !== "owned")) throw new HarnessForkError(409, "Conversation owner changed; retry on its owner");
   const title = titlePrefix ? `${titlePrefix} ${source.title}` : source.title;
   const timestamp = new Date().toISOString();
   const loaded = await Promise.all(targets.map(async (target) => {
@@ -59,11 +59,14 @@ async function forkInRuntime(sourceProject: ProjectRecord, engine: ConversationE
     return { adapter, snapshot: await adapter.fork() };
   }));
   const files: HarnessForkFile[] = [];
+  // Conflict forks validate the saved local bytes under the transcript receive lock.
+  // This guard and the snapshot are synchronous, so no local turn can start between them.
+  conflictSnapshot?.validate(source);
   // Adapter code is loaded before this synchronous map. Local turns cannot start halfway through a snapshot.
   const copies = targets.map((target, index) => {
     const id = randomUUID();
     const { adapter, snapshot } = loaded[index];
-    const result = snapshot({ project: destination, sessionId: target.sessionId, sessionPath: target.path, newSessionId: id, title, timestamp, draft: Boolean(target.draft), live: findHarnessSession(project.id, target.engine, target.sessionId)?.session });
+    const result = snapshot({ project: destination, sessionId: target.sessionId, sessionPath: target.path, newSessionId: id, title, timestamp, draft: Boolean(target.draft), live: conflictSnapshot ? undefined : findHarnessSession(project.id, target.engine, target.sessionId)?.session });
     const root = adapter.sync.transcriptRoot();
     for (const file of result.files) {
       if (!isWithin(file.destination, root) || !confinedToRuntime(currentRuntime(), file.destination)) throw new HarnessForkError(409, "Fork transcript is outside the configured transcript root");

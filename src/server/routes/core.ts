@@ -10,7 +10,7 @@ import { dispatchSignedRuntime, twinRuntimeGuard } from "../runtime-peers.js";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { authenticate, authenticationStatus, AuthError, type AuthSession, type MfaLoginChallenge, beginMfaSetup, cancelMfaSetup, changePassword, setOwnEmail, clearSessionCookieValue, completeMfaLogin, confirmMfaSetup, createAdministrator, listLoginSessions, manageMfa, mfaStatus, revokeSession, revokeUserSession, sessionCookieNameFor, sessionCookieValue, sessionForId } from "../../auth.js";
+import { authenticate, authenticationStatus, AuthError, type AuthSession, type MfaLoginChallenge, beginMfaSetup, cancelMfaSetup, changePassword, setOwnEmail, clearSessionCookieValue, completeMfaLogin, beginGatewayMfaSetup, confirmGatewayMfaSetup, confirmMfaSetup, createAdministrator, listLoginSessions, manageMfa, mfaStatus, revokeSession, revokeUserSession, sessionCookieNameFor, sessionCookieValue, sessionForId } from "../../auth.js";
 import { appVersion } from "../../changelog.js";
 import { captureClusterRawBody, clusterBodyParserError, rejectEncodedClusterBody, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
 import { emailSchema, loginSchema, passwordChangeSchema, setupSchema } from "../schemas.js";
@@ -20,6 +20,7 @@ import { receiveManagerCertificate } from "../cluster-manager.js";
 import { confirmTwinHttp } from "../twins.js";
 import { relayTransportOf } from "../../relay/stream.js";
 import { otherUsersMayUsePhone } from "../../relay/phone-policy.js";
+import { authorizeRemoteSignIn, verifyRemoteMfa } from "../remote-mfa.js";
 
 app.use(securityHeaders);
 app.set("trust proxy", 1);
@@ -105,12 +106,12 @@ app.get("/api/health", (_request, response) => {
 
 function viaGateway(request: Request): boolean { return relayTransportOf(request.socket) === "gateway"; }
 
-function sendLogin(request: Request, response: Response, result: AuthSession | MfaLoginChallenge): void {
+function sendLogin(request: Request, response: Response, result: AuthSession | MfaLoginChallenge, recoveryCodes?: string[]): void {
   if ("mfaRequired" in result) { response.json(result); return; }
   response.setHeader("Set-Cookie", sessionCookieValue(result, viaGateway(request)));
   // A visitor's profile comes from their home node, asked for at each sign-in here.
   if (result.isRemoteLogin) void import("../roaming.js").then(({ requestProfile }) => requestProfile(result.accountId)).catch((error) => console.warn("Profile request failed", error));
-  response.json({ mustChangePassword: result.mustChangePassword, csrfToken: result.csrfToken, username: result.username, email: result.email, accountId: result.accountId, role: result.role, needsEmail: !result.isRemoteLogin && !result.email, isRemoteLogin: result.isRemoteLogin });
+  response.json({ mustChangePassword: result.mustChangePassword, csrfToken: result.csrfToken, username: result.username, email: result.email, accountId: result.accountId, role: result.role, needsEmail: !result.isRemoteLogin && !result.email, isRemoteLogin: result.isRemoteLogin, ...(recoveryCodes ? { recoveryCodes } : {}) });
 }
 
 function authError(error: unknown, _request: Request, response: Response, next: NextFunction): void {
@@ -121,7 +122,8 @@ function authError(error: unknown, _request: Request, response: Response, next: 
 
 const mfaCodeSchema = z.object({ code: z.string().trim().min(1).max(64) }).strict();
 const mfaPasswordSchema = z.object({ currentPassword: z.string().min(1).max(200) }).strict();
-const mfaLoginSchema = mfaCodeSchema.extend({ challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
+const mfaChallengeSchema = z.object({ challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict();
+const mfaLoginSchema = mfaCodeSchema.extend(mfaChallengeSchema.shape);
 const mfaManagementSchema = mfaPasswordSchema.extend({ code: mfaCodeSchema.shape.code });
 
 app.post("/api/auth/setup", (request, response, next) => {
@@ -144,7 +146,7 @@ app.post("/api/auth/setup", (request, response, next) => {
   }
 });
 
-app.post("/api/auth/login", (request, response, next) => {
+app.post("/api/auth/login", async (request, response, next) => {
   try {
     const payload = loginSchema.parse(request.body);
     // Through a relay's phone gateway, MFA is required (D14) and attempts are throttled per
@@ -159,6 +161,10 @@ app.post("/api/auth/login", (request, response, next) => {
         throttle: [{ key: `gateway:${request.socket.remoteAddress ?? "unknown"}:${user}`, limit: 5 }, { key: `gateway:${user}`, limit: 50 }],
       })
       : authenticate(payload.username, payload.password);
+    if (!("mfaRequired" in session) && session.homeNodeId) {
+      try { await authorizeRemoteSignIn(session.homeNodeId, session.accountId); }
+      catch (error) { revokeSession(session.id); throw error; }
+    }
     sendLogin(request, response, session);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -167,20 +173,37 @@ app.post("/api/auth/login", (request, response, next) => {
     }
     if (error instanceof AuthError) { sendError(response, error.statusCode, error.message); return; }
     if (error instanceof Error && ["Invalid username or password", "Too many login attempts. Try again in 15 minutes"].includes(error.message)) {
-      // The same answer whether the password or the missing MFA was the reason.
-      sendError(response, 401, viaGateway(request) && error.message === "Invalid username or password"
-        ? "Invalid username or password. Signing in from a phone through a relay also needs two-factor authentication on this machine."
-        : error.message);
+      sendError(response, 401, error.message);
       return;
     }
     next(error);
   }
 });
 
-app.post("/api/auth/login/mfa", (request, response, next) => {
+app.post("/api/auth/login/mfa/setup", (request, response, next) => {
+  try {
+    if (!viaGateway(request)) { sendError(response, 404, "Not found"); return; }
+    response.json(beginGatewayMfaSetup(mfaChallengeSchema.parse(request.body).challenge));
+  } catch (error) { authError(error, request, response, next); }
+});
+app.post("/api/auth/login/mfa/confirm", (request, response, next) => {
+  try {
+    if (!viaGateway(request)) { sendError(response, 404, "Not found"); return; }
+    const { challenge, code } = mfaLoginSchema.parse(request.body);
+    const { session, recoveryCodes } = confirmGatewayMfaSetup(challenge, code);
+    sendLogin(request, response, session, recoveryCodes);
+  } catch (error) { authError(error, request, response, next); }
+});
+app.post("/api/auth/login/mfa", async (request, response, next) => {
   try {
     const payload = mfaLoginSchema.parse(request.body);
-    sendLogin(request, response, completeMfaLogin(payload.challenge, payload.code));
+    const session = await completeMfaLogin(payload.challenge, payload.code, verifyRemoteMfa, authorizeRemoteSignIn);
+    if (session.isRemoteLogin && viaGateway(request) && !otherUsersMayUsePhone()) {
+      revokeSession(session.id);
+      sendError(response, 403, "This machine does not accept other users' sign-ins from a phone");
+      return;
+    }
+    sendLogin(request, response, session);
   } catch (error) { authError(error, request, response, next); }
 });
 

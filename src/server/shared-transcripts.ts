@@ -2,7 +2,9 @@ import { confinedToRuntime, currentRuntime } from "../account-runtime.js";
 import { withProjectRuntime } from "../project-runtime.js";
 import { projectAdditionalPaths } from "./session-scope.js";
 import { createHash, randomUUID } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, readFileSync, lstatSync } from "node:fs";
+import { forkLocalConversation } from "./conversation-fork.js";
+import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
 import { copyFile, lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -316,6 +318,34 @@ async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,proj
   clearHarnessSessionCache(projectId);
  }finally{guard.done();if(!keep)await rm(partial,{force:true});}
 }
+// Preserve the local branch as a usable conversation, without changing either
+// original history or its ownership. Never route this operation to the owner.
+export async function forkConflictedTranscript(peerId:string,projectId:string,engine:string,sessionId:string,viewer:{userId:string;username:string}) {
+ const db=await clusterV2Database();ensureSchema(db);
+ return oneAtATime(peerId,engine,sessionId,()=>withProjectRuntime(projectId,async()=>{
+  await sharedTranscriptProject(peerId,projectId);
+  const project=await getProject(projectId);
+  if(!project)throw new ClusterV2HttpError(404,'Project not found');
+  const ownership=await getConversationOwnership(engine,sessionId);
+  if(ownership&&ownership.ownerNodeId!==peerId)throw new ClusterV2HttpError(409,'Conversation owner changed; check again');
+  const conflict=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peerId,projectId,engine,sessionId) as ConflictRow|undefined;
+  if(!conflict)throw new ClusterV2HttpError(409,'This conversation no longer needs review');
+  const adapter=getHarness(engine);
+  const source=(await adapter.sessions.refresh({...project,recordSessionIds:[`${engine}:${sessionId}`],includedSessionIds:[`${engine}:${sessionId}`]},[],[conflict.path])).find(item=>item.id===sessionId);
+  if(!source)throw new ClusterV2HttpError(409,'Local conflict history could not be read');
+  return forkLocalConversation(project,engine,sessionId,'[Local fork]',viewer,project,{source,validate:source=>{
+   const row=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peerId,projectId,engine,sessionId) as ConflictRow|undefined;
+   if(!row)throw new ClusterV2HttpError(409,'This conversation no longer needs review');
+   const adapter=getHarness(engine),file=adapter.paths.transcriptFile?.(source.path);
+   if(file!==row.path||!lstatSync(file).isFile()||lstatSync(file).isSymbolicLink()||createHash('sha256').update(readFileSync(file)).digest('hex')!==row.localHash)throw new ClusterV2HttpError(409,'Local history changed; check again before forking');
+   for(const segment of source.segments??[{engine,sessionId}]){
+    const live=findHarnessSession(projectId,segment.engine,segment.sessionId);
+    if(live&&harnessSessionBusy(live))throw new ClusterV2HttpError(409,'Stop this conversation before forking its conflicting history');
+   }
+  }});
+ }));
+}
+
 export function assertSharedTranscriptReady(projectId:string,sessionPath:string,ownerNodeId?:string):Promise<void>{
  return withProjectRuntime(projectId,()=>assertSharedTranscriptReadyNow(projectId,sessionPath,ownerNodeId));
 }

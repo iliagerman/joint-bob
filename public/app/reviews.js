@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { reconcileTranscriptConflict } from "./transcript-conflict.js";
 import { loadHarnesses, loadSessionNodes } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
@@ -282,7 +283,8 @@ export async function openListedSession(session) {
     openSession(result.sessionPath, title, false, false, reviewHighlightAfter);
     toast(result.pendingPeerIds?.length ? "Switched to this node; offline nodes will update when they return" : "Switched to this node");
   } catch (error) {
-    if (state.activeProjectId === projectId && state.activeSessionId === session.id) toast(error.message, 8000);
+    if (state.activeProjectId === projectId && state.activeSessionId === session.id
+      && !await reconcileTranscriptConflict(error, { projectId, engine: session.harnessId, sessionId: session.id })) toast(error.message, 8000);
   }
 }
 elements.markAllReviewedButton.addEventListener("click", () => { void markAllSessionsReviewed(); });

@@ -17,7 +17,7 @@ export class AuthError extends Error {
   constructor(public readonly statusCode: number, message: string) { super(message); }
 }
 
-export interface MfaLoginChallenge { mfaRequired: true; challenge: string }
+export interface MfaLoginChallenge { mfaRequired: true; challenge: string; mfaSetupRequired?: boolean; remoteMfa?: boolean; offlineMfa?: boolean }
 export interface MfaStatus { enabled: boolean; recoveryCodesRemaining: number }
 
 // Already-open sockets must lose access when MFA changes revoke their login session.
@@ -145,6 +145,8 @@ function authDatabase(): DatabaseSync {
       expires_at TEXT NOT NULL
     );
   `);
+  const challengeColumns = database.prepare("PRAGMA table_info(mfa_login_challenges)").all() as unknown as Array<{ name: string }>;
+  if (!challengeColumns.some(column => column.name === "setup_secret_encrypted")) database.exec("ALTER TABLE mfa_login_challenges ADD COLUMN setup_secret_encrypted TEXT");
   ensureReplicatedUserSchema(database);
   ensureAuditSchema(database);
   return database;
@@ -490,9 +492,9 @@ function isRateLimited(username: string, limit = 5): boolean {
   return count.count >= limit;
 }
 
-/** A sign-in attempt's own throttle buckets and rules. Phone sign-in through a relay uses
-    separate buckets, so attempts from the internet never lock the owner out locally, and it
-    requires MFA without revealing whether a password was right (RELAY-PLAN.md §6 M2). */
+/** Phone sign-in through a relay uses separate throttle buckets, so attempts from the
+    internet never lock the owner out locally. It issues only a short-lived challenge
+    until MFA is verified or enrolled (RELAY-PLAN.md §6 M2). */
 export interface AuthenticateOptions {
   throttle?: Array<{ key: string; limit: number }>;
   requireMfa?: boolean;
@@ -531,7 +533,7 @@ export function authenticate(username: string, password: string, options: Authen
     throw new Error("Too many login attempts. Try again in 15 minutes");
   }
   const passwordMatches = Boolean(row && timingSafeEqual(passwordDigest(password, row.password_salt), row.password_hash));
-  if (!row || !passwordMatches || (options.requireMfa && !mfaStatus(row.id).enabled) || (options.homeUsersOnly && row.home_node_id !== null)) {
+  if (!row || !passwordMatches || (options.homeUsersOnly && row.home_node_id !== null)) {
     db.exec("BEGIN");
     try {
       for (const bucket of buckets) recordLoginAttempt(db, bucket.key);
@@ -544,21 +546,22 @@ export function authenticate(username: string, password: string, options: Authen
     throw new Error("Invalid username or password");
   }
   if (row.disabled === 1) throw new AuthError(403, "This account is disabled");
-  if (row.home_node_id !== null && row.remote_mfa === 1) {
-    throw new AuthError(403, "This account uses two-factor sign-in, which works only on its home node for now");
+  if (row.home_node_id !== null && options.requireMfa && row.remote_mfa !== 1) {
+    throw new AuthError(403, "Set up two-factor authentication on your home node before signing in here from a phone");
   }
   rememberRoamingProof(db, row, password, row.password_salt);
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const bucket of buckets) db.prepare("DELETE FROM login_attempts WHERE username = ?").run(bucket.key.toLowerCase());
-    if (mfaStatus(row.id).enabled) {
+    const enabled = mfaStatus(row.id).enabled || row.remote_mfa === 1;
+    if (enabled || options.requireMfa) {
       checkMfaRateLimit(row.id);
       const challenge = randomBytes(32).toString("base64url");
       db.prepare("DELETE FROM mfa_login_challenges WHERE expires_at <= ? OR user_id = ?").run(new Date().toISOString(), row.id);
       db.prepare("INSERT INTO mfa_login_challenges (challenge_hash, user_id, expires_at) VALUES (?, ?, ?)")
         .run(digest(challenge), row.id, new Date(Date.now() + 5 * 60_000).toISOString());
       db.exec("COMMIT");
-      return { mfaRequired: true, challenge };
+      return { mfaRequired: true, challenge, ...(!enabled ? { mfaSetupRequired: true } : {}), ...(row.home_node_id !== null ? { remoteMfa: true, offlineMfa: mfaStatus(row.id).enabled } : {}) };
     }
     const session = createLoginSession(db, row);
     db.exec("COMMIT");
@@ -770,12 +773,44 @@ function consumeMfaCode(db: DatabaseSync, userId: string, code: string): boolean
   return db.prepare("DELETE FROM mfa_recovery_codes WHERE user_id = ? AND code_hash = ?").run(userId, recoveryDigest(userId, normalized)).changes === 1;
 }
 
-export function completeMfaLogin(challenge: string, code: string): AuthSession {
+export type VerifyRemoteMfa = (homeNodeId: string, accountId: string, proof: string, code: string) => Promise<void>;
+
+/** Home verifies recovery codes and legacy visitors without a synced TOTP key. */
+export function verifyAccountMfa(userId: string, proof: string, code: string): void {
+  mfaAction(userId, db => {
+    const row = db.prepare("SELECT * FROM users WHERE id = ? AND home_node_id IS NULL AND disabled = 0").get(userId) as UserRow | undefined;
+    if (!row || !roamingProofValid(userId, proof)) throw new AuthError(401, "Sign-in expired. Go back and enter your password again");
+    if (!consumeMfaCode(db, userId, code)) throw new AuthError(401, "Invalid or already used code. Use a fresh authenticator code or an unused recovery code");
+  });
+}
+
+export async function completeMfaLogin(challenge: string, code: string, verifyRemote?: VerifyRemoteMfa, authorizeRemote?: (homeNodeId: string, accountId: string) => Promise<void>): Promise<AuthSession> {
   const db = authDatabase();
   const hash = digest(challenge);
-  const row = db.prepare("SELECT users.* FROM mfa_login_challenges JOIN users ON users.id = user_id WHERE challenge_hash = ? AND expires_at > ?")
+  const row = db.prepare("SELECT users.* FROM mfa_login_challenges JOIN users ON users.id = user_id WHERE challenge_hash = ? AND expires_at > ? AND users.disabled = 0")
     .get(hash, new Date().toISOString()) as UserRow | undefined;
   if (!row) throw new AuthError(401, "Sign-in expired. Go back and enter your password again");
+  if (row.home_node_id !== null) {
+    if (!authorizeRemote) throw new AuthError(403, "Sign-in is not available on this node");
+    await authorizeRemote(row.home_node_id, accountIdForRow(db, row));
+  }
+  // Replicated TOTP is checked here even while home is offline. Recovery codes stay
+  // authoritative at home; copying them would let one code be spent on disconnected nodes.
+  const localTotp = mfaStatus(row.id).enabled && /^\d{6}$/.test(code.replace(/\s/g, ""));
+  if (row.home_node_id !== null && !localTotp) {
+    const proof = visitorSignInProof(row.id);
+    if (!verifyRemote || !proof || row.remote_mfa !== 1) throw new AuthError(401, "Sign-in expired. Go back and enter your password again");
+    checkMfaRateLimit(row.id);
+    await verifyRemote(row.home_node_id, accountIdForRow(db, row), proof, code);
+    // No transaction spans the network request. Claim the challenge only after home accepts;
+    // deletion, credential updates, expiry or a concurrent completion must still win.
+    return mfaAction(row.id, db => {
+      const current = db.prepare("SELECT * FROM users WHERE id = ? AND disabled = 0").get(row.id) as UserRow | undefined;
+      const claimed = db.prepare("DELETE FROM mfa_login_challenges WHERE challenge_hash = ? AND expires_at > ?").run(hash, new Date().toISOString());
+      if (!current || claimed.changes !== 1) throw new AuthError(401, "Sign-in expired. Go back and enter your password again");
+      return createLoginSession(db, current);
+    });
+  }
   return mfaAction(row.id, (db) => {
     const claimed = db.prepare("DELETE FROM mfa_login_challenges WHERE challenge_hash = ? AND expires_at > ?").run(hash, new Date().toISOString());
     if (claimed.changes !== 1) throw new AuthError(401, "Sign-in expired. Go back and enter your password again");
@@ -784,7 +819,54 @@ export function completeMfaLogin(challenge: string, code: string): AuthSession {
   });
 }
 
+// A gateway password proof can enroll MFA, but cannot open an app session until TOTP is proven.
+function pendingGatewaySetup(db: DatabaseSync, challenge: string): UserRow {
+  const row = db.prepare(`SELECT users.* FROM mfa_login_challenges JOIN users ON users.id = user_id
+    WHERE challenge_hash = ? AND expires_at > ? AND users.disabled = 0 AND users.home_node_id IS NULL
+      AND NOT EXISTS (SELECT 1 FROM user_mfa WHERE user_id = users.id)`)
+    .get(digest(challenge), new Date().toISOString()) as UserRow | undefined;
+  if (!row) throw new AuthError(401, "Sign-in expired. Go back and enter your password again");
+  return row;
+}
+
+export function beginGatewayMfaSetup(challenge: string): { secret: string; otpauthUri: string } {
+  const db = authDatabase();
+  const row = pendingGatewaySetup(db, challenge);
+  checkMfaRateLimit(row.id);
+  const secret = generateTotpSecret();
+  db.prepare("UPDATE mfa_login_challenges SET setup_secret_encrypted = ? WHERE challenge_hash = ?")
+    .run(encryptSecretValue(secret), digest(challenge));
+  const label = encodeURIComponent(`Joint Bob:${row.username}@${hostname()}`);
+  return { secret, otpauthUri: `otpauth://totp/${label}?secret=${secret}&issuer=Joint%20Bob&algorithm=SHA1&digits=6&period=30` };
+}
+
+export function confirmGatewayMfaSetup(challenge: string, code: string): { session: AuthSession; recoveryCodes: string[] } {
+  const db = authDatabase();
+  const row = pendingGatewaySetup(db, challenge);
+  const result = mfaAction(row.id, db => {
+    const pending = db.prepare("SELECT setup_secret_encrypted FROM mfa_login_challenges WHERE challenge_hash = ? AND expires_at > ?")
+      .get(digest(challenge), new Date().toISOString()) as { setup_secret_encrypted: string | null } | undefined;
+    if (!pending?.setup_secret_encrypted) throw new AuthError(400, "MFA setup expired. Start setup again");
+    const step = verifyTotp(decryptSecretValue(pending.setup_secret_encrypted), code.replace(/\s/g, ""));
+    if (step === undefined) throw new AuthError(400, "Invalid authenticator code");
+    db.prepare("INSERT INTO user_mfa (user_id, secret_encrypted, last_used_step) VALUES (?, ?, ?)")
+      .run(row.id, pending.setup_secret_encrypted, step);
+    const recoveryCodes = replaceRecoveryCodes(db, row.id);
+    const session = createLoginSession(db, row);
+    const revoked = invalidateOtherLogins(db, session);
+    appendAuditEvent(db, { eventType: "auth.mfa.enabled", actorType: "user", actorId: row.id, entityType: "user", entityId: row.id });
+    return { session, recoveryCodes, revoked };
+  });
+  authSessionEvents.emit("revoked", result.revoked);
+  return { session: result.session, recoveryCodes: result.recoveryCodes };
+}
+
+function requireHomeMfaManagement(session: AuthSession): void {
+  if (session.isRemoteLogin) throw new AuthError(403, "Manage MFA on your home node");
+}
+
 export function beginMfaSetup(session: AuthSession, currentPassword: string): { secret: string; otpauthUri: string } {
+  requireHomeMfaManagement(session);
   return mfaAction(session.userId, (db) => {
     requireMfaPassword(db, session.userId, currentPassword);
     if (mfaStatus(session.userId).enabled) throw new AuthError(409, "MFA is already enabled");
@@ -798,6 +880,7 @@ export function beginMfaSetup(session: AuthSession, currentPassword: string): { 
 }
 
 export function cancelMfaSetup(session: AuthSession): void {
+  requireHomeMfaManagement(session);
   authDatabase().prepare("DELETE FROM mfa_enrollments WHERE user_id = ? AND session_id = ?").run(session.userId, session.id);
 }
 
@@ -810,6 +893,7 @@ function invalidateOtherLogins(db: DatabaseSync, session: AuthSession): string[]
 }
 
 export function confirmMfaSetup(session: AuthSession, code: string): { recoveryCodes: string[] } {
+  requireHomeMfaManagement(session);
   const result = mfaAction(session.userId, (db) => {
     if (mfaStatus(session.userId).enabled) throw new AuthError(409, "MFA is already enabled");
     const pending = db.prepare("SELECT secret_encrypted FROM mfa_enrollments WHERE user_id = ? AND session_id = ? AND expires_at > ?")
@@ -828,6 +912,7 @@ export function confirmMfaSetup(session: AuthSession, code: string): { recoveryC
 }
 
 export function manageMfa(session: AuthSession, currentPassword: string, code: string, action: "disable" | "recovery-codes"): { recoveryCodes?: string[] } {
+  requireHomeMfaManagement(session);
   const result = mfaAction(session.userId, (db) => {
     requireMfaPassword(db, session.userId, currentPassword);
     if (!mfaStatus(session.userId).enabled) throw new AuthError(409, "MFA is not enabled");
@@ -880,8 +965,10 @@ export interface ReplicatedUserInput {
   homeNodeId: string;
   /** Stated by the home node: its twins share one id for the same person. */
   accountId: string;
-  /** The home node requires a second factor; this node can't verify it, so it refuses sign-in. */
+  /** A second factor is required even when an older home has not shared its TOTP key. */
   mfaRequired: boolean;
+  /** From the authenticated home snapshot only. Re-encrypted under this node's key. */
+  mfaSecret?: string | null;
   /** The clusters, shared with this node, that the person joined at home. */
   clusterIds?: string[];
 }
@@ -897,6 +984,7 @@ export interface ReplicatedUserRecord {
 /** Creates or updates a replicated user from another node. */
 export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUserRecord {
   if (!validUsername(input.username)) throw new Error("Invalid username for replicated user");
+  if (input.mfaSecret != null && (!input.mfaRequired || !/^[A-Z2-7]{32}$/.test(input.mfaSecret))) throw new Error("Invalid replicated MFA");
   const email = input.email == null ? null : normalizeEmail(input.email);
   if (email !== null && !validEmail(email)) throw new Error("Invalid email for replicated user");
   const db = authDatabase();
@@ -904,7 +992,7 @@ export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUser
 
   db.exec("BEGIN IMMEDIATE");
   try {
-    const existing = db.prepare("SELECT id, home_node_id FROM users WHERE username = ? COLLATE NOCASE").get(input.username) as { id: string; home_node_id: string | null } | undefined;
+    const existing = db.prepare("SELECT id, home_node_id, password_hash, password_salt, remote_mfa FROM users WHERE username = ? COLLATE NOCASE").get(input.username) as { id: string; home_node_id: string | null; password_hash: Uint8Array; password_salt: Uint8Array; remote_mfa: number } | undefined;
     if (existing && existing.home_node_id === null) throw new Error("Cannot overwrite the home user with a replicated user");
     if (existing && existing.home_node_id !== input.homeNodeId) throw new Error("Username conflict: replicated user from different home node");
     if (email !== null && emailTaken(db, email, existing?.id)) throw new Error("Email conflict: another account on this node uses that email");
@@ -916,15 +1004,29 @@ export function upsertReplicatedUser(input: ReplicatedUserInput): ReplicatedUser
       if (db.prepare("SELECT 1 FROM users WHERE account_id = ? AND id IS NOT ?").get(input.accountId, existing?.id ?? null)) throw new Error("Account conflict: another account here already has that id");
     }
     const id = existing?.id ?? nanoid(18);
+    let revoked: string[] = [];
+    const factor = db.prepare("SELECT secret_encrypted FROM user_mfa WHERE user_id = ?").get(id) as { secret_encrypted: string } | undefined;
+    const factorChanged = (factor ? decryptSecretValue(factor.secret_encrypted) : null) !== (input.mfaSecret ?? null);
     if (existing) {
+      if (factorChanged || !Buffer.from(existing.password_hash).equals(input.passwordHash) || !Buffer.from(existing.password_salt).equals(input.passwordSalt) || existing.remote_mfa !== (input.mfaRequired ? 1 : 0)) {
+        db.prepare("DELETE FROM mfa_login_challenges WHERE user_id = ?").run(id);
+        revoked = endSessions(db, id);
+      }
       db.prepare("UPDATE users SET password_hash = ?, password_salt = ?, email = ?, remote_mfa = ?, account_id = ?, remote_clusters = ?, updated_at = ? WHERE id = ?")
         .run(input.passwordHash, input.passwordSalt, email, input.mfaRequired ? 1 : 0, input.accountId ?? null, JSON.stringify(input.clusterIds ?? []), now, id);
     } else {
       db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, must_change_password, home_node_id, email, remote_mfa, account_id, remote_clusters, created_at, updated_at)
         VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.username, input.passwordHash, input.passwordSalt, input.homeNodeId, email, input.mfaRequired ? 1 : 0, input.accountId ?? null, JSON.stringify(input.clusterIds ?? []), now, now);
     }
+    // A repeated snapshot never resets this node's replay counter. A removed or replaced
+    // key discards its old factor and pending proofs, not the account's ownership.
+    if (factorChanged) {
+      db.prepare("DELETE FROM user_mfa WHERE user_id = ?").run(id);
+      if (input.mfaSecret) db.prepare("INSERT INTO user_mfa (user_id, secret_encrypted, last_used_step) VALUES (?, ?, -1)").run(id, encryptSecretValue(input.mfaSecret));
+    }
     appendAuditEvent(db, { eventType: existing ? "auth.replicated_user.updated" : "auth.replicated_user.created", actorType: "system", entityType: "user", entityId: id, details: { homeNodeId: input.homeNodeId } });
     db.exec("COMMIT");
+    if (revoked.length) authSessionEvents.emit("revoked", revoked);
     return { id, username: input.username, homeNodeId: input.homeNodeId, createdAt: now, updatedAt: now };
   } catch (error) {
     db.exec("ROLLBACK");
@@ -1009,15 +1111,16 @@ export interface LocalAccountCredentials {
   passwordHash: Buffer;
   passwordSalt: Buffer;
   mfaEnabled: boolean;
+  mfaSecret?: string | null;
   updatedAt: string;
 }
 
-/** Every local account's sign-in record, for the nodes it may sign in to. MFA secrets are
-    encrypted with this node's key and never travel; a peer only learns MFA is required. */
-export function localAccountsForReplication(): LocalAccountCredentials[] {
+/** Only the home exports its accounts. The authenticated snapshot transport can include
+    TOTP keys for offline verification; recovery codes and replay counters never travel. */
+export function localAccountsForReplication(includeMfa = false): LocalAccountCredentials[] {
   const db = authDatabase();
   const rows = db.prepare(`SELECT users.username, users.email, users.password_hash, users.password_salt, users.updated_at, users.account_id, users.home_node_id,
-      EXISTS (SELECT 1 FROM user_mfa WHERE user_mfa.user_id = users.id) AS mfa
-    FROM users WHERE home_node_id IS NULL ORDER BY username`).all() as unknown as Array<{ username: string; email: string | null; password_hash: Uint8Array; password_salt: Uint8Array; updated_at: string; mfa: number; account_id: string | null; home_node_id: null }>;
-  return rows.map((row) => ({ accountId: accountIdForRow(db, row), username: row.username, email: row.email, passwordHash: Buffer.from(row.password_hash), passwordSalt: Buffer.from(row.password_salt), mfaEnabled: row.mfa === 1, updatedAt: row.updated_at }));
+      (SELECT secret_encrypted FROM user_mfa WHERE user_mfa.user_id = users.id) AS mfa
+    FROM users WHERE home_node_id IS NULL AND disabled = 0 ORDER BY username`).all() as unknown as Array<{ username: string; email: string | null; password_hash: Uint8Array; password_salt: Uint8Array; updated_at: string; mfa: string | null; account_id: string | null; home_node_id: null }>;
+  return rows.map((row) => ({ accountId: accountIdForRow(db, row), username: row.username, email: row.email, passwordHash: Buffer.from(row.password_hash), passwordSalt: Buffer.from(row.password_salt), mfaEnabled: Boolean(row.mfa), ...(includeMfa ? { mfaSecret: row.mfa ? decryptSecretValue(row.mfa) : null } : {}), updatedAt: row.updated_at }));
 }

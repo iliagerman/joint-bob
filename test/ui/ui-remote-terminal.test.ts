@@ -51,33 +51,49 @@ test("the terminal button follows whether the execution node allows terminal acc
   assert.equal(await button.isDisabled(), false, "this node's own terminal stays available");
 });
 
-test("terminal access settings are together under Node and save remote access", { timeout: 120_000 }, async (t) => {
+test("the global Settings save persists terminal access settings", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
+  const session = await apiSignIn(environment, node);
   await signIn(page, node.url, environment.username, environment.password);
   const settingsLoaded = page.waitForResponse((response) => response.url().endsWith("/api/settings") && response.request().method() === "GET");
   await page.getByTestId("settings-open-button").click();
   await page.locator("#settingsDialog[open]").waitFor();
   await settingsLoaded;
+  const terminalPolicyLoaded = page.waitForResponse((response) => response.url().endsWith("/api/terminal-policy") && response.request().method() === "GET");
   await page.getByTestId("settings-tab-node").click();
+  await terminalPolicyLoaded;
 
   const policy = page.getByTestId("settings-terminal-policy");
+  const mode = page.getByTestId("terminal-policy-mode");
   const twins = page.getByTestId("settings-remote-terminal-twins");
   const others = page.getByTestId("settings-remote-terminal-other-nodes");
   await policy.waitFor({ state: "visible" });
   assert.equal(await policy.evaluate((element) => Boolean(element.closest("#settingsPanel-node"))), true);
   assert.equal(await twins.evaluate((element) => Boolean(element.closest("#settingsPanel-node"))), true);
   assert.equal(await others.evaluate((element) => Boolean(element.closest("#settingsPanel-node"))), true);
-  await twins.waitFor({ state: "visible" });
-  assert.equal(await twins.isChecked(), true);
-  assert.equal(await others.isChecked(), false);
-
+  assert.equal(await mode.inputValue(), "admin", "the fixture starts with terminal access enabled for its admin");
+  await mode.selectOption("off");
+  const separateSave = page.waitForResponse((response) => response.url().endsWith("/api/terminal-policy") && response.request().method() === "PUT");
+  await page.getByTestId("terminal-policy-save").click();
+  assert.equal((await separateSave).status(), 200);
+  await mode.selectOption("admin");
   await twins.uncheck();
   await others.check();
   const saved = page.waitForResponse((response) => response.url().endsWith("/api/settings") && response.request().method() === "PUT");
+  const savedTerminalPolicy = page.waitForResponse((response) => response.url().endsWith("/api/terminal-policy") && response.request().method() === "PUT");
   await page.getByTestId("settings-save-button").click();
   assert.equal((await saved).status(), 200);
+  assert.equal((await savedTerminalPolicy).status(), 200, "global Save settings must save changed terminal access");
 
-  const session = await apiSignIn(environment, node);
   const stored = await api<{ remoteTerminal: unknown }>(node, session, "GET", "/settings");
   assert.deepEqual(stored.body.remoteTerminal, { twins: false, otherNodes: true });
+  const savedPolicy = await api<{ mode: string }>(node, session, "GET", "/terminal-policy");
+  assert.equal(savedPolicy.body.mode, "admin", "the global Settings save must persist Only me terminal access");
+
+  await page.getByTestId("settings-open-button").click();
+  await page.locator("#settingsDialog[open]").waitFor();
+  const reloadedTerminalPolicy = page.waitForResponse((response) => response.url().endsWith("/api/terminal-policy") && response.request().method() === "GET");
+  await page.getByTestId("settings-tab-node").click();
+  await reloadedTerminalPolicy;
+  assert.equal(await mode.inputValue(), "admin", "reopening Settings must show the saved terminal policy");
 });

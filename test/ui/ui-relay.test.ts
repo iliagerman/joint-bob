@@ -350,7 +350,7 @@ test("Relay → Joined relays shows this machine's relay with its phone access",
   assert.equal(await page.locator('[data-testid="relay-clusters"], [data-testid="relay-move-up"], [data-testid="relay-move-down"]').count(), 0, "relay choice is automatic: no cluster control or order buttons");
   assert.match(await page.getByTestId("relays-address").innerText(), /^This machine's address for clusters: \S+/);
   assert.equal(await page.getByTestId("relay-phone-signin-toggle").isChecked(), true, "phone sign-in is on by default");
-  assert.equal(await page.getByTestId("relay-mfa-hint").innerText(), "Phone sign-in through a relay needs two-factor authentication. Set it up under Account.", "an account without two-factor sign-in is told why");
+  assert.equal(await page.getByTestId("relay-mfa-hint").innerText(), "Phone sign-in through a relay needs two-factor authentication. You can set it up when you sign in, or under Account.", "an account without two-factor sign-in is told why");
   await page.getByTestId("relay-local-card").scrollIntoViewIfNeeded();
   await shot("joined-relays");
 });

@@ -47,6 +47,39 @@ test("the admin signs in by email, sees the Node tab, and an account without an 
   assert.deepEqual(errors, []);
 });
 
+test("a local user changes their email from Account settings without changing their account", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator("#loginDialog[open]").waitFor({ timeout: 30_000 });
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 30_000 });
+
+  const before = await page.evaluate(async () => (await fetch("/api/auth/status")).json());
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-account").click();
+  const email = page.getByTestId("settings-email-input");
+  await email.waitFor({ state: "visible" });
+  await page.waitForFunction((expected) => document.querySelector<HTMLInputElement>("#settingsEmail")?.value === expected, `${environment.username}@example.test`);
+  assert.equal(await email.inputValue(), `${environment.username}@example.test`);
+  await email.fill("Dev.Updated@Example.test");
+  await page.getByTestId("settings-change-email-button").click();
+  await page.getByTestId("settings-email-status").getByText("Email changed to dev.updated@example.test").waitFor();
+  const after = await page.evaluate(async () => (await fetch("/api/auth/status")).json());
+  assert.equal(after.accountId, before.accountId, "changing email keeps the account");
+  assert.equal(after.email, "dev.updated@example.test");
+  assert.equal(await email.inputValue(), "dev.updated@example.test");
+  await page.getByTestId("settings-logout-button").click();
+  await page.locator("#loginDialog[open]").waitFor();
+  await page.getByTestId("login-username-input").fill("DEV.UPDATED@EXAMPLE.TEST");
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.getByText("Internal Assistant", { exact: true }).waitFor();
+  const signedIn = await page.evaluate(async () => (await fetch("/api/auth/status")).json());
+  assert.equal(signedIn.accountId, before.accountId, "the new email signs in to the same account");
+});
+
 test("a member sees no admin entries, never calls an admin route, and saves only their own settings", { timeout: 150_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const member = addMember(environment, node, "noam", "noam@example.test");
@@ -78,6 +111,8 @@ test("a member sees no admin entries, never calls an admin route, and saves only
 
   await page.getByTestId("settings-tab-labels").click();
   await page.locator("#settingsConversationLabels").fill("noam-label");
+  await page.getByTestId("settings-save-button").waitFor({ state: "visible" });
+  await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#settingsForm [type='submit']")?.disabled, undefined, { timeout: 40_000 });
   await page.locator("#settingsForm [type='submit']").click();
   await page.getByText("Settings saved").waitFor();
   const saved = runOnNode(environment, node, `

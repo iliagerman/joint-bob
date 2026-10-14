@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Joint Bob: close the laptop, your agent keeps running</title>
+  <meta name="description" content="Joint Bob is a private workspace for Claude Code, Pi and Kiro. Conversations run on machines you own, and you pick them up from any of them, or from your phone.">
+  <link rel="canonical" href="https://joint-bob.bobthebot.io/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://joint-bob.bobthebot.io/">
+  <meta property="og:title" content="Joint Bob: close the laptop, your agent keeps running">
+  <meta property="og:description" content="A private workspace for Claude Code, Pi and Kiro. Conversations run on machines you own, and you pick them up from any of them, or from your phone.">
+  <meta property="og:image" content="https://joint-bob.bobthebot.io/media/hero-1080.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="media/icon.svg">
+  <link rel="stylesheet" href="landing.css">
+</head>
+<body>
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <header class="topbar" id="topbar">
+    <a class="brand" href="#top">
+      <img src="media/icon.svg" alt="">
+      <span class="brand-copy"><strong>Joint Bob</strong><span>Agent workspace</span></span>
+    </a>
+    <span class="links">
+      <a class="ghost" href="#use-cases">Use cases</a>
+      <a class="ghost" href="#tour">The tour</a>
+      <a class="ghost" href="https://github.com/iliagerman/joint-bob">GitHub</a>
+    </span>
+    <button class="ghost icon-button" type="button" id="soundButton" aria-pressed="false" aria-label="Sound" title="Sound">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18 6.8a7.5 7.5 0 0 1 0 10.4"/></svg>
+    </button>
+    <button class="ghost icon-button" type="button" id="themeButton" aria-label="Light or dark" title="Light or dark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/></svg>
+    </button>
+    <a class="primary go" href="#install">Install</a>
+    <i class="progress" id="progress"></i>
+  </header>
+
+  <main>
+    <!-- The way in. This section is two and a half screens tall and its content stays put: the
+         scroll lifts the words away and pulls the film up until it fills the window. -->
+    <section class="enter" id="top">
+      <div class="enter-pin">
+        <div class="glow"></div>
+        <div class="enter-copy" id="enterCopy">
+          <p class="eyebrow">A private workspace for coding agents</p>
+          <h1>Close the laptop. <em>Your agent keeps running.</em></h1>
+          <p class="lede">Joint Bob runs Claude Code, Pi and Kiro conversations on machines you own. Start one on your laptop, let your server carry it, and pick it up from your phone.</p>
+          <!-- The install command here too, so nobody has to reach the foot of the page for it. -->
+          <div class="quick">
+            <div class="composer-input">curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash</div>
+            <button class="primary go" type="button" data-copy>Copy</button>
+          </div>
+          <p class="quick-note">Paste it in a terminal on macOS, Linux or Windows with WSL 2. No sudo. <a href="#install">More about installing</a></p>
+          <div class="actions">
+            <a class="primary" href="#use-cases">See what it does</a>
+            <button class="primary" type="button" data-watch="hero">▶ Watch with sound</button>
+          </div>
+        </div>
+        <div class="enter-film" id="enterFilm">
+          <div class="frame" data-film="hero"><div class="screen"><video data-src="media/hero-1080.mp4" poster="media/hero-1080.jpg" muted loop playsinline aria-label="A 22-second film: an agent in a terminal dies when the laptop closes; in Joint Bob the same task keeps running on a home server and is picked up from a phone."></video><span class="hear"><i></i><i></i><i></i></span></div></div>
+        </div>
+        <p class="hint" id="hint">Scroll</p>
+      </div>
+    </section>
+
+    <section class="inside">
+      <p class="eyebrow" data-flow="bottom">Inside</p>
+      <h2 class="big" data-split data-delay="0.1">One conversation. Every machine you own.</h2>
+      <p class="lede" data-flow="bottom" data-delay="0.2">It starts on one machine and keeps going on another. Follow it down the page.</p>
+      <div class="ribbon"><div class="machines" id="machines" aria-hidden="true">
+        <span>MacBook Pro</span><span class="to">→</span><span>Home server</span><span class="to">→</span><span>Phone</span><span class="to">→</span><span>Maya's MacBook</span><span class="to">→</span><span>EC2 instance</span><span class="to">→</span><span>MacBook Pro</span><span class="to">→</span><span>Home server</span><span class="to">→</span><span>Phone</span><span class="to">→</span><span>Maya's MacBook</span>
+      </div></div>
+      <!-- The seven use cases as pictures to pick from; landing.js fills this in. -->
+      <p class="section-title pick" data-flow="bottom" data-delay="0.1">Seven use cases, under 25 seconds each. Pick one to watch</p>
+      <div class="tiles wrap" id="tiles"></div>
+      <div class="dots" id="dots"></div>
+    </section>
+
+    <!-- The journey. landing.js adds a stop for each use case. -->
+    <section class="journey" id="use-cases">
+      <div class="line" id="line"><i></i><b></b></div>
+      <div class="wrap" id="stops"></div>
+    </section>
+
+    <section class="tour" id="tour">
+      <div class="wrap">
+        <p class="eyebrow" data-flow="bottom">The tour</p>
+        <h2 class="big" data-split data-delay="0.1">All of it in 50 seconds</h2>
+        <div class="frame" data-flow="tilt"><video data-src="media/teaser-1080.mp4" poster="media/teaser-1080.jpg" controls muted playsinline></video></div>
+      </div>
+    </section>
+
+    <section class="why">
+      <div class="wrap">
+        <h2 class="big" data-split>It runs where you put it</h2>
+        <div class="answers">
+          <div data-flow="left"><h3>Your machines</h3><p>It installs as your own user on macOS, Linux, or Windows with WSL 2: a laptop, a box under the desk, an EC2 instance. One machine is enough to start.</p></div>
+          <div data-flow="bottom" data-delay="0.15"><h3>Your agents</h3><p>Claude Code, Pi and Kiro, signed in with your own accounts. Pick the agent, model and reasoning level for each conversation.</p></div>
+          <div data-flow="right"><h3>Your network</h3><p>It serves on localhost. Add Tailscale, your own HTTPS, or a relay when you want your phone and your other machines in.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="install" id="install">
+      <div class="wrap">
+        <p class="eyebrow" data-flow="bottom">Install</p>
+        <h2 class="big" data-split data-delay="0.1">One command, on a machine you own</h2>
+        <p class="lede" data-flow="bottom" data-delay="0.2">No sudo. The installer downloads the latest release, checks its checksum and sets up a service for your user. Then open the local address it prints and create your account.</p>
+        <div class="composer" data-flow="bottom" data-delay="0.3">
+          <div class="command-strip"><span>macOS</span><span>Linux</span><span>Windows with WSL 2</span><span>MIT licensed</span><a href="https://github.com/iliagerman/joint-bob">GitHub</a></div>
+          <div class="composer-row">
+            <div class="composer-input" id="installCommand">curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash</div>
+            <button class="send" type="button" data-copy aria-label="Copy the install command" title="Copy the install command">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3 10.5 13.5M21 3l-6.5 18-4-7.5L3 9.5z"/></svg>
+            </button>
+          </div>
+        </div>
+        <p class="fine">Every screen in these films is the app itself, on throwaway machines with invented projects. The agent's replies in them are scripted. © 2026 Ilia German</p>
+      </div>
+    </section>
+  </main>
+  <!-- An offer that stays at the foot of the window through the use cases. -->
+  <button class="watch-pill" type="button" id="watchPill" data-watch=""><i></i><span>Watch with sound</span></button>
+
+  <!-- The theater: any film, large, with its sound; one after another. -->
+  <dialog class="theater" id="theater" aria-label="Films, with sound">
+    <div class="theater-card">
+      <div class="film-bar"><strong id="theaterTitle"></strong><span id="theaterCount"></span>
+        <button class="ghost icon-button" type="button" id="theaterClose" aria-label="Close" title="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <video id="theaterFilm" controls playsinline></video>
+      <div class="theater-foot">
+        <p class="message user" id="theaterText"></p>
+        <button class="primary" type="button" id="theaterPrevious">Previous</button>
+        <button class="primary go" type="button" id="theaterNext">Next</button>
+      </div>
+    </div>
+  </dialog>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="landing.js" defer></script>
+</body>
+</html>

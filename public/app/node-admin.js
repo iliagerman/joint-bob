@@ -84,6 +84,7 @@ const terminalIdle = document.querySelector("#terminalPolicyIdle");
 const terminalSave = document.querySelector("#terminalPolicySave");
 const terminalStatus = document.querySelector("#terminalPolicyStatus");
 let selectableUsers = [];
+let terminalPolicyDirty = false;
 
 function renderTerminalPeople(selected) {
   terminalPeople.hidden = terminalMode.value !== "selected";
@@ -100,6 +101,32 @@ function renderTerminalPeople(selected) {
   }) : [Object.assign(document.createElement("p"), { className: "settings-hint", textContent: "Add people in Users to choose them here." })]));
 }
 
+function terminalPolicyValue() {
+  return {
+    mode: terminalMode.value,
+    accounts: [...terminalPeople.querySelectorAll("input:checked")].map((input) => input.value).sort(),
+    maxPerUser: Number(terminalMax.value),
+    idleMinutes: Number(terminalIdle.value),
+  };
+}
+
+async function saveTerminalPolicy() {
+  await api("/api/terminal-policy", { method: "PUT", body: JSON.stringify(terminalPolicyValue()) });
+  terminalPolicyDirty = false;
+  terminalStatus.textContent = "Saved. Open terminals keep running; new ones follow these settings.";
+  document.dispatchEvent(new CustomEvent("terminalPolicyChanged"));
+}
+
+export async function saveChangedTerminalPolicy() {
+  if (!terminalPolicyDirty) return;
+  try {
+    await saveTerminalPolicy();
+  } catch (error) {
+    terminalStatus.textContent = error.message;
+    throw error;
+  }
+}
+
 export async function loadTerminalPolicy() {
   if (!isNodeAdmin()) return;
   const [policy, users] = await Promise.all([api("/api/terminal-policy"), api("/api/users").catch(() => ({ users: [] }))]);
@@ -109,20 +136,20 @@ export async function loadTerminalPolicy() {
   terminalIdle.value = policy.idleMinutes;
   terminalStatus.textContent = "";
   renderTerminalPeople(policy.accounts);
+  terminalPolicyDirty = false;
 }
 
-terminalMode?.addEventListener("change", () => renderTerminalPeople([...terminalPeople.querySelectorAll("input:checked")].map((input) => input.value)));
+terminalMode?.addEventListener("change", () => {
+  terminalPolicyDirty = true;
+  renderTerminalPeople([...terminalPeople.querySelectorAll("input:checked")].map((input) => input.value));
+});
+terminalPeople?.addEventListener("change", () => { terminalPolicyDirty = true; });
+terminalMax?.addEventListener("input", () => { terminalPolicyDirty = true; });
+terminalIdle?.addEventListener("input", () => { terminalPolicyDirty = true; });
 terminalSave?.addEventListener("click", async () => {
   terminalSave.disabled = true;
   try {
-    await api("/api/terminal-policy", { method: "PUT", body: JSON.stringify({
-      mode: terminalMode.value,
-      accounts: [...terminalPeople.querySelectorAll("input:checked")].map((input) => input.value),
-      maxPerUser: Number(terminalMax.value),
-      idleMinutes: Number(terminalIdle.value),
-    }) });
-    terminalStatus.textContent = "Saved. Open terminals keep running; new ones follow these settings.";
-    document.dispatchEvent(new CustomEvent("terminalPolicyChanged"));
+    await saveTerminalPolicy();
   } catch (error) {
     terminalStatus.textContent = error.message;
   } finally {
