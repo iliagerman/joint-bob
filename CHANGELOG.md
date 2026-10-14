@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.95.2 — 2026-10-14
 
-- Fixed searchable dropdown lists inside dialogs being cut off; their options now open within the dialog and scroll there.
+- Fixed searchable dropdown lists inside dialogs, such as the project list in the move dialog, being cut off with their own scrollbar; the list now shows in full inside the dialog, and each option's detail text is no longer clipped.
 
 ## 2.95.1 — 2026-10-14
 
