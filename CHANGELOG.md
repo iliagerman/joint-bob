@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the Runs on picker marking a healthy machine as offline when its answer came over the relay, which takes a couple of seconds; the picker now waits up to 5 seconds for each machine to reply.
+
 ## 2.91.2 — 2026-10-14
 
 - Fixed the mobile Tools & actions menu's Agent and Effort rows, which could not open their choices; they now list the options as buttons, like Runs on, and stay open after you pick one.

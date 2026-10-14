@@ -364,6 +364,9 @@ app.get('/api/cluster/projects/presence',async(request,response,next)=>{
   }catch(error){next(error);}
 });
 
+/** How long the Runs-on picker waits for a machine to answer. A relayed answer takes about 2 s. */
+const PRESENCE_LIMIT_MS = 5_000;
+
 app.get("/api/projects/:projectId/session-nodes", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
@@ -378,10 +381,10 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
       try {
         // A peer that is slow or offline answers from what it last reported, marked offline.
         const presence=await peerSnapshot(`presence:${project.id}`,peer.id,async()=>{
-          const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(3000)});
+          const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(PRESENCE_LIMIT_MS)});
           if(!reply.ok)throw new Error('Project presence unavailable');
           return await reply.json() as {mapped:boolean;terminal?:boolean};
-        });
+        },{waitMs:PRESENCE_LIMIT_MS});
         // A peer that predates the terminal setting does not restrict it.
         return {id:peer.id,name:peer.name,local:false,online:presence.fresh,mapped:presence.value.mapped,terminal:presence.value.terminal!==false};
       } catch {
