@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.97.0 — 2026-10-14
 
-- Added an option to accept webhook calls only from listed senders, such as Telegram users; calls from anyone else are refused and listed under Calls, where you can allow them with one click.
+- Added an option to accept webhook calls only from listed senders, such as Telegram users, with an optional name for each one; the sender is read from the first field you configure that holds a value, and a Use Telegram bot fields button fills in where Telegram names the person.
+- Made webhook calls from anyone not on the list, or naming no sender, stop short of the conversation; they are answered so Telegram does not retry them and are listed under Calls as Refused, with the sender's value and an Allow button.
+- Made an empty sender list refuse every call, which lets you find your own ID in the Calls list before you allow anyone.
+- Added the checked sender's name and ID to the top of each delivered webhook message, so the agent can tell household members apart.
 
 ## 2.96.0 — 2026-10-14
 
