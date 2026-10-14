@@ -70,6 +70,7 @@ async function openAutoRespond() {
   elements.autoRespondInstructions.value = saved?.instructions ?? defaults?.instructions ?? "";
   elements.autoRespondStopInstructions.value = saved ? saved.stopInstructions : defaults?.stopInstructions ?? "";
   elements.autoRespondLimit.value = saved ? saved.maxResponses ?? "" : defaults?.maxResponses ?? "";
+  elements.autoRespondUseTools.checked = saved ? saved.useTools !== false : true;
   elements.autoRespondEnabled.checked = !saved || saved.status !== "off";
   renderStatus();
   elements.autoRespondDialog.showModal();
@@ -94,6 +95,7 @@ function save(event) {
     instructions: elements.autoRespondInstructions.value.trim(),
     stopInstructions: elements.autoRespondStopInstructions.value.trim(),
     maxResponses: limit ? Number(limit) : null,
+    useTools: elements.autoRespondUseTools.checked,
   };
   if (!config.instructions) { toast("Write the instructions for the responder"); return; }
   if (sendSocket({ type: "autoRespond", autoRespond: { enabled: true, config } })) elements.autoRespondDialog.close();

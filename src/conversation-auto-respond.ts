@@ -11,7 +11,11 @@ import type { ChatMessage } from "./types.js";
 export type AutoRespondStatus = "active" | "stopped" | "off";
 export type AutoRespondStopKind = "stop-instruction" | "limit" | "user-stopped" | "turn-failed" | "responder-failed" | "budget";
 
-export const DEFAULT_AUTO_RESPOND_INSTRUCTIONS = "Answer as the user would, to keep the work moving. When the agent offers options, take the one it recommends; with no recommendation, take the simplest one that meets the original request. Do not add requirements. Keep replies short.";
+export const DEFAULT_AUTO_RESPOND_INSTRUCTIONS = [
+  "Answer as the user would, to keep the work moving. When the agent offers options, take the one it recommends; with no recommendation, take the simplest one that meets the original request. Do not add requirements. Keep replies short.",
+  "Check claims before you accept them: read the files the agent changed and run the project's tests or the commands it says pass. If something is wrong or missing, say what you found and ask the agent to fix it.",
+  "When a change cannot be checked with what exists, for example a UI, an API flow or an integration with no test, ask the agent to add a way to test it (a test, a script, a test page, a fixture server or a browser check), run it, and show you the result.",
+].join("\n\n");
 export const DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS = [
   "The task the user asked for is finished and verified.",
   "The agent asks for a password, token, one-time code, payment detail, or anything only the user can supply.",
@@ -28,6 +32,8 @@ export const autoRespondConfigSchema = z.object({
   instructions: z.string().trim().min(1).max(20_000),
   stopInstructions: z.string().trim().max(20_000),
   maxResponses: z.number().int().min(1).max(500).nullable(),
+  /** The responder may read the project and run commands to check the agent's work. */
+  useTools: z.boolean().default(true),
 }).strict();
 export type AutoRespondConfig = z.infer<typeof autoRespondConfigSchema>;
 
@@ -188,6 +194,10 @@ export function responderPrompt(config: AutoRespondConfig, turns: AutoRespondTur
     config.instructions.trim(),
     "",
     `This would be response ${responseNumber}${config.maxResponses ? ` of ${config.maxResponses}` : ""}.`,
+    ...(config.useTools ? [
+      "",
+      "You are working in the project's folder and may use your tools: read files, search, look at git status and diffs, and run tests, builds or other commands to check what the agent says before you answer. Do not change anything: no edits, commits, pushes, deploys, installs or messages. The agent does the work; you only check it and reply.",
+    ] : []),
     "",
     "<conversation>",
     blocks.join("\n\n"),
@@ -198,7 +208,7 @@ export function responderPrompt(config: AutoRespondConfig, turns: AutoRespondTur
     last?.role === "assistant" ? last.text.trim() : "",
     "</last-message>",
     "",
-    "Answer in exactly this format and nothing else:",
+    config.useTools ? "When you are done checking, end your final message with exactly this block and nothing after it:" : "Answer in exactly this format and nothing else:",
     "DECISION: STOP or RESPOND",
     "REASON: one line",
     "---",
@@ -210,7 +220,10 @@ export type AutoRespondDecision = { decision: "stop"; reason: string } | { decis
 
 /** Fails closed: anything that is not a clear decision, and an empty reply, is null. */
 export function parseAutoRespondDecision(output: string): AutoRespondDecision | null {
-  const match = output.match(/^\s*DECISION:\s*(STOP|RESPOND)\b[^\n]*\n\s*REASON:\s*([^\n]*)(?:\n---[ \t]*\n?([\s\S]*))?$/i);
+  // A responder that used tools narrates first; its decision is the last block it wrote.
+  const start = [...output.matchAll(/^[ \t]*DECISION:/gim)].at(-1)?.index;
+  if (start === undefined) return null;
+  const match = output.slice(start).match(/^\s*DECISION:\s*(STOP|RESPOND)\b[^\n]*\n\s*REASON:\s*([^\n]*)(?:\n---[ \t]*\n?([\s\S]*))?$/i);
   if (!match) return null;
   const reason = match[2].trim().slice(0, 500) || "No reason given";
   if (match[1].toUpperCase() === "STOP") return { decision: "stop", reason };

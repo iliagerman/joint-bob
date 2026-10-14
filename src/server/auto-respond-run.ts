@@ -3,7 +3,9 @@ import { getHarness, getHarnessRuntime } from "../harnesses.js";
 import type { HarnessEvent, HarnessModelSettings } from "../harnesses/runtime.js";
 import type { AutoRespondConfig } from "../conversation-auto-respond.js";
 
-const RESPONDER_TIMEOUT_MS = 120_000;
+// Checking the agent's work can mean running a test suite; judging text alone is quick.
+const RESPONDER_TIMEOUT_MS = 20 * 60_000;
+const TEXT_ONLY_TIMEOUT_MS = 120_000;
 
 export interface AutoRespondRunInput {
   projectId: string;
@@ -16,7 +18,7 @@ export interface AutoRespondRunInput {
 }
 
 /**
- * One responder decision in a throwaway, tool-less harness session, disposed before
+ * One responder decision in a throwaway harness session in the project folder, disposed before
  * returning so it never joins the project's conversations. Opening through the guarded
  * runtime makes a used-up budget refuse the run.
  */
@@ -43,10 +45,10 @@ export async function runAutoResponder(input: AutoRespondRunInput): Promise<stri
     await runtime.validateSettings(settings);
     await session.configure(settings);
     await session.preflight();
-    // The responder only judges and writes text; a harness that cannot turn its tools off cannot be one.
-    await session.setTools([]);
+    // With tools off the responder only judges text; a harness that cannot turn its tools off cannot run that way.
+    if (!input.config.useTools) await session.setTools([]);
     const done = new Promise<void>((resolve, reject) => {
-      timer = setTimeout(() => { void session.cancel().catch(() => {}); reject(new Error("The auto responder timed out")); }, RESPONDER_TIMEOUT_MS);
+      timer = setTimeout(() => { void session.cancel().catch(() => {}); reject(new Error("The auto responder timed out")); }, input.config.useTools ? RESPONDER_TIMEOUT_MS : TEXT_ONLY_TIMEOUT_MS);
       timer.unref();
       onAbort = () => { void session.cancel().catch(() => {}); reject(new Error("Auto respond was cancelled")); };
       if (input.signal.aborted) onAbort(); else input.signal.addEventListener("abort", onAbort, { once: true });
@@ -57,7 +59,9 @@ export async function runAutoResponder(input: AutoRespondRunInput): Promise<stri
     });
     await session.prompt({ text: input.prompt });
     await done;
-    return events.join("").trim();
+    // After tool calls the reply spans several messages; the decision is in the last one.
+    const last = [...session.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());
+    return (last?.text ?? events.join("")).trim();
   } finally {
     if (timer) clearTimeout(timer);
     if (onAbort) input.signal.removeEventListener("abort", onAbort);

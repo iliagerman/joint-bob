@@ -9,7 +9,7 @@ import { assistantMessageKey, parseAutoRespondDecision, responderPrompt, type Au
 import { projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
 
-const config: AutoRespondConfig = { harnessId: "kiro", provider: "kiro", modelId: "default", thinkingLevel: "medium", instructions: "Keep going.", stopInstructions: "- Stop when finished.", maxResponses: 2 };
+const config: AutoRespondConfig = { harnessId: "kiro", provider: "kiro", modelId: "default", thinkingLevel: "medium", instructions: "Keep going.", stopInstructions: "- Stop when finished.", maxResponses: 2, useTools: true };
 
 test("the responder's decision parses, and anything unclear fails closed", () => {
   assert.deepEqual(parseAutoRespondDecision("DECISION: RESPOND\nREASON: needs a nudge\n---\nUse option B.\nThanks."), { decision: "respond", reason: "needs a nudge", reply: "Use option B.\nThanks." });
@@ -17,7 +17,9 @@ test("the responder's decision parses, and anything unclear fails closed", () =>
   assert.deepEqual(parseAutoRespondDecision("decision: stop\nreason: asks for a password\n---\nignored"), { decision: "stop", reason: "asks for a password" });
   assert.equal(parseAutoRespondDecision("DECISION: RESPOND\nREASON: x\n---\n"), null, "an empty reply is not a decision");
   assert.equal(parseAutoRespondDecision("Sure, I would say go ahead."), null);
-  assert.equal(parseAutoRespondDecision("Here you go:\nDECISION: RESPOND\nREASON: x\n---\nhi"), null, "chatter before the decision is not accepted");
+  assert.deepEqual(parseAutoRespondDecision("I ran the tests; two fail.\nDECISION: RESPOND\nREASON: tests fail\n---\nFix the failing tests."), { decision: "respond", reason: "tests fail", reply: "Fix the failing tests." }, "a responder that checked first ends with its decision");
+  assert.deepEqual(parseAutoRespondDecision("Earlier I thought DECISION: STOP\nREASON: x\nThen:\nDECISION: RESPOND\nREASON: y\n---\ngo"), { decision: "respond", reason: "y", reply: "go" }, "the last decision block wins");
+  assert.equal(parseAutoRespondDecision("I looked around and have no opinion."), null);
 });
 
 test("the prompt carries the rules, the opening request and the agent's last message, and bounds the transcript", () => {
@@ -33,6 +35,9 @@ test("the prompt carries the rules, the opening request and the agent's last mes
   assert.match(prompt, /<last-message>\nAll done, anything else\?\n<\/last-message>/);
   assert.ok(prompt.length < 70_000);
   assert.ok(!prompt.includes("step 0 "), "the oldest turns are dropped first");
+  assert.match(prompt, /may use your tools/, "with tools on, the responder is told it may check the work");
+  assert.match(prompt, /Do not change anything/);
+  assert.doesNotMatch(responderPrompt({ ...config, useTools: false }, turns, 1), /may use your tools/);
 });
 
 test("an assistant message is keyed by what it says and how many user messages preceded it", () => {

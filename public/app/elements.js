@@ -109,6 +109,7 @@ export const elements = {
   autoRespondInstructions: document.querySelector("#autoRespondInstructions"),
   autoRespondStopInstructions: document.querySelector("#autoRespondStopInstructions"),
   autoRespondLimit: document.querySelector("#autoRespondLimit"),
+  autoRespondUseTools: document.querySelector("#autoRespondUseTools"),
   cancelAutoRespondButton: document.querySelector("#cancelAutoRespondButton"),
   saveAutoRespondButton: document.querySelector("#saveAutoRespondButton"),
   notificationToggleButton: document.querySelector("#notificationToggleButton"),
