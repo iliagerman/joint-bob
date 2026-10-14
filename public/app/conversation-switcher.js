@@ -75,10 +75,20 @@ function ensureOverlay() {
   overlay = document.createElement("div");
   overlay.className = "conversation-switcher";
   overlay.hidden = true;
-  overlay.addEventListener("click", (event) => {
+  // Acts on pointerdown rather than click: on a Mac, Control+click is a context-menu gesture
+  // that can suppress the click, and the chord itself holds Control.
+  overlay.addEventListener("contextmenu", (event) => event.preventDefault());
+  overlay.addEventListener("pointerdown", (event) => {
     if (event.target === overlay) close();
     const row = event.target.closest("[data-index]");
     if (row && session) commit(Number(row.dataset.index));
+  });
+  // The mouse highlights the row it is over, so a pointer and the keys show the same selection.
+  overlay.addEventListener("pointermove", (event) => {
+    const row = event.target.closest("[data-index]");
+    if (!row || !session || session.index === Number(row.dataset.index)) return;
+    session.index = Number(row.dataset.index);
+    render();
   });
   document.body.append(overlay);
   return overlay;

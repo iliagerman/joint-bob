@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the conversation switcher ignoring clicks on a Mac when Control was held; a click on a row now opens it, and hovering over a row highlights it, so the mouse and the keys always show the same selection.
+
 ## 2.95.0 — 2026-10-14
 
 - Added a conversation switcher: hold Control+Option and tap Tab (Ctrl+Shift and Space on Windows) to step through your last 10 conversations from the main view or a canvas pane, then let go to open the one selected; a digit opens its row at once, and Escape cancels.

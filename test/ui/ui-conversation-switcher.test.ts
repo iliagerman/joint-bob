@@ -128,3 +128,16 @@ test("the chord still opens the list while a chat pane on the canvas has the key
   // The pane's release reaches this page as a message, so the close is awaited rather than read.
   await page.locator(".conversation-switcher").waitFor({ state: "hidden", timeout: 5_000 });
 });
+
+test("a mouse click on a row opens it while the chord is held", async () => {
+  // Control+click is a context-menu gesture on a Mac, so the row must not depend on a click event that never comes.
+  await holdChord();
+  await page.keyboard.press(cycleKey);
+  const target = await rows().nth(1).locator("strong").innerText();
+  const box = await rows().nth(1).boundingBox();
+  assert.ok(box, "row 2 is on screen");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.locator('.session-card[aria-current="true"]', { hasText: target }).first().waitFor({ timeout: 20_000 });
+  assert.equal(await overlayOpen(), false, "the click closes the list");
+  await letGoOfChord();
+});
