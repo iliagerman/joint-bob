@@ -2419,9 +2419,15 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   background: var(--surface);
   box-shadow: var(--shadow, 0 10px 30px rgb(0 0 0 / 0.25));
 }
+/* Inside a dialog the list flows in the card instead of floating over it: the card clips and scrolls, so an absolute list would be cut off. */
+.dialog-card .searchable-select-popover { position: static; margin-top: 4px; }
 .searchable-select-popover[hidden] { display: none; }
-.searchable-select-options { display: grid; max-height: 220px; overflow-y: auto; color: var(--muted); }
+.searchable-select-options { display: grid; grid-auto-rows: max-content; align-content: start; max-height: 220px; overflow-y: auto; color: var(--muted); }
 .searchable-select-option {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: center;
   min-height: 36px;
   padding: 7px 10px;
   border: 0;
