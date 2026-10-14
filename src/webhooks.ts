@@ -9,11 +9,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 
 export const WEBHOOK_SECRET_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
-export const WEBHOOK_MAX_BODY_BYTES = 256 * 1024;
+/** Room for screenshots and documents; the whole body is held in memory while it is read. */
+export const WEBHOOK_MAX_BODY_BYTES = 100 * 1024 * 1024;
 /** Delivery history kept for each webhook. */
 const HISTORY_LIMIT = 25;
-/** Longest payload text placed in a message; the rest is cut and the message says so. */
-const MAX_PAYLOAD_CHARS = 20_000;
+/** Longest payload text placed in the message itself; a longer payload travels whole as an attached file. */
+export const MAX_PAYLOAD_CHARS = 20_000;
+export const PAYLOAD_FILE_NAME = "webhook-payload.txt";
 
 export const webhookInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -23,6 +25,8 @@ export const webhookInputSchema = z.object({
   ]),
   context: z.string().trim().max(10_000).default(""),
   enabled: z.boolean().default(true),
+  /** Files in a call (multipart parts, or a JSON `attachments` list) reach the conversation as attachments. */
+  attachments: z.boolean().default(false),
 }).strict();
 export type WebhookInput = z.infer<typeof webhookInputSchema>;
 
@@ -32,6 +36,7 @@ export interface Webhook {
   target: WebhookInput["target"];
   context: string;
   enabled: boolean;
+  attachments: boolean;
   createdAt: string;
   updatedAt: string;
   lastReceivedAt: string | null;
@@ -55,6 +60,7 @@ export function ensureWebhookSchema(db: DatabaseSync): void {
     engine TEXT,
     context TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
+    attachments INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_received_at TEXT,
@@ -66,6 +72,8 @@ export function ensureWebhookSchema(db: DatabaseSync): void {
     status TEXT NOT NULL,
     detail TEXT NOT NULL DEFAULT '');
   CREATE INDEX IF NOT EXISTS webhook_deliveries_hook ON webhook_deliveries(webhook_id, id);`);
+  const columns = db.prepare("PRAGMA table_info(webhooks)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "attachments")) db.exec("ALTER TABLE webhooks ADD COLUMN attachments INTEGER NOT NULL DEFAULT 0");
 }
 
 export const hashWebhookSecret = (secret: string): string => createHash("sha256").update(secret).digest("hex");
@@ -77,7 +85,7 @@ function webhookRow(row: Record<string, unknown>): Webhook {
     ? { kind: "conversation" as const, projectId: String(row.project_id), sessionId: String(row.session_id), engine: String(row.engine) }
     : { kind: "project" as const, projectId: String(row.project_id), ...(row.engine ? { engine: String(row.engine) } : {}) };
   return {
-    id: String(row.id), name: String(row.name), target, context: String(row.context), enabled: row.enabled === 1,
+    id: String(row.id), name: String(row.name), target, context: String(row.context), enabled: row.enabled === 1, attachments: row.attachments === 1,
     createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     lastReceivedAt: row.last_received_at ? String(row.last_received_at) : null, receivedCount: Number(row.received_count),
   };
@@ -113,16 +121,16 @@ export function createWebhook(db: DatabaseSync, input: WebhookInput): { webhook:
   const id = randomUUID();
   const now = new Date().toISOString();
   const { sessionId, engine } = targetColumns(input.target);
-  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,context,enabled,created_at,updated_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, now, now);
+  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,context,enabled,attachments,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, now, now);
   return { webhook: getWebhook(db, id)!, secret };
 }
 
 export function updateWebhook(db: DatabaseSync, id: string, input: WebhookInput): Webhook {
   ensureWebhookSchema(db);
   const { sessionId, engine } = targetColumns(input.target);
-  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,context=?,enabled=?,updated_at=? WHERE id=?`)
-    .run(input.name, input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, new Date().toISOString(), id);
+  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,context=?,enabled=?,attachments=?,updated_at=? WHERE id=?`)
+    .run(input.name, input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, new Date().toISOString(), id);
   if (!result.changes) throw new WebhookError(404, "Webhook not found");
   return getWebhook(db, id)!;
 }
@@ -160,7 +168,61 @@ export function webhookDeliveries(db: DatabaseSync, id: string): WebhookDelivery
 /** Headers worth showing the agent: what the payload is and which event the sender says it is. */
 const SHOWN_HEADER = /^(content-type|user-agent|x-[a-z0-9-]*(event|type|action|delivery)[a-z0-9-]*)$/;
 
-export interface WebhookCall { method: string; headers: Record<string, string>; query: string; body: string }
+export interface WebhookAttachment { name: string; mimeType: string; data: Buffer }
+export interface WebhookCall { method: string; headers: Record<string, string>; query: string; body: string; attachments?: WebhookAttachment[] }
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", heic: "image/heic",
+  pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", html: "text/html",
+};
+const mimeFromName = (name: string): string => MIME_BY_EXTENSION[name.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream";
+
+/** A JSON `attachments` entry counts as a file only in this shape, so a sender's own field of that name (Slack's, say) stays text. */
+const jsonFileSchema = z.object({ name: z.string().trim().min(1).max(240), mimeType: z.string().trim().min(1).max(120).optional(), data: z.string() });
+
+function decodeBase64(data: string, name: string): Buffer {
+  const bytes = Buffer.from(data, "base64");
+  if (bytes.toString("base64").replace(/=+$/, "") !== data.replace(/\s+/g, "").replace(/=+$/, "")) throw new WebhookError(400, `Attachment "${name}" is not valid base64`);
+  return bytes;
+}
+
+/**
+ * Splits a call's body into the text the conversation reads and the files it carries. Files are
+ * taken only when the webhook accepts attachments: the parts of a multipart/form-data body, or a
+ * JSON body's `attachments` list of `{ name, mimeType?, data: base64 }`. Otherwise the body is all text.
+ */
+export async function readWebhookPayload(contentType: string, body: Buffer, acceptAttachments: boolean): Promise<{ text: string; attachments: WebhookAttachment[] }> {
+  const type = contentType.split(";", 1)[0].trim().toLowerCase();
+  if (acceptAttachments && type === "multipart/form-data") {
+    let form: FormData;
+    try { form = await new Response(new Uint8Array(body), { headers: { "content-type": contentType } }).formData(); }
+    catch { throw new WebhookError(400, "The multipart body could not be read"); }
+    const fields: Record<string, string | string[]> = {};
+    const attachments: WebhookAttachment[] = [];
+    for (const [key, value] of form.entries()) {
+      if (typeof value !== "string") {
+        const name = value.name || key;
+        attachments.push({ name, mimeType: value.type || mimeFromName(name), data: Buffer.from(await value.arrayBuffer()) });
+        continue;
+      }
+      const prior = fields[key];
+      fields[key] = prior === undefined ? value : [...(Array.isArray(prior) ? prior : [prior]), value];
+    }
+    return { text: Object.keys(fields).length ? JSON.stringify(fields, null, 2) : "", attachments };
+  }
+  const text = body.toString("utf8");
+  if (!acceptAttachments || type !== "application/json") return { text, attachments: [] };
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return { text, attachments: [] }; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { text, attachments: [] };
+  const { attachments: list, ...rest } = parsed as Record<string, unknown>;
+  const files = z.array(jsonFileSchema).min(1).safeParse(list);
+  if (!files.success) return { text, attachments: [] };
+  return {
+    text: Object.keys(rest).length ? JSON.stringify(rest, null, 2) : "",
+    attachments: files.data.map((file) => ({ name: file.name, mimeType: file.mimeType ?? mimeFromName(file.name), data: decodeBase64(file.data, file.name) })),
+  };
+}
 
 /**
  * The message the conversation receives: the webhook's own context first (what the user wants
@@ -174,14 +236,15 @@ export function webhookMessage(webhook: Pick<Webhook, "name" | "context">, call:
   const shown = Object.entries(call.headers).filter(([name]) => SHOWN_HEADER.test(name)).map(([name, value]) => `${name}: ${value.slice(0, 200)}`);
   lines.push(`${call.method} ${call.query ? `?${call.query}` : "(no query)"}`, ...shown);
   const body = call.body.trim();
-  if (!body) lines.push("", "(empty payload)");
+  if (!body) lines.push("", call.attachments?.length ? "(no text; the call carried only files)" : "(empty payload)");
   else {
     const cut = body.length > MAX_PAYLOAD_CHARS;
     const text = cut ? body.slice(0, MAX_PAYLOAD_CHARS) : body;
     // A fence longer than any backtick run inside keeps the payload from closing it early.
     const fence = "`".repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map((run) => run[0].length + 1)));
     lines.push("", "Payload:", fence, text, fence);
-    if (cut) lines.push(`(payload cut after ${MAX_PAYLOAD_CHARS} of ${body.length} characters)`);
+    if (cut) lines.push(`(the first ${MAX_PAYLOAD_CHARS} of ${body.length} characters; the whole payload is attached as ${PAYLOAD_FILE_NAME})`);
   }
+  if (call.attachments?.length) lines.push("", `The call carried ${call.attachments.length} file${call.attachments.length === 1 ? "" : "s"}, attached below. They come from the same outside sender.`);
   return lines.join("\n");
 }

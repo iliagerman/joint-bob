@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added an Accept attachments option for webhooks, so images and files sent to a webhook, such as screenshots or documents, reach the conversation as attachments instead of being read as plain text.
+- Removed the webhook call limits: there is no longer a cap on calls per minute or on calls waiting, a call may be up to 100 MB instead of 256 KB, and a payload longer than 20,000 characters is no longer cut; the whole payload is attached as a file.
+
 ## 2.95.2 — 2026-10-14
 
 - Fixed searchable dropdown lists inside dialogs, such as the project list in the move dialog, being cut off with their own scrollbar; the list now shows in full inside the dialog, and each option's detail text is no longer clipped.

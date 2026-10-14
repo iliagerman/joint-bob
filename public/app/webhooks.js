@@ -13,7 +13,8 @@ const reveal = byId("webhooksReveal");
 const history = byId("webhooksHistory");
 const field = {
   name: byId("webhooksName"), kind: byId("webhooksTargetKind"), project: byId("webhooksProject"), conversation: byId("webhooksConversation"),
-  conversationLabel: byId("webhooksConversationLabel"), context: byId("webhooksContext"), enabled: byId("webhooksEnabled"), save: byId("webhooksSave"),
+  conversationLabel: byId("webhooksConversationLabel"), context: byId("webhooksContext"), enabled: byId("webhooksEnabled"),
+  attachments: byId("webhooksAttachments"), save: byId("webhooksSave"),
 };
 
 let webhooks = [];
@@ -58,14 +59,14 @@ function hookRow(hook) {
   const title = makeNode("div", "relay-row-title");
   title.append(makeNode("strong", "relay-row-name", hook.name), makeBadge(hook.enabled ? "On" : "Off", hook.enabled ? "ok" : ""));
   main.append(title,
-    makeNode("p", "relay-row-meta", targetLabel(hook)),
+    makeNode("p", "relay-row-meta", hook.attachments ? `${targetLabel(hook)} · accepts attachments` : targetLabel(hook)),
     makeNode("p", "relay-row-meta", hook.receivedCount ? `${hook.receivedCount} call${hook.receivedCount === 1 ? "" : "s"} · last ${formatWhen(hook.lastReceivedAt)}` : "No calls yet"));
   const actions = makeNode("div", "relay-row-actions");
   actions.append(
     makeButton("Calls", "webhooks-calls-button", () => showCalls(hook)),
     makeButton("Edit", "webhooks-edit-button", () => openForm(hook)),
     makeButton(hook.enabled ? "Turn off" : "Turn on", "webhooks-toggle-button", () => run(async () => {
-      await api(`/api/webhooks/${hook.id}`, { method: "PUT", body: JSON.stringify({ name: hook.name, target: hook.target, context: hook.context, enabled: !hook.enabled }) });
+      await api(`/api/webhooks/${hook.id}`, { method: "PUT", body: JSON.stringify({ name: hook.name, target: hook.target, context: hook.context, enabled: !hook.enabled, attachments: hook.attachments }) });
       await refresh();
     })),
     makeTwoStepButton({ label: "New address", armedLabel: "Replace address?", testid: "webhooks-regenerate-button", onConfirm: () => run(async () => {
@@ -165,6 +166,7 @@ async function openForm(hook = null) {
   field.kind.value = hook?.target.kind ?? "project";
   field.context.value = hook?.context ?? "";
   field.enabled.checked = hook?.enabled ?? true;
+  field.attachments.checked = hook?.attachments ?? false;
   field.save.textContent = hook ? "Save webhook" : "Create webhook";
   byId("webhooksNew").hidden = true;
   form.hidden = false;
@@ -196,7 +198,7 @@ async function submit(event) {
   const target = field.kind.value === "conversation"
     ? { kind: "conversation", projectId: field.project.value, sessionId: field.conversation.value, engine: field.conversation.selectedOptions[0]?.dataset.engine || "" }
     : { kind: "project", projectId: field.project.value };
-  const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked });
+  const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked });
   field.save.disabled = true;
   try {
     if (editing) {

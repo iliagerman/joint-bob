@@ -1,6 +1,7 @@
 // Delivers a webhook call: a new conversation in the target project, or one more message in
 // the target conversation. Runs through this node's own chat socket, like a scheduled task.
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { getClusterNode } from "../cluster.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
@@ -11,19 +12,47 @@ import { getProjectLock } from "../project-locks.js";
 import { getProject } from "../store.js";
 import { recordTurnFailure } from "../turn-failures.js";
 import { isHarnessId } from "../types.js";
-import { recordWebhookDelivery, WebhookError, webhookMessage, type Webhook, type WebhookCall } from "../webhooks.js";
-import { queueConversationPrompt } from "./conversation-prompt.js";
+import {
+  MAX_PAYLOAD_CHARS, PAYLOAD_FILE_NAME, recordWebhookDelivery, WebhookError, webhookMessage, type Webhook, type WebhookAttachment, type WebhookCall,
+} from "../webhooks.js";
+import { persistTaskAttachments } from "./chat.js";
+import { queueConversationPrompt, type PromptAttachment } from "./conversation-prompt.js";
 import { broadcastToProject } from "./realtime.js";
 
-/** Calls accepted but not yet queued in a conversation. A flood waits here, not in sockets. */
-const MAX_IN_FLIGHT = 20;
-let inFlight = 0;
+/** What one chat-socket prompt may carry, as for a browser message (src/server/schemas.ts). */
+const SOCKET_IMAGES = 4;
+const SOCKET_FILES = 6;
+const SOCKET_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 
 /** The harness a new conversation uses when the webhook names none: the first one this node can run. */
 function defaultEngine(): string {
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.runtime);
   if (!adapter) throw new WebhookError(503, "No harness is available on this machine");
   return adapter.id;
+}
+
+/**
+ * Splits a call's files between the prompt and the disk. Images and files that fit a chat
+ * message travel with it, so the agent sees images as images and the transcript shows them.
+ * The rest are saved to the project's attachments folder and listed by path in the message.
+ */
+async function placeAttachments(cwd: string, attachments: WebhookAttachment[]) {
+  const images: PromptAttachment[] = [];
+  const files: PromptAttachment[] = [];
+  const spill: { images: PromptAttachment[]; files: PromptAttachment[] } = { images: [], files: [] };
+  for (const attachment of attachments) {
+    const encoded = { name: attachment.name, mimeType: attachment.mimeType, data: attachment.data.toString("base64") };
+    const image = attachment.mimeType.startsWith("image/");
+    const fits = attachment.data.byteLength > 0 && attachment.data.byteLength <= SOCKET_ATTACHMENT_BYTES;
+    if (image && fits && images.length < SOCKET_IMAGES) images.push(encoded);
+    else if (!image && fits && files.length < SOCKET_FILES) files.push(encoded);
+    else (image ? spill.images : spill.files).push(encoded);
+  }
+  const saved = await persistTaskAttachments(cwd, spill.images, spill.files);
+  const listed = saved.length
+    ? `More files from this call, saved in the project:\n${saved.map((file) => `- ${file.name}: ${path.resolve(cwd, file.path)}`).join("\n")}\nOpen them from these paths when needed.`
+    : "";
+  return { images, files, listed };
 }
 
 /** Checks the target and queues the message. Throws when the target cannot take it. */
@@ -33,14 +62,17 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   if (!project) throw new WebhookError(404, "The webhook's project no longer exists");
   const lock = await getProjectLock(project.id);
   if (lock && lock.nodeId !== local.id) throw new WebhookError(409, `Project is locked by ${lock.nodeName}`);
-  const message = webhookMessage(webhook, call);
-  const requestId = randomUUID();
+  const attachments = [...(call.attachments ?? [])];
+  if (call.body.trim().length > MAX_PAYLOAD_CHARS) attachments.push({ name: PAYLOAD_FILE_NAME, mimeType: "text/plain", data: Buffer.from(call.body) });
+  const placed = await placeAttachments(project.path, attachments);
+  const message = [webhookMessage(webhook, call), placed.listed].filter(Boolean).join("\n\n");
+  const prompt = { message, images: placed.images, files: placed.files, requestId: randomUUID(), label: "Webhook", until: "started" as const };
   if (webhook.target.kind === "conversation") {
     const { sessionId, engine } = webhook.target;
     if (!isHarnessId(engine)) throw new WebhookError(409, "The conversation's agent is not available");
     const ownership = await getConversationOwnership(engine, sessionId);
     if (ownership && ownership.ownerNodeId !== local.id) throw new WebhookError(409, "The conversation lives on another machine; create the webhook there");
-    await queueConversationPrompt({ projectId: project.id, engine, sessionId, message, requestId, label: "Webhook", until: "started" });
+    await queueConversationPrompt({ projectId: project.id, engine, sessionId, ...prompt });
     return sessionId;
   }
   const engine = webhook.target.engine ?? defaultEngine();
@@ -50,7 +82,7 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   await ensureSessionTitle(sessionId, webhook.name);
   broadcastToProject(project.id, { type: "sessionsChanged" });
   try {
-    await queueConversationPrompt({ projectId: project.id, engine, sessionId, message, requestId, label: "Webhook", until: "started" });
+    await queueConversationPrompt({ projectId: project.id, engine, sessionId, ...prompt });
   } catch (error) {
     // The conversation is already listed. It says why it is empty, instead of opening blank.
     recordTurnFailure(engine, sessionId, `Webhook "${webhook.name}" could not start this conversation: ${error instanceof Error ? error.message : String(error)}`);
@@ -59,21 +91,17 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   return sessionId;
 }
 
-/** Accepts a call for delivery. Returns false when too many deliveries are already waiting. */
-export function acceptWebhookCall(webhook: Webhook, call: WebhookCall): boolean {
-  if (inFlight >= MAX_IN_FLIGHT) return false;
-  inFlight += 1;
+/** Accepts a call for delivery; the outcome lands in the webhook's call history. */
+export function acceptWebhookCall(webhook: Webhook, call: WebhookCall): void {
   void (async () => {
     try {
       const sessionId = await deliver(webhook, call);
-      recordWebhookDelivery(await clusterV2Database(), webhook.id, "delivered", webhook.target.kind === "project" ? `Started conversation ${sessionId}` : "Added to the conversation");
+      const files = call.attachments?.length ? ` with ${call.attachments.length} file${call.attachments.length === 1 ? "" : "s"}` : "";
+      recordWebhookDelivery(await clusterV2Database(), webhook.id, "delivered", webhook.target.kind === "project" ? `Started conversation ${sessionId}${files}` : `Added to the conversation${files}`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       console.warn(`Webhook ${webhook.id} delivery failed: ${detail}`);
       try { recordWebhookDelivery(await clusterV2Database(), webhook.id, "failed", detail); } catch { /* history is best effort */ }
-    } finally {
-      inFlight -= 1;
     }
   })();
-  return true;
 }

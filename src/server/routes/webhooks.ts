@@ -14,8 +14,8 @@ import { relayMachine } from "../../relay/store.js";
 import { isWebhookOnlyChannel } from "../../relay/stream.js";
 import { getProject } from "../../store.js";
 import {
-  createWebhook, deleteWebhook, getWebhook, listWebhooks, regenerateWebhookSecret, updateWebhook, WEBHOOK_MAX_BODY_BYTES, webhookDeliveries,
-  webhookForSecret, webhookInputSchema, WebhookError, type WebhookInput,
+  createWebhook, deleteWebhook, getWebhook, listWebhooks, readWebhookPayload, regenerateWebhookSecret, updateWebhook, WEBHOOK_MAX_BODY_BYTES,
+  webhookDeliveries, webhookForSecret, webhookInputSchema, WebhookError, type WebhookInput,
 } from "../../webhooks.js";
 import { Feature, isClusterOriginUrl, requireFeature, sendError } from "../http-auth.js";
 import { listProjectSessionsWithReviewState } from "../sessions-helpers.js";
@@ -23,25 +23,13 @@ import { app, flags, requestInterceptors, upgradeHandlers } from "../state.js";
 import { acceptWebhookCall } from "../webhooks.js";
 
 const HOOK_PATH = /^\/hooks\/([A-Za-z0-9_-]{20,128})$/;
-const CALLS_PER_MINUTE = 60;
-const calls = new Map<string, number[]>();
-
-/** At most this many calls a minute for one webhook, however the sender is spread out. */
-function withinRate(id: string): boolean {
-  const cutoff = Date.now() - 60_000;
-  const recent = (calls.get(id) ?? []).filter((at) => at > cutoff);
-  if (recent.length >= CALLS_PER_MINUTE) { calls.set(id, recent); return false; }
-  recent.push(Date.now());
-  calls.set(id, recent);
-  return true;
-}
 
 function reply(response: ServerResponse, status: number, text: string, headers: Record<string, string> = {}): void {
   response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", Connection: "close", ...headers }).end(text);
 }
 
 /** Reads the body, giving up past the cap. Resolves undefined when the sender sent too much. */
-function readBody(request: IncomingMessage): Promise<string | undefined> {
+function readBody(request: IncomingMessage): Promise<Buffer | undefined> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -50,7 +38,7 @@ function readBody(request: IncomingMessage): Promise<string | undefined> {
       if (size > WEBHOOK_MAX_BODY_BYTES) { chunks.length = 0; request.removeAllListeners("data"); request.resume(); resolve(undefined); return; }
       chunks.push(chunk);
     });
-    request.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    request.on("end", () => resolve(Buffer.concat(chunks)));
     request.on("error", reject);
   });
 }
@@ -67,15 +55,14 @@ async function handleHook(request: IncomingMessage, response: ServerResponse, se
   const webhook = webhookForSecret(await clusterV2Database(), secret);
   if (!webhook) { request.resume(); reply(response, 404, "Not found"); return; }
   if (!webhook.enabled) { request.resume(); reply(response, 403, "This webhook is turned off"); return; }
-  if (!withinRate(webhook.id)) { request.resume(); reply(response, 429, "Too many requests", { "Retry-After": "30" }); return; }
   const body = await readBody(request);
   if (body === undefined) { reply(response, 413, "Payload too large"); return; }
+  let payload: Awaited<ReturnType<typeof readWebhookPayload>>;
+  try { payload = await readWebhookPayload(String(request.headers["content-type"] ?? ""), body, webhook.attachments); }
+  catch (error) { reply(response, error instanceof WebhookError ? error.statusCode : 400, error instanceof Error ? error.message : "The body could not be read"); return; }
   const query = (request.url ?? "").split("?", 2)[1] ?? "";
-  if (!acceptWebhookCall(webhook, { method: request.method ?? "POST", headers: flatHeaders(request), query: query.slice(0, 1000), body })) {
-    reply(response, 429, "Too many webhook calls are waiting", { "Retry-After": "30" });
-    return;
-  }
-  response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store", Connection: "close" }).end('{"accepted":true}');
+  acceptWebhookCall(webhook, { method: request.method ?? "POST", headers: flatHeaders(request), query: query.slice(0, 1000), body: payload.text, attachments: payload.attachments });
+  response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store", Connection: "close" }).end(JSON.stringify({ accepted: true, attachments: payload.attachments.length }));
 }
 
 requestInterceptors.push((request, response) => {

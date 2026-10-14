@@ -6,6 +6,7 @@ import { runtimeSocketHeaders } from "./runtime-peers.js";
 import { server } from "./state.js";
 
 interface ReadyStatus { model: { provider: string; id: string }; thinkingLevel: string }
+export interface PromptAttachment { name: string; mimeType: string; data: string }
 export interface PromptQueueSettings { harnessId: string; provider: string; modelId: string; reasoning: string }
 
 export interface ConversationPromptOptions {
@@ -13,6 +14,9 @@ export interface ConversationPromptOptions {
   engine: string;
   sessionId: string;
   message: string;
+  /** Sent with the prompt as a browser sends a pasted image or file: base64 bytes the chat socket stores as attachments. */
+  images?: PromptAttachment[];
+  files?: PromptAttachment[];
   requestId: string;
   /** Prefix for errors, naming who sent the prompt ("Scheduled", "Worktree"). */
   label: string;
@@ -55,7 +59,10 @@ export async function queueConversationPrompt(options: ConversationPromptOptions
       if (event.type === "ready") {
         if (event.ownership || event.readOnly) { finish(new Error(`${label} conversation is not writable on this node`)); return; }
         const queueSettings = options.queueSettings?.(event.status);
-        socket.send(JSON.stringify({ type: "prompt", message: options.message, requestId: options.requestId, ...(queueSettings ? { queueSettings } : {}) }));
+        socket.send(JSON.stringify({
+          type: "prompt", message: options.message, requestId: options.requestId, ...(queueSettings ? { queueSettings } : {}),
+          ...(options.images?.length ? { images: options.images } : {}), ...(options.files?.length ? { files: options.files } : {}),
+        }));
       }
       if (event.type === "userMessage" && event.queued && event.requestId === options.requestId) {
         queueId = event.queueId;

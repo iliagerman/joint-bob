@@ -41,8 +41,8 @@ const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const MAX_UNAUTHENTICATED_PER_IP = 16;
 const MAX_WATCHED = 10_000;
 const REQUESTS_PER_HOUR = 5;
-const WEBHOOKS_PER_MINUTE = 120;
-const WEBHOOK_MAX_BODY = 256 * 1024;
+/** The same cap the machine applies (WEBHOOK_MAX_BODY_BYTES), so a call with attachments passes through. */
+const WEBHOOK_MAX_BODY = 100 * 1024 * 1024;
 const USAGE_FLUSH_BYTES = 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-connection", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"]);
@@ -730,19 +730,6 @@ export class RelayServer {
     return match ? { name: match[1], secret: match[2] } : undefined;
   }
 
-  private readonly webhookLog = new Map<string, number[]>();
-
-  /** At most this many webhook calls per minute reach one machine through this relay. */
-  private webhookAllowed(nodeId: string): boolean {
-    const cutoff = Date.now() - 60_000;
-    const recent = (this.webhookLog.get(nodeId) ?? []).filter((at) => at > cutoff);
-    if (recent.length >= WEBHOOKS_PER_MINUTE) { this.webhookLog.set(nodeId, recent); return false; }
-    recent.push(Date.now());
-    this.webhookLog.set(nodeId, recent);
-    if (this.webhookLog.size > MAX_WATCHED) this.webhookLog.clear();
-    return true;
-  }
-
   /**
    * Hands one webhook call to the machine that owns the URL. The relay never reads the secret's
    * meaning: the machine looks the secret up itself and answers 404 for any it does not know.
@@ -760,7 +747,7 @@ export class RelayServer {
     const problem = this.channelProblem(target, "gateway");
     if (problem) { plain(503, problem, { "Retry-After": "30" }); return; }
     const clientIp = clientAddress(request);
-    if (!this.webhookAllowed(machine.nodeId) || !this.admitGatewayRequest(clientIp)) { plain(429, "Too many requests", { "Retry-After": "30" }); return; }
+    if (!this.admitGatewayRequest(clientIp)) { plain(429, "Too many requests", { "Retry-After": "30" }); return; }
     this.proxyRequest(request, response, this.openGatewayStream(target, clientIp, "webhook"), `/hooks/${hook.secret}`, clientIp, WEBHOOK_MAX_BODY);
   }
 
