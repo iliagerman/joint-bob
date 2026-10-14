@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.93.0 — 2026-10-14
 
 - Changed sign-in on cluster machines so you can use your home machine's username or email, password, and authenticator code on another machine in your cluster, even when your home machine is offline, once that machine has synced your account.
+- Added MFA setup at sign-in on cluster machines, which shows a setup key for an offline authenticator and one-time recovery codes to save before you continue.
+- Added an email field to Settings > Account with a Change email button; it is hidden when you are signed in through another machine.
+- Added a dialog for a conversation that has two histories, which lets you keep both, fork this machine's history into a new conversation, or replace it with the owner's history after a backup; nothing is overwritten without your confirmation.
+- Made Settings save your terminal access changes along with the rest of the page.
 
 ## 2.92.0 — 2026-10-14
 
