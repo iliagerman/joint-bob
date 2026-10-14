@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.97.1 — 2026-10-14
 
-- Changed searchable dropdown lists inside dialogs to float over the dialog and open upward when there is no room below, so opening one no longer resizes the dialog or runs off the screen.
+- Fixed searchable dropdown lists inside dialogs, such as the project list in the move dialog, so they float over the dialog and open upward when there is no room below; opening one no longer resizes the dialog.
 
 ## 2.97.0 — 2026-10-14
 
