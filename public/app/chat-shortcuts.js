@@ -11,6 +11,11 @@ export const CHAT_SHORTCUT_CONTROLS = {
   scheduledTasks: "chatCronButton",
   backgroundTasks: "backgroundTasksButton",
   chatFiles: "chatFilesButton",
+  sessionActions: "chatSessionMenuButton",
+  markDone: "chatDoneButton",
+  autoRespond: "autoRespondButton",
+  git: "chatGitButton",
+  explainConversation: "chatStoryButton",
 };
 
 export function runChatShortcut(command) {

@@ -108,7 +108,7 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
 });
 
 test("chat controls advertise shortcuts", async () => {
-  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-add-to-canvas-button", "chat-rename-button", "chat-cron-button", "background-tasks-open", "chat-files-button"]) {
+  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-add-to-canvas-button", "chat-rename-button", "chat-cron-button", "background-tasks-open", "chat-files-button", "chat-session-menu-button", "chat-done-button", "chat-auto-respond-button", "chat-git-button", "chat-story-button"]) {
     const control = page.getByTestId(id);
     const host = await control.evaluate((element) => element.closest("[data-shortcut-hint]")?.getAttribute("data-shortcut-hint"));
     assert.ok(host, `${id} needs a shortcut hint`);
@@ -332,6 +332,29 @@ test("chat shortcuts focus selectors and open actions", async () => {
   await page.keyboard.press("Control+Alt+S");
   await page.getByTestId("cron-dialog").waitFor();
   await page.getByTestId("cron-close").click();
+  // The actions the letters ran out for ride Shift as well.
+  await page.keyboard.press("Control+Alt+Shift+R");
+  await page.getByTestId("auto-respond-dialog").waitFor();
+  await page.getByTestId("auto-respond-cancel-button").click();
+  await page.getByTestId("auto-respond-dialog").waitFor({ state: "hidden" });
+  // The seeded project is no git repository and marking done would change the fixture,
+  // so these only prove the key presses the button, with its own handler held back.
+  const pressed = await page.evaluate(() => {
+    const seen: string[] = [];
+    for (const id of ["chatGitButton", "chatStoryButton", "chatDoneButton"]) {
+      document.getElementById(id)!.addEventListener("click", (event) => { event.stopImmediatePropagation(); seen.push(id); }, { capture: true });
+    }
+    (window as unknown as { pressedChatButtons: string[] }).pressedChatButtons = seen;
+    return seen.length;
+  });
+  assert.equal(pressed, 0);
+  for (const key of ["G", "E", "D"]) await page.keyboard.press(`Control+Alt+Shift+${key}`);
+  assert.deepEqual(await page.evaluate(() => (window as unknown as { pressedChatButtons: string[] }).pressedChatButtons), ["chatGitButton", "chatStoryButton", "chatDoneButton"]);
+  await page.keyboard.press("Control+Alt+Shift+A");
+  await page.locator("#rowMenu:popover-open").waitFor();
+  await page.keyboard.press("Escape");
+  await page.locator("#rowMenu:popover-open").waitFor({ state: "detached" });
+  assert.equal(await page.locator("#chatDoneButton .shortcut-hint").textContent(), "⇧D", "a Shift chord says so on its badge");
   await page.context().grantPermissions(["notifications"]);
   const before = await page.getByTestId("chat-notify-button").getAttribute("aria-pressed");
   await page.keyboard.press("Control+Alt+Y");

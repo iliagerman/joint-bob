@@ -19,7 +19,9 @@ export function syncShortcutHints() {
       badge.setAttribute("aria-hidden", "true");
       host.append(badge);
     }
-    badge.textContent = chordKeyLabel(chord);
+    // Shift is the one extra modifier a default adds, so it stays on the badge: ⇧D and D are different keys.
+    const shift = chord.includes("shift") && !CANVAS_COMMAND_MODIFIERS.includes("shift");
+    badge.textContent = `${shift ? "⇧" : ""}${chordKeyLabel(chord)}`;
     badge.title = chordLabel(chord);
   }
 }

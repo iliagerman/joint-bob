@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added keyboard shortcuts in chat for the conversation actions, Mark done, Auto respond, Git, and Story buttons, using Control+Option+Shift with A, D, R, G, and E, and shown on each button's badge; you can change them in Settings.
+
 ## 2.93.0 — 2026-10-14
 
 - Changed sign-in on cluster machines so you can use your home machine's username or email, password, and authenticator code on another machine in your cluster, even when your home machine is offline, once that machine has synced your account.
