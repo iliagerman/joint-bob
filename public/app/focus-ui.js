@@ -43,11 +43,11 @@ function showSection(section) {
   document.querySelector("#focusChatQuickActions").hidden = !inChat || Boolean(section);
   context.hidden = Boolean(section);
   chatHost.hidden = section !== "tools";
-  nodeList.hidden = section !== "node";
+  nodeList.hidden = !["node", "agent", "effort"].includes(section);
   document.querySelector("#focusTools").setAttribute("aria-expanded", String(section === "tools"));
   document.querySelector("#focusNode").setAttribute("aria-expanded", String(section === "node"));
   document.querySelector("#focusContextTitle").textContent = section
-    ? { tools: "Tools & actions", node: "Runs on" }[section]
+    ? { tools: "Tools & actions", node: "Runs on", agent: "Agent", effort: "Effort" }[section]
     : { projects: "Projects", sessions: "This project", chat: "This conversation", board: "Project board", canvas: "Canvas" }[currentView()];
   elements.chatMoreMenu.open = section === "tools";
   placeMenu();
@@ -103,27 +103,31 @@ export function syncQuickActionLabels() {
   effortLabel.textContent = state.thinkingLevel || "Effort";
   const activeNode = state.sessionNodes.find(n => n.id === state.activeNodeId);
   nodeLabel.textContent = activeNode?.name || "Node";
+  document.querySelector("#focusAgent").disabled = elements.chatHarnessSelect.disabled;
+  document.querySelector("#focusEffort").disabled = elements.reasoningLevelSelect.disabled;
   document.querySelector("#focusNode").disabled = elements.chatNodeSelect.disabled;
 }
 
-/** The toolbar's node options as buttons: its <select> is hidden in this menu, and a hidden select has no picker to open. */
-function showNodes() {
-  nodeList.replaceChildren(...Array.from(elements.chatNodeSelect.options, option => {
+/** Show the toolbar selects as buttons; their native pickers cannot open while the toolbar is hidden. */
+function showSelectOptions(select, section) {
+  nodeList.replaceChildren(...Array.from(select.options, option => {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = option.textContent;
-    button.dataset.testid = "focus-node-option";
+    button.dataset.testid = `focus-${section}-option`;
     button.disabled = option.disabled;
     button.setAttribute("aria-pressed", String(option.selected));
     button.addEventListener("click", () => {
-      showMenu(false);
-      if (option.selected) return;
-      elements.chatNodeSelect.value = option.value;
-      elements.chatNodeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      if (!option.selected) {
+        select.value = option.value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (section === "node") showMenu(false);
+      else showSection("");
     });
     return button;
   }));
-  showSection("node");
+  showSection(section);
   document.querySelector("#focusBack").focus();
 }
 
@@ -182,10 +186,10 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   document.querySelector("#conversationSearchCreateButton").onclick = start;
   decorateControls();
   document.querySelector("#focusMarkDone").onclick = () => { showMenu(false); elements.chatDoneButton.click(); };
-  document.querySelector("#focusAgent").onclick = () => { showMenu(false); if (typeof elements.chatHarnessSelect.showPicker === "function") elements.chatHarnessSelect.showPicker(); else elements.chatHarnessSelect.focus(); };
+  document.querySelector("#focusAgent").onclick = () => showSelectOptions(elements.chatHarnessSelect, "agent");
   document.querySelector("#focusModel").onclick = () => { showMenu(false); elements.modelButton.click(); };
-  document.querySelector("#focusEffort").onclick = () => { showMenu(false); if (typeof elements.reasoningLevelSelect.showPicker === "function") elements.reasoningLevelSelect.showPicker(); else elements.reasoningLevelSelect.focus(); };
-  document.querySelector("#focusNode").onclick = showNodes;
+  document.querySelector("#focusEffort").onclick = () => showSelectOptions(elements.reasoningLevelSelect, "effort");
+  document.querySelector("#focusNode").onclick = () => showSelectOptions(elements.chatNodeSelect, "node");
   document.querySelector("#focusTools").onclick = () => { showSection("tools"); document.querySelector("#focusBack").focus(); };
   document.querySelector("#focusBack").onclick = backToControls;
   for (const [id, action] of [["focusNewNote", createNote], ["focusRecents", openRecentSessions], ["focusReviews", inspectReviews], ["focusRunning", inspectRunning]]) {

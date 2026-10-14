@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.91.2 — 2026-10-14
+
+- Fixed the mobile Tools & actions menu's Agent and Effort rows, which could not open their choices; they now list the options as buttons, like Runs on, and stay open after you pick one.
+
 ## 2.91.1 — 2026-10-13
 
 - Fixed the mobile Tools & actions menu, which showed two icons on each row and put the Story button and the Auto stopped badge at the top right, out of line with the rest of the menu.

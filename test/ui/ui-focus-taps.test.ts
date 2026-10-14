@@ -20,8 +20,26 @@ test("focus controls support single, double, and triple taps", { timeout: 180_00
   await page.locator("#sessionList .session-card").first().click();
   await page.waitForFunction(() => !document.querySelector<HTMLTextAreaElement>("#messageInput")!.disabled);
 
+  await page.evaluate(async () => {
+    const { state } = await import(new URL("/app/state.js", location.href).href);
+    const { renderReasoningOptions } = await import(new URL("/app/composer-dialogs.js", location.href).href);
+    state.availableThinkingLevels = ["low", "high"];
+    state.thinkingLevel = "low";
+    renderReasoningOptions();
+    (window as Window & { controlMessages: unknown[] }).controlMessages = [];
+    state.socket.send = (message: string) => (window as Window & { controlMessages: unknown[] }).controlMessages.push(JSON.parse(message));
+  });
   const fab = page.getByTestId("focus-controls-button");
   await fab.tap();
+  await page.getByTestId("focus-agent").tap();
+  assert.equal(await page.locator("#focusControls").isVisible(), true, "agent selection keeps controls open");
+  await page.getByTestId("focus-agent-option").first().tap();
+  assert.equal(await page.locator("#focusControls").isVisible(), true, "choosing an agent keeps controls open");
+  await page.getByTestId("focus-effort").tap();
+  assert.equal(await page.locator("#focusControls").isVisible(), true, "effort selection keeps controls open");
+  await page.getByRole("button", { name: "high", exact: true }).tap();
+  assert.equal(await page.locator("#focusControls").isVisible(), true, "choosing effort keeps controls open");
+  await page.waitForFunction(() => (window as Window & { controlMessages: { type: string; level?: string }[] }).controlMessages.some(message => message.type === "setThinking" && message.level === "high"));
   await page.getByTestId("focus-new-note").tap();
   await page.getByTestId("quick-note-dialog").waitFor();
   await page.getByTestId("quick-note-cancel-button").tap();
