@@ -3,10 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.96.0 — 2026-10-14
 
-- Added an Accept attachments option for webhooks, so images and files sent to a webhook, such as screenshots or documents, reach the conversation as attachments instead of being read as plain text.
-- Removed the webhook call limits: there is no longer a cap on calls per minute or on calls waiting, a call may be up to 100 MB instead of 256 KB, and a payload longer than 20,000 characters is no longer cut; the whole payload is attached as a file.
+- Added an Accept attachments option for webhooks, off by default, so files sent to a webhook, such as screenshots or documents, reach the conversation as attachments; up to 4 images and 6 files travel with the prompt, the rest are saved to the project's attachments folder and listed by path, and the call's reply says how many files it accepted.
+- Removed the webhook limits on calls per minute and on deliveries waiting at once, so a busy webhook is no longer turned away.
+- Raised the webhook body limit from 256 KB to 100 MB.
+- Changed long webhook payloads so they are no longer cut off: the first 20,000 characters are quoted in the message, and the whole payload is attached as a file.
 
 ## 2.95.2 — 2026-10-14
 
