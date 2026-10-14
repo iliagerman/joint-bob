@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.95.1 — 2026-10-14
 
-- Fixed the conversation switcher ignoring clicks on a Mac when Control was held; a click on a row now opens it, and hovering over a row highlights it, so the mouse and the keys always show the same selection.
+- Fixed the conversation switcher ignoring mouse clicks on a Mac while Control was held; clicking a row now opens it, and hovering over a row highlights it.
 
 ## 2.95.0 — 2026-10-14
 
