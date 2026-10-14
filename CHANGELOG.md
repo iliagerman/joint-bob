@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed searchable dropdown lists inside dialogs to float over the dialog and open upward when there is no room below, so opening one no longer resizes the dialog or runs off the screen.
+
 ## 2.97.0 — 2026-10-14
 
 - Added an option to accept webhook calls only from listed senders, such as Telegram users, with an optional name for each one; the sender is read from the first field you configure that holds a value, and a Use Telegram bot fields button fills in where Telegram names the person.

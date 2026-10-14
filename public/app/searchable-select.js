@@ -35,8 +35,24 @@ export function createSearchableSelect({ id, testid, label, prompt = "Choose…"
     trigger.classList.toggle("empty", !label);
   };
 
+  // Inside a dialog the card clips and scrolls, so the list is placed fixed beside the trigger and
+  // floats over the dialog: opening it never resizes the dialog.
+  function place() {
+    if (!popover.closest("dialog")) return;
+    const rect = trigger.getBoundingClientRect();
+    const gap = 4;
+    const above = window.innerHeight - rect.bottom - gap < popover.offsetHeight && rect.top - gap > window.innerHeight - rect.bottom;
+    Object.assign(popover.style, {
+      position: "fixed", right: "auto", left: `${rect.left}px`, width: `${rect.width}px`,
+      top: above ? "auto" : `${rect.bottom + gap}px`,
+      bottom: above ? `${window.innerHeight - rect.top + gap}px` : "auto",
+    });
+  }
+  const reposition = () => place();
+
   function close({ focusTrigger = false } = {}) {
     popover.hidden = true; trigger.setAttribute("aria-expanded", "false"); search.removeAttribute("aria-activedescendant");
+    window.removeEventListener("resize", reposition); window.removeEventListener("scroll", reposition, true);
     if (focusTrigger) trigger.focus();
   }
 
@@ -76,10 +92,12 @@ export function createSearchableSelect({ id, testid, label, prompt = "Choose…"
     if (!matches.length) list.textContent = emptyText;
     const current = matches.findIndex((option) => option.value === trigger.dataset.value);
     highlight(needle || current < 0 ? 0 : current);
+    place();
   }
 
   function open() {
     search.value = ""; popover.hidden = false; trigger.setAttribute("aria-expanded", "true");
+    window.addEventListener("resize", reposition); window.addEventListener("scroll", reposition, true);
     render(); search.focus();
   }
 

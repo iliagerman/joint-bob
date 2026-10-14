@@ -35,7 +35,16 @@ test("conversation menu moves a conversation to another project's list", { timeo
     assert.equal(await submit.isDisabled(), true, "submit needs a destination first");
     await page.getByTestId("session-transfer-copy").check();
     assert.equal(await submit.innerText(), "Copy");
+    const card = dialog.locator(".dialog-card");
+    const sizeBefore = await card.boundingBox();
     await page.getByTestId("session-transfer-project-select").click();
+    const list = page.getByTestId("session-transfer-project-select-options");
+    await list.waitFor();
+    const sizeAfter = await card.boundingBox();
+    assert.deepEqual({ width: sizeAfter?.width, height: sizeAfter?.height }, { width: sizeBefore?.width, height: sizeBefore?.height }, "opening the project list must not resize the dialog");
+    const listBox = await list.boundingBox();
+    const viewport = page.viewportSize();
+    assert.ok(listBox && viewport && listBox.y >= 0 && listBox.y + listBox.height <= viewport.height, "the project list stays inside the viewport");
     await page.getByTestId("session-transfer-project-select-search").fill("Joint Bob");
     await page.getByTestId("session-transfer-project-select-option").filter({ hasText: "Joint Bob" }).first().click();
     assert.equal(await submit.isDisabled(), false);
