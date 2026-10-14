@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added keyboard shortcuts in chat for the conversation actions, Mark done, Auto respond, Git, and Story buttons, using Control+Option+Shift with A, D, R, G, and E, and shown on each button's badge; you can change them in Settings.
+- Made the dialog for a conversation with two histories load when the app starts offline, so you can still choose to keep both, fork, or replace the history.
 
 ## 2.93.0 — 2026-10-14
 
