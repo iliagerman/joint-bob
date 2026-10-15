@@ -41,8 +41,8 @@ test("focus UI is opt-in, uses real conversations, and reverts without losing th
   await page.getByTestId("focus-controls-button").click();
   assert.equal(await page.locator("#chatToolbar").isVisible(), false);
   await page.getByTestId("focus-tools").click();
-  assert.equal(await page.locator("#chatToolbar").isVisible(), true);
-  assert.equal(await page.getByTestId("chat-open-browser-button").isVisible(), true);
+  assert.equal(await page.locator("#chatToolbar").isVisible(), true, "tools are available inside the focus panel");
+  await page.getByTestId("focus-back").click();
   await page.getByTestId("focus-new-conversation").click();
   const projectPicker = page.getByTestId("new-session-project-select");
   await projectPicker.waitFor({ state: "visible" });

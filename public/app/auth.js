@@ -217,7 +217,7 @@ export async function initializeApplication() {
   void watchVisitorProfile();
   await loadWorkspaces();
   await loadProjects();
-  if (!state.canvasPaneMode) setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
+  if (!state.canvasPaneMode && !state.initialSessionId && !state.initialSessionPath) setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
   state.preferencesLoaded = true;
   if (!state.canvasPaneMode) {
     void showWhatsNew(preferences.lastSeenVersion).catch((error) => console.warn("Could not load the changelog", error));
@@ -228,6 +228,11 @@ export async function initializeApplication() {
   if (state.authenticated && !state.canvasPaneMode) startProjectSyncPolling();
   if (state.authenticated && !state.canvasPaneMode) void showTerminalNoticeOnce();
   if (state.authenticated && !state.canvasPaneMode) void showAdminTransferOffer();
+  if (!state.canvasPaneMode && state.initialAction === "new-conversation") {
+    state.initialAction = null;
+    const { startGlobalConversation } = await import("./new-session.js");
+    await startGlobalConversation();
+  }
 }
 
 async function submitLogin(event) {

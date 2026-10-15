@@ -8,9 +8,26 @@
   "orientation": "portrait",
   "background_color": "#141618",
   "theme_color": "#141618",
+  "categories": ["productivity", "development", "utilities"],
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
-  ]
+  ],
+  "shortcuts": [
+    {
+      "name": "New Conversation",
+      "short_name": "New Chat",
+      "description": "Start a new agent conversation",
+      "url": "/?action=new-conversation",
+      "icons": [
+        { "src": "/icon-192.png", "sizes": "192x192" }
+      ]
+    }
+  ],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
+  "handle_links": "preferred",
+  "prefer_related_applications": false
 }

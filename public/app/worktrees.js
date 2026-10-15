@@ -80,6 +80,20 @@ export function worktreesHeading() {
   heading.dataset.testid = "worktree-subsection";
   const label = document.createElement("span");
   label.textContent = "Worktrees";
+  const review = document.createElement("button");
+  review.type = "button";
+  review.className = "ghost worktree-reference-button";
+  review.dataset.testid = "context-references-open-button";
+  review.title = "Start a conversation with references to several worktrees or conversations";
+  review.textContent = "Review together";
+  review.addEventListener("click", async () => {
+    try {
+      const { openContextReferencesDialog } = await import("./context-references.js");
+      openContextReferencesDialog();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
   const add = document.createElement("button");
   add.type = "button";
   add.className = "ghost worktree-add-button";
@@ -87,7 +101,7 @@ export function worktreesHeading() {
   add.title = "New worktree: a synced copy of this project's code for isolated work";
   add.textContent = "+ Worktree";
   add.addEventListener("click", () => openWorktreeDialog(null));
-  heading.append(label, add);
+  heading.append(label, review, add);
   return heading;
 }
 

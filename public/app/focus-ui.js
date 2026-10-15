@@ -190,7 +190,8 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   document.querySelector("#focusModel").onclick = () => { showMenu(false); elements.modelButton.click(); };
   document.querySelector("#focusEffort").onclick = () => showSelectOptions(elements.reasoningLevelSelect, "effort");
   document.querySelector("#focusNode").onclick = () => showSelectOptions(elements.chatNodeSelect, "node");
-  document.querySelector("#focusTools").onclick = () => { showSection("tools"); document.querySelector("#focusBack").focus(); };
+  document.querySelector("#focusAutoRespond").onclick = () => { showMenu(false); elements.autoRespondButton.click(); };
+  document.querySelector("#focusTools").onclick = (event) => { event.stopPropagation(); showSection("tools"); document.querySelector("#focusBack").focus(); };
   document.querySelector("#focusBack").onclick = backToControls;
   for (const [id, action] of [["focusNewNote", createNote], ["focusRecents", openRecentSessions], ["focusReviews", inspectReviews], ["focusRunning", inspectRunning]]) {
     document.getElementById(id).onclick = () => { showMenu(false); Promise.resolve().then(action).catch(error => toast(error.message)); };
@@ -219,7 +220,7 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
 
 function backToControls() {
   showSection("");
-  document.querySelector("#focusTools").focus();
+  document.querySelector("#focusNewConversation").focus();
 }
 function decorateControls() {
   // Only add icons to buttons that don't already have icons in the HTML.

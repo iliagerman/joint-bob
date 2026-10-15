@@ -47,6 +47,19 @@ test("the auto respond dialog opens from the chat menu with the default rules an
     const rowBadge = page.locator(".session-card, .list-row").filter({ hasText: "Thread-Based Agent Builder" }).getByTestId("session-auto-respond-badge").first();
     await rowBadge.waitFor({ timeout: 20_000 });
     assert.match(await rowBadge.innerText(), /^Auto 0\/10$/);
+
+    // An app update reloads the page: the saved state comes back from the node, not from the browser.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByTestId("chat-message-input").waitFor();
+    await page.getByTestId("auto-respond-pill").waitFor({ state: "visible", timeout: 20_000 });
+
+    // Choosing a preset fills in its rules; editing a rule switches the preset back to Custom.
+    await page.getByTestId("chat-auto-respond-button").click();
+    await page.getByTestId("auto-respond-preset").selectOption("review-consent");
+    assert.match(await page.getByTestId("auto-respond-instructions").inputValue(), /LGTM/);
+    await page.getByTestId("auto-respond-stop-instructions").fill("Stop now");
+    assert.equal(await page.getByTestId("auto-respond-preset").inputValue(), "", "editing a preset's rule makes it Custom");
+    await page.getByTestId("auto-respond-cancel-button").click();
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

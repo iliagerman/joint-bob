@@ -10,6 +10,21 @@ let defaults = null;
 let phase = "idle";
 const picker = { harnesses: [], models: [] };
 
+const PRESETS = {
+  "review-consent": {
+    instructions: "Review the work done so far. Ask clarifying questions if needed. Once you understand the work and confirm it meets the requirements, respond with 'LGTM' to indicate your approval and consent.",
+    stopInstructions: "The work has been reviewed and approved (LGTM received)\nAll requirements have been met\nNo further clarification is needed",
+    useTools: true,
+    maxResponses: null,
+  },
+  "aidlc-driver": {
+    instructions: "Drive the AI-DLC (AI Development Lifecycle) process forward using common sense, available documentation, and best-practice recommendations. Read the project's AI-DLC configuration, understand the current phase, and execute the next logical steps. Use available tools to inspect code, run tests, and validate changes. Make reasonable decisions based on the context and documented patterns.",
+    stopInstructions: "Current AI-DLC phase is complete\nAll phase requirements are satisfied\nBlocked on user decision or external dependency\nTests are failing and require manual intervention",
+    useTools: true,
+    maxResponses: null,
+  },
+};
+
 /** Shows the conversation's auto respond state in the toolbar pill and the menu button. */
 export function setAutoRespond(autoRespond, nextPhase = "idle", nextDefaults) {
   if (nextDefaults) defaults = nextDefaults;
@@ -67,6 +82,19 @@ async function openAutoRespond() {
   const savedPick = saved ? { harnessId: saved.harnessId, provider: saved.provider, modelId: saved.modelId, thinkingLevel: saved.thinkingLevel } : undefined;
   elements.autoRespondHarness.value = picker.harnesses.some((harness) => harness.id === (saved?.harnessId ?? state.engine)) ? (saved?.harnessId ?? state.engine) : picker.harnesses[0]?.id ?? "";
   fillPickers(savedPick);
+
+  // Detect if current config matches a preset
+  let matchingPreset = "";
+  if (saved) {
+    for (const [presetId, preset] of Object.entries(PRESETS)) {
+      if (saved.instructions === preset.instructions && saved.stopInstructions === preset.stopInstructions) {
+        matchingPreset = presetId;
+        break;
+      }
+    }
+  }
+
+  elements.autoRespondPreset.value = matchingPreset;
   elements.autoRespondInstructions.value = saved?.instructions ?? defaults?.instructions ?? "";
   elements.autoRespondStopInstructions.value = saved ? saved.stopInstructions : defaults?.stopInstructions ?? "";
   elements.autoRespondLimit.value = saved ? saved.maxResponses ?? "" : defaults?.maxResponses ?? "";
@@ -74,6 +102,19 @@ async function openAutoRespond() {
   elements.autoRespondEnabled.checked = !saved || saved.status !== "off";
   renderStatus();
   elements.autoRespondDialog.showModal();
+}
+
+function applyPreset() {
+  const presetId = elements.autoRespondPreset.value;
+  if (!presetId) return; // Custom preset, do nothing
+
+  const preset = PRESETS[presetId];
+  if (!preset) return;
+
+  elements.autoRespondInstructions.value = preset.instructions;
+  elements.autoRespondStopInstructions.value = preset.stopInstructions;
+  elements.autoRespondUseTools.checked = preset.useTools;
+  elements.autoRespondLimit.value = preset.maxResponses ?? "";
 }
 
 function save(event) {
@@ -110,3 +151,24 @@ elements.autoRespondModel.addEventListener("change", () => {
   const harness = pickedHarness();
   if (harness) fillThinkingOptions(harness, picker.models, elements.autoRespondModel, elements.autoRespondThinking, elements.autoRespondThinking.value);
 });
+elements.autoRespondPreset.addEventListener("change", applyPreset);
+
+// Reset to custom preset when instructions are manually changed
+function markAsCustomPreset() {
+  const currentPreset = elements.autoRespondPreset.value;
+  if (!currentPreset) return; // Already custom
+
+  const preset = PRESETS[currentPreset];
+  if (!preset) return;
+
+  // Check if values still match the preset
+  const matchesPreset = elements.autoRespondInstructions.value === preset.instructions
+    && elements.autoRespondStopInstructions.value === preset.stopInstructions;
+
+  if (!matchesPreset) {
+    elements.autoRespondPreset.value = "";
+  }
+}
+
+elements.autoRespondInstructions.addEventListener("input", markAsCustomPreset);
+elements.autoRespondStopInstructions.addEventListener("input", markAsCustomPreset);

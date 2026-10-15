@@ -22,6 +22,7 @@ export const state = {
   // scroll, and programmatic pins land at the bottom, so the listener simply
   // follows the scroll position.
   followChat: true,
+  initialAction: bootParams.get("action"),
   initialSessionId: bootParams.get("sessionId"),
   initialNodeId: bootParams.get("nodeId"),
   canvasLayout: emptyCanvasLayout(),

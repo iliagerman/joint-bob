@@ -15,7 +15,11 @@ test("mobile project header hides clutter, offers copyable path and moves real f
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   const path = await page.locator("#projectPath").textContent();
   for (const selector of ["#projectPath", "#chatsRecentSessionsButton", "#chatsRunningConversationsButton", "#conversationListPane .live-row", "#chatFilters", ".classification-filter", ".done-filter"]) {
-    assert.equal(await page.locator(selector).isVisible(), false, `${selector} stays out of the mobile list`);
+    const controls = page.locator(selector);
+    assert.ok(await controls.count() > 0, `${selector} exists`);
+    for (const control of await controls.all()) {
+      assert.equal(await control.isVisible(), false, `${selector} stays out of the mobile list`);
+    }
   }
   assert.ok((await page.locator("#chatsPanel .panel-bar").boundingBox())!.height <= 56);
   await page.locator("#projectName").click();

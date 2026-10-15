@@ -27,6 +27,8 @@ export function setComposerEnabled(enabled) {
   elements.attachButton.disabled = !allowed;
   elements.attachmentInput.disabled = !allowed;
   elements.renameSessionButton.disabled = !allowed;
+  elements.autoRespondButton.disabled = !allowed;
+  elements.focusAutoRespond.disabled = !allowed;
   elements.modelButton.disabled = !allowed;
   // In Bob auto the classifier owns the reasoning level, so the picker follows the lock.
   elements.reasoningLevelSelect.disabled = !allowed || auto;

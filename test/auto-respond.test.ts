@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type WebSocket from "ws";
 import { assistantMessageKey, parseAutoRespondDecision, responderPrompt, type AutoRespondConfig } from "../src/conversation-auto-respond.js";
-import { projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
+import { projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
 
 const config: AutoRespondConfig = { harnessId: "kiro", provider: "kiro", modelId: "default", thinkingLevel: "medium", instructions: "Keep going.", stopInstructions: "- Stop when finished.", maxResponses: 2, useTools: true };
@@ -156,6 +156,62 @@ test("auto respond answers for the user until a limit or a stop instruction ends
     await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "textDelta" && message.text === "agent heard: one more"));
     await new Promise((resolve) => setTimeout(resolve, 500));
     assert.equal(chat.messages.filter((message) => message.type === "userMessage" && message.auto).length, answered);
+  } finally {
+    for (const socket of sockets) socket.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function prepareKiroNode(root: string, responder: string): Promise<{ environment: DevEnvironment; node: SeededNode }> {
+  const environment = await seedDevEnvironment(root, 1);
+  const node = environment.nodes[0];
+  const executable = path.join(environment.home, "bin", "kiro-fixture");
+  const configPath = path.join(environment.home, ".kiro");
+  const sessionPath = path.join(configPath, "sessions");
+  await Promise.all([mkdir(path.dirname(executable), { recursive: true }), mkdir(sessionPath, { recursive: true })]);
+  await writeFile(executable, fixtureSource);
+  await chmod(executable, 0o700);
+  await writeFile(responder, responderSource);
+  configureKiro(node.dataDir, executable, configPath, sessionPath);
+  return { environment, node };
+}
+
+test("an active auto respond resumes on its own after the node restarts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "auto-respond-restart-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  const sockets: WebSocket[] = [];
+  try {
+    const responder = path.join(root, "responder.mjs");
+    const { environment, node } = await prepareKiroNode(root, responder);
+    server = await startDevNode(environment, node, { JOINT_BOB_AUTO_RESPONDER: responder });
+    const auth = await signIn(environment, node);
+    const project = projectNamed(node, "Joint Bob");
+    const chat = openChat(node.url, auth.cookie, project.id, "kiro:new");
+    sockets.push(chat.socket);
+    await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "ready"));
+    chat.socket.send(JSON.stringify({ type: "prompt", message: "start the work" }));
+    await waitFor(chat.messages, () => chat.messages.filter((message) => message.type === "agent_end").length === 1);
+    chat.socket.send(JSON.stringify({ type: "autoRespond", autoRespond: { enabled: true, config: { ...config, maxResponses: 5 } } }));
+    // Stop once the agent has answered the second reply and the responder is between turns.
+    await waitFor(chat.messages, () => autoStates(chat.messages).some((state) => state?.responses === 2) && chat.messages.filter((message) => message.type === "agent_end").length >= 3);
+    const before = autoStates(chat.messages).at(-1)!.responses;
+    await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "sessionFile"));
+    const file = chat.messages.find((message) => message.type === "sessionFile")!;
+    chat.socket.close();
+    await stopDevNode(server);
+
+    server = await startDevNode(environment, node, { JOINT_BOB_AUTO_RESPONDER: responder });
+    const restarted = await signIn(environment, node);
+    const reopened = openChat(node.url, restarted.cookie, project.id, String(file.sessionFile));
+    sockets.push(reopened.socket);
+    await waitFor(reopened.messages, () => reopened.messages.some((message) => message.type === "ready"));
+    const ready = reopened.messages.find((message) => message.type === "ready")!;
+    const restored = ready.autoRespond as { status: string; responses: number } | null;
+    assert.equal(restored?.status, "active", "the responder is still on after the restart");
+    assert.ok(restored.responses >= before, "the count survives the restart");
+    await waitFor(reopened.messages, () => autoStates(reopened.messages).some((state) => state?.stopKind === "limit"));
+    assert.equal(autoStates(reopened.messages).at(-1)?.responses, 5, "the responder keeps answering after the restart until its limit");
   } finally {
     for (const socket of sockets) socket.close();
     if (server) await stopDevNode(server);

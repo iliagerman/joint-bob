@@ -78,7 +78,7 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     } catch (error) {
       if (ticket === generation) data[section] = { error: error.name === "TimeoutError" ? "the request timed out" : error.message };
     }
-    if (ticket === generation && active()) render();
+    if (ticket === generation && active()) render(view !== "suggest" || Boolean(detail) || section === "suggest");
   }
 
   function scopeQuery() {
@@ -534,12 +534,13 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     if (detail) footnote.textContent = "Figures compare the skill with every turn that loaded any skill in the same scope. A turn that loads several skills counts under each, and observed use does not show that a skill caused a result.";
   }
 
-  function render() {
+  function render(updateBody = true) {
     renderStats();
     renderFindings();
     renderViews();
     renderFocus();
-    renderBody();
+    // Unrelated report completions must not replace an open suggestion draft.
+    if (updateBody) renderBody();
     renderFootnote();
     requestAnimationFrame(refit);
   }

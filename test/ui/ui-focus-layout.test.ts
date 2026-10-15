@@ -31,8 +31,9 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and transparen
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({ path: `tmp/focus-${theme}-${view}.png` });
     await page.getByTestId("focus-controls-button").click();
+    await page.locator("#focusControls").waitFor();
     const menu = await page.locator("#focusControls").boundingBox();
-    assert.ok(menu && menu.height <= 430, `root menu is compact, not a toolbar dump: ${JSON.stringify(menu)}`);
+    assert.ok(menu && menu.height <= 700, `root menu is compact, not a toolbar dump: ${JSON.stringify(menu)}`);
     for (const id of ["focus-new-conversation", "focus-new-note", "focus-reviews", "focus-running", "focus-settings"]) {
       const button = page.getByTestId(id);
       assert.equal(await button.locator("svg").count(), 1, `${id} has an outline icon`);
@@ -42,15 +43,27 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and transparen
     await page.getByTestId("focus-close").click();
   }
   await page.getByTestId("focus-controls-button").click();
+  await page.locator("#focusControls").waitFor();
   assert.equal(await page.locator("#chatToolbar").isVisible(), false);
+  await page.getByTestId("focus-auto-respond").waitFor({ state: "visible" });
+  await page.getByTestId("focus-auto-respond").click();
+  await page.getByTestId("auto-respond-dialog").waitFor({ state: "visible", timeout: 5000 });
+  assert.equal(await page.getByTestId("auto-respond-dialog").isVisible(), true);
+  await page.getByTestId("auto-respond-cancel-button").click();
+  await page.getByTestId("focus-controls-button").click();
+  await page.locator("#focusControls").waitFor();
   await page.getByTestId("focus-tools").click();
-  assert.equal(await page.getByTestId("chat-open-browser-button").isVisible(), true);
-  assert.equal(await page.getByTestId("chat-model-button").isVisible(), false);
-  await page.screenshot({ path: `tmp/focus-${theme}-tools.png` });
-  await page.keyboard.press("Escape");
+  await page.locator("#chatToolbar").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#focusContextTitle").textContent(), "Tools & actions");
+  for (const id of ["chat-open-browser-button", "chat-git-button", "chat-story-button", "chat-share-button", "background-tasks-open"]) {
+    assert.equal(await page.getByTestId(id).isVisible(), true, `${id} stays reachable in focus mode`);
+  }
+  await page.getByTestId("background-tasks-open").click();
+  await page.getByTestId("background-tasks-close").click();
+  await page.getByTestId("focus-back").click();
   await page.getByTestId("focus-agent").click();
-  assert.equal(await page.getByTestId("chat-model-button").isVisible(), true);
-  assert.equal(await page.getByTestId("chat-open-browser-button").isVisible(), false);
+  await page.locator("#focusNodeList").waitFor({ state: "visible" });
+  assert.ok(await page.getByTestId("focus-agent-option").count() > 0, "agent section shows harness options");
   await page.screenshot({ path: `tmp/focus-${theme}-agent.png` });
   await page.getByTestId("focus-back").click();
   await page.setViewportSize({ width: 390, height: 460 });

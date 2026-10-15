@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Turned on strict resource isolation by default, so chats no longer load your personal skills, commands, plugins, or MCP servers from Claude, Pi, or Kiro; Joint Bob and project resources still load.
+- Added a Share action to conversations that shares a link to the open conversation, or copies it when sharing is unavailable, and a New Conversation shortcut on installed app icons that opens the new-conversation wizard.
 
 ## 2.101.0 — 2026-10-15
 

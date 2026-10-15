@@ -17,6 +17,10 @@ async function login(page: any, environment: any, url: string): Promise<void> {
   await page.getByTestId("login-password-input").fill(environment.password);
   await page.getByTestId("login-submit-button").click();
   await page.getByTestId("usage-open").waitFor();
+  await page.waitForFunction(async () => {
+    const { state } = await import("/app/state.js");
+    return state.preferencesLoaded && state.harnesses.some((harness) => harness.id === "pi" && harness.label === "Pi");
+  });
 }
 
 test("usage dashboard edits subscription price and manual quota on desktop and mobile", { timeout: 240_000 }, async (t) => {
@@ -204,7 +208,7 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   await page.keyboard.down("Alt");
   const costsBadge = opener.locator(".shortcut-hint");
   await costsBadge.waitFor({ state: "visible" });
-  assert.equal(await costsBadge.textContent(), "C");
+  assert.equal(await costsBadge.textContent(), "⇧C");
   assert.ok((await costsBadge.getAttribute("title"))?.includes("C"), "costs badge title includes its key");
   await page.keyboard.up("Alt");
   await page.keyboard.up("Control");
@@ -364,6 +368,7 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   assert.equal(await month.locator(".usage-compare-tooltip span").count(), 4, "the hover lists every period");
   assert.equal(await dialog.locator(".usage-card").evaluate((element: HTMLElement) => element.scrollHeight <= element.clientHeight + 1), true, "the comparison fits without scrolling");
   await dialog.getByTestId("usage-tab-overview").click();
+  await page.locator('#usageRefresh:enabled').waitFor();
 
   gateRefresh = true;
   await page.locator("#usageRefresh").click();
@@ -489,6 +494,7 @@ test("skills and time lists one row per skill, says what stands out, and pages i
 
   // One row per skill, most used first; the list pages, and neither it nor the dialog scrolls.
   assert.deepEqual((await names()).slice(0, 4), ["ponytail", "caveman", "flaky", "slow"]);
+  assert.equal(await page.evaluate(async () => (await import('/app/state.js')).state.harnesses.find((harness) => harness.id === 'pi')?.label), "Pi", "the loaded harness metadata supplies Pi's display name");
   assert.equal(await rows.first().locator(".usage-name-detail").textContent(), "59 conversations · Pi · typed 4×");
   assert.deepEqual(await body.locator("thead th").allTextContents(), ["Skill", "Turns", "Of skill turns", "Trend", "Cost", "Per turn", "Requests", "Tokens", "Cache", "Failed tools", "Median turn", "Projects", "Last used"]);
   assert.deepEqual(await rows.first().locator("td").allTextContents(), ["ponytail59 conversations · Pi · typed 4×", "118", "39%", "", "$236", "$2", "2,360", "1.24M", "90%", "5.0%", "1m 00s", "1", "Oct 12"]);
@@ -574,6 +580,14 @@ test("suggestions stay unread until asked, then list skills to remove and kinds 
   await login(page, environment, node.url);
   let suggestionRequests = 0;
   const drafts: any[] = [];
+  let releaseInventory!: () => void;
+  const inventoryGate = new Promise<void>((resolve) => { releaseInventory = resolve; });
+  t.after(() => releaseInventory());
+  const inventoryRequested = page.waitForRequest('**/api/resources/inventory*');
+  await page.route('**/api/resources/inventory*', async (route) => {
+    await inventoryGate;
+    await route.fulfill({ json: { nodes: [] } });
+  });
   const empty = { skills: [], scopeRequests: 0, unattributedRequests: 0, withSkill: { turns: 0, requests: 0, pricedRequests: 0, costUsd: 0, toolCalls: 0, toolErrors: 0, timedTurns: 0, medianDurationMs: null },
     withoutSkill: { requests: 0, pricedRequests: 0, costUsd: 0, toolCalls: 0, toolErrors: 0 }, turnTiming: null, coverage: { missing: 0 } };
   await page.route("**/api/usage/skills?*", (route: any) => route.fulfill({ json: empty }));
@@ -612,6 +626,13 @@ test("suggestions stay unread until asked, then list skills to remove and kinds 
   await creations.getByTestId("usage-suggest-draft").click();
   assert.equal(await creations.getByTestId("usage-draft-name").inputValue(), "deploy-staging");
   await creations.getByTestId("usage-draft-content").fill("Run the staging deploy script and check the health endpoint.");
+  await inventoryRequested;
+  const inventoryLoaded = page.waitForResponse('**/api/resources/inventory*');
+  releaseInventory();
+  await (await inventoryLoaded).finished();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  assert.equal(await creations.getByTestId("usage-draft-content").count(), 1, "a late inventory read must preserve the open suggestion draft");
+  assert.equal(await creations.getByTestId("usage-draft-content").inputValue(), "Run the staging deploy script and check the health endpoint.", "a late inventory read must preserve typed draft content");
   await creations.getByTestId("usage-draft-save").click();
   await creations.getByTestId("usage-draft-review").waitFor();
   assert.deepEqual(drafts, [{ projectId: "p1", name: "deploy-staging", kind: "script", content: "Run the staging deploy script and check the health endpoint.", evidenceConversationIds: ["a", "b", "c"] }]);

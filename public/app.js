@@ -67,6 +67,7 @@ import "./app/saved-commands.js";
 import "./app/secrets.js";
 import "./app/browser-login.js";
 import "./app/usage-dashboard.js";
+import "./app/conversation-sharing.js";
 
 initializeFocusUi({
   openSettings, startConversation: startGlobalConversation,

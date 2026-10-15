@@ -5,9 +5,11 @@ import { toast } from "./shell.js";
 export const mobileFocusViewport = matchMedia("(max-width: 700px)");
 const filtersDialog = document.querySelector("#focusProjectFiltersDialog");
 const infoDialog = document.querySelector("#focusProjectInfoDialog");
-const filterHomes = ["#chatFilters", ".classification-filter", ".done-filter", "#markAllReviewedButton"].map(selector => ({
-  control: document.querySelector(selector), home: document.createComment("Project filter location"),
-}));
+const filterHomes = ["#chatFilters", ".classification-filter", ".done-filter", "#markAllReviewedButton"].flatMap(selector =>
+  Array.from(document.querySelectorAll(selector), control => ({
+    control, home: document.createComment("Project filter location"),
+  })),
+);
 
 function mobileFocus() {
   return mobileFocusViewport.matches && document.body.classList.contains("focus-ui");

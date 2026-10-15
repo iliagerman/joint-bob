@@ -80,10 +80,26 @@ after(async () => {
 });
 
 async function openProject(): Promise<void> {
+  const appState = await page.evaluateHandle(async () => (await import("/app/state.js")).state);
+  try {
+    await page.waitForFunction((state) => state.preferencesLoaded, appState);
+  } finally {
+    await appState.dispose();
+  }
   const projectCard = page.locator(".project-card", { hasText: "Joint Bob" }).first();
   await projectCard.waitFor({ timeout: 20_000 });
   await projectCard.click();
   await page.locator(".session-card").first().waitFor({ timeout: 20_000 });
+}
+
+/** Hold the real fixture response, not an intercepted request that navigation may abort. */
+function delayWorktreeListing(pending: Promise<void>): Promise<void> {
+  return page.route("**/api/projects/*/worktrees", async (route) => {
+    if (route.request().method() !== "GET") { await route.continue(); return; }
+    const response = await route.fetch();
+    await pending;
+    await route.fulfill({ response });
+  });
 }
 
 test("a worktree is created from the conversation list as a code-only copy", async () => {
@@ -178,7 +194,7 @@ test("worktree grouping does not wait for a slow cleanup scan", async () => {
 test("conversation badges still have matching groups while the worktree listing is pending", async () => {
   let release!: () => void;
   const pending = new Promise<void>((resolve) => { release = resolve; });
-  await page.route("**/api/projects/*/worktrees", async (request) => { await pending; await request.continue(); });
+  await delayWorktreeListing(pending);
   try {
     await page.reload({ waitUntil: "domcontentloaded" });
     await openProject();
@@ -202,7 +218,7 @@ test("a late worktree listing keeps empty groups collapsed without moving visibl
   });
   let release!: () => void;
   const pending = new Promise<void>((resolve) => { release = resolve; });
-  await page.route("**/api/projects/*/worktrees", async (request) => { await pending; await request.continue(); });
+  await delayWorktreeListing(pending);
   try {
     await page.reload({ waitUntil: "domcontentloaded" });
     await openProject();
@@ -210,11 +226,11 @@ test("a late worktree listing keeps empty groups collapsed without moving visibl
     await row.waitFor();
     assert.equal(await page.getByTestId("worktree-section").count(), 1, "initial groups come from conversations");
     release();
-    await page.waitForFunction(async (id) => (await import("/app/state.js")).state.worktrees.some((worktree) => worktree.id === id), empty.id);
+    const toggle = page.getByTestId("other-worktrees-toggle");
+    await toggle.waitFor();
     assert.equal(await page.locator("#sessionList > [data-testid='worktree-section']").count(), 1, "the late listing must not insert an empty top-level group");
     const section = page.getByTestId("worktree-section").filter({ hasText: "Empty worktree" });
     assert.equal(await section.isVisible(), false);
-    const toggle = page.getByTestId("other-worktrees-toggle");
     assert.equal(await toggle.innerText(), "Other worktrees (1)");
     await toggle.click();
     await section.waitFor();
@@ -273,6 +289,27 @@ test("long worktree headers and conversation cards fit the column without horizo
   } finally {
     await page.setViewportSize({ width: 1440, height: 900 });
   }
+});
+
+test("worktrees and conversations can be referenced together in a new conversation", async () => {
+  await page.getByTestId("context-references-open-button").click();
+  const dialog = page.getByTestId("context-references-dialog");
+  await dialog.waitFor();
+  const worktree = dialog.locator(".context-reference-row", { hasText: WORKTREE_NAME });
+  const conversation = dialog.locator(".context-reference-row", { hasText: CONVERSATION_NAME });
+  await worktree.first().locator("input").check();
+  await conversation.last().locator("input").check();
+  assert.equal(await page.locator("#contextReferencesCount").innerText(), "2 references selected");
+  await page.getByTestId("context-references-start-button").click();
+  await page.locator("#choiceDialog[open]").waitFor({ timeout: 10_000 });
+  await page.getByTestId("choice-accept-button").click();
+  await page.locator("#newSessionNameDialog[open]").waitFor({ timeout: 10_000 });
+  await page.getByTestId("new-session-name-input").fill("Combined review");
+  await page.getByTestId("new-session-name-start-button").click();
+  await page.locator("#messageInput:not([disabled])").waitFor({ timeout: 30_000 });
+  const draft = await page.locator("#messageInput").inputValue();
+  assert.match(draft, new RegExp(`Worktree: ${WORKTREE_NAME}[\\s\\S]*Conversation: ${CONVERSATION_NAME}`));
+  assert.match(draft, /pointers only; content is not preloaded/);
 });
 
 test("starting a conversation from the worktree menu runs it in the worktree", async () => {

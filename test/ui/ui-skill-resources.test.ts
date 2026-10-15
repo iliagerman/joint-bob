@@ -21,6 +21,7 @@ test("resource settings explicitly publish and reload skills", { timeout: 120_00
     await page.goto(node.url); await page.getByTestId("login-username-input").fill(environment.username); await page.getByTestId("login-password-input").fill(environment.password); await page.getByTestId("login-submit-button").click();
     await page.getByText("Internal Assistant", { exact: true }).waitFor(); await page.getByTestId("settings-open-button").click(); await page.getByTestId("settings-tab-resources").click();
     await page.waitForFunction(() => document.querySelector("#settingsForm")?.getAttribute("aria-busy") !== "true");
+    await page.getByTestId("resources-tab-paths").click();
     await page.getByTestId("settings-resource-skills-paths").fill(source);
     await page.getByTestId("settings-sync-skills-button").click(); await page.getByTestId("confirm-cancel-button").click();
     await assert.rejects(readFile(path.join(environment.home, "JointBob/.agent-resources/shared/skills/visible/SKILL.md")));

@@ -118,10 +118,13 @@ body.view-chat #focusControlsButton { bottom: 160px; }
 .focus-node-btn { background: linear-gradient(135deg, rgba(20, 184, 166, 0.15), rgba(13, 148, 136, 0.1)) !important; border: 1px solid rgba(20, 184, 166, 0.3); }
 .focus-node-btn:hover:not(:disabled) { background: linear-gradient(135deg, rgba(20, 184, 166, 0.25), rgba(13, 148, 136, 0.15)) !important; border-color: rgba(20, 184, 166, 0.5); }
 .focus-node-btn svg { color: rgb(20, 184, 166); }
+.focus-auto-respond-btn { background: linear-gradient(135deg, rgba(14, 165, 233, 0.15), rgba(2, 132, 199, 0.1)) !important; border: 1px solid rgba(14, 165, 233, 0.3); }
+.focus-auto-respond-btn:hover:not(:disabled) { background: linear-gradient(135deg, rgba(14, 165, 233, 0.25), rgba(2, 132, 199, 0.15)) !important; border-color: rgba(14, 165, 233, 0.5); }
+.focus-auto-respond-btn svg { color: rgb(14, 165, 233); }
 .focus-tools-btn { background: linear-gradient(135deg, rgba(148, 163, 184, 0.15), rgba(100, 116, 139, 0.1)) !important; border: 1px solid rgba(148, 163, 184, 0.3); }
 .focus-tools-btn:hover:not(:disabled) { background: linear-gradient(135deg, rgba(148, 163, 184, 0.25), rgba(100, 116, 139, 0.15)) !important; border-color: rgba(148, 163, 184, 0.5); }
 .focus-tools-btn svg { color: rgb(148, 163, 184); }
-#focusMarkDone, #focusTools { grid-column: 1 / -1; }
+#focusMarkDone { grid-column: 1 / -1; }
 #focusNodeList { display: grid; padding: 4px 0; }
 #focusNodeList button[aria-pressed="true"] { color: var(--live); font-weight: 600; }
 .focus-global-actions { flex-shrink: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 6px 0; border-top: 1px solid var(--line); }
@@ -140,7 +143,8 @@ body.booting :is(#focusControlsButton, #focusControls) { visibility: hidden; }
 #focusChatControls .chat-toolbar-control { width: 100%; max-width: 100%; min-height: 44px; font-size: 13px; }
 #focusChatControls :is(.chat-toolbar-break, #chatRecentSessionsButton, #chatRunningConversationsButton) { display: none !important; }
 #focusControls[data-section="tools"] #chatToolbar { display: flex; flex-direction: column; gap: 0; padding: 4px 0; }
-#focusControls[data-section="tools"] :is(.chat-session-controls, .chat-control, #backgroundTasksButton) { display: none; }
+#focusControls[data-section="tools"] .chat-toolbar-actions { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
+#focusControls[data-section="tools"] :is(.chat-session-controls, .chat-control) { display: none; }
 #focusChatControls #backgroundTasksButton { width: 100%; }
 #focusChatControls .background-tasks-label { display: inline; }
 #focusChatControls .chat-more { width: 100%; }
