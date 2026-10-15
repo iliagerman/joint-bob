@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.99.0 — 2026-10-15
 
-- Added an Owner choice to Settings > Webhooks, so a webhook can be created and managed from an active twin's machine; it lives only on the chosen owner, and if that owner is offline the request fails rather than creating a copy here.
+- Added an Owner choice to Settings > Webhooks, so a webhook can be created, listed, edited, and deleted from an active twin's machine; it lives only on the chosen owner, an existing webhook's owner cannot be changed, and if that owner is offline the request fails rather than creating a copy here.
 
 ## 2.98.0 — 2026-10-15
 
