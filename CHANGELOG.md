@@ -3,10 +3,6 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Made relay connections that fell back to polling retry the faster WebSocket connection every five minutes, and kept transport errors visible in the relay history across reconnects.
-
 ## 2.101.0 — 2026-10-15
 
 - Added Auto respond presets for reviewing work and driving AI-DLC, and put Auto respond directly in the mobile focus controls.
