@@ -542,7 +542,7 @@ async function saveSettings(event) {
   else renderSessions();
   const restartRequired = harnessDescriptors.filter(({ id }) => saved.restartRequired[id]).map(({ label }) => `${label} configuration`);
   elements.settingsRestartMessage.hidden = restartRequired.length === 0;
-  elements.settingsRestartMessage.textContent = restartRequired.length ? `Restart required for ${restartRequired.join(" and ")} changes.` : "";
+  elements.settingsRestartMessage.textContent = restartRequired.length ? `Settings saved. Restart required for ${restartRequired.join(" and ")} changes.` : "";
   if (!restartRequired.length) elements.settingsDialog.close();
   // A toast inside a closed dialog is invisible, so close it before announcing success.
   toast("Settings saved");
@@ -673,4 +673,26 @@ elements.settingsChangePasswordButton.addEventListener("click", async () => {
     toast(error.message);
   }
 });
-elements.settingsForm.addEventListener("submit", (event) => saveSettings(event).catch((error) => toast(error.message)));
+let settingsSaving = false;
+elements.settingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (settingsSaving || !settingsReady || settingsLoading) return;
+  settingsSaving = true;
+  const button = elements.settingsForm.querySelector('[type="submit"]');
+  button.disabled = true;
+  button.textContent = "Saving…";
+  elements.settingsRestartMessage.hidden = false;
+  elements.settingsRestartMessage.classList.add("is-loading");
+  elements.settingsRestartMessage.textContent = "Saving settings…";
+  try {
+    await saveSettings(event);
+  } catch (error) {
+    elements.settingsRestartMessage.textContent = `Could not save settings: ${error.message}`;
+    toast(error.message);
+  } finally {
+    settingsSaving = false;
+    button.disabled = false;
+    button.textContent = "Save settings";
+    elements.settingsRestartMessage.classList.remove("is-loading");
+  }
+});

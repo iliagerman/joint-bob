@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Showed progress while Settings saves, with the Save button disabled, and a clear message when a save fails or succeeds instead of leaving the dialog unchanged.
+
 ## 2.100.1 — 2026-10-15
 
 - Showed the saved commands shortcut you have set in Settings, or a prompt to assign one when none is set, and clarified that picking a prompt pastes it into the chat draft without sending it.

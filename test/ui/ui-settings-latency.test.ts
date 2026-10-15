@@ -54,6 +54,48 @@ test("Settings opens immediately and local settings do not wait for optional pan
   }
 });
 
+test("Save settings shows progress, failure, and success", { timeout: 90_000 }, async (t) => {
+  const { page, node, environment } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card").first().waitFor();
+  await page.getByTestId("settings-open-button").click();
+  const save = page.getByTestId("settings-save-button");
+  const status = page.locator("#settingsRestartMessage");
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+  const pending = gate(), requested = gate();
+  let fail = true;
+  await page.route("**/api/settings", async route => {
+    if (route.request().method() !== "PUT") return route.continue();
+    requested.release();
+    await pending.promise;
+    if (fail) return route.fulfill({ status: 503, json: { error: "Save unavailable" } });
+    return route.continue();
+  });
+  try {
+    await save.click();
+    await requested.promise;
+    assert.equal(await save.isDisabled(), true);
+    assert.equal(await save.innerText(), "Saving…");
+    assert.equal(await status.innerText(), "Saving settings…");
+    assert.equal(await status.evaluate(element => getComputedStyle(element, "::before").content), '""');
+    pending.release();
+    await status.getByText("Could not save settings: Save unavailable").waitFor();
+    assert.equal(await status.isVisible(), true);
+    await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+    assert.equal(await save.innerText(), "Save settings");
+    fail = false;
+    await save.click();
+    await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+    await page.getByText("Settings saved", { exact: true }).waitFor();
+  } finally {
+    pending.release();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
 test("failed settings reads keep saving disabled and allow closing the dialog", { timeout: 90_000 }, async (t) => {
   const { page, node, environment } = await nativeUiFixture(t);
   await page.goto(node.url);
