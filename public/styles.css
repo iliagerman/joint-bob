@@ -1728,6 +1728,12 @@ select.chat-toolbar-control {
 .conversation-lock button { flex: 0 0 auto; }
 .composer { display: grid; gap: 6px; padding: 8px 12px 14px; background: var(--header); }
 .composer.dragging { outline: 2px dashed var(--accent); outline-offset: -4px; }
+.saved-command-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(200px, 2fr) auto; gap: 8px; align-items: start; margin: 8px 0; }
+.saved-command-row > * { min-width: 0; }
+#savedCommandsOptions { max-height: 45dvh; overflow-y: auto; }
+.saved-command-option { display: block; width: 100%; padding: 10px; text-align: left; border: 0; background: transparent; color: var(--text); }
+.saved-command-option:is(:hover, [aria-selected="true"]) { background: color-mix(in srgb, var(--accent) 12%, var(--field)); }
+@media (max-width: 600px) { .saved-command-row { grid-template-columns: 1fr auto; } .saved-command-row textarea { grid-column: 1 / -1; grid-row: 2; } }
 .command-autocomplete { width: 100%; max-width: 1100px; max-height: min(320px, 42dvh); margin: 0 auto; overflow-y: auto; border: 1px solid var(--line-strong); border-radius: var(--radius-ctl); background: var(--panel); box-shadow: var(--shadow); }
 .command-autocomplete[hidden] { display: none; }
 .command-autocomplete button { display: grid; width: 100%; min-height: 48px; padding: 8px 12px; border: 0; border-radius: 0; text-align: left; background: transparent; color: var(--text); }

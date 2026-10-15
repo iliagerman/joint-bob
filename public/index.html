@@ -334,6 +334,7 @@
           <button type="button" data-command="/model" data-testid="chat-model-command-button">/model</button>
           <button type="button" data-command="/tools" data-testid="chat-tools-button">/tools</button>
           <button type="button" data-command="/compact" data-testid="chat-compact-button">/compact</button>
+          <button type="button" id="savedCommandsButton" data-testid="saved-commands-button">Saved commands</button>
           <button type="button" id="chatResourcesButton" data-testid="chat-resources-button" title="See this conversation's skills and MCP servers, and add more">Skills &amp; tools</button>
         </div>
         <div class="conversation-lock" id="conversationLock" role="status" data-testid="conversation-lock-notice" hidden>
@@ -991,6 +992,9 @@
             <label class="checkbox-row"><input id="settingsEndConversationEnabled" type="checkbox" data-testid="settings-end-conversation-enabled" /> Enable double-click Send to end a conversation</label>
             <label>End conversation prompt<textarea id="settingsEndConversationPrompt" rows="4" maxlength="10000" data-testid="settings-end-conversation-prompt"></textarea></label>
             <p class="settings-hint">When enabled, the start prompt runs before your first message. Double-clicking Send submits the end prompt and leaves your draft and attachments untouched.</p>
+            <div><strong>Saved commands</strong> <button type="button" class="ghost compact" id="addSavedCommand" data-testid="add-saved-command">Add command</button></div>
+            <p class="settings-hint">Save named prompts here. Use the saved commands shortcut in a conversation to paste one into the chat draft without sending it.</p>
+            <div id="savedCommandsList" data-testid="saved-commands-list"></div>
           </fieldset>
         </section>
 
@@ -2005,6 +2009,15 @@
           <button class="primary" type="submit" data-testid="quick-note-save-button">Save note</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="savedCommandsDialog" aria-labelledby="savedCommandsTitle" data-testid="saved-commands-dialog">
+      <div class="dialog-card">
+        <h2 id="savedCommandsTitle">Saved commands</h2>
+        <input id="savedCommandsSearch" type="search" placeholder="Find a command" aria-label="Find a saved command" autocomplete="off" data-testid="saved-commands-search" />
+        <div id="savedCommandsOptions" role="listbox" aria-label="Saved commands" data-testid="saved-commands-options"></div>
+        <button type="button" class="ghost" id="closeSavedCommands">Cancel</button>
+      </div>
     </dialog>
 
     <dialog id="worktreeDialog" data-testid="worktree-dialog">

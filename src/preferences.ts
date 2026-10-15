@@ -168,7 +168,7 @@ const CANVAS_MODIFIERS: CanvasModifier[] = [...CANVAS_CHORD_MODIFIERS];
 // Order matters: a command added later takes its default chord only if no earlier
 // command already holds it, so an existing account never loses a binding it configured.
 const CANVAS_KEYMAP_COMMANDS = [
-  "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings", "focusInput",
+  "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings", "focusInput", "savedCommands",
   "paneSearch", "recentPane", "focusPane",
   "splitRight", "splitBelow", "closePane", "createPage",
   "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
@@ -195,6 +195,7 @@ export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
     runningConversations: commandChord("O"),
     settings: commandChord(","),
     focusInput: commandChord("I"),
+    savedCommands: ["ctrl", "alt", "shift", "L"],
     toggleProjects: commandChord("["),
     toggleChats: commandChord("]"),
     board: commandChord("D"),

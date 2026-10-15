@@ -1,0 +1,35 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { nativeUiFixture } from "./native-ui-fixture.js";
+
+test("saved commands paste into chat through a keyboard shortcut without sending", { timeout: 240_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.locator("#loginDialog[open]").waitFor();
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor();
+  await page.evaluate(async () => (await import("/app/settings.js")).openSettings("commands"));
+  await page.getByTestId("add-saved-command").click();
+  await page.locator("#savedCommandsList input").fill("Review changes");
+  await page.locator("#savedCommandsList textarea").fill("Review my changes, do not send this yet.");
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  await page.getByTestId("chat-message-input").fill("Old draft");
+  await page.keyboard.press("Control+Alt+Shift+L");
+  await page.getByTestId("saved-commands-dialog").waitFor({ state: "visible" });
+  await page.getByTestId("saved-commands-search").fill("Review");
+  await page.getByTestId("saved-commands-search").press("Enter");
+  assert.equal(await page.getByTestId("chat-message-input").inputValue(), "Review my changes, do not send this yet.");
+  assert.equal(await page.getByTestId("saved-commands-dialog").evaluate((dialog) => (dialog as HTMLDialogElement).open), false);
+  await page.reload();
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  await page.getByTestId("chat-message-input").click();
+  await page.keyboard.press("Control+Alt+Shift+L");
+  await page.getByTestId("saved-commands-dialog").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("saved-commands-options").getByText("Review changes").count(), 1);
+});

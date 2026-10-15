@@ -67,6 +67,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     const conversationCommands = {
       start: { enabled: true, prompt: "Pull main before work." },
       end: { enabled: true, prompt: "Commit, push, and watch CI." },
+      presets: [{ name: "Review changes", prompt: "Review my changes." }],
     };
     const saved = await fetch(`${node.baseUrl}/api/settings`, {
       method: "PUT",

@@ -63,6 +63,7 @@ import "./app/worktrees.js";
 import "./app/terminal.js";
 import "./app/ownership.js";
 import "./app/composer.js";
+import "./app/saved-commands.js";
 import "./app/secrets.js";
 import "./app/browser-login.js";
 import "./app/usage-dashboard.js";

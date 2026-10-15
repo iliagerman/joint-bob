@@ -221,7 +221,7 @@ export const isSwitcherNavigationCode = (code) => /^Digit[0-9]$/.test(code)
  *  keymap hands one chord to two commands, the earlier command keeps it. The first
  *  six and the app toolbar commands answer even while the canvas is closed. */
 export const CANVAS_KEYMAP_COMMANDS = [
-  "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings", "focusInput",
+  "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings", "focusInput", "savedCommands",
   "paneSearch", "recentPane", "focusPane",
   "splitRight", "splitBelow", "closePane", "createPage",
   "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
@@ -248,6 +248,7 @@ export const DEFAULT_CANVAS_KEYMAP = {
     runningConversations: commandChord("O"),
     settings: commandChord(","),
     focusInput: commandChord("I"),
+    savedCommands: ["ctrl", "alt", "shift", "L"],
     toggleProjects: commandChord("["),
     toggleChats: commandChord("]"),
     board: commandChord("D"),

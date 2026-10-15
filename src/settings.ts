@@ -40,11 +40,13 @@ export const DEFAULT_END_CONVERSATION_PROMPT = "Make sure all your code is commi
 export interface ConversationCommandsSettings {
   start: { enabled: boolean; prompt: string };
   end: { enabled: boolean; prompt: string };
+  presets: { name: string; prompt: string }[];
 }
 
 export const DEFAULT_CONVERSATION_COMMANDS: ConversationCommandsSettings = {
   start: { enabled: false, prompt: DEFAULT_START_CONVERSATION_PROMPT },
   end: { enabled: false, prompt: DEFAULT_END_CONVERSATION_PROMPT },
+  presets: [],
 };
 
 export interface RemoteTerminalSettings { twins: boolean; otherNodes: boolean }
@@ -282,7 +284,7 @@ function conversationCommands(): ConversationCommandsSettings {
         ? stored[name]!.prompt.trim()
         : DEFAULT_CONVERSATION_COMMANDS[name].prompt,
     });
-    return { start: command("start"), end: command("end") };
+    return { start: command("start"), end: command("end"), presets: Array.isArray(stored.presets) ? stored.presets : [] };
   } catch {
     return structuredClone(DEFAULT_CONVERSATION_COMMANDS);
   }
@@ -341,7 +343,7 @@ const personalSchemas = {
   autoCompactThreshold: z.number().int().min(1).max(100).nullable(),
   digestAttachments: z.boolean(),
   showProjectsOnOtherNodes: z.boolean(),
-  conversationCommands: z.object({ start: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict(), end: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict() }).strict(),
+  conversationCommands: z.object({ start: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict(), end: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict(), presets: z.array(z.object({ name: z.string().trim().min(1).max(80), prompt: z.string().trim().min(1).max(10_000) }).strict()).max(50).optional() }).strict(),
   conversationDefaults: conversationDefaultsSchema,
 } satisfies Record<(typeof PERSONAL_SETTING_KEYS)[number], z.ZodTypeAny>;
 

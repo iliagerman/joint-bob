@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Added saved commands in Settings and a keyboard menu that pastes a chosen prompt into the chat draft without sending it.
 - Changed the focus mode Tools button into an Auto respond button that opens auto-respond directly, added a Preset menu with a review-and-consent preset and an AI-DLC driver preset, and kept an active auto-respond on across an app update: it resumes once the node is back, with its count kept.
 - Made an active auto respond survive an app update by reading its state back from the node when the page reloads, instead of from the browser's saved copy.
 - Added a Share button to the chat More menu that copies a link to the open conversation, or opens the device's share sheet where one is available, and let installed app icons open a New Conversation shortcut and conversation links open their conversation directly.

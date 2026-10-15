@@ -390,6 +390,7 @@ async function loadSettings() {
   elements.settingsStartConversationPrompt.value = settings.conversationCommands.start.prompt;
   elements.settingsEndConversationEnabled.checked = settings.conversationCommands.end.enabled;
   elements.settingsEndConversationPrompt.value = settings.conversationCommands.end.prompt;
+  renderSavedCommands(settings.conversationCommands.presets || []);
   elements.completionSoundSelect.value = state.completionSound;
   syncNotifyButton();
   if (!admin) return;
@@ -419,6 +420,52 @@ async function loadSettings() {
   state.syncthingEndpoint = settings.syncthing.endpoint;
 }
 
+const savedCommandsList = document.querySelector("#savedCommandsList");
+
+function renderSavedCommands(commands) {
+  savedCommandsList.replaceChildren();
+  for (const command of commands) addSavedCommandRow(command);
+}
+
+function addSavedCommandRow(command = { name: "", prompt: "" }) {
+  const row = document.createElement("div");
+  row.className = "saved-command-row";
+  const name = document.createElement("input");
+  name.placeholder = "Name";
+  name.setAttribute("aria-label", "Command name");
+  name.maxLength = 80;
+  name.required = true;
+  name.value = command.name;
+  const prompt = document.createElement("textarea");
+  prompt.placeholder = "Prompt to paste into chat";
+  prompt.setAttribute("aria-label", "Command prompt");
+  prompt.maxLength = 10000;
+  prompt.required = true;
+  prompt.rows = 2;
+  prompt.value = command.prompt;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "ghost compact";
+  remove.textContent = "Remove";
+  remove.setAttribute("aria-label", "Remove saved command");
+  remove.addEventListener("click", () => row.remove());
+  row.append(name, prompt, remove);
+  savedCommandsList.append(row);
+  if (!command.name) name.focus();
+}
+
+document.querySelector("#addSavedCommand").addEventListener("click", () => addSavedCommandRow());
+
+function savedCommandsValue() {
+  const rows = [...savedCommandsList.children];
+  if (rows.length > 50) throw new Error("Save at most 50 commands");
+  return rows.map((row) => {
+    const [name, prompt] = row.querySelectorAll("input, textarea");
+    if (!name.value.trim() || !prompt.value.trim()) throw new Error("Saved commands need a name and prompt");
+    return { name: name.value.trim(), prompt: prompt.value.trim() };
+  });
+}
+
 function personalSettingsValue() {
   return {
     conversationDefaults: conversationDefaultsValue(),
@@ -430,6 +477,7 @@ function personalSettingsValue() {
     conversationCommands: {
       start: { enabled: elements.settingsStartConversationEnabled.checked, prompt: elements.settingsStartConversationPrompt.value.trim() },
       end: { enabled: elements.settingsEndConversationEnabled.checked, prompt: elements.settingsEndConversationPrompt.value.trim() },
+      presets: savedCommandsValue(),
     },
   };
 }
@@ -484,10 +532,7 @@ async function saveSettings(event) {
       gitPullTimeoutSeconds: Number(elements.settingsGitPullTimeoutSeconds.value),
       ...(syncCheck ? { syncCheck } : {}),
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
-      conversationCommands: {
-        start: { enabled: elements.settingsStartConversationEnabled.checked, prompt: elements.settingsStartConversationPrompt.value.trim() },
-        end: { enabled: elements.settingsEndConversationEnabled.checked, prompt: elements.settingsEndConversationPrompt.value.trim() },
-      },
+      conversationCommands: personalSettingsValue().conversationCommands,
     }),
   });
   await saveChangedTerminalPolicy();

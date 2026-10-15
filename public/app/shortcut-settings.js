@@ -28,6 +28,7 @@ const COMMAND_ROWS = [
   { command: "runningConversations", label: "Open the running conversations list" },
   { command: "settings", label: "Open the settings dialog" },
   { command: "focusInput", label: "Put the cursor in the field you can type in" },
+  { command: "savedCommands", label: "Chat: open saved commands to paste a prompt" },
   { command: "toggleProjects", label: "Collapse or expand the projects panel" },
   { command: "toggleChats", label: "Collapse or expand the conversations panel" },
   { command: "newProject", label: "Add a project" },

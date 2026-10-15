@@ -107,7 +107,7 @@ test("every command has a default chord, and the defaults never collide", () => 
     assert.notEqual(normalizeChord(defaults[command]), null, `${command}'s default is a valid chord`);
     // One modifier pair everywhere is what lets a button badge name the key alone.
     assert.deepEqual(defaults[command].slice(0, 2), ["ctrl", "alt"], `${command} rides Control+Option`);
-    assert.equal(defaults[command].length, ["costs", "sessionActions", "markDone", "autoRespond", "git", "explainConversation"].includes(command) ? 4 : 3, `${command} is one chord, not a sequence`);
+    assert.equal(defaults[command].length, ["costs", "sessionActions", "markDone", "autoRespond", "git", "explainConversation", "savedCommands"].includes(command) ? 4 : 3, `${command} is one chord, not a sequence`);
   }
   assert.deepEqual(defaults.costs, ["ctrl", "alt", "shift", "C"]);
   assert.deepEqual(defaults.markDone, ["ctrl", "alt", "shift", "D"]);
