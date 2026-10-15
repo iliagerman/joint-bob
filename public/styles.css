@@ -2222,6 +2222,9 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 #secretAccountProviderPicker { width: 100%; }
 .secret-type-select :is(.searchable-select-trigger, .searchable-select-option) { display: flex; align-items: center; gap: 10px; }
 .secret-type-select .secret-provider-icon, .secret-type-select .row-menu-icon { flex: 0 0 18px; width: 18px; height: 18px; }
+.secret-type-select .searchable-select-option { flex-direction: row; justify-content: flex-start; min-height: 40px; width: 100%; }
+.secret-type-select .searchable-select-popover { font-size: 13px; }
+.secret-type-select .searchable-select-options { max-height: min(280px, 40dvh); }
 .secret-account-list, .secret-scope-list { display: grid; gap: 8px; }
 .secret-sharing-card { width: min(480px, calc(100vw - 24px)); max-height: min(75vh, 680px); overflow-y: auto; }
 .secret-sharing-card fieldset { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 10px 12px; }
@@ -2262,7 +2265,8 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 /* Each variable is its own card: the name needs the full width to stay readable, and the
    value is a paste target, so squeezing all four controls onto one line truncated both. */
 #secretVariableRows { display: grid; gap: 10px; }
-.secret-github-fields { display: grid; gap: 10px; }
+.secret-github-fields, .secret-ssh-fields { display: grid; gap: 10px; }
+.secret-ssh-fields textarea { min-height: 90px; font-family: var(--mono); font-size: 11.5px; resize: vertical; }
 .secret-github-fields > button { justify-self: start; }
 .secret-github-key { display: grid; gap: 6px; }
 .secret-github-key textarea { min-height: 78px; resize: vertical; font-family: var(--mono); font-size: 11.5px; }

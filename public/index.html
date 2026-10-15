@@ -2108,6 +2108,17 @@
             <label class="checkbox-row"><input type="radio" name="secretGithubProtocol" value="https" data-testid="secret-github-protocol-https" /> HTTPS with the API token or GitHub App</label>
           </fieldset>
         </div>
+        <div id="secretSshFields" class="secret-ssh-fields" data-testid="secret-ssh-fields" hidden>
+          <div class="secret-github-actions"><button type="button" class="ghost compact" id="secretSshSessionUpload" data-testid="secret-ssh-session-upload">Import MobaXterm session</button><input type="file" id="secretSshSessionFile" accept=".mxtsessions" hidden data-testid="secret-ssh-session-file" /><span class="muted">Fills host, port and username only. Add your key and password separately.</span></div>
+          <label>Host or IP address<input id="secretSshHost" autocomplete="off" spellcheck="false" placeholder="192.0.2.10 or server.example.com" data-testid="secret-ssh-host" /></label>
+          <label>Port <span class="muted">(defaults to 22)</span><input id="secretSshPort" type="number" min="1" max="65535" inputmode="numeric" placeholder="22" data-testid="secret-ssh-port" /></label>
+          <label>Username<input id="secretSshUsername" autocomplete="off" spellcheck="false" placeholder="deploy" data-testid="secret-ssh-username" /></label>
+          <label>Private key <span class="muted">(OpenSSH or PEM; paste or upload, stored as a private file)</span><textarea id="secretSshKey" autocomplete="off" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY----- or -----BEGIN RSA PRIVATE KEY-----" data-testid="secret-ssh-key"></textarea></label>
+          <div class="secret-github-actions"><button type="button" class="ghost compact" id="secretSshUpload" data-testid="secret-ssh-upload">Upload key (id_rsa, OpenSSH or PEM)</button><input type="file" id="secretSshFile" hidden data-testid="secret-ssh-file" /><button type="button" class="ghost compact danger" id="secretSshRemoveKey" data-testid="secret-ssh-remove-key" hidden>Remove saved key</button></div>
+          <label>Password <span class="muted">(optional alternative to a key; never passed on command line)</span><input id="secretSshPassword" type="password" autocomplete="new-password" data-testid="secret-ssh-password" /></label>
+          <button type="button" class="ghost compact danger" id="secretSshRemovePassword" data-testid="secret-ssh-remove-password" hidden>Remove saved password</button>
+          <label>Access expires <span class="muted">(optional; date supplied by the server)</span><input id="secretSshExpiresAt" type="date" data-testid="secret-ssh-expires-at" /></label>
+        </div>
         <div id="secretVariableRows" data-testid="secret-variable-rows"></div>
         <button type="button" class="ghost" id="secretVariableAddButton" data-testid="secret-variable-add-button">Add environment variable</button>
         <label class="checkbox-row"><input id="secretAccountReplicateInput" type="checkbox" data-testid="secret-account-replicate-toggle" /> Replicate this account to paired nodes</label>

@@ -62,6 +62,31 @@ test("secret accounts redact saved values, retain omitted edits, and expose only
   });
 });
 
+test("SSH accounts keep keys private, preserve edits and reject invalid connection fields", async () => {
+  await withSecrets("ssh", async (secrets) => {
+    const pem = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+    const fields = [
+      { name: "SSH_HOST", kind: "value" as const, value: "192.0.2.10" },
+      { name: "SSH_USERNAME", kind: "value" as const, value: "deploy" },
+      { name: "SSH_PRIVATE_KEY", kind: "file" as const, value: pem },
+    ];
+    const account = await secrets.saveSecretAccount({ label: "Test server", provider: "ssh", variables: fields });
+    assert.equal(JSON.stringify(await secrets.listSecretAccounts()).includes("BEGIN RSA PRIVATE KEY"), false);
+    await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+    const env = secrets.genericSecretEnvironment("project-a");
+    assert.equal(env.SSH_HOST, "192.0.2.10");
+    assert.equal(env.SSH_USERNAME, "deploy");
+    assert.equal((await readFile(env.SSH_PRIVATE_KEY, "utf8")), pem);
+    assert.equal((await stat(env.SSH_PRIVATE_KEY)).mode & 0o777, 0o600);
+    assert.match(secrets.agentCredentialContext("project-a"), /SSH_PRIVATE_KEY \(secret file path\)/);
+    await secrets.saveSecretAccount({ id: account.id, label: "Test server", provider: "ssh", variables: fields.map(({ name, kind }) => ({ name, kind })) });
+    assert.equal(await readFile(secrets.genericSecretEnvironment("project-a").SSH_PRIVATE_KEY, "utf8"), pem);
+    await assert.rejects(secrets.saveSecretAccount({ label: "Bad port", provider: "ssh", variables: [...fields, { name: "SSH_PORT", kind: "value", value: "65536" }] }), /SSH port/);
+    await assert.rejects(secrets.saveSecretAccount({ label: "Bad fields", provider: "ssh", variables: [{ name: "SSH_PRIVATE_KEY", kind: "file", value: "key" }] }), /SSH needs a host/);
+    await assert.rejects(secrets.saveSecretAccount({ label: "Bad date", provider: "ssh", variables: [...fields, { name: "SSH_EXPIRES_AT", kind: "value", value: "2030-02-30" }] }), /SSH access expiry/);
+  });
+});
+
 test("new provider types retain encrypted values and export their chosen variable", async () => {
   await withSecrets("more-providers", async (secrets) => {
     for (const [provider, variable] of [

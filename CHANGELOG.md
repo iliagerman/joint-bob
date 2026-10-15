@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added an SSH account type to Settings > Secrets, which keeps a host, port, username, private key or password, and optional access expiry, and can fill in host, port and username from a MobaXterm session file.
+
 ## 2.99.0 — 2026-10-15
 
 - Added an Owner choice to Settings > Webhooks, so a webhook can be created, listed, edited, and deleted from an active twin's machine; it lives only on the chosen owner, an existing webhook's owner cannot be changed, and if that owner is offline the request fails rather than creating a copy here.

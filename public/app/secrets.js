@@ -3,6 +3,7 @@ import { elements } from "./elements.js";
 import { brandIcon, brandIconPaths, menuIcon } from "./icons.js";
 import { fuzzyMatch } from "./fuzzy.js";
 import { createSearchableSelect } from "./searchable-select.js";
+import { parseMobaSshSession } from "./ssh-session-import.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 
@@ -14,6 +15,7 @@ let githubTokenRemoved = false;
 let githubAppRemoved = false;
 let githubKeyRemoved = false;
 let githubProtocolTouched = false;
+const sshRemoved = new Set();
 // Set while the account form was opened from a project's picker: the new account belongs to that project.
 let creatingForProjectId = null;
 // Set while the account form was opened from a picker that wants the new account ticked.
@@ -23,7 +25,7 @@ let secretScopeTarget = null;
 let secretTypeFilter = "all";
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
-const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", openai: "OpenAI", zai: "Z.AI", grafana: "Grafana", datadog: "Datadog", postgres: "PostgreSQL", mssql: "MS SQL", mongodb: "MongoDB", website: "Website", custom: "Custom" };
+const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", openai: "OpenAI", zai: "Z.AI", grafana: "Grafana", datadog: "Datadog", postgres: "PostgreSQL", mssql: "MS SQL", mongodb: "MongoDB", website: "Website", ssh: "SSH", custom: "Custom" };
 /** Shown under the provider picker so the choice explains itself before anything is typed. */
 const providerHints = {
   aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
@@ -38,11 +40,15 @@ const providerHints = {
   postgres: "DATABASE_URL for PostgreSQL clients. Paste the full connection URL.",
   mssql: "MSSQL_CONNECTION_STRING for Microsoft SQL Server clients. Paste the connection string.",
   mongodb: "MONGODB_URI for MongoDB clients. Paste the connection URI.",
+  ssh: "Connect with an OpenSSH or PEM private key, or a password. Upload a .pem file or paste its contents; the private file path works with ssh -i. Verify the host key before connecting.",
   custom: "Any environment variables you need. Every agent session in the scopes you assign this account to receives them.",
   website: "Structured website sign-in. Set the exact website origin, then LOGIN_USERNAME and LOGIN_PASSWORD (add more fields the form needs). The agent fills them at that origin with login-fill; values never enter the shell. Sharing sends encrypted-at-rest copies to selected nodes.",
 };
 
 function providerIcon(provider) {
+  if (provider === "ssh") {
+    const icon = menuIcon("terminal"); icon.classList.add("secret-provider-icon", "ssh"); return icon;
+  }
   return brandIcon(brandIconPaths[provider] ? provider : "custom", `secret-provider-icon ${provider}`);
 }
 
@@ -347,11 +353,13 @@ function applySecretProviderPreset() {
   elements.secretAccountProviderIcon.replaceChildren(providerIcon(provider));
   elements.secretAccountProviderHint.textContent = providerHints[provider];
   const github = provider === "github";
+  const ssh = provider === "ssh";
   elements.secretGithubFields.hidden = !github;
-  elements.secretVariableRows.hidden = github;
-  elements.secretVariableAddButton.hidden = github;
-  elements.secretAccountOriginInput.closest("label").hidden = github;
-  document.querySelector("#secretAccountOriginHint").hidden = github;
+  document.querySelector("#secretSshFields").hidden = !ssh;
+  elements.secretVariableRows.hidden = github || ssh;
+  elements.secretVariableAddButton.hidden = github || ssh;
+  elements.secretAccountOriginInput.closest("label").hidden = github || ssh;
+  document.querySelector("#secretAccountOriginHint").hidden = github || ssh;
   const typed = [...elements.secretVariableRows.children].some((row) => row.querySelector("[data-secret-value]").value.trim());
   if (editingSecretAccountId || typed) return;
   elements.secretVariableRows.replaceChildren();
@@ -377,6 +385,12 @@ function openSecretAccount(account = null, projectId = null, onSaved = null) {
   // A new account has no rows yet, so the preset below fills them; an edited one keeps its own.
   account?.variables.forEach((item) => secretRow(item));
   resetGithubFields(account);
+  sshRemoved.clear();
+  for (const name of ["SSH_PRIVATE_KEY", "SSH_PASSWORD"]) sshRemoveButtons[name].hidden = !account?.variables.some((item) => item.name === name);
+  for (const [name, input] of Object.entries(sshInputs)) {
+    input.value = "";
+    input.placeholder = account?.variables.some((item) => item.name === name) ? "Leave blank to keep saved value" : sshPlaceholders[name];
+  }
   applySecretProviderPreset();
   elements.secretAccountDialog.showModal();
 }
@@ -527,14 +541,61 @@ elements.secretGithubSshKeyGenerateButton.addEventListener("click", () => void (
 })().catch((error) => toast(error.message)));
 elements.secretGithubPublicKeyCopyButton.addEventListener("click", () => void navigator.clipboard.writeText(elements.secretGithubPublicKeyText.textContent)
   .then(() => toast("Public key copied"), () => toast("Copy failed. Select the key and copy it manually")));
+const sshInputs = {
+  SSH_HOST: document.querySelector("#secretSshHost"), SSH_PORT: document.querySelector("#secretSshPort"),
+  SSH_USERNAME: document.querySelector("#secretSshUsername"), SSH_PRIVATE_KEY: document.querySelector("#secretSshKey"),
+  SSH_PASSWORD: document.querySelector("#secretSshPassword"), SSH_EXPIRES_AT: document.querySelector("#secretSshExpiresAt"),
+};
+const sshPlaceholders = Object.fromEntries(Object.entries(sshInputs).map(([name, input]) => [name, input.placeholder]));
+const sshRemoveButtons = { SSH_PRIVATE_KEY: document.querySelector("#secretSshRemoveKey"), SSH_PASSWORD: document.querySelector("#secretSshRemovePassword") };
+for (const [name, button] of Object.entries(sshRemoveButtons)) button.addEventListener("click", () => {
+  sshRemoved.add(name);
+  button.hidden = true;
+  sshInputs[name].value = "";
+  sshInputs[name].placeholder = "Removed when you save";
+});
+for (const name of Object.keys(sshRemoveButtons)) sshInputs[name].addEventListener("input", () => { if (sshInputs[name].value.trim()) sshRemoved.delete(name); });
+document.querySelector("#secretSshSessionUpload").addEventListener("click", () => document.querySelector("#secretSshSessionFile").click());
+document.querySelector("#secretSshSessionFile").addEventListener("change", (event) => void (async () => {
+  const [file] = event.target.files;
+  event.target.value = "";
+  if (!file) return;
+  if (file.size > 100000) throw new Error("MobaXterm session file is too large");
+  const session = parseMobaSshSession(await file.text());
+  sshInputs.SSH_HOST.value = session.host;
+  sshInputs.SSH_PORT.value = session.port;
+  if (session.username) sshInputs.SSH_USERNAME.value = session.username;
+})().catch((error) => toast(error.message)));
+document.querySelector("#secretSshUpload").addEventListener("click", () => document.querySelector("#secretSshFile").click());
+document.querySelector("#secretSshFile").addEventListener("change", (event) => void (async () => {
+  const [file] = event.target.files;
+  event.target.value = "";
+  if (!file) return;
+  if (file.size > 100000) throw new Error("That file is too large to be an SSH private key");
+  sshInputs.SSH_PRIVATE_KEY.value = await file.text();
+})().catch((error) => toast(error.message)));
+
+function sshVariables() {
+  const saved = editingSecretAccount?.provider === "ssh" ? editingSecretAccount.variables : [];
+  const variables = Object.entries(sshInputs).flatMap(([name, input]) => {
+    const value = input.value.trim();
+    const previous = !sshRemoved.has(name) && saved.some((item) => item.name === name);
+    if (!value && !previous) return [];
+    return [{ name, kind: name === "SSH_PRIVATE_KEY" ? "file" : "value", ...(value ? { value } : {}) }];
+  });
+  for (const name of ["SSH_HOST", "SSH_USERNAME"]) if (!variables.some((item) => item.name === name)) throw new Error("SSH needs a host and username");
+  if (!variables.some((item) => item.name === "SSH_PRIVATE_KEY" || item.name === "SSH_PASSWORD")) throw new Error("SSH needs a private key or password");
+  return variables;
+}
+
 elements.secretAccountOriginInput.addEventListener("input", () => {
   for (const row of elements.secretVariableRows.children) refreshSecretValueControl(row);
 });
 
 async function saveSecretAccount() {
   const provider = secretProviderPicker.value;
-  const websiteOrigin = provider === "github" ? "" : elements.secretAccountOriginInput.value.trim();
-  let variables = provider === "github" ? githubVariables() : [...elements.secretVariableRows.children].map((row) => {
+  const websiteOrigin = provider === "github" || provider === "ssh" ? "" : elements.secretAccountOriginInput.value.trim();
+  let variables = provider === "github" ? githubVariables() : provider === "ssh" ? sshVariables() : [...elements.secretVariableRows.children].map((row) => {
     const name = row.querySelector("[data-secret-name]").value.trim();
     const kind = row.querySelector("[data-secret-kind]").value;
     const value = row.querySelector("[data-secret-value]").value;
