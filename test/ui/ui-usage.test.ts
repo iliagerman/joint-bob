@@ -362,8 +362,7 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   assert.equal(await week.getByTestId("usage-compare-week-value").textContent(), `$${elapsed}`);
   assert.deepEqual(await week.getByTestId("usage-compare-row-value").allTextContents(), Array(4).fill(`$${elapsed}`), "each earlier week through the same weekday");
   const hover = month.getByTestId("usage-compare-hover");
-  const hoverBox = (await hover.boundingBox())!;
-  await page.mouse.move(hoverBox.x + hoverBox.width / 2, hoverBox.y + hoverBox.height / 2);
+  await hover.hover();
   await month.locator(".usage-compare-tooltip:not([hidden])").waitFor();
   assert.equal(await month.locator(".usage-compare-tooltip span").count(), 4, "the hover lists every period");
   assert.equal(await dialog.locator(".usage-card").evaluate((element: HTMLElement) => element.scrollHeight <= element.clientHeight + 1), true, "the comparison fits without scrolling");

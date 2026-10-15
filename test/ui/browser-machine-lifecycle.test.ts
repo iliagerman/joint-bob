@@ -10,6 +10,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SignedIn, pairTwinNodes } from "../dev-nodes.js";
 import type { BrowserSessionView } from "../../src/browser-types.js";
+import { waitForAssertion } from "../async-assertion.js";
 
 const browserEnv = process.env.CHROME_PATH ? { JOINT_BOB_BROWSER_EXECUTABLE: process.env.CHROME_PATH } : {};
 type Reply = { session: BrowserSessionView; sessions: BrowserSessionView[]; result: unknown; error: string; unavailableNodes: Array<{ nodeId: string }> };
@@ -126,6 +127,16 @@ async function assertOffline(flow: Lifecycle, accounts: BrowserSessionView[]) {
 async function waitForRecovery(flow: Lifecycle, accounts: BrowserSessionView[]) {
   for (const session of accounts.filter(session => session.nodeId === flow.b.nodeId)) {
     const deadline = Date.now() + 30000;
+    // Listening does not mean native profiles have launched. Do not issue a
+    // command against the persisted interrupted row before its live page exists.
+    await waitForAssertion(async () => {
+      const inventory = await flow.inventory();
+      const restored = inventory.sessions.find(candidate => candidate.id === session.id);
+      assert.ok(restored, `Missing recovery session ${session.id}`);
+      assert.equal(restored.state, "running", JSON.stringify(restored));
+      assert.ok(restored.activePageId, JSON.stringify(restored));
+      assert.ok(restored.tabs.some(tab => tab.id === restored.activePageId && tab.url === `${flow.origin}/`), JSON.stringify(restored));
+    }, Math.max(0, deadline - Date.now()));
     let response;
     do {
       response = await flow.agent({ operation: "command", profileId: session.profileId, command: { action: "snapshot" } });

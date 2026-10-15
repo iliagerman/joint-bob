@@ -48,7 +48,18 @@ async function signInThroughForm(page: Page, url: string): Promise<void> {
   await page.getByTestId("login-username-input").fill(environment.username);
   await page.getByTestId("login-password-input").fill(environment.password);
   await page.getByTestId("login-submit-button").click();
+  await waitForApplication(page);
+}
+
+async function waitForApplication(page: Page): Promise<void> {
   await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 30_000 });
+  // Project rows render before initializeApplication finishes. Do not tear down
+  // that initialization with a reload while its login handler is still running.
+  await page.waitForFunction(async () => {
+    const { state } = await import("/app/state.js");
+    return state.authenticated && state.preferencesLoaded
+      && !(document.querySelector("#loginSubmitButton") as HTMLButtonElement).disabled;
+  });
 }
 
 async function waitForOwner(sessionId: string, ownerNodeId: string): Promise<void> {
@@ -84,7 +95,7 @@ test("signing into both nodes through the form leaves both tabs signed in", asyn
   for (const [index, node] of environment.nodes.entries()) {
     const page = pages[index];
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 30_000 });
+    await waitForApplication(page);
     assert.equal(await page.locator("#loginDialog[open]").count(), 0, `node ${node.key} is still signed in after the other node signed in`);
 
     const status = await page.evaluate(() => fetch("/api/auth/status").then((response) => response.json() as Promise<{ authenticated: boolean }>));

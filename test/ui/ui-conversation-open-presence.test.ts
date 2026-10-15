@@ -11,6 +11,14 @@ test("a local conversation opens while unrelated node discovery is still pending
   const started = new Promise<void>(resolve => { requested = resolve; });
   const local = { id: node.nodeId, name: node.name, local: true, online: true, mapped: true };
   const targeted: string[] = [];
+  // The watch socket refreshes the list after it connects. Seed every response,
+  // not state.sessions once: a refresh would erase that in-memory precondition.
+  await page.route(`**/api/projects/${project.id}/sessions`, async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const session of body.sessions) session.executionNodeId = node.nodeId;
+    await route.fulfill({ response, json: body });
+  });
   await page.route(`**/api/projects/${project.id}/session-nodes*`, async route => {
     const target = new URL(route.request().url()).searchParams.get("nodeId");
     if (target) targeted.push(target);
@@ -26,12 +34,10 @@ test("a local conversation opens while unrelated node discovery is still pending
     await started;
     const first = page.locator("#sessionList .session-card").first();
     await first.waitFor();
-    const before = await page.evaluate(async nodeId => {
+    const before = await page.evaluate(async () => {
       const { state } = await import("/app/state.js");
-      // Simulate a known local execution owner with a cold node directory.
-      for (const session of state.sessions) session.executionNodeId = nodeId;
       return state.sessionNodes.length;
-    }, node.nodeId);
+    });
     assert.equal(before, 0, "the inventory request has not supplied local-node information");
     const socketOpened = page.waitForEvent("websocket", {
       predicate: socket => { const url = new URL(socket.url()); return url.pathname === "/ws" && url.searchParams.get("sessionPath") !== "watch"; },

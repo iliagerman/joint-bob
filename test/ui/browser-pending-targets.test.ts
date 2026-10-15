@@ -42,6 +42,10 @@ test("pending browser requests never redirect approval or files", { timeout: 300
     return { live, a, b, execute, state, close: () => execute({ action: "close" }) };
   }
   async function dialog(page: Page, message = "Approve operation?") {
+    // Chrome can suppress confirm() on a background tab instead of emitting a
+    // dialog. Focus the target, as for the native file chooser below.
+    await page.bringToFront();
+    assert.equal(await page.evaluate(() => document.hasFocus()), true, "Native dialog requires a foreground page");
     const opened = page.waitForEvent("dialog");
     const result = page.evaluate(message => confirm(message), message).catch(() => false);
     return { dialog: await opened, result };
@@ -172,10 +176,9 @@ test("pending browser requests never redirect approval or files", { timeout: 300
         upload = f.execute({ action: "upload", files: [...files, { ...files[0], name: "second.txt" }], expectedPageId: old.pageId, requestId: old.id });
         void upload.catch(() => {});
         await entered.promise;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([f.close(), new Promise((_, reject) => { timer = setTimeout(() => reject(Error("End blocked by staged writes")), 3000); })]);
-        } finally { clearTimeout(timer); }
+        const closing = f.close();
+        assert.equal(f.live.stopSignal.signal.aborted, true, "End must abort synchronously while staged writes are blocked");
+        await closing;
         blocked.resolve(); await assert.rejects(upload, /not running|closed/i);
         assert.deepEqual(await fs.readdir(staging).catch(error => { if (error.code === "ENOENT") return []; throw error; }), [], "Ended upload must remove its recreated staging directory and private files");
       } finally {
