@@ -993,7 +993,7 @@
             <label>End conversation prompt<textarea id="settingsEndConversationPrompt" rows="4" maxlength="10000" data-testid="settings-end-conversation-prompt"></textarea></label>
             <p class="settings-hint">When enabled, the start prompt runs before your first message. Double-clicking Send submits the end prompt and leaves your draft and attachments untouched.</p>
             <div><strong>Saved commands</strong> <button type="button" class="ghost compact" id="addSavedCommand" data-testid="add-saved-command">Add command</button></div>
-            <p class="settings-hint">Save named prompts here. Use the saved commands shortcut in a conversation to paste one into the chat draft without sending it.</p>
+            <p class="settings-hint" data-testid="saved-commands-instructions">Add a command with a name and prompt, then click Save settings. In a conversation, <span id="savedCommandsShortcutHelp"></span> or click Saved commands. Type to search, use ↑/↓ to choose, then press Enter to paste the prompt into your chat draft. Nothing is sent until you click Send. Change the keyboard shortcut in Settings → Shortcuts under “Saved / custom commands”.</p>
             <div id="savedCommandsList" data-testid="saved-commands-list"></div>
           </fieldset>
         </section>

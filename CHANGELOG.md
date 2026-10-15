@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Showed the saved commands shortcut you have set in Settings > Commands, or a prompt to assign one when none is set, and clarified that picking a prompt pastes it into the chat draft without sending it.
+
 ## 2.100.0 — 2026-10-15
 
 - Added an SSH account type to Settings > Secrets that keeps a host, port, username, private key or password, and an optional access expiry, and can fill in the host, port and username from a MobaXterm session file.

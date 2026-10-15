@@ -28,7 +28,7 @@ const COMMAND_ROWS = [
   { command: "runningConversations", label: "Open the running conversations list" },
   { command: "settings", label: "Open the settings dialog" },
   { command: "focusInput", label: "Put the cursor in the field you can type in" },
-  { command: "savedCommands", label: "Chat: open saved commands to paste a prompt" },
+  { command: "savedCommands", label: "Saved / custom commands: open the chat picker. Add prompts in Settings → Commands; search, choose with ↑/↓, then Enter to paste without sending." },
   { command: "toggleProjects", label: "Collapse or expand the projects panel" },
   { command: "toggleChats", label: "Collapse or expand the conversations panel" },
   { command: "newProject", label: "Add a project" },
@@ -143,9 +143,17 @@ function renderConversationShortcuts(shortcuts) {
   }
 }
 
+function syncSavedCommandsHelp(keymap) {
+  const chord = keymap.commands.savedCommands;
+  document.querySelector("#savedCommandsShortcutHelp").textContent = chord
+    ? `press ${chordLabel(chord)} to open the saved commands menu`
+    : "assign a keyboard shortcut in Settings → Shortcuts";
+}
+
 export async function fillShortcutSettings() {
   const keymap = normalizeCanvasKeymap(state.canvasKeymap);
   fillFields(keymap);
+  syncSavedCommandsHelp(keymap);
   statusLine.textContent = "";
   elements.canvasKeymapSearch.value = "";
   filterShortcutRows("");
@@ -195,6 +203,7 @@ async function saveShortcutSettings() {
     return;
   }
   state.canvasKeymap = next;
+  syncSavedCommandsHelp(next);
   state.canvasController?.setKeymap(next);
   syncShortcutHints();
   statusLine.textContent = "Saved.";

@@ -11,6 +11,20 @@ test("saved commands paste into chat through a keyboard shortcut without sending
   await page.getByTestId("login-submit-button").click();
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor();
   await page.evaluate(async () => (await import("/app/settings.js")).openSettings("commands"));
+  const instructions = page.getByTestId("saved-commands-instructions");
+  assert.match(await instructions.innerText(), /Enter to paste.*Nothing is sent/);
+  assert.match(await page.locator("#savedCommandsShortcutHelp").innerText(), /L/);
+  assert.match(await page.locator("#canvasKeymapCommand-savedCommands").locator("..").innerText(), /Saved \/ custom commands.*Settings → Commands/);
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const previous = state.canvasKeymap;
+    state.canvasKeymap = { ...previous, commands: { ...previous.commands, savedCommands: null } };
+    await (await import("/app/shortcut-settings.js")).fillShortcutSettings();
+    state.canvasKeymap = previous;
+  });
+  assert.match(await page.locator("#savedCommandsShortcutHelp").innerText(), /assign a keyboard shortcut/);
+  await page.evaluate(async () => (await import("/app/shortcut-settings.js")).fillShortcutSettings());
+  assert.match(await page.locator("#savedCommandsShortcutHelp").innerText(), /L/);
   await page.getByTestId("add-saved-command").click();
   await page.locator("#savedCommandsList input").fill("Review changes");
   await page.locator("#savedCommandsList textarea").fill("Review my changes, do not send this yet.");
