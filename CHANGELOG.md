@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.100.0 — 2026-10-15
 
-- Added an SSH account type to Settings > Secrets, which keeps a host, port, username, private key or password, and optional access expiry, and can fill in host, port and username from a MobaXterm session file.
+- Added an SSH account type to Settings > Secrets that keeps a host, port, username, private key or password, and an optional access expiry, and can fill in the host, port and username from a MobaXterm session file.
 
 ## 2.99.0 — 2026-10-15
 
