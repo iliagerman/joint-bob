@@ -3,10 +3,11 @@ import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import { agentResourcePaths } from "./agent-resources.js";
+import { claudeEnterpriseMcpPath, claudePluginMcpServers, claudeProjectMcpDecisions } from "./harnesses/claude/resources.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime } from "./harnesses/runtime-configuration.js";
 import { defaultSkillRoots, listSkills } from "./skills.js";
-import { getScopedResourcePaths } from "./settings.js";
+import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { scopedSkillsRoot } from "./scoped-skills.js";
 import type { HarnessId } from "./types.js";
 
@@ -23,7 +24,7 @@ export interface InventorySkill {
   harnesses: HarnessId[];
 }
 
-export type McpSource = "shared" | "user" | "local" | "project" | "plugin";
+export type McpSource = "shared" | "user" | "local" | "project" | "plugin" | "enterprise";
 
 export interface InventoryMcpServer {
   name: string;
@@ -120,11 +121,9 @@ async function claudeServers(projectPath: string | undefined): Promise<Inventory
   if (projectPath) {
     const file = path.join(projectPath, ".mcp.json");
     const config = await readJson(file);
-    const enabled = strings(projectSettings.enabledMcpjsonServers);
-    const disabled = strings(projectSettings.disabledMcpjsonServers);
-    // Claude asks before using project servers; only an explicit approval makes them run unattended.
-    const unapproved = projectSettings.enableAllProjectMcpServers === true ? [] : Object.keys(record(config?.mcpServers)).filter((name) => !enabled.includes(name));
-    if (config) found.push(...servers(config.mcpServers, { source: "project", file, harnesses: ["claude"] }, [...disabled, ...unapproved]));
+    const decisions = claudeProjectMcpDecisions(projectPath);
+    const unapproved = Object.keys(record(config?.mcpServers)).filter((name) => !decisions.approved(name));
+    if (config) found.push(...servers(config.mcpServers, { source: "project", file, harnesses: ["claude"] }, unapproved));
   }
   return found;
 }
@@ -134,6 +133,11 @@ async function pluginServers(pluginsRoot: string): Promise<InventoryMcpServer[]>
   try { entries = await readdir(pluginsRoot, { withFileTypes: true }); } catch (error) { if (missing(error)) return []; throw error; }
   const found = await Promise.all(entries.filter((entry) => entry.isDirectory() || entry.isSymbolicLink()).map(async (entry) => {
     const file = path.join(pluginsRoot, entry.name, ".mcp.json");
+    if (getSettings().strictResourceIsolation) {
+      const plugin = path.dirname(file);
+      if (!await readJson(path.join(plugin, ".claude-plugin/plugin.json"))) return [];
+      return servers(claudePluginMcpServers(plugin, process.cwd()), { source: "plugin", file: path.join(plugin, ".claude-plugin/plugin.json"), harnesses: ["claude"] });
+    }
     const config = await readJson(file);
     if (!config) return [];
     return servers(config.mcpServers ?? config, { source: "plugin", file, harnesses: ["claude"] });
@@ -153,15 +157,27 @@ async function kiroServers(projectPath: string | undefined): Promise<InventoryMc
 
 /** Lists MCP servers each harness loads on this node, optionally including one project's servers. */
 export async function listMcpServers(projectPath?: string, resourceRoot?: string): Promise<InventoryMcpServer[]> {
+  const strict = getSettings().strictResourceIsolation;
   const paths = agentResourcePaths(resourceRoot);
   const discovered = new Set(listDiscoveredHarnesses().map((adapter) => adapter.id));
   const shared = servers((await readJson(paths.mcpConfig))?.mcpServers, { source: "shared", file: paths.mcpConfig, harnesses: MCP_HARNESSES.filter((id) => discovered.has(id)) });
+  const enterprise = discovered.has("claude") ? await readJson(claudeEnterpriseMcpPath()) : undefined;
   const groups = await Promise.all([
     discovered.has("claude") ? claudeServers(projectPath) : [],
-    discovered.has("claude") ? pluginServers(paths.claudePlugins) : [],
+    discovered.has("claude") && !enterprise ? pluginServers(paths.claudePlugins) : [],
     discovered.has("kiro") ? kiroServers(projectPath) : [],
   ]);
-  return [...shared, ...groups.flat()];
+  const decisions = projectPath ? claudeProjectMcpDecisions(projectPath) : undefined;
+  const entries = [...shared, ...groups.flat(), ...servers(enterprise?.mcpServers, { source: "enterprise", file: claudeEnterpriseMcpPath(), harnesses: ["claude"] })];
+  return entries.flatMap((server) => {
+    if (!strict) return [server];
+    if (["user", "local"].includes(server.source)) return [{ ...server, enabled: false }];
+    if (server.source !== "enterprise" && server.harnesses.includes("claude") && (enterprise || decisions?.disabled(server.name))) {
+      const others = server.harnesses.filter((id) => id !== "claude");
+      return [{ ...server, harnesses: ["claude" as const], enabled: false }, ...(others.length ? [{ ...server, harnesses: others }] : [])];
+    }
+    return [server];
+  });
 }
 
 async function inventorySkills(projectPath: string | undefined, projectId: string | undefined, sharedRoot: string, conversationId?: string): Promise<InventorySkill[]> {
@@ -197,9 +213,12 @@ export async function resourceInventory(options: { projectPath?: string; project
 export async function shareMcpServers(file: string, names: string[], options: { projectPath?: string; resourceRoot?: string } = {}): Promise<{ added: string[]; skipped: string[] }> {
   const paths = agentResourcePaths(options.resourceRoot);
   if (path.resolve(file) === path.resolve(paths.mcpConfig)) throw new Error("Servers are already shared");
-  const known = (await listMcpServers(options.projectPath, options.resourceRoot)).filter((server) => server.source !== "shared").map((server) => server.file);
-  if (!known.includes(file)) throw new Error("Unknown MCP config source");
-  const config = await readJson(file);
+  const known = (await listMcpServers(options.projectPath, options.resourceRoot)).filter((server) => server.source !== "shared");
+  const source = known.find((server) => server.file === file);
+  if (!source) throw new Error("Unknown MCP config source");
+  const config = source.source === "plugin" && getSettings().strictResourceIsolation
+    ? { mcpServers: claudePluginMcpServers(path.dirname(path.dirname(file)), options.projectPath ?? process.cwd()) }
+    : await readJson(file);
   if (!config) throw new Error("MCP config source is unreadable");
   const pools = [record(config.mcpServers), ...(options.projectPath ? [record(record(record(config.projects)[options.projectPath]).mcpServers)] : [])];
   const current = (await readJson(paths.mcpConfig)) ?? {};

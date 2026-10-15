@@ -186,6 +186,8 @@ export interface SettingsInput {
   showProjectsOnOtherNodes?: boolean;
   /** Start each new conversation in a Joint Bob worktree of its own. */
   newConversationWorktree?: boolean;
+  /** Only load Joint Bob-managed resources; exclude native harness configs and installations. */
+  strictResourceIsolation?: boolean;
   gitPullFileLimit?: number;
   /** How long a worktree command waits for the node before reporting that its outcome is unknown. */
   gitPullTimeoutSeconds?: number;
@@ -216,6 +218,7 @@ export interface SettingsResponse {
   digestAttachments: boolean;
   showProjectsOnOtherNodes: boolean;
   newConversationWorktree: boolean;
+  strictResourceIsolation: boolean;
   gitPullFileLimit: number;
   gitPullTimeoutSeconds: number;
   syncCheck: SyncCheckSettings;
@@ -467,6 +470,7 @@ export function nodeSettings(): SettingsResponse {
     digestAttachments: value("digestAttachments", "false") === "true",
     showProjectsOnOtherNodes: value("showProjectsOnOtherNodes", "true") === "true",
     newConversationWorktree: value("newConversationWorktree", "false") === "true",
+    strictResourceIsolation: value("strictResourceIsolation", "true") === "true",
     gitPullFileLimit: Number(value("gitPullFileLimit", "1000")),
     gitPullTimeoutSeconds: Number(value("gitPullTimeoutSeconds", "360")),
     syncCheck: syncCheck(conversationDefaults),
@@ -577,6 +581,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
   const showProjectsOnOtherNodes = input.showProjectsOnOtherNodes ?? previous.showProjectsOnOtherNodes;
   const newConversationWorktree = input.newConversationWorktree ?? previous.newConversationWorktree;
+  const strictResourceIsolation = input.strictResourceIsolation === undefined ? previous.strictResourceIsolation : z.boolean().parse(input.strictResourceIsolation);
   const gitPullFileLimit = input.gitPullFileLimit ?? previous.gitPullFileLimit;
   if (!Number.isInteger(gitPullFileLimit) || gitPullFileLimit < 1 || gitPullFileLimit > 3000) throw new Error("Git PR file limit must be between 1 and 3000");
   const gitPullTimeoutSeconds = input.gitPullTimeoutSeconds ?? previous.gitPullTimeoutSeconds;
@@ -607,6 +612,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "digestAttachments", String(digestAttachments));
     save(db, "showProjectsOnOtherNodes", String(showProjectsOnOtherNodes));
     save(db, "newConversationWorktree", String(newConversationWorktree));
+    save(db, "strictResourceIsolation", String(strictResourceIsolation));
     save(db, "gitPullFileLimit", String(gitPullFileLimit));
     save(db, "gitPullTimeoutSeconds", String(gitPullTimeoutSeconds));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
@@ -630,6 +636,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         syncthingChanged: previous.syncthing.endpoint !== settings.syncthing.endpoint || previous.syncthing.apiKeyConfigured !== settings.syncthing.apiKeyConfigured,
         projectHomeChanged: previous.projects.homePath !== settings.projects.homePath,
         resourcesChanged: JSON.stringify(previous.resources) !== JSON.stringify(settings.resources),
+        strictResourceIsolationChanged: previous.strictResourceIsolation !== settings.strictResourceIsolation,
         conversationDefaultsChanged: JSON.stringify(previous.conversationDefaults) !== JSON.stringify(settings.conversationDefaults),
         conversationLabelsChanged: JSON.stringify(previous.conversationLabels) !== JSON.stringify(settings.conversationLabels),
         conversationHistoryDaysChanged: previous.conversationHistoryDays !== settings.conversationHistoryDays,

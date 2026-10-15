@@ -39,6 +39,7 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
     await mkdir(path.join(resources, "mcp"), { recursive: true });
     await mkdir(path.join(resources, "runtime"), { recursive: true });
     await writeFile(path.join(resources, "mcp", "config.json"), "{}\n");
+    await writeFile(path.join(root, ".mcp.json"), '{"mcpServers":{}}');
     await writeFile(path.join(resources, "runtime", "common-instructions.md"), "Canonical instructions\nCanonical rule\n");
 
     const globalSkill = path.join(root, "global-skill");
@@ -88,24 +89,26 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
     assert.equal(lost?.summary.status, "failed");
     assert.match(lost?.summary.tasks[0].error ?? "", /ended before reporting task completion/);
     const args = (await readFile(argsFile, "utf8")).split("\n");
+    assert.equal(args[args.indexOf("--setting-sources") + 1], "project,local");
+    assert.ok(args.includes("--strict-mcp-config"));
     const toolsIndex = args.indexOf("--tools");
     assert.ok(toolsIndex >= 0, `expected --tools in claude args: ${JSON.stringify(args)}`);
     assert.equal(args[toolsIndex + 1], "Bash,Read");
     const pluginDirectories = args.flatMap((arg, index) => arg === "--plugin-dir" ? [args[index + 1]] : []);
-    assert.deepEqual(pluginDirectories.slice(0, 3), [
+    assert.deepEqual(pluginDirectories.slice(0, 4), [
+      path.join(resources, "claude", "plugins", "vendor_one_1"),
       path.join(resources, "claude", "plugins", "vendor_two_1"),
       globalPlugin,
       path.join(projectPlugins, "project-plugin"),
     ]);
-    const generatedPlugin = pluginDirectories[3];
+    const generatedPlugin = pluginDirectories[4];
     assert.ok(generatedPlugin, "configured resources generate a Claude plugin");
     assert.deepEqual(JSON.parse(await readFile(path.join(generatedPlugin, ".claude-plugin", "plugin.json"), "utf8")), { name: "joint-bob-resources" });
     assert.equal(await realpath(path.join(generatedPlugin, "skills", "global-skill")), await realpath(globalSkill));
     assert.equal(await realpath(path.join(generatedPlugin, "skills", "project-skill")), await realpath(path.join(projectSkills, "project-skill")));
     assert.equal(await realpath(path.join(generatedPlugin, "commands", "global-prompt.md")), await realpath(globalPrompt));
     assert.equal(await realpath(path.join(generatedPlugin, "commands", "project-prompt.md")), await realpath(path.join(projectPrompts, "project-prompt.md")));
-    const mcpIndex = args.indexOf("--mcp-config");
-    assert.equal(args[mcpIndex + 1], path.join(resources, "mcp", "config.json"));
+    assert.equal(args.includes("--mcp-config"), false, "empty managed and project configs do not supply any MCP servers");
     const instructionIndex = args.indexOf("--append-system-prompt-file");
     const instructions = await readFile(args[instructionIndex + 1], "utf8");
     assert.match(instructions, /Canonical instructions/);

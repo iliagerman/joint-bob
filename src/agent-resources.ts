@@ -615,7 +615,7 @@ function configuredPaths(configured: ScopedResourcePaths | undefined, type: keyo
 export function piAgentResourcePaths(root?: string, configured?: ScopedResourcePaths): { extensions: string[]; skills: string[]; prompts: string[]; themes: string[] } {
   const paths = agentResourcePaths(root);
   return {
-    extensions: [...new Set([paths.piExtensions, ...configuredPaths(configured, "plugins")])],
+    extensions: [...new Set([path.dirname(paths.piExtensions), ...configuredPaths(configured, "plugins")])],
     skills: [...new Set([paths.sharedSkills, ...configuredPaths(configured, "skills")])],
     prompts: [...new Set([paths.piPrompts, ...configuredPaths(configured, "prompts")])],
     themes: [paths.piThemes],
@@ -652,23 +652,32 @@ function claudePluginSources(sources: string[]): string[] {
   return [...new Set(plugins)];
 }
 
+/** Relative markdown paths, shared by generated plugins and command discovery. */
+export function managedMarkdownFiles(root: string): string[] {
+  if (!existsSync(root)) return [];
+  if (lstatSync(root).isFile() || lstatSync(root).isSymbolicLink() && root.endsWith(".md")) return root.endsWith(".md") ? [root] : [];
+  return readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => {
+    const file = path.join(root, entry.name);
+    return entry.isDirectory() ? managedMarkdownFiles(file) : entry.name.endsWith(".md") ? [file] : [];
+  });
+}
+
 function resourceEntries(roots: string[], kind: "skills" | "prompts"): Map<string, string> {
   const found = new Map<string, string>();
   for (const root of roots) {
     if (!existsSync(root)) continue;
-    if (kind === "skills" && existsSync(path.join(root, "SKILL.md"))) {
-      found.set(path.basename(root), root);
+    if (kind === "prompts") {
+      for (const file of managedMarkdownFiles(root)) found.set((root.endsWith(".md") ? path.basename(file) : path.relative(root, file)).slice(0, -3), file);
       continue;
     }
-    if (kind === "prompts" && root.endsWith(".md") && lstatSync(root).isFile()) {
-      found.set(path.basename(root, ".md"), root);
+    if (kind === "skills" && existsSync(path.join(root, "SKILL.md"))) {
+      found.set(path.basename(root), root);
       continue;
     }
     if (!lstatSync(root).isDirectory()) continue;
     for (const name of readdirSync(root).sort()) {
       const source = path.join(root, name);
       if (kind === "skills" && existsSync(path.join(source, "SKILL.md"))) found.set(name, source);
-      if (kind === "prompts" && name.endsWith(".md") && lstatSync(source).isFile()) found.set(path.basename(name, ".md"), source);
     }
   }
   return new Map([...found].sort(([left], [right]) => left.localeCompare(right)));
@@ -676,22 +685,26 @@ function resourceEntries(roots: string[], kind: "skills" | "prompts"): Map<strin
 
 function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedResourcePaths): string | undefined {
   let skillPaths = [paths.sharedSkills];
-  let promptPaths: string[] = [];
+  let promptPaths = [paths.claudeCommands];
   if (configured) {
     skillPaths = [...skillPaths, ...configured.global.skills, ...configured.project.skills];
-    promptPaths = [...configured.global.prompts, ...configured.project.prompts];
+    promptPaths = [...promptPaths, ...configured.global.prompts, ...configured.project.prompts];
   }
   const skills = resourceEntries(skillPaths, "skills");
   const prompts = resourceEntries(promptPaths, "prompts");
-  if (!skills.size && !prompts.size) return undefined;
-  const mappings = [...skills, ...prompts].map(([name, source]) => `${name}\0${source}\0${existsSync(source) ? readFileSync(source.endsWith(".md") ? source : path.join(source, "SKILL.md")) : ""}`).join("\n");
+  const agents = resourceEntries([paths.claudeAgents], "prompts");
+  const entries = [["skills", skills], ["commands", prompts], ["agents", agents]] as const;
+  if (!entries.some(([, files]) => files.size)) return undefined;
+  const mappings = entries.flatMap(([kind, files]) => [...files].map(([name, source]) => `${kind}\0${name}\0${source}\0${readFileSync(kind === "skills" ? path.join(source, "SKILL.md") : source)}`)).join("\n");
   const target = path.join(dataDirectory(), "runtime", "resource-plugins", createHash("sha256").update(mappings).digest("hex"));
   if (existsSync(target)) return target;
   const temporary = `${target}.${randomUUID()}.tmp`;
   mkdirSync(path.join(temporary, ".claude-plugin"), { recursive: true });
   writeFileSync(path.join(temporary, ".claude-plugin", "plugin.json"), JSON.stringify({ name: CLAUDE_RESOURCE_PLUGIN_NAME }));
-  for (const [name, source] of skills) { mkdirSync(path.join(temporary, "skills"), { recursive: true }); symlinkSync(source, path.join(temporary, "skills", name), "dir"); }
-  for (const [name, source] of prompts) { mkdirSync(path.join(temporary, "commands"), { recursive: true }); symlinkSync(source, path.join(temporary, "commands", `${name}.md`), "file"); }
+  for (const [kind, files] of entries) for (const [name, source] of files) {
+    mkdirSync(path.dirname(path.join(temporary, kind, kind === "skills" ? name : `${name}.md`)), { recursive: true });
+    symlinkSync(source, path.join(temporary, kind, kind === "skills" ? name : `${name}.md`), kind === "skills" ? "dir" : "file");
+  }
   mkdirSync(path.dirname(target), { recursive: true });
   try {
     renameSync(temporary, target);
@@ -704,7 +717,7 @@ function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedR
 }
 
 function generatedInstructionFile(paths: AgentResourcePaths, configured?: ScopedResourcePaths, extraInstructions?: string): string {
-  const additional = configuredPaths(configured, "rules");
+  const additional = [...(existsSync(paths.claudeInstructions) ? [paths.claudeInstructions] : []), ...configuredPaths(configured, "rules")];
   if (!additional.length && !extraInstructions) return paths.commonInstructionsFile;
   const files: string[] = [];
   const visit = (source: string): void => {
@@ -722,7 +735,8 @@ function generatedInstructionFile(paths: AgentResourcePaths, configured?: Scoped
 
 export function claudeAgentResourceArgs(root?: string, configured?: ScopedResourcePaths, extraInstructions?: string): string[] {
   const paths = agentResourcePaths(root);
-  const installed = installedUserPluginNames();
+  const strict = getSettings().strictResourceIsolation;
+  const installed = strict ? new Set<string>() : installedUserPluginNames();
   const args: string[] = [];
   if (existsSync(paths.claudePlugins)) for (const name of readdirSync(paths.claudePlugins).sort()) {
     const plugin = path.join(paths.claudePlugins, name);
@@ -761,6 +775,10 @@ async function reconcile(options: AgentResourceReconcileOptions): Promise<AgentR
   await Promise.all(directories.map((directory) => mkdir(directory, { recursive: true })));
 
   const counts: Counts = { imported: 0, linked: 0, unchanged: 0, conflicts: [] };
+  if (settings.strictResourceIsolation) {
+    await generateCommonInstructions(paths);
+    return { root, ...counts };
+  }
   await reconcileMappings(mappings(paths, pi, claude, agents), dataDirectory(options.dataDir), counts);
   await importPlugins(paths, claude, counts);
   await generateCommonInstructions(paths);

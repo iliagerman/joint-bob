@@ -617,9 +617,11 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
     credentialsNow: credentials,
     resources: async (conversationId) => {
       const configured = getScopedResourcePaths(options.projectId, conversationId);
-      const commonInstructions = await commonAgentInstructionFiles(undefined, [...configured.global.rules, ...configured.project.rules]);
+      const commonInstructions = await commonAgentInstructionFiles(undefined, [agentResourcePaths().piInstructions, ...configured.global.rules, ...configured.project.rules]);
       const resources = piAgentResourcePaths(undefined, configured);
       return {
+        strictResourceIsolation: getSettings().strictResourceIsolation,
+        packagesFile: agentResourcePaths().piPackages,
         extensions: resources.extensions,
         prompts: resources.prompts,
         themes: resources.themes,

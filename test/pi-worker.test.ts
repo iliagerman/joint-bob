@@ -49,6 +49,11 @@ test("a Pi conversation runs in a worker under its project's account and writes 
   });
   await mkdir(serviceAgent, { recursive: true });
   await mkdir(homes, { recursive: true });
+  const nativeAgent = path.join(homes, "jb-admin", ".pi", "agent");
+  const nativeMarker = path.join(nativeAgent, "native-extension-ran");
+  await mkdir(path.join(nativeAgent, "extensions"), { recursive: true });
+  await writeFile(path.join(nativeAgent, "AGENTS.md"), "NATIVE_WORKER_INSTRUCTIONS");
+  await writeFile(path.join(nativeAgent, "extensions", "native.ts"), `import { writeFileSync } from "node:fs"; export default () => writeFileSync(${JSON.stringify(nativeMarker)}, "ran");`);
   await writeFile(path.join(serviceAgent, "models.json"), JSON.stringify({ providers: { fixture: {
     baseUrl: model.url, api: "openai-completions",
     models: [{ id: "fixture-model", name: "Fixture", reasoning: false, input: ["text"], contextWindow: 32000, maxTokens: 512 }],
@@ -85,6 +90,8 @@ test("a Pi conversation runs in a worker under its project's account and writes 
     assert.match(await readFile(path.join(homes, "runs.log"), "utf8"), /^admin$/m, "the worker ran through the helper as the admin's account");
     assert.ok(await readFile(path.join(admin, ".pi", "agent", "models.json"), "utf8"), "the node's model list was provisioned for the account");
     assert.ok(model.prompts.some((prompt) => prompt.includes("hello worker")), "the prompt reached the model from the worker");
+    assert.equal(model.prompts.some((prompt) => prompt.includes("NATIVE_WORKER_INSTRUCTIONS")), false);
+    await assert.rejects(readFile(nativeMarker), { code: "ENOENT" }, "the worker never executes native extensions");
     assert.ok(model.authorizations.includes("Bearer node-signed-in-key"), "with the node's sign-in, read through the server");
     await assert.rejects(readFile(path.join(admin, ".pi", "agent", "auth.json")), "the account never holds the node's sign-ins");
   } finally {

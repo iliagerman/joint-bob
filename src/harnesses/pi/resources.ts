@@ -1,17 +1,19 @@
-import { DefaultResourceLoader, getAgentDir, SettingsManager, type PromptTemplate, type Skill } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SettingsManager, type PromptTemplate, type Skill } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
-import { piAgentResourcePaths } from "../../agent-resources.js";
+import { agentResourcePaths, piAgentResourcePaths } from "../../agent-resources.js";
 import { builtinCommands, type CommandDiscoveryOptions, type HarnessCommand } from "../../commands.js";
-import { defaultSkillRoots, readConfiguredSkillPath, readSkillDirectory, type SkillRoots, type SkillSummary } from "../../skills.js";
+import { readConfiguredSkillPath, readSkillDirectory, type SkillRoots, type SkillSummary } from "../../skills.js";
 import { getSettings } from "../../settings.js";
 import type { HarnessResources } from "../resource-contract.js";
+import { createPiResourceLoader } from "./resource-loader.js";
 
 function scope(value: string): "user" | "project" { return value === "project" ? "project" : "user"; }
 function skillCommand(skill: Skill): HarnessCommand { return { harness: "pi", name: `skill:${skill.name}`, description: skill.description, invocation: `/skill:${skill.name} `, kind: "skill", scope: scope(skill.sourceInfo.scope) }; }
 function promptCommand(prompt: PromptTemplate): HarnessCommand { return { harness: "pi", name: prompt.name, description: prompt.description, invocation: `/${prompt.name} `, kind: "prompt", scope: scope(prompt.sourceInfo.scope) }; }
 
 async function skills(projectPath: string, roots: SkillRoots): Promise<SkillSummary[]> {
-  const userRoot = roots.piUser ?? roots.user?.pi;
+  const strict = getSettings().strictResourceIsolation;
+  const userRoot = strict ? undefined : (roots.piUser ?? roots.user?.pi);
   const sources = await Promise.all([
     ...(userRoot ? [readSkillDirectory(userRoot, "pi", "user")] : []),
     readSkillDirectory(roots.shared, "pi", "user"),
@@ -24,12 +26,15 @@ async function skills(projectPath: string, roots: SkillRoots): Promise<SkillSumm
 }
 
 async function commands(projectPath: string, options: CommandDiscoveryOptions): Promise<HarnessCommand[]> {
+  const strict = getSettings().strictResourceIsolation;
   const agentDir = options.piAgentDir || getSettings().pi.configPath || getAgentDir();
   const resources = piAgentResourcePaths(options.resourceRoot, options.resourcePaths);
-  const loader = new DefaultResourceLoader({ cwd: projectPath, agentDir, settingsManager: SettingsManager.create(projectPath, agentDir), additionalExtensionPaths: resources.extensions, additionalSkillPaths: resources.skills, additionalPromptTemplatePaths: resources.prompts, additionalThemePaths: resources.themes });
+  const loader = createPiResourceLoader({ cwd: projectPath, agentDir, settingsManager: SettingsManager.create(projectPath, agentDir), additionalExtensionPaths: resources.extensions, additionalSkillPaths: resources.skills, additionalPromptTemplatePaths: resources.prompts, additionalThemePaths: resources.themes }, strict, agentResourcePaths(options.resourceRoot).piPackages);
   await loader.reload();
   const extensions = loader.getExtensions().extensions.flatMap((extension) => [...extension.commands.values()].map((command): HarnessCommand => ({ harness: "pi", name: command.name, description: command.description ?? "Extension command", invocation: `/${command.name} `, kind: "extension", scope: scope(command.sourceInfo.scope) })));
-  return [...builtinCommands("pi"), { harness: "pi", name: "reload", description: "Reload Pi configuration and resources", invocation: "/reload ", kind: "builtin" }, ...extensions, ...loader.getPrompts().prompts.map(promptCommand), ...loader.getSkills().skills.map(skillCommand)];
+  const prompts = loader.getPrompts().prompts;
+  const skills = loader.getSkills().skills;
+  return [...builtinCommands("pi"), { harness: "pi", name: "reload", description: "Reload Pi configuration and resources", invocation: "/reload ", kind: "builtin" }, ...extensions, ...prompts.map(promptCommand), ...skills.map(skillCommand)];
 }
 
 const resources: HarnessResources = { skills, commands };

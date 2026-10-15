@@ -49,10 +49,10 @@ test("the inventory merges harnesses per skill and lists MCP servers without arg
     await writeSkill(path.join(project, ".claude/skills"), "claude-only", "Project skill for Claude");
     await mkdir(path.dirname(paths.mcpConfig), { recursive: true });
     await writeFile(paths.mcpConfig, JSON.stringify({ mcpServers: { docs: { url: "https://docs.example.com/mcp?token=secret" } } }));
-    await writeFile(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { approved: { command: "/usr/bin/node", args: ["server.js"] }, pending: { command: "npx" } } }));
+    await writeFile(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { approved: { command: "/usr/bin/node", args: ["server.js"] }, pending: { command: "npx" }, rejected: { command: "rejected" } } }));
     await writeFile(claudeUserConfig, JSON.stringify({
       mcpServers: { personal: { command: "/opt/bin/personal-mcp", args: ["--token", "secret"], env: { API_KEY: "secret" } } },
-      projects: { [project]: { enabledMcpjsonServers: ["approved"] } },
+      projects: { [project]: { enabledMcpjsonServers: ["approved", "rejected"], disabledMcpjsonServers: ["rejected"] } },
     }));
 
     const inventory = await resourceInventory({ projectPath: project, resourceRoot: managed });
@@ -65,8 +65,8 @@ test("the inventory merges harnesses per skill and lists MCP servers without arg
     const byName = Object.fromEntries(inventory.mcpServers.map((server) => [server.name, server]));
     assert.deepEqual([byName.docs.source, byName.docs.transport, byName.docs.target], ["shared", "http", "https://docs.example.com"]);
     assert.deepEqual([...byName.docs.harnesses].sort(), ["claude", "kiro"]);
-    assert.deepEqual([byName.personal.source, byName.personal.target, byName.personal.enabled], ["user", "personal-mcp", true]);
-    assert.deepEqual([byName.approved.enabled, byName.pending.enabled], [true, false]);
+    assert.deepEqual([byName.personal.source, byName.personal.target, byName.personal.enabled], ["user", "personal-mcp", false]);
+    assert.deepEqual([byName.approved.enabled, byName.pending.enabled, byName.rejected.enabled], [true, false, false]);
     assert.doesNotMatch(JSON.stringify(inventory), /secret/);
     assert.equal(inventory.harnesses.find((harness) => harness.id === "pi")?.mcp, false);
 

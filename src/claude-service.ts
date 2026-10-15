@@ -15,6 +15,7 @@ import { isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./har
 import { claudeProjectDir, claudeProjectDirs } from "./harnesses/claude/paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { claudeAgentResourceArgs } from "./agent-resources.js";
+import { claudeResourceIsolationArgs } from "./harnesses/claude/resources.js";
 import { agentCapabilityEnvironment, agentCapabilityInstructionFiles } from "./agent-capabilities.js";
 import { getConversationRecord } from "./conversation-records.js";
 import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
@@ -601,7 +602,8 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   if (options.model) args.push("--model", options.model);
   if (options.effort) args.push("--effort", options.effort);
   if (options.tools) args.push("--tools", options.tools.join(","));
-  args.push(...claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId, options.conversationId), options.systemInstructions));
+  args.push(...claudeResourceIsolationArgs(options.cwd,
+    claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId, options.conversationId), options.systemInstructions)));
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();

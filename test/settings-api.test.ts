@@ -45,6 +45,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     node = await startNode(root);
     const headers = await authenticatedHeaders(node.baseUrl);
     const initialSettings = await (await fetch(`${node.baseUrl}/api/settings`, { headers })).json();
+    assert.equal(initialSettings.strictResourceIsolation, true);
     assert.equal(initialSettings.gitPullFileLimit, 1000);
     assert.equal(initialSettings.gitPullTimeoutSeconds, 360);
     const piRuntime = { configPath: path.join(root, "pi-config"), sessionPath: path.join(root, "pi-sessions") };
@@ -90,6 +91,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     const savedText = await saved.text();
     assert.doesNotMatch(savedText, /secret-api-key/);
     assert.deepEqual(JSON.parse(savedText), {
+      strictResourceIsolation: true,
       gitPullFileLimit: 750,
       gitPullTimeoutSeconds: 360,
       subprocessMaxLifetimeMinutes: 360,
@@ -132,6 +134,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     const readText = await read.text();
     assert.doesNotMatch(readText, /secret-api-key/);
     assert.deepEqual(JSON.parse(readText), {
+      strictResourceIsolation: true,
       gitPullFileLimit: 750,
       gitPullTimeoutSeconds: 360,
       subprocessMaxLifetimeMinutes: 360,
@@ -168,6 +171,15 @@ test("settings API persists runtime and Syncthing choices without returning secr
       conversationLabelIcons: { Research: "🔬", Bug: "🐞", Feature: "✨", POC: "🧪" },
       restartRequired: { pi: false, claude: false, kiro: false },
     });
+
+    for (const strictResourceIsolation of [false, true, "false", null]) {
+      const response = await fetch(`${node.baseUrl}/api/settings`, {
+        method: "PUT", headers,
+        body: JSON.stringify({ syncthing: { endpoint: "http://127.0.0.1:8384" }, strictResourceIsolation }),
+      });
+      assert.equal(response.status, typeof strictResourceIsolation === "boolean" ? 200 : 400);
+      if (response.ok) assert.equal((await response.json()).strictResourceIsolation, strictResourceIsolation);
+    }
 
     const preservedResources = await fetch(`${node.baseUrl}/api/settings`, {
       method: "PUT",

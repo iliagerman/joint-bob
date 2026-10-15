@@ -35,12 +35,13 @@ test("unknown command harness fails instead of falling back to Pi", async () => 
 });
 
 test("Kiro expands configured prompt templates and preserves arguments", async () => {
-  const prompts = path.join(os.homedir(), ".kiro", "prompts");
+  const project = path.join(os.homedir(), "prompt-project");
+  const prompts = path.join(project, ".kiro", "prompts");
   await mkdir(prompts, { recursive: true });
   const file = path.join(prompts, "review.md");
   await writeFile(file, "Review this change.");
   try {
-    assert.equal(await expandKiroPrompt("/review focus on tests", process.cwd()), "Review this change.\n\nfocus on tests");
+    assert.equal(await expandKiroPrompt("/review focus on tests", project), "Review this change.\n\nfocus on tests");
     assert.equal(await expandKiroPrompt("/compact now", process.cwd()), "/compact now");
   } finally { await rm(file, { force: true }); }
 });

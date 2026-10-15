@@ -25,7 +25,7 @@ test("Pi commands come from the same resource loader used by Pi sessions", async
 
     const commands = await listHarnessCommands(project, "pi", { piAgentDir: agentDir, resourceRoot, shared });
 
-    assert.ok(commands.some((command) => command.kind === "skill" && command.invocation === "/skill:debugging "));
+    assert.equal(commands.some((command) => command.invocation === "/skill:debugging "), false);
     assert.ok(commands.some((command) => command.kind === "skill" && command.invocation === "/skill:canonical "));
     assert.ok(commands.some((command) => command.kind === "prompt" && command.invocation === "/review "));
     assert.ok(commands.some((command) => command.kind === "prompt" && command.invocation === "/canonical-review "));
@@ -69,7 +69,7 @@ test("Claude command list uses Claude skills and invocation syntax", async () =>
       resourceRoot: path.join(root, "resources"),
     });
 
-    assert.ok(commands.some((command) => command.kind === "skill" && command.invocation === "/push-code "));
+    assert.equal(commands.some((command) => command.invocation === "/push-code "), false);
     assert.deepEqual(commands.find((command) => command.invocation === "/review "), {
       harness: "claude",
       name: "review",

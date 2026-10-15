@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { nodeMcpServersApply, runtimeHome } from "../../account-runtime.js";
 import { adminAccountId } from "../../ownership.js";
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { agentResourcePaths, commonAgentInstructionFiles } from "../../agent-resources.js";
 import { agentCapabilityInstructionFiles } from "../../agent-capabilities.js";
@@ -69,7 +68,8 @@ async function readMcpConfig(file: string): Promise<Record<string, unknown>> {
 }
 
 async function listKiroSkills(projectPath: string, roots: SkillRoots): Promise<SkillSummary[]> {
-  const userRoot = roots.user?.kiro;
+  const strict = getSettings().strictResourceIsolation;
+  const userRoot = strict ? undefined : roots.user?.kiro;
   const sources = await Promise.all([
     ...(userRoot ? [readSkillDirectory(userRoot, "kiro", "user")] : []),
     readSkillDirectory(roots.shared, "kiro", "user"),
@@ -102,11 +102,12 @@ async function promptCommands(root: string, scope: "user" | "project"): Promise<
 }
 
 async function listKiroCommands(projectPath: string, options: CommandDiscoveryOptions): Promise<HarnessCommand[]> {
+  const strict = getSettings().strictResourceIsolation;
   const defaults = defaultSkillRoots();
   const roots: SkillRoots = { ...defaults, ...options, user: { ...defaults.user, ...options.user }, global: options.resourcePaths?.global.skills ?? options.global ?? [], project: options.resourcePaths?.project.skills ?? options.project ?? [] };
   const config = getSettings().runtimes.kiro.configPath;
   const prompts = await Promise.all([
-    promptCommands(path.join(config, "prompts"), "user"),
+    ...(strict ? [] : [promptCommands(path.join(config, "prompts"), "user")]),
     ...(options.resourcePaths?.global.prompts ?? []).map((root) => promptCommands(root, "user")),
     promptCommands(path.join(projectPath, ".kiro", "prompts"), "project"),
     ...(options.resourcePaths?.project.prompts ?? []).map((root) => promptCommands(root, "project")),
@@ -119,7 +120,7 @@ export async function expandKiroPrompt(text: string, cwd: string, projectId?: st
   if (!match || match[1] === "compact") return text;
   const scoped = getScopedResourcePaths(projectId);
   const roots = [
-    path.join(getSettings().runtimes.kiro.configPath, "prompts"),
+    ...(getSettings().strictResourceIsolation ? [] : [path.join(getSettings().runtimes.kiro.configPath, "prompts")]),
     ...scoped.global.prompts,
     path.join(cwd, ".kiro", "prompts"),
     ...scoped.project.prompts,
@@ -181,6 +182,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
     ...agentCapabilityInstructionFiles().map((file) => file.content),
     credentialContext ?? agentCredentialContext(options.projectId, { engine: "kiro", sessionId: options.sessionId }),
   ].filter(Boolean).join("\n\n");
+  const strict = getSettings().strictResourceIsolation;
   const profile = {
     name,
     description: "Joint Bob Kiro session profile",
@@ -188,8 +190,11 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
     resources: skills,
     tools: enabledTools === undefined ? ["*"] : [...enabledTools],
     allowedTools: [],
-    mcpServers: nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(resources.mcpConfig) : {},
-    includeMcpJson: true,
+    mcpServers: {
+      ...(nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(resources.mcpConfig) : {}),
+      ...(strict ? await readMcpConfig(path.join(options.cwd, ".kiro/settings/mcp.json")) : {}),
+    },
+    includeMcpJson: !strict,
   };
   const file = path.join(agents, `${name}.json`);
   const temporary = path.join(agents, `.${name}.${randomUUID()}.tmp`);

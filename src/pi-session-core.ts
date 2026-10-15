@@ -2,7 +2,6 @@ import { basename } from "node:path";
 import path from "node:path";
 import {
   createAgentSession,
-  DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -11,6 +10,8 @@ import {
   type AgentSession,
   type Skill,
 } from "@earendil-works/pi-coding-agent";
+
+import { createPiResourceLoader } from "./harnesses/pi/resource-loader.js";
 
 /**
  * A Pi session from what it needs and nothing else: no database, no settings store, no
@@ -35,6 +36,8 @@ export interface PiCredentials {
 }
 
 export interface PiResources {
+  strictResourceIsolation: boolean;
+  packagesFile: string;
   extensions: string[];
   prompts: string[];
   themes: string[];
@@ -142,7 +145,7 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     spawnHook: (context) => ({ ...context, env: { ...context.env, ...credentials.environment, ...credentials.capabilityEnvironment } }),
   });
   const settingsManager = SettingsManager.create(inputs.cwd, inputs.agentDir);
-  const resourceLoader = new DefaultResourceLoader({
+  const resourceLoader = createPiResourceLoader({
     cwd: inputs.cwd,
     agentDir: inputs.agentDir,
     settingsManager,
@@ -152,7 +155,7 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     additionalThemePaths: resources.themes,
     agentsFilesOverride: (current) => ({ agentsFiles: [...current.agentsFiles, ...resources.agentsFiles] }),
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
-  });
+  }, resources.strictResourceIsolation, resources.packagesFile);
   await resourceLoader.reload();
   let model = inputs.sessionPath ? undefined : modelRuntime.getModel(inputs.defaults.provider, inputs.defaults.modelId);
   let thinkingLevel: AgentSession["thinkingLevel"] | undefined = inputs.sessionPath ? undefined : inputs.defaults.thinkingLevel;

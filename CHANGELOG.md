@@ -5,7 +5,17 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
-- Showed progress while Settings saves, with the Save button disabled, and a clear message when a save fails or succeeds instead of leaving the dialog unchanged.
+- Turned on strict resource isolation by default, so chats no longer load your personal skills, commands, plugins, or MCP servers from Claude, Pi, or Kiro; Joint Bob and project resources still load.
+
+## 2.101.0 — 2026-10-15
+
+- Added Auto respond presets for reviewing work and driving AI-DLC, and put Auto respond directly in the mobile focus controls.
+- Added conversation links that open directly in Joint Bob, a Share action, and PWA shortcuts for new conversations.
+- Added lightweight worktree and conversation references when starting a new conversation.
+- Added strict resource isolation so Pi, Claude, and Kiro can use managed resources without loading native user-level agent resources.
+- Showed progress while Settings saves, with the Save button disabled, and a clear message when a save fails or succeeds.
+- Kept mobile tools and both conversation filters accessible, and fixed clipped browser popup streams and monitoring icons.
+- Preserved suggestion drafts while background usage reports finish loading.
 
 ## 2.100.1 — 2026-10-15
 
