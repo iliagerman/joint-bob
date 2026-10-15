@@ -26,7 +26,7 @@ async function waitForRelease(engine: string): Promise<void> {
   throw new Error(`Timed out waiting for ${release}`);
 }
 
-async function appendPiTranscript(session: HarnessSession, options: HarnessOpenOptions, input: HarnessPrompt): Promise<ChatMessage[]> {
+async function appendPiTranscript(session: HarnessSession, options: HarnessOpenOptions, input: HarnessPrompt): Promise<{ user: ChatMessage; finish: () => Promise<ChatMessage> }> {
   const file = session.file;
   if (!file) throw new Error("Stubbed Pi session has no native transcript file");
   await mkdir(path.dirname(file), { recursive: true });
@@ -41,9 +41,19 @@ async function appendPiTranscript(session: HarnessSession, options: HarnessOpenO
     { type: "message", id: userId, parentId: null, timestamp, message: { role: "user", content: [{ type: "text", text: input.text }], timestamp: Date.now() } },
     { type: "message", id: assistantId, parentId: userId, timestamp, message: { role: "assistant", content: [{ type: "text", text: "stubbed response" }], timestamp: Date.now() } },
   ];
-  await appendFile(file, records.map((record) => JSON.stringify(record)).join("\n") + "\n");
+  await appendFile(file, JSON.stringify(records[0]) + "\n");
   const { simplifyMessages } = await import("../src/pi-service.js");
-  return simplifyMessages(records.map((record) => record.message));
+  const [user, assistant] = simplifyMessages(records.map((record) => record.message));
+  return {
+    user,
+    finish: async () => {
+      const finished = new Date();
+      records[1].timestamp = finished.toISOString();
+      records[1].message.timestamp = finished.getTime();
+      await appendFile(file, JSON.stringify(records[1]) + "\n");
+      return { ...assistant, timestamp: finished.toISOString() };
+    },
+  };
 }
 
 async function appendClaudeTranscript(session: HarnessSession, options: HarnessOpenOptions, input: HarnessPrompt): Promise<void> {
@@ -85,10 +95,13 @@ function wrapPiSession(session: HarnessSession, options: HarnessOpenOptions): Ha
     const emit = (event: HarnessEvent): void => { for (const listener of listeners) listener(event); };
     try {
       await input.beforeStart?.();
+      // A joining client must see the accepted prompt even while the turn is held.
+      const transcript = await appendPiTranscript(session, options, input);
+      completed.push(transcript.user);
       emit({ type: "agent_start" });
       input.onStarted?.();
       await recordStubRun("pi");
-      completed.push(...await appendPiTranscript(session, options, input));
+      completed.push(await transcript.finish());
       emit({ type: "sessionFile", sessionId: session.id, sessionFile: session.file });
       emit({ type: "textDelta", text: "stubbed response" });
     } finally {

@@ -109,7 +109,10 @@ test("notes search matches titles and content like conversation search", async (
   }
 });
 
-test("mobile keeps creation actions together and switches conversations and notes with tabs", async () => {
+test("mobile keeps creation actions together and switches conversations and notes with tabs", async t => {
+  t.after(async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
   await page.setViewportSize({ width: 390, height: 844 });
   const projectId = node.projects.find((project) => project.name === "Internal Assistant")!.id;
   await page.locator(`[data-project-id="${projectId}"] .project-card`).click();
@@ -133,9 +136,12 @@ test("mobile keeps creation actions together and switches conversations and note
 
   const newConversation = page.getByTestId("new-conversation-mobile-button");
   const newNote = page.getByTestId("quick-note-create-mobile-button");
+  await newConversation.waitFor({ state: "visible" });
+  await newNote.waitFor({ state: "visible" });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   const [conversationBox, noteBox] = await Promise.all([newConversation.boundingBox(), newNote.boundingBox()]);
   assert.ok(conversationBox && noteBox, "both mobile creation actions are visible");
-  assert.ok(Math.abs(conversationBox.y - noteBox.y) < 2, "mobile creation actions share one row");
+  assert.ok(Math.abs(conversationBox.y - noteBox.y) < 2, `mobile creation actions share one row: conversation=${JSON.stringify(conversationBox)}, note=${JSON.stringify(noteBox)}`);
 
   const conversationsTab = page.getByTestId("conversations-tab");
   const notesTab = page.getByTestId("notes-tab");
@@ -222,7 +228,12 @@ test("a quick note can move, start a conversation, and be deleted", async () => 
   await movedRow.click();
   assert.equal(await page.getByTestId("quick-note-convert-button").isVisible(), true, "the note dialog can start a conversation");
   await page.getByTestId("quick-note-cancel-button").click();
-  await movedItem.getByTestId("quick-note-start-button").click();
+  const [started] = await Promise.all([
+    page.waitForResponse(response => /\/api\/quick-notes\/[^/]+\/start$/.test(response.url()) && response.request().method() === "POST"),
+    movedItem.getByTestId("quick-note-start-button").click(),
+  ]);
+  const launch = await started.json();
+  assert.equal(started.status(), 200, `quick note launch failed: ${JSON.stringify(launch)}`);
   await page.locator("#messages .message.user").filter({ hasText: "Do this manually after deploy." }).waitFor();
   await movedRow.waitFor({ state: "detached" });
 
@@ -394,14 +405,13 @@ test("a scheduled note waits for its time instead of starting with the queue", a
   assert.match(await row.getByTestId("quick-note-schedule-badge").innerText(), /waits until/i, "the row shows it is waiting");
 
   // The visible Notes tab polls, and a future note must survive every poll without starting.
-  let polls = 0;
-  const countPoll = (request: import("playwright-core").Request) => {
-    if (request.url().includes(`/api/projects/${projectId}/quick-notes`)) polls += 1;
-  };
-  page.on("request", countPoll);
-  await page.waitForTimeout(6_500);
-  page.off("request", countPoll);
-  assert.ok(polls >= 1, `the visible Notes tab polls for queue movement, saw ${polls}`);
+  const poll = await page.waitForResponse(response =>
+    response.url().includes(`/api/projects/${projectId}/quick-notes`)
+    && response.request().method() === "GET",
+  );
+  assert.equal(poll.status(), 200, "the visible Notes tab polls successfully for queue movement");
+  const polled = await poll.json() as { notes: Array<{ title: string; status: string }> };
+  assert.equal(polled.notes.find(note => note.title === "Hold for the morning")?.status, "pending", "the poll still reports the future note pending");
   await row.waitFor();
   assert.match(await row.getByTestId("quick-note-schedule-badge").innerText(), /waits until/i, "the scheduled note still waits after polling");
 

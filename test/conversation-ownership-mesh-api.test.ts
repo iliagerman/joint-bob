@@ -133,6 +133,11 @@ async function exerciseConcurrentBoundary(
   await waitForInvocation(mesh.invocationLog, `${engine}:${source.nodeId}`);
   // Owner preflight may append settings; snapshot only once its held execution has started.
   const before = await readFile(sessionPath, "utf8");
+  if (engine === "pi") {
+    const accepted = JSON.parse(before.trim().split("\n").at(-1)!);
+    assert.equal(accepted.message.role, "user", "the held Pi turn already persisted its accepted prompt");
+    assert.equal(accepted.message.content[0].text, `${engine} owner write`);
+  }
   const rejected = await prompt(destinationSocket, `${engine} spoofed continuation`);
   assert.equal(rejected.type, "error");
   assert.match(String(rejected.error), new RegExp(source.nodeId));
@@ -140,7 +145,7 @@ async function exerciseConcurrentBoundary(
   await writeFile(path.join(mesh.holdDir, `${engine}.release`), "release");
   assert.equal((await ownerTurn).type, "textDelta");
   const addedLines = (await readFile(sessionPath, "utf8")).trim().split("\n").length - before.trim().split("\n").length;
-  assert.equal(addedLines, 2);
+  assert.equal(addedLines, engine === "pi" ? 1 : 2, "Pi appends only the held answer; Claude appends its prompt and answer");
   const invocations = (await readFile(mesh.invocationLog, "utf8")).trim().split("\n").filter((line) => line === `${engine}:${source.nodeId}`);
   assert.equal(invocations.length, 1);
 }
