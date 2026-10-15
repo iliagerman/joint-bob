@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.100.1 — 2026-10-15
 
-- Showed the saved commands shortcut you have set in Settings > Commands, or a prompt to assign one when none is set, and clarified that picking a prompt pastes it into the chat draft without sending it.
+- Showed the saved commands shortcut you have set in Settings, or a prompt to assign one when none is set, and clarified that picking a prompt pastes it into the chat draft without sending it.
 
 ## 2.100.0 — 2026-10-15
 
