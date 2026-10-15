@@ -21,10 +21,11 @@ import {
 import type { RelayServer } from "./relay-server.js";
 import { RelayChannelError, RelayStream } from "./stream.js";
 import { PollClient, relayPollUrl, type FrameSocket } from "./poll.js";
-import { createMembership, deleteMembership, lastPeerRoutes, listMemberships, membership, membershipByOrigin, recordPeerRoute, updateMembership, type RelayMembership } from "./store.js";
+import { createMembership, deleteMembership, lastPeerRoutes, listMemberships, membership, membershipByOrigin, recordPeerRoute, recordRelayTransportEvent, updateMembership, type RelayMembership } from "./store.js";
 
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
+const WEBSOCKET_RETRY_MS = 5 * 60_000;
 /** How long a new channel waits for a relay to report its peer online. */
 const ROUTE_WAIT_MS = 5_000;
 /** The relay pings every 30 s and a long-poll answers within 25 s; silence this long means the link is dead. */
@@ -47,12 +48,20 @@ export interface RuntimeHandlers {
   nodeName(): string;
   /** Use long-polling from the start instead of trying WebSockets first. */
   preferPoll?: boolean;
+  /** Override only in isolated transport tests. */
+  websocketRetryMs?: number;
 }
 
 export interface RelayRoute { membershipId: string; hub: ChannelHub }
 
 /** Nonces and the relay key from one connection's introduction, before the relay admits this machine. */
 interface AdmissionHandshake { origin: string; machineNonce: string; relayNonce: string; relayPublicKey: string }
+
+function transportError(error: Error): string {
+  const codes = error instanceof AggregateError ? error.errors.map((cause: unknown) => (cause as NodeJS.ErrnoException)?.code).filter(Boolean) : [];
+  return `${error.name}: ${error.message}${codes.length ? ` (${codes.join(", ")})` : ""}`
+    .replace(/https?:\/\/\S+/g, "[url]").replace(/(token|secret|password|authorization)=\S+/gi, "$1=[redacted]").slice(0, 300);
+}
 
 class RelayConnection {
   ws: FrameSocket | undefined;
@@ -69,6 +78,8 @@ class RelayConnection {
   private stopped = false;
   private attempt = 0;
   private timer: NodeJS.Timeout | undefined;
+  private websocketRetry: NodeJS.Timeout | undefined;
+  private retryingWebSocket = false;
   /** A token is spent once; it lives only in memory until the relay accepts it. */
   token: string | undefined;
   request = false;
@@ -89,7 +100,10 @@ class RelayConnection {
   stop(reason = "Stopped"): void {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
+    if (this.websocketRetry) clearTimeout(this.websocketRetry);
     this.timer = undefined;
+    this.websocketRetry = undefined;
+    this.retryingWebSocket = false;
     this.teardown(reason);
     this.ws?.close(1000, reason.slice(0, 120));
     this.ws = undefined;
@@ -103,10 +117,17 @@ class RelayConnection {
       : new WebSocket(relayConnectUrl(current.origin), { maxPayload: MAX_FRAME, perMessageDeflate: false, handshakeTimeout: 15_000 });
     this.ws = ws;
     let opened = false;
+    let failure = "";
+    const transport = this.usePoll ? "poll" : "websocket";
     let lastHeard = Date.now();
     const heard = (): void => { lastHeard = Date.now(); };
     // A NAT that drops an idle mapping or a relay host that loses power sends no close; notice the silence.
-    const watchdog = setInterval(() => { if (Date.now() - lastHeard > SILENCE_LIMIT_MS) ws.terminate(); }, SILENCE_LIMIT_MS / 3);
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastHeard > SILENCE_LIMIT_MS) {
+        failure = "No relay frames for 90 seconds";
+        ws.terminate();
+      }
+    }, SILENCE_LIMIT_MS / 3);
     watchdog.unref();
     ws.on("open", () => { opened = true; this.failedToOpen = 0; heard(); });
     ws.on("ping", heard);
@@ -120,23 +141,44 @@ class RelayConnection {
         const decoded = decodeFrame(frame);
         if (decoded.type === FRAME_CONTROL) this.admissionStep(ws, handshake, decoded.message);
       } catch (error) {
-        updateMembership(this.runtime.db, this.id, { lastError: error instanceof Error ? error.message.slice(0, 300) : "Relay protocol error" });
+        failure = error instanceof Error ? transportError(error) : "Relay protocol error";
+        updateMembership(this.runtime.db, this.id, { lastError: failure });
         this.runtime.changed();
         ws.close(1008, "Protocol error");
       }
     });
-    ws.on("close", () => {
+    ws.on("close", (code?: number) => {
       clearInterval(watchdog);
       if (ws !== this.ws) return;
-      // A proxy that blocks WebSockets fails every attempt before it opens: switch transports.
-      if (!opened && ++this.failedToOpen >= 2) { this.usePoll = !this.usePoll; this.failedToOpen = 0; }
+      if (!this.stopped && !this.retryingWebSocket) {
+        const detail = failure || `Closed (${code ?? "unknown"})${opened ? " after opening" : " before opening"}`;
+        this.record(transport, "closed", detail);
+      }
+      if (!this.stopped) {
+        // A proxy that blocks WebSockets fails every attempt before it opens: switch transports.
+        if (this.retryingWebSocket) {
+          // Keep the probe flag while the old polling session closes. Only the
+          // WebSocket attempt can complete or fail the probe.
+          if (transport === "websocket") {
+            this.retryingWebSocket = false;
+            this.usePoll = true;
+            this.record("poll", "fallback", "WebSocket retry failed");
+          }
+        } else if (!opened && ++this.failedToOpen >= 2) {
+          this.usePoll = !this.usePoll;
+          this.failedToOpen = 0;
+          this.record(this.usePoll ? "poll" : "websocket", "fallback", `Switching from ${transport}`);
+        }
+      }
       this.teardown("Relay connection closed");
       this.ws = undefined;
       this.scheduleReconnect();
     });
     ws.on("error", (error: Error) => {
       if (ws !== this.ws) return;
-      updateMembership(this.runtime.db, this.id, { lastError: error.message.slice(0, 300) });
+      failure = transportError(error);
+      updateMembership(this.runtime.db, this.id, { lastError: failure });
+      this.record(transport, "error", failure);
     });
   }
 
@@ -197,13 +239,22 @@ class RelayConnection {
       onControl: (control) => this.handleControl(control),
     });
     this.sendWatch();
+    this.record(ws instanceof PollClient ? "poll" : "websocket", "connected");
+    if (ws instanceof PollClient) this.scheduleWebSocketRetry();
+    else {
+      this.retryingWebSocket = false;
+      if (this.websocketRetry) clearTimeout(this.websocketRetry);
+      this.websocketRetry = undefined;
+    }
     this.runtime.changed();
     if (!wasAdmitted) this.runtime.handlers.membershipsChanged();
   }
 
   private acceptRefusal(message: Extract<ControlMessage, { t: "denied" }>): void {
     const status = message.code === "revoked" ? "revoked" : message.code === "suspended" ? "suspended" : "denied";
-    updateMembership(this.runtime.db, this.id, { status, lastError: String(message.reason ?? "Refused").slice(0, 300) });
+    const reason = String(message.reason ?? "Refused").slice(0, 300);
+    updateMembership(this.runtime.db, this.id, { status, lastError: reason });
+    this.record(this.ws instanceof PollClient ? "poll" : "websocket", "refused", `${message.code}: ${reason}`);
     this.token = undefined;
     this.request = false;
     // Refusals are decisions; only the operator's change and the user's retry reconnect.
@@ -223,6 +274,29 @@ class RelayConnection {
     this.online.clear();
     this.listings.clear();
     if (wasConnected) this.runtime.changed();
+  }
+
+  private record(transport: "websocket" | "poll", event: string, detail = ""): void {
+    // Never persist authentication frames, relay URLs with query strings, or user payloads.
+    const safe = detail.replace(/https?:\/\/\S+/g, "[url]").replace(/(token|secret|password|authorization)=\S+/gi, "$1=[redacted]");
+    recordRelayTransportEvent(this.runtime.db, this.id, transport, event, safe);
+    if (event === "error" || event === "closed" || event === "fallback" || event === "refused") console.warn(`Relay ${this.id} ${transport} ${event}: ${safe}`);
+  }
+
+  private scheduleWebSocketRetry(): void {
+    if (this.websocketRetry || this.stopped || !this.usePoll || !this.connected) return;
+    this.websocketRetry = setTimeout(() => {
+      this.websocketRetry = undefined;
+      if (this.stopped || !this.usePoll || !this.connected) return;
+      // One relay session per machine: switching transports disconnects the old session.
+      // Wait for active channels rather than interrupting an in-flight request.
+      if (this.hub?.openChannels) { this.scheduleWebSocketRetry(); return; }
+      this.retryingWebSocket = true;
+      this.usePoll = false;
+      this.record("websocket", "retry", "Testing WebSocket after polling fallback");
+      this.ws?.close(1000, "Testing WebSocket");
+    }, this.runtime.handlers.websocketRetryMs ?? WEBSOCKET_RETRY_MS);
+    this.websocketRetry.unref();
   }
 
   private scheduleReconnect(): void {

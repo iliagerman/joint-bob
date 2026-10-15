@@ -14,7 +14,7 @@ import { RelayServerError } from "../../relay/relay-server.js";
 import { enrollLink, LOCAL_RELAY_ID, RelayRuntimeError } from "../../relay/runtime.js";
 import {
   audit, createRelayToken, listAudit, listRelayMachines, listRelayTokens, machineUsage, otherUsersPhoneSignIn, relayMachine, RelayStoreError,
-  revokeRelayToken, saveServingSettings, servingSettings, type MachineStatus,
+  revokeRelayToken, saveServingSettings, servingSettings, listRelayTransportEvents, membership, type MachineStatus,
 } from "../../relay/store.js";
 import { Feature, requireFeature, sendError } from "../http-auth.js";
 import { app } from "../state.js";
@@ -92,6 +92,12 @@ async function membershipView(response: Response): Promise<unknown> {
 }
 
 app.get("/api/relays", handle(async (_request, response) => { response.json(await membershipView(response)); }));
+app.get("/api/relays/:id/transport-events", handle(async (request, response) => {
+  const db = await clusterV2Database();
+  const id = uuid.parse(request.params.id);
+  if (!membership(db, id)) throw new RelayRuntimeError(404, "Relay not found");
+  response.json({ events: listRelayTransportEvents(db, id) });
+}));
 
 const addSchema = z.union([
   z.object({ link: z.string().trim().min(1).max(2000) }).strict(),

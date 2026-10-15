@@ -13,7 +13,7 @@ import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../src/cluster-
 import { FRAME_DATA, decodeFrame, encodeControl, pairingCode, virtualRelayUrl } from "../src/relay/protocol.js";
 import { RelayServer } from "../src/relay/relay-server.js";
 import { RelayRuntime } from "../src/relay/runtime.js";
-import { createRelayToken, ensureRelaySchema, lastPeerRoutes, listMemberships, relayMachine, saveServingSettings } from "../src/relay/store.js";
+import { createRelayToken, ensureRelaySchema, lastPeerRoutes, listMemberships, listRelayTransportEvents, recordRelayTransportEvent, relayMachine, saveServingSettings } from "../src/relay/store.js";
 import { ChannelHub } from "../src/relay/hub.js";
 import { RelayStream, relayPeerOf } from "../src/relay/stream.js";
 import { peerFetch, peerWebSocket, setRelayTransport } from "../src/relay/transport.js";
@@ -156,17 +156,27 @@ test("machines join with a token, get unique names and see each other online", a
   a = await machine("office mac", () => b ? [b.nodeId] : []);
   b = await machine("office mac", () => [a.nodeId]);
   a.runtime.addWithToken(token("a"));
+  await eventually(() => assert.equal(listMemberships(a.db)[0]?.status, "admitted"));
   b.runtime.addWithToken(token("b"));
-  await eventually(() => {
-    assert.equal(listMemberships(a.db)[0]?.status, "admitted");
-    assert.equal(listMemberships(b.db)[0]?.status, "admitted");
-  });
+  await eventually(() => assert.equal(listMemberships(b.db)[0]?.status, "admitted"));
   assert.equal(listMemberships(a.db)[0].name, "office-mac");
   assert.equal(listMemberships(b.db)[0].name, "office-mac-2", "the second machine with the same name gets a suffix");
   assert.equal(listMemberships(a.db)[0].fingerprint, relay.fingerprint, "the relay key is pinned");
   a.runtime.refreshWatch();
   b.runtime.refreshWatch();
   await eventually(() => { assert.ok(a.runtime.hasRoute(b.nodeId)); assert.ok(b.runtime.hasRoute(a.nodeId)); });
+});
+
+test("relay transport errors survive reconnects and history stays bounded", async () => {
+  const id = listMemberships(a.db)[0].id;
+  recordRelayTransportEvent(a.db, id, "websocket", "error", "handshake timeout");
+  for (let i = 0; i < 110; i++) recordRelayTransportEvent(a.db, id, "poll", "connected");
+  const events = listRelayTransportEvents(a.db, id);
+  assert.equal(events.length, 100);
+  assert.equal(events[0].transport, "poll");
+  assert.ok(!events.some((entry) => entry.detail === "handshake timeout"));
+  recordRelayTransportEvent(a.db, id, "websocket", "error", "retry failed");
+  assert.equal(listRelayTransportEvents(a.db, id)[0].detail, "retry failed");
 });
 
 test("a used token cannot admit another machine", async () => {
@@ -354,6 +364,49 @@ test("a machine that cannot use WebSockets connects by long-polling and still re
   setRelayTransport(b.runtime);
   const inbound = await peerFetch(`${virtualRelayUrl(polled.nodeId)}/to-poll`, { method: "POST", body: "pushed-to-poller" });
   assert.equal((await inbound.json() as { echo: string; from: string }).echo, "pushed-to-poller");
+});
+
+test("polling retries WebSocket and returns only after in-flight channels finish", async () => {
+  const client = await machine("poll-recovery", () => [b.nodeId], { preferPoll: true, websocketRetryMs: 75 });
+  client.runtime.addWithToken(token("poll-recovery"));
+  await eventually(() => assert.equal(listMemberships(client.db)[0]?.status, "admitted"));
+  client.runtime.refreshWatch();
+  await eventually(() => assert.equal(client.runtime.hasRoute(b.nodeId), true));
+  pin(client, b);
+  const id = listMemberships(client.db)[0].id;
+  // A held HTTP request prevents the transport switch, even when the retry is due.
+  const stream = client.runtime.openStream(b.nodeId, "peer");
+  await new Promise<void>((resolve) => stream.once("relay-ready", resolve));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal((client.runtime as any).connections.get(id).ws.constructor.name, "PollClient");
+  stream.destroy();
+  await eventually(() => assert.equal((client.runtime as any).connections.get(id).ws?.constructor.name, "WebSocket"));
+  await eventually(() => assert.ok(listRelayTransportEvents(client.db, id).some((entry) => entry.transport === "websocket" && entry.event === "connected")));
+  assert.ok(listRelayTransportEvents(client.db, id).some((entry) => entry.event === "retry"));
+});
+
+test("failed WebSocket re-probe restores polling and tries again later", async () => {
+  const other = await secondRelay();
+  const original = other.server.handleUpgrade;
+  let blockWebSocket = true;
+  other.server.handleUpgrade = function (request, socket, head) {
+    if (blockWebSocket) { socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n"); return true; }
+    return original.call(this, request, socket, head);
+  };
+  const client = await machine("retry-failure", () => [], { preferPoll: true, websocketRetryMs: 150 });
+  try {
+    client.runtime.addWithToken(other.token("retry-failure"));
+    const id = listMemberships(client.db)[0].id;
+    await eventually(() => assert.equal((client.runtime as any).connections.get(id).connected, true));
+    await eventually(() => assert.ok(listRelayTransportEvents(client.db, id).some((entry) => entry.transport === "websocket" && entry.event === "error")));
+    await eventually(() => assert.equal((client.runtime as any).connections.get(id).ws?.constructor.name, "PollClient"));
+    blockWebSocket = false;
+    await eventually(() => assert.ok(listRelayTransportEvents(client.db, id).some((entry) => entry.transport === "websocket" && entry.event === "connected")));
+    const events = listRelayTransportEvents(client.db, id);
+    assert.ok(events.some((entry) => entry.transport === "poll" && entry.event === "connected"), "polling reconnected after failed re-probe");
+    assert.equal(events.filter((entry) => entry.transport === "websocket" && entry.event === "error").length, 1, "one failed probe returns straight to polling");
+    assert.ok(events.some((entry) => entry.event === "fallback" && entry.detail === "WebSocket retry failed"));
+  } finally { client.runtime.stop(); other.close(); }
 });
 
 test("peerWebSocket opens a WebSocket to a relay-only peer through the relay", async () => {

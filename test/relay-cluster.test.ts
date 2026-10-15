@@ -101,6 +101,12 @@ test("relay-only machines share exactly what their clusters allow, and the relay
       });
     }
 
+    const relayId = (await api<{ relays: Array<{ id: string }> }>(a, sa, "GET", "/relays")).body.relays[0].id;
+    const history = await api<{ events: Array<{ transport: string; event: string }> }>(a, sa, "GET", `/relays/${relayId}/transport-events`);
+    assert.equal(history.status, 200);
+    assert.ok(history.body.events.some((entry) => entry.transport === "websocket" && entry.event === "connected"));
+    assert.equal((await api(a, sa, "GET", `/relays/${randomUUID()}/transport-events`)).status, 404);
+
     const clusterX = await createClusterWith(a, sa, b, sb, "Home");
     const clusterY = await createClusterWith(a, sa, c, sc, "Work");
     const forX = a.projects.find((project) => project.name === "Internal Assistant")!;

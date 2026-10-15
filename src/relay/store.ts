@@ -64,7 +64,10 @@ export function ensureRelaySchema(db: DatabaseSync): void {
     last_error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    last_connected_at TEXT);`);
+    last_connected_at TEXT);
+  CREATE TABLE IF NOT EXISTS relay_transport_events(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, membership_id TEXT NOT NULL,
+    at TEXT NOT NULL, transport TEXT NOT NULL, event TEXT NOT NULL, detail TEXT NOT NULL);`);
 }
 
 const now = (): string => new Date().toISOString();
@@ -391,7 +394,25 @@ export function updateMembership(db: DatabaseSync, id: string, fields: Partial<P
   db.prepare(`UPDATE relay_memberships SET ${sets.join(",")}, updated_at=? WHERE id=?`).run(...values, now(), id);
 }
 
+export interface RelayTransportEvent { at: string; transport: string; event: string; detail: string }
+
+/** Keep a bounded node-local history, including errors that preceded a successful reconnect. */
+export function recordRelayTransportEvent(db: DatabaseSync, id: string, transport: "websocket" | "poll", event: string, detail = ""): void {
+  ensureRelaySchema(db);
+  db.prepare("INSERT INTO relay_transport_events(membership_id,at,transport,event,detail) VALUES(?,?,?,?,?)")
+    .run(id, now(), transport, event, detail.slice(0, 300));
+  db.prepare(`DELETE FROM relay_transport_events WHERE membership_id=? AND id NOT IN
+    (SELECT id FROM relay_transport_events WHERE membership_id=? ORDER BY id DESC LIMIT 100)`).run(id, id);
+}
+
+export function listRelayTransportEvents(db: DatabaseSync, id: string): RelayTransportEvent[] {
+  ensureRelaySchema(db);
+  return db.prepare("SELECT at,transport,event,detail FROM relay_transport_events WHERE membership_id=? ORDER BY id DESC LIMIT 100")
+    .all(id) as unknown as RelayTransportEvent[];
+}
+
 export function deleteMembership(db: DatabaseSync, id: string): void {
+  db.prepare("DELETE FROM relay_transport_events WHERE membership_id=?").run(id);
   db.prepare("DELETE FROM relay_memberships WHERE id=?").run(id);
 }
 
