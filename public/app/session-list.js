@@ -196,7 +196,11 @@ function sessionCard(session, sessionActive, sessionPinned, ticketTask) {
     doneBadge.textContent = "Done";
     meta.append(" ", doneBadge);
   }
-  if (session.autoRespond) meta.append(" ", autoRespondBadge(session.autoRespond));
+  // The list snapshot may lag behind the live chat or come from a different node.
+  const autoRespond = state.activeConversationProjectId === state.activeProjectId
+    && (session.conversationId || session.id) === state.activeConversationId
+    ? state.autoRespond : session.autoRespond;
+  if (autoRespond) meta.append(" ", autoRespondBadge(autoRespond));
   if (ticketTask) meta.append(" ", ticketBadge(ticketTask));
   if (session.worktree) meta.append(" ", worktreeBadge(session.worktree));
   button.addEventListener("click", () => openListedSession(session));

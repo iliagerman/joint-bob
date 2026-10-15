@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed the focus mode Tools button into an Auto respond button that opens auto-respond directly, added a Preset menu with a review-and-consent preset and an AI-DLC driver preset, and kept an active auto-respond on across an app update: it resumes once the node is back, with its count kept.
+- Made an active auto respond survive an app update by reading its state back from the node when the page reloads, instead of from the browser's saved copy.
+- Added a Share button to the chat More menu that copies a link to the open conversation, or opens the device's share sheet where one is available, and let installed app icons open a New Conversation shortcut and conversation links open their conversation directly.
+- Stopped loading native user-level agent resources by default while keeping Joint Bob and project resources available.
+- Made the auto respond badge on the open conversation in the list follow its live state, so a stop, resume, or turn-off shows at once and a stale list refresh no longer shows an old status.
+
 ## 2.97.1 — 2026-10-14
 
 - Fixed searchable dropdown lists inside dialogs, such as the project list in the move dialog, so they float over the dialog and open upward when there is no room below; opening one no longer resizes the dialog.

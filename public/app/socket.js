@@ -207,6 +207,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     state.conversationSegments = null;
     state.activeConversationId = null;
     state.activeConversationProjectId = null;
+    setAutoRespond(null);
     syncBackgroundTasks();
     state.scheduledTurn = false;
     state.scheduledAssistantText = "";
@@ -374,7 +375,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
       const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
       showChatEmptyState("Ready for your first message", `${harnessLabel(state.harnesses, state.engine)} will run on ${node?.name || "the selected node"}. The conversation is created when you send.`);
     }
-    renderChatSessionControls();
+    renderSessions();
     sendSocket({ type: "models" });
     const conversion = state.pendingQuickNoteConversion;
     if (conversion?.provider && conversion.modelId) {
@@ -448,6 +449,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "autoRespond") {
     const stopped = payload.state?.status === "stopped" && state.autoRespond?.status !== "stopped";
     setAutoRespond(payload.state, payload.phase);
+    renderSessions();
     if (stopped) toast(payload.message, 8000);
     return;
   }
