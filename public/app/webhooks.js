@@ -1,6 +1,6 @@
 // Settings → Webhooks. A webhook is a secret address; a call to it starts a conversation in a
 // project or adds a message to one conversation. The address is shown once, built here from the
-// secret the server returns and the relays this machine is on. Every action applies at once.
+// secret the server returns and the relays its owner is on. Every action applies at once.
 // The list pages to the height it is given instead of scrolling.
 import { api } from "./api.js";
 import { copyText, createFittedList, formatWhen, makeBadge, makeButton, makeNode, makeTwoStepButton, showStatus } from "./relay-ui.js";
@@ -12,21 +12,24 @@ const listSection = byId("webhooksListSection");
 const reveal = byId("webhooksReveal");
 const history = byId("webhooksHistory");
 const field = {
-  name: byId("webhooksName"), kind: byId("webhooksTargetKind"), project: byId("webhooksProject"), conversation: byId("webhooksConversation"),
+  owner: byId("webhooksOwner"), name: byId("webhooksName"), kind: byId("webhooksTargetKind"), project: byId("webhooksProject"), conversation: byId("webhooksConversation"),
   conversationLabel: byId("webhooksConversationLabel"), context: byId("webhooksContext"), enabled: byId("webhooksEnabled"),
   attachments: byId("webhooksAttachments"), sendersEnabled: byId("webhooksSendersEnabled"), senders: byId("webhooksSenders"),
   senderFields: byId("webhooksSenderFields"), allowedSenders: byId("webhooksAllowedSenders"), save: byId("webhooksSave"),
 };
 
 let webhooks = [];
-let bases = [];
 let projects = [];
+let ownerRevision = 0;
+let ownerReady = false;
+let saving = false;
 let projectNames = new Map();
 let editing = null;
 let wired = false;
 let telegramSenderFields = [];
 
 const errorText = (error) => error?.message || "Something went wrong";
+const endpoint = (suffix = "") => `/api/webhooks${suffix}?nodeId=${encodeURIComponent(field.owner.value)}`;
 
 /** The body a PUT or POST sends: everything about the webhook, so saving one setting keeps the others. */
 const hookBody = (hook, changes = {}) => JSON.stringify({
@@ -83,16 +86,15 @@ function hookRow(hook) {
     makeButton("Calls", "webhooks-calls-button", () => showCalls(hook)),
     makeButton("Edit", "webhooks-edit-button", () => openForm(hook)),
     makeButton(hook.enabled ? "Turn off" : "Turn on", "webhooks-toggle-button", () => run(async () => {
-      await api(`/api/webhooks/${hook.id}`, { method: "PUT", body: hookBody(hook, { enabled: !hook.enabled }) });
+      await api(endpoint(`/${hook.id}`), { method: "PUT", body: hookBody(hook, { enabled: !hook.enabled }) });
       await refresh();
     })),
     makeTwoStepButton({ label: "New address", armedLabel: "Replace address?", testid: "webhooks-regenerate-button", onConfirm: () => run(async () => {
-      const body = await api(`/api/webhooks/${hook.id}/regenerate`, { method: "POST", body: "{}" });
-      bases = body.bases;
-      showUrls(`New address for “${hook.name}”. The old one no longer works.`, body.secret, bases);
+      const body = await api(endpoint(`/${hook.id}/regenerate`), { method: "POST", body: "{}" });
+      showUrls(`New address for “${hook.name}”. The old one no longer works.`, body.secret, body.bases);
     }) }),
     makeTwoStepButton({ label: "Delete", armedLabel: "Delete it?", testid: "webhooks-delete-button", onConfirm: () => run(async () => {
-      await api(`/api/webhooks/${hook.id}`, { method: "DELETE" });
+      await api(endpoint(`/${hook.id}`), { method: "DELETE" });
       history.hidden = true;
       await refresh();
     }) }));
@@ -109,7 +111,9 @@ const list = createFittedList({
 
 async function showCalls(hook) {
   try {
-    const { deliveries } = await api(`/api/webhooks/${hook.id}/deliveries`);
+    const revision = ownerRevision;
+    const { deliveries } = await api(endpoint(`/${hook.id}/deliveries`));
+    if (revision !== ownerRevision) return;
     history.replaceChildren(makeNode("p", "relay-row-meta", `Recent calls to “${hook.name}” (newest first)`));
     if (!deliveries.length) history.append(makeNode("p", "relay-empty", "No calls yet."));
     for (const call of deliveries.slice(0, 5)) {
@@ -121,7 +125,7 @@ async function showCalls(hook) {
       if (call.status === "refused" && call.sender && hook.senders && !hook.senders.allowed.some(({ value }) => value === call.sender)) {
         row.append(makeButton("Allow", "webhooks-allow-sender-button", () => run(async () => {
           const current = webhooks.find((candidate) => candidate.id === hook.id) ?? hook;
-          await api(`/api/webhooks/${hook.id}`, { method: "PUT", body: hookBody(current, { senders: { ...current.senders, allowed: [...current.senders.allowed, { value: call.sender, label: "" }] } }) });
+          await api(endpoint(`/${hook.id}`), { method: "PUT", body: hookBody(current, { senders: { ...current.senders, allowed: [...current.senders.allowed, { value: call.sender, label: "" }] } }) });
           await refresh();
           await showCalls(webhooks.find((candidate) => candidate.id === hook.id) ?? hook);
           showStatus(status, `Sender ${call.sender} is allowed. Add a name for it under Edit.`, "ok");
@@ -135,14 +139,19 @@ async function showCalls(hook) {
 }
 
 async function run(work) {
+  if (saving) return;
+  saving = true;
   showStatus(status, "");
+  field.owner.disabled = true;
   try { await work(); } catch (error) { showStatus(status, errorText(error), "error"); }
+  finally { saving = false; field.owner.disabled = Boolean(editing); }
 }
 
 async function refresh() {
-  const body = await api("/api/webhooks");
+  const revision = ownerRevision;
+  const body = await api(endpoint());
+  if (revision !== ownerRevision) return;
   webhooks = body.webhooks;
-  bases = body.bases;
   telegramSenderFields = body.telegramSenderFields ?? [];
   await list.reload();
 }
@@ -150,9 +159,47 @@ async function refresh() {
 // ---- form ----
 
 async function loadProjects() {
-  const body = await api("/api/projects");
+  const revision = ownerRevision;
+  const body = await api(endpoint("/projects"));
+  if (revision !== ownerRevision) return;
   projects = body.projects;
   projectNames = new Map(projects.map((project) => [project.id, project.name]));
+}
+
+/** Changing owner drops old targets and rows before loading. A slow peer must not restore them. */
+async function loadOwner() {
+  const revision = ++ownerRevision;
+  ownerReady = false;
+  field.save.disabled = true;
+  byId("webhooksNew").disabled = true;
+  reveal.hidden = true;
+  byId("webhooksRevealUrls").replaceChildren();
+  history.hidden = true;
+  projects = [];
+  webhooks = [];
+  projectNames.clear();
+  field.project.replaceChildren();
+  field.conversation.replaceChildren();
+  await list.reload();
+  if (revision !== ownerRevision) return;
+  showStatus(status, "Loading owner…");
+  try {
+    await Promise.all([loadProjects(), refresh()]);
+    if (revision !== ownerRevision) return;
+    fillProjects();
+    await list.reload();
+    if (revision !== ownerRevision) return;
+    if (!form.hidden) syncKind();
+    ownerReady = true;
+    showStatus(status, "");
+  } catch (error) {
+    if (revision === ownerRevision) showStatus(status, errorText(error), "error");
+  } finally {
+    if (revision === ownerRevision) {
+      field.save.disabled = !ownerReady;
+      byId("webhooksNew").disabled = !ownerReady;
+    }
+  }
 }
 
 function fillProjects(selected) {
@@ -163,10 +210,11 @@ function fillProjects(selected) {
 /** Conversations the webhook can write to: live ones, not tickets or read-only copies. */
 async function fillConversations(selected) {
   field.conversation.replaceChildren(new Option("Loading…", ""));
+  const revision = ownerRevision;
   const projectId = field.project.value;
   if (!projectId) { field.conversation.replaceChildren(new Option("Choose a project first", "")); return; }
-  const { sessions } = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
-  if (projectId !== field.project.value) return;
+  const { sessions } = await api(endpoint(`/projects/${encodeURIComponent(projectId)}/sessions`));
+  if (revision !== ownerRevision || projectId !== field.project.value) return;
   const usable = sessions.filter((session) => !session.readOnly && !session.taskId && !session.doneAt);
   const options = usable.map((session) => {
     const option = new Option(session.title || session.firstMessage || session.id, session.id);
@@ -188,11 +236,14 @@ function syncKind() {
 }
 
 async function openForm(hook = null) {
+  if (!ownerReady || saving) return;
   editing = hook;
+  field.owner.disabled = true;
   showStatus(status, "");
   reveal.hidden = true;
   history.hidden = true;
-  try { await loadProjects(); } catch (error) { showStatus(status, errorText(error), "error"); return; }
+  try { await loadProjects(); } catch (error) { editing = null; showStatus(status, errorText(error), "error"); return; }
+  finally { field.owner.disabled = Boolean(editing); }
   fillProjects(hook?.target.projectId);
   field.name.value = hook?.name ?? "";
   field.kind.value = hook?.target.kind ?? "project";
@@ -213,6 +264,7 @@ async function openForm(hook = null) {
 
 function closeForm() {
   editing = null;
+  field.owner.disabled = saving;
   form.hidden = true;
   listSection.hidden = false;
   byId("webhooksNew").hidden = false;
@@ -230,6 +282,7 @@ function missingField() {
 
 async function submit(event) {
   event.preventDefault();
+  if (!ownerReady || saving || field.save.disabled) return;
   const missing = missingField();
   if (missing) { showStatus(status, missing.message, "error"); missing.element.focus(); return; }
   const target = field.kind.value === "conversation"
@@ -239,26 +292,35 @@ async function submit(event) {
     ? { fields: field.senderFields.value.split(/[\s,]+/).filter(Boolean), allowed: parseAllowed(field.allowedSenders.value) }
     : null;
   const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, senders });
+  saving = true;
   field.save.disabled = true;
+  field.owner.disabled = true;
+  byId("webhooksCancel").disabled = true;
   try {
     if (editing) {
-      await api(`/api/webhooks/${editing.id}`, { method: "PUT", body });
-      closeForm();
+      await api(endpoint(`/${editing.id}`), { method: "PUT", body });
       await refresh();
+      closeForm();
     } else {
-      const created = await api("/api/webhooks", { method: "POST", body });
-      bases = created.bases;
+      const created = await api(endpoint(), { method: "POST", body });
       closeForm();
+      // Show the secret before refreshing: a failed list request must not lose the only copy.
+      showUrls(`Address for “${created.webhook.name}”`, created.secret, created.bases);
       await refresh();
-      showUrls(`Address for “${created.webhook.name}”`, created.secret, bases);
     }
   } catch (error) { showStatus(status, errorText(error), "error"); }
-  finally { field.save.disabled = false; }
+  finally {
+    saving = false;
+    field.save.disabled = !ownerReady;
+    field.owner.disabled = Boolean(editing);
+    byId("webhooksCancel").disabled = false;
+  }
 }
 
 function wire() {
   if (wired) return;
   wired = true;
+  field.owner.addEventListener("change", () => void loadOwner());
   byId("webhooksNew").addEventListener("click", () => void openForm());
   byId("webhooksCancel").addEventListener("click", closeForm);
   byId("webhooksRevealDone").addEventListener("click", () => { reveal.hidden = true; byId("webhooksRevealUrls").replaceChildren(); });
@@ -273,8 +335,18 @@ function wire() {
 
 export async function loadWebhooks() {
   wire();
+  if (saving) return;
+  closeForm();
   showStatus(status, "");
   try {
-    await Promise.all([loadProjects(), refresh()]);
+    const { owners } = await api("/api/webhooks/owners");
+    const selected = field.owner.value;
+    field.owner.replaceChildren(...owners.map(owner => new Option(owner.local ? `${owner.name} (this machine)` : `${owner.name} (twin)`, owner.id)));
+    if (selected) {
+      // Revocation must not silently turn a remote selection into local creation.
+      if (!owners.some(owner => owner.id === selected)) field.owner.add(new Option("Unavailable owner", selected));
+      field.owner.value = selected;
+    }
+    await loadOwner();
   } catch (error) { showStatus(status, errorText(error), "error"); }
 }

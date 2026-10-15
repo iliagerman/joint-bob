@@ -1114,6 +1114,10 @@
             <p class="settings-hint">A webhook is a secret address another service can call. Each call starts a new conversation in a project, or adds a message to one conversation. Changes apply at once and do not need Save settings.</p>
             <button class="primary compact" type="button" id="webhooksNew" data-testid="webhooks-new-button">New webhook</button>
           </div>
+          <div class="relay-form">
+            <label>Owner<select id="webhooksOwner" data-testid="webhooks-owner-select" aria-describedby="webhooksOwnerHint"></select></label>
+          </div>
+          <p class="settings-hint" id="webhooksOwnerHint">Choose this machine or an active twin. Webhooks listed here belong only to that owner, which stores them and handles calls. No copies or automatic fallback. An existing webhook's owner cannot be changed.</p>
           <p class="settings-hint relay-inline-status" id="webhooksStatus" role="status" data-testid="webhooks-status"></p>
           <div class="relay-reveal" id="webhooksReveal" data-testid="webhooks-reveal" hidden>
             <p class="settings-hint" id="webhooksRevealTitle"></p>

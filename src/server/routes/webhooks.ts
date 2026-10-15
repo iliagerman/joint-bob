@@ -7,12 +7,17 @@ import type { Duplex } from "node:stream";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { getClusterNode } from "../../cluster.js";
+import { signClusterRequest } from "../../cluster-protocol.js";
+import { isTrustedTwin } from "../../cluster-sharing-policy.js";
+import { getConversationOwnership } from "../../conversation-ownership.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { relayRuntimeInstance, relayServerInstance } from "../../relay/index.js";
 import { phoneAddress } from "../../relay/protocol.js";
 import { relayMachine } from "../../relay/store.js";
 import { isWebhookOnlyChannel } from "../../relay/stream.js";
-import { getProject } from "../../store.js";
+import { peerFetch } from "../../relay/transport.js";
+import { getProject, listProjects } from "../../store.js";
+import { listRuntimePeers } from "../runtime-peers.js";
 import {
   createWebhook, deleteWebhook, getWebhook, listWebhooks, readWebhookPayload, recordWebhookDelivery, regenerateWebhookSecret, updateWebhook,
   TELEGRAM_SENDER_FIELDS, WEBHOOK_MAX_BODY_BYTES, webhookDeliveries, webhookForSecret, webhookInputSchema, WebhookError, webhookSender, type WebhookInput,
@@ -133,39 +138,107 @@ async function checkTarget(input: WebhookInput): Promise<void> {
   if (input.target.kind !== "conversation") return;
   const { sessionId, engine } = input.target;
   const found = (await listProjectSessionsWithReviewState(project, "", "")).find((session) => session.id === sessionId && session.harnessId === engine);
-  if (!found) throw new WebhookError(404, "Conversation not found on this machine");
+  if (!found || found.readOnly || found.taskId || found.doneAt) throw new WebhookError(404, "Conversation not found on this machine");
+  const ownership = await getConversationOwnership(engine, sessionId);
+  if (ownership && ownership.ownerNodeId !== (await getClusterNode()).id) throw new WebhookError(409, "Choose the machine that owns this conversation");
 }
 
-app.get("/api/webhooks", handle(async (_request, response) => {
+const commandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("list") }).strict(),
+  z.object({ action: z.literal("projects") }).strict(),
+  z.object({ action: z.literal("sessions"), projectId: z.string().min(1).max(240) }).strict(),
+  z.object({ action: z.literal("create"), input: webhookInputSchema }).strict(),
+  z.object({ action: z.literal("update"), id: z.string().uuid(), input: webhookInputSchema }).strict(),
+  z.object({ action: z.literal("regenerate"), id: z.string().uuid() }).strict(),
+  z.object({ action: z.literal("deliveries"), id: z.string().uuid() }).strict(),
+  z.object({ action: z.literal("delete"), id: z.string().uuid() }).strict(),
+]);
+type Command = z.infer<typeof commandSchema>;
+
+/** Always executes locally. A twin may manage a webhook, but never stores a copy of it. */
+async function manage(command: Command): Promise<unknown> {
   const db = await clusterV2Database();
-  response.json({ webhooks: listWebhooks(db), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS });
+  if (command.action === "list") return { webhooks: listWebhooks(db), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS };
+  if (command.action === "projects") return { projects: (await listProjects()).map(({ id, name }) => ({ id, name })) };
+  if (command.action === "sessions") {
+    const project = await getProject(command.projectId);
+    if (!project) throw new WebhookError(404, "Project not found on this machine");
+    const local = await getClusterNode();
+    const sessions = await listProjectSessionsWithReviewState(project, "", "");
+    return { sessions: sessions.filter(session => !session.readOnly && !session.taskId && !session.doneAt && (!session.executionNodeId || session.executionNodeId === local.id))
+      .map(({ id, title, firstMessage, harnessId }) => ({ id, title, firstMessage, harnessId })) };
+  }
+  if (command.action === "create" || command.action === "update") {
+    await checkTarget(command.input);
+    if (command.action === "create") return { ...createWebhook(db, command.input), bases: await urlBases() };
+    return { webhook: updateWebhook(db, command.id, command.input) };
+  }
+  if (!getWebhook(db, command.id)) throw new WebhookError(404, "Webhook not found");
+  if (command.action === "regenerate") return { ...regenerateWebhookSecret(db, command.id), bases: await urlBases() };
+  if (command.action === "deliveries") return { deliveries: webhookDeliveries(db, command.id) };
+  deleteWebhook(db, command.id);
+  return { ok: true };
+}
+
+async function twinOwners() {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  return (await listRuntimePeers()).filter(peer => isTrustedTwin(db, local.id, peer.id));
+}
+
+async function route(request: Request, command: Command): Promise<unknown> {
+  const nodeId = z.string().uuid().optional().parse(request.query.nodeId);
+  const local = await getClusterNode();
+  if (!nodeId || nodeId === local.id) return manage(command);
+  const peer = (await twinOwners()).find(peer => peer.id === nodeId);
+  if (!peer) throw new WebhookError(403, "Webhook owner must be this machine or an active twin");
+  const target = "/api/cluster/v2/webhooks", body = Buffer.from(JSON.stringify(command));
+  try {
+    const reply = await peerFetch(new URL(target, peer.url), {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), body,
+      headers: { "Content-Type": "application/json", Authorization: signClusterRequest(await clusterV2Database(), local.id, peer.id, "POST", target, body) },
+    }, peer.id);
+    const result = await reply.json() as { error?: string };
+    if (!reply.ok) throw new WebhookError(reply.status, result.error || "Webhook owner rejected the request");
+    return result;
+  } catch (error) {
+    if (error instanceof WebhookError) throw error;
+    // A lost response may follow a successful write. Never retry or create locally.
+    throw new WebhookError(503, "Webhook owner did not respond. Check its webhook list before retrying.");
+  }
+}
+
+app.post("/api/cluster/v2/webhooks", handle(async (request, response) => {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  if (response.locals.machineProtocol !== 2 || !isTrustedTwin(db, local.id, response.locals.machineNodeId)) throw new WebhookError(403, "Only active twins may manage webhooks");
+  response.json(await manage(commandSchema.parse(request.body)));
 }));
 
+app.get("/api/webhooks/owners", handle(async (_request, response) => {
+  const local = await getClusterNode();
+  response.json({ owners: [{ id: local.id, name: local.name, local: true }, ...(await twinOwners()).map(({ id, name }) => ({ id, name, local: false }))] });
+}));
+app.get("/api/webhooks/projects", handle(async (request, response) => {
+  response.json(await route(request, { action: "projects" }));
+}));
+app.get("/api/webhooks/projects/:projectId/sessions", handle(async (request, response) => {
+  response.json(await route(request, commandSchema.parse({ action: "sessions", projectId: request.params.projectId })));
+}));
+app.get("/api/webhooks", handle(async (request, response) => {
+  response.json(await route(request, { action: "list" }));
+}));
 app.post("/api/webhooks", handle(async (request, response) => {
-  const input = webhookInputSchema.parse(request.body);
-  await checkTarget(input);
-  const created = createWebhook(await clusterV2Database(), input);
-  response.status(201).json({ ...created, bases: await urlBases() });
+  response.status(201).json(await route(request, { action: "create", input: webhookInputSchema.parse(request.body) }));
 }));
-
 app.put("/api/webhooks/:id", handle(async (request, response) => {
-  const input = webhookInputSchema.parse(request.body);
-  await checkTarget(input);
-  response.json({ webhook: updateWebhook(await clusterV2Database(), z.string().uuid().parse(request.params.id), input) });
+  response.json(await route(request, { action: "update", id: z.string().uuid().parse(request.params.id), input: webhookInputSchema.parse(request.body) }));
 }));
-
 app.post("/api/webhooks/:id/regenerate", handle(async (request, response) => {
-  response.json({ ...regenerateWebhookSecret(await clusterV2Database(), z.string().uuid().parse(request.params.id)), bases: await urlBases() });
+  response.json(await route(request, { action: "regenerate", id: z.string().uuid().parse(request.params.id) }));
 }));
-
 app.get("/api/webhooks/:id/deliveries", handle(async (request, response) => {
-  const db = await clusterV2Database();
-  const id = z.string().uuid().parse(request.params.id);
-  if (!getWebhook(db, id)) throw new WebhookError(404, "Webhook not found");
-  response.json({ deliveries: webhookDeliveries(db, id) });
+  response.json(await route(request, { action: "deliveries", id: z.string().uuid().parse(request.params.id) }));
 }));
-
 app.delete("/api/webhooks/:id", handle(async (request, response) => {
-  if (!deleteWebhook(await clusterV2Database(), z.string().uuid().parse(request.params.id))) throw new WebhookError(404, "Webhook not found");
+  await route(request, { action: "delete", id: z.string().uuid().parse(request.params.id) });
   response.status(204).end();
 }));

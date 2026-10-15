@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added an Owner choice to Settings > Webhooks, so a webhook can be created and managed from an active twin's machine; it lives only on the chosen owner, and if that owner is offline the request fails rather than creating a copy here.
+
 ## 2.98.0 — 2026-10-15
 
 - Added saved commands, which you set up in Settings, to paste a chosen prompt into the chat draft without sending it; Control+Option+Shift+L opens the picker.

@@ -369,6 +369,12 @@ Use Pause/Resume, Edit, Delete, and History in the dialog. Edits and pauses neve
 
 Schedules and run history stay in the execution node's SQLite database. They do not use Syncthing. Failed runs retry at the next scheduled time by default; select **Pause schedule after a failed run** when a task should stop for review instead. Interrupted dispatches still pause to prevent an uncertain run from overlapping a later one. Deleting a schedule leaves its conversations intact.
 
+## Webhooks
+
+In **Settings > Webhooks**, choose an **Owner** before creating a webhook. The owner can be this machine or an active twin, not an ordinary cluster member. The project and conversation choices come from that owner.
+
+Each webhook stays on one machine. Its secret, settings, and call history are not cloned to twins, and calls run only on its owner. Use the same owner selector to list, edit, rotate addresses, or delete that machine's webhooks from your laptop. Existing webhooks cannot change owners. If the owner is unavailable, the request fails without creating or running anything locally. After an uncertain response, check the owner's list before trying again.
+
 ## Skills and resources
 
 In **Settings > Resources**, enter absolute global skill paths such as `/Users/alice/my-skills`, then save settings. **Sync local skills** explicitly publishes complete skill directories to `<Joint Bob home>/.agent-resources/shared/skills`; it does not watch local folders. Sync again after every local edit. Sources remain untouched, matching shared skills are backed up under `<node data>/agent-resources-backups/<operation>/` and replaced, and removing a source does not delete its shared copy.

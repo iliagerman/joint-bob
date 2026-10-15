@@ -12,7 +12,7 @@ import path from "node:path";
 import test, { after, before } from "node:test";
 import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
-import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
+import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
 
 interface Hook { id: string; name: string; target: unknown; enabled: boolean; attachments: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
 
@@ -21,6 +21,7 @@ let environment: DevEnvironment;
 let node: SeededNode;
 let session: SignedIn;
 let server: ChildProcess;
+let twinServer: ChildProcess;
 let browser: Browser;
 let page: Page;
 const consoleErrors: string[] = [];
@@ -39,9 +40,12 @@ async function until(check: () => Promise<boolean>, what: string): Promise<void>
 
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-webhooks-"));
-  environment = await seedDevEnvironment(root, 1);
+  environment = await seedDevEnvironment(root, 2);
   node = environment.nodes[0];
-  server = await startDevNode(environment, node);
+  const extraEnv = { JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log") };
+  server = await startDevNode(environment, node, extraEnv);
+  twinServer = await startDevNode(environment, environment.nodes[1], extraEnv);
+  await pairTwinNodes(environment);
   session = await signIn(environment, node);
   browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
@@ -53,6 +57,7 @@ before(async () => {
 after(async () => {
   if (browser) await browser.close();
   if (server) await stopDevNode(server);
+  if (twinServer) await stopDevNode(twinServer);
   if (root) await rm(root, { recursive: true, force: true });
 });
 
@@ -161,6 +166,38 @@ test("a sender list refuses strangers before the conversation, and Allow lets a 
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("webhooks-allowed-senders-input").inputValue(), "111 Ilia\n999");
   await page.getByTestId("webhooks-cancel-button").click();
+});
+
+test("creating on a twin uses its targets and address and keeps only one copy", async () => {
+  const twin = environment.nodes[1];
+  const twinSession = await signIn(environment, twin);
+  await page.getByTestId("webhooks-new-button").click();
+  await page.getByTestId("webhooks-name-input").fill("Twin only");
+  const owner = page.getByTestId("webhooks-owner-select");
+  await owner.selectOption(twin.nodeId);
+  await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#webhooksSave")!.disabled);
+  await page.getByTestId("webhooks-attachments-toggle").check();
+  await page.getByTestId("webhooks-save-button").click();
+  await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });
+  const addresses = await page.locator("#webhooksRevealUrls code").allTextContents();
+  assert.ok(addresses.some(url => url.startsWith(`${twin.url}/hooks/`)), "only the owner's addresses are revealed");
+  assert.ok(addresses.every(url => !url.startsWith(`${node.url}/hooks/`)));
+  assert.deepEqual((await hooks()).map(hook => hook.name), ["Deals"], "creating remotely leaves local hooks alone");
+  const remoteHooks = () => api<{ webhooks: Hook[] }>(twin, twinSession, "GET", "/webhooks");
+  assert.deepEqual((await remoteHooks()).body.webhooks.map(hook => hook.name), ["Twin only"]);
+  await page.getByTestId("webhooks-reveal-done-button").click();
+  await page.getByTestId("webhooks-list").getByText("Twin only", { exact: true }).waitFor();
+  await page.getByTestId("webhooks-edit-button").click();
+  await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
+  assert.equal(await owner.isDisabled(), true, "editing cannot move or clone a webhook");
+  assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), true);
+  await page.getByTestId("webhooks-name-input").fill("Twin renamed");
+  await page.getByTestId("webhooks-save-button").click();
+  await page.getByTestId("webhooks-list").getByText("Twin renamed", { exact: true }).waitFor();
+  assert.equal((await remoteHooks()).body.webhooks[0].name, "Twin renamed");
+  await owner.selectOption(node.nodeId);
+  await page.getByTestId("webhooks-list").getByText("Deals", { exact: true }).waitFor();
+  assert.equal(await page.getByTestId("webhooks-list").getByText("Twin renamed", { exact: true }).count(), 0);
 });
 
 test("the page logged no errors", () => {

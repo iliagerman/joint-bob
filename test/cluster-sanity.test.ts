@@ -50,6 +50,21 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+test("a webhook created from a twin exists only on its selected owner", async () => {
+  const created = await api<{ webhook: { id: string }; secret: string }>(nodeA, sessionA, "POST", `/webhooks?nodeId=${nodeB.nodeId}`, {
+    name: "Owned by B", target: { kind: "project", projectId: nodeA.projects[0].id }, enabled: false,
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const [local, remote] = await Promise.all([
+    api<{ webhooks: Array<{ id: string }> }>(nodeA, sessionA, "GET", "/webhooks"),
+    api<{ webhooks: Array<{ id: string }> }>(nodeB, sessionB, "GET", "/webhooks"),
+  ]);
+  assert.equal(local.body.webhooks.some(hook => hook.id === created.body.webhook.id), false);
+  assert.equal(remote.body.webhooks.some(hook => hook.id === created.body.webhook.id), true);
+  assert.equal((await fetch(`${nodeA.url}/hooks/${created.body.secret}`, { method: "POST" })).status, 404);
+  assert.equal((await fetch(`${nodeB.url}/hooks/${created.body.secret}`, { method: "POST" })).status, 403, "only B knows the disabled hook");
+});
+
 test("account MFA stays node-local and a peer cannot complete another node's login challenge", async () => {
   const setup = await authRequest(nodeA, "/mfa/setup", { currentPassword: environment.password }, sessionA);
   assert.equal(setup.response.status, 200, "node A supports account MFA enrollment");
