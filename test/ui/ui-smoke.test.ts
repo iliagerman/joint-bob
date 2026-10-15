@@ -156,6 +156,7 @@ test("harness settings show per-harness tabs and restore node defaults", async (
   try {
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-engines").click();
+    await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
     const claudePanel = page.locator("[data-harness-panel='claude']");
     const piPanel = page.locator("[data-harness-panel='pi']");
     assert.equal(await piPanel.isVisible(), true, "the Pi tab shows first");
@@ -173,7 +174,7 @@ test("harness settings show per-harness tabs and restore node defaults", async (
     await page.getByTestId("settings-runtime-status").getByText(/Pi executable: Blank \(uses node default\)/).waitFor();
     await page.getByTestId("settings-save-button").click();
     const restartMessage = page.locator("#settingsRestartMessage");
-    await restartMessage.waitFor({ state: "visible" });
+    await restartMessage.filter({ hasText: /Settings saved\. Restart required/i }).waitFor();
     assert.match(await restartMessage.innerText(), /restart required/i);
     const database = openFixtureDatabase();
     try {
@@ -187,6 +188,7 @@ test("harness settings show per-harness tabs and restore node defaults", async (
     await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-engines").click();
+    await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
     assert.equal(await piExecutable.inputValue(), "", "blank overrides keep the effective node default");
     await page.getByTestId("settings-cancel-button").click();
   } finally {
@@ -241,6 +243,7 @@ test("settings sub-tabs, shortcut search, and the account panel stay focused", a
 
   // Resources: every path list can be pasted into or browsed to.
   await page.getByTestId("settings-tab-resources").click();
+  await page.getByTestId("resources-tab-paths").click();
   await page.getByTestId("settings-resource-skills-browse").click();
   await page.getByTestId("folder-picker-dialog").waitFor({ state: "visible" });
   await page.getByTestId("folder-picker-cancel-button").click();
@@ -251,7 +254,9 @@ test("settings sub-tabs, shortcut search, and the account panel stay focused", a
 test("resource path fields save and reload in Settings", async () => {
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-resources").click();
-  const values = { skills: "/tmp/global-skills\n/tmp/global-skills-second", prompts: "/tmp/global-prompts", rules: "/tmp/global-rules", plugins: "/tmp/global-plugins" };
+  await page.getByTestId("resources-tab-paths").click();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+  const values = { skills: `${path.join(root, "global-skills")}\n${path.join(root, "global-skills-second")}`, prompts: path.join(root, "global-prompts"), rules: path.join(root, "global-rules"), plugins: path.join(root, "global-plugins") };
   await page.getByTestId("settings-resource-skills-paths").fill(values.skills);
   await page.getByTestId("settings-resource-prompts-paths").fill(values.prompts);
   await page.getByTestId("settings-resource-rules-paths").fill(values.rules);
@@ -262,6 +267,8 @@ test("resource path fields save and reload in Settings", async () => {
   await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 20_000 });
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-resources").click();
+  await page.getByTestId("resources-tab-paths").click();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   for (const [id, value] of Object.entries({ "settings-resource-skills-paths": values.skills, "settings-resource-prompts-paths": values.prompts, "settings-resource-rules-paths": values.rules, "settings-resource-plugins-paths": values.plugins })) assert.equal(await page.getByTestId(id).inputValue(), value);
   await page.getByTestId("settings-cancel-button").click();
 });
@@ -282,11 +289,9 @@ test("the updates tab shows this node's version and keeps controls honest on a c
 
 test("Settings loads persisted conversation shortcuts before canvas activation", async () => {
   const sessionId = "settings-before-canvas";
-  const now = new Date().toISOString();
-  const database = openFixtureDatabase();
-  database.prepare("INSERT INTO canvas_shortcuts (username, binding, project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, '1', ?, 'pi', ?, ?, ?)")
-    .run(environment.username, node.projects[0].id, sessionId, now, node.nodeId);
-  database.close();
+  const session = await signIn(environment, node);
+  const assigned = await api(node, session, "PUT", "/canvas/shortcuts/1", { projectId: node.projects[0].id, engine: "pi", sessionId });
+  assert.equal(assigned.status, 200);
   try {
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-shortcuts").click();
@@ -301,9 +306,8 @@ test("Settings loads persisted conversation shortcuts before canvas activation",
     await page.getByTestId("canvas-keymap-status").filter({ hasText: /already belongs to a conversation/ }).waitFor();
   } finally {
     if (await page.getByTestId("settings-dialog").isVisible()) await page.getByTestId("settings-cancel-button").click();
-    const cleanup = openFixtureDatabase();
-    cleanup.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND binding = '1'").run(environment.username);
-    cleanup.close();
+    const cleared = await api(node, session, "DELETE", "/canvas/shortcuts/1");
+    assert.equal(cleared.status, 200);
   }
 });
 
@@ -1062,6 +1066,7 @@ test("a top toast stays above the mobile composer", async () => {
     const project = mobilePage.locator(".project-card", { hasText: "Internal Assistant" }).first();
     await project.waitFor({ state: "attached", timeout: 20_000 });
     await mobilePage.locator("#loginDialog").waitFor({ state: "hidden" });
+    await mobilePage.waitForFunction(async () => (await import('/app/state.js')).state.preferencesLoaded);
     await mobilePage.getByTestId("nav-projects-button").click();
     await project.waitFor({ timeout: 20_000 });
     await project.click();
@@ -1099,14 +1104,22 @@ test("opening a conversation that is waiting for review updates the badge at onc
 
   // This test covers browser redraw, not transcript parsing. Move the disposable
   // review watermark behind known activity so the real endpoint reports one review.
+  await page.goto("about:blank");
   const transcript = path.join(environment.home, ".pi", "sessions", "thread-notifications-naming.jsonl");
   const reviewDatabase = openFixtureDatabase();
   const updated = reviewDatabase.prepare("UPDATE conversation_review_states SET reviewed_at = '1970-01-01T00:00:00.000Z' WHERE session_path = ?").run(transcript);
+  // Opening this seeded conversation earlier also stored its identity-keyed watermark.
+  reviewDatabase.prepare("UPDATE replicated_review_watermarks SET reviewed_at = '1970-01-01T00:00:00.000Z' WHERE username = (SELECT account_id FROM users WHERE username = ?) AND engine = 'pi' AND session_id = ?").run(environment.username, "thread-notifications-naming");
   reviewDatabase.close();
   assert.equal(updated.changes, 1, "the review baseline exists for the seeded conversation");
+  // A real conversation mutation invalidates the server's cached spanning list.
+  const session = await signIn(environment, node);
+  const project = node.projects.find((candidate) => candidate.name === "Joint Bob")!;
+  const optedIn = await api(node, session, "PUT", `/projects/${project.id}/sessions/review-notifications`, { sessionPath: transcript, enabled: true });
+  assert.equal(optedIn.status, 200);
 
   const pendingLoaded = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/reviews/pending" && response.ok());
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
   const pending = await (await pendingLoaded).json() as { projects: Array<{ sessions: Array<{ title: string }> }> };
   assert.ok(pending.projects.some((group) => group.sessions.some((session) => session.title === "Thread Notifications Naming and Pinning")), `the server counts the new reply as waiting for review (got ${JSON.stringify(pending.projects)})`);
   const badge = page.getByTestId("pending-reviews-badge");
@@ -1114,8 +1127,9 @@ test("opening a conversation that is waiting for review updates the badge at onc
   assert.equal(await badge.innerText(), "1", "the answered conversation is counted as waiting for review");
   const projectReviewBadge = page.locator('.project-card', { hasText: 'Joint Bob' }).getByTestId('project-review-badge');
   await projectReviewBadge.waitFor();
-  assert.equal(await projectReviewBadge.innerText(), '1 to review');
-  assert.equal(await projectReviewBadge.locator('xpath=..').getByText('Joint Bob', { exact: true }).count(), 1, 'review badge sits beside the project name');
+  assert.equal(await projectReviewBadge.innerText(), '1');
+  assert.equal(await projectReviewBadge.getAttribute('aria-label'), '1 conversations need review in Joint Bob');
+  assert.equal(await projectReviewBadge.locator('xpath=ancestor::*[contains(@class, "project-card-heading")]').getByText('Joint Bob', { exact: true }).count(), 1, 'review badge sits beside the project name');
 
   await page.locator(".project-card", { hasText: "Joint Bob" }).first().click();
   await page.locator(".session-card", { hasText: "Thread Notifications Naming and Pinning" }).first().click();
@@ -1229,6 +1243,7 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   await page.keyboard.press("Meta+Shift+Slash");
   await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
   await page.getByTestId("canvas-keymap-spotlight-input").waitFor({ state: "visible" });
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
 
   const spotlight = page.getByTestId("canvas-keymap-spotlight-input");
   const paneSearch = page.getByTestId("canvas-keymap-pane-search-input");
@@ -1273,6 +1288,7 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   await page.reload();
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-shortcuts").click();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   assert.equal(await paneSearch.inputValue(), `${expectedModifiers.ctrl}[`, "the saved chord survives a reload");
   // Put the defaults back so later tests type the shortcuts they expect.
   await page.getByTestId("canvas-keymap-reset-button").click();
@@ -1367,8 +1383,9 @@ test("running badge follows active conversation changes without waiting for the 
     assert.equal(await badge.textContent(), "1");
     const projectRunningBadge = page.locator('.project-card', { hasText: 'Internal Assistant' }).getByTestId('project-running-badge');
     await projectRunningBadge.waitFor();
-    assert.equal(await projectRunningBadge.innerText(), '1 running');
-    assert.equal(await projectRunningBadge.locator('xpath=..').getByText('Internal Assistant', { exact: true }).count(), 1, 'running badge sits beside the project name');
+    assert.equal(await projectRunningBadge.innerText(), '1');
+    assert.equal(await projectRunningBadge.getAttribute('aria-label'), '1 conversations running in Internal Assistant');
+    assert.equal(await projectRunningBadge.locator('xpath=ancestor::*[contains(@class, "project-card-heading")]').getByText('Internal Assistant', { exact: true }).count(), 1, 'running badge sits beside the project name');
   } finally {
     database.prepare("DELETE FROM conversation_runtime_leases WHERE engine = ? AND session_id = ?").run(target.harnessId, target.id);
     database.close();
@@ -1395,7 +1412,8 @@ test("running conversations open their live conversation in another project", as
     await page.evaluate(async () => (await import('/app/running.js')).refreshRunningConversations());
     const remoteBadge = page.locator('.project-card', { hasText: project.name }).getByTestId('project-running-badge');
     await remoteBadge.waitFor();
-    assert.equal(await remoteBadge.innerText(), '1 running', 'an unselected project shows live activity');
+    assert.equal(await remoteBadge.innerText(), '1', 'an unselected project shows live activity');
+    assert.equal(await remoteBadge.getAttribute('aria-label'), `1 conversations running in ${project.name}`);
     await page.getByTestId("running-conversations-open-button").click();
     const dialog = page.getByTestId("running-conversations-dialog");
     await dialog.getByText(project.name, { exact: true }).waitFor();
@@ -1510,7 +1528,7 @@ test("Escape closes the terminal, and reaches the shell while a full-screen prog
   await page.getByTestId("chat-open-terminal-button").click();
   await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
   await page.getByTestId("terminal-dialog").locator(".xterm-helper-textarea").focus();
-  await page.keyboard.type("printf '\\033[?1049h'");
+  await page.keyboard.type("printf '\\033[?1049h'; read -r line");
   await page.keyboard.press("Enter");
   await page.waitForFunction(async (modulePath) => {
     const { state } = await import(modulePath);

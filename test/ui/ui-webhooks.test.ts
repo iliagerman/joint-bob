@@ -73,7 +73,14 @@ test("signing in reaches the app", async () => {
 test("a webhook made with Accept attachments keeps the option through turning off and editing", async () => {
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-webhooks").click();
+  // The initial New button exists before asynchronous owner discovery starts.
+  await page.waitForFunction(() =>
+    document.querySelector<HTMLSelectElement>("#webhooksOwner")!.options.length > 0
+    && document.querySelector<HTMLSelectElement>("#webhooksProject")!.options.length > 0
+    && !document.querySelector<HTMLButtonElement>("#webhooksNew")!.disabled,
+  );
   await page.getByTestId("webhooks-new-button").click();
+  await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), false, "a new webhook reads calls as text unless asked");
   await page.getByTestId("webhooks-name-input").fill("Deals");
   await page.getByTestId("webhooks-attachments-toggle").check();

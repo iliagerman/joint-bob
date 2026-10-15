@@ -36,6 +36,7 @@ async function openNotifications(page: Page): Promise<void> {
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-notifications").click();
   await page.getByTestId("error-reporting-settings").waitFor();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
 }
 
 test("errors are sent to the ntfy topics chosen in Settings", { timeout: 120_000 }, async (t) => {
@@ -51,7 +52,10 @@ test("errors are sent to the ntfy topics chosen in Settings", { timeout: 120_000
 
   await page.getByTestId("ntfy-service-name-input").fill("Errors fixture");
   await page.getByTestId("ntfy-service-url-input").fill(ntfy.url);
+  const adding = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/ntfy/services" && response.request().method() === "POST");
   await page.getByTestId("ntfy-service-add-button").click();
+  const added = await adding;
+  assert.equal(added.ok(), true, await added.text());
   await page.getByTestId("ntfy-service-list").getByText("Errors fixture").waitFor();
 
   assert.equal(await page.getByTestId("error-reporting-options").isVisible(), false, "the options stay hidden until the feature is on");

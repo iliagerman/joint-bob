@@ -64,6 +64,16 @@ before(async () => {
   environment = await seedDevEnvironment(root, 1);
   node = environment.nodes[0];
   const executable = await gatedClaude(root);
+  // Discovery uses the same executable but is not a conversation turn.
+  const cli = await readFile(executable, "utf8");
+  assert.ok(cli.includes("const text = prompt.trim();"), "the gated fixture exposes its stdin boundary");
+  await writeFile(executable, cli.replace("const text = prompt.trim();", `const text = prompt.trim();
+if (process.argv.includes('--input-format')) {
+  const request = JSON.parse(text);
+  if (request.type !== 'control_request' || request.request.subtype !== 'initialize') throw new Error('Unexpected discovery request');
+  console.log(JSON.stringify({ type: 'control_response', response: { request_id: request.request_id, response: { models: [{ value: 'default', displayName: 'Fixture Claude', supportsEffort: true, supportedEffortLevels: ['low', 'high'] }] } } }));
+  process.exit(0);
+}`));
   server = await startDevNode(environment, node, {
     JOINT_BOB_FAKE_INVOCATIONS: path.join(root, "invocations.log"),
     JOINT_BOB_FAKE_GATE: path.join(root, "gate"),

@@ -122,6 +122,8 @@ test("the chord still opens the list while a chat pane on the canvas has the key
 
   await holdChord();
   await page.keyboard.press(cycleKey);
+  // Keyboard forwarding uses postMessage, so key dispatch can finish before the parent handles it.
+  await page.locator(".conversation-switcher").waitFor({ state: "visible" });
   assert.equal(await overlayOpen(), true, "the list opens from inside the pane");
   assert.ok(await rows().count() >= 2, "the list has the conversations opened before");
   await letGoOfChord();

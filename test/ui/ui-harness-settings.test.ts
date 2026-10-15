@@ -10,6 +10,7 @@ async function signIn(page: Page, url: string, username: string, password: strin
   await page.getByTestId("login-password-input").fill(password);
   await page.getByTestId("login-submit-button").click();
   await page.locator("#loginDialog[open]").waitFor({ state: "hidden" });
+  await page.waitForFunction(async () => (await import('/app/state.js')).state.preferencesLoaded);
   await page.locator(".project-card").first().waitFor({ state: "visible" });
   await page.getByTestId("settings-open-button").waitFor({ state: "attached" });
 }
@@ -18,6 +19,7 @@ async function openHarnessSettings(page: Page) {
   await page.getByTestId("settings-open-button").click();
   await page.locator("#settingsDialog[open]").waitFor();
   await page.getByTestId("settings-tab-engines").click();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
 }
 
 async function waitForHarnesses(page: Page) {
@@ -236,6 +238,7 @@ test("node settings configure or disable automatic context compaction", { timeou
 
   await page.getByTestId("settings-open-button").click();
   await page.locator("#settingsDialog[open]").waitFor();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   await enabled.uncheck();
   assert.equal(await threshold.isDisabled(), true);
   await page.getByTestId("settings-save-button").click();
@@ -304,6 +307,7 @@ test("harness settings and model picker follow runtime metadata", { timeout: 120
   await waitForHarnesses(page);
   await openHarnessSettings(page);
   await page.getByTestId("harness-tab-kiro").click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="settings-kiro-model-options-status"]')?.textContent === "");
   assert.equal(await page.getByTestId("settings-kiro-default-model").getAttribute("data-value"), "fixture-model");
   assert.equal(await page.getByTestId("settings-kiro-default-model").textContent(), "Fixture model");
   assert.equal(await page.getByTestId("settings-kiro-default-thinking").inputValue(), "high");
@@ -395,7 +399,7 @@ test("harness settings choose provider and model from searchable dropdowns of wh
   assert.equal(await model.getAttribute("data-value"), "", "switching provider asks for a model of that provider");
   assert.equal(await model.textContent(), "Choose a model");
   await page.getByTestId("settings-save-button").click();
-  await page.getByText("Choose a Pi model for new conversations").waitFor();
+  await page.locator('#settingsRestartMessage').filter({ hasText: 'Could not save settings: Choose a Pi model for new conversations' }).waitFor();
   await model.click();
   await modelSearch.fill("sol");
   assert.equal(await modelOptions.count(), 1, "typing filters models by label or ID");
@@ -426,13 +430,15 @@ test("on a phone the harness pickers open as a list of options", { timeout: 120_
   await page.evaluate(async () => (await import("/app/settings.js")).openSettings("engines"));
   await page.locator("#settingsDialog[open]").waitFor();
   await page.getByTestId("harness-tab-claude").click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="settings-claude-model-options-status"]')?.textContent === "");
   const model = page.getByTestId("settings-claude-default-model");
   await model.click();
   const options = page.getByTestId("settings-claude-default-model-option");
   await options.first().waitFor({ state: "visible" });
   assert.ok(await options.count() > 1, "the Claude models are listed");
-  await options.filter({ hasText: /^haiku$/ }).click();
-  assert.equal(await model.textContent(), "haiku");
+  await options.and(page.locator('[data-value="haiku"]')).click();
+  assert.equal(await model.getAttribute("data-value"), "haiku");
+  assert.equal(await model.textContent(), "Haiku");
   assert.equal(await page.getByTestId("settings-claude-default-model-search").isVisible(), false, "choosing closes the list");
 });
 

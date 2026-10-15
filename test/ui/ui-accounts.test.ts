@@ -97,8 +97,7 @@ test("a member sees no admin entries, never calls an admin route, and saves only
   await page.getByTestId("login-password-input").fill(member.oneTimePassword);
   await page.getByTestId("login-new-password-input").fill("member-chosen-password-1");
   await page.getByTestId("login-submit-button").click();
-  await page.locator("#loginDialog[open]").waitFor({ state: "detached", timeout: 30_000 }).catch(() => undefined);
-  await page.waitForFunction(() => !document.querySelector("#loginDialog")?.hasAttribute("open"), undefined, { timeout: 30_000 });
+  await page.locator("#loginDialog[open]").waitFor({ state: "hidden", timeout: 30_000 });
 
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-account").waitFor({ state: "visible" });
@@ -110,11 +109,17 @@ test("a member sees no admin entries, never calls an admin route, and saves only
   assert.equal(await page.locator("[data-testid$='-executable-input']").count(), 0, "no harness paths for a member");
 
   await page.getByTestId("settings-tab-labels").click();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   await page.locator("#settingsConversationLabels").fill("noam-label");
   await page.getByTestId("settings-save-button").waitFor({ state: "visible" });
   await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#settingsForm [type='submit']")?.disabled, undefined, { timeout: 40_000 });
+  const saving = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/settings/personal" && response.request().method() === "PUT");
   await page.locator("#settingsForm [type='submit']").click();
-  await page.getByText("Settings saved").waitFor();
+  const response = await saving;
+  assert.equal(response.status(), 200);
+  assert.deepEqual(response.request().postDataJSON().conversationLabels, ["noam-label"]);
+  assert.deepEqual((await response.json()).conversationLabels, ["noam-label"]);
+  await page.getByText("Settings saved", { exact: true }).waitFor();
   const saved = runOnNode(environment, node, `
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(process.env.JOINT_BOB_DATA_DIR + "/node.db", { readOnly: true });

@@ -79,6 +79,7 @@ async function signInAndOpenProject(page: Page, url: string, username: string, p
   await page.getByTestId("login-username-input").fill(username);
   await page.getByTestId("login-password-input").fill(password);
   await page.getByTestId("login-submit-button").click();
+  await page.waitForFunction(async () => (await import('/app/state.js')).state.preferencesLoaded);
   await page.locator("#projectList .project-card", { hasText: "Internal Assistant" }).click();
   await page.locator('#sessionList [data-testid="session-menu-button"]').first().waitFor();
 }
@@ -114,6 +115,7 @@ async function configureHarnessDefaults(page: Page) {
   } }));
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-commands").click();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   await page.getByTestId("settings-start-conversation-enabled").check();
   await page.getByTestId("settings-start-conversation-prompt").fill("Update from main first.");
   await page.getByTestId("settings-end-conversation-enabled").check();
@@ -136,6 +138,7 @@ async function configureHarnessDefaults(page: Page) {
     kiro: { provider: "kiro", modelId: "default", thinkingLevel: "medium" },
   });
   assert.deepEqual(settings.conversationCommands, {
+    presets: [],
     start: { enabled: true, prompt: "Update from main first." },
     end: { enabled: true, prompt: "Commit, push, and monitor CI." },
   });
@@ -194,6 +197,7 @@ test("Settings edit per-harness model and thinking defaults for new conversation
   await page.locator('#sessionList [data-testid="session-menu-button"]').first().waitFor();
   await page.getByTestId("settings-open-button").click();
   await page.locator('#settingsDialog[open]').waitFor();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   assert.equal(await page.locator("#settingsPiDefaultThinking").inputValue(), "low", "saved defaults survive reload");
   assert.equal(await page.locator("#settingsClaudeDefaultModel").getAttribute("data-value"), "sonnet");
   await page.evaluate('document.querySelector("#settingsDialog").close(); true');
