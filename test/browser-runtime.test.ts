@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { syncBuiltinESMExports } from "node:module";
 import { chromium } from "playwright-core";
-import { browserCapability, browserLaunchArguments, BrowserRuntime, shouldSendFrame, validateBrowserUploads } from "../src/browser-runtime.js";
+import { browserCapability, browserLaunchArguments, BrowserRuntime, jpegMatchesViewport, shouldSendFrame, validateBrowserUploads } from "../src/browser-runtime.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { browserCommandSchema, browserStartSchema } from "../src/browser-types.js";
@@ -146,6 +146,21 @@ test("uploads reject traversal, malformed base64, duplicate names and cumulative
   const big = Buffer.alloc(11 * 1024 * 1024).toString("base64");
   assert.throws(() => validateBrowserUploads([file("a", big), file("b", big)]), /20 MiB/);
   assert.deepEqual(validateBrowserUploads([file("directory/file.txt")])[0], { name: "directory/file.txt", buffer: Buffer.from("hello") });
+});
+
+test("cached popup frames wait until encoded JPEG pixels match the requested viewport", () => {
+  const jpeg = (width: number, height: number, marker = 0xc0): string => Buffer.from([
+    0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0,
+    0xff, marker, 0, 8, 8, height >> 8, height & 255, width >> 8, width & 255, 1,
+    0xff, 0xd9,
+  ]).toString("base64");
+  assert.equal(jpegMatchesViewport(jpeg(520, 333), 520, 400), false, "old cropped pixels cannot use the new frame coordinates");
+  assert.equal(jpegMatchesViewport(jpeg(520, 400), 520, 400), true);
+  assert.equal(jpegMatchesViewport(jpeg(520, 400, 0xc2), 520, 400), true, "progressive JPEG headers are supported too");
+  assert.equal(jpegMatchesViewport(jpeg(519, 400), 520, 400), false);
+  for (const malformed of ["", "bm90IGEganBlZw==", jpeg(520, 400).slice(0, 12), Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]).toString("base64")]) {
+    assert.equal(jpegMatchesViewport(malformed, 520, 400), false, "malformed frame headers cannot be published");
+  }
 });
 
 // The live page streams a JPEG per repaint. A phone on a slow link cannot

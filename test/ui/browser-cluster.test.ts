@@ -56,8 +56,13 @@ test("conversation browser runs independently of its agent node and stays pinned
     assert.equal(session.appNodeId,a.nodeId);
     assert.equal(session.nodeId,b.nodeId);
     const alias=`alias-${projectId}`;
-    await promisify(execFile)(process.execPath,['--import','tsx','--input-type=module','-e',`import {registerProjectAliases} from './src/store.ts';await registerProjectAliases(${JSON.stringify(projectId)},[${JSON.stringify(alias)}]);`],{cwd:process.cwd(),env:{...process.env,HOME:environment.home,JOINT_BOB_DATA_DIR:b.dataDir},timeout:15000});
+    // The entry node checks project visibility before relaying to the browser owner.
+    // Both nodes must know the alias, as they do after project replication.
+    for (const node of [a,b]) {
+      await promisify(execFile)(process.execPath,['--import','tsx','--input-type=module','-e',`import {registerProjectAliases} from './src/store.ts';await registerProjectAliases(${JSON.stringify(projectId)},[${JSON.stringify(alias)}]);`],{cwd:process.cwd(),env:{...process.env,HOME:environment.home,JOINT_BOB_DATA_DIR:node.dataDir},timeout:15000});
+    }
     const aliased=await api<{sessions:BrowserSessionView[]}>(a,auth,'GET',`/browser/sessions?${new URLSearchParams({projectId:alias,engine:'pi',conversationId,nodeId:b.nodeId})}`);
+    assert.equal(aliased.status,200,JSON.stringify(aliased.body));
     assert.equal(aliased.body.sessions[0]?.id,session.id,'Project aliases must resolve to the same browser session');
     const db=new DatabaseSync(path.join(b.dataDir,'node.db'));try{assert.ok(db.prepare('SELECT id FROM browser_sessions WHERE id=?').get(session.id));}finally{db.close();}
     const snapshot=await command({action:'snapshot'});assert.match(JSON.stringify(snapshot.result),/Remote app/);

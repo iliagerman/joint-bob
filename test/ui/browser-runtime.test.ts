@@ -73,11 +73,22 @@ test("real browser isolates profiles, enforces ownership, streams popups, retain
     await waitFor(async () => (await runtime.get(a.id)).tabs.length === 2);
     const popup = (await runtime.get(a.id)).activePageId!;
     await assert.rejects(execute({ action: "fill", selector: "#name", text: "wrong page", expectedPageId: a.tabs[0].id }), /page|tab/i);
-    await waitFor(() => frames.some(frame => frame.type === "browserFrame" && frame.pageId === popup));
-    const frame = frames.find(frame => frame.type === "browserFrame" && frame.pageId === popup);
     const viewport = await execute({ action: "evaluate", expression: "({width:innerWidth,height:innerHeight})" }) as any;
     assert.equal(viewport.width, 520, "popup keeps its requested natural width");
-    assert.equal(frame.width, viewport.width); assert.equal(frame.height, viewport.height);
+    assert.equal(viewport.height, 400, "popup keeps its requested natural height");
+    await waitFor(() => frames.some(frame => frame.type === "browserFrame" && frame.pageId === popup));
+    const frame = frames.find(frame => frame.type === "browserFrame" && frame.pageId === popup);
+    assert.equal(frame.width, viewport.width);
+    assert.equal(frame.height, viewport.height, "Popup screencast must cover its full CSS viewport without cropping");
+    const imageSize = await execute({ action: "evaluate", expression: `(async () => {
+      const image = new Image();
+      image.src = ${JSON.stringify(`data:image/jpeg;base64,${frame.data}`)};
+      await image.decode();
+      return { width: image.naturalWidth, height: image.naturalHeight };
+    })()` });
+    assert.deepEqual(imageSize, viewport, "Encoded popup frame must cover the viewport, not just claim matching metadata");
+    const popupScreenshot = Buffer.from((await execute({ action: "screenshot" }) as any).data, "base64");
+    assert.deepEqual({ width: popupScreenshot.readUInt32BE(16), height: popupScreenshot.readUInt32BE(20) }, viewport);
     await execute({ action: "closeTab", pageId: popup });
     await execute({ action: "takeControl" }, human);
     viewer.close(); await once(viewer, "close");
@@ -118,13 +129,13 @@ test("real browser isolates profiles, enforces ownership, streams popups, retain
     await assert.rejects(runtime.deleteProfile(profile.id, start.projectId), /in use/i);
     await runtime.execute(restored.id, { action: "close" }, agent);
     await runtime.deleteProfile(profile.id, start.projectId);
-    const pending = runtime.execute(blank.id, { action: "evaluate", expression: `fetch('${url}/long-started').then(() => new Promise(() => {}))` }, agent).catch(() => undefined);
+    const pending = assert.rejects(runtime.execute(blank.id, { action: "evaluate", expression: `fetch('${url}/long-started').then(() => new Promise(() => {}))` }, agent), /closed|not running|ended/i);
     await waitFor(() => longStarted);
     await runtime.execute(blank.id, { action: "takeControl" }, human);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([runtime.execute(blank.id, { action: "close" }, human), new Promise((_, reject) => { timer = setTimeout(() => reject(Error("End browser stuck behind an in-flight command")), 3000); })]);
-    } finally { clearTimeout(timer); }
+    const live = (runtime as unknown as { sessions: Map<string, { stopSignal: AbortController }> }).sessions.get(blank.id)!;
+    const closing = runtime.execute(blank.id, { action: "close" }, human).then(() => null, (error: unknown) => error);
+    assert.equal(live.stopSignal.signal.aborted, true, "End browser must cancel the in-flight command before waiting for native Chrome shutdown");
+    assert.equal(await closing, null, "Closing the browser must succeed");
     await pending;
     assert.equal((await runtime.get(blank.id)).state, "closed");
   } finally {

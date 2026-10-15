@@ -67,6 +67,23 @@ export function shouldSendFrame(bufferedAmount: number): boolean {
   return bufferedAmount < frameBacklogLimit;
 }
 
+/** CDP can pair cached pre-resize JPEG pixels with the new viewport metadata. */
+export function jpegMatchesViewport(data: string, width: number, height: number): boolean {
+  const jpeg = Buffer.from(data, "base64");
+  if (jpeg.length < 4 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) return false;
+  for (let offset = 2; offset + 4 <= jpeg.length;) {
+    if (jpeg[offset] !== 0xff) return false;
+    const marker = jpeg[offset + 1], length = jpeg.readUInt16BE(offset + 2);
+    if (length < 2 || offset + 2 + length > jpeg.length) return false;
+    if (marker === 0xc0 || marker === 0xc2) {
+      return length >= 8 && jpeg.readUInt16BE(offset + 7) === width && jpeg.readUInt16BE(offset + 5) === height;
+    }
+    if (marker === 0xda || marker === 0xd9) return false;
+    offset += 2 + length;
+  }
+  return false;
+}
+
 export function validateBrowserUploads(files: Array<{ name: string; data: string }>): Array<{ name: string; buffer: Buffer }> {
   let bytes = 0;
   const names = new Set<string>();
@@ -907,14 +924,26 @@ export class BrowserRuntime {
       if (generation !== session.streamGeneration) { await cdp.detach(); return; }
       session.cdp = cdp;
       await page.bringToFront();
+      const viewport = page.viewportSize();
+      if (viewport) {
+        // Popup features set outer window bounds, while Playwright emulates the
+        // requested content size. Screencasts capture the native content area,
+        // which can be shorter by the browser chrome even in headless Chrome.
+        const { windowId } = await cdp.send("Browser.getWindowForTarget");
+        await cdp.send("Browser.setContentsSize", { windowId, ...viewport });
+      }
+      let captureReady = !viewport;
       cdp.on("Page.screencastFrame", frame => {
-        if (generation === session.streamGeneration) for (const ws of session.viewers) {
+        // Acknowledge stale cached frames, but never show cropped pixels under new coordinates.
+        if (!captureReady && viewport) captureReady = frame.metadata.deviceWidth === viewport.width
+          && frame.metadata.deviceHeight === viewport.height && jpegMatchesViewport(frame.data, viewport.width, viewport.height);
+        if (captureReady && generation === session.streamGeneration) for (const ws of session.viewers) {
           if (!shouldSendFrame(ws.bufferedAmount)) continue;
           this.send(ws, { type: "browserFrame", pageId: id, data: frame.data, width: frame.metadata.deviceWidth, height: frame.metadata.deviceHeight });
         }
         void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
       });
-      // Never resize individual pages or screencast output: Playwright preserves popup window features.
+      // Keep the page's requested viewport and capture it without output scaling.
       // Static pages may repaint only once. Capture that frame too; JPEG quality
       // and per-viewer backpressure limit traffic without leaving a blank viewer.
       await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1 });
