@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
+import { parse } from "yaml";
 
 const execute = promisify(execFile);
 const version = "1.2.3";
@@ -61,6 +62,11 @@ async function fixture(t: TestContext, release: Record<string, unknown> | null =
   };
   return { work, git, run, requests };
 }
+
+test("main pushes run tests even when the version is already published", async () => {
+  const workflow = parse(await readFile(".github/workflows/release.yml", "utf8"));
+  assert.equal(workflow.jobs.test.if, "github.ref == 'refs/heads/main' || needs.version.outputs.publish == 'true'");
+});
 
 test("a main push prepares the package version for automatic publication", async (t) => {
   const f = await fixture(t);

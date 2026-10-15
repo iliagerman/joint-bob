@@ -27,7 +27,7 @@ jobs:
         id: version
         run: |
           node scripts/prepare-release.mjs --metadata-only
-      # Skips the test suite for a version that is already published; the release job checks again under its lock.
+      # Published tags skip redundant tests; main pushes always validate their latest commit.
       - name: Decide whether to publish
         id: publish
         env:
@@ -37,7 +37,7 @@ jobs:
 
   test:
     needs: version
-    if: needs.version.outputs.publish == 'true'
+    if: github.ref == 'refs/heads/main' || needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # A newer push replaces this run's tests instead of queueing a second full suite behind them.
