@@ -32,7 +32,7 @@ function recentSessionKey(entry) {
   return entry.engine && entry.sessionId ? `${entry.engine}:${entry.sessionId}` : transcriptKey(entry.sessionPath);
 }
 
-function sessionMatchesRecent(session, entry) {
+export function sessionMatchesRecent(session, entry) {
   if (entry.engine && entry.sessionId) return sessionHasHarnessIdentity(session, entry.engine, entry.sessionId);
   return [session.path, ...(session.segments || []).map((segment) => segment.path)]
     .some((path) => path && transcriptKey(path) === transcriptKey(entry.sessionPath));

@@ -4,7 +4,10 @@
 // including the release that ends the hold, because only this window sees that release.
 
 import { isSwitcherKey, isSwitcherNavigationCode, switcherChord, switcherHeld, switcherStep } from "../canvas-layout.js";
-import { lastOpenedConversations, openRecentSession } from "./recents.js";
+import { api } from "./api.js";
+import { sessionDisplayState } from "./layout.js";
+import { lastOpenedConversations, openRecentSession, sessionMatchesRecent } from "./recents.js";
+import { autoRespondBadge } from "./session-rows.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
 
@@ -39,8 +42,17 @@ export function pressSwitcherKey(event) {
     const entries = lastOpenedConversations(ROW_LIMIT);
     // One conversation has nothing to switch to, so the press is swallowed and nothing opens.
     if (entries.length > 1) {
-      session = { entries, index: 1 };
+      session = { entries, index: 1, sessionsByProject: new Map([[state.activeProjectId, state.sessions]]) };
       render();
+      const current = session;
+      for (const projectId of new Set(entries.map((entry) => entry.projectId))) {
+        if (projectId === state.activeProjectId) continue;
+        api(`/api/projects/${encodeURIComponent(projectId)}/sessions`).then(({ sessions }) => {
+          if (session !== current) return;
+          current.sessionsByProject.set(projectId, sessions);
+          render();
+        }).catch(() => {}); // Stale recents or an unavailable project simply have no status.
+      }
     }
     return true;
   }
@@ -112,7 +124,26 @@ function render() {
     title.textContent = entry.title;
     const project = document.createElement("span");
     const open = entry.sessionId && entry.sessionId === state.activeSessionId ? " · open" : "";
-    project.textContent = `${projectNames.get(entry.projectId) || "Unknown project"}${open}`;
+    project.className = "conversation-switcher-meta";
+    const projectLabel = document.createElement("span");
+    projectLabel.className = "conversation-switcher-project";
+    projectLabel.textContent = `${projectNames.get(entry.projectId) || "Unknown project"}${open}`;
+    project.append(projectLabel);
+    const listed = entry.projectId === state.activeProjectId ? state.sessions : session.sessionsByProject.get(entry.projectId);
+    const conversation = listed?.find((candidate) => sessionMatchesRecent(candidate, entry));
+    if (conversation) {
+      const status = sessionDisplayState(conversation);
+      if (status !== "done") {
+        const badge = document.createElement("em");
+        badge.className = `chat-badge chat-badge-${status}`;
+        badge.textContent = status === "active" ? "Running" : status === "background" ? "Background tasks" : "Needs review";
+        project.append(badge);
+      }
+      const autoRespond = state.activeConversationProjectId === entry.projectId
+        && (conversation.conversationId || conversation.id) === state.activeConversationId
+        ? state.autoRespond : conversation.autoRespond;
+      if (autoRespond && autoRespond.status !== "stopped") project.append(autoRespondBadge(autoRespond));
+    }
     row.append(key, title, project);
     return row;
   });

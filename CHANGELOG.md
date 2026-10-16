@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Showed running, background, needs-review, and auto-respond status on each row of the conversation switcher, including recent conversations from other projects.
+
 ## 2.103.1 — 2026-10-16
 
 - Showed a failed secret account save's error beside the Save button in red, where it stays until the next attempt, and made notices that appear while a dialog is open show on that dialog so they are no longer hidden behind Settings.

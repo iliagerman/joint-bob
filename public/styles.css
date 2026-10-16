@@ -3238,6 +3238,19 @@ body.file-view { overflow: auto; }
   font-size: 12px;
   white-space: nowrap;
 }
+.conversation-switcher-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(58vw, 310px);
+}
+.conversation-switcher-project {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-switcher-meta .chat-badge,
+.conversation-switcher-meta .session-auto-badge { flex: none; }
 .conversation-switcher-hint {
   margin: 10px 4px 0;
   padding-top: 10px;

@@ -85,6 +85,62 @@ test("holding the chord and tapping the cycle key steps to the previous conversa
   assert.equal(await overlayOpen(), false, "letting go closes the list");
 });
 
+test("rows show review, running, and auto-respond indicators", async () => {
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const first = state.recentSessions[0];
+    const second = state.recentSessions[1];
+    const firstSession = state.sessions.find((session) => session.id === first.sessionId);
+    const secondSession = state.sessions.find((session) => session.id === second.sessionId);
+    if (!firstSession || !secondSession) throw new Error("Expected both recent sessions in active project");
+    firstSession.turnRunning = true;
+    firstSession.autoRespond = { status: "running", responses: 2, maxResponses: 10 };
+    if (state.activeConversationId === (firstSession.conversationId || firstSession.id)) state.autoRespond = firstSession.autoRespond;
+    secondSession.reviewState = "needs_review";
+  });
+  await holdChord();
+  await page.keyboard.press(cycleKey);
+  assert.match(await rows().nth(0).innerText(), /Running/i);
+  assert.match(await rows().nth(0).innerText(), /Auto 2\/10/);
+  assert.match(await rows().nth(1).innerText(), /Needs review/i);
+  await page.keyboard.press("Escape");
+  await letGoOfChord();
+});
+
+test("a recent conversation in another project gets its status when listed", async () => {
+  const other = await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const project = state.projects.find((candidate) => candidate.id !== state.activeProjectId);
+    if (!project) throw new Error("Expected another project");
+    const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}/sessions`);
+    const { sessions } = await response.json();
+    const conversation = sessions[0];
+    if (!conversation) throw new Error("Expected another project's conversation");
+    state.recentSessions.push({ projectId: project.id, sessionPath: conversation.path, title: "Other project status", openedAt: new Date().toISOString() });
+    return { id: project.id, path: conversation.path };
+  });
+  const endpoint = `**/api/projects/${encodeURIComponent(other.id)}/sessions`;
+  await page.route(endpoint, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.sessions.find((candidate: { path: string }) => candidate.path === other.path).reviewState = "needs_review";
+    await route.fulfill({ response, json: body });
+  });
+  try {
+    await holdChord();
+    await page.keyboard.press(cycleKey);
+    await rows().filter({ hasText: "Other project status" }).getByText("Needs review", { exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    await letGoOfChord();
+  } finally {
+    await page.unroute(endpoint);
+    await page.evaluate(async (path) => {
+      const { state } = await import("/app/state.js");
+      state.recentSessions = state.recentSessions.filter((entry) => entry.sessionPath !== path);
+    }, other.path);
+  }
+});
+
 test("a digit opens its row at once, even while the chord is still held", async () => {
   await holdChord();
   await page.keyboard.press(cycleKey);
