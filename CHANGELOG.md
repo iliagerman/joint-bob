@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.103.0 — 2026-10-16
 
-- Previewed images, PDFs, and Word documents in a project file's View action, and turned off Edit for those files.
+- Added previews of images, PDFs, and Word documents in a project file's View action, with Edit turned off for those files.
 
 ## 2.102.0 — 2026-10-16
 
