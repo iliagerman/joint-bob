@@ -72,6 +72,24 @@ test("Share copies the open conversation's identity and its link overrides saved
   assert.equal(await page.locator("#chatPanel").isVisible(), true, "saved Projects view must not hide the linked conversation");
 });
 
+test("Pin to home screen copies this conversation's link and shows Chrome steps", async () => {
+  await page.evaluate(`Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+    writeText: async (text) => { document.body.dataset.pinnedLink = text; },
+  } });`);
+  await page.getByTestId("chat-more-button").click();
+  await page.getByTestId("chat-pin-button").click();
+  const copied = await page.locator("body").getAttribute("data-pinned-link");
+  assert.ok(copied);
+  assert.ok(new URL(copied).searchParams.get("sessionId"));
+  await page.getByText("Link copied. Open Chrome, paste it, then tap ⋮ → Add to Home screen.", { exact: true }).waitFor();
+  await page.evaluate(`Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+    writeText: async () => { throw new Error("Synthetic clipboard rejection"); },
+  } });`);
+  await page.getByTestId("chat-more-button").click();
+  await page.getByTestId("chat-pin-button").click();
+  await page.getByText("Failed to copy link: Synthetic clipboard rejection", { exact: true }).waitFor();
+});
+
 test("native sharing uses the conversation link and reports share or clipboard failures", async () => {
   await page.evaluate(`
     Object.defineProperty(navigator, "share", { configurable: true, value: async (data) => {

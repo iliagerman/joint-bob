@@ -22,12 +22,12 @@ export function getCurrentConversationTitle() {
   return project ? `${title} • ${project.name}` : title;
 }
 
-export async function copyConversationLink() {
+export async function copyConversationLink(successMessage = "Conversation link copied to clipboard") {
   const link = getCurrentConversationLink();
   if (!link) { toast("No active conversation to share"); return; }
   try {
     await navigator.clipboard.writeText(link);
-    toast("Conversation link copied to clipboard");
+    toast(successMessage);
   } catch (error) {
     toast(`Failed to copy link: ${error.message}`);
   }
@@ -56,4 +56,16 @@ shareLabel.className = "chat-action-label";
 shareLabel.textContent = "Share";
 shareButton.append(menuIcon("share"), shareLabel);
 shareButton.addEventListener("click", () => void shareConversation());
-elements.chatMoreMenu.querySelector(".chat-more-actions").append(shareButton);
+const pinButton = document.createElement("button");
+pinButton.id = "pinConversationButton";
+pinButton.className = "ghost compact chat-action";
+pinButton.type = "button";
+pinButton.dataset.testid = "chat-pin-button";
+pinButton.title = "Copy conversation link for a home-screen shortcut";
+pinButton.setAttribute("aria-label", "Copy conversation link for home screen");
+const pinLabel = document.createElement("span");
+pinLabel.className = "chat-action-label";
+pinLabel.textContent = "Copy home-screen link";
+pinButton.append(menuIcon("pin"), pinLabel);
+pinButton.addEventListener("click", () => void copyConversationLink("Link copied. Open Chrome, paste it, then tap ⋮ → Add to Home screen."));
+elements.chatMoreMenu.querySelector(".chat-more-actions").append(shareButton, pinButton);

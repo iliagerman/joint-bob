@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a Copy home-screen link action to the chat menu that copies the conversation link and shows how to add it to the home screen from Chrome.
+
 ## 2.101.1 — 2026-10-16
 
 - Kept accepted prompts visible when reconnecting while a conversation starts, without duplicating prompts or blocking live output.
