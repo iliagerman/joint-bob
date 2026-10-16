@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.103.1 — 2026-10-16
 
-- Showed a failed secret account save's error beside the Save button, where it stays until the next attempt and is no longer hidden behind other dialogs.
+- Showed a failed secret account save's error beside the Save button in red, where it stays until the next attempt, and made notices that appear while a dialog is open show on that dialog so they are no longer hidden behind Settings.
+- Made the error on a secret scope dialog show in red instead of muted grey.
+- Recorded failed secret account saves in the client log, and every rejected change request in the server log, with field names and reasons but never the submitted values.
 
 ## 2.103.0 — 2026-10-16
 
