@@ -20,6 +20,19 @@ let baseUrl: string;
 let fixture: Fixture;
 const sockets: WebSocket[] = [];
 
+async function waitForChatSession(opened: ReturnType<typeof openChat>): Promise<void> {
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const { harnessChatConnections } = await import("../src/server/harness-chat.js");
+  // Tests patch live sessions, so a wire snapshot alone is not their precondition.
+  await waitFor(opened.messages, () => {
+    const ready = opened.messages.find((frame) => frame.type === "ready");
+    if (!ready) return false;
+    const shared = [...harnessSessions.values()].find((candidate) =>
+      candidate.projectId === fixture.projectId && candidate.engine === ready.engine && candidate.session.id === ready.sessionId);
+    return Boolean(shared && [...harnessChatConnections].some((connection) => connection.shared === shared));
+  });
+}
+
 before(async () => {
   root = await temporaryRoot("joint-bob-queued-engines-");
   previous = { ...process.env };
@@ -45,6 +58,32 @@ after(async () => {
   await stopServer(server);
   process.env = previous;
   await rm(root, { recursive: true, force: true });
+});
+
+test("chat fixture readiness waits for registration beyond the ready snapshot", async (context) => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+  sockets.push(opened.socket);
+  await waitForChatSession(opened);
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const sessionId = opened.messages.find((frame) => frame.type === "ready")!.sessionId;
+  let inspected = false;
+  const values = harnessSessions.values.bind(harnessSessions);
+  // Keep the real ready frame, but gate visibility of its runtime registration.
+  const registration = context.mock.method(harnessSessions, "values", function* () {
+    for (const shared of values()) if (shared.session.id !== sessionId) yield shared;
+    inspected = true;
+  });
+  let completed = false;
+  const waiting = waitForChatSession(opened).then(() => { completed = true; });
+  try {
+    await waitFor(opened.messages, () => inspected || completed);
+    assert.equal(completed, false, "ready snapshot must not release tests before registration");
+    assert.equal(inspected, true);
+  } finally {
+    registration.mock.restore();
+    await waiting;
+  }
+  assert.equal(completed, true);
 });
 
 test("Pi app queue dispatches Claude and Pi overrides FIFO, then inherits active settings", async () => {
@@ -120,7 +159,7 @@ for (const failFirst of [false, true]) test(`update recovery starts every conver
 test("stopping a Pi turn starts the next queued message", async (context) => {
   const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
   sockets.push(opened.socket);
-  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+  await waitForChatSession(opened);
   const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
   const { harnessSessions } = await import("../src/server/harness-sessions.js");
   const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId)!;
@@ -153,7 +192,7 @@ test("stopping a Pi turn starts the next queued message", async (context) => {
 test("force starting a queued Pi prompt hides the canceled turn error", async (context) => {
   const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
   sockets.push(opened.socket);
-  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+  await waitForChatSession(opened);
   const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
   const { harnessSessions } = await import("../src/server/harness-sessions.js");
   const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId)!;

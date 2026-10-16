@@ -42,46 +42,58 @@ test("a twin shows a remote turn's end as needing review, never as reviewed, and
   try {
     const a = await seedDevEnvironment(path.join(root, "a"), 1), b = await seedDevEnvironment(path.join(root, "b"), 1);
     const owner = a.nodes[0], twin = b.nodes[0];
-    children.push(await startDevNode(a, owner), await startDevNode(b, twin));
-    const [ownerAuth, twinAuth] = await Promise.all([signIn(a, owner), signIn(b, twin)]);
-    const invitation = await api<{ link: string; relationshipId: string }>(owner, ownerAuth, "POST", "/twins/invitations", { confirmOwnedData: true });
-    assert.equal((await api(twin, twinAuth, "POST", "/twins/accept", { link: invitation.body.link, confirmOwnedData: true })).status, 201);
-    assert.equal((await api(owner, ownerAuth, "POST", `/twins/${invitation.body.relationshipId}/sharing`, { ownerNodeId: owner.nodeId, confirmOwnedData: true })).status, 200);
-
+    // Publish a complete fixture before either server can scan or share it. This
+    // test exercises live turn completion, not concurrent project/record creation.
     const directory = path.join(root, "project");
     await mkdir(directory);
-    const created = await api<{ project: { id: string } }>(owner, ownerAuth, "POST", "/projects", { name: "Remote turns", type: "personal", path: directory, synced: false });
-    assert.equal(created.status, 201);
-    const projectId = created.body.project.id;
 
     const sessionId = randomUUID(), started = Date.now() - 60_000;
     const transcript = path.join(a.home, ".pi", "sessions", `${sessionId}.jsonl`);
     await mkdir(path.dirname(transcript), { recursive: true });
     await writeFile(transcript, `${JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: new Date(started).toISOString(), cwd: directory })}\n`
       + message("user", started, "First question") + message("assistant", started + 100, "First answer"));
-    execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    const projectId = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      import assert from "node:assert/strict";
+      import { addProject } from "./src/store.ts";
+      import { getSettings } from "./src/settings.ts";
       import { ensureConversationRecord } from "./src/conversation-records.ts";
-      await ensureConversationRecord(${JSON.stringify(projectId)}, "pi", ${JSON.stringify(sessionId)}, ${JSON.stringify(owner.nodeId)});
-    `], { cwd: process.cwd(), env: { ...process.env, HOME: a.home, JOINT_BOB_DATA_DIR: owner.dataDir }, stdio: "pipe" });
+      assert.equal(getSettings().pi.sessionPath, ${JSON.stringify(path.dirname(transcript))});
+      assert.equal(getSettings().strictResourceIsolation, true);
+      const project = await addProject("Remote turns", ${JSON.stringify(directory)}, { type: "personal", synced: false });
+      await ensureConversationRecord(project.id, "pi", ${JSON.stringify(sessionId)}, ${JSON.stringify(owner.nodeId)});
+      process.stdout.write(project.id);
+    `], { cwd: process.cwd(), env: { ...process.env, HOME: a.home, JOINT_BOB_DATA_DIR: owner.dataDir }, stdio: "pipe", encoding: "utf8" }).trim();
+
+    children.push(await startDevNode(a, owner), await startDevNode(b, twin));
+    const [ownerAuth, twinAuth] = await Promise.all([signIn(a, owner), signIn(b, twin)]);
+    const invitation = await api<{ link: string; relationshipId: string }>(owner, ownerAuth, "POST", "/twins/invitations", { confirmOwnedData: true });
+    assert.equal((await api(twin, twinAuth, "POST", "/twins/accept", { link: invitation.body.link, confirmOwnedData: true })).status, 201);
+    assert.equal((await api(owner, ownerAuth, "POST", `/twins/${invitation.body.relationshipId}/sharing`, { ownerNodeId: owner.nodeId, confirmOwnedData: true })).status, 200);
 
     const row = async (node: SeededNode, auth: SignedIn): Promise<Row> => {
       const listed = await api<{ sessions: Row[] }>(node, auth, "GET", `/projects/${projectId}/sessions`);
       assert.equal(listed.status, 200);
       const found = listed.body.sessions.find((session) => session.id === sessionId);
-      assert.ok(found, `${node.key} lists the conversation`);
+      assert.ok(found, `${node === owner ? "owner" : "twin"} lists the conversation (${listed.body.sessions.length} rows)`);
       return found;
     };
     // The twin has just pulled the transcript, so the next periodic pull is 30 seconds away.
     await eventually(async () => assert.ok(receipts(twin, projectId).includes(sessionId), "the twin received the transcript"));
     const pulledAt = Date.now();
     const first = await eventually(() => row(owner, ownerAuth));
+    assert.equal(first.path, transcript, "owner lists the native fixture, not a draft");
     const reviewed = await fetch(`${owner.url}/api/projects/${projectId}/sessions/reviewed`, {
       method: "PUT",
       headers: { Cookie: ownerAuth.cookie, "x-csrf-token": ownerAuth.csrfToken, "Content-Type": "application/json" },
       body: JSON.stringify({ sessionPath: first.path, updatedAt: first.updatedAt }),
     });
     assert.equal(reviewed.status, 204);
-    await eventually(async () => assert.equal((await row(twin, twinAuth)).reviewState, "reviewed"));
+    await eventually(async () => {
+      const current = await row(twin, twinAuth);
+      assert.equal(current.path, path.join(b.home, ".pi", "sessions", `${sessionId}.jsonl`), "twin lists its native copy");
+      assert.equal(current.updatedAt, first.updatedAt, "initial transcript activity agrees");
+      assert.equal(current.reviewState, "reviewed");
+    });
 
     // One turn on the owner: the prompt, the running lease, the answer, the end of the run.
     const runtimeDb = openPiRuntimeDatabase(owner.dataDir);
