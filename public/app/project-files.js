@@ -34,8 +34,13 @@ function projectFileResolutionUrl(filePath) {
 }
 
 function resetFileEditor() {
-  state.fileEditor = { requestedPath: null, path: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false, markdown: false, preview: false, readOnly: false };
+  state.fileEditor = { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false, markdown: false, preview: false, readOnly: false };
   elements.fileActionView.hidden = false;
+  elements.fileBinaryView.hidden = true;
+  elements.fileImagePreview.removeAttribute("src");
+  elements.fileDocumentPreview.removeAttribute("src");
+  elements.fileImagePreview.hidden = true;
+  elements.fileDocumentPreview.hidden = true;
   elements.fileEditorView.hidden = true;
   fileEditor.setValue("");
   fileEditor.setOption("mode", null);
@@ -60,7 +65,7 @@ export async function openFileAction(path, taskId) {
   try {
     const body = await api(`${projectFileApiUrl("file-resolution", path, taskId).pathname}${projectFileApiUrl("file-resolution", path, taskId).search}`);
     if (!elements.fileActionDialog.open || state.fileEditor.requestedPath !== path) return;
-    Object.assign(state.fileEditor, { path: body.path, downloadUrl: body.downloadUrl, contentUrl: body.contentUrl });
+    Object.assign(state.fileEditor, { path: body.path, viewUrl: body.viewUrl, downloadUrl: body.downloadUrl, contentUrl: body.contentUrl });
     elements.fileActionPath.textContent = body.path;
     elements.fileActionDownloadLink.href = body.downloadUrl;
     elements.fileActionDownloadLink.removeAttribute("aria-disabled");
@@ -69,7 +74,7 @@ export async function openFileAction(path, taskId) {
       elements.fileActionBrowserLink.hidden = false;
     }
     elements.fileActionViewButton.disabled = false;
-    elements.fileActionEditButton.disabled = false;
+    elements.fileActionEditButton.disabled = /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|pdf|docx?)$/i.test(body.path);
     elements.fileActionStatus.textContent = "";
   } catch (error) {
     if (!elements.fileActionDialog.open || state.fileEditor.requestedPath !== path) return;
@@ -98,8 +103,18 @@ function applyFileEditorView(markdown, preview) {
 // Viewing and editing are the same dialog: viewing locks the buffer, hides Save, and
 // opens markdown on its rendered half, so reading a file never leaves the app.
 async function openProjectFile(readOnly) {
-  const { contentUrl } = state.fileEditor;
+  const { contentUrl, viewUrl, path } = state.fileEditor;
   if (!contentUrl) return;
+  if (readOnly && /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|pdf|docx?)$/i.test(path)) {
+    const image = /\.(?:png|jpe?g|gif|webp|avif|bmp|ico)$/i.test(path);
+    elements.fileImagePreview.hidden = !image;
+    elements.fileDocumentPreview.hidden = image;
+    if (image) { elements.fileImagePreview.alt = path; elements.fileImagePreview.src = viewUrl; }
+    else elements.fileDocumentPreview.src = viewUrl;
+    elements.fileActionView.hidden = true;
+    elements.fileBinaryView.hidden = false;
+    return;
+  }
   state.fileEditor.loading = true;
   state.fileEditor.readOnly = readOnly;
   elements.fileActionViewButton.disabled = true;
@@ -185,6 +200,7 @@ elements.fileActionEditButton.addEventListener("click", () => openProjectFile(fa
 elements.fileActionCancelButton.addEventListener("click", attemptCloseFileEditor);
 elements.fileEditorSaveButton.addEventListener("click", () => saveProjectFile());
 elements.fileEditorCancelButton.addEventListener("click", attemptCloseFileEditor);
+elements.fileBinaryCloseButton.addEventListener("click", attemptCloseFileEditor);
 elements.fileActionDialog.addEventListener("cancel", (event) => { event.preventDefault(); attemptCloseFileEditor(); });
 for (const link of [elements.fileActionDownloadLink, elements.fileActionBrowserLink]) {
   link.addEventListener("click", () => setTimeout(() => {

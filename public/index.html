@@ -1709,6 +1709,11 @@
             <button class="primary" id="fileActionEditButton" type="button" data-testid="file-action-edit-button" autofocus><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 20 4.5-1 11-11a2 2 0 0 0-3-3l-11 11L4 20zM14.5 7.5l3 3"/></svg>Edit</button>
           </div>
         </div>
+        <div id="fileBinaryView" hidden>
+          <img id="fileImagePreview" alt="" data-testid="file-image-preview" hidden>
+          <iframe id="fileDocumentPreview" title="Document preview" data-testid="file-document-preview" hidden></iframe>
+          <div class="dialog-actions"><button class="ghost" id="fileBinaryCloseButton" type="button" data-testid="file-binary-close-button">Close</button></div>
+        </div>
         <div id="fileEditorView" hidden>
           <div class="file-editor-label"><label for="fileEditorTextarea">File contents</label><span class="file-editor-label-tools"><button class="ghost" id="fileEditorPreviewButton" type="button" hidden aria-pressed="false" data-testid="file-editor-preview-button">Preview</button><span id="fileEditorMode" data-testid="file-editor-mode">Normal</span></span></div>
           <div class="file-editor-split" id="fileEditorSplit">

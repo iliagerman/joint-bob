@@ -7,6 +7,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import WordExtractor from "word-extractor";
 import { type ClusterPeer, getClusterNode } from "../../cluster.js";
 import { getRuntimePeer, runtimeFetch } from "../runtime-peers.js";
 import { ConversationOwnershipError } from "../../conversation-ownership.js";
@@ -204,6 +205,7 @@ function projectFileContentType(resolved: string): string {
 // forbids an inline script, so the source travels inside a hidden <pre> and
 // /file-view.js renders it.
 const MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".mkdn"]);
+const WORD_FILE_EXTENSIONS = new Set([".doc", ".docx"]);
 
 // The language label a rendered code block carries. An extension that is not listed
 // still renders as a code block, just without a language name.
@@ -274,9 +276,21 @@ async function sendProjectFile(response: Response, projectId: string, requestedP
       createReadStream(resolved).pipe(response);
       return;
     }
+    const extension = path.extname(resolved).toLowerCase();
+    if (mode === "view" && WORD_FILE_EXTENSIONS.has(extension)) {
+      if (info.size > 20 * 1024 * 1024) throw new ProjectFileError(413, "Document is too large to preview");
+      try {
+        const document = await new WordExtractor().extract(resolved);
+        const page = fileViewPage(fileName, "word", document.getBody());
+        response.setHeader("Content-Type", "text/html; charset=utf-8");
+        response.setHeader("Content-Length", String(Buffer.byteLength(page)));
+        response.end(page);
+      } catch { throw new ProjectFileError(415, "Cannot preview this Word document"); }
+      return;
+    }
     // Only text renders on the page. A binary or oversized file falls through to the
     // byte stream below, which is what an image or a PDF needs anyway.
-    const viewable = !download && !INLINE_PROJECT_FILE_TYPES[path.extname(resolved).toLowerCase()] && info.size <= TEXT_FILE_LIMIT;
+    const viewable = !download && !INLINE_PROJECT_FILE_TYPES[extension] && info.size <= TEXT_FILE_LIMIT && !WORD_FILE_EXTENSIONS.has(extension);
     const source = viewable ? readableText(await readFile(resolved)) : null;
     if (source !== null) {
       const page = fileViewPage(fileName, fileViewLanguage(resolved), source);

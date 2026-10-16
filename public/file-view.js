@@ -10,4 +10,5 @@ const body = document.getElementById("fileViewBody");
 const language = source.dataset.language;
 
 if (language === "markdown") renderMarkdown(body, source.textContent);
+else if (language === "word") { body.classList.add("file-view-word"); body.textContent = source.textContent; }
 else body.append(buildCodeBlock(language, source.textContent));

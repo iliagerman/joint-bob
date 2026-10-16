@@ -77,9 +77,10 @@ export function securityHeaders(request: Request, response: Response, next: Next
   const inlineStyle = "'self' 'unsafe-inline'";
   response.setHeader("Content-Security-Policy", `default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src-elem ${inlineStyle}; style-src-attr ${inlineStyle}; script-src 'self'`);
   response.setHeader("X-Content-Type-Options", "nosniff");
-  // The canvas embeds the normal chat surface in a same-origin iframe; every other
-  // document stays unframeable.
-  response.setHeader("X-Frame-Options", request.path === "/" && request.query.canvasPane === "1" ? "SAMEORIGIN" : "DENY");
+  // The canvas and the file dialog embed same-origin views. All other documents
+  // stay unframeable (including the separate sandboxed HTML browser mode).
+  const filePreview = /^\/api\/projects\/[^/]+\/file$/.test(request.path) && request.query.browser !== "1" && request.query.download !== "1";
+  response.setHeader("X-Frame-Options", (request.path === "/" && request.query.canvasPane === "1") || filePreview ? "SAMEORIGIN" : "DENY");
   response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   if (request.path.startsWith("/api/")) response.setHeader("Cache-Control", "no-store");

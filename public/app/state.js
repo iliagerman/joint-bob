@@ -187,7 +187,7 @@ export const state = {
   preferencesLoaded: false,
   initialProjectId: bootParams.get("projectId"),
   initialSessionPath: bootParams.get("sessionPath"),
-  fileEditor: { requestedPath: null, path: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false },
+  fileEditor: { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false },
   fileExplorer: { dir: "", clipboard: null, loading: false },
 };
 
