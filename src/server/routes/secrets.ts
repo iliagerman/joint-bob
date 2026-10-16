@@ -24,14 +24,13 @@ import { Feature, requireFeature } from "../http-auth.js";
 app.use("/api/secrets", requireFeature(Feature.SECRETS_MANAGE));
 app.use("/api/clusters/:clusterId/secrets", requireFeature(Feature.SECRETS_MANAGE));
 
-/** Automatically sync replicating accounts to active twins. */
-async function syncToTwins(replicate: boolean): Promise<void> {
-  if (!replicate) return;
+/** Automatically sync owned accounts to active twins, independently of cluster sharing. */
+async function syncToTwins(): Promise<void> {
   const db = await clusterV2Database();
   const local = (await getClusterNode()).id;
   const twins = listTwinRelationships(db, local).filter((t) => t.status === "active");
   if (twins.length > 0) {
-    await enqueueSecretCredentialSync(twins.map((t) => t.peer.nodeId), undefined, true);
+    await enqueueSecretCredentialSync(twins.map((t) => t.peer.nodeId));
   }
 }
 
@@ -106,14 +105,14 @@ app.get("/api/secrets", async (_request, response, next) => {
 app.post("/api/secrets/accounts", async (request, response, next) => {
   try {
     const account = await saveSecretAccount(secretAccountSchema.parse(request.body));
-    await syncToTwins(account.replicate);
+    await syncToTwins();
     response.status(201).json({ accounts: await listSecretAccounts(), account });
   } catch (error) { next(error); }
 });
 app.put("/api/secrets/accounts/:accountId", async (request, response, next) => {
   try {
     const account = await saveSecretAccount({ ...secretAccountSchema.parse(request.body), id: z.string().uuid().parse(request.params.accountId) });
-    await syncToTwins(account.replicate);
+    await syncToTwins();
     response.json({ accounts: await listSecretAccounts(), account });
   } catch (error) { if (error instanceof ClusterV2HttpError) { response.status(error.statusCode).json({ error: error.message }); return; } next(error); }
 });
@@ -128,6 +127,7 @@ app.put("/api/secrets/scopes/:scopeType/:scopeId", async (request, response, nex
     const scope = secretScopeParamsSchema.parse(request.params);
     const payload = secretScopeSchema.parse(request.body);
     await setScopeSecretAccounts(scope.scopeType, scope.scopeId, payload.accountIds);
+    await syncToTwins();
     response.json(await getScopeSecretAccounts(scope.scopeType, scope.scopeId));
   } catch (error) {
     if (error instanceof Error && /Selected .* accounts have duplicate /.test(error.message)) { response.status(409).json({ error: error.message }); return; }

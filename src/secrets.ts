@@ -24,8 +24,8 @@ export type ConversationEngineId = HarnessId;
     travel as `accountIds` until `persistConversationSecretAccounts` can store them. */
 export interface SecretConversation { engine: ConversationEngineId; sessionId?: string; accountIds?: string[] }
 export interface SecretVariable { name: string; kind: SecretKind; configured: true }
-/** `projectId` marks an account owned by one project: it is attached to that project on creation, never
-    replicates, and is offered only in that project's pickers. Absent means global to this node. */
+/** `projectId` marks an account owned by one project: attached on creation and usable only
+    in that project. Twins preserve this restriction; cluster export requires an explicit grant. */
 export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; github?: GithubAccountSummary; websiteOrigin?: string; projectId?: string; shared?: boolean; readOnly?: boolean; ownerNodeId?: string }
 export interface SecretAccountInput { id?: string; label: string; provider: SecretProvider; replicate?: boolean; variables: Array<{ name: string; kind: SecretKind; value?: string }>; websiteOrigin?: string | null; projectId?: string }
 export interface WebsiteCredentialAccount { id: string; origin: string; variables: Array<{ name: string; kind: SecretKind; value: string }> }
@@ -298,7 +298,7 @@ function conversationRows(conversation: SecretConversation): AccountRow[] {
 
 function accountAllowedForProject(accountId: string, projectId: string): boolean {
   const handle = db();
-  const { origin_node_id: origin, project_id: ownerProject } = handle.prepare("SELECT origin_node_id,project_id FROM secret_accounts WHERE id=?").get(accountId) as { origin_node_id: string; project_id: string|null };
+  const { origin_node_id: origin, project_id: ownerProject, replicate } = handle.prepare("SELECT origin_node_id,project_id,replicate FROM secret_accounts WHERE id=?").get(accountId) as { origin_node_id: string; project_id: string|null; replicate: number };
   if (ownerProject && ownerProject !== projectId) return false;
   // An account created here has no origin until it first replicates.
   if (!origin) return true;
@@ -306,13 +306,13 @@ function accountAllowedForProject(accountId: string, projectId: string): boolean
   if (origin === local) return true;
   if (isTrustedTwin(handle, local, origin)) return true;
   const policy = handle.prepare("SELECT deleted FROM cluster_v2_resource_policy WHERE kind='project' AND resource_id=?").get(projectId) as { deleted: number } | undefined;
-  if (!hasTable('cluster_v2_scoped_secret_copies')) return Boolean(policy && !policy.deleted && mayReceiveResource(handle, local, 'project', projectId) && mayReceiveResource(handle, origin, 'project', projectId));
+  if (!hasTable('cluster_v2_scoped_secret_copies')) return Boolean(replicate && policy && !policy.deleted && mayReceiveResource(handle, local, 'project', projectId) && mayReceiveResource(handle, origin, 'project', projectId));
   const grants = handle.prepare('SELECT grants FROM cluster_v2_scoped_secret_copies WHERE peer_id=? AND account_id=?').get(origin, accountId) as {grants:string}|undefined;
   if (ownerProject && (!policy || policy.deleted || !mayReceiveResource(handle, local, 'project', projectId) || !mayReceiveResource(handle, origin, 'project', projectId))) return false;
   if (grants && (JSON.parse(grants.grants) as Array<{clusterId:string}>).some(grant => handle.prepare('SELECT 1 FROM sharing_memberships a JOIN sharing_memberships b ON a.cluster_id=b.cluster_id WHERE a.cluster_id=? AND a.node_id=? AND b.node_id=?').get(grant.clusterId,local,origin) && (!ownerProject || handle.prepare("SELECT 1 FROM sharing_resource_shares WHERE kind='project' AND resource_id=? AND cluster_id=?").get(ownerProject,grant.clusterId)))) return true;
   if (!policy || policy.deleted || !mayReceiveResource(handle, local, 'project', projectId) || !mayReceiveResource(handle, origin, 'project', projectId)) return false;
   const copy = handle.prepare('SELECT scopes FROM cluster_v2_scoped_secret_copies WHERE peer_id=? AND account_id=?').get(origin, accountId) as { scopes: string } | undefined;
-  return !copy || (JSON.parse(copy.scopes) as Array<{ projectIds: string[] }>).some(scope => scope.projectIds.includes(projectId));
+  return copy ? (JSON.parse(copy.scopes) as Array<{ projectIds: string[] }>).some(scope => scope.projectIds.includes(projectId)) : Boolean(replicate);
 }
 
 /** Broadest first: workspace, then project, then conversation. Callers apply them in this
@@ -408,21 +408,27 @@ export async function setScopeSecretAccounts(scopeType: SecretScopeType, scopeId
   if (new Set(accountIds).size !== accountIds.length) throw new Error("Secret account IDs must be unique");
   const rows = accountIds.map(visibleAccountRow);
   assertNoCollision(rows);
-  const previous = scopeType === "workspace" ? (await getScopeSecretAccounts(scopeType, canonical)).accountIds : [];
+  const previous = (await getScopeSecretAccounts(scopeType, canonical)).accountIds;
   const changed = [...new Set([...previous, ...accountIds])].filter((id) => previous.includes(id) !== accountIds.includes(id));
   db().exec("BEGIN IMMEDIATE");
   try {
     db().prepare("DELETE FROM secret_assignments WHERE scope_type = ? AND scope_id = ?").run(scopeType, canonical);
     const insert = db().prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
     for (const id of accountIds) insert.run(scopeType, canonical, id);
+    const local = hasTable("cluster_node") ? (db().prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string } | undefined)?.id : undefined;
     if (hasTable('cluster_v2_local_secret_assignments')) {
       db().prepare('DELETE FROM cluster_v2_local_secret_assignments WHERE scope_type=? AND scope_id=?').run(scopeType,canonical);
-      for (const id of accountIds) if (db().prepare("SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=? AND grants<>'[]'").get(id)) db().prepare('INSERT INTO cluster_v2_local_secret_assignments VALUES(?,?,?)').run(scopeType,canonical,id);
+      for (const row of rows) {
+        const fromTwin = local && row.origin_node_id && row.origin_node_id !== local && isTrustedTwin(db(), local, row.origin_node_id);
+        if (fromTwin || db().prepare("SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=? AND grants<>'[]'").get(row.id)) db().prepare('INSERT INTO cluster_v2_local_secret_assignments VALUES(?,?,?)').run(scopeType,canonical,row.id);
+      }
     }
-    const selectUpdatedAt = db().prepare("SELECT updated_at FROM secret_accounts WHERE id = ?");
+    const selectUpdatedAt = db().prepare("SELECT updated_at, origin_node_id FROM secret_accounts WHERE id = ?");
     const touch = db().prepare("UPDATE secret_accounts SET updated_at = ? WHERE id = ?");
     for (const id of changed) {
-      const row = selectUpdatedAt.get(id) as { updated_at: string };
+      const row = selectUpdatedAt.get(id) as { updated_at: string; origin_node_id: string };
+      // Selecting a received account must not advance its owner's credential version.
+      if (local && row.origin_node_id && row.origin_node_id !== local) continue;
       if (!hasTable('cluster_v2_scoped_secret_copies') || !db().prepare('SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=?').get(id)) touch.run(new Date(Math.max(Date.now(), Date.parse(row.updated_at) + 1)).toISOString(), id);
     }
     db().exec("COMMIT");

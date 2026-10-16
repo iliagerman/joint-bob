@@ -19,6 +19,9 @@ export interface SecretAssignmentPayload {
 export interface SecretAccountPayload {
   label: string;
   provider: SecretProvider;
+  /** Cluster export preference; twins receive owned accounts regardless of this flag. */
+  replicate?: boolean;
+  projectId?: string;
   variables: Array<{ name: string; kind: SecretKind; value: string }>;
   /** Optional for compatibility with events sent by older nodes. */
   workspaceIds?: string[];
@@ -84,6 +87,8 @@ function validateEvent(event: SecretCredentialEvent): void {
   const value = event.value;
   if (!value || typeof value.label !== "string" || !value.label.trim() || value.label.length > 64) throw new Error("Secret credential event needs a label");
   if (!(["aws", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "postgres", "mssql", "mongodb", "custom", "website", "ssh"] as string[]).includes(value.provider)) throw new Error("Secret credential event provider is invalid");
+  if (value.replicate !== undefined && typeof value.replicate !== "boolean") throw new Error("Secret credential event replicate flag is invalid");
+  if (value.projectId !== undefined && (typeof value.projectId !== "string" || !value.projectId.trim() || value.projectId.length > 300)) throw new Error("Secret credential event project ID is invalid");
   if (value.provider === "website" && value.websiteOrigin == null) throw new Error("Website secret accounts require a website origin");
   if (value.websiteOrigin != null && (typeof value.websiteOrigin !== "string" || normalizeWebsiteOrigin(value.websiteOrigin) !== value.websiteOrigin)) throw new Error("Secret credential event website origin is invalid");
   if (!Array.isArray(value.variables) || value.variables.length < 1 || value.variables.length > 20) throw new Error("Secret credential event needs between 1 and 20 variables");
@@ -138,8 +143,10 @@ function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, valu
 function applyAssignments(handle: DatabaseSync, accountId: string, value: SecretAccountPayload): void {
   if (value.assignments === undefined) return;
   handle.prepare("DELETE FROM secret_assignments WHERE account_id = ?").run(accountId);
-  const insert = handle.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
-  for (const entry of value.assignments) {
+  const local = handle.prepare("SELECT 1 FROM sqlite_master WHERE name = 'cluster_v2_local_secret_assignments'").get()
+    ? handle.prepare("SELECT scope_type AS scopeType, scope_id AS scopeId FROM cluster_v2_local_secret_assignments WHERE account_id = ?").all(accountId) as unknown as SecretAssignmentPayload[] : [];
+  const insert = handle.prepare("INSERT OR IGNORE INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
+  for (const entry of [...value.assignments, ...local]) {
     if (entry.scopeType === "workspace" && !handle.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(entry.scopeId)) continue;
     // Never onto a member's project or workspace.
     if ((entry.scopeType === "project" || entry.scopeType === "workspace") && !ownedByAdmin(entry.scopeType, entry.scopeId, handle)) continue;
@@ -148,35 +155,48 @@ function applyAssignments(handle: DatabaseSync, accountId: string, value: Secret
   }
 }
 
-/** Rebuilds the outbox from the accounts that are marked to replicate right now. An account
-    switched back to node-local has its queued events removed, so it can no longer leave. */
+/** A locally created account belongs to twins only when the admin owns it and its project.
+    Imported project accounts stay on the explicitly granted cluster path. */
+export function ownsSecretForTwin(handle: DatabaseSync, nodeId: string, accountId: string, projectId?: string | null): boolean {
+  if (!projectId) return ownedByAdmin("secret", accountId, handle);
+  if (!ownedByAdmin("project", projectId, handle)) return false;
+  return !handle.prepare("SELECT 1 FROM sqlite_master WHERE name = 'sharing_resource_owners'").get()
+    || !handle.prepare("SELECT 1 FROM sharing_resource_owners WHERE kind = 'project' AND resource_id = ? AND owner_node_id <> ?").get(projectId, nodeId);
+}
+
+/** Rebuilds the twin outbox from the admin's own accounts, never received copies. */
 function refreshOutbox(handle: DatabaseSync, nodeId: string): void {
   const obsolete = `SELECT e.event_id FROM secret_credential_events e LEFT JOIN secret_accounts a ON a.id=e.entity_key
-    WHERE a.id IS NULL OR a.replicate=0 OR a.project_id IS NOT NULL OR e.updated_at<>a.updated_at`;
+    WHERE a.id IS NULL OR e.updated_at<>a.updated_at`;
   handle.prepare(`DELETE FROM secret_credential_deliveries WHERE event_id IN (${obsolete})`).run();
   handle.prepare(`DELETE FROM secret_credential_events WHERE event_id IN (${obsolete})`).run();
-  // Twins carry the admin's own replicating accounts; a member's never leave this node that way.
-  const replicating = (handle.prepare("SELECT id, label, provider, variables_encrypted, website_origin, updated_at, origin_node_id FROM secret_accounts WHERE replicate = 1 AND project_id IS NULL").all() as unknown as Array<{ id: string; label: string; provider: SecretProvider; variables_encrypted: string; website_origin: string | null; updated_at: string; origin_node_id: string }>)
-    .filter((row) => ownedByAdmin("secret", row.id, handle));
+  const replicating = (handle.prepare("SELECT id, label, provider, replicate, project_id, variables_encrypted, website_origin, updated_at, origin_node_id FROM secret_accounts WHERE origin_node_id = '' OR origin_node_id = ?").all(nodeId) as unknown as Array<{ id: string; label: string; provider: SecretProvider; replicate: number; project_id: string | null; variables_encrypted: string; website_origin: string | null; updated_at: string; origin_node_id: string }>)
+    .filter((row) => ownsSecretForTwin(handle, nodeId, row.id, row.project_id));
+  const eligible = new Set(replicating.map(account => account.id));
+  for (const row of handle.prepare("SELECT event_id, entity_key FROM secret_credential_events WHERE origin_node_id = ?").all(nodeId) as Array<{ event_id: string; entity_key: string }>) {
+    if (eligible.has(row.entity_key)) continue;
+    handle.prepare("DELETE FROM secret_credential_deliveries WHERE event_id = ?").run(row.event_id);
+    handle.prepare("DELETE FROM secret_credential_events WHERE event_id = ?").run(row.event_id);
+  }
   for (const account of replicating) {
     const originNodeId = account.origin_node_id || nodeId;
     if (!account.origin_node_id) handle.prepare("UPDATE secret_accounts SET origin_node_id = ? WHERE id = ?").run(nodeId, account.id);
     const known = handle.prepare("SELECT payload_encrypted FROM secret_credential_events WHERE entity_key = ? AND updated_at = ? AND origin_node_id = ?").get(account.id, account.updated_at, originNodeId) as { payload_encrypted: string } | undefined;
     const knownPayload = known ? JSON.parse(decryptSecretValue(known.payload_encrypted)) as SecretAccountPayload : undefined;
-    if (knownPayload?.assignments !== undefined) continue;
+    if (knownPayload?.assignments !== undefined && knownPayload.replicate !== undefined) continue;
     const updatedAt = known ? new Date(Math.max(Date.now(), Date.parse(account.updated_at) + 1)).toISOString() : account.updated_at;
     if (known) handle.prepare("UPDATE secret_accounts SET updated_at = ? WHERE id = ?").run(updatedAt, account.id);
     insertEvent(handle, {
       id: randomUUID(), entityKey: account.id, operation: "upsert",
-      value: { label: account.label, provider: account.provider, variables: JSON.parse(decryptSecretValue(account.variables_encrypted)), ...(account.website_origin ? { websiteOrigin: account.website_origin } : {}), workspaceIds: workspaceIds(handle, account.id), assignments: assignments(handle, account.id) },
+      value: { label: account.label, provider: account.provider, replicate: Boolean(account.replicate), ...(account.project_id ? { projectId: account.project_id } : {}), variables: JSON.parse(decryptSecretValue(account.variables_encrypted)), ...(account.website_origin ? { websiteOrigin: account.website_origin } : {}), workspaceIds: workspaceIds(handle, account.id), assignments: assignments(handle, account.id) },
       updatedAt, originNodeId, createdAt: new Date().toISOString(),
     });
   }
 }
 
-/** Enrols every replicating account for delivery to `peerIds` and clears any retry backoff.
-    Nothing is ever enrolled automatically: credentials stay on this node until asked for. */
-export async function enqueueSecretCredentialSync(peerIds: string[], actorId?: string, localOnly = false): Promise<number> {
+/** Enrols owned accounts for active twins. Callers must authorize the twin relationship;
+    ordinary cluster sharing uses scoped credentials, not this outbox. */
+export async function enqueueSecretCredentialSync(peerIds: string[], actorId?: string): Promise<number> {
   const local = await getClusterNode();
   const handle = db();
   const at = new Date().toISOString();
@@ -185,7 +205,7 @@ export async function enqueueSecretCredentialSync(peerIds: string[], actorId?: s
     refreshOutbox(handle, local.id);
     let enrolled = 0;
     for (const peerId of peerIds) {
-      enrolled += Number(handle.prepare("INSERT OR IGNORE INTO secret_credential_deliveries (event_id, peer_id, attempts, next_attempt_at, delivered_at, last_error) SELECT event_id, ?, 0, ?, NULL, NULL FROM secret_credential_events WHERE (?=0 OR origin_node_id=?)").run(peerId, at, localOnly ? 1 : 0, local.id).changes);
+      enrolled += Number(handle.prepare("INSERT OR IGNORE INTO secret_credential_deliveries (event_id, peer_id, attempts, next_attempt_at, delivered_at, last_error) SELECT event_id, ?, 0, ?, NULL, NULL FROM secret_credential_events WHERE origin_node_id=?").run(peerId, at, local.id).changes);
       handle.prepare("UPDATE secret_credential_deliveries SET attempts = 0, next_attempt_at = ?, last_error = NULL WHERE peer_id = ? AND delivered_at IS NULL").run(at, peerId);
     }
     appendAuditEvent(handle, { eventType: "secrets.credentials.sync", actorType: actorId ? "user" : "system", actorId, entityType: "secrets.credentials", entityId: "sync", details: { peers: peerIds.length, enrolled } });
@@ -209,15 +229,23 @@ export async function receiveSecretCredentialEvents(events: SecretCredentialEven
     const inbox = handle.prepare("INSERT OR IGNORE INTO secret_credential_inbox (event_id, origin_node_id, received_at) VALUES (?, ?, ?)");
     for (const event of events) {
       if (!inbox.run(event.id, event.originNodeId, new Date().toISOString()).changes) { received.push(event.id); continue; }
-      const current = handle.prepare("SELECT updated_at, origin_node_id FROM secret_accounts WHERE id = ?").get(event.entityKey) as VersionRow | undefined;
-      // A local edit bumps updated_at to now, so it outranks anything the peer still holds (FR7.4).
-      // A twin carries the admin's secrets only: it never replaces one a member made here.
-      if ((!current || compareVersion({ updated_at: event.updatedAt, origin_node_id: event.originNodeId }, current) > 0) && ownedByAdmin("secret", event.entityKey, handle)) {
+      const current = handle.prepare("SELECT updated_at, origin_node_id, project_id FROM secret_accounts WHERE id = ?").get(event.entityKey) as (VersionRow & { project_id: string | null }) | undefined;
+      const scopedCopy = handle.prepare("SELECT 1 FROM sqlite_master WHERE name = 'cluster_v2_scoped_secret_copies'").get()
+        && handle.prepare("SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id = ? AND peer_id = ?").get(event.entityKey, event.originNodeId);
+      const order = current ? compareVersion({ updated_at: event.updatedAt, origin_node_id: event.originNodeId }, current) : 1;
+      // Equal versions can promote a scoped copy after pairing. Never replace a member's
+      // account or attach a project-owned account to a member's project.
+      if ((order > 0 || order === 0 && scopedCopy) && ownedByAdmin("secret", event.entityKey, handle)
+        && (!current?.project_id || ownedByAdmin("project", current.project_id, handle))
+        && (!event.value.projectId || ownedByAdmin("project", event.value.projectId, handle))) {
         // Re-encrypted here with this node's own key, never stored under the sender's.
-        handle.prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, website_origin, origin_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, website_origin = excluded.website_origin, origin_node_id = excluded.origin_node_id, updated_at = excluded.updated_at")
-          .run(event.entityKey, event.value.label, event.value.provider, encryptSecretValue(JSON.stringify(event.value.variables)), event.value.websiteOrigin ?? null, event.originNodeId, event.updatedAt, event.updatedAt);
+        handle.prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, project_id, website_origin, origin_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, replicate = excluded.replicate, project_id = excluded.project_id, website_origin = excluded.website_origin, origin_node_id = excluded.origin_node_id, updated_at = excluded.updated_at")
+          .run(event.entityKey, event.value.label, event.value.provider, encryptSecretValue(JSON.stringify(event.value.variables)), event.value.replicate === false ? 0 : 1, event.value.projectId ?? null, event.value.websiteOrigin ?? null, event.originNodeId, event.updatedAt, event.updatedAt);
+        // A former cluster copy now follows its owner's twin snapshots. An empty scoped
+        // snapshot must not delete it after the promotion.
+        if (scopedCopy) handle.prepare("DELETE FROM cluster_v2_scoped_secret_copies WHERE account_id = ? AND peer_id = ?").run(event.entityKey, event.originNodeId);
         applyAssignments(handle, event.entityKey, event.value);
-        applyWorkspaceAssignments(handle, event.entityKey, event.value);
+        if (event.value.assignments === undefined) applyWorkspaceAssignments(handle, event.entityKey, event.value);
       }
       insertEvent(handle, event);
       received.push(event.id);

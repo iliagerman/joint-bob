@@ -32,9 +32,15 @@ test('Twin to Selected reuses same-origin credentials but restricts workspace re
   const workspace=(sourceDb.prepare('SELECT workspace_id FROM projects WHERE id=?').get(p.id) as {workspace_id:string}).workspace_id;sourceDb.close();
   const account=await api<{account:{id:string}}>(left,sa,'POST','/secrets/accounts',{label:'Synthetic workspace',provider:'custom',replicate:true,variables:[{name:'DOWNGRADE_SECRET',kind:'value',value:'synthetic-only'}]});
   assert.equal(account.status,201);
-  assert.equal((await api(left,sa,'PUT',`/secrets/scopes/workspace/${workspace}`,{accountIds:[account.body.account.id]})).status,200);
+  const twinOnly=await api<{account:{id:string}}>(left,sa,'POST','/secrets/accounts',{label:'Synthetic twin only',provider:'custom',variables:[{name:'TWIN_ONLY_SECRET',kind:'value',value:'synthetic-twin-only'}]});
+  assert.equal(twinOnly.status,201);
+  assert.equal((await api(left,sa,'PUT',`/secrets/scopes/workspace/${workspace}`,{accountIds:[account.body.account.id,twinOnly.body.account.id]})).status,200);
   const resolve=(id:string)=>JSON.parse(execFileSync(process.execPath,['--import','tsx','--input-type=module','-e',`import {genericSecretEnvironment} from './src/secrets.ts'; console.log(JSON.stringify(genericSecretEnvironment(${JSON.stringify(id)})));`],{env:{...process.env,HOME:b.home,JOINT_BOB_DATA_DIR:right.dataDir},encoding:'utf8'})) as Record<string,string>;
-  await eventually(async()=>assert.equal(resolve(p.id).DOWNGRADE_SECRET,'synthetic-only'));
+  await eventually(async()=>{
+   const values=resolve(p.id);
+   assert.equal(values.DOWNGRADE_SECRET,'synthetic-only');
+   assert.equal(values.TWIN_ONLY_SECRET,'synthetic-twin-only','owned accounts reach twins without cluster replication');
+  });
   const runningSnapshot=resolve(p.id);
   const db=new DatabaseSync(path.join(right.dataDir,'node.db'));
   let targetWorkspace:string;
@@ -51,6 +57,7 @@ test('Twin to Selected reuses same-origin credentials but restricts workspace re
    assert.equal(received.status,200,`same-origin twin account must convert to a scoped copy without 409: ${await received.text()}`);
   });
   assert.equal(resolve(p.id).DOWNGRADE_SECRET,'synthetic-only');
+  assert.equal(resolve(p.id).TWIN_ONLY_SECRET,undefined,'former twin access is not a cluster grant, even for a still-shared project');
   assert.equal(resolve(q.body.project.id).DOWNGRADE_SECRET,undefined);
   for(const foreign of [false,true]){
    const protectedAccount=await api<{account:{id:string}}>(right,sb,'POST','/secrets/accounts',{label:foreign?'Other origin':'Local account',provider:'custom',variables:[{name:foreign?'OTHER_SECRET':'LOCAL_SECRET',kind:'value',value:'preserved-synthetic'}]});

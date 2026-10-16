@@ -39,7 +39,9 @@ test("a secret account created from the project picker belongs to that project o
     await page.getByTestId("secret-account-label-input").fill("Project token");
     await page.getByTestId("secret-variable-name-input").first().fill("PROJECT_TOKEN");
     await page.getByTestId("secret-variable-value-input").first().fill("synthetic-project-token");
-    assert.equal(await page.getByTestId("secret-account-replicate-toggle").isDisabled(), true, "owned accounts cannot replicate");
+    assert.equal(await page.getByTestId("secret-account-replicate-toggle").isDisabled(), true, "project-owned accounts require explicit cluster grants");
+    assert.match(await page.getByTestId("secret-account-replicate-toggle").locator("..").innerText(), /shared projects in clusters/);
+    assert.equal(await form.getByText("Your twins receive your accounts automatically, even with this unchecked. Project-owned accounts keep their project restriction.").isVisible(), true);
     const createdResponse = page.waitForResponse((response) => response.url().endsWith("/api/secrets/accounts") && response.request().method() === "POST");
     await page.getByTestId("secret-account-save-button").click();
     const created = await createdResponse;
@@ -79,7 +81,7 @@ test("a secret account created from the project picker belongs to that project o
     await page.getByTestId("secret-account-label-input").fill("Workspace token");
     await page.getByTestId("secret-variable-name-input").first().fill("WORKSPACE_TOKEN");
     await page.getByTestId("secret-variable-value-input").first().fill("synthetic-workspace-token");
-    assert.equal(await page.getByTestId("secret-account-replicate-toggle").isDisabled(), false, "a node-local account may replicate");
+    assert.equal(await page.getByTestId("secret-account-replicate-toggle").isDisabled(), false, "an account may opt into attached-project cluster sharing");
     const workspaceCreated = page.waitForResponse((response) => response.url().endsWith("/api/secrets/accounts") && response.request().method() === "POST");
     await page.getByTestId("secret-account-save-button").click();
     const workspaceBody = await (await workspaceCreated).json() as { account: { id: string; projectId?: string } };

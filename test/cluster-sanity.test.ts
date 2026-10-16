@@ -563,6 +563,64 @@ test("workspace secret attachments replicate to the same workspace on a peer", a
   assert.fail("workspace attachment did not replicate to node B");
 });
 
+test("twins expose unflagged secrets to attached conversations and preserve project limits", { timeout: 60_000 }, async () => {
+  const projectId = nodeA.projects[0].id;
+  const conversationId = `pi:${randomUUID()}`;
+  const waitFor = async (check: () => Promise<void>) => {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      try { await check(); return; } catch (error) { if (Date.now() >= deadline) throw error; }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  };
+  const agentIds = async (node: SeededNode, project: string, sessionId: string) => {
+    const code = `import {accountsForAgent} from './src/secrets.ts'; console.log(JSON.stringify(accountsForAgent(${JSON.stringify(project)}, {engine:'pi',sessionId:${JSON.stringify(sessionId)}}).map(account=>account.id)));`;
+    const { stdout } = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", code], {
+      env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: node.dataDir, PI_WEB_DATA_DIR: node.dataDir },
+    });
+    return JSON.parse(stdout) as string[];
+  };
+  // Each machine owns a different account. Both directions use the real signed transport.
+  for (const [source, sourceAuth, target, targetAuth] of [[nodeA, sessionA, nodeB, sessionB], [nodeB, sessionB, nodeA, sessionA]] as const) {
+    const created = await api<{ account: { id: string } }>(source, sourceAuth, "POST", "/secrets/accounts", {
+      label: "Twin without opt-in", provider: "custom", variables: [{ name: "TWIN_ONLY_TOKEN", kind: "value", value: "synthetic-twin-only" }],
+    });
+    assert.equal(created.status, 201);
+    const id = created.body.account.id;
+    await waitFor(async () => {
+      const remote = await api<{ accounts: Array<{ id: string; replicate: boolean }> }>(target, targetAuth, "GET", "/secrets");
+      assert.equal(remote.body.accounts.find(account => account.id === id)?.replicate, false, "a twin must receive an account without enabling cluster export");
+    });
+    assert.ok(!(await agentIds(target, projectId, conversationId.slice(3))).includes(id), "receipt alone does not attach the account");
+    for (const ids of [[id], [], [id], []]) {
+      assert.equal((await api(source, sourceAuth, "PUT", `/secrets/scopes/conversation/${conversationId}`, { accountIds: ids })).status, 200);
+      await waitFor(async () => assert.equal((await agentIds(target, projectId, conversationId.slice(3))).includes(id), ids.length > 0, "conversation attachment additions and removals reach the execution node"));
+    }
+    // A conversation on the receiving twin may select the account there. Owner rotations
+    // must refresh the credentials without deleting that local selection.
+    for (const ids of [[id], []]) {
+      assert.equal((await api(target, targetAuth, "PUT", `/secrets/scopes/conversation/${conversationId}`, { accountIds: ids })).status, 200);
+      const label = `Rotated with ${ids.length} local attachments`;
+      assert.equal((await api(source, sourceAuth, "PUT", `/secrets/accounts/${id}`, { label, provider: "custom", variables: [{ name: "TWIN_ONLY_TOKEN", kind: "value", value: "synthetic-rotated" }] })).status, 200);
+      await waitFor(async () => {
+        const remote = await api<{ accounts: Array<{ id: string; label: string }> }>(target, targetAuth, "GET", "/secrets");
+        assert.equal(remote.body.accounts.find(account => account.id === id)?.label, label, "owner rotation reaches the receiver");
+      });
+      assert.equal((await agentIds(target, projectId, conversationId.slice(3))).includes(id), ids.length > 0, "owner rotations preserve receiving-twin selections and removals");
+    }
+  }
+  const created = await api<{ account: { id: string } }>(nodeA, sessionA, "POST", "/secrets/accounts", {
+    label: "Twin project key", provider: "custom", projectId, variables: [{ name: "TWIN_PROJECT_KEY", kind: "value", value: "synthetic-project-only" }],
+  });
+  assert.equal(created.status, 201);
+  const id = created.body.account.id;
+  await waitFor(async () => assert.ok((await agentIds(nodeB, projectId, "project-secret")).includes(id), "a project-owned account follows its project to the twin"));
+  const remote = await api<{ accounts: Array<{ id: string; projectId?: string }> }>(nodeB, sessionB, "GET", "/secrets");
+  assert.equal(remote.body.accounts.find(account => account.id === id)?.projectId, projectId);
+  const otherProject = nodeA.projects[1].id;
+  assert.ok(!(await agentIds(nodeB, otherProject, "project-secret")).includes(id), "project-owned accounts never activate in other projects");
+});
+
 test("review writes wake same-node tabs even when they watch another project", async () => {
   const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
   const other = nodeA.projects.find((candidate) => candidate.id !== project.id)!;

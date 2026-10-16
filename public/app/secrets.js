@@ -618,7 +618,7 @@ async function saveSecretAccount() {
   const notify = onAccountSaved;
   elements.secretAccountDialog.close(); await loadSecretAccounts();
   if (notify) notify(saved.account);
-  toast(payload.replicate ? "Secret account saved. Twins receive it automatically" : "Secret account saved");
+  toast("Secret account saved. Your twins receive it automatically");
 }
 
 // Shown beside the Save button rather than as a toast, so it stays until the next attempt.

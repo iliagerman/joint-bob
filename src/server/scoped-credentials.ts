@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
 import {z} from 'zod';
 import {getClusterNode} from '../cluster.js';
+import {ownsSecretForTwin} from '../secret-replication.js';
 import {isTrustedTwin} from '../cluster-sharing-policy.js';
 import {clusterV2Database} from '../cluster-v2-store.js';
 import { ClusterV2HttpError } from '../cluster-v2-errors.js';
@@ -79,12 +80,15 @@ function scopesForAccount(db:DatabaseSync,local:string,accountId:string,allowed:
  });
 }
 function snapshot(db:DatabaseSync,local:string,peer:string):Account[]{
- const allowed=sharedProjectIds(db,local,peer);
+ const allowed=sharedProjectIds(db,local,peer),twin=isTrustedTwin(db,local,peer);
  ensureSecretSharingSchema(db);
  const rows=db.prepare(`SELECT id,label,provider,website_origin,variables_encrypted,updated_at,replicate,project_id FROM secret_accounts a WHERE (replicate=1 OR EXISTS(SELECT 1 FROM cluster_v2_secret_grants g WHERE g.account_id=a.id) OR EXISTS(SELECT 1 FROM secret_assignments s JOIN cluster_v2_share_selections sh ON sh.kind='workspace' AND sh.resource_id=s.scope_id WHERE s.account_id=a.id AND s.scope_type='workspace'))
   AND (origin_node_id='' OR origin_node_id=?)
   AND NOT EXISTS(SELECT 1 FROM cluster_v2_scoped_secret_copies c WHERE c.account_id=a.id)`).all(local) as unknown as Array<{id:string;label:string;provider:Account['provider'];website_origin:string|null;variables_encrypted:string;updated_at:string;replicate:number;project_id:string|null}>;
  return rows.flatMap(row=>{
+  // The admin's owned accounts use the twin outbox. Other users' explicit cluster grants
+  // still use scoped delivery, even when the destination is one of the admin's twins.
+  if(twin&&ownsSecretForTwin(db,local,row.id,row.project_id))return [];
   const grants=activeGrants(db,local,peer,row.id).filter(grant=>!row.project_id||Boolean(db.prepare("SELECT 1 FROM sharing_resource_shares WHERE kind='project' AND resource_id=? AND cluster_id=?").get(row.project_id,grant.clusterId)));
   if(row.project_id&&(!grants.length||!allowed.includes(row.project_id)))return [];
   const scopes=scopesForAccount(db,local,row.id,allowed).map(scope=>{
@@ -160,8 +164,7 @@ export async function flushScopedCredentials():Promise<void>{
   if(!active&&(copy.project_id||scopes.every(scope=>scope.projectIds.every(id=>!mayShareProject(db,local.id,copy.peer_id,id)))))removeCopy(db,copy.peer_id,copy.account_id);
  }
  for(const peer of presentReplicationPeers(db,local.id)){
-  const twin=isTrustedTwin(db,local.id,peer.nodeId);
-  const accounts=snapshot(db,local.id,peer.nodeId).filter(account=>!twin || (db.prepare('SELECT replicate FROM secret_accounts WHERE id=?').get(account.id) as {replicate:number}).replicate===0);
+  const accounts=snapshot(db,local.id,peer.nodeId);
   try{await signedPeerPost(peer,'/api/cluster/v2/credentials/scoped',{accounts});db.prepare('DELETE FROM cluster_v2_scoped_secret_errors WHERE peer_id=?').run(peer.nodeId);}
   catch(error){db.prepare('INSERT OR REPLACE INTO cluster_v2_scoped_secret_errors VALUES(?,?)').run(peer.nodeId,error instanceof Error?error.message:'Scoped credentials failed');}
  }

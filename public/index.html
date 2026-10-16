@@ -620,7 +620,7 @@
         <div class="dialog-heading" tabindex="-1" autofocus>
           <span class="eyebrow">Node configuration</span>
           <h2>Settings</h2>
-          <p>Paths and generic secret accounts are node-local. GitHub credentials move only by explicit sync to a node you pick.</p>
+          <p>Paths are node-local. Your twins receive your secret accounts automatically; other cluster machines need sharing permission.</p>
         </div>
 
         <div class="settings-body">
@@ -1000,7 +1000,7 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-secrets" role="tabpanel" aria-labelledby="settingsTab-secrets" tabindex="0" hidden>
-          <p>Named service, database, website, and custom accounts are encrypted and stay on this node unless you mark one to replicate. Attach them to a workspace, a project, or a single conversation.</p>
+          <p>Secret accounts are encrypted. Your twins automatically receive all accounts you own; other cluster machines need sharing permission. Attach accounts to a workspace, a project, or a single conversation to let agents use them.</p>
           <div class="secret-type-toolbar"><div id="secretTypePicker" class="secret-type-picker"></div><input id="secretAccountSearch" type="search" class="secret-account-search" placeholder="Search secret accounts" aria-label="Search secret accounts" autocomplete="off" spellcheck="false" data-testid="secret-account-search" /><button class="ghost secret-type-add" type="button" id="secretAccountAddButton" aria-label="Add secret account" title="Add secret account" data-testid="secret-account-add-button">+</button></div>
           <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div></fieldset>
         </section>
@@ -2148,7 +2148,8 @@
         </div>
         <div id="secretVariableRows" data-testid="secret-variable-rows"></div>
         <button type="button" class="ghost" id="secretVariableAddButton" data-testid="secret-variable-add-button">Add environment variable</button>
-        <label class="checkbox-row"><input id="secretAccountReplicateInput" type="checkbox" data-testid="secret-account-replicate-toggle" /> Replicate this account to paired nodes</label>
+        <label class="checkbox-row"><input id="secretAccountReplicateInput" type="checkbox" data-testid="secret-account-replicate-toggle" /> Share attached accounts with shared projects in clusters</label>
+        <p class="settings-hint">Your twins receive your accounts automatically, even with this unchecked. Project-owned accounts keep their project restriction.</p>
         </div>
         <div class="dialog-actions"><button type="button" class="ghost" id="secretAccountCancelButton" data-testid="secret-account-cancel-button">Cancel</button><button type="submit" class="primary" data-testid="secret-account-save-button">Save account</button></div>
       </form>

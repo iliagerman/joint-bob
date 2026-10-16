@@ -125,6 +125,8 @@ export const sessionRecoverySchema = z.object({ engine: registeredHarnessIdSchem
     provider: z.enum(["aws", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "postgres", "mssql", "mongodb", "custom", "website", "ssh"]),
     variables: z.array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000) }).strict()).min(1).max(20),
     websiteOrigin: z.string().max(2048).nullable().optional(),
+    replicate: z.boolean().optional(),
+    projectId: z.string().trim().min(1).max(300).optional(),
     workspaceIds: z.array(z.string().trim().min(1).max(300)).max(100).optional(),
     assignments: z.array(z.object({ scopeType: z.enum(["workspace", "project", "conversation"]), scopeId: z.string().trim().min(1).max(300) }).strict()).max(200).optional(),
   }).strict(),

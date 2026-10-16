@@ -45,19 +45,18 @@ function outboxKeys(dataDir: string): string[] {
   }
 }
 
-test("a node-local account produces no outbound replication row", async () => {
+test("twins receive owned accounts without the cluster replication flag", async () => {
   await withNode("local", async ({ dataDir, secrets, replication }) => {
     const local = await secrets.saveSecretAccount({ label: "Local", provider: "custom", variables: [{ name: "LOCAL_TOKEN", kind: "value", value: "stays-here" }] });
     const shared = await secrets.saveSecretAccount({ label: "Shared", provider: "custom", replicate: true, variables: [{ name: "SHARED_TOKEN", kind: "value", value: "travels" }] });
 
     const peerId = randomUUID();
     await replication.enqueueSecretCredentialSync([peerId]);
-    assert.deepEqual(outboxKeys(dataDir), [shared.id]);
+    assert.deepEqual(outboxKeys(dataDir), [local.id, shared.id].sort());
 
     const events = await replication.secretCredentialEventsForPeer(peerId);
-    assert.deepEqual(events.map((event: { entityKey: string }) => event.entityKey), [shared.id]);
-    assert.doesNotMatch(JSON.stringify(events), /stays-here/);
-    assert.ok(!outboxKeys(dataDir).includes(local.id));
+    assert.equal(events.find((event: { entityKey: string }) => event.entityKey === local.id)?.value.replicate, false);
+    assert.equal(events.find((event: { entityKey: string }) => event.entityKey === shared.id)?.value.replicate, true);
   });
 });
 
@@ -138,7 +137,7 @@ test("sync upgrades an older account event with workspace attachments", async ()
   });
 });
 
-test("switching an account back to node-local withdraws it from the outbox", async () => {
+test("disabling cluster replication keeps the account available to twins", async () => {
   await withNode("withdraw", async ({ dataDir, secrets, replication }) => {
     const account = await secrets.saveSecretAccount({ label: "Shared", provider: "custom", replicate: true, variables: [{ name: "SHARED_TOKEN", kind: "value", value: "travels" }] });
     const peerId = randomUUID();
@@ -147,8 +146,10 @@ test("switching an account back to node-local withdraws it from the outbox", asy
 
     await secrets.saveSecretAccount({ id: account.id, label: "Shared", provider: "custom", replicate: false, variables: [{ name: "SHARED_TOKEN", kind: "value" }] });
     await replication.enqueueSecretCredentialSync([peerId]);
-    assert.deepEqual(outboxKeys(dataDir), []);
-    assert.deepEqual(await replication.secretCredentialEventsForPeer(peerId), []);
+    assert.deepEqual(outboxKeys(dataDir), [account.id]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].value.replicate, false);
   });
 });
 
@@ -421,6 +422,99 @@ test("a received assignment set stores project attachments for projects this nod
   });
 });
 
+for (const scopeType of ["project", "conversation"] as const) {
+  test(`${scopeType} attachment changes and removals produce new twin events, unchanged saves do not`, async () => {
+    await withNode(`${scopeType}-changes`, async ({ dataDir, secrets, replication }) => {
+      seedProject(dataDir);
+      const scopeId = scopeType === "project" ? "project-a" : "pi:session-1";
+      const account = await secrets.saveSecretAccount({ label: "Shared", provider: "custom", replicate: true, variables: [{ name: "TOKEN", kind: "value", value: "synthetic" }] });
+      const peerId = randomUUID();
+      for (const accountIds of [[], [account.id], [], [account.id]]) {
+        await secrets.setScopeSecretAccounts(scopeType, scopeId, accountIds);
+        await replication.enqueueSecretCredentialSync([peerId]);
+        const events = await replication.secretCredentialEventsForPeer(peerId);
+        assert.equal(events.length, 1, "changed attachments must invalidate the delivered snapshot");
+        assert.deepEqual(events[0].value.assignments, accountIds.map(() => ({ scopeType, scopeId })));
+        await replication.recordSecretCredentialReceipt(peerId, [events[0].id]);
+        await secrets.setScopeSecretAccounts(scopeType, scopeId, accountIds);
+        await replication.enqueueSecretCredentialSync([peerId]);
+        assert.deepEqual(await replication.secretCredentialEventsForPeer(peerId), [], "unchanged attachments must not create another event");
+      }
+    });
+  });
+}
+
+test("twins receive project-owned accounts with their project restriction", async () => {
+  await withNode("project-owned", async ({ dataDir, secrets, replication }) => {
+    seedProject(dataDir);
+    const account = await secrets.saveSecretAccount({ label: "Project", provider: "custom", projectId: "project-a", variables: [{ name: "TOKEN", kind: "value", value: "synthetic" }] });
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].entityKey, account.id);
+    assert.equal(events[0].value.projectId, "project-a");
+    assert.equal(events[0].value.replicate, false);
+  });
+});
+
+test("twin sync excludes other users and imported accounts, including imported projects", async () => {
+  await withNode("owned-only", async ({ dataDir, secrets, replication }) => {
+    seedProject(dataDir);
+    const own = await secrets.saveSecretAccount({ label: "Own", provider: "custom", variables: [{ name: "OWN", kind: "value", value: "synthetic" }] });
+    const member = await secrets.saveSecretAccount({ label: "Member", provider: "custom", replicate: true, variables: [{ name: "MEMBER", kind: "value", value: "synthetic" }] });
+    const imported = await secrets.saveSecretAccount({ label: "Imported", provider: "custom", replicate: true, variables: [{ name: "IMPORTED", kind: "value", value: "synthetic" }] });
+    const project = await secrets.saveSecretAccount({ label: "Imported project", provider: "custom", projectId: "project-a", variables: [{ name: "PROJECT", kind: "value", value: "synthetic" }] });
+    const handle = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      handle.prepare("INSERT INTO resource_account_owners VALUES ('secret', ?, 'member', ?)").run(member.id, new Date().toISOString());
+      handle.prepare("UPDATE secret_accounts SET origin_node_id = ? WHERE id = ?").run(randomUUID(), imported.id);
+      handle.exec("CREATE TABLE sharing_resource_owners (kind TEXT, resource_id TEXT, owner_node_id TEXT); INSERT INTO sharing_resource_owners VALUES ('project', 'project-a', 'another-node')");
+    } finally { handle.close(); }
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    assert.deepEqual((await replication.secretCredentialEventsForPeer(peerId)).map((event: { entityKey: string }) => event.entityKey), [own.id]);
+    assert.ok(!outboxKeys(dataDir).includes(project.id));
+  });
+});
+
+test("pairing promotes an equal-version scoped copy without losing its project or sharing flag", async () => {
+  await withNode("promote-scoped", async ({ dataDir, secrets, replication }) => {
+    seedProject(dataDir);
+    const event = {
+      id: randomUUID(), entityKey: randomUUID(), operation: "upsert" as const,
+      value: { label: "Project", provider: "custom" as const, projectId: "project-a", replicate: false, variables: [{ name: "TOKEN", kind: "value" as const, value: "synthetic" }], assignments: [{ scopeType: "project" as const, scopeId: "project-a" }] },
+      updatedAt: "2026-01-01T00:00:00.000Z", originNodeId: randomUUID(), createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    await replication.receiveSecretCredentialEvents([event]);
+    const handle = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      handle.exec("CREATE TABLE cluster_v2_scoped_secret_copies (account_id TEXT PRIMARY KEY, peer_id TEXT)");
+      handle.prepare("INSERT INTO cluster_v2_scoped_secret_copies VALUES (?, ?)").run(event.entityKey, event.originNodeId);
+      await replication.receiveSecretCredentialEvents([{ ...event, id: randomUUID() }]);
+      assert.equal(handle.prepare("SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id = ?").get(event.entityKey), undefined, "scoped cleanup must not remove a promoted twin account");
+      const [account] = await secrets.listSecretAccounts();
+      assert.equal(account.projectId, "project-a");
+      assert.equal(account.replicate, false, "twin receipt must not enable cluster export");
+      assert.deepEqual(await secrets.getScopeSecretAccounts("project", "project-a"), { accountIds: [event.entityKey] });
+    } finally { handle.close(); }
+  });
+});
+
+test("a queued account reassigned to a member is withdrawn from twin delivery", async () => {
+  await withNode("withdraw-member", async ({ dataDir, secrets, replication }) => {
+    const account = await secrets.saveSecretAccount({ label: "Reassigned", provider: "custom", variables: [{ name: "TOKEN", kind: "value", value: "synthetic" }] });
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    assert.equal((await replication.secretCredentialEventsForPeer(peerId)).length, 1);
+    const handle = new DatabaseSync(path.join(dataDir, "node.db"));
+    try { handle.prepare("INSERT INTO resource_account_owners VALUES ('secret', ?, 'member', ?)").run(account.id, new Date().toISOString()); }
+    finally { handle.close(); }
+    await replication.enqueueSecretCredentialSync([peerId]);
+    assert.deepEqual(await replication.secretCredentialEventsForPeer(peerId), []);
+  });
+});
+
 test("malformed assignments are rejected rather than half-applied", async () => {
   await withNode("assignments-reject", async ({ secrets, replication }) => {
     const base = {
@@ -432,6 +526,8 @@ test("malformed assignments are rejected rather than half-applied", async () => 
       originNodeId: randomUUID(),
       createdAt: "2026-01-01T00:00:00.000Z",
     };
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, replicate: "yes" } }]), /replicate flag is invalid/);
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, projectId: " " } }]), /project ID is invalid/);
     await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, assignments: [{ scopeType: "galaxy", scopeId: "x" }] } }]), /assignments are invalid/);
     await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, assignments: [{ scopeType: "project", scopeId: "" }] } }]), /assignments are invalid/);
     await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, assignments: [{ scopeType: "project", scopeId: "p" }, { scopeType: "project", scopeId: "p" }] } }]), /assignments are invalid/);

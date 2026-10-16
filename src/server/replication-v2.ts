@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { accountOfSomeoneElse, ownedByAdmin, resourceOwner } from "../ownership.js";
+import { accountOfSomeoneElse, resourceOwner } from "../ownership.js";
 import { getClusterNode } from "../cluster.js";
 import { ensurePeerEndpointSchema, type PeerEndpoint } from "../cluster-peer-endpoints.js";
 import { signClusterRequest } from "../cluster-protocol.js";
@@ -178,13 +178,11 @@ export async function flushTwinCredentials(): Promise<void> {
   const db = await clusterV2Database(), local = await getClusterNode();
   const peers = presentReplicationPeers(db, local.id).filter(peer => isTrustedTwin(db, local.id, peer.nodeId));
   if (!peers.length) return;
-  await enqueueSecretCredentialSync(peers.map(peer => peer.nodeId), undefined, true);
+  await enqueueSecretCredentialSync(peers.map(peer => peer.nodeId));
   for (const peer of peers) {
     const events = (await secretCredentialEventsForPeer(peer.nodeId)).filter(event => event.originNodeId === local.id);
-    const activeIds=(db.prepare(`SELECT id FROM secret_accounts WHERE replicate=1 AND origin_node_id=?
-      AND project_id IS NULL`).all(local.id) as unknown as Array<{id:string}>).map(row=>row.id).filter(id=>ownedByAdmin("secret",id,db));
     try {
-      const reply = await signedPeerPost(peer, "/api/cluster/v2/twins/credentials", { events, activeIds }) as { received: string[] };
+      const reply = await signedPeerPost(peer, "/api/cluster/v2/twins/credentials", { events }) as { received: string[] };
       if (!Array.isArray(reply.received) || reply.received.some(id => !events.some(event => event.id === id))) throw new Error("Invalid credential receipt");
       await recordSecretCredentialReceipt(peer.nodeId, reply.received);
       settled(`twin-credentials:${peer.nodeId}`);
