@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Showed a quick note in a conversation opened while the note was starting, so it no longer vanishes or appears twice, and showed a scheduled report that finished while the conversation was opening.
+
+## 2.101.1 — 2026-10-16
+
+- Kept accepted prompts visible when reconnecting while a conversation starts, without duplicating prompts or blocking live output.
+
 ## 2.101.0 — 2026-10-15
 
 - Added Auto respond presets for reviewing work and driving AI-DLC, and put Auto respond directly in the mobile focus controls.

@@ -63,6 +63,7 @@ function holdEngineTurns(root: string): { release: () => Promise<void> } {
 test("manual launch runs the saved note over the real /ws wire", { timeout: 90_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-quick-wire-"));
   let server: ChildProcess | undefined;
+  let socket: WebSocket | undefined;
   try {
     const environment = await seedDevEnvironment(root, 1);
     const node = environment.nodes[0];
@@ -72,9 +73,6 @@ test("manual launch runs the saved note over the real /ws wire", { timeout: 90_0
     const project = projectNamed(node, "Internal Assistant");
     const queue = await api<{ queue: { enabled: boolean } }>(node, session, "GET", "/quick-notes/queue");
     assert.equal(queue.body.queue.enabled, false, "launches must work with the queue off");
-    // The stub holds every turn until a release file exists; this test wants completion.
-    await writeFile(path.join(root, "pi.release"), "");
-
     const note = await createNote(node, session, project.id, "Manual launch");
     const listed = await api<{ notes: QuickNote[] }>(node, session, "GET", `/projects/${project.id}/quick-notes`);
     assert.ok(listed.body.notes.some((candidate) => candidate.id === note.id));
@@ -88,6 +86,16 @@ test("manual launch runs the saved note over the real /ws wire", { timeout: 90_0
     assert.equal(launch.body.note.status, "started");
     await until("manual engine turn started", async () => (await engineLogLines(log)).length > 0);
     assert.deepEqual((await engineLogLines(log)).length, 1, "the stubbed engine ran exactly one turn");
+
+    let ready: { messages: Array<{ role: string; text: string }> } | undefined;
+    socket = new WebSocket(`${node.url.replace("http:", "ws:")}/ws?projectId=${project.id}&sessionPath=${encodeURIComponent(launch.body.sessionPath)}&sessionId=${launch.body.sessionId}&nodeId=${node.nodeId}`, { headers: { Cookie: session.cookie, Origin: node.url } });
+    socket.on("message", raw => {
+      const event = JSON.parse(raw.toString());
+      if (event.type === "ready") ready = event;
+    });
+    await until("joining client receives the running conversation", () => Boolean(ready));
+    assert.deepEqual(ready!.messages.filter(message => message.role === "user").map(message => message.text), ["Manual launch\n\nManual launch body"], "the accepted prompt is present before the held turn completes");
+    assert.equal(ready!.messages.some(message => message.role === "assistant"), false, "the held assistant has not answered yet");
 
     await writeFile(path.join(root, "pi.release"), "");
     await until("manual launch completion", async () => (await noteStatus(node, session, note.id)).status === "completed");
@@ -103,6 +111,7 @@ test("manual launch runs the saved note over the real /ws wire", { timeout: 90_0
     assert.equal(duplicate.status, 409, JSON.stringify(duplicate.body));
     assert.deepEqual((await engineLogLines(log)).length, 1, "a duplicate start click never runs a second turn");
   } finally {
+    socket?.terminate();
     if (server) await stopDevNode(server);
     await rm(root, { recursive: true, force: true });
   }

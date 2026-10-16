@@ -156,7 +156,9 @@ async function writable(connection: HarnessChatConnection): Promise<void> {
 }
 
 export function refreshHarnessPromptQueue(connection: HarnessChatConnection): void {
-  const prompts = listQueuedPrompts(queueKey(connection)).filter((prompt) => !prompt.systemEventId && !startingIds.has(prompt.id));
+  // Starting is still durable and unclaimed. Reconnecting clients need its text
+  // until onStarted transfers the queued bubble into history.
+  const prompts = listQueuedPrompts(queueKey(connection)).filter((prompt) => !prompt.systemEventId);
   publish(connection, { type: "queuedPrompts", prompts: prompts.map((prompt) => {
     const images = new Set(prompt.images.map(({ path: imagePath }) => imagePath));
     return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, timestamp: prompt.createdAt, ...(prompt.author ? { author: prompt.author } : {}), scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
@@ -893,46 +895,67 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const saved = readQueueSettings(queueKey(connection));
   if (saved && selectedHarness(saved) === options.engine && !harnessSessionBusy(shared)) await measureOperation("chat.open.configure", () => shared.session.configure(runtimeSettings(saved)));
   attachHarnessClient(shared, options.socket); harnessChatConnections.add(connection);
-  const transcript = await measureOperation("chat.open.history", () => conversationTranscriptPayload(options.project.id, options.engine, shared.session.id, options.listedSessions, shared.session.messages));
-  if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
-  const scheduled = Boolean(record?.cronTaskId);
-  const beforeLiveTurn = historyBeforeLiveTurn(transcript.messages, shared);
-  const turnFailures = listTurnFailures(options.engine, shared.session.id);
-  const history = withTurnFailures(await attachAutoReplies(options.project.id, conversationId, attachMessageAuthors(options.project.id, conversationId, beforeLiveTurn)), turnFailures);
-  const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
-  // Every step that can add or drop messages, so a client seeing a transcript shrink or change can name the step.
-  const diagnostics = {
-    runtime: runtimeWasOpen ? "already open" : "loaded",
-    runtimeMessages: shared.session.messages.length,
-    boundedMessages: transcript.messages.length,
-    trimmed: transcript.messages[0]?.id === "transcript-trimmed",
-    hiddenLiveTurnMessages: transcript.messages.length - beforeLiveTurn.length,
-    turnFailures: turnFailures.length,
-    scheduledCollapsed: history.length - browserMessages.length,
-    liveEvents: shared.liveEvents.length,
-    busy: harnessSessionBusy(shared),
+  options.socket.on("close", () => { harnessChatConnections.delete(connection); detachHarnessClient(connection.shared, options.socket); });
+  // History and queue must describe the same side of onStarted. Metadata reads
+  // below yield to dispatch; retry only for input/queue/turn changes, never deltas.
+  const inputState = () => {
+    const messages = shared.session.messages;
+    let lastUser = messages.length - 1;
+    while (lastUser >= 0 && messages[lastUser].role !== "user") lastUser--;
+    return JSON.stringify([
+      messages[lastUser],
+      listQueuedPrompts(queueKey(connection)).map(({ id, revision, dispatchState }) => [id, revision, dispatchState]),
+      shared.turnInFlight,
+      harnessSessionBusy(shared),
+    ]);
   };
-  const goal = await getConversationGoal(options.project.id, conversationId);
-  const autoRespond = await getAutoRespond(options.project.id, conversationId);
-  const routing = await routingClientState(connection, local.id);
-  const routingMode = routing ? routing.mode : "manual";
-  const conversationCommands = getSettings().conversationCommands;
-  const segmentRecords = await listConversationSegments(options.project.id, conversationId);
-  const listed = options.listedSessions?.find((session) => session.conversationId === conversationId || session.id === conversationId);
-  const startedCandidates = [listed?.createdAt, ...segmentRecords.map((segment) => segment.createdAt), ...browserMessages.map((message) => message.timestamp)]
-    .filter((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)))
-    .sort((left, right) => Date.parse(left) - Date.parse(right));
-  const conversationStartedAt = startedCandidates[0] ?? null;
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
-  for (const event of shared.liveEvents) send(options.socket, event);
-  refreshHarnessPromptQueue(connection);
+  for (;;) {
+    const inputs = inputState();
+    // Sessions replace this array on turn start/end, but append or coalesce deltas in place.
+    const liveTurn = shared.liveEvents;
+    const transcript = await measureOperation("chat.open.history", () => conversationTranscriptPayload(options.project.id, options.engine, shared.session.id, options.listedSessions, shared.session.messages));
+    const scheduled = Boolean(record?.cronTaskId);
+    const beforeLiveTurn = historyBeforeLiveTurn(transcript.messages, shared);
+    const turnFailures = listTurnFailures(options.engine, shared.session.id);
+    const history = withTurnFailures(await attachAutoReplies(options.project.id, conversationId, attachMessageAuthors(options.project.id, conversationId, beforeLiveTurn)), turnFailures);
+    const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
+    // Every step that can add or drop messages, so a client seeing a transcript shrink or change can name the step.
+    const diagnostics = {
+      runtime: runtimeWasOpen ? "already open" : "loaded",
+      runtimeMessages: shared.session.messages.length,
+      boundedMessages: transcript.messages.length,
+      trimmed: transcript.messages[0]?.id === "transcript-trimmed",
+      hiddenLiveTurnMessages: transcript.messages.length - beforeLiveTurn.length,
+      turnFailures: turnFailures.length,
+      scheduledCollapsed: history.length - browserMessages.length,
+      liveEvents: shared.liveEvents.length,
+      busy: harnessSessionBusy(shared),
+    };
+    const goal = await getConversationGoal(options.project.id, conversationId);
+    const autoRespond = await getAutoRespond(options.project.id, conversationId);
+    const routing = await routingClientState(connection, local.id);
+    const routingMode = routing ? routing.mode : "manual";
+    const conversationCommands = getSettings().conversationCommands;
+    const segmentRecords = await listConversationSegments(options.project.id, conversationId);
+    const listed = options.listedSessions?.find((session) => session.conversationId === conversationId || session.id === conversationId);
+    const startedCandidates = [listed?.createdAt, ...segmentRecords.map((segment) => segment.createdAt), ...browserMessages.map((message) => message.timestamp)]
+      .filter((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)))
+      .sort((left, right) => Date.parse(left) - Date.parse(right));
+    const conversationStartedAt = startedCandidates[0] ?? null;
+    if (options.socket.readyState !== WebSocket.OPEN) return;
+    if (inputs !== inputState() || liveTurn !== shared.liveEvents) continue;
+    if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
+    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+    for (const event of shared.liveEvents) send(options.socket, event);
+    refreshHarnessPromptQueue(connection);
+    break;
+  }
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {
     logChatFailure("Chat command", connection, error);
     send(options.socket, { type: "error", error: chatErrorMessage(error) });
     if (error instanceof ConversationOwnershipError) send(options.socket, { type: "ownership", ownership: await describeConversationOwner(error.ownership, local.id) });
     sendHarnessStatus(connection.shared, options.socket);
   }));
-  options.socket.on("close", () => { harnessChatConnections.delete(connection); detachHarnessClient(connection.shared, options.socket); });
   if (options.autoStartPrompt && !shared.session.messages.length && !listQueuedPrompts(queueKey(connection)).length) {
     await serializeMutation(connection, () => enqueue(connection, options.autoStartPrompt!, [], []));
   }
