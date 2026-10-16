@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.104.0 — 2026-10-16
 
 - Showed running, background, needs-review, and auto-respond status on each row of the conversation switcher, including recent conversations from other projects.
 
