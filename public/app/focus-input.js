@@ -15,7 +15,7 @@ const onScreen = (element) => Boolean(element?.getClientRects().length);
  * than by document order, so a dialog holding the focus is the top one; failing that,
  * the last one the document declares is the closest guess.
  */
-function topmostOpenDialog() {
+export function topmostOpenDialog() {
   const open = [...document.querySelectorAll("dialog[open]")];
   if (!open.length) return null;
   return open.find((dialog) => dialog.contains(document.activeElement)) ?? open.at(-1);

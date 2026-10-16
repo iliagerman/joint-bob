@@ -163,11 +163,16 @@ app.use((error: unknown, request: Request, response: Response, _next: NextFuncti
   }
   // body-parser marks client mistakes (malformed JSON, oversized bodies) with their own 4xx status.
   const exposed = error as { status?: unknown; expose?: unknown; message?: unknown } | null;
+  // Rejected changes are logged so a save that failed behind a dialog can be traced. Field
+  // paths and Zod's messages carry no submitted values; polled reads are left out as noise.
   if (exposed?.expose === true && typeof exposed.status === "number" && exposed.status >= 400 && exposed.status < 500) {
-    sendError(response, exposed.status, typeof exposed.message === "string" ? exposed.message : "Bad request");
+    const message = typeof exposed.message === "string" ? exposed.message : "Bad request";
+    if (request.method !== "GET") console.warn(`Rejected ${request.method} ${request.path} (${exposed.status}): ${message}`);
+    sendError(response, exposed.status, message);
     return;
   }
   if (error instanceof z.ZodError) {
+    if (request.method !== "GET") console.warn(`Rejected ${request.method} ${request.path} (400): ${error.errors.map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`).join("; ")}`);
     sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
     return;
   }

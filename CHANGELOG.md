@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Showed a failed secret account save's error beside the Save button, where it stays until the next attempt and is no longer hidden behind other dialogs.
+
 ## 2.103.0 — 2026-10-16
 
 - Added previews of images, PDFs, and Word documents in a project file's View action, with Edit turned off for those files.

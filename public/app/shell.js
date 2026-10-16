@@ -1,6 +1,7 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { sendSocket } from "./chat-controls.js";
 import { elements } from "./elements.js";
+import { topmostOpenDialog } from "./focus-input.js";
 import { openSettings } from "./settings.js";
 import { state } from "./state.js";
 
@@ -107,8 +108,9 @@ export function toast(message, duration = 3200) {
     node.remove();
   });
   node.append(text, close);
-  const openDialog = document.querySelector("dialog[open]");
-  (openDialog || document.body).append(node);
+  // Into the dialog on top: the first open one in the document is often Settings, under
+  // a secret account dialog's blurred backdrop, which hid that dialog's save errors.
+  (topmostOpenDialog() || document.body).append(node);
 }
 
 export function setTheme(theme) {

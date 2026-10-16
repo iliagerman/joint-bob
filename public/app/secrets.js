@@ -392,6 +392,7 @@ function openSecretAccount(account = null, projectId = null, onSaved = null) {
     input.placeholder = account?.variables.some((item) => item.name === name) ? "Leave blank to keep saved value" : sshPlaceholders[name];
   }
   applySecretProviderPreset();
+  secretAccountError.hidden = true;
   elements.secretAccountDialog.showModal();
 }
 
@@ -459,7 +460,8 @@ export async function openSecretScope(scopeType, scopeId, label) {
   elements.secretScopeSearch.focus();
 }
 
-const secretScopeError = document.createElement("p");
+// A div, not a p: `.dialog-card p` would recolour it muted grey.
+const secretScopeError = document.createElement("div");
 secretScopeError.className = "queued-error";
 secretScopeError.setAttribute("role", "alert");
 secretScopeError.hidden = true;
@@ -619,7 +621,21 @@ async function saveSecretAccount() {
   toast(payload.replicate ? "Secret account saved. Twins receive it automatically" : "Secret account saved");
 }
 
+// Shown beside the Save button rather than as a toast, so it stays until the next attempt.
+const secretAccountError = document.createElement("div");
+secretAccountError.className = "queued-error";
+secretAccountError.setAttribute("role", "alert");
+secretAccountError.dataset.testid = "secret-account-error";
+secretAccountError.hidden = true;
+elements.secretAccountForm.querySelector(".dialog-actions").before(secretAccountError);
+
 elements.secretAccountForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  void saveSecretAccount().catch((error) => toast(error.message));
+  secretAccountError.hidden = true;
+  void saveSecretAccount().catch((error) => {
+    secretAccountError.textContent = error.message;
+    secretAccountError.hidden = false;
+    // A null status means the form refused it before any request was sent. Values are never logged.
+    console.warn("Could not save secret account", { provider: secretProviderPicker.value, editing: Boolean(editingSecretAccountId), method: error.method ?? null, status: error.status ?? null, error: error.message });
+  });
 });
