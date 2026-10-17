@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.106.0 — 2026-10-17
 
-- Added personal assistants, which you create from a conversation's More menu to save links with screenshots, set their instructions, and limit their browser, terminal, and MCP tool use; installed phone and Mac apps can share links and screenshots straight into one.
+- Added personal assistants, created from a conversation's More menu, that save links with screenshots, follow your instructions, and can be limited in their browser, terminal, and MCP tool use.
+- Added sharing of links and screenshots from installed phone and Mac apps straight into a personal assistant.
 
 ## 2.105.0 — 2026-10-17
 
