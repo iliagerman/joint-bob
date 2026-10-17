@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.105.0 — 2026-10-17
+
+- Added Git repos under Resources, where you can add a repository, see its skills, Claude plugins, and MCP servers, and install the ones you pick for every agent on the node.
+- Added checking and updating for Git repos, with an option to install new commits automatically as soon as a check finds them.
+- Added sharing of Git repo installs with your other machines, which then get the same items, follow later updates, and lose them when the share is removed.
+- Added announcements to receiving machines when a shared skill changes, while keeping local edits and skills a machine has dismissed.
+
 ## 2.104.2 — 2026-10-17
 
 - Kept scheduled tasks running after a node restart unless they are set to pause on failure; the interrupted run is still marked failed as uncertain.
