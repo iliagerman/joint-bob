@@ -178,12 +178,17 @@ export class CronStore {
     this.db.prepare("UPDATE cron_runs SET status = ?, error = ?, finished_at = ? WHERE id = ?").run(status, error, Date.now(), id);
   }
   recover(now = Date.now()): void {
-    // Never replay an uncertain dispatch. Pause it so an external agent still
-    // finishing after a node crash cannot overlap a later scheduled run.
+    // Never replay an uncertain dispatch. Settle interrupted runs, then let
+    // enabled schedules without pause-on-failure continue at their next due time.
     for (const task of this.list()) if (this.active(task.id)) {
-      const { id, nextRun, lastRun, ...input } = task;
-      this.update(id, { ...input, enabled: false });
-      this.db.prepare("UPDATE cron_runs SET status = 'failed', error = 'Node restarted during scheduled run; outcome uncertain. Task paused.', finished_at = ? WHERE task_id = ? AND status IN ('waiting', 'running')").run(now, task.id);
+      if (task.enabled && task.pauseOnFailure) {
+        const { id, nextRun, lastRun, ...input } = task;
+        this.update(id, { ...input, enabled: false }, now);
+      }
+      this.db.prepare("UPDATE cron_runs SET status = 'failed', error = ?, finished_at = ? WHERE task_id = ? AND status IN ('waiting', 'running')")
+        .run(task.enabled && task.pauseOnFailure
+          ? 'Node restarted during scheduled run; outcome uncertain. Task paused.'
+          : 'Node restarted during scheduled run; outcome uncertain. Task will resume at the next scheduled time.', now, task.id);
     }
     for (const task of this.list()) if (task.nextRun <= now) this.db.prepare("UPDATE cron_tasks SET next_run = ? WHERE id = ?").run(nextCronRun(task.schedule, now), task.id);
   }

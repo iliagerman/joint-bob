@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Kept scheduled tasks running after a node restart unless they are set to pause on failure; the interrupted run is still marked failed as uncertain.
+
 ## 2.104.1 — 2026-10-16
 
 - Made the secret accounts you own reach your twin machines automatically, even with the replicate checkbox off and when you attach them to a workspace, project, or conversation; that checkbox now only controls sharing with cluster members for shared projects.

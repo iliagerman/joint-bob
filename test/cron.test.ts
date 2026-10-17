@@ -136,24 +136,38 @@ test("reading a task fetches only its latest run, while history still returns a 
   assert.equal(store.history(task.id)[0].id, ids.at(-1));
 });
 
-test("interrupted scheduled runs pause on restart and never replay an uncertain dispatch", async () => {
+test("interrupted runs settle on restart without replay; only pause-on-failure stops the schedule", async () => {
   const { CronStore } = await import("../src/cron.js");
   const db = new DatabaseSync(":memory:");
   try {
     const store = new CronStore(db), data = input();
-    const task = store.create(data);
-    const run = store.claim(task.id, data.ownerNodeId, task.nextRun)!;
-    store.target(run.id, "conversation");
-    assert.equal(store.taskForRun(run.id, "conversation")?.id, task.id);
-    assert.equal(store.taskForRun(run.id, "another-conversation"), null);
-    store.recover();
-    assert.equal(store.taskForRun(run.id, "conversation"), null, "settled runs cannot silence another prompt");
-    const recovered = store.get(task.id)!;
-    assert.equal(recovered.enabled, false);
-    assert.equal(recovered.lastRun?.status, "failed");
-    assert.match(recovered.lastRun!.error!, /outcome uncertain/);
-    assert.equal(recovered.lastRun?.sessionId, "conversation");
-    assert.equal(store.claim(task.id, data.ownerNodeId, task.nextRun + 86400000), null);
+    for (const pauseOnFailure of [false, true]) {
+      const task = store.create({ ...data, pauseOnFailure }, Date.parse("2026-03-03T13:00:00Z"));
+      const run = store.claim(task.id, data.ownerNodeId, task.nextRun)!;
+      store.target(run.id, "conversation");
+      assert.equal(store.taskForRun(run.id, "conversation")?.id, task.id);
+      assert.equal(store.taskForRun(run.id, "another-conversation"), null);
+      store.recover(task.nextRun + 1000);
+      store.recover(task.nextRun + 1000);
+      assert.equal(store.taskForRun(run.id, "conversation"), null, "settled runs cannot silence another prompt");
+      const recovered = store.get(task.id)!;
+      assert.equal(recovered.enabled, !pauseOnFailure);
+      assert.equal(recovered.lastRun?.status, "failed");
+      assert.match(recovered.lastRun!.error!, /outcome uncertain/);
+      assert.equal(recovered.lastRun?.sessionId, "conversation");
+      assert.ok(recovered.nextRun > task.nextRun + 1000, "uncertain dispatch is skipped");
+      assert.equal(store.claim(task.id, data.ownerNodeId, task.nextRun + 1000), null);
+      const next = store.claim(task.id, data.ownerNodeId, recovered.nextRun);
+      assert.equal(Boolean(next), !pauseOnFailure, "only opted-in schedules pause after restart");
+      if (next) store.finish(next.id, "succeeded", null);
+    }
+    const disabled = store.create(data, Date.parse("2026-03-03T13:00:00Z"));
+    const interrupted = store.claim(disabled.id, data.ownerNodeId, disabled.nextRun)!;
+    store.update(disabled.id, { ...data, enabled: false });
+    store.recover(disabled.nextRun + 1000);
+    assert.equal(store.get(disabled.id)?.enabled, false, "manually disabled tasks stay disabled");
+    assert.equal(store.get(disabled.id)?.lastRun?.id, interrupted.id);
+    assert.equal(store.get(disabled.id)?.lastRun?.status, "failed");
   } finally { db.close(); }
 });
 
