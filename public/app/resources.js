@@ -18,7 +18,7 @@ const view = {
   page: 0, scanPage: 0, selected: new Set(), selectedServers: new Set(), scanSelected: new Set(),
 };
 // Rows per page, refitted to whatever height the panel gives each list.
-const pageSizes = { list: 8, scan: 8 };
+const pageSizes = { list: 8, scan: 8, git: 6 };
 const conversationTitles = new Map();
 
 function harnessLabel(id) {
@@ -602,6 +602,7 @@ function renderSummary() {
   const who = view.scope === "conversation" && view.engine ? ` · ${harnessLabel(view.engine)} conversation` : "";
   const offline = view.nodes.filter((entry) => !entry.inventory).length;
   elements.resourcesSummary.textContent = view.tab === "paths" ? "Folders every agent on this node loads skills, prompts, rules and plugins from."
+    : view.tab === "git" ? "Git repositories this node installs skills, plugins and MCP servers from, and the ones other nodes share with it."
     : `${where}${who}${offline ? ` · ${offline} node${offline === 1 ? "" : "s"} unavailable` : ""}. Tab counts are for this node.`;
 }
 
@@ -609,14 +610,18 @@ function render() {
   for (const tab of elements.resourcesPanel.querySelectorAll("[data-resources-tab]")) tab.setAttribute("aria-selected", String(tab.dataset.resourcesTab === view.tab));
   // A conversation runs one agent, so its view is always that agent's.
   elements.resourcesHarnessSelect.disabled = view.scope === "conversation" && Boolean(view.engine);
+  // Repositories are not per agent.
+  elements.resourcesHarnessSelect.hidden = view.tab === "git";
   const listing = view.tab === "skills" || view.tab === "mcp";
   elements.resourcesList.hidden = !listing;
   if (!listing) { elements.resourcesListPager.hidden = true; elements.resourcesShareBar.hidden = true; }
   elements.resourcesScopeSelect.parentElement.hidden = view.tab === "paths";
-  elements.resourcesScopeSelect.hidden = view.tab === "add";
+  elements.resourcesScopeSelect.hidden = view.tab === "add" || view.tab === "git";
   elements.resourcesAddPanel.hidden = view.tab !== "add";
+  elements.resourcesGitPanel.hidden = view.tab !== "git";
   elements.resourcesPathsPanel.hidden = view.tab !== "paths";
   if (view.tab === "add") renderAdd();
+  else if (view.tab === "git") renderGit();
   else if (listing) renderList();
   renderSummary();
 }
@@ -794,6 +799,319 @@ async function shareSelectedServers() {
   } catch (error) { setStatus(error.message); toast(error.message); }
 }
 
+/* ---- Git repositories ---- */
+
+const KIND_LABELS = { skill: "skill", plugin: "plugin", mcp: "MCP" };
+const GIT_STATUS_LABELS = { available: "New", imported: "Imported", edited: "Edited here", removed: "Removed here", gone: "Gone upstream" };
+const git = { sources: [], loaded: false, selectedId: null, selectedOwner: null, chosen: new Set(), sourcePage: 0, itemPage: 0 };
+const GIT_SOURCES_PER_PAGE = 3;
+
+const shortCommit = (commit) => (commit || "").slice(0, 8);
+const sameSource = (source) => source.id === git.selectedId && (source.ownerNodeId ?? null) === git.selectedOwner;
+function selectedSource() { return git.sources.find(sameSource) ?? null; }
+function installedKeys(source) { return new Set(source.items.filter((item) => item.status !== "available").map((item) => item.key)); }
+
+function selectSource(source) {
+  git.selectedId = source?.id ?? null;
+  git.selectedOwner = source?.ownerNodeId ?? null;
+  git.chosen = source ? installedKeys(source) : new Set();
+  git.itemPage = 0;
+}
+
+/** Replaces one source in the list, keeping the person's ticks unless it is the one just applied. */
+function storeSource(source, resetChoice = false) {
+  const index = git.sources.findIndex((item) => item.id === source.id && (item.ownerNodeId ?? null) === (source.ownerNodeId ?? null));
+  if (index === -1) git.sources.push(source); else git.sources[index] = source;
+  if (resetChoice && sameSource(source)) git.chosen = installedKeys(source);
+}
+
+function sourceStatus(source) {
+  if (source.ownerNodeId) return source.lastError ? `Shared by ${source.ownerName}: ${source.lastError}` : `Shared by ${source.ownerName} · runs its commit and selection`;
+  const parts = [];
+  if (source.checkError) parts.push(`Check failed: ${source.checkError}`);
+  else if (source.updateAvailable) parts.push(`Update available: ${shortCommit(source.commit)} → ${shortCommit(source.latestCommit)}`);
+  else parts.push(`Up to date${source.checkedAt ? ` · checked ${new Date(source.checkedAt).toLocaleString()}` : ""}`);
+  if (source.recipients.length) {
+    const failing = source.recipients.filter((nodeId) => source.deliveries?.[nodeId]?.error);
+    parts.push(`shared with ${source.recipientNames.join(", ")}${failing.length ? ` (${failing.length} not delivered)` : ""}`);
+  }
+  if (source.lastError) parts.push(source.lastError);
+  return parts.join(" · ");
+}
+
+function gitResultText(result) {
+  const parts = [];
+  if (result.installed?.length) parts.push(`installed ${result.installed.join(", ")}`);
+  if (result.removed?.length) parts.push(`removed ${result.removed.join(", ")}`);
+  if (result.kept?.length) parts.push(`kept ${result.kept.join(", ")}`);
+  if (!parts.length) parts.push("nothing changed");
+  if (result.errors?.length) parts.push(`failed: ${result.errors.join("; ")}`);
+  return parts.join("; ");
+}
+
+async function gitAction(control, action) {
+  control.disabled = true;
+  try { await action(); }
+  catch (error) { setStatus(error.message); toast(error.message); }
+  finally { control.disabled = false; }
+}
+
+function openGitShareDialog(source) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "secret-sharing-dialog";
+  dialog.dataset.testid = "git-share-dialog";
+  const form = document.createElement("form");
+  form.method = "dialog";
+  form.className = "dialog-card secret-sharing-card skill-share-card";
+  const title = document.createElement("h3");
+  title.textContent = `Share ${source.label}`;
+  const hint = document.createElement("p");
+  hint.textContent = "Each node clones this repository itself, at this node's commit, and installs the same items. It needs its own access to the repository. When you update here, they follow.";
+  form.append(title, hint);
+  const group = fieldset("Machines", "Every agent on that node loads the items.");
+  const nodes = view.sharing?.nodes ?? [];
+  if (!nodes.length) group.append(emptyRow("No other nodes in your clusters yet. Create or join a cluster to share."));
+  for (const node of nodes) group.append(checkboxRow(`${node.name}${node.twin ? " (twin)" : ""}`, { kind: "node", value: node.nodeId }, source.recipients.includes(node.nodeId), "git-share-node"));
+  form.append(group);
+  const actions = document.createElement("div");
+  actions.className = "dialog-actions";
+  const cancel = button("Cancel", "git-share-cancel", () => dialog.close(), "ghost");
+  const save = document.createElement("button");
+  save.type = "submit"; save.className = "primary"; save.dataset.testid = "git-share-save"; save.textContent = "Save sharing";
+  save.disabled = !nodes.length && !source.recipients.length;
+  actions.append(cancel, save);
+  form.append(actions);
+  dialog.append(form);
+  document.body.append(dialog);
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const recipients = [...form.querySelectorAll('input[data-kind="node"]:checked')].map((input) => input.dataset.value);
+    const added = recipients.filter((nodeId) => !source.recipients.includes(nodeId));
+    void gitAction(save, async () => {
+      if (added.length && !await confirmAction({ title: `Share ${source.label}?`, message: `${added.map(nodeName).join(", ")} will clone ${source.url} and install ${installedKeys(source).size} item${installedKeys(source).size === 1 ? "" : "s"}, executable scripts and MCP commands included.`, confirmLabel: "Share" })) return;
+      const body = await api(`/api/resources/git/${encodeURIComponent(source.id)}/options`, { method: "PUT", body: JSON.stringify({ recipients }) });
+      storeSource(body.source);
+      dialog.close();
+      renderGit();
+      setStatus(recipients.length ? `${source.label} is shared with ${recipients.map(nodeName).join(", ")}.` : `${source.label} is no longer shared; receivers remove their copies.`);
+    });
+  });
+  dialog.showModal();
+  cancel.focus({ preventScroll: true });
+}
+
+function gitSourceRow(source) {
+  const row = document.createElement("div");
+  row.className = `resources-row resources-git-source${sameSource(source) ? " is-selected" : ""}`;
+  row.dataset.testid = "resources-git-source";
+  row.title = source.url;
+  row.addEventListener("click", (event) => {
+    if (event.target.closest("button, input, label")) return;
+    selectSource(source);
+    renderGit();
+  });
+  const head = document.createElement("div");
+  head.className = "resources-row-head";
+  const name = document.createElement("strong");
+  name.textContent = source.label;
+  head.append(name, badge(source.ref || "default branch"), badge(shortCommit(source.commit)));
+  if (source.ownerNodeId) head.append(badge(`from ${source.ownerName}`, "origin-scoped"));
+  if (source.updateAvailable && !source.ownerNodeId) head.append(badge("update", "update"));
+  const actions = document.createElement("span");
+  actions.className = "resources-row-actions";
+  if (!source.ownerNodeId) {
+    const check = button("Check", "git-source-check", () => void gitAction(check, async () => {
+      const body = await api(`/api/resources/git/${encodeURIComponent(source.id)}/check`, { method: "POST", body: JSON.stringify({}) });
+      storeSource(body.source);
+      renderGit();
+      setStatus(body.source.checkError ? body.source.checkError : body.source.updateAvailable ? `${source.label} has a new commit, ${shortCommit(body.source.latestCommit)}.` : `${source.label} is up to date.`);
+    }));
+    const update = button("Update", "git-source-update", () => void gitAction(update, async () => {
+      const body = await api(`/api/resources/git/${encodeURIComponent(source.id)}/update`, { method: "POST", body: JSON.stringify({}) });
+      storeSource(body.source, true);
+      renderGit();
+      await Promise.all([loadInventory(), loadSkills(true)]);
+      setStatus(`${source.label} at ${shortCommit(body.result.commit)}: ${gitResultText(body.result)}.${source.recipients.length ? " Shared nodes follow." : ""}`);
+    }), source.updateAvailable ? "primary compact" : "ghost compact");
+    const auto = document.createElement("label");
+    const autoInput = selectBox(`Update ${source.label} automatically`, source.autoUpdate, "git-source-auto-update", (checked) => void gitAction(autoInput, async () => {
+      const body = await api(`/api/resources/git/${encodeURIComponent(source.id)}/options`, { method: "PUT", body: JSON.stringify({ autoUpdate: checked }) });
+      storeSource(body.source);
+      setStatus(checked ? `${source.label} installs new commits by itself when a check finds them.` : `${source.label} waits for you to update it.`);
+    }));
+    auto.append(autoInput, "Auto-update");
+    const share = button("Share…", "git-source-share", () => openGitShareDialog(source));
+    const remove = button("Remove", "git-source-remove", () => void gitAction(remove, async () => {
+      if (!await confirmAction({ title: `Remove ${source.label}?`, message: `Everything installed from it is removed from this node${source.recipients.length ? ` and from ${source.recipientNames.join(", ")}` : ""}. Copies edited here are kept; removed folders are backed up.`, confirmLabel: "Remove", destructive: true })) return;
+      const body = await api(`/api/resources/git/${encodeURIComponent(source.id)}`, { method: "DELETE" });
+      git.sources = git.sources.filter((item) => item !== source);
+      if (sameSource(source)) selectSource(git.sources[0]);
+      renderGit();
+      await Promise.all([loadInventory(), loadSkills(true)]);
+      setStatus(`Removed ${source.label}: ${gitResultText(body.result)}.`);
+    }), "ghost compact danger");
+    actions.append(check, update, auto, share, remove);
+  }
+  head.append(actions);
+  const status = document.createElement("span");
+  status.className = "skill-option-description";
+  status.dataset.testid = "git-source-status";
+  status.textContent = sourceStatus(source);
+  status.title = status.textContent;
+  row.append(head, status);
+  return row;
+}
+
+function gitItemRow(source, item) {
+  const row = document.createElement("label");
+  row.className = "resources-row resources-check-row";
+  row.dataset.testid = "resources-git-item";
+  row.title = item.path;
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.dataset.testid = "resources-git-item-select";
+  input.disabled = Boolean(source.ownerNodeId) || (Boolean(item.error) && !git.chosen.has(item.key));
+  input.checked = git.chosen.has(item.key);
+  input.addEventListener("change", () => {
+    if (input.checked) git.chosen.add(item.key); else git.chosen.delete(item.key);
+    syncGitButtons();
+  });
+  const body = document.createElement("span");
+  body.className = "resources-check-body";
+  const name = document.createElement("strong");
+  name.textContent = item.name;
+  name.append(" ", badge(KIND_LABELS[item.kind] ?? item.kind, "harness"), " ", badge(item.error ? "invalid" : GIT_STATUS_LABELS[item.status] ?? item.status, item.error ? "off" : `status-${item.status === "available" ? "new" : item.status}`));
+  if (item.plugin) name.append(" ", badge(`in ${item.plugin}`));
+  const description = document.createElement("span");
+  description.className = "skill-option-description";
+  description.textContent = item.error || item.description || item.path;
+  description.title = `${item.path}${item.description ? ` — ${item.description}` : ""}`;
+  body.append(name, description);
+  row.append(input, body);
+  return row;
+}
+
+function gitSelectionChanged(source) {
+  if (!source || source.ownerNodeId) return false;
+  const installed = installedKeys(source);
+  return installed.size !== git.chosen.size || [...git.chosen].some((key) => !installed.has(key));
+}
+
+function syncGitButtons() {
+  const source = selectedSource();
+  elements.resourcesGitApplyButton.disabled = !gitSelectionChanged(source);
+  elements.resourcesGitSelectAllButton.disabled = !source || Boolean(source.ownerNodeId);
+  const installed = source ? installedKeys(source) : new Set();
+  const adding = [...git.chosen].filter((key) => !installed.has(key)).length, removing = [...installed].filter((key) => !git.chosen.has(key)).length;
+  elements.resourcesGitApplyButton.textContent = adding || removing ? `Apply selection (${[adding ? `+${adding}` : "", removing ? `−${removing}` : ""].filter(Boolean).join(" ")})` : "Apply selection";
+}
+
+function renderGit() {
+  elements.resourcesGitCount.textContent = git.loaded ? `(${git.sources.length})` : "";
+  const sourcesList = elements.resourcesGitSources;
+  sourcesList.replaceChildren();
+  if (!git.loaded) sourcesList.append(emptyRow("Loading…"));
+  else if (!git.sources.length) sourcesList.append(emptyRow("No repositories yet. Add one above to list its skills, plugins and MCP servers."));
+  if (git.loaded && !selectedSource() && git.sources.length) selectSource(git.sources[0]);
+  const sources = paged(git.sources, git.sourcePage, GIT_SOURCES_PER_PAGE);
+  git.sourcePage = sources.current;
+  for (const source of sources.shown) sourcesList.append(gitSourceRow(source));
+  renderPager(elements.resourcesGitSourcesPager, git.sources.length, git.sourcePage, GIT_SOURCES_PER_PAGE, (page) => { git.sourcePage = page; renderGit(); });
+  const itemsList = elements.resourcesGitItems;
+  itemsList.replaceChildren();
+  const source = selectedSource();
+  const query = normalizedQuery(elements.resourcesSearchInput.value);
+  const items = source ? source.items.filter((item) => matches(query, item.name, item.description, item.path, item.kind)) : [];
+  if (source && !items.length) itemsList.append(emptyRow(source.items.length ? "No items match." : "No skills, plugins or MCP servers found in this repository."));
+  const shown = paged(items, git.itemPage, pageSizes.git);
+  git.itemPage = shown.current;
+  for (const item of shown.shown) itemsList.append(gitItemRow(source, item));
+  renderPager(elements.resourcesGitItemsPager, items.length, git.itemPage, pageSizes.git, (page) => { git.itemPage = page; renderGit(); });
+  syncGitButtons();
+  fitGitPage();
+}
+
+/** Same refit as the other lists, against the git item list. */
+function fitGitPage() {
+  const list = elements.resourcesGitItems;
+  const rows = [...list.children].filter((child) => child.classList.contains("resources-row"));
+  if (!rows.length || !list.clientHeight || refitting) return;
+  const gap = parseFloat(getComputedStyle(list).rowGap) || 0;
+  const size = Math.max(1, Math.floor((list.clientHeight + gap) / (Math.max(...rows.map((row) => row.offsetHeight)) + gap)));
+  if (size === pageSizes.git) return;
+  const first = git.itemPage * pageSizes.git;
+  pageSizes.git = size;
+  git.itemPage = Math.floor(first / size);
+  refitting = true;
+  try { renderGit(); } finally { refitting = false; }
+}
+
+async function loadGit() {
+  try {
+    const body = await api("/api/resources/git");
+    git.sources = body.sources;
+    git.loaded = true;
+    const current = selectedSource();
+    if (current) git.chosen = installedKeys(current); else selectSource(git.sources[0]);
+  } catch (error) { git.loaded = true; setStatus(error.message); }
+  if (view.tab === "git") renderGit(); else elements.resourcesGitCount.textContent = `(${git.sources.length})`;
+}
+
+async function addRepository() {
+  const url = elements.resourcesGitUrl.value.trim();
+  if (!url) { elements.resourcesGitUrl.focus(); return; }
+  await gitAction(elements.resourcesGitAddButton, async () => {
+    setStatus(`Cloning ${url}…`);
+    const body = await api("/api/resources/git", { method: "POST", body: JSON.stringify({ url, ref: elements.resourcesGitRef.value.trim() || null }) });
+    storeSource(body.source);
+    selectSource(body.source);
+    git.sourcePage = Math.floor(git.sources.indexOf(selectedSource()) / GIT_SOURCES_PER_PAGE);
+    elements.resourcesGitUrl.value = "";
+    elements.resourcesGitRef.value = "";
+    renderGit();
+    const counts = { skill: 0, plugin: 0, mcp: 0 };
+    for (const item of body.source.items) if (!item.error) counts[item.kind] += 1;
+    setStatus(`${body.source.label} at ${shortCommit(body.source.commit)}: ${counts.skill} skill${counts.skill === 1 ? "" : "s"}, ${counts.plugin} plugin${counts.plugin === 1 ? "" : "s"}, ${counts.mcp} MCP server${counts.mcp === 1 ? "" : "s"}. Tick what to install, then apply.`);
+  });
+}
+
+async function applyGitChoice() {
+  const source = selectedSource();
+  if (!gitSelectionChanged(source)) return;
+  const installed = installedKeys(source);
+  const adding = source.items.filter((item) => git.chosen.has(item.key) && !installed.has(item.key));
+  const removing = source.items.filter((item) => installed.has(item.key) && !git.chosen.has(item.key));
+  if (!await confirmAction({
+    title: `Apply ${source.label}?`,
+    message: [adding.length ? `Install ${adding.map((item) => item.name).join(", ")} for every agent on this node, scripts and MCP commands included.` : "",
+      removing.length ? `Remove ${removing.map((item) => item.name).join(", ")}; copies edited here are kept.` : "",
+      source.recipients.length ? `${source.recipientNames.join(", ")} follow${source.recipients.length === 1 ? "s" : ""} this selection.` : ""].filter(Boolean).join(" "),
+    confirmLabel: "Apply",
+    destructive: removing.length > 0,
+  })) return;
+  await gitAction(elements.resourcesGitApplyButton, async () => {
+    const body = await api(`/api/resources/git/${encodeURIComponent(source.id)}/selection`, { method: "PUT", body: JSON.stringify({ keys: [...git.chosen] }) });
+    storeSource(body.source, true);
+    renderGit();
+    await Promise.all([loadInventory(), loadSkills(true)]);
+    setStatus(`${source.label}: ${gitResultText(body.result)}. New Claude and Kiro runs load plugins and MCP servers.`);
+  });
+  syncGitButtons();
+}
+
+elements.resourcesGitAddButton.addEventListener("click", () => void addRepository());
+for (const input of [elements.resourcesGitUrl, elements.resourcesGitRef]) {
+  input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void addRepository(); } });
+}
+elements.resourcesGitSelectAllButton.addEventListener("click", () => {
+  const source = selectedSource();
+  if (!source || source.ownerNodeId) return;
+  for (const item of source.items) if (!item.error && item.status !== "gone") git.chosen.add(item.key);
+  renderGit();
+});
+elements.resourcesGitApplyButton.addEventListener("click", () => void applyGitChoice());
+
 /* ---- Opening ---- */
 
 function configure({ scope = "conversation", projectId = state.activeProjectId, engine = state.engine, conversationId = state.activeConversationId || state.activeSessionId, tab = "skills" } = {}) {
@@ -822,6 +1140,7 @@ export function showResourcesPanel() {
   render();
   void loadInventory();
   sources = loadSources();
+  void loadGit();
   if (view.tab === "add") void autoScan();
 }
 
@@ -841,7 +1160,7 @@ elements.resourcesScopeSelect.addEventListener("change", () => {
   void loadInventory();
 });
 elements.resourcesHarnessSelect.addEventListener("change", () => { view.page = 0; render(); });
-elements.resourcesSearchInput.addEventListener("input", () => { view.page = 0; render(); });
+elements.resourcesSearchInput.addEventListener("input", () => { view.page = 0; git.itemPage = 0; render(); });
 // The panel sits inside the Settings form; Enter here must not save settings.
 elements.resourcesSearchInput.addEventListener("keydown", (event) => { if (event.key === "Enter") event.preventDefault(); });
 for (const tab of elements.resourcesPanel.querySelectorAll("[data-resources-tab]")) {
@@ -851,6 +1170,7 @@ for (const tab of elements.resourcesPanel.querySelectorAll("[data-resources-tab]
     setStatus("");
     render();
     if (view.tab === "add" && !view.scanRoot) void autoScan();
+    if (view.tab === "git") void loadGit();
   });
 }
 elements.resourcesScanButton.addEventListener("click", () => void scan());
@@ -863,7 +1183,8 @@ elements.resourcesImportButton.addEventListener("click", () => void importSelect
 elements.resourcesRefreshButton.addEventListener("click", async () => {
   try {
     if (view.tab === "skills") await api("/api/resources/skills/refresh", { method: "POST", body: JSON.stringify({}) });
-    await loadInventory();
+    if (view.tab === "git") await api("/api/resources/git/refresh", { method: "POST", body: JSON.stringify({}) });
+    await Promise.all([loadInventory(), view.tab === "git" ? loadGit() : null]);
     if (view.tab === "add") await scan();
   } catch (error) { setStatus(error.message); }
 });
@@ -878,7 +1199,9 @@ const resized = new ResizeObserver((entries) => {
   requestAnimationFrame(() => {
     if (changed.some((entry) => entry.target === elements.resourcesList) && !elements.resourcesList.hidden) renderList();
     if (changed.some((entry) => entry.target === elements.resourcesScanList) && !elements.resourcesAddPanel.hidden) renderAdd();
+    if (changed.some((entry) => entry.target === elements.resourcesGitItems) && !elements.resourcesGitPanel.hidden) renderGit();
   });
 });
 resized.observe(elements.resourcesList);
 resized.observe(elements.resourcesScanList);
+resized.observe(elements.resourcesGitItems);

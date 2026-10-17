@@ -1405,6 +1405,7 @@
             <button type="button" role="tab" data-resources-tab="skills" aria-selected="true" data-testid="resources-tab-skills">Skills <span id="resourcesSkillsCount"></span></button>
             <button type="button" role="tab" data-resources-tab="mcp" aria-selected="false" data-testid="resources-tab-mcp">MCP servers <span id="resourcesMcpCount"></span></button>
             <button type="button" role="tab" data-resources-tab="add" aria-selected="false" data-testid="resources-tab-add">+ Add skills</button>
+            <button type="button" role="tab" data-resources-tab="git" aria-selected="false" data-testid="resources-tab-git">Git repos <span id="resourcesGitCount"></span></button>
             <button type="button" role="tab" data-resources-tab="paths" aria-selected="false" data-testid="resources-tab-paths">Load paths</button>
           </div>
           <div class="resources-share-bar" id="resourcesShareBar" data-testid="resources-share-bar" hidden></div>
@@ -1422,6 +1423,20 @@
               <button class="primary" type="button" id="resourcesImportButton" data-testid="resources-import-button" disabled>Import selected</button>
             </div>
             <p class="settings-hint">Import copies whole skill folders, scripts included, into this node's managed skills. Every agent on this node sees them; they stay on this node until you share them from the Skills tab.</p>
+          </section>
+          <section class="resources-add resources-git" id="resourcesGitPanel" role="tabpanel" data-testid="resources-git-panel" hidden>
+            <label>Bring skills, Claude plugins and MCP servers from a git repository
+              <span class="folder-input-row resources-git-add-row"><input id="resourcesGitUrl" type="text" autocomplete="off" spellcheck="false" placeholder="https://github.com/owner/repo, git@host:owner/repo.git or owner/repo" data-testid="resources-git-url" /><input id="resourcesGitRef" type="text" autocomplete="off" spellcheck="false" placeholder="Branch or tag" aria-label="Branch or tag (optional)" data-testid="resources-git-ref" /><button class="ghost" type="button" id="resourcesGitAddButton" data-testid="resources-git-add-button">Add repository</button></span>
+            </label>
+            <div class="resources-list" id="resourcesGitSources" data-testid="resources-git-sources"></div>
+            <div class="resources-pager" id="resourcesGitSourcesPager" data-testid="resources-git-sources-pager" hidden></div>
+            <div class="resources-list resources-page" id="resourcesGitItems" data-testid="resources-git-items"></div>
+            <div class="resources-pager" id="resourcesGitItemsPager" data-testid="resources-git-items-pager" hidden></div>
+            <div class="github-group-actions">
+              <button class="ghost" type="button" id="resourcesGitSelectAllButton" data-testid="resources-git-select-all">Select all</button>
+              <button class="primary" type="button" id="resourcesGitApplyButton" data-testid="resources-git-apply" disabled>Apply selection</button>
+            </div>
+            <p class="settings-hint">Ticked items are copied where every agent on this node loads them: skills into managed skills, plugins for Claude, MCP servers for Claude and Kiro. Unticking removes them again; copies edited here are kept. Remotes are checked for new commits every six hours. Nodes you share a repository with run this node's commit and selection, and follow each update.</p>
           </section>
           <section class="resources-paths" id="resourcesPathsPanel" role="tabpanel" data-testid="resources-paths-panel" hidden>
             <p>Additional to managed and native defaults. Enter one absolute file or folder per line; replace lines or add multiple folders (up to 20) per type. Project-scoped folders are additional and more specific than these global lists.</p>

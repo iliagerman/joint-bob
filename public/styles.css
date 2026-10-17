@@ -4048,9 +4048,17 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .resources-add { display: flex; flex-direction: column; gap: 10px; }
 .resources-add > * { flex: none; }
 .resources-add > .resources-page { flex: 1 1 0; min-height: 0; }
+.resources-git-add-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 160px) auto; gap: 8px; }
+.resources-git-source { cursor: pointer; }
+.resources-git-source.is-selected { border-color: var(--accent); }
+.resources-git-source .resources-row-actions { flex-wrap: wrap; }
+.resources-git-source .resources-row-actions label { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.resources-badge.status-edited, .resources-badge.update { color: var(--warning, #d9a441); border-color: currentColor; }
 .resources-paths { display: grid; gap: 12px; align-content: start; overflow-y: auto; scrollbar-width: thin; }
 .resources-toolbar { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .resources-toolbar > [hidden] { display: none; }
+/* The git tab shows neither the scope nor the agent filter: search takes the row. */
+.resources-toolbar:has(> #resourcesHarnessSelect[hidden]):has(> #resourcesScopeSelect[hidden]) { grid-template-columns: minmax(0, 1fr) auto; }
 .resources-toolbar .search-shell { margin: 0; }
 .resources-toolbar .search-shell input { border-color: var(--line); }
 /* The share dialog scrolls between its title and its buttons, never past either. */
@@ -4099,10 +4107,17 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
   .resources-panel > #resourcesSummary { display: none; }
   .resources-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   .resources-toolbar .search-shell { grid-column: 1 / 3; }
+  .resources-toolbar:has(> #resourcesHarnessSelect[hidden]):has(> #resourcesScopeSelect[hidden]) .search-shell { grid-column: auto; }
   .resources-tabs { overflow-x: auto; scrollbar-width: none; }
   .resources-tabs button { white-space: nowrap; padding: 6px 8px; }
   .resources-row .resources-badge.harness, .resources-row-actions > small { display: none; }
   .resources-share-line > span { flex-basis: 100%; }
+  .resources-git-add-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .resources-git-add-row > input:first-child { grid-column: 1 / -1; }
+  .resources-git > .settings-hint { display: none; }
+  /* A phone cannot fit the form, a repository and its items at once: the panel scrolls, its item list still pages. */
+  .resources-git { overflow-y: auto; scrollbar-width: thin; }
+  .resources-git > .resources-page { flex: none; min-height: 128px; }
 }
 
 /* ---- Git view: Story tab ----

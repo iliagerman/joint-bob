@@ -385,6 +385,48 @@ export async function refreshSharedSkills(): Promise<void> {
   return refresh;
 }
 
+/** Peers that receive at least one of these skills from this node, each with a cluster to reach it through. */
+function skillReceivers(db: DatabaseSync, local: string, names: string[]): Map<string, string> {
+  const receivers = new Map<string, string>();
+  for (const membership of listSharingMemberships(db, local)) {
+    if (getSharingCluster(db, membership.clusterId).closed) continue;
+    for (const member of listSharingClusterMembers(db, membership.clusterId)) {
+      if (member.nodeId === local || receivers.has(member.nodeId)) continue;
+      if (names.some((name) => authorizedSkillClusters(db, local, member.nodeId, name).length || scopedOnly(db, local, member.nodeId, name))) receivers.set(member.nodeId, membership.clusterId);
+    }
+  }
+  return receivers;
+}
+
+/**
+ * Tells the nodes a changed skill is shared with to fetch it now, so they run the new version
+ * without waiting for their next refresh. Nodes that are away catch up when they return.
+ */
+export async function announceSkillChanges(names: string[]): Promise<void> {
+  const db = await clusterV2Database(), local = (await getClusterNode()).id;
+  ensureSkillSharingSchema(db);
+  const valid = names.filter((name) => { try { validateSkillName(name); return true; } catch { return false; } });
+  const managed = await managedNames(), owned = [];
+  for (const name of valid) if (managed.includes(name) && !await receivedOwner(agentResourcePaths().sharedSkills, name)) owned.push(name);
+  if (!owned.length) return;
+  await Promise.all([...skillReceivers(db, local, owned)].filter(([peer]) => !peerAway(peer)).map(async ([peer, cluster]) => {
+    try { await signedSkillPost(db, local, peer, cluster, "/api/cluster/v2/skills/changed", {}, 4096, true); }
+    catch (error) { console.warn(`Skill change notice to ${peer} failed: ${(error as Error).message}`); }
+  }));
+}
+
+/** A sharing node changed a skill it shares here: fetch from that node now. */
+async function ownerChanged(owner: string): Promise<{ accepted: true }> {
+  const db = await clusterV2Database(), local = (await getClusterNode()).id;
+  const cluster = requirePeer(db, local, owner);
+  void (async () => {
+    await ensureLegacySkillSyncPaused();
+    await syncOwner(db, local, owner, cluster);
+    writeScopedIndex(db);
+  })().catch((error) => console.warn(`Skill refresh from ${owner} failed`, error));
+  return { accepted: true };
+}
+
 async function shareSkill(name: string, ids: string[], nodeIds: string[], scopes: SkillScopeGrants) {
   await ensureLegacySkillSyncPaused();
   return withSkillMutation(async () => {
@@ -437,4 +479,5 @@ app.post("/api/resources/skills/refresh", route(async (request) => { z.object({}
 app.post("/api/cluster/v2/skills/manifest", route(async (request, response) => { z.object({}).strict().parse(request.body); return manifestFor(response.locals.machineNodeId); }, true));
 app.post("/api/cluster/v2/skills/scoped-manifest", route(async (request, response) => { z.object({}).strict().parse(request.body); return scopedManifestFor(response.locals.machineNodeId); }, true));
 app.post("/api/cluster/v2/skills/bundle", route(async (request, response) => bundleFor(response.locals.machineNodeId, z.object({ name: nameSchema }).strict().parse(request.body).name), true));
+app.post("/api/cluster/v2/skills/changed", route(async (request, response) => { z.object({}).strict().parse(request.body); return ownerChanged(response.locals.machineNodeId); }, true));
 }

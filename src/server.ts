@@ -23,6 +23,7 @@ import { runSyncCheck } from "./server/sync-check.js";
 import { installBackendErrorCapture } from "./server/error-capture.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { syncNtfyServiceShares } from "./server/ntfy-share.js";
+import { scheduleGitSourceUpdateChecks, syncGitResourceShares } from "./server/git-resources.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { flushBudgetPolicies } from "./server/budgets.js";
 import { flushAccountReplication, flushBlockNotices, syncLocalAccountIds } from "./server/account-sync.js";
@@ -174,6 +175,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         announceReturn(false).catch((error) => console.warn("Announcing this machine's return failed", error));
         removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
         syncNtfyServiceShares().catch((error) => console.warn("ntfy service share sync failed", error));
+        syncGitResourceShares().catch((error) => console.warn("Repository share sync failed", error));
       }
       flushClusterWork();
     };
@@ -189,6 +191,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     // First run comes a quarter hour after start, clear of the release health check.
     setInterval(() => { if (clusterWorkAllowed()) inBackground(() => runReplicationHousekeeping()).catch((error) => console.warn("Replication housekeeping failed", error)); }, 15 * 60_000).unref();
     setInterval(() => inBackground(() => reconcileManagedAgentResources()).catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
+    // Git repositories cannot announce new commits, so their remotes are asked every six hours.
+    scheduleGitSourceUpdateChecks();
     // Empty drafts go an hour after their last activity; the first sweep waits out the release health check.
     const sweepRetention = (): void => { sweepConversationRetention().catch((error) => console.warn("Conversation retention sweep failed", error)); };
     setTimeout(sweepRetention, 5 * 60_000).unref();

@@ -33,6 +33,8 @@ export const ADMIN_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
   // Skills and MCP servers published from here load into everyone's agents on this node.
   { method: "*", path: /^\/resources\/skills(\/|$)/ },
   { method: "*", path: /^\/resources\/mcp\/share$/ },
+  // Git repositories install skills, plugins and MCP servers for every agent on this node.
+  { method: "*", path: /^\/resources\/git(\/|$)/ },
   // The browser executor's configuration for this machine.
   { method: "PUT", path: /^\/browser\/config$/ },
 ];

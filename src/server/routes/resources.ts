@@ -15,9 +15,11 @@ import { sendError } from "../http-auth.js";
 import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { app } from "../state.js";
 import { peerSnapshot, staleSnapshotReason } from "../peer-snapshots.js";
+import { registerGitResourceRoutes } from "../git-resources.js";
 import { registerSkillSharingRoutes } from "../skill-sharing.js";
 
 registerSkillSharingRoutes();
+registerGitResourceRoutes();
 
 interface NodeInventory {
   node: { id: string; name: string; local: boolean; online: boolean };

@@ -274,8 +274,12 @@ app.post("/api/settings/skills/sync", async (request, response, next) => {
   try {
     const { paths } = skillSyncSchema.parse(request.body);
     syncingSkills = true;
-    await (await import("../skill-sharing.js")).ensureLegacySkillSyncPaused();
-    response.json(await syncLocalSkills(paths));
+    const sharing = await import("../skill-sharing.js");
+    await sharing.ensureLegacySkillSyncPaused();
+    const result = await syncLocalSkills(paths);
+    response.json(result);
+    // Nodes these skills are shared with fetch the new copies now rather than on their next refresh.
+    if (result.published.length) sharing.announceSkillChanges(result.published).catch((error) => console.warn("Skill change notices failed", error));
   } catch (error) {
     const validation = error instanceof Error && /^(Skill paths|Skill file|Invalid skill|No valid SKILL|Conflicting skill|Nested symbolic link|Unsupported file type|Skill source and destination overlap|Skill destination is a symbolic link|Received skills cannot)/.test(error.message);
     if (error instanceof z.ZodError || validation || (error as NodeJS.ErrnoException).code === "ENOENT") {
