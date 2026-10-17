@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.104.2 — 2026-10-17
 
 - Kept scheduled tasks running after a node restart unless they are set to pause on failure; the interrupted run is still marked failed as uncertain.
 
