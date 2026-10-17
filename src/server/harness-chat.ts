@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resourceOwner } from "../ownership.js";
+import { filterPersonalAssistantTools, personalAssistantContext, personalAssistantSettings, personalAssistantToolBaseline } from "../personal-assistants.js";
+import { revokeBrowserAgentTokens } from "../browser-agent.js";
 import { attachMessageAuthors, authoredPromptText, recordMessageAuthor, type MessageAuthor } from "../message-authors.js";
 import { internalTaskPrompt } from "../background-task-messages.js";
 import { stat, unlink } from "node:fs/promises";
@@ -378,7 +380,22 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt 
       saveDifficulty(activeDifficulty, origin);
       // Once a second person writes, the agent sees who wrote each prompt.
       const authored = queued.systemEventId ? attachments.text : authoredPromptText(connection.project.id, connection.conversationId, attachments.text, queued.author);
-      const text = `${connection.handoffContext ?? ""}${authored}`;
+      const assistantSettings = queued.author && !queued.systemEventId
+        ? await personalAssistantSettings(queued.author.accountId, connection.project.id, connection.engine, connection.shared.session.id)
+        : undefined;
+      if (assistantSettings) {
+        const available = connection.shared.session.tools();
+        const active = available.filter(tool => tool.active).map(tool => tool.name);
+        const baseline = await personalAssistantToolBaseline(queued.author!.accountId, assistantSettings.id, active);
+        const allowed = filterPersonalAssistantTools(baseline, assistantSettings);
+        if (allowed.length !== active.length || allowed.some(name => !active.includes(name))) await connection.shared.session.setTools(allowed);
+        if (!assistantSettings.allowBrowser) revokeBrowserAgentTokens(connection.project.id, connection.conversationId);
+      }
+      const assistantContext = assistantSettings
+        ? await personalAssistantContext(queued.author!.accountId, connection.project.id, connection.engine, connection.shared.session.id)
+        : "";
+      const toolPolicy = assistantSettings ? `\n\nPersonal assistant tool policy: Browser access ${assistantSettings.allowBrowser ? "allowed" : "disabled"}; terminal access ${assistantSettings.allowTerminal ? "allowed" : "disabled"}; MCP servers ${assistantSettings.mcpServerNames === null ? "inherit the conversation's installed servers" : `allowlisted to ${assistantSettings.mcpServerNames.join(", ") || "none"}`}. Treat these as access restrictions, not preferences.` : "";
+      const text = `${assistantContext ? `${assistantContext}${toolPolicy}\n\n` : ""}${connection.handoffContext ?? ""}${authored}`;
       const finishSilentReview = queued.requestId && isScheduledPromptText(queued.promptText)
         ? await silentScheduledReview(connection.project, connection.engine, connection.shared.session.id, queued.requestId) : undefined;
       await connection.shared.session.prompt({ text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {

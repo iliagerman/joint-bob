@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#141618"><link rel="manifest" href="/manifest.webmanifest">
+  <title>Personal assistant · Joint Bob</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background:#141618; color:#eee; }
+    * { box-sizing: border-box; } body { max-width: 760px; margin: auto; padding: max(24px, env(safe-area-inset-top)) 20px 80px; line-height: 1.45; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid #343939; padding-bottom:18px; }
+    h1 { font-size:1.6rem; letter-spacing:-.045em; margin:0; } h2 { font-size:1.1rem; margin:0 0 18px; } small, .muted { color:#a7afae; }
+    a { color:#9adcca; overflow-wrap:anywhere; } button { cursor:pointer; } button, input, textarea, select { font:inherit; }
+    button, input, textarea, select { border:1px solid #49514f; background:#222827; color:#f7f9f8; border-radius:10px; padding:10px 12px; }
+    input, textarea, select { width:100%; } textarea { min-height:100px; resize:vertical; } input[type=file] { border-style:dashed; }
+    button:hover, button:focus-visible { border-color:#86d5bd; } button.primary { background:#9adcca; color:#10221e; font-weight:700; border-color:#9adcca; }
+    section { margin-top:26px; padding:22px; border:1px solid #343939; border-radius:18px; background:#1b201f; }
+    label { display:block; font-size:.9rem; color:#c7d1cf; margin:16px 0 6px; } form > label:first-child { margin-top:0; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; } .row > * { flex:1; } .row button { flex:0 0 auto; }
+    article { border-top:1px solid #343939; padding:18px 0; } article:first-of-type { border:0; } article h3 { margin:0 0 4px; font-size:1rem; }
+    .images { display:flex; gap:8px; overflow-x:auto; margin:10px 0; } .images img { max-height:180px; max-width:200px; border-radius:8px; object-fit:contain; background:#101313; }
+    #message { min-height:24px; color:#9adcca; } .danger { color:#ffc9c3; } .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <header><div><small>JOINT BOB / PERSONAL</small><h1 id="heading">Your assistants</h1></div><a href="/">Workspace</a></header>
+  <p id="message" role="status" aria-live="polite"></p>
+  <section id="chooser"><h2>Assistants</h2><div id="assistants"></div></section>
+  <main id="detail" class="hidden">
+    <section><div class="row"><a id="chat" class="primary">Open conversation</a><button id="copy" type="button">Copy assistant link</button></div>
+      <p class="muted">Bookmark this page on Mac or add it to your phone's home screen. Both open the same conversation.</p>
+    </section>
+    <section><h2>Instructions</h2><form id="settings">
+      <label for="name">Name</label><input id="name" required maxlength="100">
+      <label for="instructions">What should this assistant do?</label><textarea id="instructions" maxlength="20000" placeholder="When comparing offers, cite each original link and flag missing details."></textarea>
+      <label><input id="allow-browser" type="checkbox" style="width:auto"> Allow browser use</label>
+      <label><input id="allow-terminal" type="checkbox" style="width:auto"> Allow terminal use</label>
+      <p class="muted">Disabled tools are removed before each turn. Skills and MCP servers use conversation-scoped settings in Joint Bob.</p>
+      <a id="resources" href="/">Configure skills and MCP servers for this conversation</a>
+      <button class="primary">Save instructions</button>
+    </form></section>
+    <section><h2>MCP servers</h2>
+      <p class="muted">Choose which installed project and shared MCP servers this assistant can use. The server must already be installed in Joint Bob Resources.</p>
+      <div id="mcp-options"></div><button id="save-mcp" type="button">Save MCP access</button>
+    </section>
+    <section><h2>Secret accounts</h2>
+      <p class="muted">Accounts attached here are available to this conversation. Configure values in Joint Bob Settings → Secrets; never paste them into instructions.</p>
+      <form id="secrets"><div id="secret-options"></div><button class="primary">Save accounts</button></form>
+    </section>
+    <section><h2>Save a link with screenshots</h2><form id="capture">
+      <label for="collection">Collection</label><input id="collection" value="Shopping" required maxlength="100">
+      <label for="title">Title</label><input id="title" required maxlength="300" placeholder="Phone listing">
+      <label for="url">Original link</label><input id="url" type="url" placeholder="https://…">
+      <label for="note">Notes</label><textarea id="note" maxlength="10000" placeholder="Price, condition, what caught your eye"></textarea>
+      <label for="images">Screenshots (up to four, 20 MiB total)</label><input id="images" type="file" accept="image/png,image/jpeg,image/webp" multiple>
+      <p class="muted">Link and screenshots stay together. If there is no link, the assistant will flag it.</p>
+      <button class="primary">Save item</button>
+    </form></section>
+    <section><div class="row"><h2>Saved items</h2><button id="refresh" type="button">Refresh</button></div><div id="items"></div></section>
+  </main>
+  <script type="module" src="/assistant.js"></script>
+</body>
+</html>

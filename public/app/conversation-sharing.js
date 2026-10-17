@@ -1,6 +1,7 @@
 import { elements } from "./elements.js";
 import { menuIcon } from "./icons.js";
 import { state } from "./state.js";
+import { api } from "./api.js";
 import { toast } from "./shell.js";
 
 /** Links identify a conversation without including its transcript or local file path. */
@@ -68,4 +69,24 @@ pinLabel.className = "chat-action-label";
 pinLabel.textContent = "Copy home-screen link";
 pinButton.append(menuIcon("pin"), pinLabel);
 pinButton.addEventListener("click", () => void copyConversationLink("Link copied. Open Chrome, paste it, then tap ⋮ → Add to Home screen."));
-elements.chatMoreMenu.querySelector(".chat-more-actions").append(shareButton, pinButton);
+const personalButton = document.createElement("button");
+personalButton.className = "ghost compact chat-action";
+personalButton.type = "button";
+personalButton.dataset.testid = "chat-personal-assistant-button";
+personalButton.textContent = "Personal assistant";
+personalButton.addEventListener("click", async () => {
+  const projectId = state.activeConversationProjectId || state.activeProjectId;
+  const sessionId = state.activeSessionId;
+  if (!projectId || !sessionId) { toast("Open a conversation first"); return; }
+  try {
+    const { assistants } = await api("/api/personal-assistants");
+    let profile = assistants.find(entry => entry.projectId === projectId && entry.engine === state.engine && entry.sessionId === sessionId);
+    if (!profile) {
+      const name = window.prompt("Name this personal assistant", getCurrentConversationTitle());
+      if (!name?.trim()) return;
+      ({ assistant: profile } = await api("/api/personal-assistants", { method: "POST", body: JSON.stringify({ projectId, engine: state.engine, sessionId, name: name.trim(), instructions: "" }) }));
+    }
+    location.href = `/assistant.html?id=${encodeURIComponent(profile.id)}`;
+  } catch (error) { toast(error.message); }
+});
+elements.chatMoreMenu.querySelector(".chat-more-actions").append(shareButton, pinButton, personalButton);
