@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.109.0 — 2026-10-18
 
-- Added Ask AI to pull requests, pipeline runs, and failed jobs in the Git view, with clearer status badges, rendered descriptions and comments, highlighted log errors, and a Try again button when GitHub fails to load.
+- Added Ask AI to pull requests, pipeline runs, and failed jobs in the Git view, which sends the item's details to the read-only reviewer as a question.
+- Polished the pull request, pipeline run, and job lists and detail pages in the Git view with status badges, relative times, and durations.
+- Rendered pull request descriptions and comments as formatted text.
+- Showed a spinner as soon as a pull request or pipeline run opens, and a Try again button when GitHub fails to load it.
+- Loaded a failed job's log automatically with its error lines highlighted.
 - Added per-node control over which shared skills, plugins, and MCP servers each agent uses, with a Tools tab, a Plugins tab, and relay skill rules that a machine can follow or stop following.
 
 ## 2.108.0 — 2026-10-18
