@@ -23,14 +23,19 @@ test("personal assistant opens from conversation and saves a link with its scree
     await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
     await page.locator("body.view-chat #chatPanel").waitFor({ state: "visible" });
     await page.waitForFunction(() => !(document.querySelector("#messageInput") as HTMLTextAreaElement).disabled);
-    const id = await page.evaluate(async () => {
-      const { state } = await import("/app/state.js");
-      const { api } = await import("/app/api.js");
-      const { assistant } = await api("/api/personal-assistants", { method: "POST", body: JSON.stringify({ projectId: state.activeConversationProjectId, engine: state.engine, sessionId: state.activeSessionId, name: "Phone assistant", instructions: "" }) });
-      return assistant.id;
-    });
-    await page.goto(`${environment.nodes[0].url}/assistant.html?id=${id}`);
+    const button = page.getByTestId("chat-personal-assistant-button");
+    assert.equal(await button.locator("svg.chat-toolbar-icon").count(), 1);
+    assert.ok((await button.boundingBox())!.width <= 40, "assistant fits the icon toolbar");
+    await button.click();
+    const dialog = page.getByTestId("personal-assistant-dialog");
+    await dialog.waitFor({ state: "visible" });
+    assert.equal(await dialog.locator(".dialog-card").evaluate(card => getComputedStyle(card).display), "grid", "name form uses the app dialog style");
+    await dialog.getByTestId("personal-assistant-name").fill("Phone assistant");
+    await dialog.getByTestId("personal-assistant-create").click();
     await page.locator("#heading").getByText("Phone assistant").waitFor();
+    const id = new URL(page.url()).searchParams.get("id");
+    assert.ok(id, "creation opens a permanent assistant URL");
+    assert.equal(await page.locator("header a[href='/assistant.html']").count(), 1, "assistant list stays reachable");
     await page.locator("#instructions").fill("Compare listings by price and warranty");
     await page.locator("#allow-browser").uncheck();
     await page.locator("#allow-terminal").uncheck();
@@ -53,6 +58,11 @@ test("personal assistant opens from conversation and saves a link with its scree
     assert.equal(await page.locator("#allow-browser").isChecked(), false);
     assert.equal(await page.locator("#allow-terminal").isChecked(), false);
     await page.locator("#items article", { hasText: "Phone A" }).waitFor();
+    await page.locator("#chat").click();
+    await page.locator("body.view-chat #chatPanel").waitFor({ state: "visible" });
+    await page.getByTestId("chat-personal-assistant-button").click();
+    await page.locator("#heading").getByText("Phone assistant").waitFor();
+    assert.equal(new URL(page.url()).searchParams.get("id"), id, "conversation icon reopens the same assistant");
   } finally {
     await browser?.close();
     if (server) await stopDevNode(server);

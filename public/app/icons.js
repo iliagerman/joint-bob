@@ -6,6 +6,7 @@ import { sessionEngine } from "./session-identity.js";
  */
 const rowMenuIconPaths = {
   chat: ["M4 4h16v12H9l-5 4z", "M8 8h8M8 12h5"],
+  assistant: ["M12 3v3", "M4.5 9a3 3 0 0 1 3-3h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3z", "M8.5 12h.01M15.5 12h.01", "M9 16h6"],
   play: ["m8 5 11 7-11 7z"],
   close: ["m6 6 12 12M18 6 6 18"],
   back: ["m14 6-6 6 6 6"],

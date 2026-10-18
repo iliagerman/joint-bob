@@ -44,7 +44,7 @@ test("installed share target keeps text, URL and screenshot together for review 
     assert.equal(await page.locator("#note").inputValue(), "Warranty included");
     await page.getByText("1 shared screenshot(s) ready. Review and save.").waitFor();
     await page.locator("#capture button").click();
-    await page.getByText("Item saved").waitFor();
+    await page.locator("#message").getByText("Item saved", { exact: true }).waitFor();
     await page.locator("#items article img").waitFor();
     assert.equal(await page.locator("#items article img").count(), 1);
   } finally { await browser?.close(); if (server) await stopDevNode(server); await rm(root, { recursive: true, force: true }); }

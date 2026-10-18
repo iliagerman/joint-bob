@@ -73,20 +73,41 @@ const personalButton = document.createElement("button");
 personalButton.className = "ghost compact chat-action";
 personalButton.type = "button";
 personalButton.dataset.testid = "chat-personal-assistant-button";
-personalButton.textContent = "Personal assistant";
+personalButton.title = "Open personal assistant";
+personalButton.setAttribute("aria-label", "Open personal assistant");
+const personalLabel = document.createElement("span");
+personalLabel.className = "chat-action-label";
+personalLabel.textContent = "Personal assistant";
+const personalIcon = menuIcon("assistant");
+personalIcon.classList.add("chat-toolbar-icon");
+personalButton.append(personalIcon, personalLabel);
+const personalDialog = document.querySelector("#personalAssistantDialog");
+const personalForm = document.querySelector("#personalAssistantForm");
+let personalConversation;
 personalButton.addEventListener("click", async () => {
   const projectId = state.activeConversationProjectId || state.activeProjectId;
   const sessionId = state.activeSessionId;
   if (!projectId || !sessionId) { toast("Open a conversation first"); return; }
   try {
     const { assistants } = await api("/api/personal-assistants");
-    let profile = assistants.find(entry => entry.projectId === projectId && entry.engine === state.engine && entry.sessionId === sessionId);
-    if (!profile) {
-      const name = window.prompt("Name this personal assistant", getCurrentConversationTitle());
-      if (!name?.trim()) return;
-      ({ assistant: profile } = await api("/api/personal-assistants", { method: "POST", body: JSON.stringify({ projectId, engine: state.engine, sessionId, name: name.trim(), instructions: "" }) }));
-    }
-    location.href = `/assistant.html?id=${encodeURIComponent(profile.id)}`;
+    const profile = assistants.find(entry => entry.projectId === projectId && entry.engine === state.engine && entry.sessionId === sessionId);
+    if (profile) { location.href = `/assistant.html?id=${encodeURIComponent(profile.id)}`; return; }
+    personalConversation = { projectId, engine: state.engine, sessionId };
+    document.querySelector("#personalAssistantName").value = getCurrentConversationTitle();
+    personalDialog.showModal();
   } catch (error) { toast(error.message); }
+});
+document.querySelector("#personalAssistantCancel").addEventListener("click", () => personalDialog.close());
+personalForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const name = document.querySelector("#personalAssistantName").value.trim();
+  if (!name || !personalConversation) return;
+  const button = personalForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const { assistant } = await api("/api/personal-assistants", { method: "POST", body: JSON.stringify({ ...personalConversation, name, instructions: "" }) });
+    personalDialog.close();
+    location.href = `/assistant.html?id=${encodeURIComponent(assistant.id)}`;
+  } catch (error) { toast(error.message); } finally { button.disabled = false; }
 });
 elements.chatMoreMenu.querySelector(".chat-more-actions").append(shareButton, pinButton, personalButton);

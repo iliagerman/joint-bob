@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Replaced the browser name prompt for personal assistants with a dialog, and let the conversation's assistant icon reopen its assistant.
+
 ## 2.106.0 — 2026-10-17
 
 - Added personal assistants, created from a conversation's More menu, that save links with screenshots, follow your instructions, and can be limited in their browser, terminal, and MCP tool use.

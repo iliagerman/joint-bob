@@ -8,6 +8,7 @@
     :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background:#141618; color:#eee; }
     * { box-sizing: border-box; } body { max-width: 760px; margin: auto; padding: max(24px, env(safe-area-inset-top)) 20px 80px; line-height: 1.45; }
     header { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid #343939; padding-bottom:18px; }
+    .header-links { display:flex; gap:14px; flex-wrap:wrap; justify-content:flex-end; }
     h1 { font-size:1.6rem; letter-spacing:-.045em; margin:0; } h2 { font-size:1.1rem; margin:0 0 18px; } small, .muted { color:#a7afae; }
     a { color:#9adcca; overflow-wrap:anywhere; } button { cursor:pointer; } button, input, textarea, select { font:inherit; }
     button, input, textarea, select { border:1px solid #49514f; background:#222827; color:#f7f9f8; border-radius:10px; padding:10px 12px; }
@@ -22,12 +23,12 @@
   </style>
 </head>
 <body>
-  <header><div><small>JOINT BOB / PERSONAL</small><h1 id="heading">Your assistants</h1></div><a href="/">Workspace</a></header>
+  <header><div><small>JOINT BOB / PERSONAL</small><h1 id="heading">Your assistants</h1></div><nav class="header-links" aria-label="Assistant navigation"><a href="/assistant.html">All assistants</a><a href="/">Workspace</a></nav></header>
   <p id="message" role="status" aria-live="polite"></p>
   <section id="chooser"><h2>Assistants</h2><div id="assistants"></div></section>
   <main id="detail" class="hidden">
     <section><div class="row"><a id="chat" class="primary">Open conversation</a><button id="copy" type="button">Copy assistant link</button></div>
-      <p class="muted">Bookmark this page on Mac or add it to your phone's home screen. Both open the same conversation.</p>
+      <p class="muted">This assistant uses your existing conversation. Open conversation to chat. Save instructions and access below; they apply on its next turn. Bookmark this page on Mac or add it to your phone's home screen. You can also reopen it from the assistant icon in that conversation.</p>
     </section>
     <section><h2>Instructions</h2><form id="settings">
       <label for="name">Name</label><input id="name" required maxlength="100">
