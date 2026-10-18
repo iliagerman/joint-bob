@@ -3,9 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.113.0 — 2026-10-18
 
-- Added a state filter to Resources and per-agent on/off switches that show each skill, MCP server, and plugin as enabled, disabled, or read-only when it cannot be switched safely.
+- Added a state filter to Resources that shows all, enabled, disabled, or agent-managed resources.
+- Added per-agent on/off switches for skills, MCP servers, and plugins, including project MCP servers and plugins, with a "Use default" option to clear your choice.
+- Showed resources that cannot be switched safely as read-only with the reason, including native Claude skills from user and project folders, which are managed in their source folder.
+- Required strict resource isolation before changing MCP or Claude resource activation, and explained why when it is off. Pi skill controls remain available.
+- Explained in Resources that enabled means allowed to load in new runs, not proof of use in an existing conversation.
+- Renamed the chat's "Skills & tools" button to "Resources".
+- Showed relays in policy lists by their environment and host address instead of the name stored on this machine.
+- Renamed the auto-activate option to cover received skills, MCP servers, and plugins.
 
 ## 2.112.1 — 2026-10-18
 
