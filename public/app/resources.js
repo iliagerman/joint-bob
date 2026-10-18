@@ -463,11 +463,14 @@ function selectedServers() {
   return (localEntry()?.inventory?.mcpServers ?? []).filter((server) => view.selectedServers.has(serverKey(server)));
 }
 
+let peerStatusExpanded = false;
 function peerStatus() {
   const peers = view.sharing?.peerStatus ?? [];
   if (!peers.length) return null;
   const details = document.createElement("details");
   details.className = "resources-peer-status";
+  details.open = peerStatusExpanded;
+  details.addEventListener("toggle", () => { if (details.isConnected) peerStatusExpanded = details.open; });
   const failing = peers.filter((peer) => peer.error).length;
   const summary = document.createElement("summary");
   summary.textContent = `Receiving from ${peers.length} node${peers.length === 1 ? "" : "s"}${failing ? ` · ${failing} failing` : ""}`;
@@ -1123,6 +1126,7 @@ function configure({ scope = "conversation", projectId = state.activeProjectId, 
   view.tab = tab;
   view.nodes = [];
   view.sharing = null;
+  peerStatusExpanded = false;
   view.page = 0;
   view.selected.clear();
   view.selectedServers.clear();
