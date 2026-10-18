@@ -45,6 +45,8 @@ export const machineRoutes = new Set([
   "GET /cluster/project-files",
   "POST /cluster/project-file-delete",
   "POST /cluster/project-file-copy",
+  "GET /cluster/git/repositories",
+  "DELETE /cluster/git/review",
   "GET /cluster/git/status",
   "GET /cluster/git/diff",
   "GET /cluster/git/history",

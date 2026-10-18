@@ -10,6 +10,8 @@ import type { HarnessId } from "./types.js";
 export const GIT_REVIEW_THREAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface GitReviewSelection {
+  /** Project/task-relative repository root; absent means legacy root ("."). */
+  repository?: string;
   /** "worktree" for a pending change, or a commit hash for a historical one. */
   scope: "worktree" | "commit" | "context";
   /** The commit hash when scope is "commit". */

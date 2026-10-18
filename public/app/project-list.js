@@ -6,6 +6,8 @@ import { loadProjects, refreshProjectsQuietly, selectProject } from "./project-s
 import { pendingReviewCountForProject } from "./reviews.js";
 import { runningCountForProject } from "./running.js";
 import { openResources } from "./resources.js";
+import { openProjectGit } from "./project-git.js";
+import { openProjectIssues } from "./project-issues.js";
 import { openBudgetDialog, projectBudgetTarget } from "./budget-dialog.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { mobileProjectFilterActions } from "./focus-project-controls.js";
@@ -271,6 +273,8 @@ function projectPinToggle(project) {
 function projectMenuItems(project) {
   return [
     ...mobileProjectFilterActions(project),
+    { label: "Git repositories", icon: "folder", testid: "project-git-button", onSelect: () => { void openProjectGit(project); } },
+    { label: "GitHub issues", icon: "github", testid: "project-issues-button", onSelect: () => openProjectIssues(project.id) },
     { label: "Scheduled tasks", icon: "refresh", testid: "project-cron-button", onSelect: () => openScheduledTasks(project.id).catch(error => toast(error.message)) },
     { label: "Skills & tools", icon: "sliders", testid: "project-resources-button", onSelect: () => openResources({ scope: "project", projectId: project.id }) },
     ...(project.locallyOwned !== false ? [{

@@ -2,6 +2,7 @@ import { harnessOption } from "../harness-metadata.js";
 import { loadGitHosting, resetGitHosting } from "./git-hosting.js";
 import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
+import { projectGitUrl } from "./project-git-url.js";
 import { elements } from "./elements.js";
 import { renderSideBySideDiff } from "./git-diff-view.js";
 import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyCommitsToExplain, storyHasSaved, storyHidesScope, storyIsBeingWritten, storyIsFresh, storyIsMissing, storyPicking, storyPullNumber, storyPullUrl, selectStoryPull } from "./git-story.js";
@@ -14,6 +15,9 @@ import { activeChatSession } from "./terminal.js";
 // of ownership. Another conversation can edit the same file.
 const git = {
   tab: "changes",
+  target: null,
+  viewRequest: 0,
+  ready: false,
   conversationId: null,
   status: null,
   commits: [],
@@ -36,11 +40,7 @@ const git = {
 };
 
 function gitApiUrl(route, params = {}) {
-  const url = new URL(`/api/projects/${encodeURIComponent(state.activeProjectId)}/git/${route}`, location.origin);
-  for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
-  if (state.activeNodeId) url.searchParams.set("nodeId", state.activeNodeId);
-  if (state.activeTaskId) url.searchParams.set("taskId", state.activeTaskId);
-  return `${url.pathname}${url.search}`;
+  return projectGitUrl(git.target, route, params);
 }
 
 function setStatus(message) {
@@ -52,8 +52,13 @@ const KIND_LABEL = {
   copied: "copied", type_changed: "type", unmerged: "conflict", untracked: "untracked", unknown: "changed",
 };
 
-export async function openGitReview(conversationId = null, { tab = "changes", ownScope = false } = {}) {
-  if (!state.activeProjectId) { toast("Open a project conversation first"); return; }
+export async function openGitReview(conversationId = null, { tab = "changes", ownScope = false, context, prepare } = {}) {
+  const target = context ?? { projectId: state.activeProjectId, nodeId: state.activeNodeId, taskId: state.activeTaskId };
+  if (!target.projectId) { toast("Select a project first"); return; }
+  const version = ++git.viewRequest;
+  git.target = target;
+  git.ready = !prepare;
+  document.querySelector("#gitReviewRepositories").hidden = !prepare;
   hideStoryReturn();
   git.conversationId = conversationId;
   git.tab = tab;
@@ -74,7 +79,8 @@ export async function openGitReview(conversationId = null, { tab = "changes", ow
   elements.gitReviewFocus.checked = false;
   elements.gitReviewGuide.hidden = true;
   elements.gitReviewGenerate.disabled = true;
-  elements.gitReviewContext.textContent = conversationId ? "Conversation changes" : "Project changes";
+  const projectName = state.projects.find((project) => project.id === target.projectId)?.name ?? "Project";
+  elements.gitReviewContext.textContent = conversationId ? "Conversation changes" : `${projectName} · Git`;
   elements.gitReviewBranch.textContent = "";
   elements.gitReviewDiff.textContent = "";
   elements.gitReviewDiffPath.textContent = "";
@@ -84,7 +90,7 @@ export async function openGitReview(conversationId = null, { tab = "changes", ow
   resetStory({
     container: elements.gitStory,
     conversationId,
-    apiUrl: gitApiUrl,
+    apiUrl: (route, params) => projectGitUrl(target, route, params),
     onChange: syncStoryChrome,
     generate: (options) => { void generateStoryFromView(options); },
     coverage: storyCoverage,
@@ -93,9 +99,19 @@ export async function openGitReview(conversationId = null, { tab = "changes", ow
     closeDialog: () => { elements.gitReviewDialog.close(); offerStoryReturn(); },
   });
   applyTab(tab);
-  elements.gitReviewDialog.showModal();
+  if (!elements.gitReviewDialog.open) elements.gitReviewDialog.showModal();
+  if (prepare) {
+    setStatus("Loading repositories…");
+    let ready;
+    try { ready = await prepare(); }
+    catch (error) { if (version === git.viewRequest) setStatus(error.message); return; }
+    if (version !== git.viewRequest || !elements.gitReviewDialog.open) return;
+    git.ready = ready;
+    if (!git.ready) { setStatus("Choose a machine with a Git repository in this project."); return; }
+  }
   git.storyLoad = loadStory();
   await loadCurrentTab();
+  if (version !== git.viewRequest || !elements.gitReviewDialog.open) return;
   try { await ensurePickers(); elements.gitReviewGenerate.disabled = false; syncStoryChrome(); } catch (error) { toast(error.message, 8000); }
 }
 
@@ -137,25 +153,34 @@ function renderAmbiguity() {
 }
 
 async function loadCurrentTab() {
+  if (!git.ready) return;
   if (git.tab === "changes") return loadChanges();
   if (git.tab === "history") return loadHistory();
   if (git.tab === "story") return openStoryTab();
-  if (git.tab === "pulls" || git.tab === "pipelines") return loadGitHosting(git.tab, gitApiUrl, { explainPull: (number) => { applyTab("story"); selectStoryPull(number); void openStoryTab(); }, ask: askAboutContext });
+  if (git.tab === "pulls" || git.tab === "pipelines") {
+    const target = { ...git.target };
+    const version = git.viewRequest;
+    return loadGitHosting(git.tab, (route, params) => projectGitUrl(target, route, params), { explainPull: (number) => { applyTab("story"); selectStoryPull(number); void openStoryTab(); }, ask: (context) => { if (version === git.viewRequest) return askAboutContext(context); } });
+  }
   return loadReviews();
 }
 
 async function loadChanges() {
+  const version = git.viewRequest;
   setStatus("Loading changes…");
   try {
     const status = await api(gitApiUrl("status"));
-    if (!elements.gitReviewDialog.open || git.tab !== "changes") return;
+    if (version !== git.viewRequest || !elements.gitReviewDialog.open || git.tab !== "changes") return;
     git.status = status;
     elements.gitReviewBranch.textContent = `${status.branch}${status.upstream ? ` → ${status.upstream}` : ""}${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}`;
     if (git.conversationId && git.scopePaths === null) await loadConversationScope();
+    if (version !== git.viewRequest) return;
     renderChangeList(status);
     if (!git.guide && !status.clean) await restoreLatestGuide();
+    if (version !== git.viewRequest) return;
     setStatus(status.clean ? "Working tree clean" : git.scopePaths === null && git.conversationId ? "Conversation file list unavailable. Refresh or include other pending changes." : "");
   } catch (error) {
+    if (version !== git.viewRequest) return;
     setStatus(error.message);
     toast(error.message, 8000);
   }
@@ -290,6 +315,7 @@ function renderChangeList(status) {
 }
 
 async function selectWorktreeFile(change, staged) {
+  const version = git.viewRequest;
   git.selection = { scope: "worktree", filePath: change.path, staged, label: change.path };
   markActiveRow();
   elements.gitReviewDiffPath.textContent = change.oldPath ? `${change.oldPath} → ${change.path}` : change.path;
@@ -298,7 +324,7 @@ async function selectWorktreeFile(change, staged) {
   try {
     const untracked = change.kind === "untracked";
     const diff = await api(gitApiUrl("diff", { path: change.path, staged: staged ? "1" : undefined, untracked: untracked ? "1" : undefined }));
-    if (git.selection?.filePath !== change.path) return;
+    if (version !== git.viewRequest || git.selection?.filePath !== change.path) return;
     renderDiff(diff);
     setStatus("");
   } catch (error) { setStatus(error.message); toast(error.message, 8000); }
@@ -313,10 +339,11 @@ function renderDiff(diff) {
 }
 
 async function loadHistory() {
+  const version = git.viewRequest;
   setStatus("Loading history…");
   try {
     const body = await api(gitApiUrl("history", { limit: 50 }));
-    if (!elements.gitReviewDialog.open || git.tab !== "history") return;
+    if (version !== git.viewRequest || !elements.gitReviewDialog.open || git.tab !== "history") return;
     git.commits = body.commits;
     renderCommitList(body.commits);
     setStatus(body.commits.length ? "" : "No commits.");
@@ -343,6 +370,7 @@ function renderCommitList(commits) {
 }
 
 async function selectCommit(commit) {
+  const version = git.viewRequest;
   git.selection = { scope: "commit", revision: commit.hash, label: commit.subject };
   markActiveRow();
   elements.gitReviewDiffPath.textContent = `${commit.shortHash} — ${commit.subject}`;
@@ -350,13 +378,14 @@ async function selectCommit(commit) {
   setStatus("Loading commit…");
   try {
     const detail = await api(gitApiUrl("commit", { revision: commit.hash }));
-    if (git.selection?.revision !== commit.hash) return;
+    if (version !== git.viewRequest || git.selection?.revision !== commit.hash) return;
     renderDiff(detail.diff);
     setStatus(`${detail.files.length} file${detail.files.length === 1 ? "" : "s"} changed`);
   } catch (error) { setStatus(error.message); toast(error.message, 8000); }
 }
 
 async function loadReviews() {
+  const version = git.viewRequest;
   setStatus("Loading reviews…");
   elements.gitReviewDiff.textContent = "";
   elements.gitReviewDiffPath.textContent = "";
@@ -364,7 +393,7 @@ async function loadReviews() {
   try {
     const params = git.conversationId ? { conversationId: git.conversationId } : {};
     const body = await api(gitApiUrl("reviews", params));
-    if (!elements.gitReviewDialog.open || git.tab !== "reviews") return;
+    if (version !== git.viewRequest || !elements.gitReviewDialog.open || git.tab !== "reviews") return;
     renderReviewList(body.threads);
     setStatus(body.threads.length ? "Reviews expire 7 days after their last question." : "No saved reviews.");
   } catch (error) { setStatus(error.message); toast(error.message, 8000); }
@@ -457,9 +486,11 @@ async function askAboutContext({ label, text, placeholder = "What should I look 
 }
 
 async function openThread(threadId) {
+  const version = git.viewRequest;
   applyTab("reviews");
   try {
     const body = await api(gitApiUrl(`reviews/${encodeURIComponent(threadId)}`));
+    if (version !== git.viewRequest) return;
     if (body.thread.messages[0]?.text === "Generated change story") {
       applyTab("story");
       await loadStory(threadId);
@@ -471,6 +502,7 @@ async function openThread(threadId) {
       elements.gitReviewFocus.checked = true;
       renderGuide();
       const freshness = await api(gitApiUrl("guide-fresh", { threadId }));
+      if (version !== git.viewRequest) return;
       if (!freshness.fresh) setStatus("Review outdated: pending changes differ from the saved snapshot. Generate a new review.");
       return;
     }
@@ -479,6 +511,7 @@ async function openThread(threadId) {
     elements.gitReviewAskForm.hidden = false;
     elements.gitReviewAskTarget.textContent = `Review of ${reviewTargetLabel(body.thread.selection)}`;
     await ensurePickers();
+    if (version !== git.viewRequest) return;
     elements.gitReviewHarness.value = body.thread.harnessId;
     syncModelOptions();
     selectModel(elements.gitReviewModel, body.thread.modelId, body.thread.provider);
@@ -502,6 +535,7 @@ function renderThread(messages) {
 
 async function submitAsk(event) {
   event.preventDefault();
+  const version = git.viewRequest;
   if (git.asking || !git.selection) return;
   const question = elements.gitReviewQuestion.value.trim();
   if (!question) return;
@@ -530,6 +564,7 @@ async function submitAsk(event) {
       const body = await api(gitApiUrl("ask"), { method: "POST", body: JSON.stringify(payload) });
       thread = body.thread;
     }
+    if (version !== git.viewRequest) return;
     git.thread = thread;
     renderThread(thread.messages);
     elements.gitReviewQuestion.value = "";
@@ -547,7 +582,7 @@ function selectedPaths() {
 }
 
 async function generateGuide() {
-  if (!git.status || !git.harnesses.length) { toast("Git review is still loading"); return; }
+  if (!git.ready || !git.status || !git.harnesses.length) { toast("Git review is still loading"); return; }
   const request = git.scopeRequest;
   const paths = selectedPaths();
   if (!paths.length) { toast("No pending files in the selected scope"); return; }
@@ -673,8 +708,11 @@ function storyCoverage() {
 }
 
 async function ensureStatus() {
+  if (!git.ready) throw new Error("Select an available repository first");
+  const version = git.viewRequest;
   if (!git.status) {
     const status = await api(gitApiUrl("status"));
+    if (version !== git.viewRequest) return;
     git.status = status;
     elements.gitReviewBranch.textContent = `${status.branch}${status.upstream ? ` → ${status.upstream}` : ""}${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}`;
   }
@@ -692,7 +730,7 @@ async function openStoryTab() {
 
 /** The reviewer chosen in the bar, or null while the pickers are still loading or the reviewer is unavailable. */
 function storyReviewer() {
-  if (!git.harnesses.length) { toast("Git review is still loading"); return null; }
+  if (!git.ready || !git.harnesses.length) { toast("Git review is still loading"); return null; }
   const harness = selectedHarness();
   if (!harness?.ready) { toast("Selected reviewer is unavailable on this node"); return null; }
   const model = selectedModel(elements.gitReviewModel);
@@ -758,6 +796,7 @@ document.addEventListener("activeConversationChanged", () => {
 });
 
 async function generateStoryFromView({ conversation = false } = {}) {
+  const version = git.viewRequest;
   const reviewer = storyReviewer();
   if (!reviewer) return;
   const pullNumber = conversation ? null : storyPullNumber();
@@ -773,9 +812,11 @@ async function generateStoryFromView({ conversation = false } = {}) {
   }
   try {
     await ensureStatus();
+    if (version !== git.viewRequest) return;
     // The server only trusts a conversation file list it handed out in the last few minutes.
     if (git.conversationId && !elements.gitReviewAllChanges.checked) await loadConversationScope();
   } catch (error) { toast(error.message, 8000); return; }
+  if (version !== git.viewRequest) return;
   const includeCommits = Boolean(git.conversationId) && elements.gitReviewStoryCommits.checked;
   const paths = selectedPaths();
   // A conversation still has its turns to explain; without one there must be something pending.
@@ -801,7 +842,7 @@ elements.chatStoryButton.addEventListener("click", () => {
   openConversationStory(session.conversationId ?? session.id).catch((error) => toast(error.message));
 });
 elements.gitReviewCloseButton.addEventListener("click", () => elements.gitReviewDialog.close());
-elements.gitReviewDialog.addEventListener("close", () => { git.scopeRequest += 1; git.selection = null; git.thread = null; });
+elements.gitReviewDialog.addEventListener("close", () => { git.viewRequest += 1; git.scopeRequest += 1; git.selection = null; git.thread = null; });
 for (const button of [elements.gitReviewTabChanges, elements.gitReviewTabStory, elements.gitReviewTabHistory, elements.gitReviewTabReviews, elements.gitReviewTabPulls, elements.gitReviewTabPipelines]) {
   button.addEventListener("click", () => { applyTab(button.dataset.gitTab); elements.gitReviewAskForm.hidden = true; void loadCurrentTab(); });
 }

@@ -10,6 +10,34 @@ import { nodeSettings, updateSettings } from "../src/settings.js";
 
 const exec = promisify(execFile);
 
+test("issues project public fields, filter PRs, and paginate using the unfiltered page", async () => {
+  await fixture("https://github.com/acme/widget.git", async (dir) => {
+    const user = { login: "octo", html_url: "https://github.com/octo", avatar_url: "https://avatars.githubusercontent.com/u/1" };
+    const issue = { number: 1, title: "Bug", html_url: "https://github.com/acme/widget/issues/1", state: "open", body: null, user, labels: [{ name: "bug", color: "ff0000", description: null }], assignees: [user], comments: 2, created_at: "2026-01-01", updated_at: "2026-01-02" };
+    const calls: Array<{ url: string; auth: string | null }> = [];
+    const github = await createGitHubReview(dir, "test-token", async (input, init) => {
+      calls.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+      return Response.json(calls.length === 1 ? [{ ...issue, secret: "omit", user: { ...user, secret: "omit" } }, ...Array.from({ length: 29 }, () => ({ ...issue, pull_request: {} }))] : []);
+    });
+    assert.deepEqual(await github.issues("open"), { issues: [issue], hasMore: true });
+    assert.deepEqual(await github.issues("closed", 2), { issues: [], hasMore: false });
+    assert.deepEqual(calls, ["open&per_page=30&page=1", "closed&per_page=30&page=2"].map((query) => ({ url: `https://api.github.com/repos/acme/widget/issues?state=${query}&sort=updated&direction=desc`, auth: "Bearer test-token" })));
+    await assert.rejects(github.issues("open", 0), /Invalid page/);
+    await assert.rejects(github.issues("all" as "open"), /Invalid issue state/);
+    assert.equal(calls.length, 2);
+  });
+});
+
+test("issues allow anonymous reads and preserve safe GitHub errors", async () => {
+  await fixture("https://github.com/acme/widget.git", async (dir) => {
+    const github = await createGitHubReview(dir, undefined, async (_input, init) => {
+      assert.equal(new Headers(init?.headers).get("authorization"), null);
+      return Response.json({ message: "private details" }, { status: 403 });
+    });
+    await assert.rejects(github.issues("open"), /GitHub request failed \(HTTP 403\)/);
+  });
+});
+
 async function fixture(remote: string, run: (dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "jb-github-review-"));
   try {

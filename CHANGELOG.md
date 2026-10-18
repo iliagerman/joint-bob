@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added project menu options to browse any Git repository in a project without opening a conversation, and to view GitHub issues across several selected projects.
+
 ## 2.113.0 — 2026-10-18
 
 - Added a state filter to Resources that shows all, enabled, disabled, or agent-managed resources.

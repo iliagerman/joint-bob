@@ -341,6 +341,14 @@ Ticket agents work in the synchronized `<home>/tickets` folder. Handoff waits fo
 
 Existing Git-backed tickets keep their worktree and merge behavior. New tickets do not create a branch and do not show **Merge to main**.
 
+### Project Git and issues
+
+Open a project's row menu and choose **Git repositories**, without opening a conversation. Pick a machine and repository to inspect changes, diffs, history, saved reviews, pull requests, and pipelines. Joint Bob discovers repositories at the project root and in nested folders, including Git files used by submodules. Dependency and build folders are skipped, symlink directories are not scanned, and incomplete scans show a warning. Git data stays on the selected machine.
+
+Choose **GitHub issues** in the project menu for that project's repositories. The issues button beside project search opens a combined view. Select one or more projects and **Apply selection**, then filter by repository, open/closed state, or search the loaded results. Each issue shows its project and repository; duplicate issues from the same GitHub repository appear once. **Load more** fetches older issues. Unavailable repositories show errors without hiding the others. **Refresh** retries them.
+
+Issues use each local repository's GitHub `origin` and the project's existing GitHub credentials. Public repositories can be read without a token; private repositories need an attached account with Issues read permission. Issue browsing is read-only, and issue titles link to GitHub. Combined issue discovery uses the project folders on the node serving the request.
+
 ## Conversation settings
 
 Use a conversation's row menu to change its **Classification**, including after it starts. Choose a configured label, **Other** for custom text, or **Unclassified** to clear it. Labels sync between paired nodes. Configure the available labels in **Settings > Labels**.

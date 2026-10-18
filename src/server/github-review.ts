@@ -15,6 +15,42 @@ type GithubCall = (route: string, method?: string, body?: object) => Promise<unk
 export interface GithubCredentials { tokenFor(repository: { owner: string; host?: string }): string | undefined; sshHosts?: string[] }
 type Credentials = string | undefined | GithubCredentials;
 
+interface GitHubIssueUser { login: string; html_url: string; avatar_url: string }
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  html_url: string;
+  state: "open" | "closed";
+  body?: string | null;
+  user: GitHubIssueUser | null;
+  labels: Array<{ name: string; color: string; description?: string | null }>;
+  assignees: GitHubIssueUser[];
+  comments: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function issueUser({ login, html_url, avatar_url }: GitHubIssueUser): GitHubIssueUser {
+  return { login, html_url, avatar_url };
+}
+
+async function issues(call: GithubCall, state: "open" | "closed", page: number): Promise<{ issues: GitHubIssue[]; hasMore: boolean }> {
+  if (state !== "open" && state !== "closed") throw new GitReviewError(400, "Invalid issue state");
+  assertId(page, "page");
+  const batch = await call(`/issues?state=${state}&per_page=30&page=${page}&sort=updated&direction=desc`) as Array<GitHubIssue & { pull_request?: unknown }>;
+  return {
+    issues: batch.filter((item) => !("pull_request" in item)).map((item) => ({
+      number: item.number, title: item.title, html_url: item.html_url, state: item.state,
+      ...(item.body !== undefined ? { body: item.body } : {}),
+      user: item.user ? issueUser(item.user) : null,
+      labels: item.labels.map(({ name, color, description }) => ({ name, color, ...(description !== undefined ? { description } : {}) })),
+      assignees: item.assignees.map(issueUser), comments: item.comments,
+      created_at: item.created_at, updated_at: item.updated_at,
+    })),
+    hasMore: batch.length === 30,
+  };
+}
+
 function tokenFor(credentials: Credentials, repository: { owner: string; host?: string }): string | undefined {
   return typeof credentials === "object" ? credentials.tokenFor(repository) : credentials;
 }
@@ -190,6 +226,7 @@ export async function createGitHubReview(cwd: string, credentials: Credentials, 
   };
   return {
     repository: { owner, repo },
+    issues: (state: "open" | "closed", page = 1) => issues(call, state, page),
     pulls: (state: "open" | "closed", page: number) => call(`/pulls?state=${state}&per_page=30&page=${page}&sort=updated&direction=desc`),
     create: (head: string, target: string, title: string, body: string, draft: boolean) => {
       if (!BRANCH.test(head) || !BRANCH.test(target) || head === target) throw new GitReviewError(400, "Choose different, valid head and base branches");

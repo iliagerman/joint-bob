@@ -109,6 +109,7 @@
             <input id="projectSearchInput" type="search" autocomplete="off" placeholder="Search projects" data-testid="project-list-search-input" />
           </label>
           <button class="ghost icon-button projects-quick-note-mobile" id="projectsQuickNoteButton" type="button" disabled aria-label="New quick note" title="New quick note" data-testid="projects-quick-note-create-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h9l3 3V20.5H6z"/><path d="M15 3.5v3h3M12 10v6M9 13h6"/></svg></button>
+          <button class="ghost icon-button" id="allProjectIssuesButton" type="button" aria-label="Issues across projects" title="Issues across projects" data-testid="all-project-issues-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 3v1"/></svg></button>
           <button class="primary icon-button" id="newProjectButton" data-shortcut-hint="newProject" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
         </div>
         <div class="list-filter-row" id="projectFilterRow" role="group" aria-label="Filter projects" hidden></div>
@@ -1762,6 +1763,32 @@
       </div>
     </dialog>
 
+    <dialog id="projectIssuesDialog" class="project-issues-dialog" aria-labelledby="projectIssuesTitle" data-testid="project-issues-dialog">
+      <div class="dialog-card project-issues-card">
+        <header class="git-review-header">
+          <div><span class="eyebrow">Projects · GitHub</span><h2 id="projectIssuesTitle">Issues</h2></div>
+          <button type="button" class="ghost compact" id="projectIssuesClose" data-testid="project-issues-close" aria-label="Close issues">Close</button>
+        </header>
+        <div class="project-issues-controls">
+          <label>Projects<select id="projectIssuesProjects" multiple size="3" data-testid="project-issues-projects"></select></label>
+          <div class="project-issues-filters">
+            <button type="button" class="primary compact" id="projectIssuesApply" data-testid="project-issues-apply">Apply selection</button>
+            <label>Repository<select id="projectIssuesRepository" data-testid="project-issues-repository"><option value="">All repositories</option></select></label>
+            <label>State<select id="projectIssuesState" data-testid="project-issues-state"><option value="open">Open</option><option value="closed">Closed</option></select></label>
+            <button type="button" class="ghost compact" id="projectIssuesRefresh" data-testid="project-issues-refresh">Refresh</button>
+          </div>
+          <label class="sr-only" for="projectIssuesSearch">Search loaded issues</label>
+          <input type="search" id="projectIssuesSearch" placeholder="Search loaded issues, labels or projects" data-testid="project-issues-search" />
+        </div>
+        <div class="project-issues-content">
+          <div id="projectIssuesErrors" class="project-issues-errors" role="status" data-testid="project-issues-errors" hidden></div>
+          <div id="projectIssuesList" data-testid="project-issues-list"></div>
+          <button type="button" class="ghost compact" id="projectIssuesMore" data-testid="project-issues-more" hidden>Load more</button>
+        </div>
+        <p id="projectIssuesStatus" class="git-review-status" role="status" aria-live="polite"></p>
+      </div>
+    </dialog>
+
     <dialog id="gitReviewDialog" data-testid="git-review-dialog">
       <div class="dialog-card git-review-card">
         <header class="git-review-header">
@@ -1769,6 +1796,12 @@
             <span class="eyebrow" id="gitReviewContext">Project changes</span>
             <h2>Git</h2>
             <p class="git-review-branch" id="gitReviewBranch" data-testid="git-review-branch"></p>
+            <div class="project-git-repositories" id="gitReviewRepositories" hidden>
+              <label>Machine<select id="gitReviewNode" data-testid="git-review-node"></select></label>
+              <label>Repository<select id="gitReviewRepository" data-testid="git-review-repository"></select></label>
+              <button type="button" class="ghost compact" id="gitReviewRepositoryRefresh" data-testid="git-review-repository-refresh">Refresh</button>
+              <span id="gitReviewRepositoryNote" class="muted" role="status"></span>
+            </div>
           </div>
           <button class="ghost icon-button" id="gitReviewCloseButton" type="button" aria-label="Close git review" title="Close" data-testid="git-review-close-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
         </header>
