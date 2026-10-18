@@ -16,7 +16,11 @@ if (process.argv.length === 3 && process.argv[2] === "--version") {
   const abort = () => controller.abort();
   process.on("SIGINT", abort); process.on("SIGTERM", abort);
   try {
-    const result = await runSupervisedShell({ args: process.argv.slice(2), cwd: process.cwd(), env: process.env, signal: controller.signal, onData: data => process.stdout.write(data) });
+    // Account workers cannot read the service database; their relay refreshes instead.
+    const env = process.env.JOINT_BOB_SECRET_TOKEN && (process.env.JOINT_BOB_TASK_SOCKET || !process.env.JOINT_BOB_TASK_RELAY)
+      ? (await import("../dist/secret-agent.js")).refreshSecretAgentEnvironment(process.env)
+      : process.env;
+    const result = await runSupervisedShell({ args: process.argv.slice(2), cwd: process.cwd(), env, signal: controller.signal, onData: data => process.stdout.write(data) });
     process.exitCode = result.exitCode;
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : "Supervised shell failed"}\n`);

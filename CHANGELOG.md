@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Made environment secrets attached, rotated, or removed mid-conversation apply to the next shell command right away, even during a running turn, without restarting the agent.
+
 ## 2.106.1 — 2026-10-18
 
 - Replaced the name prompt for personal assistants with a dialog that explains what happens next, and let the conversation's assistant icon reopen its assistant.

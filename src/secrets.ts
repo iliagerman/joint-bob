@@ -555,8 +555,19 @@ export function websiteCredentialSnapshot(project: string, conversation?: Secret
   return Array.from(groups.values(), ({ id, origin, variables }) => ({ id, origin, variables: Array.from(variables.values()) }));
 }
 
+/** A value-free marker for the resolved scopes and their encrypted credential versions. */
+export function secretEnvironmentRevision(projectId: string, conversation?: SecretConversation): string {
+  return createHash("sha256").update(JSON.stringify(resolved(projectId, conversation).map(({ row, scope }) => [scope, row.id, row.provider, row.website_origin, row.variables_encrypted]))).digest("hex");
+}
+
 export function agentEnvironment(projectId: string, conversation?: SecretConversation): NodeJS.ProcessEnv {
-  return genericSecretEnvironment(projectId, conversation);
+  // Capture before resolving values: a racing edit leaves an older marker and forces
+  // the next command to re-read, rather than marking stale values as current.
+  const revision = secretEnvironmentRevision(projectId, conversation);
+  const values = genericSecretEnvironment(projectId, conversation);
+  // Names only: a later shell can remove startup values that have since been detached,
+  // renamed, deleted, or made ambiguous. Never put credential values in this marker.
+  return { ...values, JOINT_BOB_SECRET_ENV_NAMES: JSON.stringify(Object.keys(values)), JOINT_BOB_SECRET_ENV_REVISION: revision };
 }
 
 /** Only attached accounts can be selected. Return metadata, never credential values. */
@@ -597,7 +608,8 @@ export function accountEnvironmentForAgent(project: string, conversation: Secret
 
 /** Writes the accounts the new-conversation dialog picked, once the engine has reported the
     session id they belong to. Changing this on a running conversation is saved but does not
-    restart a running turn: updated attachments are resolved before the next message. */
+    restart a running turn: new shell commands resolve ordinary secrets immediately;
+    model context and website snapshots refresh before the next message. */
 export async function persistConversationSecretAccounts(engine: ConversationEngineId, sessionId: string, accountIds: string[]): Promise<void> {
   if (!accountIds.length) return;
   await setScopeSecretAccounts("conversation", conversationScopeId(engine, sessionId), accountIds);

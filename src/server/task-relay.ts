@@ -7,6 +7,8 @@ import type { BackgroundTaskAgentIdentity } from "../background-task-agent.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { runtimeForProject } from "../project-runtime.js";
 import { TaskRequestError } from "./background-tasks.js";
+import { getConversationRecord } from "../conversation-records.js";
+import { refreshSecretAgentEnvironment, secretAgentIdentity } from "../secret-agent.js";
 
 const id = z.string().uuid();
 const relayBody = z.discriminatedUnion("action", [
@@ -84,6 +86,12 @@ export async function relayTaskControl(identity: BackgroundTaskAgentIdentity, to
   }
   const runtime = await runtimeForProject(identity.projectId).catch(() => { throw new TaskRequestError(404, "Project not found"); });
   if (body.action === "start") {
+    if (body.env.JOINT_BOB_SECRET_TOKEN) {
+      const secret = secretAgentIdentity(body.env.JOINT_BOB_SECRET_TOKEN);
+      const record = await getConversationRecord(secret.projectId, secret.conversation.engine, secret.conversation.sessionId!);
+      if (secret.projectId !== identity.projectId || (record?.conversationId ?? secret.conversation.sessionId) !== identity.conversationId) throw new TaskRequestError(403, "Secret account access does not match this conversation");
+      body.env = refreshSecretAgentEnvironment(body.env) as Record<string, string>;
+    }
     const [executable, args] = runtime.name ? ["/bin/sh", ["-c", GROUP_STOP, "joint-bob-task", body.executable, ...body.args]] : [body.executable, body.args];
     const wrapped = runtimeCommand(runtime, body.cwd, executable, args);
     return requestSupervisor(control.socketPath, token, { ...body, executable: wrapped.command, args: wrapped.args });

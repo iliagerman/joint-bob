@@ -35,6 +35,11 @@ delete process.env.JOINT_BOB_RELEASE;
 delete process.env.MASTER_BOB_RELEASE;
 delete process.env.JOINT_BOB_INSTALL_ROOT;
 delete process.env.JOINT_BOB_INSECURE_COOKIE;
+// An agent may launch tests with a live secret capability. Fixture shells must never
+// try to resolve that token against either the production or disposable database.
+delete process.env.JOINT_BOB_SECRET_TOKEN;
+delete process.env.JOINT_BOB_SECRET_ENV_NAMES;
+delete process.env.JOINT_BOB_SECRET_ENV_REVISION;
 process.umask(0o022);
 if (process.platform !== "win32") process.env.SHELL = "/bin/sh";
 delete process.env.JOINT_BOB_DATA_DIR;

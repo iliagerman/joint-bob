@@ -55,7 +55,7 @@ test("browser tokens expire at 30 days, reject malformed/unknown tokens, and cle
   finally { db.close(); t.mock.timers.reset(); }
 });
 
-test("Pi new and resumed sessions receive browser instructions and one stable merged bash environment", async (t) => {
+test("Pi new and resumed sessions keep browser identity while shell secrets refresh", async (t) => {
   const { createPiSession } = await import("../src/pi-service.js");
   const { addProject } = await import("../src/store.js");
   const { saveSecretAccount, setScopeSecretAccounts } = await import("../src/secrets.js");
@@ -98,7 +98,7 @@ test("Pi new and resumed sessions receive browser instructions and one stable me
       const first = await execute();
       assert.deepEqual(browserAgentIdentity(first.token), { projectId: project.id, engine: "pi", conversationId: sessionPath ? "canonical-browser-conversation" : handle.session.sessionManager.getSessionId() });
       await saveSecretAccount({ id: account.id, label: "Fixture", provider: "custom", variables: [{ name: "BRIDGE_FIXTURE", kind: "value", value: "changed" }] });
-      assert.deepEqual(await execute(), first, "bash spawns must not refresh token or attached secrets");
+      assert.deepEqual(await execute(), { ...first, secret: "changed" }, "new shells refresh secrets without replacing the browser token");
       assert.ok(!handle.session.systemPrompt.includes(first.token));
     } finally { handle.dispose(); }
   }

@@ -64,6 +64,33 @@ test("agents under an account run shells and tasks through the relay, as that ac
       assert.deepEqual(calls.map((call) => call.state), ["returned"], "the relay recorded the short call so Tasks hides it");
     } finally { db.close(); }
 
+    // Worker shells have no access to the service's database. The relay must resolve
+    // changes for their pinned conversation, including a non-initial harness segment.
+    const secrets = await import("../src/secrets.js");
+    const { secretAgentEnvironment } = await import("../src/secret-agent.js");
+    const { ensureConversationRecord } = await import("../src/conversation-records.js");
+    const { getClusterNode } = await import("../src/cluster.js");
+    await ensureConversationRecord(fixture.projectId, "pi", "segment-a", (await getClusterNode()).id, undefined, { conversationId: "conversation-a", segmentIndex: 1 });
+    const conversation = { engine: "pi" as const, sessionId: "segment-a" };
+    const emptyEnv = { ...agentEnv, ...secrets.agentEnvironment(fixture.projectId, conversation), ...secretAgentEnvironment(fixture.projectId, "pi", conversation.sessionId) };
+    const saved = await secrets.saveSecretAccount({ label: "Relay fixture", provider: "custom", variables: [{ name: "RELAY_SECRET_FIXTURE", kind: "value", value: "relay-first" }] });
+    await secrets.setScopeSecretAccounts("workspace", "personal", [saved.id]);
+    const check = async (env: NodeJS.ProcessEnv, expected: string) => {
+      const result = await run(process.execPath, [path.resolve("bin/joint-bob-bash.mjs"), "-c", `test "$RELAY_SECRET_FIXTURE" = '${expected}' && printf matched`], project, env);
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.stdout, "matched", "the relay refreshes without worker database access or a new prompt");
+    };
+    await check(emptyEnv, "relay-first");
+    const staleEnv = { ...emptyEnv, ...secrets.agentEnvironment(fixture.projectId, conversation) };
+    await secrets.saveSecretAccount({ id: saved.id, label: "Relay fixture", provider: "custom", variables: [{ name: "RELAY_SECRET_FIXTURE", kind: "value", value: "relay-second" }] });
+    await check(staleEnv, "relay-second");
+    await secrets.setScopeSecretAccounts("workspace", "personal", []);
+    await check(staleEnv, "");
+    const wrongConversation = await run(process.execPath, [path.resolve("bin/joint-bob-bash.mjs"), "-c", "printf unauthorized"], project, { ...staleEnv, JOINT_BOB_TASK_TOKEN: other });
+    assert.notEqual(wrongConversation.code, 0);
+    assert.match(wrongConversation.stderr, /does not match this conversation/);
+    assert.doesNotMatch(wrongConversation.stdout, /unauthorized/);
+
     const cli = path.resolve("bin/joint-bob-task.mjs");
     const startedTask = await run(process.execPath, [cli, "start", "--name", "server", "--", "/bin/sh", "-c", "echo up; exec sleep 60"], project, agentEnv);
     assert.equal(startedTask.code, 0, startedTask.stderr);

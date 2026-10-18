@@ -179,7 +179,7 @@ test("Pi snapshots website credentials by origin without exporting plaintext", a
   await f.prompt("removed");
 });
 
-for (const method of ["followUp", "steer"] as const) test(`Pi ${method} messages refresh when consumed without changing a running message`, async (t) => {
+for (const method of ["followUp", "steer"] as const) test(`Pi ${method} refreshes model context when consumed while new shells use live secrets`, async (t) => {
   const saved = await account("Queued GitHub", "fixture-token-before");
   const f = await fixture(t);
   await secrets.setScopeSecretAccounts("project", f.project.id, [saved.id]);
@@ -188,7 +188,7 @@ for (const method of ["followUp", "steer"] as const) test(`Pi ${method} messages
     if (++calls === 1) {
       await account("Queued GitHub updated", "fixture-token-after", saved.id);
       await f.handle.session[method]("queued");
-      await checkShell(f.handle, "fixture-token-before");
+      await checkShell(f.handle, "fixture-token-after");
       assert.doesNotMatch(systemPrompt(context), /Queued GitHub updated/);
     } else {
       await checkShell(f.handle, "fixture-token-after");
