@@ -1082,6 +1082,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   overflow-wrap: anywhere;
 }
 .project-card span { font-family: var(--mono); font-size: 10px; }
+.running-auto-reply-indicator { color: var(--accent) !important; font-weight: 600; }
 
 .agent-run-toggle {
   grid-column: 1 / -1;
@@ -4020,6 +4021,81 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-hosting-job { margin-top: 16px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
 .git-hosting-step { border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .git-hosting-log { max-height: 300px; overflow: auto; padding: 12px; font: 11px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); }
+/* ---- Git hosting polish: readable width, badges, loading, step lists ---- */
+.git-hosting > * { max-width: 1100px; margin-left: auto; margin-right: auto; }
+.git-hosting > .git-hosting-workspace, .git-hosting > .git-hosting-head { max-width: 1280px; }
+.git-hosting-title { font-size: 19px; line-height: 1.3; letter-spacing: -0.01em; }
+.git-hosting-row { align-items: center; min-height: 60px; transition: background .12s; }
+.git-hosting-row:focus-visible, .git-hosting-nav-job:focus-visible, .git-hosting-graph-job:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.git-hosting-row-copy { flex: 1; display: grid; gap: 6px; }
+.git-hosting-row-copy strong { font-size: 14px; font-weight: 600; }
+.git-hosting-when { color: var(--muted); font: 11px var(--mono); white-space: nowrap; }
+.git-hosting-chevron { color: var(--muted); font-size: 18px; }
+.git-hosting-indicator { width: 22px; flex: none; text-align: center; font-size: 16px; color: var(--muted); }
+.git-hosting-indicator.is-success, .git-hosting-step.is-success .git-hosting-step-mark { color: #3fb950; }
+.git-hosting-indicator.is-failure, .git-hosting-step.is-failure .git-hosting-step-mark { color: #f85149; }
+.git-hosting-indicator.is-merged { color: #a371f7; }
+.git-hosting-indicator.is-running, .git-hosting-step.is-running .git-hosting-step-mark { color: #d29922; }
+.git-hosting-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.git-hosting-chip, .git-hosting-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font: 11px/1.6 var(--mono); }
+.git-hosting-chip { color: var(--muted); background: var(--field); }
+.git-hosting-badge { border: 1px solid currentColor; color: var(--muted); }
+.git-hosting-badge.is-success { color: #3fb950; }
+.git-hosting-badge.is-failure { color: #f85149; }
+.git-hosting-badge.is-running { color: #d29922; }
+.git-hosting-badge.is-merged { color: #a371f7; }
+.git-hosting-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.git-hosting-head-copy { flex: 1 1 320px; min-width: 0; display: grid; gap: 8px; }
+.git-hosting-head-copy .git-hosting-title { margin: 0; }
+.git-hosting-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.git-hosting-ask { border-color: var(--accent); color: var(--accent); }
+.git-hosting-link { color: var(--accent); font-size: 12px; text-decoration: none; }
+.git-hosting-link:hover, .git-hosting-back:hover { text-decoration: underline; }
+.git-hosting-loading { display: flex; align-items: center; gap: 10px; padding: 18px 4px; color: var(--muted); font-size: 13px; }
+.git-hosting-spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: git-hosting-spin .7s linear infinite; }
+@keyframes git-hosting-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .git-hosting-spinner { animation-duration: 2s; } }
+.git-hosting-error { display: grid; justify-items: start; gap: 10px; padding: 14px; border: 1px solid color-mix(in srgb, #f85149 50%, var(--line)); border-radius: var(--radius-ctl); color: var(--text); font-size: 13px; }
+.git-hosting-markdown { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.git-hosting-markdown > :first-child { margin-top: 0; }
+.git-hosting-markdown > :last-child { margin-bottom: 0; }
+.git-hosting-description { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); white-space: normal; }
+.git-hosting-comment { margin: 10px 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.git-hosting-comment-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+.git-hosting-comment-head .git-hosting-when { margin-left: auto; }
+.git-hosting-file { margin: 6px 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-ctl); overflow: hidden; }
+.git-hosting-file summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; background: var(--panel); }
+.git-hosting-file[open] summary { border-bottom: 1px solid var(--line); }
+.git-hosting-file-name { flex: 1; min-width: 0; font: 12px var(--mono); overflow-wrap: anywhere; }
+.git-hosting-diffstat { display: flex; gap: 6px; font: 11px var(--mono); }
+.git-hosting .is-add { color: #3fb950; }
+.git-hosting .is-del { color: #f85149; }
+.git-hosting-patch { max-height: 420px; margin: 0; }
+.git-hosting-patch span { display: block; }
+.git-hosting-patch .is-add { background: color-mix(in srgb, #3fb950 14%, transparent); }
+.git-hosting-patch .is-del { background: color-mix(in srgb, #f85149 14%, transparent); }
+.git-hosting-patch .is-hunk { color: var(--muted); }
+.git-hosting-actions { position: sticky; bottom: -18px; z-index: 2; background: var(--surface); }
+.git-hosting-nav-job { border-radius: 6px; }
+.git-hosting-nav-job.is-failure, .git-hosting-graph-job.is-failure { color: #f85149; }
+.git-hosting-graph-job.is-running { color: #d29922; }
+.git-hosting-job-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.git-hosting-job-head h4 { margin: 0 auto 0 0; }
+.git-hosting-steps { list-style: none; margin: 12px 0; padding: 0; }
+li.git-hosting-step { display: flex; align-items: center; gap: 10px; padding: 7px 8px; font-size: 12px; }
+li.git-hosting-step.is-failure { background: color-mix(in srgb, #f85149 10%, transparent); }
+.git-hosting-step-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+li.git-hosting-step .git-hosting-note { margin: 0; }
+.git-hosting-step-mark { width: 14px; text-align: center; }
+.git-hosting-log-line.is-error { display: inline-block; width: 100%; color: #ff7b72; background: color-mix(in srgb, #f85149 12%, transparent); }
+[data-testid="git-hosting-more"] { margin: 12px auto; display: block; }
+.git-hosting > .git-hosting-back { display: block; width: 100%; text-align: left; }
+.git-hosting-filters .git-hosting-select { width: auto; flex: 0 1 200px; padding-right: 34px; background-color: var(--panel); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 1.75 6 6.25l4.5-4.5' fill='none' stroke='%238b9198' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.git-hosting-indicator .git-hosting-spinner { display: inline-block; vertical-align: middle; border-top-color: #d29922; }
+.git-hosting .ghost.compact { border-color: var(--line); }
+.git-hosting .ghost.compact.git-hosting-ask { border-color: var(--accent); }
+.git-hosting .ghost.compact.destructive { color: #f85149; }
+.git-hosting-actions .git-hosting-merge-first { margin-left: auto; }
 @media (max-width: 700px) {
   .git-review-card { width: calc(100vw - 16px); height: calc(100dvh - 16px); grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto auto; }
   .git-review-tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); overflow: visible; padding: 0 6px; }
@@ -4055,7 +4131,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .resources-git-source .resources-row-actions label { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 .resources-badge.status-edited, .resources-badge.update { color: var(--warning, #d9a441); border-color: currentColor; }
 .resources-paths { display: grid; gap: 12px; align-content: start; overflow-y: auto; scrollbar-width: thin; }
-.resources-toolbar { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.resources-toolbar { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .resources-toolbar > [hidden] { display: none; }
 /* The git tab shows neither the scope nor the agent filter: search takes the row. */
 .resources-toolbar:has(> #resourcesHarnessSelect[hidden]):has(> #resourcesScopeSelect[hidden]) { grid-template-columns: minmax(0, 1fr) auto; }
@@ -4101,12 +4177,21 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 @media (max-width: 640px) { .resources-conversation-picker { grid-template-columns: 1fr; } }
 .resources-pager { display: flex; justify-content: center; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
 .resources-peer-status summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.resources-activation { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+.resources-relay-policy { border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 8px 12px; max-height: 24vh; overflow-y: auto; font-size: 12px; }
+.resources-relay-policy label { display: flex; flex-direction: column; gap: 5px; }
+.resources-relay-policy p { margin: 6px 0; color: var(--muted); }
+.resources-relay-policy textarea { min-height: 70px; width: 100%; font-family: var(--mono); }
+.resources-auto-activate { font-size: 12px; }
 .resources-status { margin: 0; font-size: 12px; color: var(--muted); }
 @media (max-width: 640px) {
   /* Phones keep every row's controls and drop what repeats elsewhere, so a page holds more rows. */
   .resources-panel > #resourcesSummary { display: none; }
   .resources-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
-  .resources-toolbar .search-shell { grid-column: 1 / 3; }
+  .resources-toolbar #resourcesNodeSelect { grid-column: 1 / 2; }
+  .resources-toolbar #resourcesScopeSelect { grid-column: 2 / 3; }
+  .resources-toolbar #resourcesHarnessSelect { grid-column: 1 / 2; }
+  .resources-toolbar .search-shell { grid-column: 2 / 3; }
   .resources-toolbar:has(> #resourcesHarnessSelect[hidden]):has(> #resourcesScopeSelect[hidden]) .search-shell { grid-column: auto; }
   .resources-tabs { overflow-x: auto; scrollbar-width: none; }
   .resources-tabs button { white-space: nowrap; padding: 6px 8px; }

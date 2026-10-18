@@ -55,6 +55,14 @@ function renderRunningEntry(group, entry) {
   const activity = entry.backgroundRunning && !entry.turnRunning ? "Background tasks running" : "Running";
   const details = [activity, entry.agentLabel, entry.agentModel, entry.updatedAt && formatDate(entry.updatedAt)].filter(Boolean).join(" · ");
   meta.append(agentIcon(sessionAgentId(entry)), document.createTextNode(details));
+  if (entry.autoRespond?.status === "active") {
+    const indicator = document.createElement("span");
+    indicator.className = "running-auto-reply-indicator";
+    indicator.textContent = "Auto-reply";
+    indicator.title = "This conversation is self-driving";
+    indicator.setAttribute("aria-label", "Self-driving conversation");
+    meta.append(document.createTextNode(" · "), indicator);
+  }
   button.append(title, meta);
   button.addEventListener("click", () => openRunningConversation(group, entry).catch((error) => toast(error.message)));
   elements.runningConversationsList.append(button);

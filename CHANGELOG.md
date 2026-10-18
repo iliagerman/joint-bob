@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added Ask AI to pull requests, pipeline runs, and failed jobs in the Git view, and gave those pages clearer status badges, loading states, retry on errors, and highlighted error lines in job logs.
+- Showed an "Auto-reply" tag on running conversations that are driving themselves, so you can see at a glance which ones are running without you.
+
 ## 2.107.0 — 2026-10-18
 
 - Added a "Review implementation through tests" preset to the auto respond dialog, which reviews the agent's work at each pause and keeps going until the feature is built and its tests pass.
