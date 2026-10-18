@@ -4490,9 +4490,11 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .session-card[data-color][data-worktree-color] { box-shadow: inset 3px 0 0 var(--project-hue), inset -3px 0 0 var(--worktree-hue); }
 .session-card[data-color][data-worktree-color].active { box-shadow: inset 4px 0 0 var(--project-hue), inset -4px 0 0 var(--worktree-hue), var(--raise); }
 .session-worktree-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 9.5px; border-radius: 4px; padding: 2px 6px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; color: var(--heading); background: color-mix(in srgb, var(--worktree-hue) 22%, transparent); }
-.context-references-card { width: min(620px, calc(100vw - 24px)); max-height: min(760px, calc(100dvh - 24px)); }
-.context-references-list { display: grid; gap: 18px; min-height: 0; overflow-y: auto; }
+.context-references-card { width: min(620px, calc(100vw - 24px)); max-height: min(760px, calc(100dvh - 24px)); display: flex; flex-direction: column; overflow: hidden; }
+.context-references-card > :not(.context-references-list) { flex: none; }
+.context-references-list { display: grid; align-content: start; gap: 18px; flex: 1; min-height: 0; overflow-y: auto; }
 .context-references-list section { display: grid; gap: 6px; }
+.context-references-list [hidden] { display: none; }
 .context-references-list h3 { margin: 0; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
 .context-reference-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--line); border-left: 3px solid var(--worktree-hue, var(--line-strong)); border-radius: var(--radius-ctl); background: var(--panel); cursor: pointer; }
 .context-reference-row:has(input:checked) { border-color: color-mix(in srgb, var(--accent) 58%, var(--line)); background: color-mix(in srgb, var(--accent) 9%, var(--panel)); }

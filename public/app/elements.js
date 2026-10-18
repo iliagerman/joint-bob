@@ -307,6 +307,7 @@ export const elements = {
   contextReferencesDialog: document.querySelector("#contextReferencesDialog"),
   contextReferencesForm: document.querySelector("#contextReferencesForm"),
   contextReferencesList: document.querySelector("#contextReferencesList"),
+  contextReferencesSearch: document.querySelector("#contextReferencesSearch"),
   contextReferencesCount: document.querySelector("#contextReferencesCount"),
   startContextReferencesButton: document.querySelector("#startContextReferencesButton"),
   cancelContextReferencesButton: document.querySelector("#cancelContextReferencesButton"),

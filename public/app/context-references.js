@@ -54,6 +54,18 @@ function selectedReferences(keys) {
   return { projectId: state.activeProjectId, worktrees, conversations };
 }
 
+function filterReferences() {
+  const query = elements.contextReferencesSearch.value.trim().toLocaleLowerCase();
+  for (const group of elements.contextReferencesList.querySelectorAll("section")) {
+    let visible = false;
+    for (const row of group.querySelectorAll(".context-reference-row")) {
+      row.hidden = !row.textContent.toLocaleLowerCase().includes(query);
+      if (!row.hidden) visible = true;
+    }
+    group.hidden = !visible;
+  }
+}
+
 export function openContextReferencesDialog() {
   if (!state.activeProjectId) return;
   const worktreeRows = state.worktrees.map((worktree) => checkboxRow({
@@ -72,11 +84,14 @@ export function openContextReferencesDialog() {
     section("Worktrees", worktreeRows),
     section("Conversations", conversationRows),
   );
+  elements.contextReferencesSearch.value = "";
+  elements.contextReferencesList.scrollTop = 0;
   updateCount();
   elements.contextReferencesDialog.showModal();
 }
 
 elements.contextReferencesList.addEventListener("change", updateCount);
+elements.contextReferencesSearch.addEventListener("input", filterReferences);
 elements.cancelContextReferencesButton.addEventListener("click", () => elements.contextReferencesDialog.close());
 elements.contextReferencesForm.addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -291,6 +291,52 @@ test("long worktree headers and conversation cards fit the column without horizo
   }
 });
 
+test("review references search keeps selections and only the list scrolls", async () => {
+  await page.setViewportSize({ width: 390, height: 420 });
+  try {
+    await page.getByTestId("context-references-open-button").click();
+    const dialog = page.getByTestId("context-references-dialog");
+    const search = page.getByTestId("context-references-search");
+    const worktree = dialog.locator(".context-reference-row", { hasText: WORKTREE_NAME }).first();
+    await worktree.locator("input").check();
+    await search.fill("Inbox mock");
+    assert.equal(await worktree.isVisible(), false);
+    assert.equal(await dialog.locator(".context-reference-row:visible").count(), 1);
+    assert.equal(await page.locator("#contextReferencesCount").innerText(), "1 reference selected");
+    await search.fill("no matching references");
+    assert.equal(await dialog.locator(".context-reference-row:visible").count(), 0);
+    await search.fill("");
+    assert.equal(await worktree.locator("input").isChecked(), true);
+
+    const before = await dialog.evaluate((element) => {
+      const card = element.querySelector<HTMLElement>(".context-references-card")!;
+      const list = element.querySelector<HTMLElement>(".context-references-list")!;
+      const actions = element.querySelector<HTMLElement>(".dialog-actions")!;
+      const searchField = element.querySelector<HTMLElement>("#contextReferencesSearch")!;
+      return { cardOverflow: getComputedStyle(card).overflowY, listOverflow: getComputedStyle(list).overflowY,
+        listHeight: list.clientHeight, contentHeight: list.scrollHeight, actionsTop: actions.getBoundingClientRect().top,
+        searchTop: searchField.getBoundingClientRect().top, actionsBottom: actions.getBoundingClientRect().bottom,
+        dialogBottom: element.getBoundingClientRect().bottom };
+    });
+    assert.equal(before.cardOverflow, "hidden");
+    assert.equal(before.listOverflow, "auto");
+    assert.ok(before.contentHeight > before.listHeight, `list must overflow: ${JSON.stringify(before)}`);
+    assert.ok(before.actionsBottom <= before.dialogBottom, "actions stay inside dialog");
+    await dialog.locator(".context-references-list").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    const after = await dialog.evaluate((element) => ({
+      actionsTop: element.querySelector(".dialog-actions")!.getBoundingClientRect().top,
+      searchTop: element.querySelector("#contextReferencesSearch")!.getBoundingClientRect().top,
+      scrollTop: element.querySelector(".context-references-list")!.scrollTop,
+    }));
+    assert.ok(after.scrollTop > 0);
+    assert.equal(after.actionsTop, before.actionsTop);
+    assert.equal(after.searchTop, before.searchTop);
+  } finally {
+    await page.getByTestId("context-references-cancel-button").click();
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
+});
+
 test("worktrees and conversations can be referenced together in a new conversation", async () => {
   await page.getByTestId("context-references-open-button").click();
   const dialog = page.getByTestId("context-references-dialog");

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a search box to the review references dialog that filters worktrees and conversations without losing their selections, and kept its buttons in view while only the list scrolls.
+
 ## 2.111.1 — 2026-10-18
 
 - Fixed plugins that appear under more than one name, such as through a symlink, so that switching one name off turns the plugin off for the agent, and each name's switch shows its own setting in the Resources list.
