@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.112.0 — 2026-10-18
 
-- Added a search box to the review references dialog that filters worktrees and conversations without losing their selections, and kept its buttons in view while only the list scrolls.
+- Added a search box to the review references dialog that filters worktrees and conversations without losing their selections.
+- Kept the review references dialog's buttons in view while only its list scrolls.
 
 ## 2.111.1 — 2026-10-18
 
