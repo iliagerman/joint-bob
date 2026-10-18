@@ -384,9 +384,10 @@ function activationControl(kind, item, local, supported) {
   label.className = "resources-activation";
   label.title = decision.reason;
   const input = document.createElement("input");
-  input.type = "checkbox"; input.checked = decision.enabled;
+  const selected = kind === "plugin" ? decision.preference ?? decision.enabled : decision.enabled;
+  input.type = "checkbox"; input.checked = selected;
   input.dataset.testid = "resources-activation-toggle";
-  input.setAttribute("aria-label", `${decision.enabled ? "Disable" : "Enable"} ${item.name} for ${harnessLabel(harness)}`);
+  input.setAttribute("aria-label", `${selected ? "Disable" : "Enable"} ${item.name} for ${harnessLabel(harness)}`);
   input.addEventListener("change", async () => {
     input.disabled = true;
     try {

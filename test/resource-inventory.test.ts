@@ -56,6 +56,39 @@ test("inventory activation uses YAML-parsed skill names", async () => {
   }
 });
 
+test("nameless symlinked skills keep their runtime fallback identity in inventory", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "resource-inventory-skill-alias-"));
+  const { agentResourcePaths } = await import("../src/agent-resources.js");
+  const { resourceInventory } = await import("../src/resource-inventory.js");
+  const { activeSkillRoot, setActivationPreference } = await import("../src/resource-activation.js");
+  const { addProject, removeProject } = await import("../src/store.js");
+  const { updateProjectResourcePaths } = await import("../src/settings.js");
+  const managed = path.join(fixture, "managed");
+  const shared = agentResourcePaths(managed).sharedSkills;
+  const actual = path.join(shared, "actual");
+  const projectPath = path.join(fixture, "project");
+  const alias = path.join(projectPath, "skills", "alias");
+  let project: Awaited<ReturnType<typeof addProject>> | undefined;
+  try {
+    await mkdir(actual, { recursive: true });
+    await writeFile(path.join(actual, "SKILL.md"), "---\ndescription: nameless skill\n---\n");
+    await mkdir(path.dirname(alias), { recursive: true });
+    await symlink(actual, alias, "dir");
+    await mkdir(projectPath, { recursive: true });
+    project = await addProject("Inventory skill alias", projectPath, { writeInstructions: false });
+    updateProjectResourcePaths(project.id, { skills: [alias], prompts: [], rules: [], plugins: [] });
+    setActivationPreference("skill", "alias", "pi", false);
+    const inventory = await resourceInventory({ projectPath, projectId: project.id, resourceRoot: managed });
+    const listed = inventory.skills.find((skill) => skill.name === "alias" && skill.origin === "project");
+    assert.equal(listed?.activation?.pi?.enabled, false);
+    assert.notEqual(activeSkillRoot("pi", alias), alias, "runtime applies the same alias fallback name");
+  } finally {
+    setActivationPreference("skill", "alias", "pi", null);
+    if (project) await removeProject(project.id);
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("inventory ignores nested metadata names just like runtime activation filtering", async () => {
   const fixture = await mkdtemp(path.join(os.tmpdir(), "resource-inventory-nested-name-"));
   const { agentResourcePaths } = await import("../src/agent-resources.js");
@@ -109,6 +142,44 @@ test("configured plugin collections list individual activation identities", asyn
   } finally {
     setActivationPreference("plugin", "kit", "claude", null);
     if (project) await removeProject(project.id);
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("Pi package inventory follows the active isolation mode", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "resource-inventory-packages-"));
+  const { agentResourcePaths } = await import("../src/agent-resources.js");
+  const { resourceInventory } = await import("../src/resource-inventory.js");
+  const { getSettings } = await import("../src/settings.js");
+  const { save, settingsDatabase } = await import("../src/settings-store.js");
+  const paths = agentResourcePaths(path.join(fixture, "managed"));
+  const projectPath = path.join(fixture, "project");
+  const globalSettings = path.join(getSettings().pi.configPath, "settings.json");
+  const previousIsolation = getSettings().strictResourceIsolation;
+  let previousGlobalSettings: string | undefined;
+  try { previousGlobalSettings = await readFile(globalSettings, "utf8"); } catch { /* No native Pi settings existed before this test. */ }
+  try {
+    await mkdir(projectPath, { recursive: true });
+    await mkdir(path.dirname(paths.piPackages), { recursive: true });
+    await mkdir(path.dirname(globalSettings), { recursive: true });
+    await mkdir(path.join(projectPath, ".pi"), { recursive: true });
+    await writeFile(paths.piPackages, JSON.stringify({ packages: ["npm:managed-only@1.0.0"] }));
+    await writeFile(globalSettings, JSON.stringify({ packages: ["npm:native-only@1.0.0"] }));
+    await writeFile(path.join(projectPath, ".pi/settings.json"), JSON.stringify({ packages: ["npm:project-only@1.0.0"] }));
+    save(settingsDatabase(), "strictResourceIsolation", "true");
+    const strict = (await resourceInventory({ projectPath, resourceRoot: paths.root })).plugins;
+    assert.ok(strict.some((plugin) => plugin.name === "managed-only"));
+    assert.ok(strict.some((plugin) => plugin.name === "project-only"));
+    assert.equal(strict.some((plugin) => plugin.name === "native-only"), false);
+    save(settingsDatabase(), "strictResourceIsolation", "false");
+    const native = (await resourceInventory({ projectPath, resourceRoot: paths.root })).plugins;
+    assert.ok(native.some((plugin) => plugin.name === "native-only"));
+    assert.ok(native.some((plugin) => plugin.name === "project-only"));
+    assert.equal(native.some((plugin) => plugin.name === "managed-only"), false);
+  } finally {
+    save(settingsDatabase(), "strictResourceIsolation", String(previousIsolation));
+    if (previousGlobalSettings === undefined) await rm(globalSettings, { force: true });
+    else await writeFile(globalSettings, previousGlobalSettings);
     await rm(fixture, { recursive: true, force: true });
   }
 });

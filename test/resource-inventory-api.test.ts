@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -51,6 +51,28 @@ test("the cluster inventory asks each paired node over the signed runtime route"
     assert.equal(disabledPlugin.status, 200);
     const afterToggle = await api<{ nodes: NodeInventory[] }>(a, session, "GET", `/resources/inventory?projectId=${encodeURIComponent(project.id)}`);
     assert.equal(afterToggle.body.nodes[0].inventory?.plugins.find((item) => item.name === "kit")?.activation?.claude?.enabled, false);
+
+    const { agentResourcePaths } = await import("../src/agent-resources.js");
+    const managedPaths = agentResourcePaths(shared);
+    const external = path.join(root, "managed-plugin-target");
+    const aliasCollection = path.join(project.path, ".claude-plugin-aliases");
+    await mkdir(path.join(external, ".claude-plugin"), { recursive: true });
+    await writeFile(path.join(external, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "kit" }));
+    await mkdir(managedPaths.claudePlugins, { recursive: true });
+    await symlink(external, path.join(managedPaths.claudePlugins, "kit"), "dir");
+    await symlink(path.join(managedPaths.claudePlugins, "kit"), path.join(managedPaths.claudePlugins, "alias"), "dir");
+    await mkdir(aliasCollection, { recursive: true });
+    await symlink(external, path.join(aliasCollection, "alias"), "dir");
+    const withAlias = await api(a, session, "PUT", `/projects/${encodeURIComponent(project.id)}/resource-paths`, { resources: { skills: [], prompts: [], rules: [], plugins: [pluginCollection, aliasCollection] } });
+    assert.equal(withAlias.status, 200);
+    const disabledAlias = await api<{ decision: { enabled: boolean } }>(a, session, "PUT", "/resources/activation/item", { kind: "plugin", name: "alias", harness: "claude", enabled: false, projectId: project.id });
+    assert.equal(disabledAlias.body.decision.enabled, false);
+    const enabledKit = await api<{ decision: { enabled: boolean } }>(a, session, "PUT", "/resources/activation/item", { kind: "plugin", name: "kit", harness: "claude", enabled: true, projectId: project.id });
+    assert.equal(enabledKit.body.decision.enabled, false, "managed alias block is preserved in the activation response");
+    const aliasInventory = await api<{ nodes: NodeInventory[] }>(a, session, "GET", `/resources/inventory?projectId=${encodeURIComponent(project.id)}`);
+    assert.equal(aliasInventory.body.nodes[0].inventory?.plugins.find((item) => item.source === "managed" && item.name === "kit")?.activation?.claude?.enabled, false);
+    const enabledAlias = await api<{ decision: { enabled: boolean } }>(a, session, "PUT", "/resources/activation/item", { kind: "plugin", name: "alias", harness: "claude", enabled: true, projectId: project.id });
+    assert.equal(enabledAlias.body.decision.enabled, true);
 
     const nodeWide = await api<{ nodes: NodeInventory[] }>(a, session, "GET", "/resources/inventory?cluster=1");
     assert.equal(nodeWide.status, 200);

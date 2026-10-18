@@ -145,15 +145,19 @@ test("configured plugin aliases obey managed and received activation choices", a
   }
 });
 
-test("managed plugin symlinks use the target plugin's activation identity", async () => {
+test("managed plugin symlinks expose stable, separately actionable activation identities", async () => {
+  const { resourceInventory } = await import("../src/resource-inventory.js");
   const paths = agentResourcePaths(path.join(fixture, "managed-plugin-aliases"));
   const plugin = path.join(paths.claudePlugins, "kit");
   const alias = path.join(paths.claudePlugins, "alias");
   const configured = path.join(fixture, "configured-parent-alias");
   const parentAlias = path.join(configured, "parent");
   const renamed = path.join(configured, "renamed");
+  const directAliasRoot = path.join(fixture, "configured-external-alias");
+  const directAlias = path.join(directAliasRoot, "alias");
   const external = path.join(fixture, "external-plugin-target");
   await mkdir(paths.claudePlugins, { recursive: true });
+  await symlink(path.join(fixture, "missing-managed-plugin"), path.join(paths.claudePlugins, "000-broken"), "dir");
   await mkdir(path.join(external, ".claude-plugin"), { recursive: true });
   await writeFile(path.join(external, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "kit" }));
   await symlink(external, plugin, "dir");
@@ -161,21 +165,46 @@ test("managed plugin symlinks use the target plugin's activation identity", asyn
   await mkdir(configured, { recursive: true });
   await symlink(paths.claudePlugins, parentAlias, "dir");
   await symlink(path.join(parentAlias, "kit"), renamed, "dir");
+  await mkdir(directAliasRoot, { recursive: true });
+  await symlink(external, directAlias, "dir");
   const empty = { skills: [], prompts: [], rules: [], plugins: [] };
-  const scoped = { global: { ...empty, plugins: [configured] }, project: empty };
+  const scoped = { global: { ...empty, plugins: [configured, directAliasRoot] }, project: empty };
   try {
     markReceivedResource("plugin", "kit", true);
     assert.ok(claudeAgentResourceArgs(paths.root).includes(alias));
     assert.ok(claudeAgentResourceArgs(paths.root, scoped).includes(renamed), "nested parent symlinks resolve to the managed target identity");
+    assert.ok(claudeAgentResourceArgs(paths.root, scoped).includes(directAlias), "independent external aliases resolve to a managed target identity");
     setActivationPreference("plugin", "kit", "claude", false);
     assert.equal(claudeAgentResourceArgs(paths.root).includes(plugin), false);
     assert.equal(claudeAgentResourceArgs(paths.root).includes(alias), false, "managed alias respects target disable");
     assert.equal(claudeAgentResourceArgs(paths.root, scoped).includes(renamed), false, "parent-symlink alias respects target disable");
+    assert.equal(claudeAgentResourceArgs(paths.root, scoped).includes(directAlias), false, "independent external alias respects target disable");
     setActivationPreference("plugin", "kit", "claude", null);
     save(settingsDatabase(), "autoActivateSharedSkills", "false");
     assert.equal(claudeAgentResourceArgs(paths.root).includes(plugin), false);
     assert.equal(claudeAgentResourceArgs(paths.root).includes(alias), false, "managed alias respects received default");
     assert.equal(claudeAgentResourceArgs(paths.root, scoped).includes(renamed), false, "parent-symlink alias respects received default");
+    assert.equal(claudeAgentResourceArgs(paths.root, scoped).includes(directAlias), false, "independent external alias respects received default");
+    setActivationPreference("plugin", "kit", "claude", true);
+    const enabledArgs = claudeAgentResourceArgs(paths.root, scoped);
+    assert.ok(enabledArgs.includes(plugin));
+    assert.ok(enabledArgs.includes(alias));
+    const enabledInventory = await resourceInventory({ resourceRoot: paths.root });
+    assert.equal(enabledInventory.plugins.find((item) => item.source === "managed" && item.name === "kit")?.activation.claude?.enabled, true);
+    assert.equal(enabledInventory.plugins.find((item) => item.source === "managed" && item.name === "alias")?.activation.claude?.enabled, true);
+    setActivationPreference("plugin", "alias", "claude", false);
+    const blockedArgs = claudeAgentResourceArgs(paths.root, scoped);
+    assert.equal(blockedArgs.includes(plugin), false);
+    assert.equal(blockedArgs.includes(alias), false);
+    const blockedInventory = await resourceInventory({ resourceRoot: paths.root });
+    assert.equal(blockedInventory.plugins.find((item) => item.source === "managed" && item.name === "kit")?.activation.claude?.enabled, false);
+    assert.equal(blockedInventory.plugins.find((item) => item.source === "managed" && item.name === "kit")?.activation.claude?.preference, true);
+    assert.equal(blockedInventory.plugins.find((item) => item.source === "managed" && item.name === "alias")?.activation.claude?.preference, false);
+    setActivationPreference("plugin", "alias", "claude", null);
+    assert.ok(claudeAgentResourceArgs(paths.root, scoped).includes(plugin), "clearing alias block restores effective activation");
+    setActivationPreference("plugin", "kit", "claude", null);
+    const resetInventory = await resourceInventory({ resourceRoot: paths.root });
+    assert.equal(resetInventory.plugins.find((item) => item.source === "managed" && item.name === "kit")?.activation.claude?.enabled, false, "the kit identity stays visible after enabling and resetting");
   } finally {
     setActivationPreference("plugin", "kit", "claude", null);
     markReceivedResource("plugin", "kit", false);

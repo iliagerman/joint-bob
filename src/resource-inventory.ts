@@ -1,9 +1,9 @@
 import { mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
-import { agentResourcePaths, blockedPluginSkill, claudePluginSources, pluginActivationName } from "./agent-resources.js";
+import { agentResourcePaths, blockedPluginSkill, claudePluginSources, pluginActivationDecisions } from "./agent-resources.js";
 import { activationDecision, receivedResource, receivedSkill, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
 import { claudeEnterpriseMcpPath, claudePluginMcpServers, claudeProjectMcpDecisions } from "./harnesses/claude/resources.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
@@ -248,8 +248,14 @@ async function inventorySkills(projectPath: string | undefined, projectId: strin
   const scoped = await resolved(scopedSkillsRoot());
   const byKey = new Map<string, InventorySkill>();
   for (const summary of summaries) {
-    const location = await resolved(summary.path ?? "");
-    const manifest = path.basename(location) === "SKILL.md" ? location : path.join(location, "SKILL.md");
+    const discovered = summary.path ?? "";
+    const location = await resolved(discovered);
+    let discoveredIsFile = false;
+    try { discoveredIsFile = Boolean(discovered && existsSync(discovered) && statSync(discovered).isFile()); }
+    catch { /* If the discovery path changed or became unreadable, use its canonical fallback. */ }
+    const sourceManifest = path.basename(discovered) === "SKILL.md" || discoveredIsFile ? discovered : path.join(discovered, "SKILL.md");
+    const canonicalManifest = path.basename(location) === "SKILL.md" ? location : path.join(location, "SKILL.md");
+    const manifest = existsSync(sourceManifest) ? sourceManifest : canonicalManifest;
     let name = summary.name;
     try { if (existsSync(manifest)) name = skillNameFromFile(manifest, path.basename(path.dirname(manifest))); }
     catch { continue; } // A malformed resource must not break the rest of the inventory or receive an enabled identity.
@@ -278,15 +284,18 @@ export async function resourceInventory(options: { projectPath?: string; project
     for (const entry of await readdir(paths.claudePlugins, { withFileTypes: true })) {
       if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
       const plugin = path.join(paths.claudePlugins, entry.name);
-      const name = pluginActivationName(plugin, paths.claudePlugins);
-      if (seenManaged.has(name)) continue;
       const file = path.join(plugin, ".claude-plugin/plugin.json");
       if (!await readJson(file)) continue;
-      seenManaged.add(name);
-      const decision = activationDecision("plugin", name, "claude", receivedResource("plugin", name));
-      const inspected = inspectPlugin(plugin, decision);
-      plugins.push({ name, file, source: inspected.verified ? "managed" : "unverified", harnesses: ["claude"],
-        activation: { claude: inspected.decision } });
+      const decisions = pluginActivationDecisions(plugin, paths.claudePlugins);
+      const canonical = await resolved(plugin);
+      for (const { name, decision } of decisions) {
+        const key = JSON.stringify([canonical, name]);
+        if (seenManaged.has(key)) continue;
+        seenManaged.add(key);
+        const inspected = inspectPlugin(plugin, decision);
+        plugins.push({ name, file, source: inspected.verified ? "managed" : "unverified", harnesses: ["claude"],
+          activation: { claude: inspected.decision } });
+      }
     }
   } catch (error) { if (!missing(error)) throw error; }
   try {
@@ -303,13 +312,15 @@ export async function resourceInventory(options: { projectPath?: string; project
     const seenClaude = new Set<string>();
     for (const plugin of claudePluginSources([...configured.global.plugins, ...configured.project.plugins])) {
       const canonical = await resolved(plugin);
-      if (seenClaude.has(canonical)) continue;
-      seenClaude.add(canonical);
-      const name = pluginActivationName(plugin, paths.claudePlugins);
-      const shared = receivedResource("plugin", name);
-      const inspected = inspectPlugin(plugin, activationDecision("plugin", name, "claude", shared));
-      plugins.push({ name, file: plugin, source: inspected.verified ? "project" : "unverified", harnesses: ["claude"],
-        activation: { claude: inspected.decision } });
+      const decisions = pluginActivationDecisions(plugin, paths.claudePlugins);
+      for (const { name, decision } of decisions) {
+        const key = JSON.stringify([canonical, name]);
+        if (seenClaude.has(key)) continue;
+        seenClaude.add(key);
+        const inspected = inspectPlugin(plugin, decision);
+        plugins.push({ name, file: plugin, source: inspected.verified ? "project" : "unverified", harnesses: ["claude"],
+          activation: { claude: inspected.decision } });
+      }
     }
     const seenPi = new Set<string>();
     for (const source of [...configured.global.plugins, ...configured.project.plugins]) {
@@ -324,7 +335,10 @@ export async function resourceInventory(options: { projectPath?: string; project
       }
     }
   }
-  const packageFiles = [paths.piPackages, path.join(getSettings().pi.configPath, "settings.json"), ...(options.projectPath ? [path.join(options.projectPath, ".pi/settings.json")] : [])];
+  const packageFiles = [
+    ...(getSettings().strictResourceIsolation ? [paths.piPackages] : [path.join(getSettings().pi.configPath, "settings.json")]),
+    ...(options.projectPath ? [path.join(options.projectPath, ".pi/settings.json")] : []),
+  ];
   const seenPackages = new Set<string>();
   for (const file of packageFiles) {
     const config = await readJson(file);

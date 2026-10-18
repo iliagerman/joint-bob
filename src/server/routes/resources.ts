@@ -41,6 +41,8 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
     if (body.conversationId && !body.projectId) { sendError(response, 400, "Conversation needs a project"); return; }
     const inventory = await localInventory(body.projectId, body.conversationId);
     const available = body.kind === "skill" ? inventory.skills : body.kind === "mcp" ? inventory.mcpServers : inventory.plugins;
+    const plugin = body.kind === "plugin" ? inventory.plugins.find((item) => item.name === body.name && item.harnesses.includes(body.harness)
+      && ["managed", "project"].includes(item.source) && (item.source !== "project" || Boolean(body.projectId))) : undefined;
     if (!available.some((item) => item.name === body.name && item.harnesses.includes(body.harness)
       && (body.kind === "skill" ? ["shared", "scoped"].includes((item as { origin?: string }).origin ?? "")
         : body.kind === "plugin" ? ["managed", "project"].includes((item as { source?: string }).source ?? "") && ((item as { source?: string }).source !== "project" || Boolean(body.projectId))
@@ -49,7 +51,10 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
     }
     setActivationPreference(body.kind, body.name, body.harness, body.enabled);
     await reloadSharedSkills();
-    response.json({ ...body, decision: activationDecision(body.kind, body.name, body.harness, body.kind === "skill" ? receivedSkill(body.name) : receivedResource(body.kind, body.name)) });
+    const refreshed = plugin ? await localInventory(body.projectId, body.conversationId) : undefined;
+    const decision = (plugin && refreshed?.plugins.find((item) => item.name === body.name && item.source === plugin.source)?.activation[body.harness])
+      ?? activationDecision(body.kind, body.name, body.harness, body.kind === "skill" ? receivedSkill(body.name) : receivedResource(body.kind, body.name));
+    response.json({ ...body, decision });
   } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation choice"); else next(error); }
 });
 

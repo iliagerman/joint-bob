@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed plugins that appear under more than one name, such as through a symlink, so that switching one name off turns the plugin off for the agent, and each name's switch shows its own setting in the Resources list.
+
 ## 2.111.0 — 2026-10-18
 
 - Fixed per-agent on/off switches for skills, plugins, and MCP servers so that turning one off holds for the agent it was set on, and the Resources list shows each agent's state.

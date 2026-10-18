@@ -1,7 +1,7 @@
 import { nodeMcpServersApply } from "./account-runtime.js";
 import { adminAccountId } from "./ownership.js";
 import { createHash, randomUUID } from "node:crypto";
-import { activeSkillRoot, activeMcpConfig, activationDecision, assertNoBlockedNativeSkills, blockedSkillNames, receivedResource, skillNameFromFile } from "./resource-activation.js";
+import { activeSkillRoot, activeMcpConfig, activationDecision, assertNoBlockedNativeSkills, blockedSkillNames, receivedResource, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
 import { existsSync, lstatSync, mkdirSync, readlinkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -654,11 +654,9 @@ export function claudePluginSources(sources: string[]): string[] {
   return [...new Set(plugins)];
 }
 
-export function pluginActivationName(plugin: string, managedRoot = agentResourcePaths().claudePlugins): string {
-  let managedName: string | undefined;
+function managedPluginNamesAlongPath(plugin: string, roots: string[]): string[] {
+  const names = new Set<string>();
   let current = path.resolve(plugin);
-  const roots = [path.resolve(managedRoot)];
-  try { roots.push(realpathSync(managedRoot)); } catch { /* A missing managed root cannot provide an identity. */ }
   const visited = new Set<string>();
   for (let depth = 0; depth < 32; depth++) {
     try { current = path.join(realpathSync(path.dirname(current)), path.basename(current)); } catch { /* Continue with the original spelling when a parent is unavailable. */ }
@@ -666,7 +664,7 @@ export function pluginActivationName(plugin: string, managedRoot = agentResource
     visited.add(current);
     for (const root of roots) {
       const relative = path.relative(root, current);
-      if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) managedName = relative.split(path.sep)[0];
+      if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) names.add(relative.split(path.sep)[0]);
     }
     if (!existsSync(current)) break;
     try {
@@ -674,7 +672,38 @@ export function pluginActivationName(plugin: string, managedRoot = agentResource
       current = path.resolve(path.dirname(current), readlinkSync(current));
     } catch { break; }
   }
-  return managedName ?? path.basename(plugin);
+  return [...names];
+}
+
+export function pluginActivationNames(plugin: string, managedRoot = agentResourcePaths().claudePlugins): string[] {
+  const roots = [path.resolve(managedRoot)];
+  try { roots.push(realpathSync(managedRoot)); } catch { /* A missing managed root cannot provide an identity. */ }
+  const names = new Set(managedPluginNamesAlongPath(plugin, roots));
+  if (existsSync(plugin) && existsSync(managedRoot)) {
+    try {
+      const target = realpathSync(plugin);
+      for (const entry of readdirSync(managedRoot).sort()) {
+        const managedPlugin = path.join(managedRoot, entry);
+        try {
+          if (realpathSync(managedPlugin) === target) for (const name of managedPluginNamesAlongPath(managedPlugin, roots)) names.add(name);
+        } catch { /* A broken managed entry must not hide valid identities later in the directory. */ }
+      }
+    } catch { /* A missing managed root cannot provide additional identities. */ }
+  }
+  return names.size ? [...names].sort() : [path.basename(plugin)];
+}
+
+/** All aliases share effective status while keeping each alias's preference separate. */
+export function pluginActivationDecisions(plugin: string, managedRoot = agentResourcePaths().claudePlugins): Array<{ name: string; decision: ActivationDecision }> {
+  const decisions = pluginActivationNames(plugin, managedRoot).map((name) => ({
+    name,
+    decision: activationDecision("plugin", name, "claude", receivedResource("plugin", name)),
+  }));
+  const blocked = decisions.find(({ decision }) => !decision.enabled);
+  return blocked ? decisions.map(({ name, decision }) => ({
+    name,
+    decision: { ...decision, enabled: false, reason: `Blocked by plugin alias ${blocked.name}: ${blocked.decision.reason}` },
+  })) : decisions;
 }
 
 /** Relative markdown paths, shared by generated plugins and command discovery. */
@@ -799,13 +828,13 @@ export function claudeAgentResourceArgs(root?: string, configured?: ScopedResour
   const args: string[] = [];
   if (existsSync(paths.claudePlugins)) for (const entry of readdirSync(paths.claudePlugins).sort()) {
     const plugin = path.join(paths.claudePlugins, entry);
-    const name = pluginActivationName(plugin, paths.claudePlugins);
-    if (!installed.has(name) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))
-      && activationDecision("plugin", name, "claude", receivedResource("plugin", name)).enabled && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
+    const decisions = pluginActivationDecisions(plugin, paths.claudePlugins);
+    if (!decisions.some(({ name }) => installed.has(name)) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))
+      && decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
   }
   for (const plugin of claudePluginSources(configuredPaths(configured, "plugins"))) {
-    const name = pluginActivationName(plugin, paths.claudePlugins);
-    if (activationDecision("plugin", name, "claude", receivedResource("plugin", name)).enabled && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
+    const decisions = pluginActivationDecisions(plugin, paths.claudePlugins);
+    if (decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
   }
   const generated = generatedResourcePlugin(paths, configured);
   if (generated) args.push("--plugin-dir", generated);
