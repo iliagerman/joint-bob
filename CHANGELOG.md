@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.111.0 — 2026-10-18
 
-- Fixed per-agent on/off switches for skills, plugins, and MCP servers so a turn-off holds for the agent it was set on, and plugins from project folders now list with their own switch.
+- Fixed per-agent on/off switches for skills, plugins, and MCP servers so that turning one off holds for the agent it was set on, and the Resources list shows each agent's state.
+- Added per-agent on/off switches for plugins from project folders, the same as for managed plugins.
+- Hid the relay skill rules panel on the Skills tab when there are no rules or publishing to show.
 
 ## 2.110.0 — 2026-10-18
 
