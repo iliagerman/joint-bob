@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 
-interface NodeInventory { node: { id: string; local: boolean; online: boolean }; inventory?: { skills: Array<{ name: string; path: string; harnesses: string[] }>; mcpServers: Array<{ name: string; file: string }> }; error?: string }
+interface NodeInventory { node: { id: string; local: boolean; online: boolean }; inventory?: { skills: Array<{ name: string; path: string; harnesses: string[] }>; mcpServers: Array<{ name: string; file: string }>; plugins: Array<{ name: string; source: string; activation?: Record<string, { enabled: boolean }> }> }; error?: string }
 
 test("the cluster inventory asks each paired node over the signed runtime route", { timeout: 180_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "resource-inventory-api-"));
@@ -38,6 +38,19 @@ test("the cluster inventory asks each paired node over the signed runtime route"
     assert.equal(peer.inventory.mcpServers.find((server) => server.name === "tracker")?.file, "");
     assert.doesNotMatch(JSON.stringify(cluster.body), /never-leaves/);
     assert.ok(cluster.body.nodes.find((entry) => entry.node.local)?.inventory?.skills.find((item) => item.name === "cluster-skill")?.path);
+
+    const pluginCollection = path.join(project.path, ".claude-plugins");
+    const pluginManifest = path.join(pluginCollection, "kit", ".claude-plugin", "plugin.json");
+    await mkdir(path.dirname(pluginManifest), { recursive: true });
+    await writeFile(pluginManifest, JSON.stringify({ name: "kit" }));
+    const configured = await api(a, session, "PUT", `/projects/${encodeURIComponent(project.id)}/resource-paths`, { resources: { skills: [], prompts: [], rules: [], plugins: [pluginCollection] } });
+    assert.equal(configured.status, 200);
+    const beforeToggle = await api<{ nodes: NodeInventory[] }>(a, session, "GET", `/resources/inventory?projectId=${encodeURIComponent(project.id)}`);
+    assert.equal(beforeToggle.body.nodes[0].inventory?.plugins.find((item) => item.name === "kit")?.source, "project");
+    const disabledPlugin = await api(a, session, "PUT", "/resources/activation/item", { kind: "plugin", name: "kit", harness: "claude", enabled: false, projectId: project.id });
+    assert.equal(disabledPlugin.status, 200);
+    const afterToggle = await api<{ nodes: NodeInventory[] }>(a, session, "GET", `/resources/inventory?projectId=${encodeURIComponent(project.id)}`);
+    assert.equal(afterToggle.body.nodes[0].inventory?.plugins.find((item) => item.name === "kit")?.activation?.claude?.enabled, false);
 
     const nodeWide = await api<{ nodes: NodeInventory[] }>(a, session, "GET", "/resources/inventory?cluster=1");
     assert.equal(nodeWide.status, 200);

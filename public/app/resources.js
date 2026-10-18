@@ -416,7 +416,7 @@ function skillRow(skill, local) {
   const name = document.createElement("strong");
   name.textContent = skill.name;
   head.append(name, badge(ORIGIN_LABELS[skill.origin] ?? skill.origin, `origin-${skill.origin}`));
-  if (view.scope === "conversation" && view.engine && skill.harnesses.includes(view.engine)) head.append(badge("active", "active"));
+  if (view.scope === "conversation" && view.engine && skill.activation?.[view.engine]?.enabled) head.append(badge("active", "active"));
   head.append(...skill.harnesses.map((id) => badge(harnessLabel(id), "harness")));
   const actions = document.createElement("span");
   actions.className = "resources-row-actions";
@@ -467,7 +467,8 @@ function serverRow(server, local, inventory) {
   const name = document.createElement("strong");
   name.textContent = server.name;
   head.append(name, badge(MCP_SOURCE_LABELS[server.source] ?? server.source, `origin-${server.source}`));
-  if (!server.enabled) head.append(badge(server.source === "project" ? "not approved" : "disabled", "off"));
+  const harnessDisabled = view.scope === "conversation" && view.engine && server.activation?.[view.engine]?.enabled === false;
+  if (harnessDisabled || !server.enabled) head.append(badge(!harnessDisabled && server.source === "project" ? "not approved" : "disabled", "off"));
   else if (view.scope === "conversation" && view.engine && server.harnesses.includes(view.engine)) head.append(badge("active", "active"));
   head.append(...server.harnesses.map((id) => badge(harnessLabel(id), "harness")));
   const activation = server.source === "shared" ? activationControl("mcp", server, local, server.harnesses) : null;
@@ -488,7 +489,7 @@ function pluginRow(plugin, local) {
   head.className = "resources-row-head";
   const name = document.createElement("strong"); name.textContent = plugin.name;
   head.append(name, badge(plugin.source), ...plugin.harnesses.map((id) => badge(harnessLabel(id), "harness")));
-  const activation = plugin.source === "managed" ? activationControl("plugin", plugin, local, plugin.harnesses) : null;
+  const activation = ["managed", "project"].includes(plugin.source) ? activationControl("plugin", plugin, local, plugin.harnesses) : null;
   if (activation) head.append(activation);
   else head.append(badge("agent configured"));
   row.append(head);
@@ -722,7 +723,8 @@ function render() {
   // Repositories are not per agent.
   elements.resourcesHarnessSelect.hidden = view.tab === "git";
   const listing = ["skills", "mcp", "tools", "plugins"].includes(view.tab);
-  document.querySelector("#resourcesRelayPolicy").hidden = view.tab !== "skills";
+  document.querySelector("#resourcesRelayPolicy").hidden = view.tab !== "skills"
+    || (view.relayPolicies.length === 0 && document.querySelector("#resourcesRelayPublisher").hidden);
   document.querySelector(".resources-auto-activate").hidden = !["skills", "mcp", "plugins"].includes(view.tab);
   elements.resourcesList.hidden = !listing;
   if (!listing) { elements.resourcesListPager.hidden = true; elements.resourcesShareBar.hidden = true; }

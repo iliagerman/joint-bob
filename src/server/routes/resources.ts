@@ -43,7 +43,7 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
     const available = body.kind === "skill" ? inventory.skills : body.kind === "mcp" ? inventory.mcpServers : inventory.plugins;
     if (!available.some((item) => item.name === body.name && item.harnesses.includes(body.harness)
       && (body.kind === "skill" ? ["shared", "scoped"].includes((item as { origin?: string }).origin ?? "")
-        : body.kind === "plugin" ? (item as { source?: string }).source === "managed"
+        : body.kind === "plugin" ? ["managed", "project"].includes((item as { source?: string }).source ?? "") && ((item as { source?: string }).source !== "project" || Boolean(body.projectId))
           : (item as { source?: string }).source === "shared"))) {
       sendError(response, 404, "Resource is not installed for that agent"); return;
     }

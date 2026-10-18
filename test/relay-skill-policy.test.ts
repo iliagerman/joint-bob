@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { clusterPublicKeyFingerprint, getOrCreateClusterIdentity } from "../src/cluster-identity.js";
 import { activationDecision, setActivationPreference } from "../src/resource-activation.js";
-import { publishRelayPolicy, receiveRelayPolicy, relayPolicySubscriptions, subscribeRelayPolicy } from "../src/relay/resource-policy.js";
+import { relaySkillDirective } from "../src/relay/resource-policy.js";
+import { publishRelayPolicy, publishedRelayPolicy, receiveRelayPolicy, relayPolicySubscriptions, subscribeRelayPolicy } from "../src/relay/resource-policy.js";
 import { createMembership, updateMembership } from "../src/relay/store.js";
 import { settingsDatabase } from "../src/settings-store.js";
 
@@ -17,6 +21,29 @@ updateMembership(local, member.id, { status: "admitted", relayNodeId: relayId, f
 const admitted = { ...member, status: "admitted" as const, relayNodeId: relayId, fingerprint: identity.fingerprint };
 
 test.after(() => { local.prepare("DELETE FROM relay_skill_subscriptions WHERE membership_id=?").run(member.id); local.prepare("DELETE FROM relay_memberships WHERE id=?").run(member.id); relay.close(); });
+
+test("an opted-in relay block remains cached and effective after node restart and policy reconnect", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "relay-policy-restart-"));
+  const file = path.join(directory, "node.db");
+  let db = new DatabaseSync(file);
+  const sourceRelay = new DatabaseSync(":memory:");
+  const sourceRelayId = randomUUID();
+  const sourceIdentity = getOrCreateClusterIdentity(sourceRelay, sourceRelayId);
+  try {
+    const membership = createMembership(db, "https://restart-policy.fixture.example", sourceIdentity.fingerprint);
+    updateMembership(db, membership.id, { status: "admitted", relayNodeId: sourceRelayId, fingerprint: sourceIdentity.fingerprint });
+    const admittedMembership = { ...membership, status: "admitted" as const, relayNodeId: sourceRelayId, fingerprint: sourceIdentity.fingerprint };
+    const statement = publishRelayPolicy(sourceRelay, sourceRelayId, [{ action: "block", name: "restart-probe", harness: "pi" }]);
+    assert.equal(receiveRelayPolicy(db, admittedMembership, sourceIdentity.publicKey, statement), true);
+    subscribeRelayPolicy(db, membership.id, true);
+    db.close();
+    db = new DatabaseSync(file);
+    assert.equal(relayPolicySubscriptions(db).find((item) => item.relay.id === membership.id)?.statement?.body.version, statement.body.version);
+    assert.equal(relaySkillDirective(db, "restart-probe", "pi")?.action, "block");
+    assert.equal(receiveRelayPolicy(db, admittedMembership, sourceIdentity.publicKey, statement), false, "reconnect delivery is idempotent");
+    assert.equal(relaySkillDirective(db, "restart-probe", "pi")?.action, "block");
+  } finally { db.close(); sourceRelay.close(); await rm(directory, { recursive: true, force: true }); }
+});
 
 test("relay skill rules are signed, versioned, cached and require local opt-in", () => {
   const first = publishRelayPolicy(relay, relayId, [
@@ -36,6 +63,9 @@ test("relay skill rules are signed, versioned, cached and require local opt-in",
   assert.equal(activationDecision("skill", "policy-fixture", "claude", true).enabled, false, "local disable wins over relay enable");
   assert.equal(activationDecision("skill", "policy-fixture", "pi", false).enabled, false, "relay block wins over local enable");
   assert.equal(receiveRelayPolicy(local, admitted, identity.publicKey, first), false, "same signed version is idempotent");
+  const oversized = Array.from({ length: 512 }, (_, index) => ({ action: "block" as const, name: `policy-${"x".repeat(180)}-${index}`, harness: "all" as const }));
+  assert.throws(() => publishRelayPolicy(relay, relayId, oversized), /frame limit/);
+  assert.equal(publishedRelayPolicy(relay, relayId).body.version, 1, "rejected policy is never persisted");
   const next = publishRelayPolicy(relay, relayId, [{ action: "block", name: "policy-fixture", harness: "all" }]);
   assert.equal(next.body.version, 2);
   assert.equal(receiveRelayPolicy(local, admitted, identity.publicKey, next), true);

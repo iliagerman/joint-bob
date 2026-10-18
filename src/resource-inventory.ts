@@ -1,9 +1,10 @@
-import { mkdir, readdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
-import { agentResourcePaths, blockedPluginSkill } from "./agent-resources.js";
-import { activationDecision, receivedResource, receivedSkill, type ActivationDecision } from "./resource-activation.js";
+import { agentResourcePaths, blockedPluginSkill, claudePluginSources, pluginActivationName } from "./agent-resources.js";
+import { activationDecision, receivedResource, receivedSkill, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
 import { claudeEnterpriseMcpPath, claudePluginMcpServers, claudeProjectMcpDecisions } from "./harnesses/claude/resources.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime } from "./harnesses/runtime-configuration.js";
@@ -44,7 +45,7 @@ export interface InventoryMcpServer {
 export interface InventoryPlugin {
   name: string;
   file: string;
-  source: "managed" | "project" | "extension";
+  source: "managed" | "project" | "extension" | "configured" | "unverified";
   harnesses: HarnessId[];
   activation: Partial<Record<HarnessId, ActivationDecision>>;
 }
@@ -91,6 +92,37 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function pluginPackageSource(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  const source = record(value).source;
+  return typeof source === "string" ? source : undefined;
+}
+
+function pluginPackageLabel(source: string): string {
+  if (source.startsWith("npm:")) return source.slice(4).match(/^(@[^/]+\/[^@]+|[^@]+)(?:@.*)?$/)?.[1] ?? "Pi package";
+  try {
+    const url = new URL(source);
+    return url.hostname || "Pi package";
+  } catch { return path.basename(source.split(/[?#]/, 1)[0]).replace(/\.git$/, "") || "Pi package"; }
+}
+
+async function configuredPiExtensionPaths(source: string): Promise<string[]> {
+  const candidate = source.startsWith("~/") ? path.join(os.homedir(), source.slice(2)) : path.resolve(source);
+  try {
+    const info = await stat(candidate);
+    if (info.isFile()) return /\.[cm]?[jt]s$/i.test(candidate) ? [candidate] : [];
+    if (!info.isDirectory()) return [];
+    const manifest = await readJson(path.join(candidate, "package.json"));
+    const extensionList = typeof manifest?.pi === "object" && manifest.pi !== null ? record(manifest.pi).extensions : undefined;
+    const paths = (typeof extensionList === "string" ? [extensionList] : strings(extensionList)).map((entry) => path.resolve(candidate, entry));
+    if (paths.length) return paths;
+    const files = (await readdir(candidate, { withFileTypes: true }))
+      .filter((entry) => /\.[cm]?[jt]s$/i.test(entry.name) && (entry.isFile() || entry.isSymbolicLink()))
+      .map((entry) => path.join(candidate, entry.name));
+    return files.length ? files : [candidate];
+  } catch (error) { if (missing(error)) return []; throw error; }
+}
+
 function describeServer(value: unknown): Pick<InventoryMcpServer, "transport" | "target"> | undefined {
   const server = record(value);
   if (typeof server.command === "string" && server.command) return { transport: "stdio", target: path.basename(server.command) };
@@ -107,6 +139,17 @@ function servers(map: unknown, base: Omit<InventoryMcpServer, "name" | "transpor
     const described = describeServer(value);
     return described ? [{ name, ...base, ...described, enabled: !disabled.includes(name) && record(value).disabled !== true }] : [];
   });
+}
+
+function inspectPlugin(plugin: string, decision: ActivationDecision): { decision: ActivationDecision; verified: boolean } {
+  try {
+    const blockedSkill = blockedPluginSkill(plugin);
+    return blockedSkill
+      ? { decision: { ...decision, enabled: false, reason: `Contains blocked skill ${blockedSkill}` }, verified: true }
+      : { decision, verified: true };
+  } catch {
+    return { decision: { ...decision, enabled: false, reason: "Plugin contents could not be safely inspected" }, verified: false };
+  }
 }
 
 function runtimeConfigPath(id: HarnessId): string | undefined {
@@ -206,11 +249,15 @@ async function inventorySkills(projectPath: string | undefined, projectId: strin
   const byKey = new Map<string, InventorySkill>();
   for (const summary of summaries) {
     const location = await resolved(summary.path ?? "");
+    const manifest = path.basename(location) === "SKILL.md" ? location : path.join(location, "SKILL.md");
+    let name = summary.name;
+    try { if (existsSync(manifest)) name = skillNameFromFile(manifest, path.basename(path.dirname(manifest))); }
+    catch { continue; } // A malformed resource must not break the rest of the inventory or receive an enabled identity.
     const origin: SkillOrigin = inside(scoped, location) ? "scoped" : summary.scope === "project" ? "project" : inside(shared, location) ? "shared" : "user";
-    const key = `${origin}\0${summary.name}`;
+    const key = `${origin}\0${name}`;
     const existing = byKey.get(key);
     if (existing) { if (!existing.harnesses.includes(summary.harness)) existing.harnesses.push(summary.harness); continue; }
-    byKey.set(key, { name: summary.name, description: summary.description, origin, path: location, harnesses: [summary.harness] });
+    byKey.set(key, { name, description: summary.description, origin, path: location, harnesses: [summary.harness] });
   }
   return [...byKey.values()].map((skill) => ({ ...skill, activation: Object.fromEntries(skill.harnesses.map((harness) => [harness,
     activationDecision("skill", skill.name, harness, skill.origin === "scoped" || skill.origin === "shared" && receivedSkill(path.basename(skill.path), sharedRoot))])) }))
@@ -227,14 +274,19 @@ export async function resourceInventory(options: { projectPath?: string; project
   const harnesses = listDiscoveredHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label, mcp: MCP_HARNESSES.includes(adapter.id) }));
   const plugins: InventoryPlugin[] = [];
   try {
+    const seenManaged = new Set<string>();
     for (const entry of await readdir(paths.claudePlugins, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const file = path.join(paths.claudePlugins, entry.name, ".claude-plugin/plugin.json");
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const plugin = path.join(paths.claudePlugins, entry.name);
+      const name = pluginActivationName(plugin, paths.claudePlugins);
+      if (seenManaged.has(name)) continue;
+      const file = path.join(plugin, ".claude-plugin/plugin.json");
       if (!await readJson(file)) continue;
-      const decision = activationDecision("plugin", entry.name, "claude", receivedResource("plugin", entry.name));
-      const blockedSkill = blockedPluginSkill(path.dirname(path.dirname(file)));
-      plugins.push({ name: entry.name, file, source: "managed", harnesses: ["claude"],
-        activation: { claude: blockedSkill ? { ...decision, enabled: false, reason: `Contains blocked skill ${blockedSkill}` } : decision } });
+      seenManaged.add(name);
+      const decision = activationDecision("plugin", name, "claude", receivedResource("plugin", name));
+      const inspected = inspectPlugin(plugin, decision);
+      plugins.push({ name, file, source: inspected.verified ? "managed" : "unverified", harnesses: ["claude"],
+        activation: { claude: inspected.decision } });
     }
   } catch (error) { if (!missing(error)) throw error; }
   try {
@@ -246,11 +298,41 @@ export async function resourceInventory(options: { projectPath?: string; project
         activation: { pi: activationDecision("plugin", entry.name, "pi", false) } });
     }
   } catch (error) { if (!missing(error)) throw error; }
-  if (options.projectPath) {
-    const configured = getScopedResourcePaths(options.projectId, options.conversationId);
-    for (const plugin of [...configured.global.plugins, ...configured.project.plugins]) {
-      plugins.push({ name: path.basename(plugin), file: plugin, source: "project", harnesses: ["claude", "pi"],
-        activation: { claude: activationDecision("plugin", path.basename(plugin), "claude", false), pi: activationDecision("plugin", path.basename(plugin), "pi", false) } });
+  const configured = options.projectPath ? getScopedResourcePaths(options.projectId, options.conversationId) : undefined;
+  if (configured) {
+    const seenClaude = new Set<string>();
+    for (const plugin of claudePluginSources([...configured.global.plugins, ...configured.project.plugins])) {
+      const canonical = await resolved(plugin);
+      if (seenClaude.has(canonical)) continue;
+      seenClaude.add(canonical);
+      const name = pluginActivationName(plugin, paths.claudePlugins);
+      const shared = receivedResource("plugin", name);
+      const inspected = inspectPlugin(plugin, activationDecision("plugin", name, "claude", shared));
+      plugins.push({ name, file: plugin, source: inspected.verified ? "project" : "unverified", harnesses: ["claude"],
+        activation: { claude: inspected.decision } });
+    }
+    const seenPi = new Set<string>();
+    for (const source of [...configured.global.plugins, ...configured.project.plugins]) {
+      const discovered = await configuredPiExtensionPaths(source);
+      const candidate = source.startsWith("~/") ? path.join(os.homedir(), source.slice(2)) : path.resolve(source);
+      const files = discovered.length ? discovered : existsSync(candidate) ? [] : [source];
+      for (const file of files) {
+        const canonical = await resolved(file);
+        if (seenPi.has(canonical)) continue;
+        seenPi.add(canonical);
+        plugins.push({ name: existsSync(file) ? path.basename(file) : pluginPackageLabel(file), file, source: "configured", harnesses: ["pi"], activation: {} });
+      }
+    }
+  }
+  const packageFiles = [paths.piPackages, path.join(getSettings().pi.configPath, "settings.json"), ...(options.projectPath ? [path.join(options.projectPath, ".pi/settings.json")] : [])];
+  const seenPackages = new Set<string>();
+  for (const file of packageFiles) {
+    const config = await readJson(file);
+    for (const value of Array.isArray(config?.packages) ? config.packages : []) {
+      const source = pluginPackageSource(value);
+      if (!source || seenPackages.has(source)) continue;
+      seenPackages.add(source);
+      plugins.push({ name: pluginPackageLabel(source), file, source: "configured", harnesses: ["pi"], activation: {} });
     }
   }
   return { harnesses, skills, mcpServers, plugins, sharedSkillsPath: paths.sharedSkills, mcpConfigPath: paths.mcpConfig };

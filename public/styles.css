@@ -4133,7 +4133,7 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .resources-toolbar { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .resources-toolbar > [hidden] { display: none; }
 /* The git tab shows neither the scope nor the agent filter: search takes the row. */
-.resources-toolbar:has(> #resourcesHarnessSelect[hidden]):has(> #resourcesScopeSelect[hidden]) { grid-template-columns: minmax(0, 1fr) auto; }
+.resources-toolbar:has(> #resourcesHarnessSelect[hidden]):has(> #resourcesScopeSelect[hidden]) { grid-template-columns: auto minmax(0, 1fr) auto; }
 .resources-toolbar .search-shell { margin: 0; }
 .resources-toolbar .search-shell input { border-color: var(--line); }
 /* The share dialog scrolls between its title and its buttons, never past either. */

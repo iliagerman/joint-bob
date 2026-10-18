@@ -67,6 +67,30 @@ export function receivedSkill(name: string, root = agentResourcePaths().sharedSk
   return existsSync(path.join(resolveDataDirectory(), "skill-removals", `${key}.received`));
 }
 
+function receivedSkillLocation(canonical: string, root: string, first: string): boolean {
+  const canonicalRoot = existsSync(root) ? realpathSync(root) : path.resolve(root);
+  if (receivedSkill(first, root) || receivedSkill(first, canonicalRoot)) return true;
+  const managedRoot = agentResourcePaths().sharedSkills;
+  const canonicalManaged = existsSync(managedRoot) ? realpathSync(managedRoot) : path.resolve(managedRoot);
+  const relative = path.relative(canonicalManaged, canonical);
+  if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+    const managedName = relative.split(path.sep)[0];
+    if (receivedSkill(managedName, managedRoot) || receivedSkill(managedName, canonicalManaged)) return true;
+  }
+  return receivedSkill(path.basename(canonical), path.dirname(canonical));
+}
+
+function receivedSkillPath(directory: string, root: string, first: string, manifest?: string): boolean {
+  const canonical = realpathSync(directory);
+  if (receivedSkillLocation(canonical, root, first)) return true;
+  if (manifest && existsSync(manifest)) {
+    const canonicalManifestDirectory = path.dirname(realpathSync(manifest));
+    if (canonicalManifestDirectory !== canonical
+      && receivedSkillLocation(canonicalManifestDirectory, root, path.basename(canonicalManifestDirectory))) return true;
+  }
+  return false;
+}
+
 export function activationDecision(kind: ActivatableResource, name: string, harness: HarnessId, shared: boolean): ActivationDecision {
   const preference = activationPreference(kind, name, harness);
   const directive = kind === "skill" ? relaySkillDirective(settingsDatabase(), name, harness) : null;
@@ -106,8 +130,8 @@ export function activeSkillRoot(harness: HarnessId, root = agentResourcePaths().
   if (statSync(root).isFile()) {
     const name = skillNameFromFile(root, path.basename(path.dirname(root)));
     const canonical = realpathSync(root);
-    const received = path.basename(root) === "SKILL.md" && (receivedSkill(path.basename(path.dirname(root)), path.dirname(path.dirname(root)))
-      || receivedSkill(path.basename(path.dirname(canonical)), path.dirname(path.dirname(canonical))));
+    const received = receivedSkillPath(path.dirname(root), path.dirname(path.dirname(root)), path.basename(path.dirname(root)), root)
+      || receivedSkillPath(path.dirname(canonical), path.dirname(path.dirname(canonical)), path.basename(path.dirname(canonical)), canonical);
     if (activationDecision("skill", name, harness, received).enabled) return root;
     mkdirSync(empty, { recursive: true });
     return empty;
@@ -128,9 +152,7 @@ export function activeSkillRoot(harness: HarnessId, root = agentResourcePaths().
       const fallback = path.basename(directory);
       const name = skillNameFromFile(manifest, fallback);
       const first = relative.split(path.sep)[0] || fallback;
-      const markerRoot = relative ? root : path.dirname(root);
-      const canonicalMarkerRoot = relative ? canonicalRoot : path.dirname(canonicalRoot);
-      if (!activationDecision("skill", name, harness, receivedSkill(first, markerRoot) || receivedSkill(first, canonicalMarkerRoot)).enabled) {
+      if (!activationDecision("skill", name, harness, receivedSkillPath(directory, relative ? root : path.dirname(root), first, manifest)).enabled) {
         excluded = true;
         visiting.delete(real);
         return;
@@ -164,8 +186,8 @@ export function activeSkillRoot(harness: HarnessId, root = agentResourcePaths().
 }
 
 /** Only the selected harness receives approved servers; source config stays unchanged. */
-export function assertNoBlockedNativeSkills(harness: HarnessId, cwd: string): void {
-  for (const root of [path.join(cwd, ".agents/skills"), path.join(cwd, harness === "claude" ? ".claude/skills" : ".kiro/skills")]) {
+export function assertNoBlockedNativeSkills(harness: HarnessId, cwd: string, additionalRoots: string[] = []): void {
+  for (const root of [...new Set([path.join(cwd, ".agents/skills"), path.join(cwd, harness === "claude" ? ".claude/skills" : ".kiro/skills"), ...additionalRoots])]) {
     if (existsSync(root) && activeSkillRoot(harness, root) !== root) {
       throw new Error(`Cannot safely suppress blocked native ${harness} skills in ${root}. Remove the native copies or change their activation rules.`);
     }

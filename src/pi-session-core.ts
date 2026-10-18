@@ -102,8 +102,9 @@ export function sessionToolSelection(sessionManager: SessionManager): string[] |
 
 function skillsOverride(cwd: string, agentDir: string, resources: () => PiResources) {
   return (current: { skills: Skill[]; diagnostics: ReturnType<typeof loadSkills>["diagnostics"] }) => {
-    const managed = resources().managedSkillRoot;
+    let managed = resources().managedSkillRoot;
     const selected = resources().skillRoots[0];
+    try { managed = realpathSync(managed); } catch { /* Missing managed roots cannot contain loaded files. */ }
     const byName = new Map(current.skills.filter((skill) => {
       let resolved = skill.filePath;
       try { resolved = realpathSync(resolved); } catch { /* Missing skill is ignored by the loader. */ }

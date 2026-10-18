@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { clusterPublicKeyFingerprint, signClusterMessage, verifyClusterMessage } from "../cluster-identity.js";
 import { listMemberships, membership, type RelayMembership } from "./store.js";
+import { encodeControl, MAX_FRAME } from "./protocol.js";
 import type { HarnessId } from "../types.js";
 
 const rule = z.object({ action: z.enum(["enable", "block"]), name: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/), harness: z.enum(["all", "pi", "claude", "kiro"]) }).strict();
@@ -30,9 +31,13 @@ export function publishedRelayPolicy(db: DatabaseSync, nodeId: string): SignedRe
 export function publishRelayPolicy(db: DatabaseSync, nodeId: string, rules: RelaySkillRule[]): SignedRelaySkillPolicy {
   relaySkillRulesSchema.parse(rules);
   schema(db);
-  db.prepare("INSERT INTO relay_skill_policy(singleton,version,rules) VALUES(1,1,?) ON CONFLICT(singleton) DO UPDATE SET version=version+1,rules=excluded.rules")
-    .run(JSON.stringify(rules));
-  return publishedRelayPolicy(db, nodeId);
+  const current = db.prepare("SELECT version FROM relay_skill_policy WHERE singleton=1").get() as { version: number } | undefined;
+  const body = bodySchema.parse({ relayNodeId: nodeId, version: (current?.version ?? 0) + 1, rules });
+  const statement = { body, signature: signClusterMessage(db, nodeId, "relay-skill-policy", JSON.stringify(body)) };
+  if (encodeControl({ t: "skill-policy", statement }).byteLength > MAX_FRAME) throw new Error(`Relay skill policy exceeds the ${MAX_FRAME}-byte frame limit`);
+  db.prepare("INSERT INTO relay_skill_policy(singleton,version,rules) VALUES(1,?,?) ON CONFLICT(singleton) DO UPDATE SET version=excluded.version,rules=excluded.rules")
+    .run(body.version, JSON.stringify(rules));
+  return statement;
 }
 
 export function receiveRelayPolicy(db: DatabaseSync, relay: RelayMembership, publicKey: string, input: unknown): boolean {

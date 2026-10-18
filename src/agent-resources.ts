@@ -1,8 +1,8 @@
 import { nodeMcpServersApply } from "./account-runtime.js";
 import { adminAccountId } from "./ownership.js";
 import { createHash, randomUUID } from "node:crypto";
-import { activeSkillRoot, activeMcpConfig, activationDecision, assertNoBlockedNativeSkills, receivedResource, skillNameFromFile } from "./resource-activation.js";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { activeSkillRoot, activeMcpConfig, activationDecision, assertNoBlockedNativeSkills, blockedSkillNames, receivedResource, skillNameFromFile } from "./resource-activation.js";
+import { existsSync, lstatSync, mkdirSync, readlinkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -639,7 +639,7 @@ function installedUserPluginNames(): Set<string> {
     .map(([identity]) => safePluginName(identity)));
 }
 
-function claudePluginSources(sources: string[]): string[] {
+export function claudePluginSources(sources: string[]): string[] {
   const plugins: string[] = [];
   for (const source of sources) {
     if (!existsSync(source)) continue;
@@ -652,6 +652,29 @@ function claudePluginSources(sources: string[]): string[] {
     }
   }
   return [...new Set(plugins)];
+}
+
+export function pluginActivationName(plugin: string, managedRoot = agentResourcePaths().claudePlugins): string {
+  let managedName: string | undefined;
+  let current = path.resolve(plugin);
+  const roots = [path.resolve(managedRoot)];
+  try { roots.push(realpathSync(managedRoot)); } catch { /* A missing managed root cannot provide an identity. */ }
+  const visited = new Set<string>();
+  for (let depth = 0; depth < 32; depth++) {
+    try { current = path.join(realpathSync(path.dirname(current)), path.basename(current)); } catch { /* Continue with the original spelling when a parent is unavailable. */ }
+    if (visited.has(current)) break;
+    visited.add(current);
+    for (const root of roots) {
+      const relative = path.relative(root, current);
+      if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) managedName = relative.split(path.sep)[0];
+    }
+    if (!existsSync(current)) break;
+    try {
+      if (!lstatSync(current).isSymbolicLink()) break;
+      current = path.resolve(path.dirname(current), readlinkSync(current));
+    } catch { break; }
+  }
+  return managedName ?? path.basename(plugin);
 }
 
 /** Relative markdown paths, shared by generated plugins and command discovery. */
@@ -735,6 +758,10 @@ function generatedInstructionFile(paths: AgentResourcePaths, configured?: Scoped
   return filePath;
 }
 
+function pluginContentsSafe(plugin: string): boolean {
+  try { return blockedPluginSkill(plugin) === null; } catch { return false; }
+}
+
 export function blockedPluginSkill(plugin: string): string | null {
   const manifest = JSON.parse(readFileSync(path.join(plugin, ".claude-plugin/plugin.json"), "utf8")) as { skills?: unknown };
   const declared = manifest.skills === undefined ? [] : [manifest.skills].flat();
@@ -764,17 +791,22 @@ export function blockedPluginSkill(plugin: string): string | null {
 }
 
 export function claudeAgentResourceArgs(root?: string, configured?: ScopedResourcePaths, extraInstructions?: string, cwd?: string): string[] {
-  if (cwd) assertNoBlockedNativeSkills("claude", cwd);
-  const paths = agentResourcePaths(root);
   const strict = getSettings().strictResourceIsolation;
+  if (cwd) assertNoBlockedNativeSkills("claude", cwd, strict ? [] : [path.join(getSettings().claude.configPath, "skills"), path.join(os.homedir(), ".agents/skills")]);
+  if (!strict && blockedSkillNames("claude").length) throw new Error("Cannot safely enforce blocked Claude skills while native resource discovery is enabled. Turn on strict resource isolation or remove the skill block.");
+  const paths = agentResourcePaths(root);
   const installed = strict ? new Set<string>() : installedUserPluginNames();
   const args: string[] = [];
-  if (existsSync(paths.claudePlugins)) for (const name of readdirSync(paths.claudePlugins).sort()) {
-    const plugin = path.join(paths.claudePlugins, name);
+  if (existsSync(paths.claudePlugins)) for (const entry of readdirSync(paths.claudePlugins).sort()) {
+    const plugin = path.join(paths.claudePlugins, entry);
+    const name = pluginActivationName(plugin, paths.claudePlugins);
     if (!installed.has(name) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))
-      && activationDecision("plugin", name, "claude", receivedResource("plugin", name)).enabled && !blockedPluginSkill(plugin)) args.push("--plugin-dir", plugin);
+      && activationDecision("plugin", name, "claude", receivedResource("plugin", name)).enabled && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
   }
-  for (const plugin of claudePluginSources(configuredPaths(configured, "plugins"))) if (!blockedPluginSkill(plugin)) args.push("--plugin-dir", plugin);
+  for (const plugin of claudePluginSources(configuredPaths(configured, "plugins"))) {
+    const name = pluginActivationName(plugin, paths.claudePlugins);
+    if (activationDecision("plugin", name, "claude", receivedResource("plugin", name)).enabled && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
+  }
   const generated = generatedResourcePlugin(paths, configured);
   if (generated) args.push("--plugin-dir", generated);
   if (nodeMcpServersApply(adminAccountId()) && existsSync(paths.mcpConfig)) args.push("--mcp-config", activeMcpConfig("claude", paths.mcpConfig));

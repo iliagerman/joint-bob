@@ -92,6 +92,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.doesNotMatch(savedText, /secret-api-key/);
     assert.deepEqual(JSON.parse(savedText), {
       strictResourceIsolation: true,
+      autoActivateSharedSkills: true,
       gitPullFileLimit: 750,
       gitPullTimeoutSeconds: 360,
       subprocessMaxLifetimeMinutes: 360,
@@ -135,6 +136,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.doesNotMatch(readText, /secret-api-key/);
     assert.deepEqual(JSON.parse(readText), {
       strictResourceIsolation: true,
+      autoActivateSharedSkills: true,
       gitPullFileLimit: 750,
       gitPullTimeoutSeconds: 360,
       subprocessMaxLifetimeMinutes: 360,

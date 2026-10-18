@@ -7,6 +7,7 @@ import { agentResourcePaths, claudeAgentResourceArgs } from "../src/agent-resour
 import { activeMcpConfig, activeSkillRoot, activationDecision, assertNoBlockedNativeSkills, markReceivedResource, setActivationPreference } from "../src/resource-activation.js";
 import { markReceived } from "../src/skill-sharing-files.js";
 import { save, settingsDatabase } from "../src/settings-store.js";
+import { getSettings } from "../src/settings.js";
 
 const fixture = await mkdtemp(path.join(os.tmpdir(), "resource-activation-"));
 test.after(() => rm(fixture, { recursive: true, force: true }));
@@ -78,6 +79,23 @@ test("blocked configured skills are absent from every harness root and native Cl
   }
 });
 
+test("Claude fails closed when native resource discovery cannot enforce a skill block", async () => {
+  const project = path.join(fixture, "native-disabled-project");
+  const native = path.join(getSettings().claude.configPath, "skills", "blocked-native-fixture");
+  await mkdir(native, { recursive: true });
+  await writeFile(path.join(native, "SKILL.md"), "---\nname: blocked-native-fixture\ndescription: native\n---\n");
+  const previous = getSettings().strictResourceIsolation;
+  try {
+    setActivationPreference("skill", "blocked-native-fixture", "claude", false);
+    save(settingsDatabase(), "strictResourceIsolation", "false");
+    assert.throws(() => claudeAgentResourceArgs(undefined, undefined, undefined, project), /Cannot safely suppress blocked native claude skills|Cannot safely enforce blocked Claude skills/);
+  } finally {
+    save(settingsDatabase(), "strictResourceIsolation", String(previous));
+    setActivationPreference("skill", "blocked-native-fixture", "claude", null);
+    await rm(native, { recursive: true, force: true });
+  }
+});
+
 test("a plugin cannot reintroduce a blocked skill", async () => {
   const paths = agentResourcePaths(path.join(fixture, "plugin-managed"));
   const plugin = path.join(paths.claudePlugins, "kit");
@@ -97,6 +115,82 @@ test("a plugin cannot reintroduce a blocked skill", async () => {
     await symlink(external, skill, "dir");
     assert.equal(claudeAgentResourceArgs(paths.root).includes(plugin), false, "symlinked plugin skills cannot bypass the block");
   } finally { setActivationPreference("skill", "blocked-plugin-fixture", "claude", null); }
+});
+
+test("configured plugin aliases obey managed and received activation choices", async () => {
+  const paths = agentResourcePaths(path.join(fixture, "configured-plugin-managed"));
+  const configured = path.join(fixture, "configured-plugins");
+  const plugin = path.join(paths.claudePlugins, "kit");
+  const alias = path.join(configured, "plugin-alias");
+  await mkdir(path.join(plugin, ".claude-plugin"), { recursive: true });
+  await writeFile(path.join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "kit" }));
+  await mkdir(configured, { recursive: true });
+  await symlink(plugin, alias, "dir");
+  const empty = { skills: [], prompts: [], rules: [], plugins: [] };
+  const scoped = { global: { ...empty, plugins: [configured] }, project: empty };
+  try {
+    assert.ok(claudeAgentResourceArgs(paths.root, scoped).includes(alias));
+    setActivationPreference("plugin", "kit", "claude", false);
+    assert.equal(claudeAgentResourceArgs(paths.root, scoped).includes(alias), false, "renamed alias cannot bypass explicit disable");
+    setActivationPreference("plugin", "kit", "claude", null);
+    markReceivedResource("plugin", "kit", true);
+    save(settingsDatabase(), "autoActivateSharedSkills", "false");
+    assert.equal(claudeAgentResourceArgs(paths.root, scoped).includes(alias), false, "renamed alias cannot bypass received-resource default");
+    setActivationPreference("plugin", "kit", "claude", true);
+    assert.ok(claudeAgentResourceArgs(paths.root, scoped).includes(alias), "explicit enable overrides node default");
+  } finally {
+    setActivationPreference("plugin", "kit", "claude", null);
+    markReceivedResource("plugin", "kit", false);
+    save(settingsDatabase(), "autoActivateSharedSkills", "true");
+  }
+});
+
+test("managed plugin symlinks use the target plugin's activation identity", async () => {
+  const paths = agentResourcePaths(path.join(fixture, "managed-plugin-aliases"));
+  const plugin = path.join(paths.claudePlugins, "kit");
+  const alias = path.join(paths.claudePlugins, "alias");
+  const configured = path.join(fixture, "configured-parent-alias");
+  const parentAlias = path.join(configured, "parent");
+  const renamed = path.join(configured, "renamed");
+  const external = path.join(fixture, "external-plugin-target");
+  await mkdir(paths.claudePlugins, { recursive: true });
+  await mkdir(path.join(external, ".claude-plugin"), { recursive: true });
+  await writeFile(path.join(external, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "kit" }));
+  await symlink(external, plugin, "dir");
+  await symlink(plugin, alias, "dir");
+  await mkdir(configured, { recursive: true });
+  await symlink(paths.claudePlugins, parentAlias, "dir");
+  await symlink(path.join(parentAlias, "kit"), renamed, "dir");
+  const empty = { skills: [], prompts: [], rules: [], plugins: [] };
+  const scoped = { global: { ...empty, plugins: [configured] }, project: empty };
+  try {
+    markReceivedResource("plugin", "kit", true);
+    assert.ok(claudeAgentResourceArgs(paths.root).includes(alias));
+    assert.ok(claudeAgentResourceArgs(paths.root, scoped).includes(renamed), "nested parent symlinks resolve to the managed target identity");
+    setActivationPreference("plugin", "kit", "claude", false);
+    assert.equal(claudeAgentResourceArgs(paths.root).includes(plugin), false);
+    assert.equal(claudeAgentResourceArgs(paths.root).includes(alias), false, "managed alias respects target disable");
+    assert.equal(claudeAgentResourceArgs(paths.root, scoped).includes(renamed), false, "parent-symlink alias respects target disable");
+    setActivationPreference("plugin", "kit", "claude", null);
+    save(settingsDatabase(), "autoActivateSharedSkills", "false");
+    assert.equal(claudeAgentResourceArgs(paths.root).includes(plugin), false);
+    assert.equal(claudeAgentResourceArgs(paths.root).includes(alias), false, "managed alias respects received default");
+    assert.equal(claudeAgentResourceArgs(paths.root, scoped).includes(renamed), false, "parent-symlink alias respects received default");
+  } finally {
+    setActivationPreference("plugin", "kit", "claude", null);
+    markReceivedResource("plugin", "kit", false);
+    save(settingsDatabase(), "autoActivateSharedSkills", "true");
+  }
+});
+
+test("uninspectable ZIP plugins fail closed without aborting Claude resource setup", async () => {
+  const paths = agentResourcePaths(path.join(fixture, "zip-plugin-managed"));
+  const archive = path.join(fixture, "not-a-real-plugin.zip");
+  await writeFile(archive, "archive fixture");
+  const empty = { skills: [], prompts: [], rules: [], plugins: [] };
+  const configured = { global: { ...empty, plugins: [archive] }, project: empty };
+  assert.doesNotThrow(() => claudeAgentResourceArgs(paths.root, configured));
+  assert.equal(claudeAgentResourceArgs(paths.root, configured).includes(archive), false);
 });
 
 test("received Git plugins use the node default and explicit Claude disables", () => {
