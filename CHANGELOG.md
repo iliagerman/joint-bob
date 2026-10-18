@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Kept the received-skill sync errors panel on the Resources page open once you expand it, instead of collapsing when the list redraws.
+- Added a "Review implementation through tests" preset to the auto respond dialog, which reviews the agent's work at each pause and keeps going until the feature is built and its tests pass.
 
 ## 2.106.2 — 2026-10-18
 

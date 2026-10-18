@@ -57,6 +57,12 @@ test("the auto respond dialog opens from the chat menu with the default rules an
     await page.getByTestId("chat-auto-respond-button").click();
     await page.getByTestId("auto-respond-preset").selectOption("review-consent");
     assert.match(await page.getByTestId("auto-respond-instructions").inputValue(), /LGTM/);
+    await page.getByTestId("auto-respond-preset").selectOption("implementation-reviewer");
+    const reviewerInstructions = await page.getByTestId("auto-respond-instructions").inputValue();
+    assert.match(reviewerInstructions, /ongoing, constructive reviewer/);
+    assert.match(reviewerInstructions, /do not nitpick/);
+    assert.match(reviewerInstructions, /relevant tests pass/);
+    assert.match(reviewerInstructions, /complements the AI-DLC driver/);
     await page.getByTestId("auto-respond-stop-instructions").fill("Stop now");
     assert.equal(await page.getByTestId("auto-respond-preset").inputValue(), "", "editing a preset's rule makes it Custom");
     await page.getByTestId("auto-respond-cancel-button").click();

@@ -23,6 +23,12 @@ const PRESETS = {
     useTools: true,
     maxResponses: null,
   },
+  "implementation-reviewer": {
+    instructions: "Act as an ongoing, constructive reviewer of the coding agent's implementation. At each pause, inspect the changes and the agent's claims, check relevant tests and verification results, and keep reviewing until the requested feature is implemented and tested. Report only meaningful correctness gaps, risks, missed requirements, or high-value improvements; do not nitpick style or offer speculative suggestions. Give concise, specific feedback with evidence and actionable next steps. If the work is solid so far, acknowledge that and let the agent continue; do not declare completion until the feature is implemented and its relevant tests pass. This role complements the AI-DLC driver: review the work, but do not take over the lifecycle or make code changes.",
+    stopInstructions: "The requested feature is implemented and relevant tests or checks pass\nA required check fails and the agent must fix it\nBlocked on a user decision, credentials, or external dependency",
+    useTools: true,
+    maxResponses: null,
+  },
 };
 
 /** Shows the conversation's auto respond state in the toolbar pill and the menu button. */
