@@ -4,7 +4,7 @@ import { adminAccountId } from "../../ownership.js";
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { agentResourcePaths, commonAgentInstructionFiles } from "../../agent-resources.js";
-import { activeSkillRoot, activeMcpConfig } from "../../resource-activation.js";
+import { activeSkillRoot, activeMcpConfig, activeMcpServers, assertNoBlockedNativeResources } from "../../resource-activation.js";
 import { agentCapabilityInstructionFiles } from "../../agent-capabilities.js";
 import { agentCredentialContext } from "../../secrets.js";
 import { getScopedResourcePaths, getSettings } from "../../settings.js";
@@ -184,6 +184,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
     credentialContext ?? agentCredentialContext(options.projectId, { engine: "kiro", sessionId: options.sessionId }),
   ].filter(Boolean).join("\n\n");
   const strict = getSettings().strictResourceIsolation;
+  if (!strict) assertNoBlockedNativeResources("kiro", "mcp");
   const profile = {
     name,
     description: "Joint Bob Kiro session profile",
@@ -191,10 +192,10 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
     resources: skills,
     tools: enabledTools === undefined ? ["*"] : [...enabledTools],
     allowedTools: [],
-    mcpServers: {
+    mcpServers: activeMcpServers("kiro", {
       ...(nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(activeMcpConfig("kiro", resources.mcpConfig)) : {}),
       ...(strict ? await readMcpConfig(path.join(options.cwd, ".kiro/settings/mcp.json")) : {}),
-    },
+    }),
     includeMcpJson: !strict,
   };
   const file = path.join(agents, `${name}.json`);

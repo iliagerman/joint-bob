@@ -333,9 +333,9 @@ async function applySharing(skills, mode, chosen, dialog) {
         updated += 1;
       } catch (error) { failed.push(`${name}: ${error.message}`); }
     }
-    dialog.close();
     view.selected.clear();
     await Promise.all([loadInventory(), imports.length ? loadSkills(true) : null]);
+    dialog.close();
     const done = mode === "clear" ? `${updated} skill${updated === 1 ? " is" : "s are"} local only now.`
       : !targetNames(chosen).length ? `${single?.name ?? "Skills"} ${updated === 1 ? "is" : "are"} local only now.`
       : `Shared ${updated} skill${updated === 1 ? "" : "s"} with ${targetNames(chosen).join(", ")}. Receivers update on Refresh or within 30 seconds while online.`;
@@ -384,7 +384,8 @@ function activationControl(kind, item, local, supported) {
   label.className = "resources-activation";
   label.title = decision.reason;
   const input = document.createElement("input");
-  const selected = kind === "plugin" ? decision.preference ?? decision.enabled : decision.enabled;
+  const selected = decision.preference ?? (decision.reason.startsWith("Blocked by relay:")
+    ? !decision.shared || view.activation?.autoActivateSharedSkills !== false : decision.enabled);
   input.type = "checkbox"; input.checked = selected;
   input.dataset.testid = "resources-activation-toggle";
   input.setAttribute("aria-label", `${selected ? "Disable" : "Enable"} ${item.name} for ${harnessLabel(harness)}`);
@@ -490,7 +491,7 @@ function pluginRow(plugin, local) {
   head.className = "resources-row-head";
   const name = document.createElement("strong"); name.textContent = plugin.name;
   head.append(name, badge(plugin.source), ...plugin.harnesses.map((id) => badge(harnessLabel(id), "harness")));
-  const activation = ["managed", "project"].includes(plugin.source) ? activationControl("plugin", plugin, local, plugin.harnesses) : null;
+  const activation = ["managed", "global", "project"].includes(plugin.source) ? activationControl("plugin", plugin, local, plugin.harnesses) : null;
   if (activation) head.append(activation);
   else head.append(badge("agent configured"));
   row.append(head);

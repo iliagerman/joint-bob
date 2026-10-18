@@ -1,7 +1,7 @@
 import { nodeMcpServersApply } from "./account-runtime.js";
 import { adminAccountId } from "./ownership.js";
 import { createHash, randomUUID } from "node:crypto";
-import { activeSkillRoot, activeMcpConfig, activationDecision, assertNoBlockedNativeSkills, blockedSkillNames, receivedResource, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
+import { activeSkillRoot, activeMcpConfig, activationDecision, assertNoBlockedNativeSkills, assertNoBlockedNativeResources, blockedSkillNames, receivedResource, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
 import { existsSync, lstatSync, mkdirSync, readlinkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -675,7 +675,7 @@ function managedPluginNamesAlongPath(plugin: string, roots: string[]): string[] 
   return [...names];
 }
 
-export function pluginActivationNames(plugin: string, managedRoot = agentResourcePaths().claudePlugins): string[] {
+export function pluginActivationNames(plugin: string, managedRoot = agentResourcePaths().claudePlugins, configuredPlugins: string[] = []): string[] {
   const roots = [path.resolve(managedRoot)];
   try { roots.push(realpathSync(managedRoot)); } catch { /* A missing managed root cannot provide an identity. */ }
   const names = new Set(managedPluginNamesAlongPath(plugin, roots));
@@ -690,12 +690,20 @@ export function pluginActivationNames(plugin: string, managedRoot = agentResourc
       }
     } catch { /* A missing managed root cannot provide additional identities. */ }
   }
+  if (existsSync(plugin)) for (const candidate of configuredPlugins) {
+    try {
+      if (realpathSync(candidate) === realpathSync(plugin)) {
+        const managedNames = managedPluginNamesAlongPath(candidate, roots);
+        for (const name of managedNames.length ? managedNames : [path.basename(candidate)]) names.add(name);
+      }
+    } catch { /* An unavailable alias cannot provide an identity. */ }
+  }
   return names.size ? [...names].sort() : [path.basename(plugin)];
 }
 
 /** All aliases share effective status while keeping each alias's preference separate. */
-export function pluginActivationDecisions(plugin: string, managedRoot = agentResourcePaths().claudePlugins): Array<{ name: string; decision: ActivationDecision }> {
-  const decisions = pluginActivationNames(plugin, managedRoot).map((name) => ({
+export function pluginActivationDecisions(plugin: string, managedRoot = agentResourcePaths().claudePlugins, configuredPlugins: string[] = []): Array<{ name: string; decision: ActivationDecision }> {
+  const decisions = pluginActivationNames(plugin, managedRoot, configuredPlugins).map((name) => ({
     name,
     decision: activationDecision("plugin", name, "claude", receivedResource("plugin", name)),
   }));
@@ -823,17 +831,19 @@ export function claudeAgentResourceArgs(root?: string, configured?: ScopedResour
   const strict = getSettings().strictResourceIsolation;
   if (cwd) assertNoBlockedNativeSkills("claude", cwd, strict ? [] : [path.join(getSettings().claude.configPath, "skills"), path.join(os.homedir(), ".agents/skills")]);
   if (!strict && blockedSkillNames("claude").length) throw new Error("Cannot safely enforce blocked Claude skills while native resource discovery is enabled. Turn on strict resource isolation or remove the skill block.");
+  if (!strict) assertNoBlockedNativeResources("claude", "plugin");
   const paths = agentResourcePaths(root);
+  const configuredPlugins = claudePluginSources(configuredPaths(configured, "plugins"));
   const installed = strict ? new Set<string>() : installedUserPluginNames();
   const args: string[] = [];
   if (existsSync(paths.claudePlugins)) for (const entry of readdirSync(paths.claudePlugins).sort()) {
     const plugin = path.join(paths.claudePlugins, entry);
-    const decisions = pluginActivationDecisions(plugin, paths.claudePlugins);
+    const decisions = pluginActivationDecisions(plugin, paths.claudePlugins, configuredPlugins);
     if (!decisions.some(({ name }) => installed.has(name)) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))
       && decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
   }
-  for (const plugin of claudePluginSources(configuredPaths(configured, "plugins"))) {
-    const decisions = pluginActivationDecisions(plugin, paths.claudePlugins);
+  for (const plugin of configuredPlugins) {
+    const decisions = pluginActivationDecisions(plugin, paths.claudePlugins, configuredPlugins);
     if (decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
   }
   const generated = generatedResourcePlugin(paths, configured);

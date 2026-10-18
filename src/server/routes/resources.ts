@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
+import { listGitSourceRecords } from "../../git-resources.js";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -42,17 +43,19 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
     const inventory = await localInventory(body.projectId, body.conversationId);
     const available = body.kind === "skill" ? inventory.skills : body.kind === "mcp" ? inventory.mcpServers : inventory.plugins;
     const plugin = body.kind === "plugin" ? inventory.plugins.find((item) => item.name === body.name && item.harnesses.includes(body.harness)
-      && ["managed", "project"].includes(item.source) && (item.source !== "project" || Boolean(body.projectId))) : undefined;
+      && ["managed", "global", "project"].includes(item.source) && (item.source !== "project" || Boolean(body.projectId))) : undefined;
     if (!available.some((item) => item.name === body.name && item.harnesses.includes(body.harness)
       && (body.kind === "skill" ? ["shared", "scoped"].includes((item as { origin?: string }).origin ?? "")
-        : body.kind === "plugin" ? ["managed", "project"].includes((item as { source?: string }).source ?? "") && ((item as { source?: string }).source !== "project" || Boolean(body.projectId))
+        : body.kind === "plugin" ? ["managed", "global", "project"].includes((item as { source?: string }).source ?? "") && ((item as { source?: string }).source !== "project" || Boolean(body.projectId))
           : (item as { source?: string }).source === "shared"))) {
       sendError(response, 404, "Resource is not installed for that agent"); return;
     }
     setActivationPreference(body.kind, body.name, body.harness, body.enabled);
     await reloadSharedSkills();
-    const refreshed = plugin ? await localInventory(body.projectId, body.conversationId) : undefined;
-    const decision = (plugin && refreshed?.plugins.find((item) => item.name === body.name && item.source === plugin.source)?.activation[body.harness])
+    const refreshed = await localInventory(body.projectId, body.conversationId);
+    const decision = (plugin ? refreshed.plugins.find((item) => item.name === body.name && item.source === plugin.source)?.activation[body.harness]
+      : body.kind === "skill" ? refreshed.skills.find((item) => item.name === body.name && item.harnesses.includes(body.harness))?.activation?.[body.harness]
+        : refreshed.mcpServers.find((item) => item.name === body.name && item.source === "shared")?.activation?.[body.harness])
       ?? activationDecision(body.kind, body.name, body.harness, body.kind === "skill" ? receivedSkill(body.name) : receivedResource(body.kind, body.name));
     response.json({ ...body, decision });
   } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation choice"); else next(error); }
@@ -124,7 +127,35 @@ app.post(["/api/cluster/resources/inventory", "/api/cluster/v2/runtime/resources
     const skills = inventory.skills.filter((skill) => skill.origin === "scoped" ? false : skill.origin === "project"
       ? Boolean(projectId)
       : skill.origin === "shared" && !received.has(skill.name) && authorizedSkillClusters(db, local.id, sender, skill.name).length > 0);
-    response.json({ ...inventory, skills: skills.map((skill) => ({ ...skill, path: "" })), mcpServers: inventory.mcpServers.map((server) => ({ ...server, file: "" })), plugins: inventory.plugins.map((plugin) => ({ ...plugin, file: "" })), sharedSkillsPath: "", mcpConfigPath: "" });
+    const granted = (await listGitSourceRecords()).filter((source) => !source.ownerNodeId && source.recipients.includes(sender)).flatMap((source) => source.installed);
+    const pluginNames = new Set(granted.filter((item) => item.kind === "plugin").map((item) => item.name.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^\.+/, "_")));
+    const mcpNames = new Set(granted.filter((item) => item.kind === "mcp").map((item) => item.name));
+    const project = projectId ? await getProject(projectId) : undefined;
+    const inProject = (file: string): boolean => {
+      if (!project) return false;
+      try {
+        const relative = path.relative(realpathSync(project.path), realpathSync(file));
+        return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+      } catch { return false; }
+    };
+    const plugins = inventory.plugins.filter((plugin) => plugin.source === "managed" ? pluginNames.has(plugin.name)
+      : ["project", "configured"].includes(plugin.source) && inProject(plugin.file) && (plugin.source !== "project" || plugin.name === path.basename(plugin.file)));
+    const grantedPluginRoots = plugins.filter((plugin) => plugin.source === "managed").map((plugin) => path.dirname(path.dirname(plugin.file)));
+    const inGrantedPlugin = (file: string): boolean => grantedPluginRoots.some((root) => {
+      try {
+        const relative = path.relative(realpathSync(root), realpathSync(file));
+        return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+      } catch { return false; }
+    });
+    const mcpServers = inventory.mcpServers.filter((server) => server.source === "shared" ? mcpNames.has(server.name)
+      : server.source === "project" ? inProject(server.file)
+        : server.source === "plugin" && (inProject(server.file) || inGrantedPlugin(server.file)));
+    // Reasons can name private aliases, skills or relays even when the row itself is shared.
+    const peerActivation = (activation: ResourceInventory["plugins"][number]["activation"]) => Object.fromEntries(
+      Object.entries(activation).map(([harness, decision]) => [harness, { ...decision, reason: decision?.enabled ? "Enabled on peer" : "Disabled on peer" }]));
+    response.json({ ...inventory, skills: skills.map((skill) => ({ ...skill, path: "", activation: peerActivation(skill.activation ?? {}) })),
+      mcpServers: mcpServers.map((server) => ({ ...server, file: "", activation: peerActivation(server.activation ?? {}) })),
+      plugins: plugins.map((plugin) => ({ ...plugin, file: "", activation: peerActivation(plugin.activation) })), sharedSkillsPath: "", mcpConfigPath: "" });
   } catch (error) { next(error); }
 });
 

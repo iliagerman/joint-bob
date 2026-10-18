@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { agentResourcePaths } from "../src/agent-resources.js";
 import { addGitSource, applyGitOffers, applyGitSelection, checkGitSource, discoverGitItems, gitOffersFor, gitSourceView, listGitSources, normalizeGitUrl, removeGitSource, setGitSourceOptions, updateGitSource } from "../src/git-resources.js";
+import { activationDecision, markReceivedResource, receivedResource } from "../src/resource-activation.js";
+import { save, settingsDatabase } from "../src/settings-store.js";
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" }).trim();
 
@@ -34,6 +36,59 @@ async function fixtureRepository(directory: string): Promise<string> {
   git(directory, "commit", "--quiet", "-m", "initial");
   return git(directory, "rev-parse", "HEAD");
 }
+
+test("retained edited Git plugins and MCP servers stay received and disabled after unsharing", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "git-retained-activation-"));
+  const options = { dataDir: path.join(fixture, "data"), root: path.join(fixture, "resources") };
+  const paths = agentResourcePaths(options.root);
+  save(settingsDatabase(), "autoActivateSharedSkills", "false");
+  try {
+    const repository = path.join(fixture, "repo");
+    const commit = await fixtureRepository(repository);
+    const owner = "fixture-owner";
+    const applied = await applyGitOffers(owner, [{ id: "fixture-source", url: `file://${repository}`, ref: "main", commit,
+      keys: ["plugin:plugins/review", "mcp:.mcp.json#github"] }], options);
+    assert.deepEqual(applied.errors, []);
+    await writeFile(path.join(paths.claudePlugins, "review-kit/commands/review.md"), "Local edit\n");
+    await writeFile(paths.mcpConfig, JSON.stringify({ mcpServers: { github: { url: "https://edited.invalid/mcp" } } }));
+    // Also cover an older installation whose provenance exists only in the source inventory.
+    markReceivedResource("plugin", "review-kit", false);
+    markReceivedResource("mcp", "github", false);
+    assert.deepEqual((await applyGitOffers(owner, [], options)).errors, []);
+    for (const [kind, name] of [["plugin", "review-kit"], ["mcp", "github"]] as const) {
+      assert.equal(receivedResource(kind, name), true, "retained resource keeps received provenance after its source is removed");
+      assert.equal(activationDecision(kind, name, "claude", receivedResource(kind, name)).enabled, false);
+    }
+    assert.equal(await readFile(path.join(paths.claudePlugins, "review-kit/commands/review.md"), "utf8"), "Local edit\n");
+  } finally {
+    markReceivedResource("plugin", "review-kit", false);
+    markReceivedResource("mcp", "github", false);
+    save(settingsDatabase(), "autoActivateSharedSkills", "true");
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("failed Git plugin removal keeps received provenance after the source is dropped", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "git-failed-removal-"));
+  const options = { dataDir: path.join(fixture, "data"), root: path.join(fixture, "resources") };
+  save(settingsDatabase(), "autoActivateSharedSkills", "false");
+  try {
+    const repository = path.join(fixture, "repo");
+    const commit = await fixtureRepository(repository);
+    assert.deepEqual((await applyGitOffers("fixture-owner", [{ id: "fixture-source", url: `file://${repository}`, ref: "main", commit, keys: ["plugin:plugins/review"] }], options)).errors, []);
+    markReceivedResource("plugin", "review-kit", false); // Legacy source-only provenance.
+    await writeFile(path.join(options.dataDir, "removed-plugins"), "blocks backup directory creation");
+    const result = await applyGitOffers("fixture-owner", [], options);
+    assert.equal(result.errors.length, 1);
+    assert.equal((await lstat(path.join(agentResourcePaths(options.root).claudePlugins, "review-kit"))).isDirectory(), true);
+    assert.equal(receivedResource("plugin", "review-kit"), true);
+    assert.equal(activationDecision("plugin", "review-kit", "claude", true).enabled, false);
+  } finally {
+    markReceivedResource("plugin", "review-kit", false);
+    save(settingsDatabase(), "autoActivateSharedSkills", "true");
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
 
 test("git URLs accept GitHub shorthand and refuse embedded credentials", () => {
   assert.equal(normalizeGitUrl("anthropics/skills"), "https://github.com/anthropics/skills.git");

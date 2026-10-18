@@ -10,6 +10,7 @@ import { defaultSkillRoots, parseResourceFrontmatter, readConfiguredSkillPath, r
 import { getSettings } from "../../settings.js";
 import { resolveDataDirectory } from "../../data-directory.js";
 import { agentResourcePaths, managedMarkdownFiles } from "../../agent-resources.js";
+import { activeMcpServers, assertNoBlockedNativeResources } from "../../resource-activation.js";
 import type { HarnessResources } from "../resource-contract.js";
 
 function object(value: unknown): Record<string, unknown> {
@@ -109,7 +110,10 @@ function isolatedMcpConfig(servers: Record<string, unknown>): string {
 }
 
 export function claudeResourceIsolationArgs(cwd: string, resources: string[]): string[] {
-  if (!getSettings().strictResourceIsolation) return resources;
+  if (!getSettings().strictResourceIsolation) {
+    assertNoBlockedNativeResources("claude", "mcp");
+    return resources;
+  }
   const args = ["--setting-sources", "project,local"];
   // The pinned CLI gives this file exclusive MCP control. Never send dynamic servers or the conflicting strict flag.
   const enterprise = fs.existsSync(claudeEnterpriseMcpPath());
@@ -120,6 +124,7 @@ export function claudeResourceIsolationArgs(cwd: string, resources: string[]): s
     if (!stat.isFile() || stat.size > 2097152) throw new Error("Strict isolation refuses an unreadable or oversized enterprise MCP config");
     const map = json(claudeEnterpriseMcpPath()).mcpServers;
     if (!map || typeof map !== "object" || Array.isArray(map)) throw new Error("Strict isolation refuses an invalid enterprise MCP config");
+    if (Object.keys(activeMcpServers("claude", object(map))).length !== Object.keys(map).length) throw new Error("Cannot safely suppress a blocked enterprise MCP server");
   } else args.push("--strict-mcp-config");
   const servers: Record<string, unknown> = {};
   for (let i = 0; i < resources.length; i++) {
@@ -142,7 +147,8 @@ export function claudeResourceIsolationArgs(cwd: string, resources: string[]): s
       servers[name] = server;
     }
     for (const name of Object.keys(servers)) if (decisions.disabled(name)) delete servers[name];
-    if (Object.keys(servers).length) args.push("--mcp-config", isolatedMcpConfig(servers));
+    const active = activeMcpServers("claude", servers);
+    if (Object.keys(active).length) args.push("--mcp-config", isolatedMcpConfig(active));
   }
   return args;
 }

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Kept each agent's on/off choice for shared skills, plugins, and MCP servers when relay blocks or the auto-activate default change, and stopped peers from seeing private plugins and MCP servers.
+
 ## 2.112.0 — 2026-10-18
 
 - Added a search box to the review references dialog that filters worktrees and conversations without losing their selections.

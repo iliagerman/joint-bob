@@ -4,7 +4,7 @@ import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import { agentResourcePaths, blockedPluginSkill, claudePluginSources, pluginActivationDecisions } from "./agent-resources.js";
-import { activationDecision, receivedResource, receivedSkill, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
+import { activationDecision, receivedResource, receivedSkillPath, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
 import { claudeEnterpriseMcpPath, claudePluginMcpServers, claudeProjectMcpDecisions } from "./harnesses/claude/resources.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime } from "./harnesses/runtime-configuration.js";
@@ -45,7 +45,7 @@ export interface InventoryMcpServer {
 export interface InventoryPlugin {
   name: string;
   file: string;
-  source: "managed" | "project" | "extension" | "configured" | "unverified";
+  source: "managed" | "global" | "project" | "extension" | "configured" | "unverified";
   harnesses: HarnessId[];
   activation: Partial<Record<HarnessId, ActivationDecision>>;
 }
@@ -183,19 +183,22 @@ async function claudeServers(projectPath: string | undefined): Promise<Inventory
   return found;
 }
 
-async function pluginServers(pluginsRoot: string): Promise<InventoryMcpServer[]> {
-  let entries;
-  try { entries = await readdir(pluginsRoot, { withFileTypes: true }); } catch (error) { if (missing(error)) return []; throw error; }
-  const found = await Promise.all(entries.filter((entry) => entry.isDirectory() || entry.isSymbolicLink()).map(async (entry) => {
-    const file = path.join(pluginsRoot, entry.name, ".mcp.json");
-    if (getSettings().strictResourceIsolation) {
-      const plugin = path.dirname(file);
-      if (!await readJson(path.join(plugin, ".claude-plugin/plugin.json"))) return [];
-      return servers(claudePluginMcpServers(plugin, process.cwd()), { source: "plugin", file: path.join(plugin, ".claude-plugin/plugin.json"), harnesses: ["claude"] });
-    }
-    const config = await readJson(file);
-    if (!config) return [];
-    return servers(config.mcpServers ?? config, { source: "plugin", file, harnesses: ["claude"] });
+async function pluginServers(pluginsRoot: string, configuredPlugins: string[], cwd: string): Promise<InventoryMcpServer[]> {
+  const plugins = claudePluginSources([pluginsRoot, ...configuredPlugins]);
+  const found = await Promise.all(plugins.map(async (plugin) => {
+    const decisions = pluginActivationDecisions(plugin, pluginsRoot, configuredPlugins);
+    const activation = inspectPlugin(plugin, decisions.find(({ decision }) => !decision.enabled)?.decision ?? decisions[0].decision).decision;
+    const file = path.join(plugin, ".mcp.json");
+    let entries: InventoryMcpServer[];
+    try {
+      if (getSettings().strictResourceIsolation) {
+        entries = servers(claudePluginMcpServers(plugin, cwd), { source: "plugin", file: path.join(plugin, ".claude-plugin/plugin.json"), harnesses: ["claude"] });
+      } else {
+        const config = await readJson(file);
+        entries = servers(config?.mcpServers ?? config, { source: "plugin", file, harnesses: ["claude"] });
+      }
+    } catch { return []; } // An uninspectable plugin cannot advertise loadable servers.
+    return entries.map((server) => ({ ...server, enabled: server.enabled && activation.enabled, activation: { claude: activation } }));
   }));
   return found.flat();
 }
@@ -211,7 +214,7 @@ async function kiroServers(projectPath: string | undefined): Promise<InventoryMc
 }
 
 /** Lists MCP servers each harness loads on this node, optionally including one project's servers. */
-export async function listMcpServers(projectPath?: string, resourceRoot?: string): Promise<InventoryMcpServer[]> {
+export async function listMcpServers(projectPath?: string, resourceRoot?: string, configuredPlugins = claudePluginSources(getScopedResourcePaths().global.plugins)): Promise<InventoryMcpServer[]> {
   const strict = getSettings().strictResourceIsolation;
   const paths = agentResourcePaths(resourceRoot);
   const discovered = new Set(listDiscoveredHarnesses().map((adapter) => adapter.id));
@@ -219,14 +222,15 @@ export async function listMcpServers(projectPath?: string, resourceRoot?: string
   const enterprise = discovered.has("claude") ? await readJson(claudeEnterpriseMcpPath()) : undefined;
   const groups = await Promise.all([
     discovered.has("claude") ? claudeServers(projectPath) : [],
-    discovered.has("claude") && !enterprise ? pluginServers(paths.claudePlugins) : [],
+    discovered.has("claude") && !enterprise ? pluginServers(paths.claudePlugins, configuredPlugins, projectPath ?? process.cwd()) : [],
     discovered.has("kiro") ? kiroServers(projectPath) : [],
   ]);
   const decisions = projectPath ? claudeProjectMcpDecisions(projectPath) : undefined;
   const entries = [...shared, ...groups.flat(), ...servers(enterprise?.mcpServers, { source: "enterprise", file: claudeEnterpriseMcpPath(), harnesses: ["claude"] })]
     .map((server) => {
       const activation = Object.fromEntries(server.harnesses.map((harness) => [harness,
-        activationDecision("mcp", server.name, harness, server.source === "shared" && receivedResource("mcp", server.name))]));
+        server.activation?.[harness]?.enabled === false ? server.activation[harness]
+          : activationDecision("mcp", server.name, harness, receivedResource("mcp", server.name))]));
       return { ...server, activation, enabled: server.enabled && server.harnesses.some((harness) => activation[harness].enabled) };
     });
   return entries.flatMap((server) => {
@@ -259,23 +263,32 @@ async function inventorySkills(projectPath: string | undefined, projectId: strin
     let name = summary.name;
     try { if (existsSync(manifest)) name = skillNameFromFile(manifest, path.basename(path.dirname(manifest))); }
     catch { continue; } // A malformed resource must not break the rest of the inventory or receive an enabled identity.
-    const origin: SkillOrigin = inside(scoped, location) ? "scoped" : summary.scope === "project" ? "project" : inside(shared, location) ? "shared" : "user";
+    const received = existsSync(manifest) && receivedSkillPath(path.dirname(manifest), sharedRoot,
+      inside(shared, location) ? path.relative(shared, location).split(path.sep)[0] : path.basename(path.dirname(manifest)), manifest);
+    const origin: SkillOrigin = inside(scoped, location) ? "scoped" : received ? "shared" : summary.scope === "project" ? "project" : inside(shared, location) ? "shared" : "user";
+    const decision = activationDecision("skill", name, summary.harness, origin === "scoped" || received);
     const key = `${origin}\0${name}`;
     const existing = byKey.get(key);
-    if (existing) { if (!existing.harnesses.includes(summary.harness)) existing.harnesses.push(summary.harness); continue; }
-    byKey.set(key, { name, description: summary.description, origin, path: location, harnesses: [summary.harness] });
+    if (existing) {
+      if (!existing.harnesses.includes(summary.harness)) existing.harnesses.push(summary.harness);
+      existing.activation![summary.harness] = decision;
+      continue;
+    }
+    byKey.set(key, { name, description: summary.description, origin, path: location, harnesses: [summary.harness], activation: { [summary.harness]: decision } });
   }
-  return [...byKey.values()].map((skill) => ({ ...skill, activation: Object.fromEntries(skill.harnesses.map((harness) => [harness,
-    activationDecision("skill", skill.name, harness, skill.origin === "scoped" || skill.origin === "shared" && receivedSkill(path.basename(skill.path), sharedRoot))])) }))
+  return [...byKey.values()]
     .sort((left, right) => left.name.localeCompare(right.name) || left.origin.localeCompare(right.origin));
 }
 
 /** Everything this node would load: skills per harness and MCP servers, for one project or node-wide. */
 export async function resourceInventory(options: { projectPath?: string; projectId?: string; conversationId?: string; resourceRoot?: string } = {}): Promise<ResourceInventory> {
   const paths = agentResourcePaths(options.resourceRoot);
+  const configured = getScopedResourcePaths(options.projectPath ? options.projectId : undefined, options.conversationId);
+  const globalPlugins = claudePluginSources(configured.global.plugins);
+  const configuredPlugins = claudePluginSources([...configured.global.plugins, ...(options.projectPath ? configured.project.plugins : [])]);
   const [skills, mcpServers] = await Promise.all([
     inventorySkills(options.projectPath, options.projectId, paths.sharedSkills, options.conversationId),
-    listMcpServers(options.projectPath, options.resourceRoot),
+    listMcpServers(options.projectPath, options.resourceRoot, configuredPlugins),
   ]);
   const harnesses = listDiscoveredHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label, mcp: MCP_HARNESSES.includes(adapter.id) }));
   const plugins: InventoryPlugin[] = [];
@@ -286,7 +299,7 @@ export async function resourceInventory(options: { projectPath?: string; project
       const plugin = path.join(paths.claudePlugins, entry.name);
       const file = path.join(plugin, ".claude-plugin/plugin.json");
       if (!await readJson(file)) continue;
-      const decisions = pluginActivationDecisions(plugin, paths.claudePlugins);
+      const decisions = pluginActivationDecisions(plugin, paths.claudePlugins, configuredPlugins);
       const canonical = await resolved(plugin);
       for (const { name, decision } of decisions) {
         const key = JSON.stringify([canonical, name]);
@@ -307,18 +320,17 @@ export async function resourceInventory(options: { projectPath?: string; project
         activation: { pi: activationDecision("plugin", entry.name, "pi", false) } });
     }
   } catch (error) { if (!missing(error)) throw error; }
-  const configured = options.projectPath ? getScopedResourcePaths(options.projectId, options.conversationId) : undefined;
-  if (configured) {
+  {
     const seenClaude = new Set<string>();
-    for (const plugin of claudePluginSources([...configured.global.plugins, ...configured.project.plugins])) {
+    for (const plugin of configuredPlugins) {
       const canonical = await resolved(plugin);
-      const decisions = pluginActivationDecisions(plugin, paths.claudePlugins);
+      const decisions = pluginActivationDecisions(plugin, paths.claudePlugins, configuredPlugins);
       for (const { name, decision } of decisions) {
         const key = JSON.stringify([canonical, name]);
         if (seenClaude.has(key)) continue;
         seenClaude.add(key);
         const inspected = inspectPlugin(plugin, decision);
-        plugins.push({ name, file: plugin, source: inspected.verified ? "project" : "unverified", harnesses: ["claude"],
+        plugins.push({ name, file: plugin, source: inspected.verified ? globalPlugins.includes(plugin) ? "global" : "project" : "unverified", harnesses: ["claude"],
           activation: { claude: inspected.decision } });
       }
     }

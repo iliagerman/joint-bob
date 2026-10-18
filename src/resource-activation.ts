@@ -80,7 +80,7 @@ function receivedSkillLocation(canonical: string, root: string, first: string): 
   return receivedSkill(path.basename(canonical), path.dirname(canonical));
 }
 
-function receivedSkillPath(directory: string, root: string, first: string, manifest?: string): boolean {
+export function receivedSkillPath(directory: string, root: string, first: string, manifest?: string): boolean {
   const canonical = realpathSync(directory);
   if (receivedSkillLocation(canonical, root, first)) return true;
   if (manifest && existsSync(manifest)) {
@@ -194,11 +194,31 @@ export function assertNoBlockedNativeSkills(harness: HarnessId, cwd: string, add
   }
 }
 
+export function activeMcpServers(harness: HarnessId, servers: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(servers).filter(([name]) =>
+    activationDecision("mcp", name, harness, receivedResource("mcp", name)).enabled));
+}
+
+/** Native discovery cannot reliably remove a separately installed copy. Refuse rather than promise a disable. */
+export function assertNoBlockedNativeResources(harness: HarnessId, kind: "plugin" | "mcp"): void {
+  schema();
+  const names = new Set((settingsDatabase().prepare("SELECT name FROM resource_activation WHERE kind=? AND harness=? UNION SELECT name FROM received_resource_activation WHERE kind=?")
+    .all(kind, harness, kind) as Array<{ name: string }>).map(({ name }) => name));
+  try {
+    const store = JSON.parse(readFileSync(path.join(resolveDataDirectory(), "git-resources/sources.json"), "utf8"));
+    for (const source of store.sources ?? []) if (source.ownerNodeId) for (const item of source.installed ?? []) {
+      if (item.kind === kind) names.add(kind === "plugin" ? item.name.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^\.+/, "_") : item.name);
+    }
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  if ([...names].some((name) => !activationDecision(kind, name, harness, receivedResource(kind, name)).enabled)) {
+    throw new Error(`Cannot safely enforce blocked ${harness} ${kind} resources while native discovery is enabled. Turn on strict resource isolation or remove the block.`);
+  }
+}
+
 export function activeMcpConfig(harness: HarnessId, file = agentResourcePaths().mcpConfig): string {
   if (!existsSync(file)) return file;
   const content = JSON.parse(readFileSync(file, "utf8")) as { mcpServers?: Record<string, unknown> };
-  const mcpServers = Object.fromEntries(Object.entries(content.mcpServers ?? {}).filter(([name]) =>
-    activationDecision("mcp", name, harness, receivedResource("mcp", name)).enabled));
+  const mcpServers = activeMcpServers(harness, content.mcpServers ?? {});
   const json = JSON.stringify({ ...content, mcpServers });
   const destination = path.join(resolveDataDirectory(), "runtime", "active-mcp", harness,
     `${createHash("sha256").update(json).digest("hex")}.json`);

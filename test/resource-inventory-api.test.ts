@@ -35,7 +35,7 @@ test("the cluster inventory asks each paired node over the signed runtime route"
     assert.equal(peer.node.online, true);
     const skill = peer.inventory.skills.find((item) => item.name === "cluster-skill");
     assert.equal(skill, undefined, "ungranted managed skill names are not disclosed to peers");
-    assert.equal(peer.inventory.mcpServers.find((server) => server.name === "tracker")?.file, "");
+    assert.equal(peer.inventory.mcpServers.find((server) => server.name === "tracker"), undefined, "ungranted MCP names stay private");
     assert.doesNotMatch(JSON.stringify(cluster.body), /never-leaves/);
     assert.ok(cluster.body.nodes.find((entry) => entry.node.local)?.inventory?.skills.find((item) => item.name === "cluster-skill")?.path);
 
@@ -76,7 +76,17 @@ test("the cluster inventory asks each paired node over the signed runtime route"
 
     const nodeWide = await api<{ nodes: NodeInventory[] }>(a, session, "GET", "/resources/inventory?cluster=1");
     assert.equal(nodeWide.status, 200);
-    assert.ok(nodeWide.body.nodes.find((entry) => entry.node.id === b.nodeId)?.inventory);
+    const remoteInventory = nodeWide.body.nodes.find((entry) => entry.node.id === b.nodeId)?.inventory;
+    assert.ok(remoteInventory);
+    assert.deepEqual(remoteInventory.plugins, [], "unshared managed plugins and native packages stay private");
+
+    const globalPlugin = path.join(root, "global-kit");
+    await mkdir(path.join(globalPlugin, ".claude-plugin"), { recursive: true });
+    await writeFile(path.join(globalPlugin, ".claude-plugin/plugin.json"), '{"name":"global-kit"}');
+    assert.equal((await api(a, session, "PUT", "/settings", { syncthing: { endpoint: "" }, resources: { skills: [], prompts: [], rules: [], plugins: [globalPlugin] } })).status, 200);
+    const globalToggle = await api<{ decision: { enabled: boolean } }>(a, session, "PUT", "/resources/activation/item", { kind: "plugin", name: "global-kit", harness: "claude", enabled: false });
+    assert.equal(globalToggle.status, 200, JSON.stringify(globalToggle.body));
+    assert.equal(globalToggle.body.decision.enabled, false);
 
     assert.equal((await api(a, session, "GET", "/resources/inventory?projectId=missing")).status, 404);
     assert.equal((await api(a, session, "GET", "/resources/skills/scan?path=relative")).status, 400);

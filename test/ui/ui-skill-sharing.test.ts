@@ -38,10 +38,15 @@ test("Settings → Resources shares single and bulk skills with clusters, worksp
     await page.getByTestId("login-submit-button").click();
     await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
     await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+    await page.locator('[data-testid="chat-message-input"]:enabled').waitFor();
     await page.getByTestId("chat-resources-button").click();
     const panel = page.getByTestId("resources-panel");
     const pageLabel = page.getByTestId("resources-list-pager").getByTestId("resources-page-label");
     await pageLabel.getByText(/^1–\d+ of \d+$/).waitFor();
+    // The settings loading banner changes the list height independently of resource loading.
+    await page.locator("#settingsForm:not([aria-busy])").waitFor();
+    // ResizeObserver refits on the next frame; measure the settled page, not its first render.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const perPage = await page.getByTestId("resources-skill-row").count();
     assert.ok(perPage >= 3, `a page shows several skills (${perPage})`);
     assert.ok(await panel.evaluate((element) => element.querySelector("#resourcesList")!.scrollHeight <= element.querySelector("#resourcesList")!.clientHeight + 1), "the list pages instead of scrolling");
@@ -100,9 +105,24 @@ test("Settings → Resources shares single and bulk skills with clusters, worksp
     const otherConversation = values.find((value) => value && value !== currentId)!;
     await choice.selectOption(otherConversation);
     await dialog.getByTestId("skill-share-conversation-add").click();
-    await dialog.getByTestId("skill-share-save").click();
-    await page.getByTestId("confirm-accept-button").click();
+    let saved = false, releaseRefresh!: () => void, refreshStarted!: () => void;
+    const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    const refreshing = new Promise<void>((resolve) => { refreshStarted = resolve; });
+    const saving = page.waitForResponse((response) => response.request().method() === "PUT" && response.url().endsWith("/skills/portable/sharing"))
+      .then(() => { saved = true; });
+    await page.route("**/api/resources/skills/sharing", async (route) => {
+      if (saved) { refreshStarted(); await refreshGate; }
+      await route.continue();
+    });
+    try {
+      await dialog.getByTestId("skill-share-save").click();
+      await page.getByTestId("confirm-accept-button").click();
+      await saving;
+      await refreshing;
+      assert.equal(await dialog.isVisible(), true, "cannot reopen sharing with stale grants before the refresh finishes");
+    } finally { releaseRefresh(); }
     await dialog.waitFor({ state: "detached" });
+    await page.unroute("**/api/resources/skills/sharing");
     portable = (await api<{ skills: Policy[] }>(node, session, "GET", "/resources/skills/sharing")).body.skills.find((skill) => skill.name === "portable")!;
     assert.deepEqual([portable.clusterIds, portable.workspaceIds], [[], []]);
     assert.deepEqual(portable.conversations.map((item) => item.conversationId), [otherConversation], "a conversation picked from another list is shared");

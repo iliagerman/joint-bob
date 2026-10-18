@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
+import { getOrCreateClusterIdentity } from "../../src/cluster-identity.js";
+import { createMembership, updateMembership } from "../../src/relay/store.js";
+import { publishRelayPolicy, receiveRelayPolicy, subscribeRelayPolicy } from "../../src/relay/resource-policy.js";
 import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 import { markReceived } from "../../src/skill-sharing-files.js";
@@ -77,6 +82,31 @@ test("Resources edits per-agent skill activation and node auto-activate default"
     const policy = await api<{ version: number; rules: unknown[] }>(node, session, "GET", "/relay/serving/skill-policy");
     assert.equal(policy.body.version, 1);
     assert.equal(policy.body.rules.length, 1);
+
+    // A signed cached block must not hide the saved local preference or prevent disabling it.
+    const receiver = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    const relay = new DatabaseSync(":memory:");
+    const relayId = randomUUID();
+    const identity = getOrCreateClusterIdentity(relay, relayId);
+    let membershipId: string;
+    try {
+      const membership = createMembership(receiver, "https://cached-policy.fixture.example", identity.fingerprint);
+      membershipId = membership.id;
+      updateMembership(receiver, membership.id, { status: "admitted", relayNodeId: relayId, fingerprint: identity.fingerprint });
+      receiveRelayPolicy(receiver, { ...membership, status: "admitted", relayNodeId: relayId, fingerprint: identity.fingerprint }, identity.publicKey,
+        publishRelayPolicy(relay, relayId, [{ action: "block", name: skillName, harness: "claude" }]));
+      subscribeRelayPolicy(receiver, membership.id, true);
+    } finally { receiver.close(); relay.close(); }
+    await page.getByTestId("resources-harness-select").selectOption("claude");
+    await page.getByTestId("resources-refresh-button").click();
+    await row.getByText(/Blocked by relay:/).waitFor();
+    assert.equal(await toggle.isChecked(), true, "checkbox shows saved enable, not relay's effective block");
+    await toggle.uncheck();
+    await page.getByTestId("resources-status").getByText(/disabled for Claude/).waitFor();
+    assert.equal((await api(node, session, "PUT", `/relays/${membershipId}/skill-policy-subscription`, { optedIn: false })).status, 200);
+    await page.getByTestId("resources-refresh-button").click();
+    await row.getByText("Disabled on this node", { exact: true }).waitFor();
+    assert.equal(await toggle.isChecked(), false, "removing relay block preserves the local disable");
   } finally {
     if (browser) await browser.close();
     if (server) await stopDevNode(server);

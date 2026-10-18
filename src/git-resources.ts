@@ -480,10 +480,15 @@ async function installItem(store: Store, source: GitResourceSource, checkout: st
 }
 
 async function uninstallItem(source: GitResourceSource, item: InstalledGitItem, result: GitApplyResult, options: GitResourceOptions): Promise<void> {
+  // Materialize legacy provenance before its source record can disappear, including failed removals.
+  if (source.ownerNodeId && item.kind !== "skill") markReceivedResource(item.kind, item.kind === "plugin" ? pluginFolderName(item.name) : item.name, true);
   const current = await currentDigest(item, options);
   source.installed = source.installed.filter((entry) => entry.key !== item.key);
-  if (source.ownerNodeId && item.kind !== "skill") markReceivedResource(item.kind, item.kind === "plugin" ? pluginFolderName(item.name) : item.name, false);
-  if (current === undefined) { result.removed.push(item.name); return; }
+  const clearProvenance = (): void => {
+    if (source.ownerNodeId && item.kind !== "skill") markReceivedResource(item.kind, item.kind === "plugin" ? pluginFolderName(item.name) : item.name, false);
+  };
+  // Retained edits and failed removals stay received, never silently becoming auto-enabled local resources.
+  if (current === undefined) { clearProvenance(); result.removed.push(item.name); return; }
   if (current !== item.installedDigest) { result.kept.push(`${item.name} (edited on this node)`); return; }
   const location = installedLocation(item, options);
   if (item.kind === "skill") {
@@ -502,6 +507,7 @@ async function uninstallItem(source: GitResourceSource, item: InstalledGitItem, 
     delete servers[item.name];
     await writeMcpConfig({ ...config, mcpServers: servers }, options);
   }
+  clearProvenance();
   result.removed.push(item.name);
 }
 
