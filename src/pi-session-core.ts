@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import {
   createAgentSession,
@@ -43,6 +44,8 @@ export interface PiResources {
   themes: string[];
   agentsFiles: Array<{ path: string; content: string }>;
   skillRoots: string[];
+  managedSkillRoot: string;
+  blockedSkillNames: string[];
 }
 
 export interface PiCoreInputs {
@@ -97,16 +100,25 @@ export function sessionToolSelection(sessionManager: SessionManager): string[] |
   return enabledTools;
 }
 
-function skillsOverride(cwd: string, agentDir: string, roots: () => string[]) {
+function skillsOverride(cwd: string, agentDir: string, resources: () => PiResources) {
   return (current: { skills: Skill[]; diagnostics: ReturnType<typeof loadSkills>["diagnostics"] }) => {
-    const byName = new Map(current.skills.map((skill) => [skill.name, skill]));
+    const managed = resources().managedSkillRoot;
+    const selected = resources().skillRoots[0];
+    const byName = new Map(current.skills.filter((skill) => {
+      let resolved = skill.filePath;
+      try { resolved = realpathSync(resolved); } catch { /* Missing skill is ignored by the loader. */ }
+      const relative = path.relative(managed, resolved);
+      const fromManaged = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+      return !fromManaged || existsSync(path.join(selected, skill.name, "SKILL.md"));
+    }).map((skill) => [skill.name, skill]));
     const diagnostics = [...current.diagnostics];
-    for (const skillPath of roots()) {
+    for (const skillPath of resources().skillRoots) {
       const loaded = loadSkills({ cwd, agentDir, skillPaths: [skillPath], includeDefaults: false });
       for (const skill of loaded.skills) byName.set(skill.name, skill);
       diagnostics.push(...loaded.diagnostics);
     }
-    return { skills: [...byName.values()], diagnostics };
+    const blocked = new Set(resources().blockedSkillNames);
+    return { skills: [...byName.values()].filter((skill) => !blocked.has(skill.name)), diagnostics };
   };
 }
 
@@ -150,7 +162,7 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     agentDir: inputs.agentDir,
     settingsManager,
     additionalExtensionPaths: resources.extensions,
-    skillsOverride: skillsOverride(inputs.cwd, inputs.agentDir, () => resources.skillRoots),
+    skillsOverride: skillsOverride(inputs.cwd, inputs.agentDir, () => resources),
     additionalPromptTemplatePaths: resources.prompts,
     additionalThemePaths: resources.themes,
     agentsFilesOverride: (current) => ({ agentsFiles: [...current.agentsFiles, ...resources.agentsFiles] }),

@@ -17,3 +17,17 @@ test("Git view exposes list-first PR and pipeline tabs with mobile-visible navig
   assert.match(styles, /\.git-review-tab:nth-child\(n\+4\) \{ grid-column: span 3; \}/);
   assert.match(styles, /\.git-hosting-graph-body \{ display: grid; gap: 22px; \}/);
 });
+
+test("PR and pipeline views can ask an agent about their own text and show loading at once", async () => {
+  const [hosting, review, schemas] = await Promise.all([
+    readFile("public/app/git-hosting.js", "utf8"),
+    readFile("public/app/git-review.js", "utf8"),
+    readFile("src/server/schemas.ts", "utf8"),
+  ]);
+  assert.match(hosting, /git-hosting-ask-pull/);
+  assert.match(hosting, /git-hosting-ask-run/);
+  assert.match(hosting, /git-hosting-ask-job/);
+  assert.match(hosting, /Loading pull request…/);
+  assert.match(review, /scope: "context"/);
+  assert.match(schemas, /scope: z\.enum\(\["worktree", "commit", "context"\]\)/);
+});

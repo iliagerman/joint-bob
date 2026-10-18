@@ -188,6 +188,7 @@ export interface SettingsInput {
   newConversationWorktree?: boolean;
   /** Only load Joint Bob-managed resources; exclude native harness configs and installations. */
   strictResourceIsolation?: boolean;
+  autoActivateSharedSkills?: boolean;
   gitPullFileLimit?: number;
   /** How long a worktree command waits for the node before reporting that its outcome is unknown. */
   gitPullTimeoutSeconds?: number;
@@ -219,6 +220,7 @@ export interface SettingsResponse {
   showProjectsOnOtherNodes: boolean;
   newConversationWorktree: boolean;
   strictResourceIsolation: boolean;
+  autoActivateSharedSkills: boolean;
   gitPullFileLimit: number;
   gitPullTimeoutSeconds: number;
   syncCheck: SyncCheckSettings;
@@ -323,9 +325,9 @@ export function getProjectResourcePaths(projectId: string): ResourcePaths {
 }
 
 /** Skills shared to this project's workspace or to this conversation load with the project's own. */
-export function getScopedResourcePaths(projectId?: string, conversationId?: string): ScopedResourcePaths {
+export function getScopedResourcePaths(projectId?: string, conversationId?: string, harness?: "pi" | "claude" | "kiro"): ScopedResourcePaths {
   const project = projectId ? getProjectResourcePaths(projectId) : emptyResourcePaths();
-  const scoped = scopedSkillRoots(projectId, conversationId);
+  const scoped = scopedSkillRoots(projectId, conversationId, harness);
   return { global: getSettings().resources, project: scoped.length ? { ...project, skills: [...project.skills, ...scoped] } : project };
 }
 
@@ -471,6 +473,7 @@ export function nodeSettings(): SettingsResponse {
     showProjectsOnOtherNodes: value("showProjectsOnOtherNodes", "true") === "true",
     newConversationWorktree: value("newConversationWorktree", "false") === "true",
     strictResourceIsolation: value("strictResourceIsolation", "true") === "true",
+    autoActivateSharedSkills: value("autoActivateSharedSkills", "true") === "true",
     gitPullFileLimit: Number(value("gitPullFileLimit", "1000")),
     gitPullTimeoutSeconds: Number(value("gitPullTimeoutSeconds", "360")),
     syncCheck: syncCheck(conversationDefaults),
@@ -582,6 +585,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const showProjectsOnOtherNodes = input.showProjectsOnOtherNodes ?? previous.showProjectsOnOtherNodes;
   const newConversationWorktree = input.newConversationWorktree ?? previous.newConversationWorktree;
   const strictResourceIsolation = input.strictResourceIsolation === undefined ? previous.strictResourceIsolation : z.boolean().parse(input.strictResourceIsolation);
+  const autoActivateSharedSkills = input.autoActivateSharedSkills === undefined ? previous.autoActivateSharedSkills : z.boolean().parse(input.autoActivateSharedSkills);
   const gitPullFileLimit = input.gitPullFileLimit ?? previous.gitPullFileLimit;
   if (!Number.isInteger(gitPullFileLimit) || gitPullFileLimit < 1 || gitPullFileLimit > 3000) throw new Error("Git PR file limit must be between 1 and 3000");
   const gitPullTimeoutSeconds = input.gitPullTimeoutSeconds ?? previous.gitPullTimeoutSeconds;
@@ -613,6 +617,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "showProjectsOnOtherNodes", String(showProjectsOnOtherNodes));
     save(db, "newConversationWorktree", String(newConversationWorktree));
     save(db, "strictResourceIsolation", String(strictResourceIsolation));
+    save(db, "autoActivateSharedSkills", String(autoActivateSharedSkills));
     save(db, "gitPullFileLimit", String(gitPullFileLimit));
     save(db, "gitPullTimeoutSeconds", String(gitPullTimeoutSeconds));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));

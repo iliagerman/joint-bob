@@ -50,7 +50,10 @@ function boundedDiff(diff: string): string {
 
 function reviewPrompt(input: RunGitReviewInput): string {
   if (input.instructions) return `${input.instructions}\n\n${boundedDiff(input.diff)}`;
-  const target = input.selection.scope === "commit"
+  const context = input.selection.scope === "context";
+  const target = context
+    ? input.selection.label || "the provided context"
+    : input.selection.scope === "commit"
     ? `commit ${input.selection.revision}`
     : input.selection.filePath
       ? `the ${input.selection.staged ? "staged" : "working-tree"} change to ${input.selection.filePath}`
@@ -60,10 +63,10 @@ function reviewPrompt(input: RunGitReviewInput): string {
     : "";
   return [
     "You are a read-only code reviewer. Explain code changes; never modify files, run mutating commands, stage, commit, or push.",
-    "Use only the provided diff and conversation context. Cite file paths and line references where useful.",
+    "Use only the provided material and conversation context. Cite file paths and line references where useful.",
     `The user is asking about ${target}.`,
     "",
-    "```diff",
+    context ? "```text" : "```diff",
     boundedDiff(input.diff),
     "```",
     historyBlock,

@@ -29,6 +29,7 @@ import { canonicalPiTranscriptName, piSessionIdFromFileName } from "./harnesses/
 import { forgetTranscriptSummary, storeTranscriptSummary, storedTranscriptSummary } from "./transcript-summary-store.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { agentResourcePaths, commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
+import { activeSkillRoot, blockedSkillNames } from "./resource-activation.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
 import { createCoreSession, type PiCoreHooks, type PiCoreInputs, type PiCredentials, type PiSessionHandle } from "./pi-session-core.js";
 import { currentRuntime, runInRuntime, serviceRuntime } from "./account-runtime.js";
@@ -616,9 +617,10 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
     credentials: async (sessionId, conversationId) => credentials(sessionId, conversationId),
     credentialsNow: credentials,
     resources: async (conversationId) => {
-      const configured = getScopedResourcePaths(options.projectId, conversationId);
+      const configured = getScopedResourcePaths(options.projectId, conversationId, "pi");
       const commonInstructions = await commonAgentInstructionFiles(undefined, [agentResourcePaths().piInstructions, ...configured.global.rules, ...configured.project.rules]);
       const resources = piAgentResourcePaths(undefined, configured);
+      const blocked = blockedSkillNames("pi");
       return {
         strictResourceIsolation: getSettings().strictResourceIsolation,
         packagesFile: agentResourcePaths().piPackages,
@@ -626,7 +628,9 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
         prompts: resources.prompts,
         themes: resources.themes,
         agentsFiles: [...commonInstructions, ...agentCapabilityInstructionFiles()],
-        skillRoots: [agentResourcePaths().sharedSkills, ...configured.global.skills, path.join(options.cwd, ".pi", "skills"), ...configured.project.skills],
+        skillRoots: [activeSkillRoot("pi"), ...configured.global.skills.map((root) => activeSkillRoot("pi", root)), activeSkillRoot("pi", path.join(options.cwd, ".pi", "skills")), ...configured.project.skills.map((root) => activeSkillRoot("pi", root))],
+        managedSkillRoot: agentResourcePaths().sharedSkills,
+        blockedSkillNames: blocked,
       };
     },
   };

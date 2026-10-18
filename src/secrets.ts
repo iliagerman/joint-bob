@@ -1,5 +1,5 @@
 import { accountReceivesFrom } from "./cluster-accounts.js";
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { NotFoundError } from "./not-found.js";
 import { actingAccount, type ActingAccount } from "./account-context.js";
 import { forgetResourceOwner, newResourceOwner, resourceOwner, setResourceOwner } from "./ownership.js";
@@ -14,7 +14,7 @@ import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "./cluster-v2-errors.js";
 import { applyGithubAccounts, assertGithubAccountsDistinct, assertGithubVariableNames, finalizeGithubVariables, githubAccount, githubAccountContext, githubAccountSummary, githubOwnerFromRemote, GITHUB_TOKEN_VARIABLE, type GithubAccount, type GithubAccountSummary } from "./github-credentials.js";
 
-export type SecretProvider = "aws" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "zai" | "grafana" | "datadog" | "postgres" | "mssql" | "mongodb" | "custom" | "website" | "ssh";
+export type SecretProvider = "aws" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "zai" | "grafana" | "datadog" | "postgres" | "mssql" | "mongodb" | "custom" | "website" | "ssh" | "certificate";
 export type SecretKind = "value" | "file";
 /** Attachment tiers, broadest first. Resolution merges them in this order. */
 export type SecretScopeType = "workspace" | "project" | "conversation";
@@ -121,7 +121,7 @@ function assertScope(scopeType: string, scopeId: string): asserts scopeType is S
 }
 
 function assertInput(input: SecretAccountInput): void {
-  if (!(["aws", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "postgres", "mssql", "mongodb", "custom", "website", "ssh"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
+  if (!(["aws", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
   if (!input.label.trim() || input.label.trim().length > 64 || /[\x00-\x1f\x7f]/.test(input.label)) throw new Error("Secret account label must be between 1 and 64 characters without control characters");
   if (input.variables.length < 1 || input.variables.length > 20) throw new Error("Secret accounts need between 1 and 20 variables");
   const names = new Set<string>();
@@ -140,6 +140,9 @@ function assertInput(input: SecretAccountInput): void {
     if (fields.get("SSH_PORT")?.value && (!/^\d+$/.test(fields.get("SSH_PORT")!.value!) || Number(fields.get("SSH_PORT")!.value) < 1 || Number(fields.get("SSH_PORT")!.value) > 65535)) throw new Error("SSH port must be between 1 and 65535");
     const expiry = fields.get("SSH_EXPIRES_AT")?.value;
     if (expiry && (!/^\d{4}-\d{2}-\d{2}$/.test(expiry) || Number.isNaN(Date.parse(expiry)) || new Date(expiry).toISOString().slice(0, 10) !== expiry)) throw new Error("SSH access expiry must be a valid date");
+  }
+  if (input.provider === "certificate") {
+    if (input.variables.length !== 2 || input.variables.some((variable) => !["TLS_CERTIFICATE", "TLS_PRIVATE_KEY"].includes(variable.name) || variable.kind !== "file")) throw new Error("Certificate accounts need TLS_CERTIFICATE and TLS_PRIVATE_KEY files");
   }
   // The GitHub provider owns its variable names, so a typo cannot silently disable git push.
   if (input.provider === "github") assertGithubVariableNames(input.variables);
@@ -345,7 +348,7 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
   if (old && (old.origin_node_id && hasTable('cluster_node') && old.origin_node_id !== (db().prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string}|undefined)?.id || hasTable('cluster_v2_scoped_secret_copies') && db().prepare('SELECT 1 FROM cluster_v2_scoped_secret_copies WHERE account_id=?').get(id))) throw new ClusterV2HttpError(403, 'Shared secret accounts are read-only on this node');
   const websiteOrigin = input.websiteOrigin === undefined ? old?.website_origin ?? null : input.websiteOrigin === null ? null : normalizeWebsiteOrigin(input.websiteOrigin);
   if (input.provider === "website" && !websiteOrigin) throw new Error("Website secret accounts require a website origin");
-  if (input.provider === "ssh" && websiteOrigin) throw new Error("SSH accounts cannot be bound to a website origin");
+  if ((input.provider === "ssh" || input.provider === "certificate") && websiteOrigin) throw new Error("SSH and certificate accounts cannot be bound to a website origin");
   if (websiteOrigin && input.variables.some((variable) => variable.kind === "file")) throw new Error("Website credential accounts cannot contain file variables");
   // Ownership is fixed at creation: an edit keeps the stored owner and ignores any other.
   const projectId = old ? old.project_id : input.projectId === undefined ? null : canonicalScopeId("project", input.projectId);
@@ -361,6 +364,13 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
     return { name: item.name, kind: item.kind, value };
   });
   const variables = input.provider === "github" ? finalizeGithubVariables(merged) : merged;
+  if (input.provider === "certificate") {
+    try {
+      const cert = new X509Certificate(variables.find((item) => item.name === "TLS_CERTIFICATE")!.value);
+      const privateKey = createPrivateKey(variables.find((item) => item.name === "TLS_PRIVATE_KEY")!.value);
+      if (!cert.publicKey.equals(createPublicKey(privateKey))) throw new Error("Certificate and private key do not match");
+    } catch (error) { throw new Error(`Invalid certificate account: ${error instanceof Error ? error.message : String(error)}`); }
+  }
   const replicate = input.replicate ? 1 : 0;
   const now = new Date().toISOString();
   db().exec("BEGIN IMMEDIATE");
@@ -630,6 +640,7 @@ const providerHints: Record<SecretProvider, string> = {
   mssql: "use MSSQL_CONNECTION_STRING to connect to Microsoft SQL Server",
   mongodb: "use MONGODB_URI to connect to MongoDB",
   ssh: "SSH_HOST, SSH_USERNAME and optional SSH_PORT identify the connection. SSH_PRIVATE_KEY is a private file path for ssh -i; verify the server host key. SSH_PASSWORD is not usable as an ssh CLI argument. SSH_EXPIRES_AT records the server's access expiry date; do not attempt to connect after that date without confirmation. Do not print secret values or disable host key verification",
+  certificate: "TLS_CERTIFICATE and TLS_PRIVATE_KEY are private file paths for TLS clients; never print their contents. System services need separate persistent files with restricted permissions",
   custom: "plain environment variables for this project",
   website: "structured website sign-in credentials filled through login-fill at the bound origin",
 };

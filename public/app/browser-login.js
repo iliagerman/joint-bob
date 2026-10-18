@@ -5,6 +5,19 @@ import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 
 const dismissed = new Set(), announced = new Set();
+const DISMISSAL_PREFIX = "joint-bob.browser-login-dismissed:";
+// Only notification dismissal is saved, never login completion or browser control.
+// Request IDs keep a later sign-in visible, even for the same profile and session.
+function isDismissed(key) {
+  if (dismissed.has(key)) return true;
+  try { return localStorage.getItem(DISMISSAL_PREFIX + key) === "1"; }
+  catch { return false; }
+}
+function dismissRequest(key) {
+  dismissed.add(key);
+  try { localStorage.setItem(DISMISSAL_PREFIX + key, "1"); }
+  catch { /* Storage may be unavailable; still dismiss for this page. */ }
+}
 let popup = null, discovering = false, discoveryOutage = false, timer = null;
 // Every open page asked for the browser list every two seconds, and each answer asks every
 // browser machine in turn. While no browser is running anywhere there is no sign-in to find,
@@ -29,7 +42,7 @@ const sessionIdentity = session => ({ projectId: session.projectId, engine: sess
 function close(current, markDismissed = false) {
   if (!current || current.closed) return;
   current.closed = true;
-  if (markDismissed) dismissed.add(current.requestKey);
+  if (markDismissed) dismissRequest(current.requestKey);
   current.viewer?.dispose();
   document.removeEventListener("keydown", current.escape, true);
   current.host.remove();
@@ -118,7 +131,7 @@ async function discover() {
     if (!state.authenticated) return;
     if (identityKey(identity()) !== currentIdentityKey || popup || document.hidden) return;
     const pending = (result.sessions || []).filter(row => row.projectId && row.engine && row.conversationId && row.appNodeId
-      && row.state === "running" && row.loginRequest && row.id && row.nodeId && !dismissed.has(requestKey(row)));
+      && row.state === "running" && row.loginRequest && row.id && row.nodeId && !isDismissed(requestKey(row)));
     const mine = currentIdentityKey && pending.find(row => identityKey(sessionIdentity(row)) === currentIdentityKey);
     if (mine) { mount(mine); return; }
     // Another conversation's sign-in stays there; announce it once instead of taking over this screen.

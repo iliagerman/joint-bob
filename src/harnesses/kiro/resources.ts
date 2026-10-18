@@ -4,6 +4,7 @@ import { adminAccountId } from "../../ownership.js";
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { agentResourcePaths, commonAgentInstructionFiles } from "../../agent-resources.js";
+import { activeSkillRoot, activeMcpConfig } from "../../resource-activation.js";
 import { agentCapabilityInstructionFiles } from "../../agent-capabilities.js";
 import { agentCredentialContext } from "../../secrets.js";
 import { getScopedResourcePaths, getSettings } from "../../settings.js";
@@ -160,17 +161,17 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   if (agentsInfo.isSymbolicLink() || !agentsInfo.isDirectory()) throw new Error("Kiro agents path must be a real directory");
   const relativeAgents = path.relative(path.resolve(runtime.configPath), path.resolve(agents));
   if (relativeAgents.startsWith("..") || path.isAbsolute(relativeAgents)) throw new Error("Kiro agents path is outside KIRO_HOME");
-  const scoped = getScopedResourcePaths(options.projectId, options.conversationId ?? options.sessionId);
+  const scoped = getScopedResourcePaths(options.projectId, options.conversationId ?? options.sessionId, "kiro");
   const instructions = await commonAgentInstructionFiles(undefined, [...scoped.global.rules, ...scoped.project.rules]);
   const resources = agentResourcePaths();
   const skillRoots = [
-    resources.sharedSkills,
+    activeSkillRoot("kiro", resources.sharedSkills),
     ...scoped.global.skills,
     ...scoped.project.skills,
     path.join(options.cwd, ".agents/skills"),
     path.join(options.cwd, ".kiro/skills"),
   ];
-  const skills = [...new Set((await Promise.all(skillRoots.map(skillResource))).flat())];
+  const skills = [...new Set((await Promise.all(skillRoots.map((root) => skillResource(activeSkillRoot("kiro", root))))).flat())];
   const agentsFile = path.join(options.cwd, "AGENTS.md");
   try {
     if ((await lstat(agentsFile)).isFile()) skills.push(`file://${agentsFile}`);
@@ -191,7 +192,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
     tools: enabledTools === undefined ? ["*"] : [...enabledTools],
     allowedTools: [],
     mcpServers: {
-      ...(nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(resources.mcpConfig) : {}),
+      ...(nodeMcpServersApply(adminAccountId()) ? await readMcpConfig(activeMcpConfig("kiro", resources.mcpConfig)) : {}),
       ...(strict ? await readMcpConfig(path.join(options.cwd, ".kiro/settings/mcp.json")) : {}),
     },
     includeMcpJson: !strict,

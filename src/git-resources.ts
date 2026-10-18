@@ -9,6 +9,7 @@ import { resolveDataDirectory } from "./data-directory.js";
 import { getSettings } from "./settings.js";
 import { backupRemovedSkill, markReceived, receivedOwner, skillSuppressed, unlinkSkillAliases, unmarkReceived } from "./skill-sharing-files.js";
 import { validateSkillName } from "./skill-sharing.js";
+import { markReceivedResource } from "./resource-activation.js";
 import { parseResourceFrontmatter } from "./skills.js";
 
 /*
@@ -474,12 +475,14 @@ async function installItem(store: Store, source: GitResourceSource, checkout: st
   }
   const installed: InstalledGitItem = { key: item.key, kind: item.kind, name: item.name, sourceDigest: digest, installedDigest: (await currentDigest({ ...item, sourceDigest: digest, installedDigest: "" }, options)) ?? "" };
   source.installed = [...source.installed.filter((entry) => entry.key !== item.key), installed];
+  if (source.ownerNodeId && item.kind !== "skill") markReceivedResource(item.kind, item.kind === "plugin" ? pluginFolderName(item.name) : item.name, true);
   result.installed.push(item.name);
 }
 
 async function uninstallItem(source: GitResourceSource, item: InstalledGitItem, result: GitApplyResult, options: GitResourceOptions): Promise<void> {
   const current = await currentDigest(item, options);
   source.installed = source.installed.filter((entry) => entry.key !== item.key);
+  if (source.ownerNodeId && item.kind !== "skill") markReceivedResource(item.kind, item.kind === "plugin" ? pluginFolderName(item.name) : item.name, false);
   if (current === undefined) { result.removed.push(item.name); return; }
   if (current !== item.installedDigest) { result.kept.push(`${item.name} (edited on this node)`); return; }
   const location = installedLocation(item, options);

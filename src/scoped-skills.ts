@@ -2,6 +2,8 @@ import { readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { resolveDataDirectory } from "./data-directory.js";
+import { activationDecision } from "./resource-activation.js";
+import type { HarnessId } from "./types.js";
 
 /** A received skill that loads only in some projects' or conversations' sessions on this node. */
 export interface ScopedSkillEntry {
@@ -31,10 +33,11 @@ export function readScopedSkillIndex(): ScopedSkillEntry[] {
 }
 
 /** Skill roots granted to this project, or to this one conversation in it. */
-export function scopedSkillRoots(projectId?: string, conversationId?: string): string[] {
+export function scopedSkillRoots(projectId?: string, conversationId?: string, harness?: HarnessId): string[] {
   if (!projectId) return [];
   return readScopedSkillIndex()
-    .filter((entry) => entry.projectIds.includes(projectId)
+    .filter((entry) => (entry.projectIds.includes(projectId)
       || Boolean(conversationId) && entry.conversations.some((item) => item.projectId === projectId && item.conversationId === conversationId))
+      && (!harness || activationDecision("skill", entry.name, harness, true).enabled))
     .map((entry) => scopedSkillParent(entry.name));
 }

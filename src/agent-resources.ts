@@ -1,13 +1,15 @@
 import { nodeMcpServersApply } from "./account-runtime.js";
 import { adminAccountId } from "./ownership.js";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { activeSkillRoot, activeMcpConfig, activationDecision, assertNoBlockedNativeSkills, receivedResource, skillNameFromFile } from "./resource-activation.js";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadSkills, SettingsManager, type PackageSource } from "@earendil-works/pi-coding-agent";
 import { resolveDataDirectory } from "./data-directory.js";
 import { allowSkillImport, receivedOwner, skillSuppressed, withSkillMutation } from "./skill-sharing-files.js";
+
 import { getSettings, type ScopedResourcePaths } from "./settings.js";
 
 export const AGENT_RESOURCES_FOLDER_ID = "joint-bob-agent-resources";
@@ -616,7 +618,7 @@ export function piAgentResourcePaths(root?: string, configured?: ScopedResourceP
   const paths = agentResourcePaths(root);
   return {
     extensions: [...new Set([path.dirname(paths.piExtensions), ...configuredPaths(configured, "plugins")])],
-    skills: [...new Set([paths.sharedSkills, ...configuredPaths(configured, "skills")])],
+    skills: [...new Set([activeSkillRoot("pi", paths.sharedSkills), ...configuredPaths(configured, "skills").map((root) => activeSkillRoot("pi", root))])],
     prompts: [...new Set([paths.piPrompts, ...configuredPaths(configured, "prompts")])],
     themes: [paths.piThemes],
   };
@@ -684,10 +686,10 @@ function resourceEntries(roots: string[], kind: "skills" | "prompts"): Map<strin
 }
 
 function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedResourcePaths): string | undefined {
-  let skillPaths = [paths.sharedSkills];
+  let skillPaths = [activeSkillRoot("claude", paths.sharedSkills)];
   let promptPaths = [paths.claudeCommands];
   if (configured) {
-    skillPaths = [...skillPaths, ...configured.global.skills, ...configured.project.skills];
+    skillPaths = [...skillPaths, ...configured.global.skills, ...configured.project.skills].map((root) => activeSkillRoot("claude", root));
     promptPaths = [...promptPaths, ...configured.global.prompts, ...configured.project.prompts];
   }
   const skills = resourceEntries(skillPaths, "skills");
@@ -733,19 +735,49 @@ function generatedInstructionFile(paths: AgentResourcePaths, configured?: Scoped
   return filePath;
 }
 
-export function claudeAgentResourceArgs(root?: string, configured?: ScopedResourcePaths, extraInstructions?: string): string[] {
+export function blockedPluginSkill(plugin: string): string | null {
+  const manifest = JSON.parse(readFileSync(path.join(plugin, ".claude-plugin/plugin.json"), "utf8")) as { skills?: unknown };
+  const declared = manifest.skills === undefined ? [] : [manifest.skills].flat();
+  if (declared.some((item) => typeof item !== "string")) throw new Error(`Unsupported skill locations in plugin ${plugin}`);
+  const roots = [path.join(plugin, "skills"), ...(declared as string[]).map((item) => path.resolve(plugin, item))];
+  const visited = new Set<string>();
+  const visit = (candidate: string): string | null => {
+    if (!existsSync(candidate)) return null;
+    const real = realpathSync(candidate);
+    if (visited.has(real)) return null;
+    visited.add(real);
+    if (visited.size > 512) throw new Error(`Plugin has too many skill paths: ${plugin}`);
+    if (statSync(candidate).isFile()) {
+      if (path.basename(candidate) !== "SKILL.md") return null;
+      const name = skillNameFromFile(candidate, path.basename(path.dirname(candidate)));
+      return activationDecision("skill", name, "claude", false).enabled ? null : name;
+    }
+    if (!statSync(candidate).isDirectory()) return null;
+    for (const entry of readdirSync(candidate).sort()) {
+      const blocked = visit(path.join(candidate, entry));
+      if (blocked) return blocked;
+    }
+    return null;
+  };
+  for (const root of roots) { const blocked = visit(root); if (blocked) return blocked; }
+  return null;
+}
+
+export function claudeAgentResourceArgs(root?: string, configured?: ScopedResourcePaths, extraInstructions?: string, cwd?: string): string[] {
+  if (cwd) assertNoBlockedNativeSkills("claude", cwd);
   const paths = agentResourcePaths(root);
   const strict = getSettings().strictResourceIsolation;
   const installed = strict ? new Set<string>() : installedUserPluginNames();
   const args: string[] = [];
   if (existsSync(paths.claudePlugins)) for (const name of readdirSync(paths.claudePlugins).sort()) {
     const plugin = path.join(paths.claudePlugins, name);
-    if (!installed.has(name) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))) args.push("--plugin-dir", plugin);
+    if (!installed.has(name) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))
+      && activationDecision("plugin", name, "claude", receivedResource("plugin", name)).enabled && !blockedPluginSkill(plugin)) args.push("--plugin-dir", plugin);
   }
-  for (const plugin of claudePluginSources(configuredPaths(configured, "plugins"))) args.push("--plugin-dir", plugin);
+  for (const plugin of claudePluginSources(configuredPaths(configured, "plugins"))) if (!blockedPluginSkill(plugin)) args.push("--plugin-dir", plugin);
   const generated = generatedResourcePlugin(paths, configured);
   if (generated) args.push("--plugin-dir", generated);
-  if (nodeMcpServersApply(adminAccountId()) && existsSync(paths.mcpConfig)) args.push("--mcp-config", paths.mcpConfig);
+  if (nodeMcpServersApply(adminAccountId()) && existsSync(paths.mcpConfig)) args.push("--mcp-config", activeMcpConfig("claude", paths.mcpConfig));
   const instructions = generatedInstructionFile(paths, configured, extraInstructions);
   if (existsSync(instructions)) args.push("--append-system-prompt-file", instructions);
   return args;

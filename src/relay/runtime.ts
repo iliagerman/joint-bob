@@ -22,6 +22,7 @@ import type { RelayServer } from "./relay-server.js";
 import { RelayChannelError, RelayStream } from "./stream.js";
 import { PollClient, relayPollUrl, type FrameSocket } from "./poll.js";
 import { createMembership, deleteMembership, lastPeerRoutes, listMemberships, membership, membershipByOrigin, recordPeerRoute, recordRelayTransportEvent, updateMembership, type RelayMembership } from "./store.js";
+import { receiveRelayPolicy } from "./resource-policy.js";
 
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
@@ -69,6 +70,7 @@ class RelayConnection {
   readonly listings = new Map<string, PeerListing>();
   /** The relay machine's own name on its relay, and whether phones can open it. */
   relayListing: PeerListing | undefined;
+  private relayPublicKey: string | undefined;
   /** Long-polling replaces the WebSocket after it repeatedly fails to open (RELAY-PLAN.md D1). */
   private usePoll: boolean;
   private failedToOpen = 0;
@@ -231,6 +233,7 @@ class RelayConnection {
       lastConnectedAt: new Date().toISOString(), relayNodeId: this.relayNodeId ?? null,
     });
     this.relayListing = typeof message.relayName === "string" && RELAY_NAME_PATTERN.test(message.relayName) ? { name: message.relayName, phone: message.relayPhone !== false } : undefined;
+    this.relayPublicKey = handshake.relayPublicKey;
     this.attempt = 0;
     this.connected = true;
     this.hub = new ChannelHub({
@@ -317,6 +320,14 @@ class RelayConnection {
   }
 
   private handleControl(message: ControlMessage): void {
+    if (message.t === "skill-policy") {
+      try {
+        const current = this.membership;
+        if (!current || !this.relayPublicKey) throw new Error("Relay not authenticated");
+        if (receiveRelayPolicy(this.runtime.db, current, this.relayPublicKey, message.statement)) this.runtime.emit("skill-policy-changed");
+      } catch (error) { console.warn(`Relay skill policy rejected: ${(error as Error).message}`); }
+      return;
+    }
     if (message.t === "presence") {
       applyPresence(message, this.runtime, this.online, this.listings);
       this.runtime.changed();

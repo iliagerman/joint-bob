@@ -4022,8 +4022,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-hosting-step { border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .git-hosting-log { max-height: 300px; overflow: auto; padding: 12px; font: 11px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); }
 /* ---- Git hosting polish: readable width, badges, loading, step lists ---- */
-.git-hosting > * { max-width: 1100px; margin-left: auto; margin-right: auto; }
-.git-hosting > .git-hosting-workspace, .git-hosting > .git-hosting-head { max-width: 1280px; }
+.git-hosting > * { max-width: 1200px; margin-left: auto; margin-right: auto; }
 .git-hosting-title { font-size: 19px; line-height: 1.3; letter-spacing: -0.01em; }
 .git-hosting-row { align-items: center; min-height: 60px; transition: background .12s; }
 .git-hosting-row:focus-visible, .git-hosting-nav-job:focus-visible, .git-hosting-graph-job:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -4090,7 +4089,7 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .git-hosting-log-line.is-error { display: inline-block; width: 100%; color: #ff7b72; background: color-mix(in srgb, #f85149 12%, transparent); }
 [data-testid="git-hosting-more"] { margin: 12px auto; display: block; }
 .git-hosting > .git-hosting-back { display: block; width: 100%; text-align: left; }
-.git-hosting-filters .git-hosting-select { width: auto; flex: 0 1 200px; padding-right: 34px; background-color: var(--panel); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 1.75 6 6.25l4.5-4.5' fill='none' stroke='%238b9198' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.git-hosting-filters .git-hosting-select { width: auto; flex: 0 1 200px; padding-right: 34px; background-color: var(--panel); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 1.75 6 6.25l4.5-4.5' fill='none' stroke='%238b9198' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 11px; }
 .git-hosting-indicator .git-hosting-spinner { display: inline-block; vertical-align: middle; border-top-color: #d29922; }
 .git-hosting .ghost.compact { border-color: var(--line); }
 .git-hosting .ghost.compact.git-hosting-ask { border-color: var(--accent); }

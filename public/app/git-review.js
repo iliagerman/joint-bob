@@ -140,7 +140,7 @@ async function loadCurrentTab() {
   if (git.tab === "changes") return loadChanges();
   if (git.tab === "history") return loadHistory();
   if (git.tab === "story") return openStoryTab();
-  if (git.tab === "pulls" || git.tab === "pipelines") return loadGitHosting(git.tab, gitApiUrl, (number) => { applyTab("story"); selectStoryPull(number); void openStoryTab(); });
+  if (git.tab === "pulls" || git.tab === "pipelines") return loadGitHosting(git.tab, gitApiUrl, { explainPull: (number) => { applyTab("story"); selectStoryPull(number); void openStoryTab(); }, ask: askAboutContext });
   return loadReviews();
 }
 
@@ -371,6 +371,7 @@ async function loadReviews() {
 }
 
 function reviewTargetLabel(selection) {
+  if (selection.scope === "context") return selection.label || "this page";
   if (selection.scope === "commit") return `commit ${selection.revision?.slice(0, 8) ?? ""}`;
   if (selection.filePath) return selection.filePath;
   return "working-tree changes";
@@ -430,11 +431,28 @@ function syncModelOptions(preferred) {
 async function openAsk() {
   if (!git.selection) return;
   git.thread = null;
+  git.context = null;
   elements.gitReviewThread.textContent = "";
   elements.gitReviewQuestion.value = "";
+  elements.gitReviewQuestion.placeholder = "Why was this changed?";
   elements.gitReviewAskTarget.textContent = `Ask about ${reviewTargetLabel(git.selection)}`;
   elements.gitReviewAskForm.hidden = false;
   try { await ensurePickers(); } catch (error) { toast(error.message, 8000); }
+  elements.gitReviewQuestion.focus();
+}
+
+// A question about text the dialog already shows, such as a pull request or a failed job's log.
+async function askAboutContext({ label, text, placeholder = "What should I look at?" }) {
+  git.selection = { scope: "context", label };
+  git.context = text;
+  git.thread = null;
+  elements.gitReviewThread.textContent = "";
+  elements.gitReviewQuestion.value = "";
+  elements.gitReviewQuestion.placeholder = placeholder;
+  elements.gitReviewAskTarget.textContent = `Ask about ${label}`;
+  elements.gitReviewAskForm.hidden = false;
+  try { await ensurePickers(); } catch (error) { toast(error.message, 8000); }
+  elements.gitReviewAskForm.scrollIntoView({ block: "nearest" });
   elements.gitReviewQuestion.focus();
 }
 
@@ -503,8 +521,9 @@ async function submitAsk(event) {
         harnessId: elements.gitReviewHarness.value,
         modelId: picked.modelId,
         thinkingLevel: elements.gitReviewThinking.value,
-        selection: { scope: git.selection.scope, ...(git.selection.revision ? { revision: git.selection.revision } : {}), ...(git.selection.filePath ? { filePath: git.selection.filePath } : {}), ...(git.selection.staged !== undefined ? { staged: git.selection.staged } : {}) },
+        selection: { scope: git.selection.scope, ...(git.selection.label ? { label: git.selection.label } : {}), ...(git.selection.revision ? { revision: git.selection.revision } : {}), ...(git.selection.filePath ? { filePath: git.selection.filePath } : {}), ...(git.selection.staged !== undefined ? { staged: git.selection.staged } : {}) },
         question,
+        ...(git.selection.scope === "context" ? { context: git.context } : {}),
         ...(provider ? { provider } : {}),
         ...(git.conversationId ? { conversationId: git.conversationId } : {}),
       };

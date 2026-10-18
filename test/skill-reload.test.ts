@@ -17,6 +17,9 @@ test("real Pi sessions reload shared and configured skills without losing sessio
   const { getSettings, updateProjectResourcePaths } = await import("../src/settings.js");
   const { addProject, removeProject } = await import("../src/store.js");
   const { createPiSession, reloadPiSkills } = await import("../src/pi-service.js");
+  const { setActivationPreference } = await import("../src/resource-activation.js");
+  const { markReceived, unmarkReceived } = await import("../src/skill-sharing-files.js");
+  const { settingsDatabase, save } = await import("../src/settings-store.js");
   const shared = agentResourcePaths().sharedSkills;
   const native = path.join(getSettings().pi.configPath, "skills");
   let project: Awaited<ReturnType<typeof addProject>> | undefined;
@@ -48,7 +51,24 @@ test("real Pi sessions reload shared and configured skills without losing sessio
     updateProjectResourcePaths(project.id, { skills: [], prompts: [], rules: [], plugins: [] });
     await reloadPiSkills(handle);
     assert.equal(handle.session.resourceLoader.getSkills().skills.some((skill) => skill.name === "extra"), false);
+    await writeSkill(path.join(cwd, ".pi/skills/category"), "blocked-nested", "Nested project skill");
+    await reloadPiSkills(handle);
+    assert.equal(handle.session.resourceLoader.getSkills().skills.some((skill) => skill.name === "blocked-nested"), true);
+    setActivationPreference("skill", "blocked-nested", "pi", false);
+    await reloadPiSkills(handle);
+    assert.equal(handle.session.resourceLoader.getSkills().skills.some((skill) => skill.name === "blocked-nested"), false, "nested project skill cannot bypass the policy");
+    await markReceived(shared, "review", "fixture-owner");
+    save(settingsDatabase(), "autoActivateSharedSkills", "false");
+    updateProjectResourcePaths(project.id, { skills: [shared], prompts: [], rules: [], plugins: [] });
+    await reloadPiSkills(handle);
+    assert.equal(handle.session.resourceLoader.getSkills().skills.some((skill) => skill.name === "review"), false, "configured managed root cannot bypass the shared default");
+    updateProjectResourcePaths(project.id, { skills: [path.join(shared, "review", "SKILL.md")], prompts: [], rules: [], plugins: [] });
+    await reloadPiSkills(handle);
+    assert.equal(handle.session.resourceLoader.getSkills().skills.some((skill) => skill.name === "review"), false, "configured received SKILL.md cannot bypass the shared default");
   } finally {
+    setActivationPreference("skill", "blocked-nested", "pi", null);
+    save(settingsDatabase(), "autoActivateSharedSkills", "true");
+    await unmarkReceived(shared, "review");
     handle?.dispose();
     if (project) await removeProject(project.id);
     await rm(cwd, { recursive: true, force: true });

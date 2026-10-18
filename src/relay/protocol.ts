@@ -43,6 +43,7 @@ export type ControlMessage =
   | { t: "watch"; nodeIds: string[] }
   | { t: "presence"; online: string[]; offline: string[]; listings?: Record<string, PeerListing> }
   | { t: "gateway"; enabled: boolean }
+  | { t: "skill-policy"; statement: import("./resource-policy.js").SignedRelaySkillPolicy }
   | { t: "open"; ref: number; to: string; kind: Exclude<ChannelKind, "gateway"> }
   | { t: "opened"; ref: number; channel: number }
   | { t: "open-failed"; ref: number; error: string }

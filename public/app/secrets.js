@@ -25,7 +25,7 @@ let secretScopeTarget = null;
 let secretTypeFilter = "all";
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
-const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", openai: "OpenAI", zai: "Z.AI", grafana: "Grafana", datadog: "Datadog", postgres: "PostgreSQL", mssql: "MS SQL", mongodb: "MongoDB", website: "Website", ssh: "SSH", custom: "Custom" };
+const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", openai: "OpenAI", zai: "Z.AI", grafana: "Grafana", datadog: "Datadog", postgres: "PostgreSQL", mssql: "MS SQL", mongodb: "MongoDB", website: "Website", ssh: "SSH", certificate: "Certificate", custom: "Custom" };
 /** Shown under the provider picker so the choice explains itself before anything is typed. */
 const providerHints = {
   aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
@@ -41,6 +41,7 @@ const providerHints = {
   mssql: "MSSQL_CONNECTION_STRING for Microsoft SQL Server clients. Paste the connection string.",
   mongodb: "MONGODB_URI for MongoDB clients. Paste the connection URI.",
   ssh: "Connect with an OpenSSH or PEM private key, or a password. Upload a .pem file or paste its contents; the private file path works with ssh -i. Verify the host key before connecting.",
+  certificate: "Upload a PEM certificate chain and its matching private key. Attached agents receive private file paths; a system proxy needs its own persistent certificate installation.",
   custom: "Any environment variables you need. Every agent session in the scopes you assign this account to receives them.",
   website: "Structured website sign-in. Set the exact website origin, then LOGIN_USERNAME and LOGIN_PASSWORD (add more fields the form needs). The agent fills them at that origin with login-fill; values never enter the shell. Sharing sends encrypted-at-rest copies to selected nodes.",
 };
@@ -70,6 +71,7 @@ function secretProviderPresets(provider) {
   const single = { openai: "OPENAI_API_KEY", zai: "ZAI_API_KEY", grafana: "GRAFANA_API_KEY", datadog: "DD_API_KEY", postgres: "DATABASE_URL", mssql: "MSSQL_CONNECTION_STRING", mongodb: "MONGODB_URI" }[provider];
   if (single) return [{ name: single, kind: "value" }];
   if (provider === "website") return [{ name: "LOGIN_USERNAME", kind: "value" }, { name: "LOGIN_PASSWORD", kind: "value" }];
+  if (provider === "certificate") return [{ name: "TLS_CERTIFICATE", kind: "file" }, { name: "TLS_PRIVATE_KEY", kind: "file" }];
   return [{ name: "", kind: "value" }];
 }
 
@@ -127,15 +129,32 @@ function secretRow(variable = { name: "", kind: "value", configured: false }) {
   for (const value of ["value", "file"]) { const option = document.createElement("option"); option.value = value; option.textContent = value === "file" ? "File content" : "Value"; kind.append(option); }
   kind.value = variable.kind;
   const value = createSecretValueControl(variable.kind, variable.configured, variable.name);
+  const upload = document.createElement("button");
+  upload.type = "button";
+  upload.className = "ghost compact";
+  upload.textContent = "Upload file";
+  upload.hidden = variable.kind !== "file";
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.hidden = true;
+  upload.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => void (async () => {
+    const [file] = fileInput.files;
+    fileInput.value = "";
+    if (!file) return;
+    if (file.size > 100000) throw new Error("Secret file must be at most 100000 bytes");
+    row.querySelector("[data-secret-value]").value = await file.text();
+  })().catch((error) => toast(error.message)));
+
   name.addEventListener("input", () => refreshSecretValueControl(row));
-  kind.addEventListener("change", () => refreshSecretValueControl(row, variable.configured));
+  kind.addEventListener("change", () => { refreshSecretValueControl(row, variable.configured); upload.hidden = kind.value !== "file"; });
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "ghost compact";
   remove.textContent = "Remove";
   remove.dataset.testid = "secret-variable-remove-button";
   remove.addEventListener("click", () => row.remove());
-  row.append(name, kind, remove, value);
+  row.append(name, kind, upload, fileInput, remove, value);
   elements.secretVariableRows.append(row);
 }
 
@@ -358,8 +377,8 @@ function applySecretProviderPreset() {
   document.querySelector("#secretSshFields").hidden = !ssh;
   elements.secretVariableRows.hidden = github || ssh;
   elements.secretVariableAddButton.hidden = github || ssh;
-  elements.secretAccountOriginInput.closest("label").hidden = github || ssh;
-  document.querySelector("#secretAccountOriginHint").hidden = github || ssh;
+  elements.secretAccountOriginInput.closest("label").hidden = github || ssh || provider === "certificate";
+  document.querySelector("#secretAccountOriginHint").hidden = github || ssh || provider === "certificate";
   const typed = [...elements.secretVariableRows.children].some((row) => row.querySelector("[data-secret-value]").value.trim());
   if (editingSecretAccountId || typed) return;
   elements.secretVariableRows.replaceChildren();
@@ -596,7 +615,7 @@ elements.secretAccountOriginInput.addEventListener("input", () => {
 
 async function saveSecretAccount() {
   const provider = secretProviderPicker.value;
-  const websiteOrigin = provider === "github" || provider === "ssh" ? "" : elements.secretAccountOriginInput.value.trim();
+  const websiteOrigin = ["github", "ssh", "certificate"].includes(provider) ? "" : elements.secretAccountOriginInput.value.trim();
   let variables = provider === "github" ? githubVariables() : provider === "ssh" ? sshVariables() : [...elements.secretVariableRows.children].map((row) => {
     const name = row.querySelector("[data-secret-name]").value.trim();
     const kind = row.querySelector("[data-secret-kind]").value;

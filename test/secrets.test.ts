@@ -87,6 +87,26 @@ test("SSH accounts keep keys private, preserve edits and reject invalid connecti
   });
 });
 
+test("certificate accounts validate matching PEM files and expose private file paths", async () => {
+  await withSecrets("certificate", async (secrets) => {
+    const certPath = path.join(secrets.dataDir, "cert.pem");
+    const keyPath = path.join(secrets.dataDir, "key.pem");
+    await exec("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", keyPath, "-out", certPath, "-subj", "/CN=example.test", "-days", "1"]);
+    const cert = await readFile(certPath, "utf8"), key = await readFile(keyPath, "utf8");
+    const variables = [{ name: "TLS_CERTIFICATE", kind: "file" as const, value: cert }, { name: "TLS_PRIVATE_KEY", kind: "file" as const, value: key }];
+    const account = await secrets.saveSecretAccount({ label: "Test TLS", provider: "certificate", variables });
+    await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+    const env = secrets.genericSecretEnvironment("project-a");
+    assert.equal(await readFile(env.TLS_CERTIFICATE, "utf8"), cert);
+    assert.equal(await readFile(env.TLS_PRIVATE_KEY, "utf8"), key);
+    assert.equal((await stat(env.TLS_PRIVATE_KEY)).mode & 0o777, 0o600);
+    assert.doesNotMatch(JSON.stringify(await secrets.listSecretAccounts()), /BEGIN (?:CERTIFICATE|PRIVATE KEY)/);
+    await secrets.saveSecretAccount({ id: account.id, label: "Test TLS", provider: "certificate", variables: variables.map(({ name, kind }) => ({ name, kind })) });
+    await assert.rejects(secrets.saveSecretAccount({ label: "Bad pair", provider: "certificate", variables: [{ ...variables[0], value: cert }, { ...variables[1], value: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" }).toString() }] }), /do not match/);
+    await assert.rejects(secrets.saveSecretAccount({ label: "Missing key", provider: "certificate", variables: [variables[0]] }), /TLS_CERTIFICATE and TLS_PRIVATE_KEY/);
+  });
+});
+
 test("new provider types retain encrypted values and export their chosen variable", async () => {
   await withSecrets("more-providers", async (secrets) => {
     for (const [provider, variable] of [

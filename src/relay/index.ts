@@ -102,6 +102,10 @@ export function startRelay(): Promise<void> {
     setPhonePolicyDatabase(db);
     tunnels = new SyncthingTunnels(db, runtime);
     runtime.on("changed", scheduleTunnels);
+    runtime.on("skill-policy-changed", () => {
+      void import("../server/realtime.js").then(({ reloadSharedSkills }) => reloadSharedSkills())
+        .catch((error) => console.warn("Relay policy skill reload failed", error));
+    });
     runtime.start();
     scheduleTunnels();
   })();

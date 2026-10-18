@@ -647,7 +647,8 @@ app.post("/api/cluster/git/ask", async (request, response, next) => {
 });
 
 async function performAsk(projectId: string, cwd: string, payload: ReturnType<typeof gitReviewAskSchema.parse>): Promise<unknown> {
-  const diff = await selectionDiff(cwd, payload.selection);
+  if (payload.selection.scope === "context" && !payload.context) throw new GitReviewError(400, "A context question needs the text it is about");
+  const diff = payload.selection.scope === "context" ? payload.context! : await selectionDiff(cwd, payload.selection);
   const result = await runGitReview({
     projectId,
     cwd,

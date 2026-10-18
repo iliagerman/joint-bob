@@ -13,8 +13,8 @@ const MCP_SOURCE_LABELS = { shared: "shared", user: "agent", local: "project-loc
 const SCAN_STATUS_LABELS = { new: "New", changed: "Changed", installed: "Installed", linked: "Linked" };
 
 const view = {
-  scope: "cluster", projectId: null, conversationId: null, engine: null, tab: "skills", configured: false,
-  nodes: [], sharing: null, loading: false, candidates: [], scanRoot: "", request: 0,
+  scope: "cluster", projectId: null, conversationId: null, engine: null, tab: "skills", configured: false, nodeId: "",
+  nodes: [], sharing: null, activation: null, relayPolicies: [], loading: false, candidates: [], scanRoot: "", request: 0,
   page: 0, scanPage: 0, selected: new Set(), selectedServers: new Set(), scanSelected: new Set(),
 };
 // Rows per page, refitted to whatever height the panel gives each list.
@@ -56,6 +56,13 @@ function matches(query, ...fields) { return !query || fields.join("\n").toLowerC
 
 function harnessFilter() { return elements.resourcesHarnessSelect.value; }
 
+function renderNodeOptions() {
+  const select = document.querySelector("#resourcesNodeSelect");
+  select.replaceChildren(new Option("This node", ""), ...view.nodes.filter((entry) => !entry.node.local).map((entry) => new Option(entry.node.name, entry.node.id)));
+  if (!view.nodes.some((entry) => entry.node.id === view.nodeId)) view.nodeId = "";
+  select.value = view.nodeId;
+}
+
 function renderHarnessOptions() {
   const ids = new Map();
   for (const entry of view.nodes) for (const harness of entry.inventory?.harnesses ?? []) ids.set(harness.id, harness.label);
@@ -74,6 +81,12 @@ function filteredServers(inventory) {
   const query = normalizedQuery(elements.resourcesSearchInput.value || "");
   const harness = harnessFilter();
   return inventory.mcpServers.filter((server) => (!harness || server.harnesses.includes(harness)) && matches(query, server.name, server.target));
+}
+
+function filteredPlugins(inventory) {
+  const query = normalizedQuery(elements.resourcesSearchInput.value || "");
+  const harness = harnessFilter();
+  return (inventory.plugins ?? []).filter((plugin) => (!harness || plugin.harnesses.includes(harness)) && matches(query, plugin.name));
 }
 
 /* ---- Sharing targets ---- */
@@ -362,6 +375,30 @@ function skillRemoveButton(skill, received) {
   return remove;
 }
 
+function activationControl(kind, item, local, supported) {
+  const harness = harnessFilter();
+  if (!local || !harness || !supported.includes(harness)) return null;
+  const decision = item.activation?.[harness];
+  if (!decision) return null;
+  const label = document.createElement("label");
+  label.className = "resources-activation";
+  label.title = decision.reason;
+  const input = document.createElement("input");
+  input.type = "checkbox"; input.checked = decision.enabled;
+  input.dataset.testid = "resources-activation-toggle";
+  input.setAttribute("aria-label", `${decision.enabled ? "Disable" : "Enable"} ${item.name} for ${harnessLabel(harness)}`);
+  input.addEventListener("change", async () => {
+    input.disabled = true;
+    try {
+      await api("/api/resources/activation/item", { method: "PUT", body: JSON.stringify({ kind, name: item.name, harness, enabled: input.checked, ...(view.scope !== "cluster" && view.projectId ? { projectId: view.projectId } : {}), ...(view.scope === "conversation" && view.conversationId ? { conversationId: view.conversationId } : {}) }) });
+      await loadInventory();
+      setStatus(`${item.name} ${input.checked ? "enabled" : "disabled"} for ${harnessLabel(harness)}. Start a new conversation to clear instructions already read.`);
+    } catch (error) { input.checked = !input.checked; input.disabled = false; toast(error.message); }
+  });
+  label.append(input, document.createTextNode(decision.reason));
+  return label;
+}
+
 function skillRow(skill, local) {
   const row = document.createElement("div");
   row.className = "resources-row";
@@ -399,6 +436,8 @@ function skillRow(skill, local) {
     if (policy) actions.append(skillRemoveButton(skill, false));
   }
   head.append(actions);
+  const activation = ["shared", "scoped"].includes(skill.origin) ? activationControl("skill", skill, local, skill.harnesses) : null;
+  if (activation) head.append(activation);
   const description = document.createElement("span");
   description.className = "skill-option-description";
   description.textContent = skill.description;
@@ -431,11 +470,36 @@ function serverRow(server, local, inventory) {
   if (!server.enabled) head.append(badge(server.source === "project" ? "not approved" : "disabled", "off"));
   else if (view.scope === "conversation" && view.engine && server.harnesses.includes(view.engine)) head.append(badge("active", "active"));
   head.append(...server.harnesses.map((id) => badge(harnessLabel(id), "harness")));
+  const activation = server.source === "shared" ? activationControl("mcp", server, local, server.harnesses) : null;
+  if (activation) head.append(activation);
   const target = document.createElement("span");
   target.className = "skill-option-description";
   target.textContent = `${server.transport} · ${server.target}`;
   target.title = target.textContent;
   row.append(head, target);
+  return row;
+}
+
+function pluginRow(plugin, local) {
+  const row = document.createElement("div");
+  row.className = "resources-row";
+  row.dataset.testid = "resources-plugin-row";
+  const head = document.createElement("div");
+  head.className = "resources-row-head";
+  const name = document.createElement("strong"); name.textContent = plugin.name;
+  head.append(name, badge(plugin.source), ...plugin.harnesses.map((id) => badge(harnessLabel(id), "harness")));
+  const activation = plugin.source === "managed" ? activationControl("plugin", plugin, local, plugin.harnesses) : null;
+  if (activation) head.append(activation);
+  else head.append(badge("agent configured"));
+  row.append(head);
+  return row;
+}
+
+function toolRow(tool) {
+  const row = document.createElement("div");
+  row.className = "resources-row"; row.dataset.testid = "resources-tool-row";
+  const name = document.createElement("strong"); name.textContent = tool.name;
+  row.append(name, badge(tool.active ? "active in conversation" : "off in conversation", tool.active ? "active" : "off"));
   return row;
 }
 
@@ -471,6 +535,7 @@ function peerStatus() {
   details.className = "resources-peer-status";
   details.open = peerStatusExpanded;
   details.addEventListener("toggle", () => { if (details.isConnected) peerStatusExpanded = details.open; });
+  details.addEventListener("click", (event) => { if (event.target instanceof Element && event.target.closest("summary")) peerStatusExpanded = !details.open; });
   const failing = peers.filter((peer) => peer.error).length;
   const summary = document.createElement("summary");
   summary.textContent = `Receiving from ${peers.length} node${peers.length === 1 ? "" : "s"}${failing ? ` · ${failing} failing` : ""}`;
@@ -487,7 +552,7 @@ function renderShareBar() {
   const bar = elements.resourcesShareBar;
   bar.replaceChildren();
   const local = localEntry()?.inventory;
-  bar.hidden = !(view.tab === "skills" || view.tab === "mcp") || !local || (view.tab === "skills" && !view.sharing);
+  bar.hidden = Boolean(view.nodeId) || !(view.tab === "skills" || view.tab === "mcp") || !local || (view.tab === "skills" && !view.sharing);
   if (bar.hidden) return;
   const line = document.createElement("div");
   line.className = "resources-share-line";
@@ -567,18 +632,23 @@ function renderList() {
   renderShareBar();
   if (view.loading && !view.nodes.length) { list.append(emptyRow("Loading…")); elements.resourcesListPager.hidden = true; return; }
   const skills = view.tab === "skills";
-  const noun = skills ? "skills" : "MCP servers";
+  const tools = view.tab === "tools";
+  const plugins = view.tab === "plugins";
+  const noun = skills ? "skills" : plugins ? "plugins" : tools ? "tools" : "MCP servers";
   const harness = harnessFilter();
   const multiple = view.nodes.length > 1;
   const items = [], counts = new Map();
   for (const entry of view.nodes) {
+    if (view.nodeId ? entry.node.id !== view.nodeId : !entry.node.local) continue;
     if (!entry.inventory) { if (multiple) list.append(nodeHeading(entry, 0, noun)); continue; }
-    if (!skills && harness && !entry.inventory.harnesses.find((item) => item.id === harness)?.mcp) {
+    if (view.tab === "mcp" && harness && !entry.inventory.harnesses.find((item) => item.id === harness)?.mcp) {
       if (multiple) list.append(nodeHeading(entry, 0, noun));
       list.append(emptyRow(`${harnessLabel(harness)} does not load MCP servers.${view.scope === "conversation" ? " Show this project to see the servers other agents load." : ""}`));
       continue;
     }
-    const rows = skills ? filteredSkills(entry.inventory) : filteredServers(entry.inventory);
+    const rows = skills ? filteredSkills(entry.inventory) : plugins ? filteredPlugins(entry.inventory)
+      : tools ? entry.node.local && view.scope === "conversation" ? (state.tools ?? []).filter((tool) => matches(normalizedQuery(elements.resourcesSearchInput.value || ""), tool.name)) : []
+      : filteredServers(entry.inventory);
     counts.set(entry, rows.length);
     for (const item of rows) items.push({ entry, item });
   }
@@ -587,19 +657,55 @@ function renderList() {
   let heading = null;
   for (const { entry, item } of shown) {
     if (multiple && entry !== heading) { list.append(nodeHeading(entry, counts.get(entry), noun)); heading = entry; }
-    list.append(skills ? skillRow(item, entry.node.local) : serverRow(item, entry.node.local, entry.inventory));
+    list.append(skills ? skillRow(item, entry.node.local) : plugins ? pluginRow(item, entry.node.local)
+      : tools ? toolRow(item) : serverRow(item, entry.node.local, entry.inventory));
   }
-  if (!items.length && !list.querySelector(".resources-row, .resources-node")) list.append(emptyRow(skills ? "No skills match." : "No MCP servers match."));
+  if (!items.length && !list.querySelector(".resources-row, .resources-node")) list.append(emptyRow(tools ? "Open a conversation to inspect its reported tools. Tools are not known before its agent starts." : `No ${noun} match.`));
   renderPager(elements.resourcesListPager, items.length, view.page, pageSizes.list, (page) => { view.page = page; renderList(); });
   fitPage(list, "list", "page", renderList);
 }
 
 function countFor(entry, key) { return entry?.inventory ? (key === "skills" ? filteredSkills(entry.inventory) : filteredServers(entry.inventory)).length : 0; }
 
+function renderRelayPolicy() {
+  const select = document.querySelector("#resourcesRelaySelect");
+  const selected = select.value;
+  select.replaceChildren(new Option("Choose a relay", ""), ...view.relayPolicies.map((item) => new Option(item.name || item.origin, item.id)));
+  select.value = view.relayPolicies.some((item) => item.id === selected) ? selected : "";
+  const preview = document.querySelector("#resourcesRelayPreview");
+  preview.replaceChildren();
+  const policy = view.relayPolicies.find((item) => item.id === select.value);
+  if (!policy) return;
+  const heading = document.createElement("p");
+  heading.textContent = policy.version === null ? "No signed policy received yet. Wait for this relay to reconnect." : `Signed version ${policy.version} · ${policy.optedIn ? "Following" : "Not following"}${policy.updatedAt ? ` · received ${new Date(policy.updatedAt).toLocaleString()}` : ""}`;
+  preview.append(heading);
+  for (const rule of policy.rules) {
+    const line = document.createElement("div");
+    line.textContent = `${rule.action === "block" ? "Block" : "Enable"} ${rule.name} for ${rule.harness === "all" ? "all agents" : harnessLabel(rule.harness)}`;
+    preview.append(line);
+  }
+  if (!policy.rules.length) preview.append(emptyRow("No skill rules from this relay."));
+  const affected = (localEntry()?.inventory?.skills ?? []).filter((skill) => policy.rules.some((rule) => rule.name === skill.name && (rule.harness === "all" || skill.harnesses.includes(rule.harness))));
+  const summary = document.createElement("p");
+  summary.textContent = `${affected.length} installed skill${affected.length === 1 ? "" : "s"} affected on this node. Blocking overrides every local enable. Local disables override relay enables. Files stay installed.`;
+  preview.append(summary);
+  const action = button(policy.optedIn ? "Stop following" : "Follow this relay's rules", "resources-relay-follow", async () => {
+    if (!policy.optedIn && policy.version === null) { toast("Wait for a signed policy before following this relay."); return; }
+    if (!policy.optedIn && !await confirmAction({ title: `Follow ${policy.name || policy.origin}?`, message: `This relay can enable or block skills on this node. Preview the ${policy.rules.length} rules above before allowing updates.`, confirmLabel: "Follow relay" })) return;
+    action.disabled = true;
+    try {
+      await api(`/api/relays/${encodeURIComponent(policy.id)}/skill-policy-subscription`, { method: "PUT", body: JSON.stringify({ optedIn: !policy.optedIn }) });
+      await loadInventory();
+    } catch (error) { action.disabled = false; toast(error.message); }
+  }, "ghost compact");
+  preview.append(action);
+}
+
 function renderSummary() {
   const local = localEntry();
   elements.resourcesSkillsCount.textContent = local ? `(${countFor(local, "skills")})` : "";
   elements.resourcesMcpCount.textContent = local ? `(${countFor(local, "mcp")})` : "";
+  document.querySelector("#resourcesPluginsCount").textContent = local ? `(${filteredPlugins(local.inventory).length})` : "";
   const project = state.projects?.find((item) => item.id === view.projectId);
   const where = view.scope === "cluster" ? "Every node, without project skills" : `${project?.name ?? "Project"}${view.scope === "project" ? " on every node" : ""}`;
   const who = view.scope === "conversation" && view.engine ? ` · ${harnessLabel(view.engine)} conversation` : "";
@@ -615,7 +721,9 @@ function render() {
   elements.resourcesHarnessSelect.disabled = view.scope === "conversation" && Boolean(view.engine);
   // Repositories are not per agent.
   elements.resourcesHarnessSelect.hidden = view.tab === "git";
-  const listing = view.tab === "skills" || view.tab === "mcp";
+  const listing = ["skills", "mcp", "tools", "plugins"].includes(view.tab);
+  document.querySelector("#resourcesRelayPolicy").hidden = view.tab !== "skills";
+  document.querySelector(".resources-auto-activate").hidden = !["skills", "mcp", "plugins"].includes(view.tab);
   elements.resourcesList.hidden = !listing;
   if (!listing) { elements.resourcesListPager.hidden = true; elements.resourcesShareBar.hidden = true; }
   elements.resourcesScopeSelect.parentElement.hidden = view.tab === "paths";
@@ -638,10 +746,24 @@ async function loadInventory() {
   if (view.scope === "conversation" && view.conversationId) params.set("conversationId", view.conversationId);
   if (view.scope !== "conversation") params.set("cluster", "1");
   try {
-    const [body, sharing] = await Promise.all([api(`/api/resources/inventory?${params}`), api("/api/resources/skills/sharing")]);
+    const [body, sharing, activation, relayPolicies, serving] = await Promise.all([api(`/api/resources/inventory?${params}`), api("/api/resources/skills/sharing"), api("/api/resources/activation"), api("/api/relays/skill-policies"), api("/api/relay/serving")]);
     if (request !== view.request) return;
     view.nodes = body.nodes;
+    renderNodeOptions();
     view.sharing = sharing;
+    view.activation = activation;
+    view.relayPolicies = relayPolicies.subscriptions ?? [];
+    const publisher = document.querySelector("#resourcesRelayPublisher");
+    publisher.hidden = !serving.settings?.enabled;
+    if (!publisher.hidden) {
+      const published = await api("/api/relay/serving/skill-policy");
+      if (request !== view.request) return;
+      const editor = document.querySelector("#resourcesRelayRules");
+      editor.value = published.rules.map((rule) => `${rule.action} ${rule.name} ${rule.harness}`).join("\n");
+      editor.dataset.version = String(published.version);
+    }
+    document.querySelector("#resourcesAutoActivate").checked = activation.autoActivateSharedSkills;
+    renderRelayPolicy();
     renderHarnessOptions();
   } catch (error) {
     if (request === view.request) setStatus(error.message);
@@ -1125,7 +1247,10 @@ function configure({ scope = "conversation", projectId = state.activeProjectId, 
   view.scope = !view.projectId ? "cluster" : scope === "conversation" && !engine ? "project" : scope;
   view.tab = tab;
   view.nodes = [];
+  view.nodeId = "";
   view.sharing = null;
+  view.activation = null;
+  view.relayPolicies = [];
   peerStatusExpanded = false;
   view.page = 0;
   view.selected.clear();
@@ -1163,7 +1288,34 @@ elements.resourcesScopeSelect.addEventListener("change", () => {
   view.page = 0;
   void loadInventory();
 });
+document.querySelector("#resourcesRelaySelect").addEventListener("change", renderRelayPolicy);
+document.querySelector("#resourcesNodeSelect").addEventListener("change", (event) => { view.nodeId = event.currentTarget.value; view.page = 0; render(); });
+document.querySelector("#resourcesRelayPublish").addEventListener("click", async (event) => {
+  const publishButton = event.currentTarget;
+  const editor = document.querySelector("#resourcesRelayRules");
+  const rules = [];
+  for (const line of editor.value.split("\n").map((text) => text.trim()).filter(Boolean)) {
+    const match = /^(enable|block) ([a-zA-Z0-9][a-zA-Z0-9._-]{0,199}) (all|pi|claude|kiro)$/.exec(line);
+    if (!match) { toast(`Invalid relay rule: ${line}`); return; }
+    rules.push({ action: match[1], name: match[2], harness: match[3] });
+  }
+  if (!await confirmAction({ title: "Publish relay skill rules?", message: `Publish ${rules.length} signed rules as a new version to every connected machine that follows this relay?`, confirmLabel: "Publish" })) return;
+  publishButton.disabled = true;
+  try { await api("/api/relay/serving/skill-policy", { method: "PUT", body: JSON.stringify({ rules }) }); await loadInventory(); }
+  catch (error) { toast(error.message); }
+  finally { publishButton.disabled = false; }
+});
 elements.resourcesHarnessSelect.addEventListener("change", () => { view.page = 0; render(); });
+document.querySelector("#resourcesAutoActivate").addEventListener("change", async (event) => {
+  const input = event.currentTarget;
+  input.disabled = true;
+  try {
+    view.activation = await api("/api/resources/activation", { method: "PUT", body: JSON.stringify({ autoActivateSharedSkills: input.checked }) });
+    await loadInventory();
+    setStatus(`Shared resources ${input.checked ? "automatically activate" : "arrive disabled"} unless individually overridden. Start a new conversation to clear instructions already read.`);
+  } catch (error) { input.checked = !input.checked; toast(error.message); }
+  finally { input.disabled = false; }
+});
 elements.resourcesSearchInput.addEventListener("input", () => { view.page = 0; git.itemPage = 0; render(); });
 // The panel sits inside the Settings form; Enter here must not save settings.
 elements.resourcesSearchInput.addEventListener("keydown", (event) => { if (event.key === "Enter") event.preventDefault(); });

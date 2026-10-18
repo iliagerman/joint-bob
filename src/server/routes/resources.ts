@@ -9,9 +9,12 @@ import { authorizedSkillClusters, listReceivedSkills } from "../../skill-sharing
 import { listDiscoveredHarnesses } from "../../harnesses/registry.js";
 import { configuredRuntime } from "../../harnesses/runtime-configuration.js";
 import { resourceInventory, shareMcpServers, type ResourceInventory } from "../../resource-inventory.js";
+import { activationDecision, setActivationPreference, autoActivateSharedSkills, receivedResource, receivedSkill } from "../../resource-activation.js";
+import { save, settingsDatabase } from "../../settings-store.js";
+import { reloadSharedSkills } from "../realtime.js";
 import { getProject } from "../../store.js";
 import { clusterPeerMayAccessProject } from "../cluster-helpers.js";
-import { sendError } from "../http-auth.js";
+import { sendError, requireFeature, Feature } from "../http-auth.js";
 import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { app } from "../state.js";
 import { peerSnapshot, staleSnapshotReason } from "../peer-snapshots.js";
@@ -20,6 +23,35 @@ import { registerSkillSharingRoutes } from "../skill-sharing.js";
 
 registerSkillSharingRoutes();
 registerGitResourceRoutes();
+
+const activationSchema = z.object({ kind: z.enum(["skill", "plugin", "mcp"]), name: z.string().min(1).max(200), harness: z.enum(["pi", "claude", "kiro"]), enabled: z.boolean().nullable(), projectId: z.string().min(1).max(200).optional(), conversationId: z.string().min(1).max(300).optional() }).strict();
+app.get("/api/resources/activation", requireFeature(Feature.SETTINGS), (_request, response) => response.json({ autoActivateSharedSkills: autoActivateSharedSkills() }));
+app.put("/api/resources/activation", requireFeature(Feature.SETTINGS), async (request, response, next) => {
+  try {
+    const body = z.object({ autoActivateSharedSkills: z.boolean() }).strict().parse(request.body);
+    save(settingsDatabase(), "autoActivateSharedSkills", String(body.autoActivateSharedSkills));
+    await reloadSharedSkills();
+    response.json(body);
+  } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation setting"); else next(error); }
+});
+app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), async (request, response, next) => {
+  try {
+    const body = activationSchema.parse(request.body);
+    if (body.projectId && !await getProject(body.projectId)) { sendError(response, 404, "Project not found"); return; }
+    if (body.conversationId && !body.projectId) { sendError(response, 400, "Conversation needs a project"); return; }
+    const inventory = await localInventory(body.projectId, body.conversationId);
+    const available = body.kind === "skill" ? inventory.skills : body.kind === "mcp" ? inventory.mcpServers : inventory.plugins;
+    if (!available.some((item) => item.name === body.name && item.harnesses.includes(body.harness)
+      && (body.kind === "skill" ? ["shared", "scoped"].includes((item as { origin?: string }).origin ?? "")
+        : body.kind === "plugin" ? (item as { source?: string }).source === "managed"
+          : (item as { source?: string }).source === "shared"))) {
+      sendError(response, 404, "Resource is not installed for that agent"); return;
+    }
+    setActivationPreference(body.kind, body.name, body.harness, body.enabled);
+    await reloadSharedSkills();
+    response.json({ ...body, decision: activationDecision(body.kind, body.name, body.harness, body.kind === "skill" ? receivedSkill(body.name) : receivedResource(body.kind, body.name)) });
+  } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation choice"); else next(error); }
+});
 
 interface NodeInventory {
   node: { id: string; name: string; local: boolean; online: boolean };
@@ -87,7 +119,7 @@ app.post(["/api/cluster/resources/inventory", "/api/cluster/v2/runtime/resources
     const skills = inventory.skills.filter((skill) => skill.origin === "scoped" ? false : skill.origin === "project"
       ? Boolean(projectId)
       : skill.origin === "shared" && !received.has(skill.name) && authorizedSkillClusters(db, local.id, sender, skill.name).length > 0);
-    response.json({ ...inventory, skills: skills.map((skill) => ({ ...skill, path: "" })), mcpServers: inventory.mcpServers.map((server) => ({ ...server, file: "" })), sharedSkillsPath: "", mcpConfigPath: "" });
+    response.json({ ...inventory, skills: skills.map((skill) => ({ ...skill, path: "" })), mcpServers: inventory.mcpServers.map((server) => ({ ...server, file: "" })), plugins: inventory.plugins.map((plugin) => ({ ...plugin, file: "" })), sharedSkillsPath: "", mcpConfigPath: "" });
   } catch (error) { next(error); }
 });
 

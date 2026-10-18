@@ -13,6 +13,7 @@ import type { Duplex } from "node:stream";
 import type { DatabaseSync } from "node:sqlite";
 import WebSocket, { WebSocketServer } from "ws";
 import { clusterPublicKeyFingerprint, getOrCreateClusterIdentity, signClusterMessage, verifyClusterMessage } from "../cluster-identity.js";
+import { publishedRelayPolicy } from "./resource-policy.js";
 import { ChannelHub, type IncomingChannel } from "./hub.js";
 import { isTrustedTwin } from "../cluster-sharing-policy.js";
 import {
@@ -355,7 +356,13 @@ export class RelayServer {
     setMachinePhoneSignIn(this.db, machine.nodeId, session.gatewayEnabled);
     this.sessions.get(machine.nodeId)?.terminate("Replaced by a newer connection");
     this.activate(session);
+    session.deliver(encodeControl({ t: "skill-policy", statement: publishedRelayPolicy(this.db, this.nodeId) }));
     return session;
+  }
+
+  broadcastSkillPolicy(): void {
+    const frame = encodeControl({ t: "skill-policy", statement: publishedRelayPolicy(this.db, this.nodeId) });
+    for (const session of this.sessions.values()) if (session.kind === "remote") session.deliver(frame);
   }
 
   private deny(ws: FrameSocket, reason: string, code: DeniedCode): undefined {

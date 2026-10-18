@@ -2,7 +2,8 @@ import { mkdir, readdir, readFile, realpath, rename, writeFile } from "node:fs/p
 import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
-import { agentResourcePaths } from "./agent-resources.js";
+import { agentResourcePaths, blockedPluginSkill } from "./agent-resources.js";
+import { activationDecision, receivedResource, receivedSkill, type ActivationDecision } from "./resource-activation.js";
 import { claudeEnterpriseMcpPath, claudePluginMcpServers, claudeProjectMcpDecisions } from "./harnesses/claude/resources.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime } from "./harnesses/runtime-configuration.js";
@@ -22,6 +23,7 @@ export interface InventorySkill {
   origin: SkillOrigin;
   path: string;
   harnesses: HarnessId[];
+  activation?: Partial<Record<HarnessId, ActivationDecision>>;
 }
 
 export type McpSource = "shared" | "user" | "local" | "project" | "plugin" | "enterprise";
@@ -36,12 +38,22 @@ export interface InventoryMcpServer {
   /** The command name or URL origin; never arguments, headers or environment values. */
   target: string;
   enabled: boolean;
+  activation?: Partial<Record<HarnessId, ActivationDecision>>;
+}
+
+export interface InventoryPlugin {
+  name: string;
+  file: string;
+  source: "managed" | "project" | "extension";
+  harnesses: HarnessId[];
+  activation: Partial<Record<HarnessId, ActivationDecision>>;
 }
 
 export interface ResourceInventory {
   harnesses: Array<{ id: HarnessId; label: string; mcp: boolean }>;
   skills: InventorySkill[];
   mcpServers: InventoryMcpServer[];
+  plugins: InventoryPlugin[];
   sharedSkillsPath: string;
   mcpConfigPath: string;
 }
@@ -168,7 +180,12 @@ export async function listMcpServers(projectPath?: string, resourceRoot?: string
     discovered.has("kiro") ? kiroServers(projectPath) : [],
   ]);
   const decisions = projectPath ? claudeProjectMcpDecisions(projectPath) : undefined;
-  const entries = [...shared, ...groups.flat(), ...servers(enterprise?.mcpServers, { source: "enterprise", file: claudeEnterpriseMcpPath(), harnesses: ["claude"] })];
+  const entries = [...shared, ...groups.flat(), ...servers(enterprise?.mcpServers, { source: "enterprise", file: claudeEnterpriseMcpPath(), harnesses: ["claude"] })]
+    .map((server) => {
+      const activation = Object.fromEntries(server.harnesses.map((harness) => [harness,
+        activationDecision("mcp", server.name, harness, server.source === "shared" && receivedResource("mcp", server.name))]));
+      return { ...server, activation, enabled: server.enabled && server.harnesses.some((harness) => activation[harness].enabled) };
+    });
   return entries.flatMap((server) => {
     if (!strict) return [server];
     if (["user", "local"].includes(server.source)) return [{ ...server, enabled: false }];
@@ -195,7 +212,9 @@ async function inventorySkills(projectPath: string | undefined, projectId: strin
     if (existing) { if (!existing.harnesses.includes(summary.harness)) existing.harnesses.push(summary.harness); continue; }
     byKey.set(key, { name: summary.name, description: summary.description, origin, path: location, harnesses: [summary.harness] });
   }
-  return [...byKey.values()].sort((left, right) => left.name.localeCompare(right.name) || left.origin.localeCompare(right.origin));
+  return [...byKey.values()].map((skill) => ({ ...skill, activation: Object.fromEntries(skill.harnesses.map((harness) => [harness,
+    activationDecision("skill", skill.name, harness, skill.origin === "scoped" || skill.origin === "shared" && receivedSkill(path.basename(skill.path), sharedRoot))])) }))
+    .sort((left, right) => left.name.localeCompare(right.name) || left.origin.localeCompare(right.origin));
 }
 
 /** Everything this node would load: skills per harness and MCP servers, for one project or node-wide. */
@@ -206,7 +225,35 @@ export async function resourceInventory(options: { projectPath?: string; project
     listMcpServers(options.projectPath, options.resourceRoot),
   ]);
   const harnesses = listDiscoveredHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label, mcp: MCP_HARNESSES.includes(adapter.id) }));
-  return { harnesses, skills, mcpServers, sharedSkillsPath: paths.sharedSkills, mcpConfigPath: paths.mcpConfig };
+  const plugins: InventoryPlugin[] = [];
+  try {
+    for (const entry of await readdir(paths.claudePlugins, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const file = path.join(paths.claudePlugins, entry.name, ".claude-plugin/plugin.json");
+      if (!await readJson(file)) continue;
+      const decision = activationDecision("plugin", entry.name, "claude", receivedResource("plugin", entry.name));
+      const blockedSkill = blockedPluginSkill(path.dirname(path.dirname(file)));
+      plugins.push({ name: entry.name, file, source: "managed", harnesses: ["claude"],
+        activation: { claude: blockedSkill ? { ...decision, enabled: false, reason: `Contains blocked skill ${blockedSkill}` } : decision } });
+    }
+  } catch (error) { if (!missing(error)) throw error; }
+  try {
+    for (const entry of await readdir(paths.piExtensions, { withFileTypes: true })) {
+      const file = path.join(paths.piExtensions, entry.name);
+      if (!entry.isDirectory() && !entry.isFile()) continue;
+      if (entry.isFile() && !/\.[cm]?[jt]s$/.test(entry.name)) continue;
+      plugins.push({ name: entry.name, file, source: "extension", harnesses: ["pi"],
+        activation: { pi: activationDecision("plugin", entry.name, "pi", false) } });
+    }
+  } catch (error) { if (!missing(error)) throw error; }
+  if (options.projectPath) {
+    const configured = getScopedResourcePaths(options.projectId, options.conversationId);
+    for (const plugin of [...configured.global.plugins, ...configured.project.plugins]) {
+      plugins.push({ name: path.basename(plugin), file: plugin, source: "project", harnesses: ["claude", "pi"],
+        activation: { claude: activationDecision("plugin", path.basename(plugin), "claude", false), pi: activationDecision("plugin", path.basename(plugin), "pi", false) } });
+    }
+  }
+  return { harnesses, skills, mcpServers, plugins, sharedSkillsPath: paths.sharedSkills, mcpConfigPath: paths.mcpConfig };
 }
 
 /** Copies named servers from a local config into the shared MCP config that every node's Claude and Kiro load. */

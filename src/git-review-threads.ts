@@ -11,13 +11,15 @@ export const GIT_REVIEW_THREAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface GitReviewSelection {
   /** "worktree" for a pending change, or a commit hash for a historical one. */
-  scope: "worktree" | "commit";
+  scope: "worktree" | "commit" | "context";
   /** The commit hash when scope is "commit". */
   revision?: string;
   /** The reviewed file path, when the question targets one file. */
   filePath?: string;
   /** Whether the reviewed change was staged, for a worktree scope. */
   staged?: boolean;
+  /** What a "context" question is about, such as a pull request or a pipeline job. */
+  label?: string;
 }
 
 export interface GitReviewMessage {

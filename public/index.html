@@ -1389,6 +1389,7 @@
         <section class="settings-panel resources-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden data-testid="resources-panel" data-admin-only>
           <p class="settings-hint" id="resourcesSummary" data-testid="resources-summary"></p>
           <div class="resources-toolbar">
+            <select id="resourcesNodeSelect" aria-label="Node" data-testid="resources-node-select"><option value="">This node</option></select>
             <select id="resourcesScopeSelect" aria-label="Show resources for" data-testid="resources-scope-select">
               <option value="conversation">This conversation</option>
               <option value="project">This project, every node</option>
@@ -1404,10 +1405,23 @@
           <div class="resources-tabs" role="tablist" aria-label="Resource types">
             <button type="button" role="tab" data-resources-tab="skills" aria-selected="true" data-testid="resources-tab-skills">Skills <span id="resourcesSkillsCount"></span></button>
             <button type="button" role="tab" data-resources-tab="mcp" aria-selected="false" data-testid="resources-tab-mcp">MCP servers <span id="resourcesMcpCount"></span></button>
+            <button type="button" role="tab" data-resources-tab="tools" aria-selected="false" data-testid="resources-tab-tools">Tools</button>
+            <button type="button" role="tab" data-resources-tab="plugins" aria-selected="false" data-testid="resources-tab-plugins">Plugins <span id="resourcesPluginsCount"></span></button>
             <button type="button" role="tab" data-resources-tab="add" aria-selected="false" data-testid="resources-tab-add">+ Add skills</button>
             <button type="button" role="tab" data-resources-tab="git" aria-selected="false" data-testid="resources-tab-git">Git repos <span id="resourcesGitCount"></span></button>
             <button type="button" role="tab" data-resources-tab="paths" aria-selected="false" data-testid="resources-tab-paths">Load paths</button>
           </div>
+          <label class="checkbox-row resources-auto-activate"><input id="resourcesAutoActivate" type="checkbox" data-testid="resources-auto-activate" checked /> Auto-activate shared skills on this node</label>
+          <section class="resources-relay-policy" id="resourcesRelayPolicy" data-testid="resources-relay-policy">
+            <label>Relay skill rules<select id="resourcesRelaySelect" data-testid="resources-relay-select"><option value="">Choose a relay</option></select></label>
+            <div id="resourcesRelayPreview" data-testid="resources-relay-preview"></div>
+            <div id="resourcesRelayPublisher" hidden>
+              <label>Rules this node publishes when serving a relay. One line per rule: <code>enable calendar claude</code> or <code>block deployment all</code>.
+                <textarea id="resourcesRelayRules" data-testid="resources-relay-rules" spellcheck="false"></textarea>
+              </label>
+              <button class="ghost compact" type="button" id="resourcesRelayPublish" data-testid="resources-relay-publish">Publish signed rules</button>
+            </div>
+          </section>
           <div class="resources-share-bar" id="resourcesShareBar" data-testid="resources-share-bar" hidden></div>
           <div class="resources-list resources-page" id="resourcesList" role="tabpanel" data-testid="resources-list"></div>
           <div class="resources-pager" id="resourcesListPager" data-testid="resources-list-pager" hidden></div>

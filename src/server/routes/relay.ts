@@ -11,6 +11,8 @@ import { advertisedNodeUrl, relayRuntimeInstance, relayServerInstance, relayServ
 import { setOtherUsersMayUsePhone } from "../../relay/phone-policy.js";
 import { normalizeRelayOrigin, phoneAddress, RELAY_NAME_PATTERN } from "../../relay/protocol.js";
 import { RelayServerError } from "../../relay/relay-server.js";
+import { publishRelayPolicy, publishedRelayPolicy, relayPolicySubscriptions, relaySkillRulesSchema, subscribeRelayPolicy } from "../../relay/resource-policy.js";
+import { reloadSharedSkills } from "../realtime.js";
 import { enrollLink, LOCAL_RELAY_ID, RelayRuntimeError } from "../../relay/runtime.js";
 import {
   audit, createRelayToken, listAudit, listRelayMachines, listRelayTokens, machineUsage, otherUsersPhoneSignIn, relayMachine, RelayStoreError,
@@ -92,6 +94,33 @@ async function membershipView(response: Response): Promise<unknown> {
 }
 
 app.get("/api/relays", handle(async (_request, response) => { response.json(await membershipView(response)); }));
+app.get("/api/relays/skill-policies", handle(async (_request, response) => {
+  const db = await clusterV2Database();
+  response.json({ subscriptions: relayPolicySubscriptions(db).map(({ relay, optedIn, statement, updatedAt }) => ({
+    id: relay.id, name: relay.name, origin: relay.origin, optedIn, version: statement?.body.version ?? null,
+    rules: statement?.body.rules ?? [], updatedAt,
+  })) });
+}));
+app.put("/api/relays/:id/skill-policy-subscription", handle(async (request, response) => {
+  const db = await clusterV2Database();
+  const { optedIn } = z.object({ optedIn: z.boolean() }).strict().parse(request.body);
+  subscribeRelayPolicy(db, uuid.parse(request.params.id), optedIn);
+  await reloadSharedSkills();
+  response.json({ subscriptions: relayPolicySubscriptions(db).map(({ relay, optedIn, statement }) => ({
+    id: relay.id, optedIn, rules: statement?.body.rules ?? [], version: statement?.body.version ?? null,
+  })) });
+}));
+app.get("/api/relay/serving/skill-policy", handle(async (_request, response) => {
+  const db = await clusterV2Database();
+  response.json(publishedRelayPolicy(db, (await getClusterNode()).id).body);
+}));
+app.put("/api/relay/serving/skill-policy", handle(async (request, response) => {
+  const db = await clusterV2Database();
+  const rules = relaySkillRulesSchema.parse(z.object({ rules: relaySkillRulesSchema }).strict().parse(request.body).rules);
+  const statement = publishRelayPolicy(db, (await getClusterNode()).id, rules);
+  relayServerInstance()?.broadcastSkillPolicy();
+  response.json(statement.body);
+}));
 app.get("/api/relays/:id/transport-events", handle(async (request, response) => {
   const db = await clusterV2Database();
   const id = uuid.parse(request.params.id);

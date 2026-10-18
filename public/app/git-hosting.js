@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { renderMarkdown } from "../markdown.js";
 import { confirmAction, toast } from "./shell.js";
 
 const hosting = elements.gitReviewHosting;
@@ -18,6 +19,8 @@ let detail = null;
 let jobId = null;
 let log = null;
 let explainPull = null;
+let askAi = null;
+let logLoading = null;
 
 function node(tag, className = "", text = "") {
   const element = document.createElement(tag);
@@ -32,6 +35,67 @@ function button(text, action, className = "ghost compact", testid = "") {
   if (testid) element.dataset.testid = testid;
   element.addEventListener("click", action);
   return element;
+}
+
+function ago(value) {
+  const seconds = Math.round((Date.now() - new Date(value).getTime()) / 1000);
+  if (!Number.isFinite(seconds)) return "";
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return seconds < 86400 * 30 ? `${Math.floor(seconds / 86400)}d ago` : new Date(value).toLocaleDateString();
+}
+
+function span(start, end) {
+  const seconds = Math.round((new Date(end ?? Date.now()).getTime() - new Date(start).getTime()) / 1000);
+  if (!start || !Number.isFinite(seconds) || seconds < 0) return "";
+  return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
+}
+
+// success | failure | running | neutral, shared by badges, rows and steps so one colour means one thing.
+function tone(status, conclusion) {
+  if (status && status !== "completed") return "running";
+  return conclusion === "success" ? "success" : conclusion === "failure" || conclusion === "timed_out" ? "failure" : "neutral";
+}
+
+function badge(label, kind) { return node("span", `git-hosting-badge is-${kind}`, label); }
+function chip(text, title = "") { const element = node("span", "git-hosting-chip", text); if (title) element.title = title; return element; }
+
+function githubLink(href, text) {
+  if (typeof href !== "string" || !href.startsWith("https://github.com/")) return null;
+  const link = node("a", "git-hosting-link", text);
+  link.href = href;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  return link;
+}
+
+function spinner(text) {
+  const element = node("p", "git-hosting-loading");
+  element.setAttribute("role", "status");
+  element.append(node("span", "git-hosting-spinner"), document.createTextNode(text));
+  return element;
+}
+
+// Strip terminal colour codes and the per-line timestamp GitHub prefixes, and mark error lines.
+function renderLog(text) {
+  const pre = node("pre", "git-hosting-log");
+  let firstError = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\u001b\[[0-9;]*m/g, "").replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z ?/, "");
+    const row = node("span", /(^|\W)(error|failed|fail|fatal|✕|✖)(\W|$)|##\[error\]|^\s*not ok\b/i.test(line) ? "git-hosting-log-line is-error" : "git-hosting-log-line", `${line}\n`);
+    if (!firstError && row.classList.contains("is-error")) firstError = row;
+    pre.append(row);
+  }
+  pre.dataset.firstError = firstError ? "1" : "";
+  pre.firstErrorLine = firstError;
+  return pre;
+}
+
+function patchView(patch) {
+  const pre = node("pre", "git-hosting-log git-hosting-patch");
+  for (const line of patch.split("\n")) pre.append(node("span", line.startsWith("+") ? "is-add" : line.startsWith("-") ? "is-del" : line.startsWith("@@") ? "is-hunk" : "", `${line}\n`));
+  return pre;
 }
 
 // Only a completed, non-failed job earns a check; queued and running jobs have no conclusion yet.
@@ -52,8 +116,9 @@ export function resetGitHosting() {
   hosting.replaceChildren();
 }
 
-export async function loadGitHosting(nextTab, gitUrl, onExplainPull) {
-  explainPull = onExplainPull;
+export async function loadGitHosting(nextTab, gitUrl, handlers = {}) {
+  explainPull = handlers.explainPull;
+  askAi = handlers.ask;
   generation++;
   tab = nextTab;
   url = gitUrl;
@@ -64,14 +129,14 @@ export async function loadGitHosting(nextTab, gitUrl, onExplainPull) {
   page = 1;
   if (tab === "pulls") { pullState = "open"; pulls = []; }
   else runs = [];
-  hosting.replaceChildren(node("p", "git-hosting-message", "Loading…"));
+  hosting.replaceChildren(spinner(`Loading ${nextTab === "pulls" ? "pull requests" : "pipeline runs"}…`));
   await loadList();
 }
 
 async function loadList(append = false) {
   const version = ++generation;
   status(`Loading ${tab === "pulls" ? "pull requests" : "pipeline runs"}…`);
-  if (!append) hosting.replaceChildren(node("p", "git-hosting-message", "Loading…"));
+  if (!append) hosting.replaceChildren(spinner(`Loading ${tab === "pulls" ? "pull requests" : "pipeline runs"}…`));
   try {
     const params = tab === "pulls" ? { op: "pulls", state: pullState, page } : { op: "runs", page };
     const response = await api(url("github", params));
@@ -87,8 +152,14 @@ async function loadList(append = false) {
     if (!validView(tab, version)) return;
     status(error.message);
     if (append) { page--; renderList(); toast(error.message, 8000); }
-    else hosting.replaceChildren(node("p", "git-hosting-message", error.message));
+    else hosting.replaceChildren(errorState(error.message, () => { void loadList(); }));
   }
+}
+
+function errorState(message, retry) {
+  const box = node("div", "git-hosting-error");
+  box.append(node("p", "", message), button("Try again", retry, "ghost compact", "git-hosting-retry"));
+  return box;
 }
 
 function filters() {
@@ -139,17 +210,25 @@ function filterRows() {
 
 function renderList() {
   const title = node("h3", "git-hosting-title", tab === "pulls" ? "All pull requests" : "All pipeline runs");
-  const note = node("p", "git-hosting-note", tab === "pulls" ? "Choose a pull request to read reviews and respond." : "Choose a workflow run to see its jobs, dependencies, and logs.");
+  const note = node("p", "git-hosting-note", tab === "pulls" ? "Pick a pull request to read, review and merge it, or ask an agent about it." : "Pick a run to see its jobs and logs, or ask an agent why it failed.");
   const list = node("div", "git-hosting-rows");
   for (const [index, item] of (tab === "pulls" ? pulls : runs).entries()) {
     const row = button("", () => { void openDetail(index); }, "git-hosting-row", tab === "pulls" ? "git-hosting-pull-row" : "git-hosting-run-row");
-    const failed = tab === "pipelines" && item.conclusion === "failure";
-    const pending = tab === "pipelines" && item.status !== "completed";
-    row.append(node("span", `git-hosting-indicator${failed ? " is-failed" : pending ? " is-running" : ""}`, failed ? "✕" : pending ? "◌" : item.state === "closed" ? "●" : "✓"));
+    const kind = tab === "pipelines" ? tone(item.status, item.conclusion) : item.merged_at ? "merged" : item.state === "closed" ? "neutral" : "success";
+    const mark = kind === "failure" ? "✕" : kind === "running" ? "◌" : kind === "neutral" ? (tab === "pulls" ? "●" : "–") : kind === "merged" ? "⇄" : "✓";
+    const indicator = node("span", `git-hosting-indicator is-${kind}`, kind === "running" ? "" : mark);
+    if (kind === "running") { indicator.append(node("span", "git-hosting-spinner")); indicator.title = "Running"; }
+    row.append(indicator);
     const copy = node("span", "git-hosting-row-copy");
     copy.append(node("strong", "", tab === "pulls" ? item.title : `${item.name} #${item.run_number}`));
-    copy.append(node("span", "git-hosting-note", tab === "pulls" ? `#${item.number} · ${item.user.login} · ${item.head.ref} → ${item.base.ref}` : `${item.head_branch} · ${item.status === "completed" ? item.conclusion : item.status} · ${new Date(item.created_at).toLocaleString()}`));
+    const meta = node("span", "git-hosting-meta");
+    if (tab === "pulls") meta.append(chip(`#${item.number}`), chip(`${item.head.ref} → ${item.base.ref}`), chip(item.user.login), ...(item.draft ? [badge("draft", "neutral")] : []));
+    else meta.append(chip(item.head_branch), badge(item.status === "completed" ? item.conclusion ?? "completed" : item.status.replace("_", " "), kind), ...(item.event ? [chip(item.event)] : []));
+    copy.append(meta);
     row.append(copy);
+    const when = node("span", "git-hosting-when", ago(item.updated_at ?? item.created_at));
+    when.title = new Date(item.created_at).toLocaleString();
+    row.append(when, node("span", "git-hosting-chevron", "›"));
     if (tab === "pipelines") { row.dataset.workflow = item.name; row.dataset.status = item.status === "completed" ? item.conclusion : item.status; }
     list.append(row);
   }
@@ -205,47 +284,104 @@ async function createPull(form) {
   }
 }
 
+function backButton() {
+  return button(tab === "pulls" ? "← All pull requests" : "← All pipeline runs", () => {
+    generation++;
+    detail = null;
+    status("");
+    if (tab === "pulls" && !pulls.length) { page = 1; void loadList(); }
+    else renderList();
+  }, "git-hosting-back", "git-hosting-back");
+}
+
 async function openDetail(index) {
   const selected = tab === "pulls" ? pulls[index] : runs[index];
   const version = ++generation;
-  status("Loading details…");
+  // Show the page at once so a click is acknowledged while GitHub answers.
+  hosting.replaceChildren(backButton(), node("h3", "git-hosting-title", tab === "pulls" ? `#${selected.number} · ${selected.title}` : `${selected.name} #${selected.run_number}`), spinner(tab === "pulls" ? "Loading pull request…" : "Loading jobs…"));
+  hosting.scrollTop = 0;
+  status("");
   try {
     const response = await api(url("github", { op: tab === "pulls" ? "pull" : "run", id: tab === "pulls" ? selected.number : selected.id }));
     if (!validView(tab, version)) return;
     detail = response;
     jobId = null;
     log = null;
+    logLoading = null;
     if (tab === "pipelines") jobId = response.jobs.find((job) => job.conclusion === "failure")?.id ?? response.jobs[0]?.id;
     renderDetail();
     hosting.scrollTop = 0;
     status("");
-  } catch (error) { status(error.message); toast(error.message, 8000); }
+    if (tab === "pipelines" && jobFailed(response.jobs.find((job) => job.id === jobId))) void loadLog(jobId);
+  } catch (error) {
+    if (!validView(tab, version)) return;
+    status(error.message);
+    hosting.replaceChildren(backButton(), errorState(error.message, () => { void openDetail(index); }));
+  }
 }
 
+const jobFailed = (job) => job?.status === "completed" && job.conclusion === "failure";
+
 function renderDetail() {
-  const back = button(tab === "pulls" ? "← All pull requests" : "← All pipeline runs", () => {
-    detail = null;
-    if (tab === "pulls" && !pulls.length) { page = 1; void loadList(); }
-    else renderList();
-  }, "git-hosting-back", "git-hosting-back");
-  hosting.replaceChildren(back);
+  hosting.replaceChildren(backButton());
   if (tab === "pulls") renderPullDetail();
   else renderRunDetail();
 }
 
 function commentEntry(entry, label) {
   const card = node("div", "git-hosting-comment");
-  card.append(node("strong", "", `${entry.user.login} · ${label}`));
-  card.append(node("p", "", entry.body ?? ""));
+  const head = node("div", "git-hosting-comment-head");
+  head.append(node("strong", "", entry.user.login), badge(label, label === "approved" ? "success" : label === "changes_requested" ? "failure" : "neutral"));
+  if (entry.created_at ?? entry.submitted_at) head.append(node("span", "git-hosting-when", ago(entry.created_at ?? entry.submitted_at)));
+  const body = node("div", "git-hosting-markdown");
+  if (entry.body) renderMarkdown(body, entry.body);
+  else body.append(node("p", "git-hosting-note", "No text."));
+  card.append(head, body);
   return card;
+}
+
+// What an agent gets when asked about this pull request: the text above plus the patches, bounded.
+function pullContext({ pull, comments, reviews, inline, files }) {
+  const parts = [`Pull request #${pull.number}: ${pull.title}`, `${pull.user.login} · ${pull.head.ref} → ${pull.base.ref} · ${pull.merged ? "merged" : pull.state}${pull.draft ? " · draft" : ""}`, "", pull.body || "No description."];
+  const talk = [...comments.map((item) => ["comment", item]), ...reviews.filter((item) => item.state !== "PENDING").map((item) => [item.state.toLowerCase(), item]), ...inline.map((item) => [`${item.path}:${item.line ?? item.original_line}`, item])];
+  if (talk.length) parts.push("", "Conversation:", ...talk.slice(0, 80).map(([label, item]) => `- ${item.user.login} (${label}): ${item.body ?? ""}`));
+  parts.push("", "Files:");
+  let budget = 120_000;
+  for (const file of files) {
+    const patch = (file.patch ?? "").slice(0, Math.max(0, Math.min(budget, 12_000)));
+    budget -= patch.length;
+    parts.push(`--- ${file.status} ${file.filename} +${file.additions} -${file.deletions}`, patch || "(patch omitted)");
+  }
+  return parts.join("\n");
+}
+
+function askButton(label, target, testid) {
+  const element = button(label, async () => {
+    element.disabled = true;
+    try { await askAi?.(await target()); } finally { element.disabled = false; }
+  }, "ghost compact git-hosting-ask", testid);
+  return element;
 }
 
 function renderPullDetail() {
   const { pull, comments, reviews, inline, files, fileLimit, truncated } = detail;
-  hosting.append(node("h3", "git-hosting-title", `#${pull.number} · ${pull.title}`));
-  hosting.append(node("p", "git-hosting-note", `${pull.user.login} · ${pull.head.ref} → ${pull.base.ref} · ${pull.merged ? "merged" : pull.state}${pull.draft ? " · draft" : ""}`));
-  hosting.append(button("Explain this PR", () => explainPull?.(pull.number), "ghost compact", "git-hosting-explain-pull"));
-  hosting.append(node("p", "git-hosting-description", pull.body || "No description."));
+  const kind = pull.merged ? "merged" : pull.state === "open" ? "success" : "neutral";
+  const head = node("header", "git-hosting-head");
+  const titles = node("div", "git-hosting-head-copy");
+  titles.append(node("h3", "git-hosting-title", `#${pull.number} · ${pull.title}`));
+  const meta = node("div", "git-hosting-meta");
+  meta.append(badge(pull.merged ? "merged" : pull.state, kind), ...(pull.draft ? [badge("draft", "neutral")] : []), chip(pull.user.login), chip(`${pull.head.ref} → ${pull.base.ref}`));
+  titles.append(meta);
+  const tools = node("div", "git-hosting-head-actions");
+  tools.append(askButton("Ask AI", () => ({ label: `PR #${pull.number}: ${pull.title}`, text: pullContext(detail), placeholder: "Is this safe to merge? What are the risks?" }), "git-hosting-ask-pull"), button("Explain this PR", () => explainPull?.(pull.number), "ghost compact", "git-hosting-explain-pull"));
+  const external = githubLink(pull.html_url, "Open on GitHub ↗");
+  if (external) tools.append(external);
+  head.append(titles, tools);
+  hosting.append(head);
+  const description = node("div", "git-hosting-description git-hosting-markdown");
+  if (pull.body) renderMarkdown(description, pull.body);
+  else description.append(node("p", "git-hosting-note", "No description."));
+  hosting.append(description);
   const reviewSection = node("section", "git-hosting-section");
   reviewSection.append(node("h4", "", `Conversation · ${comments.length} comments · ${reviews.length} reviews`));
   for (const comment of comments) reviewSection.append(commentEntry(comment, "comment"));
@@ -257,8 +393,11 @@ function renderPullDetail() {
   changes.append(node("h4", "", `Files · ${pull.changed_files}`));
   for (const file of files) {
     const item = node("details", "git-hosting-file");
-    item.append(node("summary", "", `${file.status} · ${file.filename} +${file.additions} −${file.deletions}`));
-    item.append(node("pre", "git-hosting-log", file.patch ?? "Binary file or patch unavailable"));
+    const summary = node("summary");
+    summary.append(badge(file.status, file.status === "added" ? "success" : file.status === "removed" ? "failure" : "neutral"), node("span", "git-hosting-file-name", file.filename), node("span", "git-hosting-diffstat"));
+    summary.lastChild.append(node("span", "is-add", `+${file.additions}`), node("span", "is-del", `−${file.deletions}`));
+    item.append(summary);
+    item.append(file.patch ? patchView(file.patch) : node("p", "git-hosting-note", "Binary file or patch unavailable"));
     changes.append(item);
   }
   if (truncated.files) changes.append(node("p", "git-hosting-note", `Only the first ${(fileLimit ?? files.length).toLocaleString()} files are shown. Open GitHub for the rest.`));
@@ -278,7 +417,7 @@ function renderPullActions(pull) {
   }
   if (pull.state === "closed" && !pull.merged) controls.append(button("Reopen PR", () => { void submitPullAction(pull, "reopen", "", ""); }, "ghost compact", "git-hosting-reopen"));
   if (pull.state === "open" && !pull.draft) for (const [method, label] of [["merge", "Merge"], ["squash", "Squash and merge"], ["rebase", "Rebase and merge"]]) {
-    controls.append(button(label, () => { void submitPullAction(pull, "merge", method, ""); }, "ghost compact", `git-hosting-merge-${method}`));
+    controls.append(button(label, () => { void submitPullAction(pull, "merge", method, ""); }, `${method === "squash" ? "primary" : "ghost"} compact${method === "merge" ? " git-hosting-merge-first" : ""}`, `git-hosting-merge-${method}`));
   }
   hosting.append(controls);
 }
@@ -304,14 +443,42 @@ async function submitPullAction(pull, action, event, body) {
   } catch (error) { toast(`Submitted on GitHub, but refresh failed: ${error.message}`, 8000); }
 }
 
+function runContext() {
+  const { run, jobs } = detail;
+  const lines = [`Workflow run: ${run.name} #${run.run_number}`, `Branch ${run.head_branch} · ${run.status === "completed" ? run.conclusion : run.status}${run.event ? ` · ${run.event}` : ""}`, "", "Jobs:"];
+  for (const job of jobs) {
+    lines.push(`- ${job.name}: ${job.status === "completed" ? job.conclusion : job.status}`);
+    for (const step of job.steps) lines.push(`    ${step.name}: ${step.conclusion ?? step.status}`);
+  }
+  return lines.join("\n");
+}
+
+// The failed job's log is the useful part, so asking about a job fetches it first.
+async function jobContext(job) {
+  if (log?.jobId !== job.id) await loadLog(job.id);
+  const tail = log?.jobId === job.id ? log.text.slice(-60_000) : "";
+  return `${runContext()}\n\nSelected job: ${job.name} (${job.status === "completed" ? job.conclusion : job.status})\n\nLog${tail.length === log?.text.length ? "" : " (end only)"}:\n${tail || "(not available)"}`;
+}
+
 function renderRunDetail() {
   const { run, jobs, groups, graphWarning, truncated } = detail;
-  hosting.append(node("h3", "git-hosting-title", `${run.name} #${run.run_number}`));
-  hosting.append(node("p", "git-hosting-note", `${run.head_branch} · ${run.status === "completed" ? run.conclusion : run.status} · ${jobs.length} jobs${truncated ? " · first 500 shown" : ""}`));
+  const kind = tone(run.status, run.conclusion);
+  const head = node("header", "git-hosting-head");
+  const titles = node("div", "git-hosting-head-copy");
+  titles.append(node("h3", "git-hosting-title", `${run.name} #${run.run_number}`));
+  const meta = node("div", "git-hosting-meta");
+  meta.append(badge(run.status === "completed" ? run.conclusion : run.status.replace("_", " "), kind), chip(run.head_branch), ...(run.event ? [chip(run.event)] : []), chip(`${jobs.length} jobs${truncated ? " (first 500)" : ""}`), ...(run.created_at ? [chip(ago(run.created_at), new Date(run.created_at).toLocaleString())] : []));
+  titles.append(meta);
+  const tools = node("div", "git-hosting-head-actions");
+  tools.append(askButton("Ask AI", () => ({ label: `${run.name} #${run.run_number}`, text: runContext(), placeholder: "Why did this fail? What should I fix?" }), "git-hosting-ask-run"));
+  const external = githubLink(run.html_url, "Open on GitHub ↗");
+  if (external) tools.append(external);
+  head.append(titles, tools);
+  hosting.append(head);
   const workspace = node("div", "git-hosting-workspace");
   const nav = node("aside", "git-hosting-job-nav");
   nav.append(node("h4", "", "All jobs"));
-  for (const job of jobs) nav.append(button(`${jobMark(job)} ${job.name}`, () => selectJob(job.id), `git-hosting-nav-job${jobId === job.id ? " is-active" : ""}`, `git-hosting-nav-job-${job.id}`));
+  for (const job of jobs) nav.append(button(`${jobMark(job)} ${job.name}`, () => selectJob(job.id), `git-hosting-nav-job is-${tone(job.status, job.conclusion)}${jobId === job.id ? " is-active" : ""}`, `git-hosting-nav-job-${job.id}`));
   const main = node("div", "git-hosting-workspace-main");
   main.append(renderGraph(groups, jobs));
   if (graphWarning) main.append(node("p", "git-hosting-note", graphWarning));
@@ -340,7 +507,7 @@ function renderGraph(groups, jobs) {
       if (group.needs.length) card.append(node("small", "", `Needs ${group.needs.join(", ")}`));
       for (const id of group.jobIds) {
         const job = jobs.find((item) => item.id === id);
-        card.append(button(`${jobMark(job)} ${job.name}`, () => selectJob(id), `git-hosting-graph-job${jobId === id ? " is-active" : ""}`, `git-hosting-graph-job-${id}`));
+        card.append(button(`${jobMark(job)} ${job.name}`, () => selectJob(id), `git-hosting-graph-job is-${tone(job.status, job.conclusion)}${jobId === id ? " is-active" : ""}`, `git-hosting-graph-job-${id}`));
       }
       column.append(card);
     }
@@ -375,32 +542,60 @@ function drawEdges() {
 
 function renderJob(job) {
   const section = node("section", "git-hosting-job");
-  section.append(node("h4", "", job?.name ?? "No job selected"));
-  if (!job) return section;
-  section.append(node("p", "git-hosting-note", `${job.status} · ${job.conclusion ?? "running"}`));
-  for (const [index, step] of job.steps.entries()) section.append(node("p", "git-hosting-step", `${index + 1}. ${step.name} · ${step.conclusion ?? step.status}`));
-  section.append(button("View full job log", () => { void loadLog(job.id); }, "ghost compact", "git-hosting-job-log"));
-  if (log?.jobId === job.id) section.append(node("pre", "git-hosting-log", `${log.text}${log.truncated ? "\n… log truncated at 1 MiB" : ""}`));
+  const head = node("div", "git-hosting-job-head");
+  head.append(node("h4", "", job?.name ?? "No job selected"));
+  if (!job) { section.append(head); return section; }
+  const kind = tone(job.status, job.conclusion);
+  head.append(badge(job.status === "completed" ? job.conclusion : job.status.replace("_", " "), kind));
+  const took = span(job.started_at, job.completed_at);
+  if (took) head.append(chip(took));
+  head.append(askButton("Ask AI about this job", async () => ({ label: `job ${job.name}`, text: await jobContext(job), placeholder: "Why did this job fail?" }), "git-hosting-ask-job"));
+  section.append(head);
+  const steps = node("ol", "git-hosting-steps");
+  for (const step of job.steps) {
+    const item = node("li", `git-hosting-step is-${tone(step.status, step.conclusion)}`);
+    item.append(node("span", "git-hosting-step-mark", step.status !== "completed" ? "◌" : step.conclusion === "failure" ? "✕" : step.conclusion === "skipped" ? "–" : "✓"), node("span", "git-hosting-step-name", step.name), node("span", "git-hosting-note", span(step.started_at, step.completed_at) || step.conclusion || step.status));
+    steps.append(item);
+  }
+  section.append(steps);
+  const logButton = button(log?.jobId === job.id ? "Reload log" : "View full job log", () => { void loadLog(job.id); }, "ghost compact", "git-hosting-job-log");
+  logButton.disabled = logLoading === job.id;
+  section.append(logButton);
+  if (logLoading === job.id) section.append(spinner("Loading log…"));
+  if (log?.jobId === job.id) {
+    const view = renderLog(`${log.text}${log.truncated ? "\n… log truncated at 1 MiB" : ""}`);
+    section.append(view);
+    section.logView = view;
+  }
   return section;
 }
 
 function selectJob(id) {
   jobId = id;
   log = null;
+  logLoading = null;
   renderDetail();
   if (window.matchMedia("(max-width: 700px)").matches) hosting.querySelector(".git-hosting-job").scrollIntoView({ block: "start" });
+  if (jobFailed(detail.jobs.find((job) => job.id === id))) void loadLog(id);
 }
 
 async function loadLog(id) {
-  status("Loading job log…");
+  logLoading = id;
+  if (detail && tab === "pipelines") renderDetail();
   try {
     const response = await api(url("github", { op: "log", id }));
     if (jobId !== id || tab !== "pipelines" || !detail) return;
     log = { jobId: id, ...response };
+    logLoading = null;
     renderDetail();
-    hosting.querySelector(".git-hosting-log").scrollIntoView({ block: "nearest" });
+    const view = hosting.querySelector(".git-hosting-log");
+    (view?.firstErrorLine ?? view)?.scrollIntoView({ block: "nearest" });
     status("");
-  } catch (error) { status(error.message); toast(error.message, 8000); }
+  } catch (error) {
+    if (logLoading === id) logLoading = null;
+    if (jobId === id && detail && tab === "pipelines") renderDetail();
+    status(error.message); toast(error.message, 8000);
+  }
 }
 
 window.addEventListener("resize", () => { if (tab === "pipelines" && detail) requestAnimationFrame(drawEdges); });

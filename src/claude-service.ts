@@ -603,7 +603,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   if (options.effort) args.push("--effort", options.effort);
   if (options.tools) args.push("--tools", options.tools.join(","));
   args.push(...claudeResourceIsolationArgs(options.cwd,
-    claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId, options.conversationId), options.systemInstructions)));
+    claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId, options.conversationId, "claude"), options.systemInstructions, options.cwd)));
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();
