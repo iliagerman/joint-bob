@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added Ask AI to pull requests, pipeline runs, and failed jobs in the Git view, with clearer status badges, rendered descriptions and comments, highlighted log errors, and a Try again button when GitHub fails to load.
+- Added per-node control over which shared skills, plugins, and MCP servers each agent uses, with a Tools tab, a Plugins tab, and relay skill rules that a machine can follow or stop following.
 
 ## 2.108.0 — 2026-10-18
 
