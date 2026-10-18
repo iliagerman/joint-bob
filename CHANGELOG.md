@@ -3,10 +3,6 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Added Ask AI to pull requests, pipeline runs, and failed jobs in the Git view, and gave those pages clearer status badges, loading states, retry on errors, and highlighted error lines in job logs.
-
 ## 2.108.0 — 2026-10-18
 
 - Showed an "Auto-reply" tag on running conversations that are driving themselves, so you can see at a glance which ones are running without you.
