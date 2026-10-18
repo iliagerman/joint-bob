@@ -92,14 +92,17 @@ test("Resources edits per-agent skill activation and node auto-activate default"
     try {
       const membership = createMembership(receiver, "https://cached-policy.fixture.example", identity.fingerprint);
       membershipId = membership.id;
-      updateMembership(receiver, membership.id, { status: "admitted", relayNodeId: relayId, fingerprint: identity.fingerprint });
+      updateMembership(receiver, membership.id, { status: "admitted", relayNodeId: relayId, fingerprint: identity.fingerprint, name: "my-laptop", environment: "Home relay" });
       receiveRelayPolicy(receiver, { ...membership, status: "admitted", relayNodeId: relayId, fingerprint: identity.fingerprint }, identity.publicKey,
         publishRelayPolicy(relay, relayId, [{ action: "block", name: skillName, harness: "claude" }]));
       subscribeRelayPolicy(receiver, membership.id, true);
     } finally { receiver.close(); relay.close(); }
     await page.getByTestId("resources-harness-select").selectOption("claude");
     await page.getByTestId("resources-refresh-button").click();
-    await row.getByText(/Blocked by relay:/).waitFor();
+    await row.getByText(/Blocked by relay: Home relay · cached-policy.fixture.example/).waitFor();
+    const relayOptions = await page.getByTestId("resources-relay-select").locator("option").allTextContents();
+    assert.ok(relayOptions.includes("Home relay · cached-policy.fixture.example"));
+    assert.equal(relayOptions.some((label) => label.includes("my-laptop")), false, "relay picker names the server, not this machine's membership");
     assert.equal(await toggle.isChecked(), true, "checkbox shows saved enable, not relay's effective block");
     await toggle.uncheck();
     await page.getByTestId("resources-status").getByText(/disabled for Claude/).waitFor();

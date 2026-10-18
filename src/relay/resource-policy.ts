@@ -75,11 +75,17 @@ export function relayPolicySubscriptions(db: DatabaseSync): Array<{ relay: Relay
   });
 }
 
+/** Membership.name is this machine's assigned name, not the relay server's identity. */
+export function relayPolicyLabel(relay: RelayMembership): string {
+  const host = new URL(relay.origin).host;
+  return relay.environment ? `${relay.environment} · ${host}` : host;
+}
+
 /** A relay is a policy author only after this machine opts in. Blocking wins across authors. */
 export function relaySkillDirective(db: DatabaseSync, name: string, harness: HarnessId): { action: "enable" | "block"; relays: string[] } | null {
   const matched = relayPolicySubscriptions(db).filter(({ optedIn }) => optedIn).flatMap(({ relay, statement }) =>
     (statement?.body.rules ?? []).filter((item) => item.name === name && (item.harness === "all" || item.harness === harness))
-      .map((item) => ({ action: item.action, label: relay.name || relay.origin })));
+      .map((item) => ({ action: item.action, label: relayPolicyLabel(relay) })));
   const action = matched.some((item) => item.action === "block") ? "block" : matched.length ? "enable" : null;
   return action ? { action, relays: matched.filter((item) => item.action === action).map((item) => item.label) } : null;
 }

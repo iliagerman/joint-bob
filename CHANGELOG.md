@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a state filter to Resources and per-agent on/off switches that show each skill, MCP server, and plugin as enabled, disabled, or read-only when it cannot be switched safely.
+
 ## 2.112.1 — 2026-10-18
 
 - Stopped project MCP configurations and plugin aliases from bypassing disabled resources. Agents refuse to start when native resource discovery cannot enforce a block.

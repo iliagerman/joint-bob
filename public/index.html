@@ -336,7 +336,7 @@
           <button type="button" data-command="/tools" data-testid="chat-tools-button">/tools</button>
           <button type="button" data-command="/compact" data-testid="chat-compact-button">/compact</button>
           <button type="button" id="savedCommandsButton" data-testid="saved-commands-button">Saved commands</button>
-          <button type="button" id="chatResourcesButton" data-testid="chat-resources-button" title="See this conversation's skills and MCP servers, and add more">Skills &amp; tools</button>
+          <button type="button" id="chatResourcesButton" data-testid="chat-resources-button" title="Enable or disable this conversation's skills, MCP servers and plugins">Resources</button>
         </div>
         <div class="conversation-lock" id="conversationLock" role="status" data-testid="conversation-lock-notice" hidden>
           <div class="conversation-lock-copy">
@@ -1387,6 +1387,7 @@
         </section>
 
         <section class="settings-panel resources-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden data-testid="resources-panel" data-admin-only>
+          <p class="settings-hint" id="resourcesControlsHint">Switch each agent on or off below. Enabled means allowed to load in new runs, not proof of use in an existing conversation. Native resources that cannot be controlled safely are marked read-only.</p>
           <p class="settings-hint" id="resourcesSummary" data-testid="resources-summary"></p>
           <div class="resources-toolbar">
             <select id="resourcesNodeSelect" aria-label="Node" data-testid="resources-node-select"><option value="">This node</option></select>
@@ -1396,6 +1397,9 @@
               <option value="cluster">Every node</option>
             </select>
             <select id="resourcesHarnessSelect" aria-label="Agent" data-testid="resources-harness-select"></select>
+            <select id="resourcesStateSelect" aria-label="Resource state" data-testid="resources-state-select">
+              <option value="">All resources</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="unknown">Agent managed / unknown</option>
+            </select>
             <label class="search-shell" for="resourcesSearchInput">
               <span class="sr-only">Search skills and tools</span>
               <input id="resourcesSearchInput" type="search" autocomplete="off" placeholder="Search" data-testid="resources-search-input" />
@@ -1411,7 +1415,7 @@
             <button type="button" role="tab" data-resources-tab="git" aria-selected="false" data-testid="resources-tab-git">Git repos <span id="resourcesGitCount"></span></button>
             <button type="button" role="tab" data-resources-tab="paths" aria-selected="false" data-testid="resources-tab-paths">Load paths</button>
           </div>
-          <label class="checkbox-row resources-auto-activate"><input id="resourcesAutoActivate" type="checkbox" data-testid="resources-auto-activate" checked /> Auto-activate shared skills on this node</label>
+          <label class="checkbox-row resources-auto-activate"><input id="resourcesAutoActivate" type="checkbox" data-testid="resources-auto-activate" checked /> Auto-activate received skills, MCP servers and plugins on this node</label>
           <section class="resources-relay-policy" id="resourcesRelayPolicy" data-testid="resources-relay-policy">
             <label>Relay skill rules<select id="resourcesRelaySelect" data-testid="resources-relay-select"><option value="">Choose a relay</option></select></label>
             <div id="resourcesRelayPreview" data-testid="resources-relay-preview"></div>

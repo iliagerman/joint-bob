@@ -71,22 +71,36 @@ function renderHarnessOptions() {
   elements.resourcesHarnessSelect.value = ids.has(current) ? current : "";
 }
 
+function effectiveEnabled(item, harness) {
+  return item.enabled !== false && item.activation?.[harness]?.enabled === true;
+}
+
+function matchesState(item) {
+  const state = document.querySelector("#resourcesStateSelect").value;
+  const harness = harnessFilter();
+  const agents = harness ? [harness] : item.harnesses;
+  const known = agents.filter((id) => item.activation?.[id]);
+  const actual = known.some((id) => effectiveEnabled(item, id)) ? "enabled"
+    : !known.length || known.length !== agents.length ? "unknown" : "disabled";
+  return !state || state === actual;
+}
+
 function filteredSkills(inventory) {
   const query = normalizedQuery(elements.resourcesSearchInput.value || "");
   const harness = harnessFilter();
-  return inventory.skills.filter((skill) => (!harness || skill.harnesses.includes(harness)) && matches(query, skill.name, skill.description));
+  return inventory.skills.filter((skill) => (!harness || skill.harnesses.includes(harness)) && matchesState(skill) && matches(query, skill.name, skill.description));
 }
 
 function filteredServers(inventory) {
   const query = normalizedQuery(elements.resourcesSearchInput.value || "");
   const harness = harnessFilter();
-  return inventory.mcpServers.filter((server) => (!harness || server.harnesses.includes(harness)) && matches(query, server.name, server.target));
+  return inventory.mcpServers.filter((server) => (!harness || server.harnesses.includes(harness)) && matchesState(server) && matches(query, server.name, server.target));
 }
 
 function filteredPlugins(inventory) {
   const query = normalizedQuery(elements.resourcesSearchInput.value || "");
   const harness = harnessFilter();
-  return (inventory.plugins ?? []).filter((plugin) => (!harness || plugin.harnesses.includes(harness)) && matches(query, plugin.name));
+  return (inventory.plugins ?? []).filter((plugin) => (!harness || plugin.harnesses.includes(harness)) && matchesState(plugin) && matches(query, plugin.name));
 }
 
 /* ---- Sharing targets ---- */
@@ -376,29 +390,64 @@ function skillRemoveButton(skill, received) {
 }
 
 function activationControl(kind, item, local, supported) {
-  const harness = harnessFilter();
-  if (!local || !harness || !supported.includes(harness)) return null;
-  const decision = item.activation?.[harness];
-  if (!decision) return null;
-  const label = document.createElement("label");
-  label.className = "resources-activation";
-  label.title = decision.reason;
-  const input = document.createElement("input");
-  const selected = decision.preference ?? (decision.reason.startsWith("Blocked by relay:")
-    ? !decision.shared || view.activation?.autoActivateSharedSkills !== false : decision.enabled);
-  input.type = "checkbox"; input.checked = selected;
-  input.dataset.testid = "resources-activation-toggle";
-  input.setAttribute("aria-label", `${selected ? "Disable" : "Enable"} ${item.name} for ${harnessLabel(harness)}`);
-  input.addEventListener("change", async () => {
-    input.disabled = true;
-    try {
-      await api("/api/resources/activation/item", { method: "PUT", body: JSON.stringify({ kind, name: item.name, harness, enabled: input.checked, ...(view.scope !== "cluster" && view.projectId ? { projectId: view.projectId } : {}), ...(view.scope === "conversation" && view.conversationId ? { conversationId: view.conversationId } : {}) }) });
-      await loadInventory();
-      setStatus(`${item.name} ${input.checked ? "enabled" : "disabled"} for ${harnessLabel(harness)}. Start a new conversation to clear instructions already read.`);
-    } catch (error) { input.checked = !input.checked; input.disabled = false; toast(error.message); }
-  });
-  label.append(input, document.createTextNode(decision.reason));
-  return label;
+  const filter = harnessFilter();
+  const agents = supported.filter((id) => (!filter || id === filter) && item.activation?.[id]);
+  if (!local || !agents.length) return null;
+  const controls = document.createElement("div");
+  controls.className = "resources-activation-controls";
+  for (const harness of agents) {
+    const decision = item.activation[harness];
+    const choice = document.createElement("span");
+    choice.className = "resources-agent-choice";
+    const restriction = item.activationRestrictions?.[harness];
+    if (restriction) {
+      const explanation = document.createElement("span");
+      explanation.className = "resources-activation-reason";
+      explanation.textContent = restriction;
+      choice.append(badge(`${harnessLabel(harness)} · read-only`), explanation);
+      controls.append(choice);
+      continue;
+    }
+    const label = document.createElement("label");
+    label.className = "resources-activation";
+    label.title = decision.reason;
+    const input = document.createElement("input");
+    const selected = decision.preference ?? (decision.reason.startsWith("Blocked by relay:")
+      ? !decision.shared || view.activation?.autoActivateSharedSkills !== false : decision.enabled);
+    input.type = "checkbox"; input.checked = selected;
+    input.dataset.testid = "resources-activation-toggle";
+    input.setAttribute("aria-label", `${selected ? "Disable" : "Enable"} ${item.name} for ${harnessLabel(harness)}`);
+    const saveChoice = async (enabled) => {
+      for (const control of controls.querySelectorAll("input, button")) control.disabled = true;
+      try {
+        await api("/api/resources/activation/item", { method: "PUT", body: JSON.stringify({ kind, name: item.name, harness, enabled, ...(view.scope !== "cluster" && view.projectId ? { projectId: view.projectId } : {}), ...(view.scope === "conversation" && view.conversationId ? { conversationId: view.conversationId } : {}) }) });
+        await loadInventory();
+        setStatus(enabled === null ? `${item.name} uses the default for ${harnessLabel(harness)}.`
+          : `${item.name} ${enabled ? "enabled" : "disabled"} for ${harnessLabel(harness)}. Start a new conversation to clear instructions already read.`);
+      } catch (error) {
+        input.checked = selected;
+        for (const control of controls.querySelectorAll("input, button")) control.disabled = false;
+        toast(error.message);
+      }
+    };
+    input.addEventListener("change", () => void saveChoice(input.checked));
+    const enabled = effectiveEnabled(item, harness);
+    label.append(input, document.createTextNode(harnessLabel(harness)), badge(enabled ? "Enabled" : "Disabled", enabled ? "active" : "off"));
+    if (filter) {
+      const reason = document.createElement("span");
+      reason.className = "resources-activation-reason";
+      reason.textContent = item.enabled === false && decision.enabled ? "Not loaded by the agent's configuration" : decision.reason;
+      label.append(reason);
+    }
+    choice.append(label);
+    if (decision.preference !== null) {
+      const reset = button("Use default", "resources-activation-reset", () => void saveChoice(null));
+      reset.setAttribute("aria-label", `Use default for ${item.name} for ${harnessLabel(harness)}`);
+      choice.append(reset);
+    }
+    controls.append(choice);
+  }
+  return controls;
 }
 
 function skillRow(skill, local) {
@@ -438,13 +487,13 @@ function skillRow(skill, local) {
     if (policy) actions.append(skillRemoveButton(skill, false));
   }
   head.append(actions);
-  const activation = ["shared", "scoped"].includes(skill.origin) ? activationControl("skill", skill, local, skill.harnesses) : null;
-  if (activation) head.append(activation);
+  const activation = activationControl("skill", skill, local, skill.harnesses);
+  if (activation) row.append(activation);
   const description = document.createElement("span");
   description.className = "skill-option-description";
   description.textContent = skill.description;
   description.title = skill.description;
-  row.append(head, description);
+  row.prepend(head, description);
   return row;
 }
 
@@ -473,13 +522,14 @@ function serverRow(server, local, inventory) {
   if (harnessDisabled || !server.enabled) head.append(badge(!harnessDisabled && server.source === "project" ? "not approved" : "disabled", "off"));
   else if (view.scope === "conversation" && view.engine && server.harnesses.includes(view.engine)) head.append(badge("active", "active"));
   head.append(...server.harnesses.map((id) => badge(harnessLabel(id), "harness")));
-  const activation = server.source === "shared" ? activationControl("mcp", server, local, server.harnesses) : null;
-  if (activation) head.append(activation);
+  const activation = ["shared", "project", "plugin"].includes(server.source) ? activationControl("mcp", server, local, server.harnesses) : null;
+  if (!activation && local) head.append(badge(server.source === "enterprise" ? "organization managed" : "agent configured", "off"));
   const target = document.createElement("span");
   target.className = "skill-option-description";
   target.textContent = `${server.transport} · ${server.target}`;
   target.title = target.textContent;
   row.append(head, target);
+  if (activation) row.append(activation);
   return row;
 }
 
@@ -492,9 +542,9 @@ function pluginRow(plugin, local) {
   const name = document.createElement("strong"); name.textContent = plugin.name;
   head.append(name, badge(plugin.source), ...plugin.harnesses.map((id) => badge(harnessLabel(id), "harness")));
   const activation = ["managed", "global", "project"].includes(plugin.source) ? activationControl("plugin", plugin, local, plugin.harnesses) : null;
-  if (activation) head.append(activation);
-  else head.append(badge("agent configured"));
+  if (!activation) head.append(badge(plugin.source === "unverified" ? "cannot inspect safely" : "agent configured · state unknown · read-only"));
   row.append(head);
+  if (activation) row.append(activation);
   return row;
 }
 
@@ -724,6 +774,8 @@ function render() {
   elements.resourcesHarnessSelect.disabled = view.scope === "conversation" && Boolean(view.engine);
   // Repositories are not per agent.
   elements.resourcesHarnessSelect.hidden = view.tab === "git";
+  document.querySelector("#resourcesStateSelect").hidden = !["skills", "mcp", "plugins"].includes(view.tab);
+  document.querySelector("#resourcesControlsHint").hidden = !["skills", "mcp", "plugins"].includes(view.tab);
   const listing = ["skills", "mcp", "tools", "plugins"].includes(view.tab);
   document.querySelector("#resourcesRelayPolicy").hidden = view.tab !== "skills"
     || (view.relayPolicies.length === 0 && document.querySelector("#resourcesRelayPublisher").hidden);
@@ -1310,6 +1362,7 @@ document.querySelector("#resourcesRelayPublish").addEventListener("click", async
   finally { publishButton.disabled = false; }
 });
 elements.resourcesHarnessSelect.addEventListener("change", () => { view.page = 0; render(); });
+document.querySelector("#resourcesStateSelect").addEventListener("change", () => { view.page = 0; render(); });
 document.querySelector("#resourcesAutoActivate").addEventListener("change", async (event) => {
   const input = event.currentTarget;
   input.disabled = true;

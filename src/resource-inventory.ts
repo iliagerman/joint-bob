@@ -25,6 +25,7 @@ export interface InventorySkill {
   path: string;
   harnesses: HarnessId[];
   activation?: Partial<Record<HarnessId, ActivationDecision>>;
+  activationRestrictions?: Partial<Record<HarnessId, string>>;
 }
 
 export type McpSource = "shared" | "user" | "local" | "project" | "plugin" | "enterprise";
@@ -40,6 +41,7 @@ export interface InventoryMcpServer {
   target: string;
   enabled: boolean;
   activation?: Partial<Record<HarnessId, ActivationDecision>>;
+  activationRestrictions?: Partial<Record<HarnessId, string>>;
 }
 
 export interface InventoryPlugin {
@@ -48,6 +50,7 @@ export interface InventoryPlugin {
   source: "managed" | "global" | "project" | "extension" | "configured" | "unverified";
   harnesses: HarnessId[];
   activation: Partial<Record<HarnessId, ActivationDecision>>;
+  activationRestrictions?: Partial<Record<HarnessId, string>>;
 }
 
 export interface ResourceInventory {
@@ -228,9 +231,11 @@ export async function listMcpServers(projectPath?: string, resourceRoot?: string
   const decisions = projectPath ? claudeProjectMcpDecisions(projectPath) : undefined;
   const entries = [...shared, ...groups.flat(), ...servers(enterprise?.mcpServers, { source: "enterprise", file: claudeEnterpriseMcpPath(), harnesses: ["claude"] })]
     .map((server) => {
-      const activation = Object.fromEntries(server.harnesses.map((harness) => [harness,
-        server.activation?.[harness]?.enabled === false ? server.activation[harness]
-          : activationDecision("mcp", server.name, harness, receivedResource("mcp", server.name))]));
+      const activation = Object.fromEntries(server.harnesses.map((harness) => {
+        const own = activationDecision("mcp", server.name, harness, receivedResource("mcp", server.name));
+        const containingPlugin = server.activation?.[harness];
+        return [harness, containingPlugin?.enabled === false ? { ...own, enabled: false, reason: containingPlugin.reason } : own];
+      }));
       return { ...server, activation, enabled: server.enabled && server.harnesses.some((harness) => activation[harness].enabled) };
     });
   return entries.flatMap((server) => {
@@ -267,14 +272,18 @@ async function inventorySkills(projectPath: string | undefined, projectId: strin
       inside(shared, location) ? path.relative(shared, location).split(path.sep)[0] : path.basename(path.dirname(manifest)), manifest);
     const origin: SkillOrigin = inside(scoped, location) ? "scoped" : received ? "shared" : summary.scope === "project" ? "project" : inside(shared, location) ? "shared" : "user";
     const decision = activationDecision("skill", name, summary.harness, origin === "scoped" || received);
+    const restriction = summary.harness === "claude" && ["user", "project"].includes(origin)
+      ? "Native Claude skills cannot be disabled here without preventing Claude from starting. Manage this copy in its source folder." : undefined;
     const key = `${origin}\0${name}`;
     const existing = byKey.get(key);
     if (existing) {
       if (!existing.harnesses.includes(summary.harness)) existing.harnesses.push(summary.harness);
       existing.activation![summary.harness] = decision;
+      if (restriction) (existing.activationRestrictions ??= {})[summary.harness] = restriction;
       continue;
     }
-    byKey.set(key, { name, description: summary.description, origin, path: location, harnesses: [summary.harness], activation: { [summary.harness]: decision } });
+    byKey.set(key, { name, description: summary.description, origin, path: location, harnesses: [summary.harness], activation: { [summary.harness]: decision },
+      ...(restriction ? { activationRestrictions: { [summary.harness]: restriction } } : {}) });
   }
   return [...byKey.values()]
     .sort((left, right) => left.name.localeCompare(right.name) || left.origin.localeCompare(right.origin));
@@ -360,6 +369,18 @@ export async function resourceInventory(options: { projectPath?: string; project
       seenPackages.add(source);
       plugins.push({ name: pluginPackageLabel(source), file, source: "configured", harnesses: ["pi"], activation: {} });
     }
+  }
+  // Preferences are name-wide, so a native copy restricts every row of that identity.
+  const restrictions = new Map(skills.filter((skill) => skill.activationRestrictions?.claude)
+    .map((skill) => [skill.name, skill.activationRestrictions!.claude!]));
+  for (const skill of skills) {
+    const reason = restrictions.get(skill.name);
+    if (reason && skill.harnesses.includes("claude")) (skill.activationRestrictions ??= {}).claude = reason;
+  }
+  if (!getSettings().strictResourceIsolation) {
+    const reason = "Enable strict resource isolation in Settings before changing this resource. Native discovery cannot enforce its disable without stopping agent launches.";
+    for (const item of [...skills, ...plugins]) if (item.harnesses.includes("claude")) (item.activationRestrictions ??= {}).claude = reason;
+    for (const server of mcpServers) for (const harness of server.harnesses) (server.activationRestrictions ??= {})[harness] = reason;
   }
   return { harnesses, skills, mcpServers, plugins, sharedSkillsPath: paths.sharedSkills, mcpConfigPath: paths.mcpConfig };
 }

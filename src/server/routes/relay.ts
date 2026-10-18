@@ -11,7 +11,7 @@ import { advertisedNodeUrl, relayRuntimeInstance, relayServerInstance, relayServ
 import { setOtherUsersMayUsePhone } from "../../relay/phone-policy.js";
 import { normalizeRelayOrigin, phoneAddress, RELAY_NAME_PATTERN } from "../../relay/protocol.js";
 import { RelayServerError } from "../../relay/relay-server.js";
-import { publishRelayPolicy, publishedRelayPolicy, relayPolicySubscriptions, relaySkillRulesSchema, subscribeRelayPolicy } from "../../relay/resource-policy.js";
+import { publishRelayPolicy, publishedRelayPolicy, relayPolicyLabel, relayPolicySubscriptions, relaySkillRulesSchema, subscribeRelayPolicy } from "../../relay/resource-policy.js";
 import { reloadSharedSkills } from "../realtime.js";
 import { enrollLink, LOCAL_RELAY_ID, RelayRuntimeError } from "../../relay/runtime.js";
 import {
@@ -97,7 +97,7 @@ app.get("/api/relays", handle(async (_request, response) => { response.json(awai
 app.get("/api/relays/skill-policies", handle(async (_request, response) => {
   const db = await clusterV2Database();
   response.json({ subscriptions: relayPolicySubscriptions(db).map(({ relay, optedIn, statement, updatedAt }) => ({
-    id: relay.id, name: relay.name, origin: relay.origin, optedIn, version: statement?.body.version ?? null,
+    id: relay.id, name: relayPolicyLabel(relay), origin: relay.origin, optedIn, version: statement?.body.version ?? null,
     rules: statement?.body.rules ?? [], updatedAt,
   })) });
 }));

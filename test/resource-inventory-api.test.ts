@@ -39,6 +39,36 @@ test("the cluster inventory asks each paired node over the signed runtime route"
     assert.doesNotMatch(JSON.stringify(cluster.body), /never-leaves/);
     assert.ok(cluster.body.nodes.find((entry) => entry.node.local)?.inventory?.skills.find((item) => item.name === "cluster-skill")?.path);
 
+    const nativeSkill = path.join(project.path, ".pi/skills/project-controls/SKILL.md");
+    await mkdir(path.dirname(nativeSkill), { recursive: true });
+    await writeFile(nativeSkill, "---\nname: project-controls\ndescription: Native project skill\n---\n");
+    const claudeSkill = path.join(project.path, ".claude/skills/claude-native/SKILL.md");
+    await mkdir(path.dirname(claudeSkill), { recursive: true });
+    await writeFile(claudeSkill, "---\nname: claude-native\ndescription: Native Claude skill\n---\n");
+    const refused = await api(a, session, "PUT", "/resources/activation/item", { kind: "skill", name: "claude-native", harness: "claude", enabled: false, projectId: project.id });
+    assert.equal(refused.status, 409, "reject unenforceable native Claude toggles before saving a launch-blocking preference");
+    const duplicate = path.join(shared, "shared/skills/claude-native/SKILL.md");
+    await mkdir(path.dirname(duplicate), { recursive: true });
+    await writeFile(duplicate, "---\nname: claude-native\ndescription: Managed duplicate\n---\n");
+    const sameName = await api(a, session, "PUT", "/resources/activation/item", { kind: "skill", name: "claude-native", harness: "claude", enabled: false, projectId: project.id });
+    assert.equal(sameName.status, 409, "an unrestricted duplicate cannot bypass a name-wide native restriction");
+    const projectMcp = path.join(project.path, ".kiro/settings/mcp.json");
+    await mkdir(path.dirname(projectMcp), { recursive: true });
+    await writeFile(projectMcp, JSON.stringify({ mcpServers: { "project-controls": { command: "fixture" } } }));
+    for (const [kind, harness] of [["skill", "pi"], ["mcp", "kiro"]]) {
+      const toggle = await api<{ decision: { enabled: boolean; preference: boolean | null } }>(a, session, "PUT", "/resources/activation/item", { kind, name: "project-controls", harness, enabled: false, projectId: project.id });
+      assert.equal(toggle.status, 200, "native skills and controllable project MCP servers have activation controls");
+      assert.equal(toggle.body.decision.enabled, false);
+      const reset = await api<{ decision: { preference: boolean | null } }>(a, session, "PUT", "/resources/activation/item", { kind, name: "project-controls", harness, enabled: null, projectId: project.id });
+      assert.equal(reset.status, 200);
+      assert.equal(reset.body.decision.preference, null);
+    }
+
+    assert.equal((await api(a, session, "PUT", "/settings", { strictResourceIsolation: false, syncthing: { endpoint: "" } })).status, 200);
+    const nativeMcp = await api(a, session, "PUT", "/resources/activation/item", { kind: "mcp", name: "project-controls", harness: "kiro", enabled: false, projectId: project.id });
+    assert.equal(nativeMcp.status, 409, "native discovery cannot promise a per-server disable");
+    assert.equal((await api(a, session, "PUT", "/settings", { strictResourceIsolation: true, syncthing: { endpoint: "" } })).status, 200);
+
     const pluginCollection = path.join(project.path, ".claude-plugins");
     const pluginManifest = path.join(pluginCollection, "kit", ".claude-plugin", "plugin.json");
     await mkdir(path.dirname(pluginManifest), { recursive: true });

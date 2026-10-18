@@ -42,12 +42,14 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
     if (body.conversationId && !body.projectId) { sendError(response, 400, "Conversation needs a project"); return; }
     const inventory = await localInventory(body.projectId, body.conversationId);
     const available = body.kind === "skill" ? inventory.skills : body.kind === "mcp" ? inventory.mcpServers : inventory.plugins;
+    const restricted = available.find((item) => item.name === body.name && item.harnesses.includes(body.harness) && item.activationRestrictions?.[body.harness]);
+    if (restricted) { sendError(response, 409, restricted.activationRestrictions![body.harness]!); return; }
     const plugin = body.kind === "plugin" ? inventory.plugins.find((item) => item.name === body.name && item.harnesses.includes(body.harness)
       && ["managed", "global", "project"].includes(item.source) && (item.source !== "project" || Boolean(body.projectId))) : undefined;
     if (!available.some((item) => item.name === body.name && item.harnesses.includes(body.harness)
-      && (body.kind === "skill" ? ["shared", "scoped"].includes((item as { origin?: string }).origin ?? "")
+      && (body.kind === "skill" ? Boolean(item.activation?.[body.harness])
         : body.kind === "plugin" ? ["managed", "global", "project"].includes((item as { source?: string }).source ?? "") && ((item as { source?: string }).source !== "project" || Boolean(body.projectId))
-          : (item as { source?: string }).source === "shared"))) {
+          : ["shared", "project", "plugin"].includes((item as { source?: string }).source ?? "")))) {
       sendError(response, 404, "Resource is not installed for that agent"); return;
     }
     setActivationPreference(body.kind, body.name, body.harness, body.enabled);
@@ -55,7 +57,7 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
     const refreshed = await localInventory(body.projectId, body.conversationId);
     const decision = (plugin ? refreshed.plugins.find((item) => item.name === body.name && item.source === plugin.source)?.activation[body.harness]
       : body.kind === "skill" ? refreshed.skills.find((item) => item.name === body.name && item.harnesses.includes(body.harness))?.activation?.[body.harness]
-        : refreshed.mcpServers.find((item) => item.name === body.name && item.source === "shared")?.activation?.[body.harness])
+        : refreshed.mcpServers.find((item) => item.name === body.name && item.harnesses.includes(body.harness) && ["shared", "project", "plugin"].includes(item.source))?.activation?.[body.harness])
       ?? activationDecision(body.kind, body.name, body.harness, body.kind === "skill" ? receivedSkill(body.name) : receivedResource(body.kind, body.name));
     response.json({ ...body, decision });
   } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation choice"); else next(error); }
