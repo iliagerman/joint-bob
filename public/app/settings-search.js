@@ -6,9 +6,9 @@ const MAX_LABEL_LENGTH = 160;
 /**
  * Searches every settings section by name: tab names, field labels, legends and headings.
  * Results cover all tabs, so a search finds a setting before the user knows which tab holds it.
- * `isAvailable(tab)` hides tabs this account can't open; `onPick(tab, element)` opens the match.
+ * `isAvailable(tab)` hides tabs this account can't open; `onPick(tab, element, entry)` opens the match.
  */
-export function createSettingsSearch({ input, results, tabs, panels, isAvailable, onPick }) {
+export function createSettingsSearch({ input, results, tabs, panels, isAvailable, onPick, getExtraEntries = () => [] }) {
   let current = [];
   let active = 0;
 
@@ -39,6 +39,7 @@ export function createSettingsSearch({ input, results, tabs, panels, isAvailable
         entries.push({ tab, element, title, section, key: `${name} › ${section || name}`, search: `${title} ${section} ${name}` });
       }
     }
+    entries.push(...getExtraEntries());
     return entries;
   }
 
@@ -103,7 +104,7 @@ export function createSettingsSearch({ input, results, tabs, panels, isAvailable
     if (!entry) return;
     input.value = "";
     results.hidden = true;
-    onPick(entry.tab, entry.element);
+    onPick(entry.tab, entry.element, entry);
   }
 
   input.addEventListener("input", render);

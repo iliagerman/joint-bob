@@ -39,6 +39,36 @@ test("settings search finds a setting by its name, opens its section, and flashe
   await search.press("Enter");
   assert.equal(await page.getByTestId("settings-tab-engines").getAttribute("aria-selected"), "true");
 
+  // A saved account can be found by name or variable from anywhere, even when
+  // the Secrets list is currently filtered to another provider.
+  await page.getByTestId("settings-tab-secrets").click();
+  await page.getByTestId("secret-account-add-button").click();
+  await page.getByTestId("secret-account-label-input").fill("Search fixture billing");
+  await page.getByTestId("secret-variable-name-input").first().fill("BILLING_SEARCH_KEY");
+  await page.getByTestId("secret-variable-value-input").first().fill("synthetic-only");
+  await page.getByTestId("secret-variable-value-input").nth(1).fill("synthetic-only");
+  const created = page.waitForResponse((response) => response.url().endsWith("/api/secrets/accounts") && response.request().method() === "POST");
+  await page.getByTestId("secret-account-save-button").click();
+  assert.equal((await created).status(), 201);
+  await page.getByTestId("secret-account-dialog").waitFor({ state: "hidden" });
+  await page.getByTestId("secret-type-select").click();
+  await page.getByTestId("secret-type-select-search").fill("stripe");
+  await page.getByTestId("secret-type-select-option").getByText("Stripe").click();
+  await page.getByTestId("settings-tab-account").click();
+  await search.fill("BILLING_SEARCH_KEY");
+  await results.getByText("Search fixture billing").waitFor();
+  await results.getByText("Search fixture billing").click();
+  assert.equal(await page.getByTestId("settings-tab-secrets").getAttribute("aria-selected"), "true");
+  const accountRow = page.getByTestId("secret-account-list").locator(".secret-account-row").filter({ hasText: "Search fixture billing" });
+  await accountRow.waitFor();
+  assert.ok(await accountRow.evaluate((row) => row.classList.contains("settings-hit")));
+  assert.equal(await page.getByTestId("secret-account-search").inputValue(), "Search fixture billing");
+  assert.equal(await page.getByTestId("secret-type-select").getAttribute("data-value"), "all");
+  await search.fill("Search fixture billing");
+  await results.getByText("Search fixture billing").waitFor();
+  await search.fill("synthetic-only");
+  await page.getByText("No settings match").waitFor({ timeout: 10_000 });
+
   // A query nothing matches says so.
   await search.fill("zqxjv");
   await page.getByText("No settings match").waitFor({ timeout: 10_000 });

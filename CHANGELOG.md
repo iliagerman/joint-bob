@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added Settings search for saved secret accounts by account name or variable name, which opens the Secrets tab with the matching account highlighted.
+
 ## 2.109.0 — 2026-10-18
 
 - Added Ask AI to pull requests, pipeline runs, and failed jobs in the Git view, which sends the item's details to the read-only reviewer as a question.

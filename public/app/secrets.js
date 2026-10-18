@@ -252,7 +252,7 @@ function renderSecretAccounts() {
     return;
   }
   for (const account of visible) {
-    const row = document.createElement("div"); row.className = "secret-account-row"; row.dataset.provider = account.provider;
+    const row = document.createElement("div"); row.className = "secret-account-row"; row.dataset.provider = account.provider; row.dataset.accountId = account.id;
     const meta = document.createElement("span"); meta.className = "secret-account-meta";
     const owner = account.projectId ? ` · ${state.projects.find((project) => project.id === account.projectId)?.name ?? account.projectId}` : "";
     const name = document.createElement("strong"); name.textContent = `${account.label} · ${providerLabels[account.provider] ?? account.provider}${owner}`;
@@ -337,6 +337,16 @@ secretTypePicker.setOptions([{ value: "all", label: "All types" }, ...providerOp
 // Icons are initialized after the module graph finishes loading (icons.js is cyclic).
 queueMicrotask(() => secretTypePicker.setValue("all"));
 elements.secretAccountSearch.addEventListener("input", renderSecretAccounts);
+
+export function revealSecretAccount(accountId) {
+  const account = secretAccounts.find((item) => item.id === accountId);
+  if (!account) return null;
+  secretTypeFilter = "all";
+  secretTypePicker.setValue("all");
+  elements.secretAccountSearch.value = account.label;
+  renderSecretAccounts();
+  return [...elements.secretAccountList.querySelectorAll(".secret-account-row")].find((row) => row.dataset.accountId === accountId) ?? null;
+}
 secretTypePicker.onChange((name) => { secretTypeFilter = name; renderSecretAccounts(); });
 elements.secretTypePicker.append(secretTypePicker.root);
 

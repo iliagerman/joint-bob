@@ -16,7 +16,7 @@ import { loadErrorReportingSettings } from "./error-reporting-settings.js";
 import { loadMfaSettings } from "./mfa.js";
 import { loadRoutingConfigs, saveDirtyRoutingConfig } from "./routing-configs.js";
 import { showResourcesPanel } from "./resources.js";
-import { loadSecretAccounts } from "./secrets.js";
+import { loadSecretAccounts, revealSecretAccount, secretAccounts } from "./secrets.js";
 import { confirmAction, syncNotifyButton, toast } from "./shell.js";
 import { state } from "./state.js";
 import { renderSessions } from "./session-list.js";
@@ -599,20 +599,33 @@ for (const tab of elements.settingsTabs) {
   });
 }
 elements.settingsTabsSelect.addEventListener("change", () => selectSettingsTab(elements.settingsTabsSelect.value));
-// Search every section by name. A pick opens its tab and flashes the matching row.
+// Search sections and saved account metadata. Never index secret values.
 const settingsSearch = createSettingsSearch({
   input: elements.settingsSearchInput,
   results: elements.settingsSearchResults,
   tabs: elements.settingsTabs,
   panels: elements.settingsPanels,
   isAvailable: (tab) => !tab.hidden && (isNodeAdmin() || !tab.hasAttribute("data-admin-only")),
-  onPick(tab, element) {
+  getExtraEntries: () => {
+    const tab = elements.settingsTabs.find((item) => item.dataset.settingsTab === "secrets");
+    if (!tab || tab.hidden) return [];
+    return secretAccounts.map((account) => ({
+      tab,
+      title: account.label,
+      section: "Secret accounts",
+      key: "Secrets › Secret accounts",
+      search: `${account.label} ${account.provider} ${account.websiteOrigin ?? ""} ${account.variables.map((variable) => variable.name).join(" ")}`,
+      accountId: account.id,
+    }));
+  },
+  onPick(tab, element, entry) {
     selectSettingsTab(tab.dataset.settingsTab);
-    if (element === tab) return;
-    element.scrollIntoView({ block: "center", behavior: "smooth" });
-    element.classList.remove("settings-hit");
-    void element.offsetWidth;
-    element.classList.add("settings-hit");
+    const target = entry.accountId ? revealSecretAccount(entry.accountId) : element;
+    if (!target || target === tab) return;
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.classList.remove("settings-hit");
+    void target.offsetWidth;
+    target.classList.add("settings-hit");
   },
 });
 elements.settingsDialog.addEventListener("keydown", (event) => {
