@@ -3,9 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.112.1 — 2026-10-18
 
-- Kept each agent's on/off choice for shared skills, plugins, and MCP servers when relay blocks or the auto-activate default change, and stopped peers from seeing private plugins and MCP servers.
+- Stopped project MCP configurations and plugin aliases from bypassing disabled resources. Agents refuse to start when native resource discovery cannot enforce a block.
+- Kept edited or unsuccessfully removed Git resources disabled when received resources are off by default.
+- Kept the sharing dialog open until updated grants are loaded, so reopening it cannot restore old sharing choices.
+- Kept each agent's on/off choice for shared skills, plugins, and MCP servers when relay blocks or the auto-activate default change.
+- Added per-agent on/off switches for global plugins, the same as for managed and project plugins.
+- Stopped peers from seeing your private plugins and MCP servers, and showed their on/off state on peers as plain enabled or disabled.
 
 ## 2.112.0 — 2026-10-18
 
