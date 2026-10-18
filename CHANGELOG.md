@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.106.2 — 2026-10-18
 
 - Made environment secrets attached, rotated, or removed mid-conversation apply to the next shell command right away, even during a running turn, without restarting the agent.
 
