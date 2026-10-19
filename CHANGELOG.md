@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Replaced the browser's plain confirmation box for deleting personal assistant items with an in-app dialog, where Cancel or Escape keeps the item.
+- Removing a Git repository in Resources now removes everything installed from it, including edited copies, which are backed up; if any removal fails, the repository stays listed so you can retry.
 
 ## 2.116.0 — 2026-10-19
 

@@ -185,12 +185,48 @@ test("imports part of a repository, follows its updates, keeps local edits, and 
     assert.deepEqual(await gitOffersFor("node-b", options), [{ id: added.id, url, ref: "main", commit: second, keys: ["plugin:marketplace/formatter", "skill:skills/alpha"] }]);
     assert.deepEqual(await gitOffersFor("node-c", options), []);
 
+    await writeFile(path.join(paths.sharedSkills, "alpha/SKILL.md"), "---\nname: alpha\ndescription: Local edit\n---\n");
     const removed = await removeGitSource(added.id, null, options);
-    assert.deepEqual(removed.removed, ["alpha"]);
-    assert.ok(removed.kept.some((entry) => entry.startsWith("formatter")), "an edited plugin is left in place");
+    assert.equal(removed.complete, true);
+    assert.deepEqual(removed.removed.sort(), ["alpha", "formatter"]);
+    assert.deepEqual(removed.kept, [], "explicit repository removal cleans up edited copies too");
+    await assert.rejects(lstat(path.join(paths.claudePlugins, "formatter")), { code: "ENOENT" });
+    assert.ok(removed.backups.some((entry) => entry.includes("formatter")), "edited plugin remains recoverable in a backup");
+    assert.ok(removed.backups.some((entry) => entry.includes("alpha")), "edited skill remains recoverable in a backup");
     assert.deepEqual(removed.recipients, ["node-b"]);
     await assert.rejects(lstat(path.join(paths.sharedSkills, "alpha")), { code: "ENOENT" });
     assert.deepEqual(await listGitSources(options), []);
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
+test("failed repository removal keeps the source and retries the remaining assets", { timeout: 60_000 }, async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "git-remove-retry-"));
+  const options = { dataDir: path.join(fixture, "data"), root: path.join(fixture, "resources") };
+  const paths = agentResourcePaths(options.root);
+  try {
+    const repository = path.join(fixture, "repo");
+    await fixtureRepository(repository);
+    const source = await addGitSource({ url: `file://${repository}`, ref: "main" }, options);
+    assert.deepEqual((await applyGitSelection(source.id, ["skill:skills/alpha", "plugin:plugins/review", "mcp:.mcp.json#github"], options)).errors, []);
+    await writeFile(path.join(paths.claudePlugins, "review-kit/commands/review.md"), "Local edit\n");
+    await writeFile(paths.mcpConfig, JSON.stringify({ mcpServers: { github: { url: "https://edited.invalid/mcp" }, unrelated: { command: "unrelated" } } }));
+    const blocked = path.join(options.dataDir, "removed-plugins");
+    await mkdir(path.dirname(blocked), { recursive: true });
+    await writeFile(blocked, "blocks plugin backup");
+    const partial = await removeGitSource(source.id, null, options);
+    assert.equal(partial.complete, false);
+    assert.equal(partial.errors.length, 1);
+    assert.deepEqual(partial.removed.sort(), ["alpha", "github"]);
+    assert.deepEqual((await listGitSources(options))[0].installed.map((item) => item.name), ["review-kit"]);
+    await assert.rejects(lstat(path.join(paths.sharedSkills, "alpha")), { code: "ENOENT" });
+    assert.deepEqual(Object.keys(JSON.parse(await readFile(paths.mcpConfig, "utf8")).mcpServers), ["unrelated"]);
+    assert.ok(partial.backups.some((entry) => entry.endsWith("server.json")));
+    await rm(blocked);
+    const finished = await removeGitSource(source.id, null, options);
+    assert.equal(finished.complete, true);
+    assert.deepEqual(finished.removed, ["review-kit"]);
+    assert.deepEqual(await listGitSources(options), []);
+    await assert.rejects(lstat(path.join(paths.claudePlugins, "review-kit")), { code: "ENOENT" });
   } finally { await rm(fixture, { recursive: true, force: true }); }
 });
 

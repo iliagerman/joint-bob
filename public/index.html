@@ -1452,10 +1452,10 @@
             <div class="resources-list resources-page" id="resourcesGitItems" data-testid="resources-git-items"></div>
             <div class="resources-pager" id="resourcesGitItemsPager" data-testid="resources-git-items-pager" hidden></div>
             <div class="github-group-actions">
-              <button class="ghost" type="button" id="resourcesGitSelectAllButton" data-testid="resources-git-select-all">Select all</button>
+              <button class="ghost" type="button" id="resourcesGitSelectAllButton" data-testid="resources-git-select-all">Select all installable</button>
               <button class="primary" type="button" id="resourcesGitApplyButton" data-testid="resources-git-apply" disabled>Apply selection</button>
             </div>
-            <p class="settings-hint">Ticked items are copied where every agent on this node loads them: skills into managed skills, plugins for Claude, MCP servers for Claude and Kiro. Unticking removes them again; copies edited here are kept. Remotes are checked for new commits every six hours. Nodes you share a repository with run this node's commit and selection, and follow each update.</p>
+            <p class="settings-hint">Installing copies skills into managed skills, plugins for Claude, and MCP servers for Claude and Kiro. Unchecking installed items removes them; edited copies are kept. Remotes are checked every six hours. Shared nodes follow this node's commit and selection.</p>
           </section>
           <section class="resources-paths" id="resourcesPathsPanel" role="tabpanel" data-testid="resources-paths-panel" hidden>
             <p>Additional to managed and native defaults. Enter one absolute file or folder per line; replace lines or add multiple folders (up to 20) per type. Project-scoped folders are additional and more specific than these global lists.</p>

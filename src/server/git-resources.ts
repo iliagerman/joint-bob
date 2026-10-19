@@ -219,7 +219,7 @@ export function registerGitResourceRoutes(): void {
     const id = idSchema.parse(request.params.id);
     const result = await removeGitSource(id);
     if (result.skillsChanged) await reloadSharedSkills().catch((error) => console.warn("Skill reload after removing a repository failed", error));
-    pushGitOffers(result.recipients).catch((error) => console.warn("Repository share delivery failed", error));
+    if (result.complete) pushGitOffers(result.recipients).catch((error) => console.warn("Repository share delivery failed", error));
     return { result };
   }));
   app.post("/api/resources/git/refresh", route(async (request) => {

@@ -829,7 +829,7 @@ function renderSummary() {
   const who = view.scope === "conversation" && view.engine ? ` · ${harnessLabel(view.engine)} conversation` : "";
   const offline = view.nodes.filter((entry) => !entry.inventory).length;
   elements.resourcesSummary.textContent = view.tab === "paths" ? "Folders every agent on this node loads skills, prompts, rules and plugins from."
-    : view.tab === "git" ? "Git repositories this node installs skills, plugins and MCP servers from, and the ones other nodes share with it."
+    : view.tab === "git" ? "This node’s Git installs. Item labels show which agents may load each one in new runs, not what open conversations have loaded."
     : `${where}${who}${offline ? ` · ${offline} node${offline === 1 ? "" : "s"} unavailable` : ""}. Tab counts are for this node.`;
 }
 
@@ -839,6 +839,7 @@ function render() {
   elements.resourcesHarnessSelect.disabled = view.scope === "conversation" && Boolean(view.engine);
   // Repositories are not per agent.
   elements.resourcesHarnessSelect.hidden = view.tab === "git";
+  document.querySelector("#resourcesNodeSelect").hidden = view.tab === "git";
   document.querySelector("#resourcesStateSelect").hidden = !["skills", "mcp", "plugins"].includes(view.tab);
   document.querySelector("#resourcesControlsHint").hidden = !["skills", "mcp", "plugins"].includes(view.tab);
   const listing = ["skills", "mcp", "tools", "plugins"].includes(view.tab);
@@ -1048,7 +1049,7 @@ async function shareSelectedServers() {
 /* ---- Git repositories ---- */
 
 const KIND_LABELS = { skill: "skill", plugin: "plugin", mcp: "MCP" };
-const GIT_STATUS_LABELS = { available: "New", imported: "Imported", edited: "Edited here", removed: "Removed here", gone: "Gone upstream" };
+const GIT_STATUS_LABELS = { available: "Not installed", imported: "Installed", edited: "Edited here", removed: "Removed here", gone: "Gone upstream" };
 const git = { sources: [], loaded: false, selectedId: null, selectedOwner: null, chosen: new Set(), sourcePage: 0, itemPage: 0 };
 const GIT_SOURCES_PER_PAGE = 3;
 
@@ -1189,13 +1190,15 @@ function gitSourceRow(source) {
     auto.append(autoInput, "Auto-update");
     const share = button("Share…", "git-source-share", () => openGitShareDialog(source));
     const remove = button("Remove", "git-source-remove", () => void gitAction(remove, async () => {
-      if (!await confirmAction({ title: `Remove ${source.label}?`, message: `Everything installed from it is removed from this node${source.recipients.length ? ` and from ${source.recipientNames.join(", ")}` : ""}. Copies edited here are kept; removed folders are backed up.`, confirmLabel: "Remove", destructive: true })) return;
+      if (!await confirmAction({ title: `Remove ${source.label}?`, message: `Remove its installed skills, plugins and MCP servers from this node, including edited copies. Removed files are backed up; edited MCP settings are backed up too.${source.recipients.length ? ` Shared nodes (${source.recipientNames.join(", ")}) will remove unedited copies; local edits there remain.` : ""}`, confirmLabel: "Remove repository and assets", destructive: true })) return;
       const body = await api(`/api/resources/git/${encodeURIComponent(source.id)}`, { method: "DELETE" });
-      git.sources = git.sources.filter((item) => item !== source);
-      if (sameSource(source)) selectSource(git.sources[0]);
-      renderGit();
+      if (body.result.complete) {
+        git.sources = git.sources.filter((item) => item !== source);
+        if (sameSource(source)) selectSource(git.sources[0]);
+        renderGit();
+      } else await loadGit();
       await Promise.all([loadInventory(), loadSkills(true)]);
-      setStatus(`Removed ${source.label}: ${gitResultText(body.result)}.`);
+      setStatus(body.result.complete ? `Removed ${source.label}: ${gitResultText(body.result)}.` : `${source.label} remains listed because removal failed: ${gitResultText(body.result)}. Fix the error and retry Remove.`);
     }), "ghost compact danger");
     actions.append(check, update, auto, share, remove);
   }
@@ -1209,6 +1212,29 @@ function gitSourceRow(source) {
   return row;
 }
 
+function gitItemAccess(item) {
+  if (item.status === "available") return git.chosen.has(item.key) ? "Selected to install · not installed yet" : "Not installed on this node";
+  if (item.status === "removed") return "Copy removed on this node · source selection still includes it";
+  const inventory = localEntry()?.inventory;
+  if (!inventory) return "Agent access unavailable";
+  const rows = item.kind === "skill" ? inventory.skills.filter((entry) => entry.name === item.name && entry.origin === "shared")
+    : item.kind === "mcp" ? inventory.mcpServers.filter((entry) => entry.name === item.name && entry.source === "shared")
+      : inventory.plugins.filter((entry) => entry.name === item.name && entry.source === "managed");
+  const harnesses = [...new Set(rows.flatMap((entry) => entry.harnesses))];
+  if (!harnesses.length) return "Installed here · agent access unknown";
+  const enabled = harnesses.filter((harness) => rows.some((entry) => entry.activation?.[harness]?.enabled));
+  const disabled = harnesses.filter((harness) => !enabled.includes(harness));
+  const labels = (ids) => ids.map(harnessLabel).join(", ");
+  const state = enabled.length ? `eligible for new runs: ${labels(enabled)}` : "disabled for all supported agents";
+  const upstream = item.status === "gone" ? "Upstream item removed · retained copy · " : "";
+  return `${upstream}Installed here · ${state}${disabled.length ? ` · disabled for: ${labels(disabled)}` : ""}`;
+}
+
+function gitItemDescription(item) {
+  const access = gitItemAccess(item);
+  return { text: [item.error || item.description || item.path, access].filter(Boolean).join(" · "), title: `${item.path}${item.description ? ` — ${item.description}` : ""}\n${access}` };
+}
+
 function gitItemRow(source, item) {
   const row = document.createElement("label");
   row.className = "resources-row resources-check-row";
@@ -1217,10 +1243,14 @@ function gitItemRow(source, item) {
   const input = document.createElement("input");
   input.type = "checkbox";
   input.dataset.testid = "resources-git-item-select";
+  input.setAttribute("aria-label", `Include ${item.name} from ${source.label} in the install selection`);
   input.disabled = Boolean(source.ownerNodeId) || (Boolean(item.error) && !git.chosen.has(item.key));
   input.checked = git.chosen.has(item.key);
   input.addEventListener("change", () => {
     if (input.checked) git.chosen.add(item.key); else git.chosen.delete(item.key);
+    const status = gitItemDescription(item);
+    description.textContent = status.text;
+    description.title = status.title;
     syncGitButtons();
   });
   const body = document.createElement("span");
@@ -1231,8 +1261,9 @@ function gitItemRow(source, item) {
   if (item.plugin) name.append(" ", badge(`in ${item.plugin}`));
   const description = document.createElement("span");
   description.className = "skill-option-description";
-  description.textContent = item.error || item.description || item.path;
-  description.title = `${item.path}${item.description ? ` — ${item.description}` : ""}`;
+  const status = gitItemDescription(item);
+  description.textContent = status.text;
+  description.title = status.title;
   body.append(name, description);
   row.append(input, body);
   return row;
@@ -1250,7 +1281,8 @@ function syncGitButtons() {
   elements.resourcesGitSelectAllButton.disabled = !source || Boolean(source.ownerNodeId);
   const installed = source ? installedKeys(source) : new Set();
   const adding = [...git.chosen].filter((key) => !installed.has(key)).length, removing = [...installed].filter((key) => !git.chosen.has(key)).length;
-  elements.resourcesGitApplyButton.textContent = adding || removing ? `Apply selection (${[adding ? `+${adding}` : "", removing ? `−${removing}` : ""].filter(Boolean).join(" ")})` : "Apply selection";
+  elements.resourcesGitApplyButton.textContent = adding && removing ? `Apply changes (+${adding}, −${removing})`
+    : adding ? `Install ${adding} selected` : removing ? `Apply removals (−${removing})` : "No pending changes";
 }
 
 function renderGit() {
@@ -1330,7 +1362,7 @@ async function applyGitChoice() {
   const removing = source.items.filter((item) => installed.has(item.key) && !git.chosen.has(item.key));
   if (!await confirmAction({
     title: `Apply ${source.label}?`,
-    message: [adding.length ? `Install ${adding.map((item) => item.name).join(", ")} for every agent on this node, scripts and MCP commands included.` : "",
+    message: [adding.length ? `Install ${adding.map((item) => item.name).join(", ")} on this node, including scripts and MCP commands. Installed items are enabled for compatible agents by default; per-agent access is shown in the list.` : "",
       removing.length ? `Remove ${removing.map((item) => item.name).join(", ")}; copies edited here are kept.` : "",
       source.recipients.length ? `${source.recipientNames.join(", ")} follow${source.recipients.length === 1 ? "s" : ""} this selection.` : ""].filter(Boolean).join(" "),
     confirmLabel: "Apply",
@@ -1341,7 +1373,7 @@ async function applyGitChoice() {
     storeSource(body.source, true);
     renderGit();
     await Promise.all([loadInventory(), loadSkills(true)]);
-    setStatus(`${source.label}: ${gitResultText(body.result)}. New Claude and Kiro runs load plugins and MCP servers.`);
+    setStatus(`${source.label}: ${gitResultText(body.result)}. Agent access below describes eligibility for new runs, not which open conversations have loaded the items.`);
   });
   syncGitButtons();
 }

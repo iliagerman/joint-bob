@@ -479,17 +479,17 @@ async function installItem(store: Store, source: GitResourceSource, checkout: st
   result.installed.push(item.name);
 }
 
-async function uninstallItem(source: GitResourceSource, item: InstalledGitItem, result: GitApplyResult, options: GitResourceOptions): Promise<void> {
+async function uninstallItem(source: GitResourceSource, item: InstalledGitItem, result: GitApplyResult, options: GitResourceOptions, removeEdited = false): Promise<void> {
   // Materialize legacy provenance before its source record can disappear, including failed removals.
   if (source.ownerNodeId && item.kind !== "skill") markReceivedResource(item.kind, item.kind === "plugin" ? pluginFolderName(item.name) : item.name, true);
   const current = await currentDigest(item, options);
-  source.installed = source.installed.filter((entry) => entry.key !== item.key);
+  const forget = (): void => { source.installed = source.installed.filter((entry) => entry.key !== item.key); };
   const clearProvenance = (): void => {
     if (source.ownerNodeId && item.kind !== "skill") markReceivedResource(item.kind, item.kind === "plugin" ? pluginFolderName(item.name) : item.name, false);
   };
   // Retained edits and failed removals stay received, never silently becoming auto-enabled local resources.
-  if (current === undefined) { clearProvenance(); result.removed.push(item.name); return; }
-  if (current !== item.installedDigest) { result.kept.push(`${item.name} (edited on this node)`); return; }
+  if (current === undefined) { forget(); clearProvenance(); result.removed.push(item.name); return; }
+  if (current !== item.installedDigest && !removeEdited) { forget(); result.kept.push(`${item.name} (edited on this node)`); return; }
   const location = installedLocation(item, options);
   if (item.kind === "skill") {
     result.backups.push(await backupRemovedSkill(location, options.dataDir));
@@ -504,9 +504,16 @@ async function uninstallItem(source: GitResourceSource, item: InstalledGitItem, 
   } else {
     const config = await readMcpConfig(options);
     const servers = { ...record(config.mcpServers) };
+    if (removeEdited && current !== item.installedDigest) {
+      const backup = path.join(resolveDataDirectory(options.dataDir), "removed-mcp", randomUUID(), "server.json");
+      await mkdir(path.dirname(backup), { recursive: true, mode: 0o700 });
+      await writeFile(backup, `${JSON.stringify({ name: item.name, config: servers[item.name] }, null, 2)}\n`, { mode: 0o600 });
+      result.backups.push(backup);
+    }
     delete servers[item.name];
     await writeMcpConfig({ ...config, mcpServers: servers }, options);
   }
+  forget();
   clearProvenance();
   result.removed.push(item.name);
 }
@@ -648,20 +655,22 @@ export function setGitSourceOptions(id: string, change: { autoUpdate?: boolean; 
   });
 }
 
-/** Forgets a repository and its clone. Items it installed are removed unless they were edited here. */
-export function removeGitSource(id: string, ownerNodeId: string | null = null, options: GitResourceOptions = {}): Promise<GitApplyResult & { recipients: string[] }> {
+/** Explicit removal backs up edited assets, removes its installed items, then forgets the repository only if cleanup succeeded. */
+export function removeGitSource(id: string, ownerNodeId: string | null = null, options: GitResourceOptions = {}): Promise<GitApplyResult & { recipients: string[]; complete: boolean }> {
   return withGitResourceMutation(async () => {
     const store = await readStore(options);
     const source = findSource(store, id, ownerNodeId);
     const result = emptyResult();
     for (const item of [...source.installed]) {
-      try { await uninstallItem(source, item, result, options); }
+      try { await uninstallItem(source, item, result, options, true); }
       catch (error) { result.errors.push(`${item.name}: ${(error as Error).message}`); }
     }
-    store.sources = store.sources.filter((candidate) => candidate !== source);
+    const complete = result.errors.length === 0;
+    if (complete) store.sources = store.sources.filter((candidate) => candidate !== source);
+    else { source.lastError = result.errors.join("; "); source.updatedAt = new Date().toISOString(); }
     await writeStore(store, options);
-    await rm(checkoutOf(source, options), { recursive: true, force: true });
-    return { ...result, recipients: source.recipients };
+    if (complete) await rm(checkoutOf(source, options), { recursive: true, force: true });
+    return { ...result, recipients: source.recipients, complete };
   });
 }
 

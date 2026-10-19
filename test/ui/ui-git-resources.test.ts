@@ -43,6 +43,8 @@ test("Resources → Git repos adds a repository, installs the ticked items, and 
     await page.goto(node.url); await page.getByTestId("login-username-input").fill(environment.username); await page.getByTestId("login-password-input").fill(environment.password); await page.getByTestId("login-submit-button").click();
     await page.getByText("Internal Assistant", { exact: true }).waitFor(); await page.getByTestId("settings-open-button").click(); await page.getByTestId("settings-tab-resources").click();
     await page.getByTestId("resources-tab-git").click();
+    await page.getByTestId("resources-summary").getByText(/not what open conversations have loaded/).waitFor();
+    assert.equal(await page.getByTestId("resources-node-select").isVisible(), false, "Git repositories are explicitly scoped to this node");
     await page.getByTestId("resources-git-sources").getByText(/No repositories yet/).waitFor();
 
     await page.getByTestId("resources-git-url").fill(`file://${repository}`);
@@ -51,17 +53,25 @@ test("Resources → Git repos adds a repository, installs the ticked items, and 
     await page.getByTestId("resources-status").getByText(/2 skills, 1 plugin, 1 MCP server/).waitFor();
     assert.equal(await page.getByTestId("resources-git-source").count(), 1);
     assert.equal(await page.getByTestId("resources-git-item").count(), 4);
+    const alpha = page.getByTestId("resources-git-item").filter({ hasText: "alpha" });
+    await alpha.getByText("Not installed", { exact: true }).waitFor();
+    await alpha.getByText("Not installed on this node", { exact: false }).waitFor();
     assert.equal(await page.getByTestId("resources-git-apply").isDisabled(), true);
 
     for (const name of ["alpha", "docs", "kit"]) await page.getByTestId("resources-git-item").filter({ hasText: name }).getByTestId("resources-git-item-select").check();
-    await page.getByTestId("resources-git-apply").getByText("Apply selection (+3)").waitFor();
+    await alpha.getByText("Selected to install · not installed yet", { exact: false }).waitFor();
+    await page.getByTestId("resources-git-apply").getByText("Install 3 selected").waitFor();
     await page.getByTestId("resources-git-apply").click();
     await page.getByTestId("confirm-accept-button").click();
     await page.getByTestId("resources-status").getByText(/installed .*alpha/).waitFor();
     assert.match(await readFile(path.join(resources, "shared/skills/alpha/SKILL.md"), "utf8"), /v1/);
     assert.ok((await lstat(path.join(resources, "claude/plugins/kit/.claude-plugin/plugin.json"))).isFile());
     assert.deepEqual(Object.keys(JSON.parse(await readFile(path.join(resources, "mcp/config.json"), "utf8")).mcpServers), ["docs"]);
-    assert.equal(await page.getByTestId("resources-git-item").filter({ hasText: "Imported" }).count(), 3);
+    for (const name of ["alpha", "docs", "kit"]) await page.getByTestId("resources-git-item").filter({ hasText: name }).getByText("Installed", { exact: true }).waitFor();
+    const alphaText = await page.getByTestId("resources-git-item").filter({ hasText: "alpha" }).innerText();
+    assert.match(alphaText, /Installed here · eligible for new runs: Claude, Kiro, Pi/, alphaText);
+    await page.getByTestId("resources-git-item").filter({ hasText: "docs" }).getByText(/Installed here · eligible for new runs: Claude, Kiro/).waitFor();
+    await page.getByTestId("resources-git-item").filter({ hasText: "kit" }).getByText(/Installed here · eligible for new runs: Claude/).waitFor();
     await assert.rejects(lstat(path.join(resources, "shared/skills/beta")), { code: "ENOENT" });
 
     await write(repository, "skills/alpha/SKILL.md", "---\nname: alpha\ndescription: Alpha skill\n---\nv2\n");
@@ -88,6 +98,14 @@ test("Resources → Git repos adds a repository, installs the ticked items, and 
       }
     }
     await keep(page, "git-resources-mobile");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await write(resources, "claude/plugins/kit/commands/custom.md", "Local change\n");
+    await page.getByTestId("git-source-remove").click();
+    await page.getByTestId("confirm-accept-button").getByText("Remove repository and assets").waitFor();
+    await page.getByTestId("confirm-accept-button").click();
+    await page.getByTestId("resources-git-sources").getByText(/No repositories yet/).waitFor();
+    for (const file of ["shared/skills/alpha", "claude/plugins/kit"]) await assert.rejects(lstat(path.join(resources, file)), { code: "ENOENT" });
+    assert.deepEqual(Object.keys(JSON.parse(await readFile(path.join(resources, "mcp/config.json"), "utf8")).mcpServers), []);
     assert.deepEqual(errors, []);
   } finally { if (browser) await browser.close(); if (server) await stopDevNode(server); await rm(root, { recursive: true, force: true }); }
 });
