@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.117.0 — 2026-10-19
 
-- Added live checks to Ask AI in the Git view, so answers about things like pipeline history and durations are looked up read-only using the conversation's saved credentials, and say so when access fails.
+- Added live checks to Ask AI in the Git view, including follow-up questions, so answers about things like pipeline history and durations are looked up read-only with the conversation's saved credentials, and say so when access fails.
 
 ## 2.116.4 — 2026-10-19
 
