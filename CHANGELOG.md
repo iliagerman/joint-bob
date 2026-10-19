@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.119.0 — 2026-10-19
 
 - Added relay settings in Resources so a relay can block skills, MCP servers and plugins it has not enabled, or enforce its enabled ones, on the machines that follow it.
+- Changed Resources to show each skill, MCP server and plugin's harness as a compact brand icon with on, off, or locked marks, and its switches as small pills, instead of text badges.
 
 ## 2.118.0 — 2026-10-19
 
