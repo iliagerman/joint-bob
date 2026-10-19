@@ -3,10 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.116.1 — 2026-10-19
 
 - Replaced the browser's plain confirmation box for deleting personal assistant items with an in-app dialog, where Cancel or Escape keeps the item.
 - Removing a Git repository in Resources now removes everything installed from it, including edited copies, which are backed up; if any removal fails, the repository stays listed so you can retry.
+- Showed each Git repository item in Resources as installed or not, with which agents may load it in new runs, and clarified the apply button and status messages so they no longer imply that open conversations changed.
 
 ## 2.116.0 — 2026-10-19
 
