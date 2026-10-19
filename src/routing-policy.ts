@@ -11,7 +11,7 @@ import { type ReplicationEvent } from "./replication.js";
 /** The routing policy of the implicit legacy cluster, where every peer sees every project. */
 export const LEGACY_CLUSTER_ID = "";
 export const ROUTING_LEVELS = 10;
-export const CODEX_ROUTING_MODELS = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"] as const;
+export const CODEX_ROUTING_MODELS = ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"] as const;
 const codexRoutingModels = new Set<string>(CODEX_ROUTING_MODELS);
 
 export function automaticRoutingModelAllowed(provider: string | undefined, modelId: string): boolean {
@@ -232,8 +232,8 @@ const DEFAULT_ROUTING_MODELS: Record<string, Record<(typeof DEFAULT_ROUTING_TASK
   pi: {
     "1": { provider: "openai-codex", modelId: "gpt-6-luna", thinkingLevel: "xhigh" },
     "2": { provider: "openai-codex", modelId: "gpt-6-luna", thinkingLevel: "medium" },
-    "4": { provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" },
-    "6": { provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" },
+    "4": { provider: "openai-codex", modelId: "gpt-6.1-sol", thinkingLevel: "medium" },
+    "6": { provider: "openai-codex", modelId: "gpt-6.1-sol", thinkingLevel: "medium" },
     "8": { provider: "openai-codex", modelId: "gpt-6-astra", thinkingLevel: "xhigh" },
     "10": { provider: "openai-codex", modelId: "gpt-6-astra", thinkingLevel: "xhigh" },
   },

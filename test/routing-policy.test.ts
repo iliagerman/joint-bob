@@ -149,8 +149,8 @@ test("defaultRoutingPolicy maps task categories for Pi and Claude", () => {
   assert.deepEqual(Object.entries(pi).map(([level, mapping]) => [level, mapping!.provider, mapping!.modelId, mapping!.thinkingLevel]), [
     ["1", "openai-codex", "gpt-6-luna", "xhigh"],
     ["2", "openai-codex", "gpt-6-luna", "medium"],
-    ["4", "openai-codex", "gpt-6-sol", "medium"],
-    ["6", "openai-codex", "gpt-6-sol", "medium"],
+    ["4", "openai-codex", "gpt-6.1-sol", "medium"],
+    ["6", "openai-codex", "gpt-6.1-sol", "medium"],
     ["8", "openai-codex", "gpt-6-astra", "xhigh"],
     ["10", "openai-codex", "gpt-6-astra", "xhigh"],
   ]);
