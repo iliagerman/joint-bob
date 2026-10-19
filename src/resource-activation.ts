@@ -167,7 +167,13 @@ export function activeSkillRoot(harness: HarnessId, root = agentResourcePaths().
     for (const entry of readdirSync(directory).sort()) {
       const child = path.join(directory, entry);
       const childRelative = path.join(relative, entry);
-      if (statSync(child).isDirectory()) visit(child, childRelative);
+      let info;
+      try { info = statSync(child); }
+      catch (error) {
+        if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
+        throw error;
+      }
+      if (info.isDirectory()) visit(child, childRelative);
       else files.push(childRelative);
     }
     visiting.delete(real);

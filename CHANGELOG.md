@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed deleting a skill so every tool's link to it is removed, with your original skill folder left untouched, and broken links no longer stop other skills from loading.
+
 ## 2.120.1 — 2026-10-19
 
 - Fixed Resources paging so Next reaches every skill when descriptions wrap to different heights, instead of bouncing back to an earlier page.

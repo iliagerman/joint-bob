@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
@@ -32,4 +32,27 @@ test("authenticated skill publishing and reload endpoints validate and expose pu
   }
   const unauthenticated = await fetch(`${node.url}/api/settings/skills/reload`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   assert.equal(unauthenticated.status, 401);
+});
+
+test("app deletion removes chained native links, preserves the source, and backs up the managed copy", async () => {
+  const source = path.join(root, "original/deletion-test");
+  const content = "---\nname: deletion-test\ndescription: removal fixture\n---\nOriginal instructions\n";
+  await mkdir(source, { recursive: true });
+  await writeFile(path.join(source, "SKILL.md"), content);
+  const published = await api(node, session, "POST", "/settings/skills/sync", { paths: [source] });
+  assert.equal(published.status, 200, JSON.stringify(published.body));
+  const managed = path.join(environment.home, "JointBob/.agent-resources/shared/skills/deletion-test");
+  const agents = path.join(environment.home, ".agents/skills/deletion-test");
+  const claude = path.join(environment.home, ".claude/skills/deletion-test");
+  for (const file of [agents, claude]) {
+    await mkdir(path.dirname(file), { recursive: true });
+    await rm(file, { force: true });
+  }
+  await symlink(managed, agents);
+  await symlink("../../.agents/skills/deletion-test", claude);
+  const removed = await api<{ backup: string }>(node, session, "DELETE", "/resources/skills/deletion-test");
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
+  for (const file of [managed, agents, claude]) await assert.rejects(lstat(file), { code: "ENOENT" }, `not cleaned: ${file}`);
+  assert.equal(await readFile(path.join(source, "SKILL.md"), "utf8"), content, "original source must remain untouched");
+  assert.equal(await readFile(path.join(removed.body.backup, "SKILL.md"), "utf8"), content);
 });

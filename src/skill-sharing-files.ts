@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readlink, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveDataDirectory } from "./data-directory.js";
 
@@ -31,12 +31,39 @@ export async function allowSkillImport(root: string, name: string, dataDir?: str
 }
 
 export async function unlinkSkillAliases(destination: string, roots: string[]): Promise<void> {
-  for (const root of roots) {
-    const file = path.join(root, path.basename(destination));
+  let target = path.resolve(destination);
+  try { target = path.join(await realpath(path.dirname(destination)), path.basename(destination)); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const reachesTarget = async (file: string): Promise<boolean> => {
+    const visited = new Set<string>();
+    while (visited.size < 64) {
+      try {
+        try { file = path.join(await realpath(path.dirname(file)), path.basename(file)); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        if (file === target) return true;
+        if (visited.has(file) || !(await lstat(file)).isSymbolicLink()) return false;
+        visited.add(file);
+        file = path.resolve(path.dirname(file), await readlink(file));
+      } catch (error) {
+        if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
+        throw error;
+      }
+    }
+    return false;
+  };
+  // Resolve every chain before unlinking any entry, including already dangling aliases.
+  const aliases = new Set<string>();
+  for (const root of new Set(roots)) {
     try {
-      if ((await lstat(file)).isSymbolicLink()
-        && path.resolve(path.dirname(file), await readlink(file)) === path.resolve(destination)) await unlink(file);
+      for (const entry of await readdir(root, { withFileTypes: true })) {
+        const file = path.join(root, entry.name);
+        if (entry.isSymbolicLink() && await reachesTarget(file)) aliases.add(file);
+      }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  for (const file of aliases) {
+    try { await unlink(file); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
 }
 
