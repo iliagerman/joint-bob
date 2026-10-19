@@ -361,7 +361,7 @@
             <button class="ghost attach-button icon-button" id="attachButton" type="button" disabled aria-label="Attach files" data-testid="chat-attach-button">+</button>
             <label class="sr-only" for="messageInput">Message Pi</label>
             <textarea id="messageInput" rows="1" placeholder="Ask Pi to work..." disabled role="combobox" aria-controls="commandAutocomplete" aria-autocomplete="list" aria-expanded="false" data-testid="chat-message-input"></textarea>
-            <button type="button" id="savedCommandsButton" data-testid="saved-commands-button" disabled aria-haspopup="dialog" aria-controls="savedCommandsDialog">Custom commands</button>
+            <button type="button" id="savedCommandsButton" data-testid="saved-commands-button" disabled aria-haspopup="dialog" aria-controls="savedCommandsDialog" aria-label="Custom commands" title="Custom commands"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 5 5-5 5M13 17h6"/></svg></button>
             <button class="send" id="sendButton" type="submit" disabled aria-label="Send" data-testid="chat-send-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 21.7a.5.5 0 0 0 .94-.02l6.5-19a.5.5 0 0 0-.64-.64l-19 6.5a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="M21.85 2.15 10.91 13.09"/></svg></button>
           </div>
         </form>
@@ -2125,11 +2125,27 @@
 
     <dialog id="savedCommandsDialog" aria-labelledby="savedCommandsTitle" data-testid="saved-commands-dialog">
       <div class="dialog-card">
-        <h2 id="savedCommandsTitle">Commands</h2>
+        <div class="saved-commands-heading">
+          <h2 id="savedCommandsTitle">Commands</h2>
+          <button type="button" class="ghost" id="createSavedCommand" aria-label="Add command" title="Add command" data-testid="saved-commands-add">+</button>
+        </div>
         <input id="savedCommandsSearch" type="search" placeholder="Find a command" aria-label="Find a custom command" autocomplete="off" data-testid="saved-commands-search" />
         <div id="savedCommandsOptions" role="listbox" aria-label="Custom commands" data-testid="saved-commands-options"></div>
         <button type="button" class="ghost" id="closeSavedCommands" data-testid="saved-commands-close">Cancel</button>
       </div>
+    </dialog>
+
+    <dialog id="createCommandDialog" aria-labelledby="createCommandTitle" data-testid="create-command-dialog">
+      <form id="createCommandForm" class="dialog-card">
+        <h2 id="createCommandTitle">New command</h2>
+        <label>Name<input id="createCommandName" required maxlength="80" data-testid="create-command-name" /></label>
+        <label>Prompt<textarea id="createCommandPrompt" required maxlength="10000" rows="5" data-testid="create-command-prompt"></textarea></label>
+        <p class="settings-hint">Saved privately in your commands. Nothing is sent to the conversation.</p>
+        <div class="dialog-actions">
+          <button type="button" class="ghost" id="cancelCreateCommand" data-testid="create-command-cancel">Cancel</button>
+          <button type="submit" class="primary" data-testid="create-command-save">Save command</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog id="contextReferencesDialog" data-testid="context-references-dialog" aria-labelledby="contextReferencesTitle">

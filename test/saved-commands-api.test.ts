@@ -37,5 +37,14 @@ test("saved commands retain IDs, list all presets, and record only five project-
     const policy = { clusterIds: [], nodeIds: [], workspaceIds: [], projectIds: [projects[0].id], conversations: [] };
     assert.equal((await api(node, session, "PUT", `/commands/${encodeURIComponent(ids[0])}/sharing`, policy)).status, 200);
     assert.equal((await api<any>(node, session, "GET", `/commands?projectId=${projects[1].id}`)).body.commands.some((c: any) => c.id === ids[0]), false);
+    const created = await api<any>(node, session, "POST", "/commands", { name: " From chat ", prompt: " My new prompt " });
+    assert.equal(created.status, 200);
+    assert.equal(created.body.command.name, "From chat");
+    const after = (await api<any>(node, session, "GET", "/settings")).body.conversationCommands;
+    assert.equal(after.presets.length, 8);
+    assert.deepEqual(after.start, saved.start, "creation preserves start/end settings and existing commands");
+    assert.equal(after.presets[0].prompt, "Changed prompt");
+    assert.equal((await api(node, session, "POST", "/commands", { name: " ", prompt: "x" })).status, 400);
+    assert.equal((await api(node, session, "POST", "/commands", { name: "x", prompt: " " })).status, 400);
   } finally { await stopDevNode(child); await rm(root, { recursive: true, force: true }); }
 });

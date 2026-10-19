@@ -36,7 +36,7 @@ function render() {
   document.querySelector("#savedCommandsTitle").textContent = !query && recent.length ? "Recently used commands" : "Commands";
   selected = Math.min(selected, Math.max(0, matches.length - 1));
   options.replaceChildren();
-  if (!matches.length) options.textContent = "No commands found. Add custom commands in Settings → Commands.";
+  if (!matches.length) options.textContent = "No commands found. Use + to add one.";
   matches.forEach((command, index) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -73,6 +73,38 @@ export async function openSavedCommands() {
     if (request === generation && dialog.open) { options.textContent = "Could not load commands. Close and try again."; toast(error.message); }
   }
 }
+
+const createDialog = document.querySelector("#createCommandDialog");
+const createForm = document.querySelector("#createCommandForm");
+const createName = document.querySelector("#createCommandName");
+const createPrompt = document.querySelector("#createCommandPrompt");
+document.querySelector("#createSavedCommand").addEventListener("click", () => {
+  createForm.reset();
+  createDialog.showModal();
+  createName.focus();
+});
+document.querySelector("#cancelCreateCommand").addEventListener("click", () => createDialog.close());
+createForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const save = createForm.querySelector('[type="submit"]');
+  if (save.disabled) return;
+  save.disabled = true;
+  const capture = context;
+  const request = generation;
+  try {
+    const { command } = await api("/api/commands", { method: "POST", body: JSON.stringify({ name: createName.value.trim(), prompt: createPrompt.value.trim() }) });
+    createDialog.close();
+    if (request === generation && dialog.open && sameContext(capture)) {
+      commands.push(command);
+      search.value = command.name;
+      selected = 0;
+      render();
+      search.focus();
+    }
+    toast("Command saved");
+  } catch (error) { toast(error.message); }
+  finally { save.disabled = false; }
+});
 
 document.querySelector("#savedCommandsButton").addEventListener("click", () => { void openSavedCommands(); });
 document.querySelector("#closeSavedCommands").addEventListener("click", () => dialog.close());

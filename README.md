@@ -387,7 +387,7 @@ Each webhook stays on one machine. Its secret, settings, and call history are no
 
 Add named prompts in **Settings > Commands**, then save settings. Use **Share…** on a saved command to select clusters, machines, workspaces, projects, or individual conversations. Received commands are read-only. Commands stay private until you share them. Shared commands are fetched from their owner when the picker opens, so edits and revocations apply on the next read. An offline owner's commands stay unavailable until it reconnects.
 
-In a conversation, **Custom commands** beside Send shows up to five recent selections for that project. Type to search all available commands, including shared ones. Use ↑/↓ and Enter, or click a result, to replace the chat draft with its prompt. Nothing is sent until you choose Send. The existing saved-commands keyboard shortcut opens the same picker.
+In a conversation, the **Custom commands** icon beside Send shows up to five recent selections for that project. Use **+** in the picker to save a new named prompt without leaving the conversation; saving never changes or sends your draft. Type to search all available commands, including shared ones. Use ↑/↓ and Enter, or click a result, to replace the chat draft with its prompt. Nothing is sent until you choose Send. The existing saved-commands keyboard shortcut opens the same picker.
 
 ## Skills and resources
 

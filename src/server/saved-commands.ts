@@ -7,7 +7,7 @@ import { accountInCluster } from "../cluster-accounts.js";
 import { getSharingCluster, listSharingClusterMembers, listSharingMemberships } from "../cluster-sharing-policy.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { personalSettings } from "../settings.js";
+import { personalSettings, updatePersonalSettings } from "../settings.js";
 import { getProject, listProjects, listWorkspaces } from "../store.js";
 import { commandId, commandInScope, commandPeerGrant, commandPolicies, commandPresetSchema, commandSelectionSchema, emptyCommandSelection, recentCommandIds, recordCommandUse, setCommandPolicy, type CommandSelection } from "../saved-commands.js";
 import { peerFetch } from "../relay/transport.js";
@@ -136,6 +136,15 @@ export function registerSavedCommandRoutes(): void {
   app.get("/api/commands", route(async (request, session) => {
     const { project, commands } = await contextCommands(session, request.query);
     return { commands, recentIds: recentCommandIds(await clusterV2Database(), session.accountId, project.id).filter((id) => commands.some((c) => c.id === id)) };
+  }));
+  app.post("/api/commands", route(async (request, session) => {
+    const preset = commandPresetSchema.omit({ id: true }).parse(request.body);
+    const { local } = await peers();
+    const settings = personalSettings().conversationCommands;
+    if (settings.presets.length >= 50) throw failure("You can save up to 50 commands. Remove one in Settings → Commands first.");
+    const saved = updatePersonalSettings({ conversationCommands: { ...settings, presets: [...settings.presets, preset] } }, undefined, session.accountId);
+    const command = saved.conversationCommands.presets.at(-1)!;
+    return { command: { ...command, id: commandId(local, session.accountId, command.id!) } };
   }));
   app.post("/api/commands/:id/use", route(async (request, session) => {
     const { project, commands } = await contextCommands(session, request.body);

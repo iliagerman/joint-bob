@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a + button to the Custom commands picker in conversations, so you can save a new named prompt without leaving the chat or losing your draft.
+
 ## 2.117.0 — 2026-10-19
 
 - Added live checks to Ask AI in the Git view, including follow-up questions, so answers about things like pipeline history and durations are looked up read-only with the conversation's saved credentials, and say so when access fails.
