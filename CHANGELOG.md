@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.120.0 — 2026-10-19
 
-- Added sorting by newest, oldest, recent updates, comments or title, an All option for states, and open or closed icons, colored labels, comment counts and opened or closed dates to the project Issues list.
+- Added sorting to the project Issues list by newest, oldest, recently updated, most or least commented, or title, and an All option for issue states.
+- Changed Issues rows to match GitHub, with open or closed icons, colored labels, comment counts and opened or closed dates.
 
 ## 2.119.0 — 2026-10-19
 
