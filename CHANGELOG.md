@@ -9,7 +9,6 @@ Every deployment is a version. The newest section must always match the
 - Relays that enforce skills now deliver the skill files to the nodes that follow them. Each node checks the files against the relay's signed digest, receives updates when the relay changes a skill, and uses them from each conversation's next message.
 - A skill a relay enforces now wins over every other copy with the same name on a following node. The node's own copy is backed up and restored when the node stops following.
 - The Resources skills list now marks skills that come from a relay or that a relay controls, locks the agents a relay decides, and adds a "Controlled by a relay" filter. Switching to the Tools tab no longer shifts the layout.
-- Added delivery of relay-enforced skills to following nodes, checked against the relay's signed digest and applied from each conversation's next message.
 
 ## 2.121.1 — 2026-10-19
 
