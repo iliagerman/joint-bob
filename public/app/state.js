@@ -38,6 +38,7 @@ export const state = {
   skills: [],
   skillsLoading: false,
   skillsProjectId: null,
+  skillsConversationId: null,
   tools: [],
   toolsLoading: false,
   commands: [],

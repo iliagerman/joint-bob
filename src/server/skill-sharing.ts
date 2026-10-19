@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath, rm } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -21,12 +21,14 @@ import { sendError } from "./http-auth.js";
 import { app } from "./state.js";
 import { peerFetch } from "../relay/transport.js";
 import { peerAway } from "../peer-presence.js";
+import { parseResourceFrontmatter } from "../skills.js";
 
 const nameSchema = z.string().min(1).max(200).refine((value) => { try { validateSkillName(value); return true; } catch { return false; } });
 const conversationGrantSchema = z.object({ projectId: z.string().min(1).max(200), conversationId: z.string().min(1).max(300) }).strict();
 const selectionSchema = z.object({
   clusterIds: z.array(z.string().uuid()).max(100),
   nodeIds: z.array(z.string().uuid()).max(100).default([]),
+  projectIds: z.array(z.string().min(1).max(200)).max(100).default([]),
   workspaceIds: z.array(z.string().min(1).max(300)).max(100).default([]),
   conversations: z.array(conversationGrantSchema).max(200).default([]),
 }).strict();
@@ -85,6 +87,7 @@ function aliasRoots(): string[] {
   return [path.join(os.homedir(), ".agents/skills"), path.join(settings.pi.configPath, "skills"), path.join(settings.claude.configPath, "skills")];
 }
 async function removeReceived(db: DatabaseSync, prior: ReceivedSkill): Promise<void> {
+  db.prepare("INSERT OR IGNORE INTO revoked_scoped_skills VALUES(?)").run(prior.name);
   const destination = path.join(agentResourcePaths().sharedSkills, prior.name);
   if (await existing(destination)) {
     if ((await buildSkillBundle(destination, prior.name)).digest !== prior.digest) throw failure(`Modified received skill preserved: ${prior.name}`);
@@ -115,8 +118,9 @@ async function localView() {
   for (const name of await managedNames()) {
     const source = received.find((item) => item.name === name);
     const owner = source?.ownerNodeId ?? await receivedOwner(agentResourcePaths().sharedSkills, name);
-    const scopes = owner ? { workspaceIds: [], conversations: [] } : skillScopeGrants(db, name);
-    skills.push({ name, path: await realpath(path.join(agentResourcePaths().sharedSkills, name)), kind: owner ? "received" : "local",
+    const scopes = owner ? { workspaceIds: [], projectIds: [], conversations: [] } : skillScopeGrants(db, name);
+    const description = parseResourceFrontmatter(await readFile(path.join(agentResourcePaths().sharedSkills, name, "SKILL.md"), "utf8")).description ?? "";
+    skills.push({ name, description, path: await realpath(path.join(agentResourcePaths().sharedSkills, name)), kind: owner ? "received" : "local",
       clusterIds: owner ? [] : skillClusterIds(db, node.id, name), nodeIds: owner ? [] : skillNodeIds(db, node.id, name), ...scopes,
       receivedFrom: owner, receivedFromName: owner ? nodes.get(owner)?.name ?? owner : null, lastSync: source?.updatedAt });
   }
@@ -131,10 +135,10 @@ async function localView() {
 /** Where a receiver may load a skill when no cluster or node grant gives it the whole skill. */
 function scopedGrantFor(db: DatabaseSync, owner: string, receiver: string, name: string): { projectIds: string[]; conversations: SkillConversationGrant[] } {
   const scopes = skillScopeGrants(db, name);
-  if (!scopes.workspaceIds.length && !scopes.conversations.length) return { projectIds: [], conversations: [] };
+  if (!scopes.workspaceIds.length && !scopes.projectIds.length && !scopes.conversations.length) return { projectIds: [], conversations: [] };
   ensureResourceSharingSchema(db);
   const shared = (projectId: string) => mayShareProject(db, owner, receiver, projectId);
-  const projectIds = new Set<string>();
+  const projectIds = new Set<string>(scopes.projectIds.filter(shared));
   const inWorkspace = db.prepare("SELECT id FROM projects WHERE workspace_id=? ORDER BY id");
   for (const workspaceId of scopes.workspaceIds) {
     for (const { id } of inWorkspace.all(workspaceId) as Array<{ id: string }>) if (shared(id)) projectIds.add(id);
@@ -243,7 +247,9 @@ async function installOffered(db: DatabaseSync, local: string, owner: string, cl
     const prior = listReceivedSkills(db).find((item) => item.name === offered.name && item.ownerNodeId === owner);
     if (!prior || !await existing(destination)) return false;
     if ((await buildSkillBundle(destination, offered.name)).digest !== prior.digest) throw failure(`Modified received skill preserved: ${offered.name}`);
-    return prior.digest === offered.digest;
+    if (prior.digest !== offered.digest) return false;
+    db.prepare("DELETE FROM revoked_scoped_skills WHERE name=?").run(offered.name);
+    return true;
   });
   if (unchanged) return;
   const fetched = bundleReplySchema.parse(await signedSkillPost(db, local, owner, cluster, "/api/cluster/v2/skills/bundle", { name: offered.name }, MAX_BUNDLE_RESPONSE_BYTES));
@@ -263,6 +269,7 @@ async function installOffered(db: DatabaseSync, local: string, owner: string, cl
     await markReceived(root, offered.name, owner);
     await installSkillBundle(fetched.bundle, offered.name, destination, path.join(resolveDataDirectory(), "skill-staging"));
     db.prepare("INSERT OR REPLACE INTO received_skills VALUES(?,?,?,?)").run(owner, offered.name, offered.digest, new Date().toISOString());
+    db.prepare("DELETE FROM revoked_scoped_skills WHERE name=?").run(offered.name);
     try { requirePeer(db, local, owner, cluster); }
     catch (error) {
       await removeReceived(db, { ownerNodeId: owner, name: offered.name, digest: offered.digest, updatedAt: new Date().toISOString() });
@@ -271,6 +278,8 @@ async function installOffered(db: DatabaseSync, local: string, owner: string, cl
   });
 }
 async function removeScoped(db: DatabaseSync, prior: ReceivedScopedSkill): Promise<void> {
+  // Revoke runtime access even when a locally modified copy must be preserved.
+  if (!listReceivedSkills(db).some((item) => item.name === prior.name)) db.prepare("INSERT OR IGNORE INTO revoked_scoped_skills VALUES(?)").run(prior.name);
   const destination = scopedSkillDirectory(prior.name);
   if (await existing(destination)) {
     if ((await buildSkillBundle(destination, prior.name)).digest !== prior.digest) throw failure(`Modified received skill preserved: ${prior.name}`);
@@ -290,12 +299,15 @@ async function installScoped(db: DatabaseSync, local: string, owner: string, clu
     if (other || (await managedNames()).includes(offered.name)) throw failure(`Skill name conflict: ${offered.name}`);
   };
   const unchanged = await withSkillMutation(async () => {
+    const prior = listReceivedScopedSkills(db).find((item) => item.name === offered.name && item.ownerNodeId === owner);
+    if (!prior) { await assertNoConflict(); return false; }
+    // Scope changes revoke access even if local edits prevent a content update.
+    db.prepare("UPDATE received_scoped_skills SET project_ids=?,conversations=? WHERE owner_node_id=? AND name=?").run(...scope, owner, offered.name);
     await assertNoConflict();
-    const prior = listReceivedScopedSkills(db).find((item) => item.name === offered.name);
-    if (!prior || !await existing(destination)) return false;
+    if (!await existing(destination)) return false;
     if ((await buildSkillBundle(destination, offered.name)).digest !== prior.digest) throw failure(`Modified received skill preserved: ${offered.name}`);
     if (prior.digest !== offered.digest) return false;
-    db.prepare("UPDATE received_scoped_skills SET project_ids=?,conversations=? WHERE owner_node_id=? AND name=?").run(...scope, owner, offered.name);
+    db.prepare("DELETE FROM revoked_scoped_skills WHERE name=?").run(offered.name);
     return true;
   });
   if (unchanged) return;
@@ -311,6 +323,7 @@ async function installScoped(db: DatabaseSync, local: string, owner: string, clu
     }
     await installSkillBundle(fetched.bundle, offered.name, destination, path.join(resolveDataDirectory(), "skill-staging"));
     db.prepare("INSERT OR REPLACE INTO received_scoped_skills VALUES(?,?,?,?,?,?)").run(owner, offered.name, offered.digest, new Date().toISOString(), ...scope);
+    db.prepare("DELETE FROM revoked_scoped_skills WHERE name=?").run(offered.name);
   });
 }
 async function syncScopedOwner(db: DatabaseSync, local: string, owner: string, cluster: string, errors: Error[]): Promise<void> {
@@ -434,7 +447,7 @@ async function shareSkill(name: string, ids: string[], nodeIds: string[], scopes
     const root = agentResourcePaths().sharedSkills;
     if (await receivedOwner(root, name)) throw failure("Received skills cannot be reshared", 403);
     if (!(await managedNames()).includes(name)) throw failure("Managed skill not found", 404);
-    if (ids.length || nodeIds.length || scopes.workspaceIds.length || scopes.conversations.length) await buildSkillBundle(path.join(root, name), name);
+    if (ids.length || nodeIds.length || scopes.workspaceIds.length || scopes.projectIds.length || scopes.conversations.length) await buildSkillBundle(path.join(root, name), name);
     try { setSkillShares(db, local, name, ids, nodeIds, scopes); }
     catch (error) { throw failure((error as Error).message, 400); }
     return { name, clusterIds: skillClusterIds(db, local, name), nodeIds: skillNodeIds(db, local, name), ...skillScopeGrants(db, name) };
@@ -472,7 +485,7 @@ export function registerSkillSharingRoutes(): void {
 app.get("/api/resources/skills/sharing", route(async () => localView()));
 app.put("/api/resources/skills/:name/sharing", route(async (request) => {
   const selection = selectionSchema.parse(request.body);
-  return shareSkill(nameSchema.parse(request.params.name), selection.clusterIds, selection.nodeIds, { workspaceIds: selection.workspaceIds, conversations: selection.conversations });
+  return shareSkill(nameSchema.parse(request.params.name), selection.clusterIds, selection.nodeIds, { workspaceIds: selection.workspaceIds, projectIds: selection.projectIds, conversations: selection.conversations });
 }));
 app.delete("/api/resources/skills/:name", route(async (request) => removeSkill(nameSchema.parse(request.params.name))));
 app.post("/api/resources/skills/refresh", route(async (request) => { z.object({}).strict().parse(request.body); await refreshSharedSkills(); return localView(); }));

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added Custom commands to chat, with your five most recent picks per project and shared commands you can share with clusters, machines, projects, or single conversations, and limited skill sharing to workspaces, projects, or conversations.
+
 ## 2.114.0 — 2026-10-19
 
 - Added project-level Git access with machine and repository selection, without opening a conversation.

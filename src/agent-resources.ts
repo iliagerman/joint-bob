@@ -1,3 +1,4 @@
+import { skillScopeContext, unavailableSkillNames, type SkillScopeContext } from "./scoped-skills.js";
 import { nodeMcpServersApply } from "./account-runtime.js";
 import { adminAccountId } from "./ownership.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -618,7 +619,7 @@ export function piAgentResourcePaths(root?: string, configured?: ScopedResourceP
   const paths = agentResourcePaths(root);
   return {
     extensions: [...new Set([path.dirname(paths.piExtensions), ...configuredPaths(configured, "plugins")])],
-    skills: [...new Set([activeSkillRoot("pi", paths.sharedSkills), ...configuredPaths(configured, "skills").map((root) => activeSkillRoot("pi", root))])],
+    skills: [...new Set([activeSkillRoot("pi", paths.sharedSkills, skillScopeContext(configured)), ...configuredPaths(configured, "skills").map((root) => activeSkillRoot("pi", root, skillScopeContext(configured)))])],
     prompts: [...new Set([paths.piPrompts, ...configuredPaths(configured, "prompts")])],
     themes: [paths.piThemes],
   };
@@ -746,10 +747,10 @@ function resourceEntries(roots: string[], kind: "skills" | "prompts"): Map<strin
 }
 
 function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedResourcePaths): string | undefined {
-  let skillPaths = [activeSkillRoot("claude", paths.sharedSkills)];
+  let skillPaths = [activeSkillRoot("claude", paths.sharedSkills, skillScopeContext(configured))];
   let promptPaths = [paths.claudeCommands];
   if (configured) {
-    skillPaths = [...skillPaths, ...configured.global.skills, ...configured.project.skills].map((root) => activeSkillRoot("claude", root));
+    skillPaths = [...skillPaths, ...configured.global.skills, ...configured.project.skills].map((root) => activeSkillRoot("claude", root, skillScopeContext(configured)));
     promptPaths = [...promptPaths, ...configured.global.prompts, ...configured.project.prompts];
   }
   const skills = resourceEntries(skillPaths, "skills");
@@ -795,11 +796,12 @@ function generatedInstructionFile(paths: AgentResourcePaths, configured?: Scoped
   return filePath;
 }
 
-function pluginContentsSafe(plugin: string): boolean {
-  try { return blockedPluginSkill(plugin) === null; } catch { return false; }
+function pluginContentsSafe(plugin: string, context: SkillScopeContext): boolean {
+  try { return blockedPluginSkill(plugin, context) === null; } catch { return false; }
 }
 
-export function blockedPluginSkill(plugin: string): string | null {
+export function blockedPluginSkill(plugin: string, context: SkillScopeContext = {}): string | null {
+  const unavailable = new Set(unavailableSkillNames(context));
   const manifest = JSON.parse(readFileSync(path.join(plugin, ".claude-plugin/plugin.json"), "utf8")) as { skills?: unknown };
   const declared = manifest.skills === undefined ? [] : [manifest.skills].flat();
   if (declared.some((item) => typeof item !== "string")) throw new Error(`Unsupported skill locations in plugin ${plugin}`);
@@ -814,7 +816,7 @@ export function blockedPluginSkill(plugin: string): string | null {
     if (statSync(candidate).isFile()) {
       if (path.basename(candidate) !== "SKILL.md") return null;
       const name = skillNameFromFile(candidate, path.basename(path.dirname(candidate)));
-      return activationDecision("skill", name, "claude", false).enabled ? null : name;
+      return !unavailable.has(name) && activationDecision("skill", name, "claude", false).enabled ? null : name;
     }
     if (!statSync(candidate).isDirectory()) return null;
     for (const entry of readdirSync(candidate).sort()) {
@@ -829,8 +831,8 @@ export function blockedPluginSkill(plugin: string): string | null {
 
 export function claudeAgentResourceArgs(root?: string, configured?: ScopedResourcePaths, extraInstructions?: string, cwd?: string): string[] {
   const strict = getSettings().strictResourceIsolation;
-  if (cwd) assertNoBlockedNativeSkills("claude", cwd, strict ? [] : [path.join(getSettings().claude.configPath, "skills"), path.join(os.homedir(), ".agents/skills")]);
-  if (!strict && blockedSkillNames("claude").length) throw new Error("Cannot safely enforce blocked Claude skills while native resource discovery is enabled. Turn on strict resource isolation or remove the skill block.");
+  if (cwd) assertNoBlockedNativeSkills("claude", cwd, strict ? [] : [path.join(getSettings().claude.configPath, "skills"), path.join(os.homedir(), ".agents/skills")], skillScopeContext(configured));
+  if (!strict && blockedSkillNames("claude", skillScopeContext(configured)).length) throw new Error("Cannot safely enforce blocked Claude skills while native resource discovery is enabled. Turn on strict resource isolation or remove the skill block.");
   if (!strict) assertNoBlockedNativeResources("claude", "plugin");
   const paths = agentResourcePaths(root);
   const configuredPlugins = claudePluginSources(configuredPaths(configured, "plugins"));
@@ -840,11 +842,11 @@ export function claudeAgentResourceArgs(root?: string, configured?: ScopedResour
     const plugin = path.join(paths.claudePlugins, entry);
     const decisions = pluginActivationDecisions(plugin, paths.claudePlugins, configuredPlugins);
     if (!decisions.some(({ name }) => installed.has(name)) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))
-      && decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
+      && decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin, skillScopeContext(configured))) args.push("--plugin-dir", plugin);
   }
   for (const plugin of configuredPlugins) {
     const decisions = pluginActivationDecisions(plugin, paths.claudePlugins, configuredPlugins);
-    if (decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin)) args.push("--plugin-dir", plugin);
+    if (decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin, skillScopeContext(configured))) args.push("--plugin-dir", plugin);
   }
   const generated = generatedResourcePlugin(paths, configured);
   if (generated) args.push("--plugin-dir", generated);

@@ -383,11 +383,19 @@ In **Settings > Webhooks**, choose an **Owner** before creating a webhook. The o
 
 Each webhook stays on one machine. Its secret, settings, and call history are not cloned to twins, and calls run only on its owner. Use the same owner selector to list, edit, rotate addresses, or delete that machine's webhooks from your laptop. Existing webhooks cannot change owners. If the owner is unavailable, the request fails without creating or running anything locally. After an uncertain response, check the owner's list before trying again.
 
+## Saved commands
+
+Add named prompts in **Settings > Commands**, then save settings. Use **Share…** on a saved command to select clusters, machines, workspaces, projects, or individual conversations. Received commands are read-only. Commands stay private until you share them. Shared commands are fetched from their owner when the picker opens, so edits and revocations apply on the next read. An offline owner's commands stay unavailable until it reconnects.
+
+In a conversation, **Custom commands** beside Send shows up to five recent selections for that project. Type to search all available commands, including shared ones. Use ↑/↓ and Enter, or click a result, to replace the chat draft with its prompt. Nothing is sent until you choose Send. The existing saved-commands keyboard shortcut opens the same picker.
+
 ## Skills and resources
 
 In **Settings > Resources**, enter absolute global skill paths such as `/Users/alice/my-skills`, then save settings. **Sync local skills** explicitly publishes complete skill directories to `<Joint Bob home>/.agent-resources/shared/skills`; it does not watch local folders. Sync again after every local edit. Sources remain untouched, matching shared skills are backed up under `<node data>/agent-resources-backups/<operation>/` and replaced, and removing a source does not delete its shared copy.
 
-Published skills use the existing Syncthing-managed agent-resources folder. Paired nodes may receive them after a transfer delay; publishing does not mean transfer has finished. Use **Reload skills** on each node after Syncthing finishes. Reload preserves idle Pi conversations and reports busy sessions and failures; retry skipped sessions when idle. Claude starts a process per turn and sees changes on its next run.
+In **Resources > Skills**, use **Share…** to choose clusters, machines, workspaces, projects, or conversations. Workspace, project, and conversation selections limit skill loading to those contexts on the owning node. On a receiver, a broader machine or cluster grant makes the skill available across that machine. No selection leaves an owned skill local-only. Scope grants reach another machine only for projects already shared with it. See [selective skill sharing](docs/skill-sharing.md) for updates, revocation, and native-discovery limits.
+
+Selective sharing uses authenticated node requests, not the legacy blanket Syncthing resource folder. Use **Reload skills** to refresh idle Pi conversations; busy sessions and failures are reported. Previously read instructions cannot be removed from a conversation's history. Claude starts a process per turn and sees changes on its next run.
 
 Skills can execute their included instructions and scripts. Publish only trusted folders, especially when sharing with paired nodes.
 

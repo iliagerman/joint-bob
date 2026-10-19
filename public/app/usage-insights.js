@@ -111,6 +111,8 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     if (data[section]) return;
     const query = new URLSearchParams({ name });
     if (projectId()) query.set("projectId", projectId());
+    const conversationId = scopeParameters().get("conversationId");
+    if (conversationId) query.set("conversationId", conversationId);
     void request(section, `/api/usage/skills/content?${query}`);
   }
   function openSkill(name, tab = "stats") {

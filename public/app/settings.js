@@ -421,23 +421,29 @@ async function loadSettings() {
 }
 
 const savedCommandsList = document.querySelector("#savedCommandsList");
+let savedCommandSnapshot = "";
 
 function renderSavedCommands(commands) {
   savedCommandsList.replaceChildren();
   for (const command of commands) addSavedCommandRow(command);
+  savedCommandSnapshot = JSON.stringify(savedCommandsValue());
+  void import("./command-sharing.js").then(({ mountReceivedCommands }) => mountReceivedCommands(savedCommandsList));
 }
 
 function addSavedCommandRow(command = { name: "", prompt: "" }) {
   const row = document.createElement("div");
   row.className = "saved-command-row";
+  row.dataset.commandId = command.id || crypto.randomUUID();
   const name = document.createElement("input");
   name.placeholder = "Name";
+  name.dataset.testid = "saved-command-name";
   name.setAttribute("aria-label", "Command name");
   name.maxLength = 80;
   name.required = true;
   name.value = command.name;
   const prompt = document.createElement("textarea");
   prompt.placeholder = "Prompt to paste into chat";
+  prompt.dataset.testid = "saved-command-prompt";
   prompt.setAttribute("aria-label", "Command prompt");
   prompt.maxLength = 10000;
   prompt.required = true;
@@ -447,9 +453,25 @@ function addSavedCommandRow(command = { name: "", prompt: "" }) {
   remove.type = "button";
   remove.className = "ghost compact";
   remove.textContent = "Remove";
+  remove.dataset.testid = "saved-command-remove";
   remove.setAttribute("aria-label", "Remove saved command");
   remove.addEventListener("click", () => row.remove());
-  row.append(name, prompt, remove);
+  const share = document.createElement("button");
+  share.type = "button"; share.className = "ghost compact";
+  share.textContent = "Share"; share.dataset.testid = "saved-command-share";
+  share.title = state.isRemoteLogin ? "Change command sharing on the owning node." : "Save command changes with Save settings before sharing. Sharing does not save other settings.";
+  share.disabled = state.isRemoteLogin;
+  share.addEventListener("click", async () => {
+    try {
+      if (!command.id || JSON.stringify(savedCommandsValue()) !== savedCommandSnapshot) {
+        toast("Save settings before sharing new or edited commands, then reopen Settings.");
+        return;
+      }
+      const { openCommandSharing } = await import("./command-sharing.js");
+      await openCommandSharing(row.dataset.commandId);
+    } catch (error) { toast(error.message); }
+  });
+  row.append(name, prompt, remove, share);
   savedCommandsList.append(row);
   if (!command.name) name.focus();
 }
@@ -462,7 +484,7 @@ function savedCommandsValue() {
   return rows.map((row) => {
     const [name, prompt] = row.querySelectorAll("input, textarea");
     if (!name.value.trim() || !prompt.value.trim()) throw new Error("Saved commands need a name and prompt");
-    return { name: name.value.trim(), prompt: prompt.value.trim() };
+    return { id: row.dataset.commandId, name: name.value.trim(), prompt: prompt.value.trim() };
   });
 }
 

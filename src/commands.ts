@@ -2,6 +2,7 @@ import type { ScopedResourcePaths } from "./settings.js";
 import type { SkillRoots } from "./skills.js";
 import type { HarnessId } from "./types.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
+import { skillScopeContext, unavailableSkillNames } from "./scoped-skills.js";
 
 export type HarnessCommandKind = "builtin" | "extension" | "prompt" | "skill";
 export interface HarnessCommand {
@@ -37,6 +38,7 @@ export async function listHarnessCommands(projectPath: string, harness: HarnessI
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === harness);
   if (!adapter) throw new Error(`Unknown harness: ${harness}`);
   const discovered = adapter.resources ? await (await adapter.resources()).commands(projectPath, options) : [];
-  const commands = [...builtinCommands(harness), ...discovered];
+  const unavailable = new Set(unavailableSkillNames(options.skillScope ?? skillScopeContext(options.resourcePaths)));
+  const commands = [...builtinCommands(harness), ...discovered].filter((command) => command.kind !== "skill" || !unavailable.has(command.name.replace(/^skill:/, "")));
   return [...new Map(commands.map((command) => [command.invocation, command])).values()].sort((left, right) => left.name.localeCompare(right.name));
 }

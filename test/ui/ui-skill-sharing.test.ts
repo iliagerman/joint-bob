@@ -69,6 +69,29 @@ test("Settings → Resources shares single and bulk skills with clusters, worksp
     assert.deepEqual(bulk.body.skills.find((skill) => skill.name === "bulk-10")?.clusterIds, []);
     await page.getByTestId("resources-skill-row").filter({ hasText: "bulk-01" }).getByText("Shared with Work (cluster)", { exact: true }).waitFor();
 
+    for (const projectName of ["Internal Assistant", "Joint Bob"]) {
+      await page.getByTestId("resources-select-all").click();
+      await bar.getByTestId("resources-share-open").click();
+      dialog = page.getByTestId("skill-share-dialog");
+      await dialog.getByRole("checkbox", { name: projectName, exact: true }).check();
+      await dialog.getByTestId("skill-share-save").click();
+      await page.getByTestId("confirm-accept-button").click();
+      await dialog.waitFor({ state: "detached" });
+    }
+    const withProjects = await api<{ skills: Array<{ name: string; clusterIds: string[]; projectIds: string[] }> }>(node, session, "GET", "/resources/skills/sharing");
+    for (const skill of withProjects.body.skills.filter((skill) => /^bulk-0[1-9]$/.test(skill.name))) {
+      assert.equal(skill.projectIds.length, 2, "bulk add unions project grants");
+      assert.deepEqual(skill.clusterIds, [clusterIds.Work], "bulk project additions preserve cluster grants");
+    }
+    await page.getByTestId("resources-select-all").click();
+    await bar.getByTestId("resources-share-open").click();
+    dialog = page.getByTestId("skill-share-dialog");
+    await dialog.getByTestId("skill-share-clear").click();
+    await page.getByTestId("confirm-accept-button").click();
+    await dialog.waitFor({ state: "detached" });
+    const cleared = await api<{ skills: Array<{ name: string; clusterIds: string[]; projectIds: string[] }> }>(node, session, "GET", "/resources/skills/sharing");
+    for (const skill of cleared.body.skills.filter((skill) => /^bulk-0[1-9]$/.test(skill.name))) assert.deepEqual([skill.projectIds, skill.clusterIds], [[], []], "bulk clear removes project grants too");
+
     await page.getByTestId("resources-search-input").fill("portable");
     const row = page.getByTestId("resources-skill-row").filter({ hasText: "UI fixture skill" });
     await row.getByTestId("skill-sharing-summary").getByText("Local only", { exact: true }).waitFor();
@@ -78,14 +101,18 @@ test("Settings → Resources shares single and bulk skills with clusters, worksp
     const workspace = dialog.getByTestId("skill-share-workspace").first();
     const workspaceId = await workspace.getAttribute("data-value");
     await workspace.check();
+    const projectGrant = dialog.getByTestId("skill-share-project").first();
+    const grantedProjectId = await projectGrant.getAttribute("data-value");
+    await projectGrant.check();
     await dialog.getByRole("checkbox", { name: /^This conversation/ }).check();
     await dialog.getByTestId("skill-share-save").click();
     await page.getByTestId("confirm-accept-button").click();
-    await row.getByTestId("skill-sharing-summary").getByText(/^Shared with Home \(cluster\), .+ \+1$/).waitFor();
-    type Policy = { name: string; clusterIds: string[]; workspaceIds: string[]; conversations: Array<{ projectId: string; conversationId: string }> };
+    await row.getByTestId("skill-sharing-summary").getByText(/^Shared with Home \(cluster\), .+ \+2$/).waitFor();
+    type Policy = { name: string; clusterIds: string[]; workspaceIds: string[]; projectIds: string[]; conversations: Array<{ projectId: string; conversationId: string }> };
     let portable = (await api<{ skills: Policy[] }>(node, session, "GET", "/resources/skills/sharing")).body.skills.find((skill) => skill.name === "portable")!;
     assert.deepEqual(portable.clusterIds, [clusterIds.Home]);
     assert.deepEqual(portable.workspaceIds, [workspaceId]);
+    assert.deepEqual(portable.projectIds, [grantedProjectId]);
     assert.equal(portable.conversations.length, 1, "This conversation is shared");
     const projectId = portable.conversations[0].projectId;
 
@@ -95,6 +122,7 @@ test("Settings → Resources shares single and bulk skills with clusters, worksp
     assert.equal(await dialog.getByRole("checkbox", { name: /^Work · / }).isChecked(), false);
     await dialog.getByRole("checkbox", { name: /^Home · / }).uncheck();
     await dialog.getByTestId("skill-share-workspace").first().uncheck();
+    await dialog.getByTestId("skill-share-project").first().uncheck();
     const current = dialog.getByRole("checkbox", { name: /^This conversation/ });
     const currentId = await current.getAttribute("data-conversation");
     await current.uncheck();
@@ -144,6 +172,45 @@ test("Settings → Resources shares single and bulk skills with clusters, worksp
     const state = await api<{ skills: Array<{ name: string }> }>(node, session, "GET", "/resources/skills/sharing");
     assert.equal(state.body.skills.some((skill) => skill.name === "portable"), false);
     assert.deepEqual(errors, []);
+  } finally {
+    if (browser) await browser.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test("project scope works locally without joining a cluster", { timeout: 90_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "skill-local-scope-ui-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  let browser: Awaited<ReturnType<typeof launchChrome>> | undefined;
+  try {
+    const environment = await seedDevEnvironment(root, 1), node = environment.nodes[0];
+    const source = path.join(environment.home, "JointBob/.agent-resources/shared/skills/local-scope");
+    await mkdir(source, { recursive: true });
+    await writeFile(path.join(source, "SKILL.md"), "---\nname: local-scope\ndescription: Local scope fixture\n---\n");
+    server = await startDevNode(environment, node);
+    const session = await signIn(environment, node);
+    browser = await launchChrome({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+    await page.goto(node.url);
+    await page.getByTestId("login-username-input").fill(environment.username);
+    await page.getByTestId("login-password-input").fill(environment.password);
+    await page.getByTestId("login-submit-button").click();
+    await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+    await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+    await page.locator('[data-testid="chat-message-input"]:enabled').waitFor();
+    await page.getByTestId("chat-resources-button").click();
+    await page.getByTestId("resources-search-input").fill("local-scope");
+    await page.getByTestId("resources-skill-row").filter({ hasText: "Local scope fixture" }).getByTestId("skill-share-button").click();
+    const dialog = page.getByTestId("skill-share-dialog");
+    await dialog.getByRole("checkbox", { name: "Internal Assistant", exact: true }).check();
+    await dialog.getByText(/limit local availability too/).waitFor();
+    await dialog.getByTestId("skill-share-save").click();
+    await page.getByTestId("confirm-accept-button").click();
+    await dialog.waitFor({ state: "detached" });
+    const policies = await api<{ skills: Array<{ name: string; projectIds: string[] }> }>(node, session, "GET", "/resources/skills/sharing");
+    assert.equal(policies.body.skills.find((skill) => skill.name === "local-scope")?.projectIds.length, 1);
   } finally {
     if (browser) await browser.close();
     if (server) await stopDevNode(server);

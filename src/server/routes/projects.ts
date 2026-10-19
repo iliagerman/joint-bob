@@ -405,8 +405,9 @@ app.get("/api/projects/:projectId/skills", async (request, response, next) => {
       sendError(response, 404, "Project not found");
       return;
     }
-    const configured = getScopedResourcePaths(project.id);
-    response.json({ skills: await listSkills(project.path, { ...defaultSkillRoots(), global: configured.global.skills, project: configured.project.skills }) });
+    const conversationId = z.string().min(1).max(300).optional().parse(request.query.conversationId);
+    const configured = getScopedResourcePaths(project.id, conversationId);
+    response.json({ skills: await listSkills(project.path, { ...defaultSkillRoots(), skillScope: { projectId: project.id, conversationId }, global: configured.global.skills, project: configured.project.skills }) });
   } catch (error) {
     next(error);
   }
@@ -420,7 +421,8 @@ app.get("/api/projects/:projectId/commands", async (request, response, next) => 
       return;
     }
     const harness = registeredHarnessIdSchema.parse(request.query.harness);
-    response.json({ commands: await listHarnessCommands(project.path, harness, { resourcePaths: getScopedResourcePaths(project.id) }) });
+    const conversationId = z.string().min(1).max(300).optional().parse(request.query.conversationId);
+    response.json({ commands: await listHarnessCommands(project.path, harness, { resourcePaths: getScopedResourcePaths(project.id, conversationId) }) });
   } catch (error) {
     next(error);
   }

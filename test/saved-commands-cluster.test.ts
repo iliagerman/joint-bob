@@ -1,0 +1,85 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
+import { signedNodeRequest } from "./signed-node-request.js";
+
+test("commands explicitly share, edit, scope and revoke over authenticated cluster requests", { timeout: 180_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "commands-cluster-"));
+  const children: Awaited<ReturnType<typeof startDevNode>>[] = [];
+  try {
+    const [ea, eb] = await Promise.all(["a", "b"].map((key) => seedDevEnvironment(path.join(root, key), 1)));
+    const a = ea.nodes[0], b = eb.nodes[0];
+    // Independent seeds reuse conversation identities. Only A supplies transcripts.
+    await rm(path.join(eb.home, ".pi", "sessions"), { recursive: true, force: true });
+    await rm(path.join(eb.home, ".claude", "projects"), { recursive: true, force: true });
+    children.push(await startDevNode(ea, a), await startDevNode(eb, b));
+    const sa = await signIn(ea, a), sb = await signIn(eb, b);
+    const created = await api<any>(a, sa, "POST", "/clusters", { name: "Commands" });
+    assert.equal(created.status, 201);
+    const clusterId = created.body.snapshot.body.clusterId;
+    const invitation = await api<any>(a, sa, "POST", `/clusters/${clusterId}/invitations`, { expectedEpoch: 1 });
+    assert.equal((await api(b, sb, "POST", "/clusters/join", { link: invitation.body.link, requestId: randomUUID() })).status, 201);
+    const project = (await api<any>(a, sa, "GET", `/clusters/${clusterId}/sharing`)).body.projects[0];
+    assert.equal((await api(a, sa, "PUT", `/clusters/${clusterId}/sharing`, { projectIds: [project.id], workspaceIds: [], confirmOwnedData: true })).status, 200);
+    const deadline = Date.now() + 30_000;
+    while (!(await api<any>(b, sb, "GET", "/projects?syncStatus=false")).body.projects.some((p: any) => p.id === project.id)) {
+      assert.ok(Date.now() < deadline, "receiver gets shared project inventory");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const settings = (await api<any>(a, sa, "GET", "/settings")).body;
+    const conversationCommands = { ...settings.conversationCommands, presets: [{ name: "Portable", prompt: "Original" }] };
+    assert.equal((await api(a, sa, "PUT", "/settings/personal", { conversationCommands })).status, 200);
+    const own = await api<any>(a, sa, "GET", `/commands?projectId=${project.id}`);
+    assert.equal(own.status, 200);
+    const id = own.body.commands[0].id, route = `/commands/${encodeURIComponent(id)}/sharing`;
+    const view = () => api<any>(b, sb, "GET", "/commands/sharing");
+    assert.equal((await view()).body.commands.some((c: any) => c.id === id), false, "cluster membership alone never shares commands");
+    const empty = { clusterIds: [], nodeIds: [], workspaceIds: [], projectIds: [], conversations: [] };
+    assert.equal((await api(a, sa, "PUT", route, { ...empty, clusterIds: [clusterId] })).status, 200);
+    assert.equal((await api(b, sb, "POST", "/commands/refresh", {})).status, 200);
+    let received = (await view()).body.commands.find((c: any) => c.id === id);
+    assert.equal(received?.prompt, "Original", "cluster grant delivers command");
+    assert.equal(received.kind, "received");
+    assert.equal((await api(b, sb, "PUT", route, { ...empty, clusterIds: [clusterId] })).status, 403, "received commands cannot be reshared");
+    const bProject = (await api<any>(b, sb, "GET", "/projects")).body.projects.find((p: any) => p.id !== project.id);
+    assert.ok(bProject, "receiver has a separate local project");
+    const search = () => api<any>(b, sb, "GET", `/commands?projectId=${bProject.id}`);
+    assert.equal((await search()).body.commands.some((c: any) => c.id === id), true, "node/cluster grants apply in all receiver projects");
+    const saved = (await api<any>(a, sa, "GET", "/settings")).body.conversationCommands;
+    saved.presets[0].prompt = "Edited";
+    assert.equal((await api(a, sa, "PUT", "/settings", { ...settings, conversationCommands: saved })).status, 200);
+    assert.equal((await view()).body.commands.find((c: any) => c.id === id)?.prompt, "Edited", "settings edits propagate without changing identity");
+    assert.equal((await api(a, sa, "PUT", route, { ...empty, nodeIds: [b.nodeId] })).status, 200);
+    assert.equal((await search()).body.commands.some((c: any) => c.id === id), true);
+    assert.equal((await api(a, sa, "PUT", route, { ...empty, conversations: [{ projectId: project.id, conversationId: "one" }] })).status, 200);
+    assert.equal((await search()).body.commands.some((c: any) => c.id === id), false, "conversation grant is not node-wide");
+    const selected = await api<any>(b, sb, "GET", `/commands?projectId=${project.id}&conversationId=one`);
+    assert.equal(selected.status, 200, JSON.stringify(selected.body));
+    assert.equal(selected.body.commands.some((c: any) => c.id === id), true, "received conversation scope matches authorized shared project");
+    assert.equal((await api<any>(b, sb, "GET", `/commands?projectId=${project.id}&conversationId=other`)).body.commands.some((c: any) => c.id === id), false);
+    assert.equal((await api(b, sb, "POST", `/commands/${encodeURIComponent(id)}/use`, { projectId: project.id, conversationId: "other" })).status, 404);
+    assert.equal((await api(b, sb, "POST", `/commands/${encodeURIComponent(id)}/use`, { projectId: project.id, conversationId: "one" })).status, 200);
+    const manifest = await signedNodeRequest(eb, b, a, "POST", "/api/cluster/v2/commands/manifest", {});
+    assert.equal(manifest.status, 200);
+    received = (await manifest.json()).commands[0];
+    assert.deepEqual(received.conversations, [{ projectId: project.id, conversationId: "one" }]);
+    assert.equal(received.global, false);
+    assert.equal((await api<any>(a, sa, "GET", `/commands?projectId=${project.id}`)).body.commands.length, 0, "scoped-only local commands also need matching context");
+    assert.equal((await api<any>(a, sa, "GET", `/commands?projectId=${project.id}&conversationId=one`)).body.commands.length, 1);
+    assert.equal((await api(a, sa, "PUT", route, { ...empty, workspaceIds: [project.workspaceId] })).status, 200);
+    const workspaceManifest = await signedNodeRequest(eb, b, a, "POST", "/api/cluster/v2/commands/manifest", {});
+    assert.deepEqual((await workspaceManifest.json()).commands[0].projectIds, [project.id], "workspace grant sends only projects shared with this receiver");
+    assert.equal((await api(a, sa, "PUT", route, empty)).status, 200);
+    await api(b, sb, "POST", "/commands/refresh", {});
+    assert.equal((await view()).body.commands.some((c: any) => c.id === id), false, "revocation removes received commands");
+    assert.equal((await fetch(`${a.url}/api/cluster/v2/commands/manifest`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status, 401, "machine manifest requires signature");
+    assert.equal((await api(a, sa, "PUT", route, { ...empty, clusterIds: [clusterId] })).status, 200);
+    saved.presets = [];
+    await api(a, sa, "PUT", "/settings/personal", { conversationCommands: saved });
+    assert.equal((await view()).body.commands.some((c: any) => c.id === id), false, "deleting a preset revokes its prompt");
+  } finally { await Promise.all(children.map(stopDevNode)); await rm(root, { recursive: true, force: true }); }
+});

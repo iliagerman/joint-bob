@@ -12,6 +12,7 @@ import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime, detectExecutable, runtimeOverrides } from "./harnesses/runtime-configuration.js";
 import type { HarnessAdapter } from "./harnesses/contract.js";
 import { decrypt, save, setting, settingsDatabase, value } from "./settings-store.js";
+import { commandPresetSchema, identifyCommandPresets } from "./saved-commands.js";
 import { defaultManagedHome } from "./managed-home.js";
 import { scopedSkillRoots } from "./scoped-skills.js";
 import { DEFAULT_SUBPROCESS_MAX_LIFETIME_MINUTES, validSubprocessLifetime } from "../scripts/subprocess-lifetime.mjs";
@@ -40,7 +41,7 @@ export const DEFAULT_END_CONVERSATION_PROMPT = "Make sure all your code is commi
 export interface ConversationCommandsSettings {
   start: { enabled: boolean; prompt: string };
   end: { enabled: boolean; prompt: string };
-  presets: { name: string; prompt: string }[];
+  presets: { id?: string; name: string; prompt: string }[];
 }
 
 export const DEFAULT_CONVERSATION_COMMANDS: ConversationCommandsSettings = {
@@ -289,7 +290,9 @@ function conversationCommands(): ConversationCommandsSettings {
         ? stored[name]!.prompt.trim()
         : DEFAULT_CONVERSATION_COMMANDS[name].prompt,
     });
-    return { start: command("start"), end: command("end"), presets: Array.isArray(stored.presets) ? stored.presets : [] };
+    const presets = identifyCommandPresets(Array.isArray(stored.presets) ? stored.presets : []);
+    if (JSON.stringify(presets) !== JSON.stringify(stored.presets ?? [])) save(settingsDatabase(), "conversationCommands", JSON.stringify({ ...stored, presets }));
+    return { start: command("start"), end: command("end"), presets };
   } catch {
     return structuredClone(DEFAULT_CONVERSATION_COMMANDS);
   }
@@ -325,10 +328,10 @@ export function getProjectResourcePaths(projectId: string): ResourcePaths {
 }
 
 /** Skills shared to this project's workspace or to this conversation load with the project's own. */
-export function getScopedResourcePaths(projectId?: string, conversationId?: string, harness?: "pi" | "claude" | "kiro"): ScopedResourcePaths {
+export function getScopedResourcePaths(projectId?: string, conversationId?: string, harness?: "pi" | "claude" | "kiro"): ScopedResourcePaths & { skillScope: { projectId?: string; conversationId?: string } } {
   const project = projectId ? getProjectResourcePaths(projectId) : emptyResourcePaths();
   const scoped = scopedSkillRoots(projectId, conversationId, harness);
-  return { global: getSettings().resources, project: scoped.length ? { ...project, skills: [...project.skills, ...scoped] } : project };
+  return { global: getSettings().resources, project: scoped.length ? { ...project, skills: [...project.skills, ...scoped] } : project, skillScope: { projectId, conversationId } };
 }
 
 export function getSettings(): SettingsResponse {
@@ -348,7 +351,7 @@ const personalSchemas = {
   autoCompactThreshold: z.number().int().min(1).max(100).nullable(),
   digestAttachments: z.boolean(),
   showProjectsOnOtherNodes: z.boolean(),
-  conversationCommands: z.object({ start: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict(), end: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict(), presets: z.array(z.object({ name: z.string().trim().min(1).max(80), prompt: z.string().trim().min(1).max(10_000) }).strict()).max(50).optional() }).strict(),
+  conversationCommands: z.object({ start: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict(), end: z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict(), presets: z.array(commandPresetSchema).max(50).refine((items) => new Set(items.flatMap((p) => p.id ? [p.id] : [])).size === items.filter((p) => p.id).length, "Duplicate command IDs").optional() }).strict(),
   conversationDefaults: conversationDefaultsSchema,
 } satisfies Record<(typeof PERSONAL_SETTING_KEYS)[number], z.ZodTypeAny>;
 
@@ -371,10 +374,19 @@ function storedPersonal(accountId: string): Record<string, unknown> {
 function personalOverlay(node: SettingsResponse, accountId: string): PersonalSettings {
   const stored = storedPersonal(accountId);
   const result = Object.fromEntries(PERSONAL_SETTING_KEYS.map((key) => [key, node[key]])) as unknown as PersonalSettings;
+  result.conversationCommands = structuredClone(DEFAULT_CONVERSATION_COMMANDS);
   for (const key of PERSONAL_SETTING_KEYS) {
     if (!(key in stored)) continue;
     const parsed = personalSchemas[key].safeParse(stored[key]);
     if (parsed.success) (result as Record<string, unknown>)[key] = parsed.data;
+  }
+  // Missing personal commands must not expose another account's presets.
+  const commands = "conversationCommands" in stored ? result.conversationCommands : structuredClone(DEFAULT_CONVERSATION_COMMANDS);
+  const presets = identifyCommandPresets(commands.presets ?? []);
+  result.conversationCommands = { ...commands, presets };
+  if (JSON.stringify(presets) !== JSON.stringify(commands.presets ?? [])) {
+    const db = settingsDatabase();
+    db.prepare("UPDATE account_settings SET payload=? WHERE account_id=?").run(JSON.stringify({ ...stored, conversationCommands: result.conversationCommands }), accountId);
   }
   return result;
 }
@@ -391,6 +403,10 @@ export function updatePersonalSettings(input: Partial<PersonalSettings>, account
   const db = settingsDatabase();
   ensureAccountSettingsSchema(db);
   const target = personalAccount(account);
+  if (changes.conversationCommands) {
+    const commands = changes.conversationCommands as ConversationCommandsSettings;
+    changes.conversationCommands = { ...commands, presets: identifyCommandPresets(commands.presets ?? [], personalSettings(account).conversationCommands.presets) };
+  }
   db.exec("BEGIN");
   try {
     if (target) {
@@ -421,6 +437,8 @@ export function seedPersonalSettings(accountId: string): void {
   ensureAccountSettingsSchema(db);
   const node = nodeSettings();
   const payload = Object.fromEntries(PERSONAL_SETTING_KEYS.map((key) => [key, node[key]]));
+  // Personal prompts are not defaults for a newly created account.
+  payload.conversationCommands = structuredClone(DEFAULT_CONVERSATION_COMMANDS);
   db.prepare("INSERT OR IGNORE INTO account_settings (account_id, payload, updated_at) VALUES (?, ?, ?)").run(accountId, JSON.stringify(payload), new Date().toISOString());
 }
 
@@ -592,7 +610,8 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   if (!Number.isInteger(gitPullTimeoutSeconds) || gitPullTimeoutSeconds < 60 || gitPullTimeoutSeconds > 3600) throw new Error("Git PR timeout must be between 60 and 3600 seconds");
   const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
-  const conversationCommands = input.conversationCommands ?? previous.conversationCommands;
+  const commandInput = input.conversationCommands ?? previous.conversationCommands;
+  const conversationCommands = { ...commandInput, presets: identifyCommandPresets(commandInput.presets ?? [], previous.conversationCommands.presets) };
   const conversationDefaults = conversationDefaultsSchema.parse(input.conversationDefaults ?? previous.conversationDefaults);
   if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
   db.exec("BEGIN");

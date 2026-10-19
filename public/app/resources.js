@@ -15,7 +15,7 @@ const SCAN_STATUS_LABELS = { new: "New", changed: "Changed", installed: "Install
 const view = {
   scope: "cluster", projectId: null, conversationId: null, engine: null, tab: "skills", configured: false, nodeId: "",
   nodes: [], sharing: null, activation: null, relayPolicies: [], loading: false, candidates: [], scanRoot: "", request: 0,
-  page: 0, scanPage: 0, selected: new Set(), selectedServers: new Set(), scanSelected: new Set(),
+  page: 0, scanPage: 0, selected: new Set(), selectedServers: new Set(), scanSelected: new Set(), bulkBusy: false,
 };
 // Rows per page, refitted to whatever height the panel gives each list.
 const pageSizes = { list: 8, scan: 8, git: 6 };
@@ -88,7 +88,7 @@ function matchesState(item) {
 function filteredSkills(inventory) {
   const query = normalizedQuery(elements.resourcesSearchInput.value || "");
   const harness = harnessFilter();
-  return inventory.skills.filter((skill) => (!harness || skill.harnesses.includes(harness)) && matchesState(skill) && matches(query, skill.name, skill.description));
+  return skillManagementInventory(inventory).filter((skill) => (!harness || skill.harnesses.includes(harness)) && matchesState(skill) && matches(query, skill.name, skill.description));
 }
 
 function filteredServers(inventory) {
@@ -105,6 +105,18 @@ function filteredPlugins(inventory) {
 
 /* ---- Sharing targets ---- */
 
+/** Admin policy rows remain editable without claiming they are available to this runtime. */
+function skillManagementInventory(inventory) {
+  if (!view.nodes.some((entry) => entry.node.local && entry.inventory === inventory)) return inventory.skills;
+  const present = new Set(inventory.skills.map((skill) => skill.name));
+  const harnesses = inventory.harnesses.map((harness) => harness.id);
+  return [...inventory.skills, ...(view.sharing?.skills ?? []).filter((skill) => skill.kind === "local" && !present.has(skill.name)).map((skill) => ({
+    name: skill.name, path: skill.path, description: `${skill.description || ""} · Not available in this scope`, origin: "shared", harnesses,
+    activation: Object.fromEntries(harnesses.map((harness) => [harness, { enabled: false, preference: null, shared: false, reason: "Not available in this scope" }])),
+    activationRestrictions: Object.fromEntries(harnesses.map((harness) => [harness, "Change sharing scopes to make this skill available here."])),
+  }))];
+}
+
 function skillKey(skill) { return `${skill.name}\n${skill.path}`; }
 function serverKey(server) { return `${server.file}\n${server.name}`; }
 
@@ -116,9 +128,9 @@ function shareable(skill) {
   return policy ? policy.kind === "local" : skill.origin !== "shared" && skill.origin !== "scoped";
 }
 
-const NO_GRANTS = { clusterIds: [], nodeIds: [], workspaceIds: [], conversations: [] };
+const NO_GRANTS = { clusterIds: [], nodeIds: [], workspaceIds: [], projectIds: [], conversations: [] };
 function grantsOf(policy) {
-  return policy ? { clusterIds: policy.clusterIds ?? [], nodeIds: policy.nodeIds ?? [], workspaceIds: policy.workspaceIds ?? [], conversations: policy.conversations ?? [] } : NO_GRANTS;
+  return policy ? { clusterIds: policy.clusterIds ?? [], nodeIds: policy.nodeIds ?? [], workspaceIds: policy.workspaceIds ?? [], projectIds: policy.projectIds ?? [], conversations: policy.conversations ?? [] } : NO_GRANTS;
 }
 const conversationValue = (item) => `${item.projectId}\n${item.conversationId}`;
 
@@ -137,6 +149,7 @@ function targetNames(grants) {
     ...grants.clusterIds.map((id) => `${clusterName(id)} (cluster)`),
     ...grants.nodeIds.map(nodeName),
     ...grants.workspaceIds.map((id) => `${workspaceName(id)} (workspace)`),
+    ...grants.projectIds.map((id) => `${projectName(id)} (project)`),
     ...grants.conversations.map(conversationName),
   ];
 }
@@ -188,6 +201,7 @@ function pickedGrants(form) {
     clusterIds: values("cluster").map((input) => input.dataset.value),
     nodeIds: values("node").map((input) => input.dataset.value),
     workspaceIds: values("workspace").map((input) => input.dataset.value),
+    projectIds: values("project").map((input) => input.dataset.value),
     conversations: values("conversation").map((input) => ({ projectId: input.dataset.project, conversationId: input.dataset.conversation })),
   };
 }
@@ -250,7 +264,7 @@ async function openShareDialog(skills) {
   title.textContent = single ? `Share ${single.name}` : `Share ${skills.length} skills`;
   const hint = document.createElement("p");
   hint.id = "skill-share-hint";
-  hint.textContent = "Every conversation on this node already has it. Receivers get the whole folder, scripts included.";
+  hint.textContent = "Workspace, project and conversation selections limit local availability too. With no scopes selected, this skill stays available everywhere on this node. Cluster and machine grants give receivers full access. Native copies that cannot be filtered must be removed after import or the agent refuses to start. Changes apply on the next runtime load; already loaded instructions cannot be recalled.";
   dialog.setAttribute("aria-describedby", hint.id);
   form.append(title, hint);
   const clusters = view.sharing?.clusters ?? [];
@@ -265,25 +279,26 @@ async function openShareDialog(skills) {
     const nodes = view.sharing?.nodes ?? [];
     if (!nodes.length) nodeGroup.append(emptyRow("No other nodes in your clusters yet."));
     for (const node of nodes) nodeGroup.append(checkboxRow(`${node.name}${node.twin ? " (twin)" : ""}`, { kind: "node", value: node.nodeId }, current.nodeIds.includes(node.nodeId), "skill-share-node"));
-    const workspaceGroup = fieldset("Workspaces", "Only conversations in the workspace's projects, on the nodes those projects are shared with.");
-    const workspaces = view.sharing?.workspaces ?? [];
-    if (!workspaces.length) workspaceGroup.append(emptyRow("No workspaces on this node."));
-    for (const workspace of workspaces) workspaceGroup.append(checkboxRow(workspace.label, { kind: "workspace", value: workspace.id }, current.workspaceIds.includes(workspace.id), "skill-share-workspace"));
-    const conversationGroup = fieldset("Conversations", "Only that conversation, on the nodes its project is shared with.");
-    conversationPicker(conversationGroup, current.conversations);
-    form.append(clusterGroup, nodeGroup, workspaceGroup, conversationGroup);
+    form.append(clusterGroup, nodeGroup);
   }
+  const workspaceGroup = fieldset("Workspaces", "Only this workspace's projects, locally and on nodes those projects are shared with.");
+  const workspaces = view.sharing?.workspaces ?? [];
+  if (!workspaces.length) workspaceGroup.append(emptyRow("No workspaces on this node."));
+  for (const workspace of workspaces) workspaceGroup.append(checkboxRow(workspace.label, { kind: "workspace", value: workspace.id }, current.workspaceIds.includes(workspace.id), "skill-share-workspace"));
+  const projectGroup = fieldset("Projects", "Only this project's conversations, locally and on nodes it is shared with.");
+  for (const project of state.projects ?? []) projectGroup.append(checkboxRow(project.name ?? project.id, { kind: "project", value: project.id }, current.projectIds.includes(project.id), "skill-share-project"));
+  const conversationGroup = fieldset("Conversations", "Only that conversation, locally and on nodes its project is shared with.");
+  conversationPicker(conversationGroup, current.conversations);
+  form.append(workspaceGroup, projectGroup, conversationGroup);
   const actions = document.createElement("div");
   actions.className = "dialog-actions";
   const cancel = button("Cancel", "skill-share-cancel", () => dialog.close(), "ghost");
   actions.append(cancel);
-  if (clusters.length) {
-    if (!single) actions.append(button("Make local only", "skill-share-clear", () => void applySharing(skills, "clear", NO_GRANTS, dialog), "ghost"));
-    const save = document.createElement("button");
-    save.type = "submit"; save.className = "primary"; save.dataset.testid = "skill-share-save";
-    save.textContent = single ? "Save sharing" : "Share";
-    actions.append(save);
-  }
+  if (!single) actions.append(button("Make local only", "skill-share-clear", () => void applySharing(skills, "clear", NO_GRANTS, dialog), "ghost"));
+  const save = document.createElement("button");
+  save.type = "submit"; save.className = "primary"; save.dataset.testid = "skill-share-save";
+  save.textContent = single ? "Save sharing" : "Share";
+  actions.append(save);
   form.append(actions);
   dialog.append(form);
   document.body.append(dialog);
@@ -309,6 +324,7 @@ function addedTargets(before, after) {
     clusterIds: after.clusterIds.filter((id) => !before.clusterIds.includes(id)),
     nodeIds: after.nodeIds.filter((id) => !before.nodeIds.includes(id)),
     workspaceIds: after.workspaceIds.filter((id) => !before.workspaceIds.includes(id)),
+    projectIds: after.projectIds.filter((id) => !before.projectIds.includes(id)),
     conversations: after.conversations.filter((item) => !before.conversations.some((prior) => conversationValue(prior) === conversationValue(item))),
   };
 }
@@ -340,7 +356,7 @@ async function applySharing(skills, mode, chosen, dialog) {
       const prior = grantsOf(policy);
       const body = mode === "add" ? {
         clusterIds: union(prior.clusterIds, chosen.clusterIds), nodeIds: union(prior.nodeIds, chosen.nodeIds),
-        workspaceIds: union(prior.workspaceIds, chosen.workspaceIds), conversations: union(prior.conversations, chosen.conversations, conversationValue),
+        workspaceIds: union(prior.workspaceIds, chosen.workspaceIds), projectIds: union(prior.projectIds, chosen.projectIds), conversations: union(prior.conversations, chosen.conversations, conversationValue),
       } : chosen;
       try {
         await api(`/api/resources/skills/${encodeURIComponent(name)}/sharing`, { method: "PUT", body: JSON.stringify(body) });
@@ -573,7 +589,8 @@ function nodeHeading(entry, count, noun) {
 function localEntry() { return view.nodes.find((entry) => entry.node.local); }
 
 function selectedSkills() {
-  return (localEntry()?.inventory?.skills ?? []).filter((skill) => view.selected.has(skillKey(skill)) && shareable(skill));
+  const inventory = localEntry()?.inventory;
+  return (inventory ? skillManagementInventory(inventory) : []).filter((skill) => view.selected.has(skillKey(skill)) && shareable(skill));
 }
 
 function selectedServers() {
@@ -601,17 +618,51 @@ function peerStatus() {
   return details;
 }
 
+function bulkChoices(inventory, kind) {
+  const rows = kind === "skill" ? filteredSkills(inventory) : kind === "mcp" ? filteredServers(inventory) : filteredPlugins(inventory);
+  const eligible = kind === "skill" ? () => true : kind === "mcp"
+    ? (row) => ["shared", "project", "plugin"].includes(row.source)
+    : (row) => ["managed", "global", "project"].includes(row.source);
+  const filter = harnessFilter();
+  const choices = new Map();
+  for (const row of rows.filter(eligible)) for (const harness of row.harnesses) {
+    if (filter && harness !== filter || !row.activation?.[harness] || row.activationRestrictions?.[harness]) continue;
+    const key = `${row.name}\0${harness}`;
+    choices.set(key, { name: row.name, harness, preference: row.activation[harness].preference });
+  }
+  return [...choices.values()];
+}
+
+async function bulkActivation(kind, enabled, choices) {
+  const tab = view.tab, nodeId = view.nodeId, projectId = view.projectId, conversationId = view.conversationId;
+  const action = enabled ? "Enable" : "Disable";
+  if (!await confirmAction({ title: `${action} all shown ${tab === "mcp" ? "MCP servers" : tab}?`,
+    message: `Save ${choices.length} agent choice${choices.length === 1 ? "" : "s"} on this node, across every matching page? Read-only resources are skipped. Relay blocks and agent configuration may still prevent loading. Already-read instructions remain in open conversations.`,
+    confirmLabel: `${action} all shown`, destructive: !enabled })) return;
+  if (tab !== view.tab || nodeId !== view.nodeId || projectId !== view.projectId || conversationId !== view.conversationId) {
+    toast("Resource view changed. Review the selection and try again."); return;
+  }
+  view.bulkBusy = true;
+  renderShareBar();
+  try {
+    const result = await api("/api/resources/activation/bulk", { method: "PUT", body: JSON.stringify({ kind, enabled, items: choices.map(({ name, harness }) => ({ name, harness })), ...(view.scope !== "cluster" && projectId ? { projectId } : {}), ...(view.scope === "conversation" && conversationId ? { conversationId } : {}) }) });
+    await loadInventory();
+    setStatus(`${result.changed} agent choice${result.changed === 1 ? "" : "s"} ${enabled ? "enabled" : "disabled"}. Start a new conversation to clear instructions already read.`);
+  } catch (error) { toast(error.message); }
+  finally { view.bulkBusy = false; renderShareBar(); }
+}
+
 function renderShareBar() {
   const bar = elements.resourcesShareBar;
   bar.replaceChildren();
   const local = localEntry()?.inventory;
-  bar.hidden = Boolean(view.nodeId) || !(view.tab === "skills" || view.tab === "mcp") || !local || (view.tab === "skills" && !view.sharing);
+  bar.hidden = Boolean(view.nodeId) || !["skills", "mcp", "plugins"].includes(view.tab) || !local;
   if (bar.hidden) return;
   const line = document.createElement("div");
   line.className = "resources-share-line";
   const count = document.createElement("span");
   count.dataset.testid = "resources-selected-count";
-  if (view.tab === "skills") {
+  if (view.tab === "skills" && view.sharing) {
     const chosen = selectedSkills();
     count.textContent = chosen.length ? `${chosen.length} skill${chosen.length === 1 ? "" : "s"} selected` : "Skills stay on this node until shared. Tick several to share at once.";
     const shown = filteredSkills(local).filter(shareable);
@@ -625,12 +676,24 @@ function renderShareBar() {
     const status = peerStatus();
     if (status) line.append(status);
     if (!view.sharing.legacy.verified) line.append(emptyRow(view.sharing.legacy.error || "Legacy sync status not yet verified. Sharing verifies it before proceeding."));
-  } else {
+  } else if (view.tab === "mcp") {
     const chosen = selectedServers();
     count.textContent = chosen.length ? `${chosen.length} server${chosen.length === 1 ? "" : "s"} selected` : "Tick a server that only one agent loads to let Claude and Kiro here load it too.";
     const share = button("Share with every agent here", "resources-share-mcp-button", () => void shareSelectedServers(), "primary compact");
     share.disabled = !chosen.length;
     line.append(count, share);
+  } else {
+    count.textContent = view.tab === "plugins" ? "Plugin activation on this node" : "Skill activation on this node";
+    line.append(count);
+  }
+  const kind = view.tab === "skills" ? "skill" : view.tab === "mcp" ? "mcp" : "plugin";
+  const choices = bulkChoices(local, kind);
+  for (const [enabled, testid] of [[true, "resources-enable-all"], [false, "resources-disable-all"]]) {
+    const selected = choices.filter((choice) => choice.preference !== enabled);
+    const action = enabled ? "Enable" : "Disable";
+    const control = button(`${action} all shown (${selected.length})`, testid, () => void bulkActivation(kind, enabled, selected));
+    control.disabled = view.bulkBusy || !selected.length || selected.length > 1000;
+    line.append(control);
   }
   bar.append(line);
 }

@@ -3,7 +3,7 @@ import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
 test("saved commands paste into chat through a keyboard shortcut without sending", { timeout: 240_000 }, async (t) => {
-  const { page, environment, node } = await nativeUiFixture(t);
+  const { page, environment, node } = await nativeUiFixture(t, (root) => ({ JOINT_BOB_TEST_ENGINE_LOG: `${root}/engine.log` }));
   await page.goto(node.url);
   await page.locator("#loginDialog[open]").waitFor();
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -32,11 +32,15 @@ test("saved commands paste into chat through a keyboard shortcut without sending
   await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  assert.equal(await page.getByTestId("saved-commands-button").innerText(), "Custom commands");
+  assert.equal(await page.locator('.composer-row #savedCommandsButton + #sendButton').count(), 1, "Custom commands must sit immediately beside Send");
   await page.getByTestId("chat-message-input").fill("Old draft");
   await page.keyboard.press("Control+Alt+Shift+L");
   await page.getByTestId("saved-commands-dialog").waitFor({ state: "visible" });
   await page.getByTestId("saved-commands-search").fill("Review");
+  await page.getByTestId("saved-commands-options").getByText("Review changes", { exact: true }).waitFor();
   await page.getByTestId("saved-commands-search").press("Enter");
+  await page.waitForFunction(() => (document.querySelector('#messageInput') as HTMLTextAreaElement)?.value === "Review my changes, do not send this yet.");
   assert.equal(await page.getByTestId("chat-message-input").inputValue(), "Review my changes, do not send this yet.");
   assert.equal(await page.getByTestId("saved-commands-dialog").evaluate((dialog) => (dialog as HTMLDialogElement).open), false);
   await page.reload();
@@ -45,5 +49,17 @@ test("saved commands paste into chat through a keyboard shortcut without sending
   await page.getByTestId("chat-message-input").click();
   await page.keyboard.press("Control+Alt+Shift+L");
   await page.getByTestId("saved-commands-dialog").waitFor({ state: "visible" });
+  await page.getByTestId("saved-commands-options").getByText("Review changes").waitFor();
   assert.equal(await page.getByTestId("saved-commands-options").getByText("Review changes").count(), 1);
+  assert.equal(await page.locator("#savedCommandsTitle").innerText(), "Recently used commands");
+  await page.getByTestId("saved-commands-search").press("Escape");
+  await page.evaluate(async () => (await import("/app/settings.js")).openSettings("commands"));
+  await page.getByTestId("saved-command-share").click();
+  await page.getByTestId("command-share-dialog").waitFor();
+  await page.getByTestId("command-share-projectIds").first().check();
+  await page.getByTestId("command-share-save").click();
+  await page.getByTestId("command-share-dialog").waitFor({ state: "detached" });
+  await page.getByTestId("saved-command-share").click();
+  await page.getByTestId("command-share-dialog").waitFor();
+  assert.equal(await page.getByTestId("command-share-projectIds").first().isChecked(), true, "Project sharing must persist through the real backend");
 });

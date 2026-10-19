@@ -194,29 +194,47 @@ function renderSkillsDialog() {
   }
 }
 
+let skillRequestGeneration = 0;
+let pendingSkillScope;
+const skillContext = () => ({ projectId: state.activeConversationProjectId || state.activeProjectId, conversationId: state.activeConversationId || state.activeSessionId || undefined });
+
 export async function loadSkills(force = false) {
-  const projectId = state.activeProjectId;
+  const context = skillContext();
+  const { projectId, conversationId } = context;
+  const scope = JSON.stringify(context);
   if (!projectId) {
+    skillRequestGeneration++;
+    pendingSkillScope = undefined;
     state.skills = [];
+    state.skillsLoading = false;
     state.skillsProjectId = null;
+    state.skillsConversationId = null;
     return;
   }
-  if ((!force && state.skillsProjectId === projectId) || state.skillsLoading) return;
+  if ((!force && state.skillsProjectId === projectId && state.skillsConversationId === conversationId) || pendingSkillScope === scope) return;
+  const request = ++skillRequestGeneration;
+  pendingSkillScope = scope;
+  state.skills = [];
   state.skillsLoading = true;
   renderSkillsDialog();
   try {
-    const body = await api(`/api/projects/${encodeURIComponent(projectId)}/skills`);
-    if (state.activeProjectId !== projectId) return;
+    const params = new URLSearchParams();
+    if (conversationId) params.set("conversationId", conversationId);
+    const body = await api(`/api/projects/${encodeURIComponent(projectId)}/skills?${params}`);
+    if (request !== skillRequestGeneration || JSON.stringify(skillContext()) !== scope) return;
     state.skills = body.skills;
     state.skillsProjectId = projectId;
+    state.skillsConversationId = conversationId;
   } catch (error) {
-    if (state.activeProjectId === projectId) {
+    if (request === skillRequestGeneration && JSON.stringify(skillContext()) === scope) {
       state.skills = [];
-      state.skillsProjectId = projectId;
+      state.skillsProjectId = null;
+      state.skillsConversationId = null;
       toast(error.message);
     }
   } finally {
-    if (state.activeProjectId === projectId) {
+    if (request === skillRequestGeneration) {
+      pendingSkillScope = undefined;
       state.skillsLoading = false;
       renderSkillsDialog();
       renderCommandAutocomplete();
@@ -343,28 +361,35 @@ export function composerCommandHandlers() {
 }
 
 function commandSourceKey() {
-  return `${state.activeProjectId}:${state.engine}`;
+  return JSON.stringify({ ...skillContext(), harness: state.engine });
 }
 
+let commandRequestGeneration = 0;
+let pendingCommandKey;
 async function loadCommands() {
-  const projectId = state.activeProjectId;
+  const { projectId, conversationId } = skillContext();
   const harness = state.engine;
   const key = commandSourceKey();
-  if (!projectId || state.commandsLoading || state.commandsKey === key) return;
+  if (!projectId || pendingCommandKey === key || state.commandsKey === key) return;
+  const request = ++commandRequestGeneration;
+  pendingCommandKey = key;
   state.commandsLoading = true;
   try {
-    const body = await api(`/api/projects/${encodeURIComponent(projectId)}/commands?harness=${encodeURIComponent(harness)}`);
-    if (commandSourceKey() !== key) return;
+    const params = new URLSearchParams({ harness });
+    if (conversationId) params.set("conversationId", conversationId);
+    const body = await api(`/api/projects/${encodeURIComponent(projectId)}/commands?${params}`);
+    if (request !== commandRequestGeneration || commandSourceKey() !== key) return;
     state.commands = body.commands;
     state.commandsKey = key;
   } catch (error) {
-    if (commandSourceKey() === key) {
+    if (request === commandRequestGeneration && commandSourceKey() === key) {
       state.commands = [];
       state.commandsKey = key;
       toast(error.message);
     }
   } finally {
-    if (commandSourceKey() === key) {
+    if (request === commandRequestGeneration) {
+      pendingCommandKey = undefined;
       state.commandsLoading = false;
       renderCommandAutocomplete();
     }

@@ -24,6 +24,7 @@ export function setComposerEnabled(enabled) {
   const auto = state.routing?.active && state.routing.mode === "auto";
   elements.messageInput.disabled = !allowed;
   elements.sendButton.disabled = !allowed;
+  elements.savedCommandsButton.disabled = !allowed;
   elements.attachButton.disabled = !allowed;
   elements.attachmentInput.disabled = !allowed;
   elements.renameSessionButton.disabled = !allowed;

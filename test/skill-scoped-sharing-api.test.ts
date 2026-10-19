@@ -42,6 +42,8 @@ test("workspace and conversation skill grants reach only nodes sharing the proje
 
     // Unknown targets are refused, not silently dropped.
     assert.equal((await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [], workspaceIds: ["missing"] })).status, 400);
+    assert.equal((await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [], projectIds: ["missing"] })).status, 400);
+    assert.equal((await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [], projectIds: [shared.id, shared.id] })).status, 400);
     assert.equal((await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [], conversations: [{ projectId: "missing", conversationId: "c-1" }] })).status, 400);
 
     const conversations = [{ projectId: shared.id, conversationId: "conversation-1" }, { projectId: unshared.body.project.id, conversationId: "conversation-2" }];
@@ -60,6 +62,34 @@ test("workspace and conversation skill grants reach only nodes sharing the proje
     assert.equal((await signedNodeRequest(eb, b, a, "POST", "/api/cluster/v2/skills/bundle", { name: "portable" })).status, 200);
     const peerInventory = await signedNodeRequest(ea, a, b, "POST", "/api/cluster/v2/runtime/resources/inventory", {});
     assert.doesNotMatch(JSON.stringify(peerInventory.body), /Scoped test instructions/, "a scoped copy is not disclosed to the owner's peers");
+
+    const projectGrant = await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [], projectIds: [shared.id, unshared.body.project.id] });
+    assert.equal(projectGrant.status, 200, JSON.stringify(projectGrant.body));
+    await api(b, sb, "POST", "/resources/skills/refresh", {});
+    assert.deepEqual(await index(b), [{ name: "portable", projectIds: [shared.id], conversations: [] }], "direct project grants authorize only projects shared with the receiver");
+    const inventory = async (projectId?: string, conversationId?: string) => {
+      const result = await api<{ nodes: Array<{ inventory: { skills: Array<{ name: string }> } }> }>(a, sa, "GET", `/resources/inventory?${new URLSearchParams({ ...(projectId ? { projectId } : {}), ...(conversationId ? { conversationId } : {}) })}`);
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      return { body: result.body.nodes[0].inventory };
+    };
+    assert.equal((await inventory()).body.skills.some((skill) => skill.name === "portable"), false, "owner node-wide inventory cannot leak project-scoped skills");
+    assert.equal((await inventory(shared.id)).body.skills.some((skill) => skill.name === "portable"), true);
+    assert.equal((await api(a, sa, "GET", "/usage/skills/content?name=portable")).status, 404);
+    assert.equal((await api(a, sa, "GET", `/usage/skills/content?name=portable&projectId=${shared.id}`)).status, 200);
+    await writeFile(path.join(managed(ea), "SKILL.md"), manifest + "Updated instructions.\n");
+    await api(b, sb, "POST", "/resources/skills/refresh", {});
+    assert.equal(await readFile(path.join(scoped(b), "SKILL.md"), "utf8"), manifest + "Updated instructions.\n", "scoped receivers get content updates");
+    await writeFile(path.join(managed(ea), "SKILL.md"), manifest);
+    await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [], conversations: [conversations[0]] });
+    assert.equal((await inventory(shared.id)).body.skills.some((skill) => skill.name === "portable"), false);
+    assert.equal((await inventory(shared.id, "conversation-1")).body.skills.some((skill) => skill.name === "portable"), true);
+    assert.equal((await api(a, sa, "GET", `/usage/skills/content?name=portable&projectId=${shared.id}&conversationId=conversation-1`)).status, 200);
+    assert.equal((await api(a, sa, "GET", `/usage/skills/content?name=portable&projectId=${shared.id}&conversationId=other`)).status, 404);
+    for (const conversationId of ["conversation-1", "other"]) {
+      const commands = await api<{ commands: Array<{ name: string }> }>(a, sa, "GET", `/projects/${shared.id}/commands?harness=pi&conversationId=${conversationId}`);
+      assert.equal(commands.status, 200, JSON.stringify(commands.body));
+      assert.equal(commands.body.commands.some((command) => command.name === "skill:portable"), conversationId === "conversation-1", "slash command discovery follows conversation scope");
+    }
 
     const workspace = await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [], workspaceIds: [shared.workspaceId, otherWorkspace], conversations: [conversations[0]] });
     assert.equal(workspace.status, 200, JSON.stringify(workspace.body));
@@ -83,6 +113,20 @@ test("workspace and conversation skill grants reach only nodes sharing the proje
     await assert.rejects(lstat(scoped(b)), { code: "ENOENT" });
     assert.deepEqual(await index(b), []);
     assert.equal((await signedNodeRequest(eb, b, a, "POST", "/api/cluster/v2/skills/bundle", { name: "portable" })).status, 403);
+
+    // Local edits must never retain permission that the owner narrowed or revoked.
+    await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [], projectIds: [shared.id] });
+    await api(b, sb, "POST", "/resources/skills/refresh", {});
+    await writeFile(path.join(scoped(b), "SKILL.md"), manifest + "Local edits.\n");
+    await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [], conversations: [conversations[0]] });
+    await api(b, sb, "POST", "/resources/skills/refresh", {});
+    assert.deepEqual(await index(b), [{ name: "portable", projectIds: [], conversations: [conversations[0]] }], "scope narrowing survives a refused content overwrite");
+    await api(a, sa, "PUT", "/resources/skills/portable/sharing", { clusterIds: [] });
+    await api(b, sb, "POST", "/resources/skills/refresh", {});
+    assert.equal(await readFile(path.join(scoped(b), "SKILL.md"), "utf8"), manifest + "Local edits.\n", "revocation preserves locally modified files");
+    const denied = await api<{ nodes: Array<{ inventory: { skills: Array<{ name: string }> } }> }>(b, sb, "GET", `/resources/inventory?projectId=${shared.id}&conversationId=conversation-1`);
+    assert.equal(denied.status, 200, JSON.stringify(denied.body));
+    assert.equal(denied.body.nodes[0].inventory.skills.some((skill) => skill.name === "portable"), false, "preserved revoked files never remain available");
   } finally {
     await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });

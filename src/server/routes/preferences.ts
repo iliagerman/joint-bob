@@ -28,6 +28,9 @@ import { broadcastToAllClients, reloadSharedSkills } from "../realtime.js";
 import { auditQuerySchema, labelIconRequestSchema, recentSessionIdentitySchema, recentSessionSchema, registeredHarnessIdSchema, resourcePathsSchema, runtimeCheckSchema, settingsSchema, userPinSchema, userPreferencesSchema } from "../schemas.js";
 import { generateLabelIcon } from "../label-icon.js";
 import { app } from "../state.js";
+import { registerSavedCommandRoutes } from "../saved-commands.js";
+
+registerSavedCommandRoutes();
 
 // Block settings access for replicated users
 // Settings are shaped by role: the admin sees the node's, everyone else only their own.

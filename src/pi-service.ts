@@ -620,7 +620,8 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
       const configured = getScopedResourcePaths(options.projectId, conversationId, "pi");
       const commonInstructions = await commonAgentInstructionFiles(undefined, [agentResourcePaths().piInstructions, ...configured.global.rules, ...configured.project.rules]);
       const resources = piAgentResourcePaths(undefined, configured);
-      const blocked = blockedSkillNames("pi");
+      const scope = { projectId: options.projectId, conversationId };
+      const blocked = blockedSkillNames("pi", scope);
       return {
         strictResourceIsolation: getSettings().strictResourceIsolation,
         packagesFile: agentResourcePaths().piPackages,
@@ -628,7 +629,7 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
         prompts: resources.prompts,
         themes: resources.themes,
         agentsFiles: [...commonInstructions, ...agentCapabilityInstructionFiles()],
-        skillRoots: [activeSkillRoot("pi"), ...configured.global.skills.map((root) => activeSkillRoot("pi", root)), activeSkillRoot("pi", path.join(options.cwd, ".pi", "skills")), ...configured.project.skills.map((root) => activeSkillRoot("pi", root))],
+        skillRoots: [activeSkillRoot("pi", undefined, scope), ...configured.global.skills.map((root) => activeSkillRoot("pi", root, scope)), activeSkillRoot("pi", path.join(options.cwd, ".pi", "skills"), scope), ...configured.project.skills.map((root) => activeSkillRoot("pi", root, scope))],
         managedSkillRoot: agentResourcePaths().sharedSkills,
         blockedSkillNames: blocked,
       };

@@ -29,6 +29,7 @@ export const elements = {
   messageInput: document.querySelector("#messageInput"),
   commandAutocomplete: document.querySelector("#commandAutocomplete"),
   sendButton: document.querySelector("#sendButton"),
+  savedCommandsButton: document.querySelector("#savedCommandsButton"),
   turnTimer: document.querySelector("#turnTimer"),
   reconnectBanner: document.querySelector("#reconnectBanner"),
   reconnectBannerText: document.querySelector("#reconnectBannerText"),

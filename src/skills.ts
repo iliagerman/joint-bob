@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { unavailableSkillNames, type SkillScopeContext } from "./scoped-skills.js";
 import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,7 @@ export interface SkillSummary {
 }
 
 export interface SkillRoots {
+  skillScope?: SkillScopeContext;
   user?: Partial<Record<HarnessId, string>>;
   piUser?: string;
   claudeUser?: string;
@@ -110,6 +112,7 @@ export async function listSkills(projectPath: string, roots: SkillRoots = defaul
     return (await adapter.resources()).skills(projectPath, roots);
   }));
   const byKey = new Map<string, SkillSummary>();
-  for (const skill of groups.flat()) byKey.set(`${skill.harness}:${skill.name}`, skill);
+  const unavailable = new Set(unavailableSkillNames(roots.skillScope));
+  for (const skill of groups.flat()) if (!unavailable.has(skill.name)) byKey.set(`${skill.harness}:${skill.name}`, skill);
   return [...byKey.values()].sort((left, right) => left.harness.localeCompare(right.harness) || left.name.localeCompare(right.name));
 }

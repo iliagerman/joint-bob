@@ -1,50 +1,76 @@
 import { api } from "./api.js";
 import { setInputValue } from "./composer.js";
 import { elements } from "./elements.js";
+import { state } from "./state.js";
 import { toast } from "./shell.js";
 
 const dialog = document.querySelector("#savedCommandsDialog");
 const search = document.querySelector("#savedCommandsSearch");
 const options = document.querySelector("#savedCommandsOptions");
 let commands = [];
+let recentIds = [];
 let selected = 0;
+let generation = 0;
+let context;
+const currentContext = () => ({ projectId: state.activeConversationProjectId || state.activeProjectId, conversationId: state.activeConversationId || undefined });
+const sameContext = (capture) => JSON.stringify(capture) === JSON.stringify(currentContext());
+
+async function choose(command) {
+  const capture = context;
+  const request = generation;
+  const draft = elements.messageInput.value;
+  try {
+    await api(`/api/commands/${encodeURIComponent(command.id)}/use`, { method: "POST", body: JSON.stringify(capture) });
+    if (request !== generation || !dialog.open || !sameContext(capture) || elements.messageInput.disabled || elements.messageInput.value !== draft) return;
+    dialog.close();
+    setInputValue(command.prompt);
+    elements.messageInput.dispatchEvent(new Event("input", { bubbles: true }));
+    elements.messageInput.focus();
+  } catch (error) { if (request === generation && sameContext(capture)) toast(error.message); }
+}
 
 function render() {
-  const matches = commands.filter(({ name, prompt }) => `${name} ${prompt}`.toLowerCase().includes(search.value.toLowerCase()));
+  const query = search.value.trim().toLowerCase();
+  const recent = recentIds.map((id) => commands.find((command) => command.id === id)).filter(Boolean).slice(0, 5);
+  const matches = query ? commands.filter(({ name, prompt }) => `${name} ${prompt}`.toLowerCase().includes(query)) : recent.length ? recent : commands.slice(0, 5);
+  document.querySelector("#savedCommandsTitle").textContent = !query && recent.length ? "Recently used commands" : "Commands";
   selected = Math.min(selected, Math.max(0, matches.length - 1));
   options.replaceChildren();
-  if (!matches.length) options.textContent = "No saved commands found.";
-  matches.forEach(({ name, prompt }, index) => {
+  if (!matches.length) options.textContent = "No commands found. Add custom commands in Settings → Commands.";
+  matches.forEach((command, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "saved-command-option";
+    button.dataset.testid = "saved-command-option";
     button.setAttribute("role", "option");
     button.setAttribute("aria-selected", String(index === selected));
-    button.textContent = name;
-    button.title = prompt;
-    button.addEventListener("click", () => {
-      dialog.close();
-      setInputValue(prompt);
-      elements.messageInput.dispatchEvent(new Event("input", { bubbles: true }));
-      elements.messageInput.focus();
-    });
+    button.textContent = command.name;
+    button.title = command.prompt;
+    button.addEventListener("click", () => { void choose(command); });
     options.append(button);
   });
 }
 
 export async function openSavedCommands() {
   if (dialog.open || elements.messageInput.disabled || !elements.messageInput.checkVisibility()) return;
+  const capture = currentContext();
+  const request = ++generation;
+  context = capture;
+  commands = []; recentIds = []; selected = 0; search.value = "";
+  dialog.showModal();
+  options.textContent = "Loading commands…";
+  search.focus();
   try {
-    const settings = await api("/api/settings");
-    commands = settings.conversationCommands?.presets || [];
-    if (!commands.length) { toast("No saved commands. Add one in Settings → Commands."); return; }
-    selected = 0;
-    search.value = "";
+    const params = new URLSearchParams({ projectId: capture.projectId });
+    if (capture.conversationId) params.set("conversationId", capture.conversationId);
+    const body = await api(`/api/commands?${params}`);
+    if (request !== generation || !dialog.open) return;
+    if (!sameContext(capture)) { dialog.close(); return; }
+    commands = body.commands;
+    recentIds = body.recentIds || [];
     render();
-    dialog.showModal();
-    search.focus();
   } catch (error) {
-    toast(error.message);
+    if (request === generation && dialog.open) { options.textContent = "Could not load commands. Close and try again."; toast(error.message); }
   }
 }
 
@@ -52,6 +78,9 @@ document.querySelector("#savedCommandsButton").addEventListener("click", () => {
 document.querySelector("#closeSavedCommands").addEventListener("click", () => dialog.close());
 search.addEventListener("input", () => { selected = 0; render(); });
 search.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault(); event.stopPropagation(); dialog.close(); return;
+  }
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     const count = options.querySelectorAll("button").length;

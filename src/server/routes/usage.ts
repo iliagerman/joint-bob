@@ -188,14 +188,14 @@ app.get("/api/usage/skills", async (request, response, next) => {
     next(error);
   }
 });
-const skillContentSchema = z.object({ name: z.string().min(1).max(200), origin: z.enum(["shared", "scoped", "user", "project"]).optional(), projectId: z.string().min(1).max(200).optional() }).strict();
+const skillContentSchema = z.object({ name: z.string().min(1).max(200), origin: z.enum(["shared", "scoped", "user", "project"]).optional(), projectId: z.string().min(1).max(200).optional(), conversationId: z.string().min(1).max(300).optional() }).strict();
 /** The text of an installed skill, for reading what an agent is told when it loads one. */
 app.get("/api/usage/skills/content", async (request, response, next) => {
   try {
     const query = skillContentSchema.parse(request.query);
     const project = query.projectId ? await getProject(query.projectId) : undefined;
     if (query.projectId && !project) { sendError(response, 404, "Project not found"); return; }
-    const inventory = await resourceInventory(project ? { projectPath: project.path, projectId: project.id } : {});
+    const inventory = await resourceInventory(project ? { projectPath: project.path, projectId: project.id, conversationId: query.conversationId } : {});
     const bare = (name: string) => name.split(":").at(-1)!;
     const copies = inventory.skills.filter((skill) => skill.name === query.name || bare(skill.name) === bare(query.name));
     const chosen = copies.find((skill) => !query.origin || skill.origin === query.origin);

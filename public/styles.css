@@ -1729,8 +1729,13 @@ select.chat-toolbar-control {
 .conversation-lock button { flex: 0 0 auto; }
 .composer { display: grid; gap: 6px; padding: 8px 12px 14px; background: var(--header); }
 .composer.dragging { outline: 2px dashed var(--accent); outline-offset: -4px; }
-.saved-command-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(200px, 2fr) auto; gap: 8px; align-items: start; margin: 8px 0; }
+.saved-command-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(200px, 2fr) auto auto; gap: 8px; align-items: start; margin: 8px 0; }
 .saved-command-row > * { min-width: 0; }
+.command-received-row { display: grid; gap: 6px; padding: 12px 0; }
+.command-received-row p { white-space: pre-wrap; margin: 0; }
+.command-share-card { max-height: 80vh; overflow-y: auto; }
+.command-share-card fieldset { display: grid; gap: 8px; }
+#savedCommandsButton { flex-shrink: 0; }
 #savedCommandsOptions { max-height: 45dvh; overflow-y: auto; }
 .saved-command-option { display: block; width: 100%; padding: 10px; text-align: left; border: 0; background: transparent; color: var(--text); }
 .saved-command-option:is(:hover, [aria-selected="true"]) { background: color-mix(in srgb, var(--accent) 12%, var(--field)); }

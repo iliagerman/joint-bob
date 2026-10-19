@@ -1,8 +1,12 @@
 # Selective skill sharing
 
-Open **Resources → Skills**, expand **Share** on a locally managed skill, select the clusters whose member machines should receive it, and choose **Save sharing**. New and existing managed skills are local-only until clusters are selected. Import native or project skills first; Joint Bob never deletes arbitrary native paths.
+Open **Resources → Skills**, choose **Share…** on an owned skill, select its targets, and save. Targets can be clusters, individual machines, workspaces, projects, or conversations. Native and project skills are imported into managed storage before sharing; Joint Bob never deletes arbitrary native paths.
 
-A grant distributes the complete skill directory, including scripts and modes, to each current member machine. This is file distribution, not a sandbox: all agents and work on that receiving machine may read the files. Received skills cannot be reshared. Name conflicts are preserved and reported rather than overwritten.
+With workspace, project, or conversation targets, the skill loads only in those contexts on its owner, even if it also has broader remote grants. A workspace covers its projects, and a project covers its conversations. No targets leaves the skill local-only and available across this node. A broader cluster or machine grant takes precedence over narrow grants on that receiver. A scoped grant reaches another machine only when the underlying project is already shared with it.
+
+A grant distributes the complete skill directory, including scripts and modes. Scope controls discovery and loading, not filesystem access or previously read instructions. This is not a sandbox: a process with access to the receiving machine's files may read them. Received skills cannot be reshared. Name conflicts are preserved and reported rather than overwritten.
+
+Scopes apply across managed, configured, and native aliases. Where a harness cannot safely suppress a native copy, it refuses to start rather than load an out-of-scope skill. Remove that native copy or use resource isolation before continuing.
 
 Removing a local managed skill asks for confirmation, revokes its grants, moves its folder to a backup outside discovery, and prevents reconciliation from importing that name again. Explicitly importing it clears that suppression. Reload updates idle Pi sessions; start a new conversation to ensure previously read instructions are forgotten.
 

@@ -10,7 +10,7 @@ import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime } from "./harnesses/runtime-configuration.js";
 import { defaultSkillRoots, listSkills } from "./skills.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
-import { scopedSkillsRoot } from "./scoped-skills.js";
+import { scopedSkillsRoot, type SkillScopeContext } from "./scoped-skills.js";
 import type { HarnessId } from "./types.js";
 
 /** Harnesses whose runs load MCP servers; Pi has no MCP client. */
@@ -144,9 +144,9 @@ function servers(map: unknown, base: Omit<InventoryMcpServer, "name" | "transpor
   });
 }
 
-function inspectPlugin(plugin: string, decision: ActivationDecision): { decision: ActivationDecision; verified: boolean } {
+function inspectPlugin(plugin: string, decision: ActivationDecision, context: SkillScopeContext = {}): { decision: ActivationDecision; verified: boolean } {
   try {
-    const blockedSkill = blockedPluginSkill(plugin);
+    const blockedSkill = blockedPluginSkill(plugin, context);
     return blockedSkill
       ? { decision: { ...decision, enabled: false, reason: `Contains blocked skill ${blockedSkill}` }, verified: true }
       : { decision, verified: true };
@@ -186,11 +186,11 @@ async function claudeServers(projectPath: string | undefined): Promise<Inventory
   return found;
 }
 
-async function pluginServers(pluginsRoot: string, configuredPlugins: string[], cwd: string): Promise<InventoryMcpServer[]> {
+async function pluginServers(pluginsRoot: string, configuredPlugins: string[], cwd: string, context: SkillScopeContext): Promise<InventoryMcpServer[]> {
   const plugins = claudePluginSources([pluginsRoot, ...configuredPlugins]);
   const found = await Promise.all(plugins.map(async (plugin) => {
     const decisions = pluginActivationDecisions(plugin, pluginsRoot, configuredPlugins);
-    const activation = inspectPlugin(plugin, decisions.find(({ decision }) => !decision.enabled)?.decision ?? decisions[0].decision).decision;
+    const activation = inspectPlugin(plugin, decisions.find(({ decision }) => !decision.enabled)?.decision ?? decisions[0].decision, context).decision;
     const file = path.join(plugin, ".mcp.json");
     let entries: InventoryMcpServer[];
     try {
@@ -217,7 +217,7 @@ async function kiroServers(projectPath: string | undefined): Promise<InventoryMc
 }
 
 /** Lists MCP servers each harness loads on this node, optionally including one project's servers. */
-export async function listMcpServers(projectPath?: string, resourceRoot?: string, configuredPlugins = claudePluginSources(getScopedResourcePaths().global.plugins)): Promise<InventoryMcpServer[]> {
+export async function listMcpServers(projectPath?: string, resourceRoot?: string, configuredPlugins = claudePluginSources(getScopedResourcePaths().global.plugins), context: SkillScopeContext = {}): Promise<InventoryMcpServer[]> {
   const strict = getSettings().strictResourceIsolation;
   const paths = agentResourcePaths(resourceRoot);
   const discovered = new Set(listDiscoveredHarnesses().map((adapter) => adapter.id));
@@ -225,7 +225,7 @@ export async function listMcpServers(projectPath?: string, resourceRoot?: string
   const enterprise = discovered.has("claude") ? await readJson(claudeEnterpriseMcpPath()) : undefined;
   const groups = await Promise.all([
     discovered.has("claude") ? claudeServers(projectPath) : [],
-    discovered.has("claude") && !enterprise ? pluginServers(paths.claudePlugins, configuredPlugins, projectPath ?? process.cwd()) : [],
+    discovered.has("claude") && !enterprise ? pluginServers(paths.claudePlugins, configuredPlugins, projectPath ?? process.cwd(), context) : [],
     discovered.has("kiro") ? kiroServers(projectPath) : [],
   ]);
   const decisions = projectPath ? claudeProjectMcpDecisions(projectPath) : undefined;
@@ -252,7 +252,7 @@ export async function listMcpServers(projectPath?: string, resourceRoot?: string
 async function inventorySkills(projectPath: string | undefined, projectId: string | undefined, sharedRoot: string, conversationId?: string): Promise<InventorySkill[]> {
   const configured = getScopedResourcePaths(projectId, conversationId);
   // Without a project, only user-level skills apply; a path that cannot exist keeps project roots empty.
-  const summaries = await listSkills(projectPath ?? path.join(os.tmpdir(), "joint-bob-no-project"), { ...defaultSkillRoots(), shared: sharedRoot, global: configured.global.skills, project: projectPath ? configured.project.skills : [] });
+  const summaries = await listSkills(projectPath ?? path.join(os.tmpdir(), "joint-bob-no-project"), { ...defaultSkillRoots(), skillScope: { projectId, conversationId }, shared: sharedRoot, global: configured.global.skills, project: projectPath ? configured.project.skills : [] });
   const shared = await resolved(sharedRoot);
   const scoped = await resolved(scopedSkillsRoot());
   const byKey = new Map<string, InventorySkill>();
@@ -297,7 +297,7 @@ export async function resourceInventory(options: { projectPath?: string; project
   const configuredPlugins = claudePluginSources([...configured.global.plugins, ...(options.projectPath ? configured.project.plugins : [])]);
   const [skills, mcpServers] = await Promise.all([
     inventorySkills(options.projectPath, options.projectId, paths.sharedSkills, options.conversationId),
-    listMcpServers(options.projectPath, options.resourceRoot, configuredPlugins),
+    listMcpServers(options.projectPath, options.resourceRoot, configuredPlugins, options),
   ]);
   const harnesses = listDiscoveredHarnesses().map((adapter) => ({ id: adapter.id, label: adapter.label, mcp: MCP_HARNESSES.includes(adapter.id) }));
   const plugins: InventoryPlugin[] = [];
@@ -314,7 +314,7 @@ export async function resourceInventory(options: { projectPath?: string; project
         const key = JSON.stringify([canonical, name]);
         if (seenManaged.has(key)) continue;
         seenManaged.add(key);
-        const inspected = inspectPlugin(plugin, decision);
+        const inspected = inspectPlugin(plugin, decision, options);
         plugins.push({ name, file, source: inspected.verified ? "managed" : "unverified", harnesses: ["claude"],
           activation: { claude: inspected.decision } });
       }
@@ -338,7 +338,7 @@ export async function resourceInventory(options: { projectPath?: string; project
         const key = JSON.stringify([canonical, name]);
         if (seenClaude.has(key)) continue;
         seenClaude.add(key);
-        const inspected = inspectPlugin(plugin, decision);
+        const inspected = inspectPlugin(plugin, decision, options);
         plugins.push({ name, file: plugin, source: inspected.verified ? globalPlugins.includes(plugin) ? "global" : "project" : "unverified", harnesses: ["claude"],
           activation: { claude: inspected.decision } });
       }

@@ -373,7 +373,7 @@ const configuredRuntimeIds = new Set(Object.keys(runtimeSchemaShape));
 export const runtimeCheckSchema = z.object(runtimeSchemaShape).strict().refine((input) => Object.keys(input).length > 0, "Provide at least one runtime") as z.ZodType<Record<string, RuntimeSettings>>;
 export const resourcePathsSchema = z.object({ skills: z.array(absolutePathSchema).max(20), prompts: z.array(absolutePathSchema).max(20), rules: z.array(absolutePathSchema).max(20), plugins: z.array(absolutePathSchema).max(20) }).strict();
 const conversationCommandSchema = z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict();
-const conversationCommandsSchema = z.object({ start: conversationCommandSchema, end: conversationCommandSchema, presets: z.array(z.object({ name: z.string().trim().min(1).max(80), prompt: z.string().trim().min(1).max(10_000) }).strict()).max(50).optional() }).strict();
+const conversationCommandsSchema = z.object({ start: conversationCommandSchema, end: conversationCommandSchema, presets: z.array(z.object({ id: z.string().uuid().optional(), name: z.string().trim().min(1).max(80), prompt: z.string().trim().min(1).max(10_000) }).strict()).max(50).refine((items) => new Set(items.flatMap((p) => p.id ? [p.id] : [])).size === items.filter((p) => p.id).length, "Duplicate command IDs").optional() }).strict();
 
 export const settingsSchema = z.object({
   conversationDefaults: conversationDefaultsSchema.optional(),

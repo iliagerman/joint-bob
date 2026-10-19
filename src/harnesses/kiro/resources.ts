@@ -165,13 +165,13 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   const instructions = await commonAgentInstructionFiles(undefined, [...scoped.global.rules, ...scoped.project.rules]);
   const resources = agentResourcePaths();
   const skillRoots = [
-    activeSkillRoot("kiro", resources.sharedSkills),
+    resources.sharedSkills,
     ...scoped.global.skills,
     ...scoped.project.skills,
     path.join(options.cwd, ".agents/skills"),
     path.join(options.cwd, ".kiro/skills"),
   ];
-  const skills = [...new Set((await Promise.all(skillRoots.map((root) => skillResource(activeSkillRoot("kiro", root))))).flat())];
+  const skills = [...new Set((await Promise.all(skillRoots.map((root) => skillResource(activeSkillRoot("kiro", root, { projectId: options.projectId, conversationId: options.conversationId ?? options.sessionId }))))).flat())];
   const agentsFile = path.join(options.cwd, "AGENTS.md");
   try {
     if ((await lstat(agentsFile)).isFile()) skills.push(`file://${agentsFile}`);

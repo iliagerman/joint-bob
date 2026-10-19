@@ -336,7 +336,6 @@
           <button type="button" data-command="/model" data-testid="chat-model-command-button">/model</button>
           <button type="button" data-command="/tools" data-testid="chat-tools-button">/tools</button>
           <button type="button" data-command="/compact" data-testid="chat-compact-button">/compact</button>
-          <button type="button" id="savedCommandsButton" data-testid="saved-commands-button">Saved commands</button>
           <button type="button" id="chatResourcesButton" data-testid="chat-resources-button" title="Enable or disable this conversation's skills, MCP servers and plugins">Resources</button>
         </div>
         <div class="conversation-lock" id="conversationLock" role="status" data-testid="conversation-lock-notice" hidden>
@@ -362,6 +361,7 @@
             <button class="ghost attach-button icon-button" id="attachButton" type="button" disabled aria-label="Attach files" data-testid="chat-attach-button">+</button>
             <label class="sr-only" for="messageInput">Message Pi</label>
             <textarea id="messageInput" rows="1" placeholder="Ask Pi to work..." disabled role="combobox" aria-controls="commandAutocomplete" aria-autocomplete="list" aria-expanded="false" data-testid="chat-message-input"></textarea>
+            <button type="button" id="savedCommandsButton" data-testid="saved-commands-button" disabled aria-haspopup="dialog" aria-controls="savedCommandsDialog">Custom commands</button>
             <button class="send" id="sendButton" type="submit" disabled aria-label="Send" data-testid="chat-send-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 21.7a.5.5 0 0 0 .94-.02l6.5-19a.5.5 0 0 0-.64-.64l-19 6.5a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="M21.85 2.15 10.91 13.09"/></svg></button>
           </div>
         </form>
@@ -994,8 +994,8 @@
             <label class="checkbox-row"><input id="settingsEndConversationEnabled" type="checkbox" data-testid="settings-end-conversation-enabled" /> Enable double-click Send to end a conversation</label>
             <label>End conversation prompt<textarea id="settingsEndConversationPrompt" rows="4" maxlength="10000" data-testid="settings-end-conversation-prompt"></textarea></label>
             <p class="settings-hint">When enabled, the start prompt runs before your first message. Double-clicking Send submits the end prompt and leaves your draft and attachments untouched.</p>
-            <div><strong>Saved commands</strong> <button type="button" class="ghost compact" id="addSavedCommand" data-testid="add-saved-command">Add command</button></div>
-            <p class="settings-hint" data-testid="saved-commands-instructions">Add a command with a name and prompt, then click Save settings. In a conversation, <span id="savedCommandsShortcutHelp"></span> or click Saved commands. Type to search, use ↑/↓ to choose, then press Enter to paste the prompt into your chat draft. Nothing is sent until you click Send. Change the keyboard shortcut in Settings → Shortcuts under “Saved / custom commands”.</p>
+            <div><strong>Custom commands</strong> <button type="button" class="ghost compact" id="addSavedCommand" data-testid="add-saved-command">Add command</button></div>
+            <p class="settings-hint" data-testid="saved-commands-instructions">Add a command with a name and prompt, then click Save settings. Before sharing new or edited commands, save settings and reopen this panel. Sharing never saves other settings. In a conversation, <span id="savedCommandsShortcutHelp"></span> or click Custom commands. Type to search, use ↑/↓ to choose, then press Enter to paste the prompt into your chat draft. Nothing is sent until you click Send. Change the keyboard shortcut in Settings → Shortcuts under “Saved / custom commands”.</p>
             <div id="savedCommandsList" data-testid="saved-commands-list"></div>
           </fieldset>
         </section>
@@ -2112,10 +2112,10 @@
 
     <dialog id="savedCommandsDialog" aria-labelledby="savedCommandsTitle" data-testid="saved-commands-dialog">
       <div class="dialog-card">
-        <h2 id="savedCommandsTitle">Saved commands</h2>
-        <input id="savedCommandsSearch" type="search" placeholder="Find a command" aria-label="Find a saved command" autocomplete="off" data-testid="saved-commands-search" />
-        <div id="savedCommandsOptions" role="listbox" aria-label="Saved commands" data-testid="saved-commands-options"></div>
-        <button type="button" class="ghost" id="closeSavedCommands">Cancel</button>
+        <h2 id="savedCommandsTitle">Commands</h2>
+        <input id="savedCommandsSearch" type="search" placeholder="Find a command" aria-label="Find a custom command" autocomplete="off" data-testid="saved-commands-search" />
+        <div id="savedCommandsOptions" role="listbox" aria-label="Custom commands" data-testid="saved-commands-options"></div>
+        <button type="button" class="ghost" id="closeSavedCommands" data-testid="saved-commands-close">Cancel</button>
       </div>
     </dialog>
 
