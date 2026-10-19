@@ -724,7 +724,7 @@ function paged(items, page, size) {
 }
 
 let refitting = false;
-/** Sizes the page to the rows the list's box shows, so the panel never needs a scrollbar. */
+/** Fit whole rows when possible; an oversized single row remains scrollable. */
 function fitPage(list, key, pageKey, rerender) {
   const children = [...list.children];
   const rows = children.filter((child) => child.classList.contains("resources-row"));
@@ -786,6 +786,8 @@ function renderList() {
 function countFor(entry, key) { return entry?.inventory ? (key === "skills" ? filteredSkills(entry.inventory) : filteredServers(entry.inventory)).length : 0; }
 
 function renderRelayPolicy() {
+  const following = view.relayPolicies.filter((policy) => policy.optedIn).length;
+  document.querySelector("#resourcesRelayStatus").textContent = following ? `· Following ${following} relay${following === 1 ? "" : "s"} on this node` : "· Not following on this node";
   const select = document.querySelector("#resourcesRelaySelect");
   const selected = select.value;
   select.replaceChildren(new Option("Choose a relay", ""), ...view.relayPolicies.map((item) => new Option(item.name || item.origin, item.id)));
@@ -793,7 +795,10 @@ function renderRelayPolicy() {
   const preview = document.querySelector("#resourcesRelayPreview");
   preview.replaceChildren();
   const policy = view.relayPolicies.find((item) => item.id === select.value);
-  if (!policy) return;
+  if (!policy) {
+    preview.append(emptyRow(view.relayPolicies.length ? "Choose a relay to review its rules before following." : "No admitted relays on this node. Join a relay in Settings → Relays first."));
+    return;
+  }
   const heading = document.createElement("p");
   heading.textContent = policy.version === null ? "No signed policy received yet. Wait for this relay to reconnect." : `Signed version ${policy.version} · ${policy.optedIn ? "Following" : "Not following"}${policy.updatedAt ? ` · received ${new Date(policy.updatedAt).toLocaleString()}` : ""}`;
   preview.append(heading);
@@ -1182,12 +1187,15 @@ function gitSourceRow(source) {
       setStatus(`${source.label} at ${shortCommit(body.result.commit)}: ${gitResultText(body.result)}.${source.recipients.length ? " Shared nodes follow." : ""}`);
     }), source.updateAvailable ? "primary compact" : "ghost compact");
     const auto = document.createElement("label");
+    auto.className = "resources-git-auto-update";
     const autoInput = selectBox(`Update ${source.label} automatically`, source.autoUpdate, "git-source-auto-update", (checked) => void gitAction(autoInput, async () => {
       const body = await api(`/api/resources/git/${encodeURIComponent(source.id)}/options`, { method: "PUT", body: JSON.stringify({ autoUpdate: checked }) });
       storeSource(body.source);
       setStatus(checked ? `${source.label} installs new commits by itself when a check finds them.` : `${source.label} waits for you to update it.`);
     }));
-    auto.append(autoInput, "Auto-update");
+    const autoText = document.createElement("span");
+    autoText.textContent = "Auto-update";
+    auto.append(autoInput, autoText);
     const share = button("Share…", "git-source-share", () => openGitShareDialog(source));
     const remove = button("Remove", "git-source-remove", () => void gitAction(remove, async () => {
       if (!await confirmAction({ title: `Remove ${source.label}?`, message: `Remove its installed skills, plugins and MCP servers from this node, including edited copies. Removed files are backed up; edited MCP settings are backed up too.${source.recipients.length ? ` Shared nodes (${source.recipientNames.join(", ")}) will remove unedited copies; local edits there remain.` : ""}`, confirmLabel: "Remove repository and assets", destructive: true })) return;

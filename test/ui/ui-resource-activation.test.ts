@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { getOrCreateClusterIdentity } from "../../src/cluster-identity.js";
 import { createMembership, updateMembership } from "../../src/relay/store.js";
-import { publishRelayPolicy, receiveRelayPolicy, subscribeRelayPolicy } from "../../src/relay/resource-policy.js";
+import { publishRelayPolicy, receiveRelayPolicy } from "../../src/relay/resource-policy.js";
 import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 import { markReceived } from "../../src/skill-sharing-files.js";
@@ -70,6 +70,13 @@ test("Resources edits per-agent skill activation and node auto-activate default"
     });
     assert.equal(serving.status, 204);
     await page.getByTestId("resources-refresh-button").click();
+    const relaySettings = page.getByTestId("resources-relay-policy");
+    await relaySettings.waitFor();
+    assert.equal(await relaySettings.evaluate((element) => element.tagName), "DETAILS", "relay controls are collapsible instead of crowding the list");
+    assert.equal(await relaySettings.evaluate((element: HTMLDetailsElement) => element.open), false, "relay settings start collapsed");
+    await page.getByTestId("resources-relay-summary").click();
+    await page.getByTestId("resources-relay-help").getByText(/each receiving node must opt in/).waitFor();
+    await page.getByTestId("resources-relay-publisher-summary").click();
     const publisher = page.getByTestId("resources-relay-publish");
     await publisher.waitFor();
     await page.getByTestId("resources-relay-rules").fill(`block ${skillName} pi`);
@@ -95,19 +102,25 @@ test("Resources edits per-agent skill activation and node auto-activate default"
       updateMembership(receiver, membership.id, { status: "admitted", relayNodeId: relayId, fingerprint: identity.fingerprint, name: "my-laptop", environment: "Home relay" });
       receiveRelayPolicy(receiver, { ...membership, status: "admitted", relayNodeId: relayId, fingerprint: identity.fingerprint }, identity.publicKey,
         publishRelayPolicy(relay, relayId, [{ action: "block", name: skillName, harness: "claude" }]));
-      subscribeRelayPolicy(receiver, membership.id, true);
     } finally { receiver.close(); relay.close(); }
     await page.getByTestId("resources-harness-select").selectOption("claude");
     await page.getByTestId("resources-refresh-button").click();
+    await page.getByTestId("resources-relay-select").locator(`option[value="${membershipId}"]`).waitFor({ state: "attached" });
+    await page.getByTestId("resources-relay-select").selectOption(membershipId);
+    await page.getByTestId("resources-relay-preview").getByText(/Not following/).waitFor();
+    assert.equal(await row.getByText(/Blocked by relay/).count(), 0, "publishing alone does not force a node to follow");
+    await page.getByTestId("resources-relay-follow").click();
+    await page.getByTestId("confirm-accept-button").click();
     await row.getByText(/Blocked by relay: Home relay · cached-policy.fixture.example/).waitFor();
+    await page.getByTestId("resources-relay-preview").getByText(/Signed version 1 · Following/).waitFor();
     const relayOptions = await page.getByTestId("resources-relay-select").locator("option").allTextContents();
     assert.ok(relayOptions.includes("Home relay · cached-policy.fixture.example"));
     assert.equal(relayOptions.some((label) => label.includes("my-laptop")), false, "relay picker names the server, not this machine's membership");
     assert.equal(await toggle.isChecked(), true, "checkbox shows saved enable, not relay's effective block");
     await toggle.uncheck();
     await page.getByTestId("resources-status").getByText(/disabled for Claude/).waitFor();
-    assert.equal((await api(node, session, "PUT", `/relays/${membershipId}/skill-policy-subscription`, { optedIn: false })).status, 200);
-    await page.getByTestId("resources-refresh-button").click();
+    await page.getByTestId("resources-relay-follow").getByText("Stop following").waitFor();
+    await page.getByTestId("resources-relay-follow").click();
     await row.getByText("Disabled on this node", { exact: true }).waitFor();
     assert.equal(await toggle.isChecked(), false, "removing relay block preserves the local disable");
   } finally {

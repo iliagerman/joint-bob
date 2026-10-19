@@ -4148,14 +4148,15 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 }
 
 /* ---- Skills & tools inventory (Settings → Resources) ---- */
-/* The lists page instead of scrolling: the panel is a fixed column, each list takes the
-   height left over, and resources.js sizes pages to it. */
-.settings-panel.resources-panel { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+/* Fit pages to the available height, with scrolling when even one row is taller than a page.
+   The panel also scrolls on small screens so its controls cannot squeeze the list to zero. */
+.settings-panel.resources-panel { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; scrollbar-width: thin; }
 .resources-panel > * { flex: none; }
 .resources-panel > .resources-page, .resources-panel > .resources-add, .resources-panel > .resources-paths { flex: 1 1 0; min-height: 0; }
+.resources-panel > .resources-page { min-height: 160px; }
 .resources-panel > [hidden] { display: none; }
 .resources-panel > .settings-hint { margin: 0; }
-.resources-page { overflow: hidden; align-content: start; }
+.resources-page { overflow-y: auto; scrollbar-width: thin; align-content: start; grid-auto-rows: max-content; }
 .resources-add { display: flex; flex-direction: column; gap: 10px; }
 .resources-add > * { flex: none; }
 .resources-add > .resources-page { flex: 1 1 0; min-height: 0; }
@@ -4163,7 +4164,8 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .resources-git-source { cursor: pointer; }
 .resources-git-source.is-selected { border-color: var(--accent); }
 .resources-git-source .resources-row-actions { flex-wrap: wrap; }
-.resources-git-source .resources-row-actions label { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.resources-git-source .resources-row-actions label.resources-git-auto-update { display: inline-flex; flex-direction: row; flex-wrap: nowrap; flex: none; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.resources-git-auto-update > input, .resources-git-auto-update > span { flex: none; }
 .resources-badge.status-edited, .resources-badge.update { color: var(--warning, #d9a441); border-color: currentColor; }
 .resources-paths { display: grid; gap: 12px; align-content: start; overflow-y: auto; scrollbar-width: thin; }
 .resources-toolbar { display: grid; grid-template-columns: auto auto auto auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
@@ -4182,6 +4184,7 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .resources-row { display: grid; gap: 3px; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 6px 12px; }
 .resources-row strong { font-size: 12.5px; font-family: var(--mono); overflow-wrap: anywhere; }
 .resources-row .skill-option-description { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#resourcesList .skill-option-description { display: block; -webkit-line-clamp: unset; white-space: normal; overflow-wrap: anywhere; }
 .resources-check-body { display: grid; gap: 3px; min-width: 0; }
 .resources-row .compact { min-height: 26px; padding: 0 8px; }
 .resources-check-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; cursor: pointer; }
@@ -4214,13 +4217,20 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .resources-peer-status summary { cursor: pointer; font-size: 12px; color: var(--muted); }
 .resources-activation-controls { display: flex; flex-wrap: wrap; gap: 6px 14px; min-width: 0; }
 .resources-agent-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-width: 0; }
-.resources-activation { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+.resources-activation { display: inline-flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
 .resources-activation input { width: 16px; height: 16px; min-width: auto; margin: 0; accent-color: var(--ink); }
 .resources-activation-reason { overflow-wrap: anywhere; }
-.resources-relay-policy { border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 8px 12px; max-height: 24vh; overflow-y: auto; font-size: 12px; }
+.resources-relay-policy { border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 8px 12px; font-size: 12px; }
+.resources-relay-policy summary { cursor: pointer; overflow-wrap: anywhere; }
+.resources-relay-policy summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#resourcesRelayStatus { color: var(--muted); }
+.resources-relay-content { max-height: 32vh; overflow-y: auto; scrollbar-width: thin; padding-right: 4px; }
+.resources-relay-content > details { margin-top: 10px; }
 .resources-relay-policy label { display: flex; flex-direction: column; gap: 5px; }
 .resources-relay-policy p { margin: 6px 0; color: var(--muted); }
-.resources-relay-policy textarea { min-height: 70px; width: 100%; font-family: var(--mono); }
+.resources-relay-policy ol { margin: 6px 0; padding-left: 20px; }
+.resources-relay-policy li + li { margin-top: 4px; }
+.resources-relay-policy textarea { display: block; height: 5.5em; min-height: 70px; max-height: 160px; margin: 6px 0; width: 100%; resize: vertical; overflow-y: auto; font-family: var(--mono); }
 .resources-auto-activate { font-size: 12px; }
 .resources-status { margin: 0; font-size: 12px; color: var(--muted); }
 @media (max-height: 650px) {

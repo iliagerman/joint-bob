@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed Resources so relay rules fold away by default with their steps explained, long skill descriptions wrap, and tall lists scroll instead of cutting off content.
+
 ## 2.116.2 — 2026-10-19
 
 - Switched two default task categories on OpenAI Codex from GPT-6 Sol to GPT-6.1 Sol.

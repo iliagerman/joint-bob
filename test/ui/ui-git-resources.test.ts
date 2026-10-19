@@ -90,6 +90,13 @@ test("Resources → Git repos adds a repository, installs the ticked items, and 
     await keep(page, "git-resources-desktop");
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
+      const auto = page.getByTestId("git-source-auto-update");
+      const layout = await auto.evaluate((input) => {
+        const label = input.parentElement!;
+        const box = label.querySelector("span")!.getBoundingClientRect(), checkbox = input.getBoundingClientRect();
+        return { difference: Math.abs(box.y + box.height / 2 - checkbox.y - checkbox.height / 2) };
+      });
+      assert.ok(layout.difference < 5, `Auto-update text and checkbox share one line at ${width}px: ${layout.difference}px apart`);
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       for (const id of ["resources-git-add-button", "resources-git-apply"]) {
         await page.getByTestId(id).scrollIntoViewIfNeeded();

@@ -7,7 +7,7 @@ import test from "node:test";
 import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
-test("Settings → Resources shows a conversation's skills and MCP servers, pages without scrolling, and imports skills from a folder", { timeout: 120_000 }, async () => {
+test("Settings → Resources shows a conversation's skills and MCP servers, keeps paged content reachable, and imports skills from a folder", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "resources-ui-")); let server: ChildProcess | undefined; let browser;
   try {
     const environment = await seedDevEnvironment(root, 1); const node = environment.nodes[0];
@@ -75,8 +75,9 @@ test("Settings → Resources shows a conversation's skills and MCP servers, page
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
       const box = await dialog.boundingBox();
       assert.ok(box && box.x >= 0 && box.x + box.width <= width, `panel fits at ${width}px`);
-      const overflow = await dialog.evaluate((panel) => [panel, panel.querySelector("#resourcesList")].map((element) => element!.scrollHeight - element!.clientHeight));
-      assert.ok(overflow.every((extra) => extra <= 1), `no vertical scrolling at ${width}×${height}: ${overflow}`);
+      const layout = await dialog.evaluate((panel) => [panel, panel.querySelector("#resourcesList")!].map((element) => ({ height: element.clientHeight,
+        overflow: element.scrollHeight - element.clientHeight, scrolling: getComputedStyle(element).overflowY })));
+      assert.ok(layout.every(({ height, overflow, scrolling }) => height > 0 && (overflow <= 1 || /auto|scroll/.test(scrolling))), `content stays reachable at ${width}×${height}: ${JSON.stringify(layout)}`);
     }
 
     await page.getByTestId("resources-tab-paths").click();
