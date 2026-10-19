@@ -699,6 +699,8 @@ async function performAsk(projectId: string, cwd: string, payload: ReturnType<ty
   const result = await runGitReview({
     projectId,
     cwd,
+    useTools: true,
+    conversationId: payload.conversationId ?? undefined,
     harnessId: payload.harnessId,
     provider: payload.provider ?? "",
     modelId: payload.modelId,
@@ -749,6 +751,8 @@ async function performFollowUp(projectId: string, cwd: string, threadId: string,
   const result = await runGitReview({
     projectId,
     cwd,
+    useTools: true,
+    conversationId: thread.conversationId ?? undefined,
     harnessId: thread.harnessId,
     provider: thread.provider,
     modelId: thread.modelId,
