@@ -8,6 +8,8 @@ import { getSharingCluster, listSharingClusterMembers, listSharingMemberships } 
 import { signClusterRequest } from "../cluster-protocol.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { personalSettings, updatePersonalSettings } from "../settings.js";
+import { ownerAsActor } from "../ownership.js";
+import { listTwinUpdateTargets } from "../twin-updates.js";
 import { getProject, listProjects, listWorkspaces } from "../store.js";
 import { commandId, commandInScope, commandPeerGrant, commandPolicies, commandPresetSchema, commandSelectionSchema, emptyCommandSelection, recentCommandIds, recordCommandUse, setCommandPolicy, type CommandSelection } from "../saved-commands.js";
 import { peerFetch } from "../relay/transport.js";
@@ -16,7 +18,7 @@ import { sendError } from "./http-auth.js";
 import { app } from "./state.js";
 
 const contextSchema = z.object({ projectId: z.string().min(1).max(300), conversationId: z.string().min(1).max(300).optional() }).strict();
-const offerSchema = commandPresetSchema.extend({ id: z.string().min(1).max(600), ownerNodeId: z.string().uuid(), global: z.boolean(), grantClusterIds: z.array(z.string().uuid()).max(100), projectIds: z.array(z.string()).max(500), conversations: commandSelectionSchema.shape.conversations }).strict();
+const offerSchema = commandPresetSchema.extend({ id: z.string().min(1).max(600), ownerNodeId: z.string().uuid(), global: z.boolean(), grantClusterIds: z.array(z.string().uuid()).max(100), twinRelationshipId: z.string().uuid().optional(), projectIds: z.array(z.string()).max(500), conversations: commandSelectionSchema.shape.conversations }).strict();
 const manifestSchema = z.object({ ownerNodeId: z.string().uuid(), commands: z.array(offerSchema).max(5000) }).strict();
 type Offer = z.infer<typeof offerSchema>;
 function failure(message: string, status = 400): Error { return Object.assign(new Error(message), { status }); }
@@ -24,7 +26,7 @@ function failure(message: string, status = 400): Error { return Object.assign(ne
 async function peers() {
   const db = await clusterV2Database(), local = (await getClusterNode()).id;
   const clusters = listSharingMemberships(db, local).map((m) => getSharingCluster(db, m.clusterId)).filter((c) => !c.closed);
-  const nodes = new Map<string, { nodeId: string; name: string; url: string; clusterIds: string[]; incarnations: string[] }>();
+  const nodes = new Map<string, { nodeId: string; name: string; url: string; clusterIds: string[]; incarnations: string[]; twinRelationshipId?: string }>();
   for (const cluster of clusters) for (const member of listSharingClusterMembers(db, cluster.id)) {
     if (member.nodeId === local) continue;
     const descriptor = db.prepare("SELECT name,url FROM cluster_v2_membership_nodes WHERE cluster_id=? AND node_id=?").get(cluster.id, member.nodeId) as { name: string; url: string } | undefined;
@@ -33,6 +35,10 @@ async function peers() {
     const owner = listSharingMemberships(db, local).find((m) => m.clusterId === cluster.id)!;
     node.incarnations.push(`${cluster.id}:${owner.joinSequence}:${member.joinSequence}`);
     node.clusterIds.push(cluster.id); nodes.set(member.nodeId, node);
+  }
+  for (const twin of listTwinUpdateTargets(db, local)) {
+    const node = nodes.get(twin.nodeId) ?? { nodeId: twin.nodeId, name: twin.name, url: twin.url, clusterIds: [], incarnations: [] };
+    nodes.set(twin.nodeId, { ...node, twinRelationshipId: twin.relationshipId });
   }
   return { db, local, clusters, nodes: [...nodes.values()] };
 }
@@ -45,7 +51,8 @@ function expandedProjects(db: Awaited<ReturnType<typeof clusterV2Database>>, sel
 /** Read the owning settings row, not a copy of its prompt. Edits and deletions take effect immediately. */
 async function manifestFor(receiver: string) {
   const { db, local, nodes } = await peers();
-  if (!nodes.some((n) => n.nodeId === receiver)) throw failure("Forbidden", 403);
+  const peer = nodes.find((n) => n.nodeId === receiver);
+  if (!peer) throw failure("Forbidden", 403);
   const commands: Offer[] = [];
   for (const policy of commandPolicies(db)) {
     const grant = commandPeerGrant(db, local, receiver, policy);
@@ -68,6 +75,16 @@ async function manifestFor(receiver: string) {
     if (!grant.global && !projectIds.length && !conversations.length) continue;
     commands.push({ ...parsed.data, id: commandId(local, policy.accountId, policy.presetId), ownerNodeId: local, global: grant.global, grantClusterIds, projectIds: grant.global ? [] : projectIds, conversations: grant.global ? [] : conversations });
   }
+  // Twin trust shares the machine owner's commands, not other local accounts' prompts.
+  const owner = ownerAsActor(undefined, db);
+  if (peer.twinRelationshipId && owner && db.prepare("SELECT 1 FROM users WHERE role='admin' AND disabled=0 AND home_node_id IS NULL").get()) {
+    for (const preset of personalSettings(owner).conversationCommands.presets) {
+      const id = commandId(local, owner.accountId, preset.id!);
+      const offered = commands.find((command) => command.id === id);
+      if (offered) offered.twinRelationshipId = peer.twinRelationshipId;
+      else commands.push({ ...preset, id, ownerNodeId: local, global: false, grantClusterIds: [], projectIds: [], conversations: [], twinRelationshipId: peer.twinRelationshipId });
+    }
+  }
   return { ownerNodeId: local, commands };
 }
 
@@ -75,7 +92,8 @@ async function manifestFor(receiver: string) {
 async function receivedCommands(session: AuthSession) {
   const { db, local, nodes } = await peers();
   const target = "/api/cluster/v2/commands/manifest";
-  const replies = await Promise.all(nodes.filter((n) => n.clusterIds.some((id) => accountInCluster(db, session.accountId, id))).map(async (node) => {
+  const ownerSession = session.role === "admin" && !session.isRemoteLogin;
+  const replies = await Promise.all(nodes.filter((n) => ownerSession && n.twinRelationshipId || n.clusterIds.some((id) => accountInCluster(db, session.accountId, id))).map(async (node) => {
     try {
       const body = Buffer.from("{}");
       const response = await peerFetch(new URL(target, node.url), { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000), body,
@@ -92,9 +110,14 @@ async function receivedCommands(session: AuthSession) {
       const current = await peers();
       const currentNode = current.nodes.find((n) => n.nodeId === node.nodeId);
       if (!currentNode) return [];
-      return manifest.commands.filter((c) => c.grantClusterIds.some((id) => accountInCluster(db, session.accountId, id)
-        && currentNode.incarnations.some((incarnation) => incarnation.startsWith(`${id}:`) && node.incarnations.includes(incarnation))))
-        .map(({ grantClusterIds: _grantClusterIds, ...c }) => ({ ...c, receivedFrom: node.nodeId, receivedFromName: node.name, kind: "received" as const, clusterIds: [], nodeIds: [], workspaceIds: [] }));
+      return manifest.commands.flatMap(({ grantClusterIds, twinRelationshipId, ...command }) => {
+        const twinGrant = ownerSession && Boolean(twinRelationshipId)
+          && twinRelationshipId === node.twinRelationshipId && twinRelationshipId === currentNode.twinRelationshipId;
+        const clusterGrant = grantClusterIds.some((id) => accountInCluster(db, session.accountId, id)
+          && currentNode.incarnations.some((incarnation) => incarnation.startsWith(`${id}:`) && node.incarnations.includes(incarnation)));
+        if (!twinGrant && !clusterGrant) return [];
+        return [{ ...command, global: command.global || twinGrant, receivedFrom: node.nodeId, receivedFromName: node.name, kind: "received" as const, clusterIds: [], nodeIds: [], workspaceIds: [] }];
+      });
     } catch { return []; } // An unreachable owner grants nothing until it can be checked again.
   }));
   return replies.flat();

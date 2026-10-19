@@ -50,6 +50,19 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+test("a saved command is available on its twin without a sharing action", async () => {
+  const settings = await api<{ conversationCommands: Record<string, unknown> }>(nodeA, sessionA, "GET", "/settings");
+  try {
+    const created = await api<{ command: { id: string } }>(nodeA, sessionA, "POST", "/commands", { name: "Twin command", prompt: "Review before shipping" });
+    assert.equal(created.status, 200);
+    const received = await api<{ commands: Array<{ id: string; prompt: string }> }>(nodeB, sessionB, "GET", `/commands?projectId=${nodeA.projects[0].id}`);
+    assert.equal(received.status, 200);
+    assert.equal(received.body.commands.find((command) => command.id === created.body.command.id)?.prompt, "Review before shipping");
+  } finally {
+    assert.equal((await api(nodeA, sessionA, "PUT", "/settings/personal", { conversationCommands: settings.body.conversationCommands })).status, 200);
+  }
+});
+
 test("a webhook created from a twin exists only on its selected owner", async () => {
   const created = await api<{ webhook: { id: string }; secret: string }>(nodeA, sessionA, "POST", `/webhooks?nodeId=${nodeB.nodeId}`, {
     name: "Owned by B", target: { kind: "project", projectId: nodeA.projects[0].id }, enabled: false,

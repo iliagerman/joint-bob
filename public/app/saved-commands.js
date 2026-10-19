@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { setInputValue } from "./composer.js";
 import { elements } from "./elements.js";
+import { fuzzyScore } from "./fuzzy.js";
 import { state } from "./state.js";
 import { toast } from "./shell.js";
 
@@ -32,7 +33,10 @@ async function choose(command) {
 function render() {
   const query = search.value.trim().toLowerCase();
   const recent = recentIds.map((id) => commands.find((command) => command.id === id)).filter(Boolean).slice(0, 5);
-  const matches = query ? commands.filter(({ name, prompt }) => `${name} ${prompt}`.toLowerCase().includes(query)) : recent.length ? recent : commands.slice(0, 5);
+  const matches = query
+    ? commands.map((command) => ({ command, score: fuzzyScore(query, command.name) }))
+      .filter(({ score }) => score !== null).sort((a, b) => b.score - a.score).map(({ command }) => command)
+    : recent.length ? recent : commands.slice(0, 5);
   document.querySelector("#savedCommandsTitle").textContent = !query && recent.length ? "Recently used commands" : "Commands";
   selected = Math.min(selected, Math.max(0, matches.length - 1));
   options.replaceChildren();

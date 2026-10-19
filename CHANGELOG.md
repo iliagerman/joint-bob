@@ -3,6 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Made the machine owner's saved commands available on its twins automatically, including commands saved before pairing, with no sharing step.
+
+## 2.121.1 — 2026-10-19
+
+- Fixed command search to rank visible names and accept abbreviations without matching hidden prompt text.
+- Shared the machine owner's saved commands automatically with its twins, including existing commands, without changing sharing settings. Other local accounts remain isolated.
+
 ## 2.121.0 — 2026-10-19
 
 - Added an issue view to the Issues list that shows the full description and comments, with buttons to start a conversation on the issue, start one in a new worktree, or open it on GitHub.

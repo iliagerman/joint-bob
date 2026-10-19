@@ -2,6 +2,34 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
+test("command search ranks names, supports abbreviations and ignores hidden prompt text", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  const commands = [
+    { id: "review", name: "pr_review", prompt: "Review code and deploy if ready" },
+    { id: "prod", name: "prompte to prod", prompt: "Run the release steps" },
+    { id: "deploy", name: "Deploy", prompt: "Ship changes" },
+  ];
+  await page.route("**/api/commands?*", (route) => route.fulfill({ json: { commands, recentIds: ["prod"] } }));
+  await page.getByTestId("saved-commands-button").click();
+  const options = page.getByTestId("saved-command-option"), search = page.getByTestId("saved-commands-search");
+  await options.waitFor();
+  assert.deepEqual(await options.allTextContents(), ["prompte to prod"]);
+  await search.fill("d");
+  assert.deepEqual(await options.allTextContents(), ["Deploy", "prompte to prod"]);
+  await search.fill("  PR REV  ");
+  assert.deepEqual(await options.allTextContents(), ["pr_review"]);
+  await search.fill("release steps");
+  assert.deepEqual(await options.allTextContents(), []);
+  await search.fill("");
+  assert.deepEqual(await options.allTextContents(), ["prompte to prod"]);
+});
+
 test("command picker limits recents, searches received commands, preserves drafts on errors and stale replies", { timeout: 240_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t, (root) => ({ JOINT_BOB_TEST_ENGINE_LOG: `${root}/engine.log` }));
   await page.goto(node.url);
@@ -23,6 +51,8 @@ test("command picker limits recents, searches received commands, preserves draft
   });
   const draft = page.getByTestId("chat-message-input");
   const open = page.getByTestId("saved-commands-button");
+  // Let the socket finish opening the conversation before testing composer availability.
+  await page.waitForFunction(() => !(document.querySelector("#messageInput") as HTMLTextAreaElement).disabled);
   await page.evaluate(async () => (await import("/app/chat-controls.js")).setComposerEnabled(false));
   assert.equal(await open.isDisabled(), true, "Commands button must follow composer availability");
   await page.evaluate(async () => (await import("/app/chat-controls.js")).setComposerEnabled(true));

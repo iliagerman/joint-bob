@@ -41,7 +41,10 @@ test("saved commands paste into chat through a keyboard shortcut without sending
   await page.getByTestId("saved-commands-dialog").waitFor({ state: "visible" });
   await page.getByTestId("saved-commands-search").fill("Review");
   await page.getByTestId("saved-commands-options").getByText("Review changes", { exact: true }).waitFor();
+  const usedCommand = page.waitForResponse((response) => response.url().includes("/api/commands/") && response.url().endsWith("/use"));
   await page.getByTestId("saved-commands-search").press("Enter");
+  const useResponse = await usedCommand;
+  assert.equal(useResponse.status(), 200, await useResponse.text());
   await page.waitForFunction(() => (document.querySelector('#messageInput') as HTMLTextAreaElement)?.value === "Review my changes, do not send this yet.");
   assert.equal(await page.getByTestId("chat-message-input").inputValue(), "Review my changes, do not send this yet.");
   assert.equal(await page.getByTestId("saved-commands-dialog").evaluate((dialog) => (dialog as HTMLDialogElement).open), false);
