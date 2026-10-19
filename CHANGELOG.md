@@ -3,12 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.122.0 — 2026-10-19
 
+- Added a searchable project selector to the Issues view.
 - Added editing of GitHub issue titles, descriptions, and open or closed state from the Issues view.
-- Relays that enforce skills now deliver the skill files to the nodes that follow them. Each node checks the files against the relay's signed digest, receives updates when the relay changes a skill, and uses them from each conversation's next message.
-- A skill a relay enforces now wins over every other copy with the same name on a following node. The node's own copy is backed up and restored when the node stops following.
-- The Resources skills list now marks skills that come from a relay or that a relay controls, locks the agents a relay decides, and adds a "Controlled by a relay" filter. Switching to the Tools tab no longer shifts the layout.
+- Added delivery of enforced skill files from relays to the nodes that follow them, checked against the relay's signed digest and removed when the relay stops enforcing them or the node stops following.
+- Changed relay-enforced skills to win over same-named skills on following nodes; the node's own copy is backed up and restored when it stops following.
+- Changed relay skill updates to reach following nodes on reconnect and at startup, and a conversation that is busy during a change reloads its skills before its next message.
+- Changed the Resources skills list to mark relay-delivered and relay-controlled skills, lock the agents a relay decides, and add a "Controlled by a relay" filter.
+- Fixed the Resources layout shifting when switching to the Tools tab.
 
 ## 2.121.1 — 2026-10-19
 
