@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Replaced the browser's plain confirmation box for deleting personal assistant items with an in-app dialog, where Cancel or Escape keeps the item.
+
 ## 2.116.0 — 2026-10-19
 
 - Added Enable all shown and Disable all shown to Resources, which switch every matching agent choice at once, even on other pages; if any choice cannot be switched, none change.

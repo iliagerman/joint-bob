@@ -63,6 +63,27 @@ test("personal assistant opens from conversation and saves a link with its scree
     await page.getByTestId("chat-personal-assistant-button").click();
     await page.locator("#heading").getByText("Phone assistant").waitFor();
     assert.equal(new URL(page.url()).searchParams.get("id"), id, "conversation icon reopens the same assistant");
+    let deleted = 0;
+    page.on("request", request => { if (request.method() === "DELETE") deleted++; });
+    const deletion = page.getByTestId("assistant-delete-dialog");
+    await card.getByRole("button", { name: "Delete item", exact: true }).click();
+    await deletion.waitFor({ state: "visible" });
+    assert.equal(deleted, 0, "opening confirmation must not delete the item");
+    await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
+    await deletion.waitFor({ state: "hidden" });
+    assert.equal(deleted, 0, "cancel must preserve the item");
+    assert.equal(await card.count(), 1);
+    await card.getByRole("button", { name: "Delete item", exact: true }).click();
+    await deletion.waitFor({ state: "visible" });
+    await page.keyboard.press("Escape");
+    await deletion.waitFor({ state: "hidden" });
+    assert.equal(deleted, 0, "Escape must preserve the item");
+    await card.getByRole("button", { name: "Delete item", exact: true }).click();
+    await deletion.getByRole("button", { name: "Delete item", exact: true }).click();
+    await card.waitFor({ state: "detached" });
+    assert.equal(deleted, 1, "confirmation deletes exactly once");
+    await page.reload();
+    await page.getByText("Nothing saved yet.", { exact: true }).waitFor();
   } finally {
     await browser?.close();
     if (server) await stopDevNode(server);

@@ -43,6 +43,13 @@ const link = () => {
   return target;
 };
 function text(parent, tag, value) { const element = document.createElement(tag); element.textContent = value; parent.append(element); return element; }
+function confirmItemDeletion(title) {
+  const dialog = document.querySelector("#delete-item-dialog");
+  dialog.querySelector("p").textContent = `Delete ${title}? This cannot be undone.`;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "delete"), { once: true }));
+}
 async function showItems() {
   const target = document.querySelector("#items"); target.replaceChildren();
   const { items } = await request(`/api/personal-assistants/${assistant.id}/items`);
@@ -60,9 +67,15 @@ async function showItems() {
       image.src = `/api/personal-assistants/${assistant.id}/items/${entry.id}/images/${encodeURIComponent(name)}`; images.append(image);
     }
     card.append(images);
-    const remove = text(card, "button", "Delete item"); remove.type = "button";
-    remove.addEventListener("click", async () => { if (!confirm(`Delete ${entry.title}?`)) return;
-      try { await request(`/api/personal-assistants/${assistant.id}/items/${entry.id}`, { method: "DELETE" }); await showItems(); } catch (error) { notify(error.message, true); }
+    const remove = text(card, "button", "Delete item"); remove.type = "button"; remove.dataset.testid = "assistant-delete-item";
+    remove.addEventListener("click", async () => {
+      remove.disabled = true;
+      try {
+        if (!await confirmItemDeletion(entry.title)) return;
+        await request(`/api/personal-assistants/${assistant.id}/items/${entry.id}`, { method: "DELETE" });
+        await showItems();
+      } catch (error) { notify(error.message, true); }
+      finally { remove.disabled = false; }
     });
     target.append(card);
   }

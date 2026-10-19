@@ -3,8 +3,18 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { appSource } from "./source.js";
 
-test("browser storage is limited to one-time legacy preference migration", async () => {
-  const app = await appSource();
+test("browser storage is limited to legacy migration and request-scoped sign-in dismissal", async () => {
+  const source = await appSource();
+  const dismissalStart = source.indexOf("function isDismissed(key)");
+  const dismissalEnd = source.indexOf("let popup =", dismissalStart);
+  assert.ok(dismissalStart >= 0 && dismissalEnd > dismissalStart, "Missing sign-in dismissal helpers");
+  const dismissal = source.slice(dismissalStart, dismissalEnd);
+  assert.match(source, /const DISMISSAL_PREFIX = "joint-bob\.browser-login-dismissed:"/);
+  assert.match(dismissal, /localStorage\.getItem\(DISMISSAL_PREFIX \+ key\) === "1"/);
+  assert.match(dismissal, /localStorage\.setItem\(DISMISSAL_PREFIX \+ key, "1"\)/);
+  assert.equal((dismissal.match(/\.(?:getItem|setItem|removeItem)\(/g) || []).length, 2);
+  assert.match(source, /const requestKey = session => `\$\{session\.nodeId\}:\$\{session\.id\}:\$\{session\.loginRequest\.id\}`/);
+  const app = source.slice(0, dismissalStart) + source.slice(dismissalEnd);
   const migrationStart = app.indexOf("async function migrateLegacyPreferences");
   const migrationEnd = app.indexOf("function showSignedOut", migrationStart);
   assert.ok(migrationStart >= 0, "Missing legacy preference migration");

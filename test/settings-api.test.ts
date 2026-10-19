@@ -90,6 +90,9 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.equal(saved.status, 200);
     const savedText = await saved.text();
     assert.doesNotMatch(savedText, /secret-api-key/);
+    const presetId = JSON.parse(savedText).conversationCommands.presets[0].id;
+    assert.match(presetId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, "legacy presets receive a stable ID");
+    Object.assign(conversationCommands.presets[0], { id: presetId });
     assert.deepEqual(JSON.parse(savedText), {
       strictResourceIsolation: true,
       autoActivateSharedSkills: true,

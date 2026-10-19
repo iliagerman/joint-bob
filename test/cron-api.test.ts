@@ -25,7 +25,7 @@ function makeDue(directory: string, id: string): void {
   } finally { db.close(); }
 }
 
-test("scheduler restart pauses uncertain dispatch, skips offline occurrences, and never overlaps an active run", { timeout: 60000 }, async () => {
+for (const pauseOnFailure of [false, true]) test(`scheduler restart ${pauseOnFailure ? "pauses" : "reschedules"} uncertain dispatch, skips offline occurrences, and never overlaps an active run`, { timeout: 60000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "cron-restart-"));
   const children: ChildProcess[] = [];
   try {
@@ -35,7 +35,7 @@ test("scheduler restart pauses uncertain dispatch, skips offline occurrences, an
     children.push(await startDevNode(environment, node, env));
     let auth = await signIn(environment, node);
     // Tests manually make tasks due; keep the natural hourly tick outside the test duration.
-    const input = { projectId: node.projects[0].id, name: "Interrupted report", prompt: "Report", engine: "claude", sessionId: null, ownerNodeId: node.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
+    const input = { projectId: node.projects[0].id, name: "Interrupted report", prompt: "Report", engine: "claude", sessionId: null, ownerNodeId: node.nodeId, enabled: true, pauseOnFailure, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
     const created = await api<{ task: CronTask }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "create", input } });
     assert.equal(created.status, 200, JSON.stringify(created.body));
     const readTask = async (id: string) => (await api<{ tasks: CronTask[] }>(node, auth, "GET", `/projects/${input.projectId}/cron`)).body.tasks.find(task => task.id === id)!;
@@ -52,8 +52,10 @@ test("scheduler restart pauses uncertain dispatch, skips offline occurrences, an
     auth = await signIn(environment, node);
     await until(async () => (await readTask(created.body.task.id)).lastRun?.status === "failed");
     const interrupted = await readTask(created.body.task.id);
-    assert.equal(interrupted.enabled, false);
+    assert.equal(interrupted.enabled, !pauseOnFailure, "only opted-in schedules pause after restart");
     assert.match(interrupted.lastRun!.error!, /outcome uncertain/);
+    assert.match(interrupted.lastRun!.error!, pauseOnFailure ? /Task paused/ : /next scheduled time/);
+    assert.ok(interrupted.nextRun > Date.now(), "restart must not immediately retry an uncertain run");
     const edited = await api<{ task: CronTask }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "update", id: interrupted.id, input: { ...input, name: "Recovered report", enabled: false } } });
     assert.equal(edited.status, 200, JSON.stringify(edited.body));
     assert.equal(edited.body.task.name, "Recovered report", "a recovered paused task must remain editable");
