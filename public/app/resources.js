@@ -76,8 +76,24 @@ function effectiveEnabled(item, harness) {
   return item.enabled !== false && item.activation?.[harness]?.enabled === true;
 }
 
+/** A relay decides this agent's state, so the local switch is locked: enforced, a copy it replaces, or not enabled there. */
+function isRelayForced(decision) {
+  return decision.reason.startsWith("Enforced by relay:") || decision.reason.startsWith("Replaced by relay:") || decision.reason.endsWith("(not enabled there)");
+}
+
+/** What the followed relays do to one resource: how many agents it enforces or blocks, and which relays. */
+function relayControl(item) {
+  const decisions = Object.values(item.activation ?? {});
+  const forced = decisions.filter(isRelayForced);
+  const advised = decisions.filter((decision) => /^(Blocked|Enabled) by relay:/.test(decision.reason));
+  const relays = [...new Set([...forced, ...advised].map((decision) => decision.reason.replace(/^[A-Za-z]+ by relay: /, "").replace(/ \(not enabled there\)$/, "")))];
+  const replaced = forced.length > 0 && forced.every((decision) => decision.reason.startsWith("Replaced by relay:"));
+  return { forced: forced.length, total: decisions.length, advised: advised.length, relays, replaced };
+}
+
 function matchesState(item) {
   const state = document.querySelector("#resourcesStateSelect").value;
+  if (state === "relay") { const control = relayControl(item); return control.forced + control.advised > 0; }
   const harness = harnessFilter();
   const agents = harness ? [harness] : item.harnesses;
   const known = agents.filter((id) => item.activation?.[id]);
@@ -426,7 +442,7 @@ function activationControl(kind, item, local, supported) {
       controls.append(choice);
       continue;
     }
-    const forced = decision.reason.startsWith("Enforced by relay:") || decision.reason.endsWith("(not enabled there)");
+    const forced = isRelayForced(decision);
     const label = document.createElement("label");
     const input = document.createElement("input");
     const selected = forced ? decision.enabled : decision.preference ?? (decision.reason.startsWith("Blocked by relay:")
@@ -504,13 +520,36 @@ function skillRow(skill, local) {
   const name = document.createElement("strong");
   name.textContent = skill.name;
   head.append(name, badge(ORIGIN_LABELS[skill.origin] ?? skill.origin, `origin-${skill.origin}`));
+  if (local) {
+    const control = relayControl(skill);
+    const policy = view.sharing ? policyFor(skill) : undefined;
+    if (policy?.managedByRelay) head.append(badge("from relay", "relay"));
+    if (control.forced + control.advised > 0) {
+      const all = control.forced === control.total && control.total > 0;
+      const mark = badge(control.replaced ? "replaced by relay" : all ? "relay-managed" : "partly relay-managed", "relay");
+      mark.title = control.replaced
+        ? `${control.relays.join(", ")} enforces its own copy of this skill, so agents load the relay's copy instead of this one.`
+        : `${control.relays.join(", ")} controls this skill${all ? "" : " for some agents"}. Locked agents cannot be changed on this node; the others you manage here.`;
+      head.append(mark);
+    } else if (view.relayPolicies.some((item) => item.optedIn)) {
+      const mark = badge("managed here", "local");
+      mark.title = "No relay you follow controls this skill. Enable or disable it per agent on this node.";
+      head.append(mark);
+    }
+  }
   if (view.scope === "conversation" && view.engine && skill.activation?.[view.engine]?.enabled) head.append(badge("active", "active"));
   const activation = activationControl("skill", skill, local, skill.harnesses);
   head.append(...(activation ? [activation] : harnessIcons(skill.harnesses)));
   const actions = document.createElement("span");
   actions.className = "resources-row-actions";
   const policy = local && view.sharing ? policyFor(skill) : undefined;
-  if (policy?.kind === "received") {
+  if (policy?.managedByRelay) {
+    const status = document.createElement("small");
+    status.dataset.testid = "skill-sharing-summary";
+    status.textContent = `Enforced by ${policy.receivedFromName || "a relay"}`;
+    status.title = `Delivered by ${policy.receivedFromName || "a relay"} with its files. Stop following the relay's rules to remove it.${policy.lastSync ? ` Last sync ${new Date(policy.lastSync).toLocaleString()}.` : ""}`;
+    actions.append(status);
+  } else if (policy?.kind === "received") {
     const status = document.createElement("small");
     status.dataset.testid = "skill-sharing-summary";
     status.textContent = `From ${policy.receivedFromName || policy.receivedFrom}`;
@@ -626,7 +665,9 @@ function peerStatus() {
   details.addEventListener("click", (event) => { if (event.target instanceof Element && event.target.closest("summary")) peerStatusExpanded = !details.open; });
   const failing = peers.filter((peer) => peer.error).length;
   const summary = document.createElement("summary");
-  summary.textContent = `Receiving from ${peers.length} node${peers.length === 1 ? "" : "s"}${failing ? ` · ${failing} failing` : ""}`;
+  const relays = peers.filter((peer) => peer.ownerNodeId.startsWith("relay:")).length, nodes = peers.length - relays;
+  const sources = [nodes ? `${nodes} node${nodes === 1 ? "" : "s"}` : "", relays ? `${relays} relay${relays === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+  summary.textContent = `Receiving from ${sources}${failing ? ` · ${failing} failing` : ""}`;
   details.append(summary);
   for (const peer of peers) {
     const status = emptyRow(`${peer.ownerName || peer.ownerNodeId}: ${peer.error || `Last synced ${new Date(peer.lastSuccess).toLocaleString()}`}`);
@@ -647,6 +688,8 @@ function bulkChoices(inventory, kind) {
   const choices = new Map();
   for (const row of rows.filter(eligible)) for (const harness of row.harnesses) {
     if (filter && harness !== filter || !row.activation?.[harness] || row.activationRestrictions?.[harness] || restricted.has(`${row.name}\0${harness}`)) continue;
+    // A relay decides this agent's state here; bulk actions leave it alone like the locked switch does.
+    if (isRelayForced(row.activation[harness])) continue;
     const key = `${row.name}\0${harness}`;
     choices.set(key, { name: row.name, harness, preference: row.activation[harness].preference });
   }
@@ -676,10 +719,20 @@ function renderShareBar() {
   const bar = elements.resourcesShareBar;
   bar.replaceChildren();
   const local = localEntry()?.inventory;
-  bar.hidden = Boolean(view.nodeId) || !["skills", "mcp", "plugins"].includes(view.tab) || !local;
+  bar.hidden = Boolean(view.nodeId) || !["skills", "mcp", "tools", "plugins"].includes(view.tab) || !local;
   if (bar.hidden) return;
   const line = document.createElement("div");
   line.className = "resources-share-line";
+  if (view.tab === "tools") {
+    // Tools cannot be shared or switched; the bar stays so the list starts where it does on the other tabs.
+    const note = document.createElement("span");
+    note.textContent = "Tools are what an open conversation's agent reports. They cannot be shared or switched here.";
+    const spacer = button(" ", "resources-share-spacer", () => {});
+    spacer.style.visibility = "hidden"; spacer.tabIndex = -1; spacer.setAttribute("aria-hidden", "true");
+    line.append(note, spacer);
+    bar.append(line);
+    return;
+  }
   const count = document.createElement("span");
   count.dataset.testid = "resources-selected-count";
   if (view.tab === "skills" && view.sharing) {
@@ -847,11 +900,12 @@ function renderRelayPolicy() {
   }
   const affected = (localEntry()?.inventory?.skills ?? []).filter((skill) => policy.rules.some((rule) => rule.name === skill.name && (rule.harness === "all" || skill.harnesses.includes(rule.harness))));
   const summary = document.createElement("p");
-  summary.textContent = `${affected.length} installed skill${affected.length === 1 ? "" : "s"} affected on this node. Blocking overrides every local enable. Local disables override relay enables. Files stay installed.`;
+  const enforced = policy.settings?.skills?.enforce ? policy.skillDigestCount ?? 0 : 0;
+  summary.textContent = `${affected.length} installed skill${affected.length === 1 ? "" : "s"} affected by its rules${enforced ? `; it enforces ${enforced} skill${enforced === 1 ? "" : "s"}, installed here with their files` : ""}. Blocking overrides every local enable. Enforced skills cannot be disabled on this node. Local disables override other relay enables.`;
   preview.append(summary);
   const action = button(policy.optedIn ? "Stop following" : "Follow this relay's rules", "resources-relay-follow", async () => {
     if (!policy.optedIn && policy.version === null) { toast("Wait for a signed policy before following this relay."); return; }
-    if (!policy.optedIn && !await confirmAction({ title: `Follow ${policy.name || policy.origin}?`, message: `This relay can enable or block skills on this node. Preview the ${policy.rules.length} rules above before allowing updates.`, confirmLabel: "Follow relay" })) return;
+    if (!policy.optedIn && !await confirmAction({ title: `Follow ${policy.name || policy.origin}?`, message: `This relay can enable or block skills on this node. Preview the ${policy.rules.length} rules above before allowing updates.${policy.settings?.skills?.enforce && policy.skillDigestCount ? ` It also enforces ${policy.skillDigestCount} skills and will install them here with their files, scripts included, and keep them up to date. Local skills with the same names are backed up and replaced.` : ""}`, confirmLabel: "Follow relay" })) return;
     action.disabled = true;
     try {
       await api(`/api/relays/${encodeURIComponent(policy.id)}/skill-policy-subscription`, { method: "PUT", body: JSON.stringify({ optedIn: !policy.optedIn }) });
@@ -882,12 +936,18 @@ function render() {
   // Repositories are not per agent.
   elements.resourcesHarnessSelect.hidden = view.tab === "git";
   document.querySelector("#resourcesNodeSelect").hidden = view.tab === "git";
-  document.querySelector("#resourcesStateSelect").hidden = !["skills", "mcp", "plugins"].includes(view.tab);
-  document.querySelector("#resourcesControlsHint").hidden = !["skills", "mcp", "plugins"].includes(view.tab);
   const listing = ["skills", "mcp", "tools", "plugins"].includes(view.tab);
-  document.querySelector("#resourcesRelayPolicy").hidden = view.tab !== "skills"
-    || (view.relayPolicies.length === 0 && document.querySelector("#resourcesRelayPublisher").hidden);
-  document.querySelector(".resources-auto-activate").hidden = !["skills", "mcp", "plugins"].includes(view.tab);
+  // Listing tabs share one layout: controls that do not apply are dimmed in place, never removed, so switching tabs does not shift the page.
+  const stateTab = ["skills", "mcp", "plugins"].includes(view.tab);
+  const keepSpace = (element, show) => { element.hidden = !listing; element.style.visibility = show ? "" : "hidden"; };
+  keepSpace(document.querySelector("#resourcesStateSelect"), stateTab);
+  keepSpace(document.querySelector("#resourcesControlsHint"), stateTab);
+  keepSpace(document.querySelector(".resources-auto-activate"), stateTab);
+  // The relay rules exist only on nodes that follow or serve a relay; there they keep their place on every listing tab.
+  const relayPolicy = document.querySelector("#resourcesRelayPolicy");
+  const relayRelevant = view.relayPolicies.length > 0 || !document.querySelector("#resourcesRelayPublisher").hidden;
+  relayPolicy.hidden = !listing || !relayRelevant;
+  relayPolicy.style.visibility = view.tab === "skills" ? "" : "hidden";
   elements.resourcesList.hidden = !listing;
   if (!listing) { elements.resourcesListPager.hidden = true; elements.resourcesShareBar.hidden = true; }
   elements.resourcesScopeSelect.parentElement.hidden = view.tab === "paths";

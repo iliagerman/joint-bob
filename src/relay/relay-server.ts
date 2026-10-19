@@ -22,6 +22,7 @@ import {
 } from "./protocol.js";
 import { RelayStream, relayTransportOf } from "./stream.js";
 import { POLL_PATH, PollServer, type FrameSocket } from "./poll.js";
+import { SKILL_BUNDLE_PATH, serveSkillBundle } from "./skill-bundle.js";
 import {
   addMachineUsage, admitMachine, audit, countAdmittedMachines, currentMonth, deleteMachine, ensureRelaySchema, expirePendingMachines, isKeyRevoked, machineUsage, markMachineAlerted,
   redeemRelayToken, relayMachine, relayMachineByName, renameRelayMachine, servingSettings, setMachinePhoneSignIn, setMachineStatus,
@@ -101,6 +102,8 @@ export class RelayServer {
   readonly publicKey: string;
   readonly fingerprint: string;
 
+  /** Set by the relay runtime: republishes the enforced-skill digests after a follower found them stale. */
+  onSkillDigestStale?: () => void;
   constructor(private readonly db: DatabaseSync, readonly nodeId: string, private readonly nodeName: () => string, private readonly alert: (topic: string, message: string) => void) {
     ensureRelaySchema(db);
     const identity = getOrCreateClusterIdentity(db, nodeId);
@@ -703,7 +706,9 @@ export class RelayServer {
     if (!label) {
       const hook = this.webhookRoute(request);
       if (hook) { this.handleWebhook(request, response, hook); return true; }
-      if (new URL(request.url ?? "/", "http://relay").pathname !== POLL_PATH) return false;
+      const pathname = new URL(request.url ?? "/", "http://relay").pathname;
+      if (pathname === SKILL_BUNDLE_PATH && this.enabled) { void serveSkillBundle(this.db, this.nodeId, request, response, () => this.onSkillDigestStale?.()); return true; }
+      if (pathname !== POLL_PATH) return false;
       if (!this.enabled) { response.writeHead(404).end(); return true; }
       this.polls.handle(request, response);
       return true;

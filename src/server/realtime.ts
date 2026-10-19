@@ -34,17 +34,22 @@ export function parseSessionPath(value: string | null): string | undefined { ret
 export function sessionKey(cwd: string, sessionPath: string | undefined): string { return `${cwd}\n${sessionPath ?? "new"}`; }
 
 export async function reloadSharedSkills(): Promise<{ reloaded: number; skipped: number; failed: Array<{ sessionId: string; error: string }> }> {
+  // A relay that enforces skills publishes their digests; any change to this node's skills makes them stale.
+  void import("../relay/enabled-snapshot.js").then(({ republishRelayResources }) => republishRelayResources())
+    .catch((error) => console.warn("Publishing relay resources failed", error));
   let reloaded = 0;
   let skipped = 0;
   const failed: Array<{ sessionId: string; error: string }> = [];
   for (const shared of harnessSessions.values()) {
-    if (harnessSessionBusy(shared)) { skipped += 1; continue; }
+    if (harnessSessionBusy(shared)) { shared.skillsStale = true; skipped += 1; continue; }
     try {
+      shared.skillsStale = false;
       await shared.session.reload();
       sendHarnessStatus(shared);
       broadcast(shared, { type: "tools", supported: true, tools: shared.session.tools() });
       reloaded += 1;
     } catch (error) {
+      shared.skillsStale = true;
       failed.push({ sessionId: shared.session.id, error: error instanceof Error ? error.message : String(error) });
     } finally {
       const connection = [...harnessChatConnections].find((candidate) => candidate.shared === shared);

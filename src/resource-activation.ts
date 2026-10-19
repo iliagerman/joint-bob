@@ -5,7 +5,8 @@ import { agentResourcePaths } from "./agent-resources.js";
 import { parse as parseYaml } from "yaml";
 import { resolveDataDirectory } from "./data-directory.js";
 import { settingsDatabase, value } from "./settings-store.js";
-import { relaySkillDirective, relayResourceDirective, relayPolicySubscriptions } from "./relay/resource-policy.js";
+import { relaySkillDirective, relayResourceDirective, relayPolicyLabel, relayPolicySubscriptions } from "./relay/resource-policy.js";
+import { receivedOwnerSync } from "./skill-sharing-files.js";
 import { unavailableSkillNames, type SkillScopeContext } from "./scoped-skills.js";
 import type { HarnessId } from "./types.js";
 
@@ -92,10 +93,33 @@ export function receivedSkillPath(directory: string, root: string, first: string
   return false;
 }
 
-export function activationDecision(kind: ActivatableResource, name: string, harness: HarnessId, shared: boolean): ActivationDecision {
+/** The label of a followed relay that enforces this skill for this agent, if any. Only skills published with a digest count: their files are delivered. */
+export function relayEnforcedSkill(name: string, harness: HarnessId): string | null {
+  for (const { relay, optedIn, statement } of relayPolicySubscriptions(settingsDatabase())) {
+    if (!optedIn || !statement || !statement.body.settings.skills.enforce) continue;
+    if (!((statement.body.enabled.skills as Record<string, string[]>)[harness] ?? []).includes(name) || statement.body.skillDigests?.[name] === undefined) continue;
+    return relayPolicyLabel(relay);
+  }
+  return null;
+}
+
+/** True when the managed copy of this skill was delivered by a relay rather than a cluster peer. */
+export function relayDeliveredSkill(name: string, root = agentResourcePaths().sharedSkills): boolean {
+  return receivedOwnerSync(root, name)?.startsWith("relay:") ?? false;
+}
+
+/**
+ * `fromRelay` marks the managed copy a followed relay delivered. When a relay enforces a skill for an
+ * agent, that copy is the only one the agent loads; every other copy with the same name is replaced.
+ */
+export function activationDecision(kind: ActivatableResource, name: string, harness: HarnessId, shared: boolean, fromRelay = false): ActivationDecision {
   const preference = activationPreference(kind, name, harness);
   const directive = kind === "skill" ? relaySkillDirective(settingsDatabase(), name, harness) : null;
   if (directive?.action === "block") return { enabled: false, reason: `Blocked by relay: ${directive.relays.join(", ")}`, preference, shared };
+  const enforced = kind === "skill" ? relayEnforcedSkill(name, harness) : null;
+  if (enforced && (fromRelay || relayDeliveredSkill(name))) return fromRelay
+    ? { enabled: true, reason: `Enforced by relay: ${enforced}`, preference, shared }
+    : { enabled: false, reason: `Replaced by relay: ${enforced}`, preference, shared };
   const resource = relayResourceDirective(settingsDatabase(), kind, name, harness);
   if (resource?.action === "block") return { enabled: false, reason: `Blocked by relay: ${resource.relays.join(", ")} (not enabled there)`, preference, shared };
   if (resource?.action === "enable") return { enabled: true, reason: `Enforced by relay: ${resource.relays.join(", ")}`, preference, shared };
@@ -137,7 +161,7 @@ export function activeSkillRoot(harness: HarnessId, root = agentResourcePaths().
     const canonical = realpathSync(root);
     const received = receivedSkillPath(path.dirname(root), path.dirname(path.dirname(root)), path.basename(path.dirname(root)), root)
       || receivedSkillPath(path.dirname(canonical), path.dirname(path.dirname(canonical)), path.basename(path.dirname(canonical)), canonical);
-    if (!unavailable.has(name) && activationDecision("skill", name, harness, received).enabled) return root;
+    if (!unavailable.has(name) && activationDecision("skill", name, harness, received, received && relayDeliveredSkill(name)).enabled) return root;
     mkdirSync(empty, { recursive: true });
     return empty;
   }
@@ -157,7 +181,8 @@ export function activeSkillRoot(harness: HarnessId, root = agentResourcePaths().
       const fallback = path.basename(directory);
       const name = skillNameFromFile(manifest, fallback);
       const first = relative.split(path.sep)[0] || fallback;
-      if (unavailable.has(name) || !activationDecision("skill", name, harness, receivedSkillPath(directory, relative ? root : path.dirname(root), first, manifest)).enabled) {
+      const received = receivedSkillPath(directory, relative ? root : path.dirname(root), first, manifest);
+      if (unavailable.has(name) || !activationDecision("skill", name, harness, received, received && relayDeliveredSkill(name)).enabled) {
         excluded = true;
         visiting.delete(real);
         return;

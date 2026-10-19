@@ -11,7 +11,7 @@ import { advertisedNodeUrl, relayRuntimeInstance, relayServerInstance, relayServ
 import { setOtherUsersMayUsePhone } from "../../relay/phone-policy.js";
 import { normalizeRelayOrigin, phoneAddress, RELAY_NAME_PATTERN } from "../../relay/protocol.js";
 import { RelayServerError } from "../../relay/relay-server.js";
-import { relayEnabledSnapshot } from "../../relay/enabled-snapshot.js";
+import { enforcedSkillDigests, relayEnabledSnapshot } from "../../relay/enabled-snapshot.js";
 import { publishRelayPolicy, publishedRelayPolicy, relayPolicyLabel, relayPolicySubscriptions, relayResourceSettingsSchema, relaySkillRulesSchema, subscribeRelayPolicy } from "../../relay/resource-policy.js";
 import { reloadSharedSkills } from "../realtime.js";
 import { enrollLink, LOCAL_RELAY_ID, RelayRuntimeError } from "../../relay/runtime.js";
@@ -99,13 +99,14 @@ app.get("/api/relays/skill-policies", handle(async (_request, response) => {
   const db = await clusterV2Database();
   response.json({ subscriptions: relayPolicySubscriptions(db).map(({ relay, optedIn, statement, updatedAt }) => ({
     id: relay.id, name: relayPolicyLabel(relay), origin: relay.origin, optedIn, version: statement?.body.version ?? null,
-    rules: statement?.body.rules ?? [], settings: statement?.body.settings ?? null, updatedAt,
+    rules: statement?.body.rules ?? [], settings: statement?.body.settings ?? null, skillDigestCount: Object.keys(statement?.body.skillDigests ?? {}).length, updatedAt,
   })) });
 }));
 app.put("/api/relays/:id/skill-policy-subscription", handle(async (request, response) => {
   const db = await clusterV2Database();
   const { optedIn } = z.object({ optedIn: z.boolean() }).strict().parse(request.body);
   subscribeRelayPolicy(db, uuid.parse(request.params.id), optedIn);
+  await (await import("../skill-sharing.js")).syncRelaySkills().catch((error) => console.warn(`Relay skill sync failed: ${(error as Error).message}`));
   await reloadSharedSkills();
   response.json({ subscriptions: relayPolicySubscriptions(db).map(({ relay, optedIn, statement }) => ({
     id: relay.id, optedIn, rules: statement?.body.rules ?? [], version: statement?.body.version ?? null,
@@ -120,7 +121,8 @@ app.put("/api/relay/serving/skill-policy", handle(async (request, response) => {
   const body = z.object({ rules: relaySkillRulesSchema, settings: relayResourceSettingsSchema.optional() }).strict().parse(request.body);
   const nodeId = (await getClusterNode()).id;
   const settings = body.settings ?? publishedRelayPolicy(db, nodeId).body.settings;
-  const statement = publishRelayPolicy(db, nodeId, body.rules, { settings, enabled: await relayEnabledSnapshot() });
+  const enabled = await relayEnabledSnapshot();
+  const statement = publishRelayPolicy(db, nodeId, body.rules, { settings, enabled, skillDigests: await enforcedSkillDigests(settings, enabled) });
   relayServerInstance()?.broadcastSkillPolicy();
   response.json(statement.body);
 }));

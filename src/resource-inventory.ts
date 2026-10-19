@@ -4,7 +4,7 @@ import { runtimeHome } from "./account-runtime.js";
 import os from "node:os";
 import path from "node:path";
 import { agentResourcePaths, blockedPluginSkill, claudePluginSources, pluginActivationDecisions } from "./agent-resources.js";
-import { activationDecision, receivedResource, receivedSkillPath, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
+import { activationDecision, receivedResource, receivedSkillPath, relayDeliveredSkill, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
 import { claudeEnterpriseMcpPath, claudePluginMcpServers, claudeProjectMcpDecisions } from "./harnesses/claude/resources.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime } from "./harnesses/runtime-configuration.js";
@@ -271,7 +271,7 @@ async function inventorySkills(projectPath: string | undefined, projectId: strin
     const received = existsSync(manifest) && receivedSkillPath(path.dirname(manifest), sharedRoot,
       inside(shared, location) ? path.relative(shared, location).split(path.sep)[0] : path.basename(path.dirname(manifest)), manifest);
     const origin: SkillOrigin = inside(scoped, location) ? "scoped" : received ? "shared" : summary.scope === "project" ? "project" : inside(shared, location) ? "shared" : "user";
-    const decision = activationDecision("skill", name, summary.harness, origin === "scoped" || received);
+    const decision = activationDecision("skill", name, summary.harness, origin === "scoped" || received, received && relayDeliveredSkill(name));
     const restriction = summary.harness === "claude" && ["user", "project"].includes(origin)
       ? "Native Claude skills cannot be disabled here without preventing Claude from starting. Manage this copy in its source folder." : undefined;
     const key = `${origin}\0${name}`;

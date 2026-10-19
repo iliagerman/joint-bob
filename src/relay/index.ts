@@ -90,6 +90,8 @@ export function startRelay(): Promise<void> {
       } catch (error) { console.warn("Relay alert failed", error); }
     });
     relayServer.reload();
+    relayServer.onSkillDigestStale = () => void import("./enabled-snapshot.js").then(({ republishRelayResources }) => republishRelayResources())
+      .catch((error) => console.warn("Republishing relay skills failed", error));
     runtime = new RelayRuntime(db, node.id, server, {
       acceptSyncthing: (stream) => tunnels?.accept(stream),
       syncthingAllowed: (from) => tunnels?.allowed(from) ?? false,
@@ -102,10 +104,15 @@ export function startRelay(): Promise<void> {
     setPhonePolicyDatabase(db);
     tunnels = new SyncthingTunnels(db, runtime);
     runtime.on("changed", scheduleTunnels);
-    runtime.on("skill-policy-changed", () => {
-      void import("../server/realtime.js").then(({ reloadSharedSkills }) => reloadSharedSkills())
-        .catch((error) => console.warn("Relay policy skill reload failed", error));
-    });
+    // A new policy installs or removes the skills it enforces, then reloads idle conversations; busy ones reload before their next message.
+    const applyPolicy = (reloadAlways: boolean) => {
+      void import("../server/skill-sharing.js").then(async ({ syncRelaySkills }) => {
+        const changed = await syncRelaySkills().catch((error) => { console.warn(`Relay skill sync failed: ${(error as Error).message}`); return false; });
+        if (changed || reloadAlways) await (await import("../server/realtime.js")).reloadSharedSkills();
+      }).catch((error) => console.warn("Relay policy skill reload failed", error));
+    };
+    runtime.on("skill-policy-changed", () => applyPolicy(true));
+    runtime.on("skill-policy-received", () => applyPolicy(false));
     runtime.start();
     scheduleTunnels();
   })();

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveDataDirectory } from "./data-directory.js";
@@ -86,6 +87,11 @@ export async function markReceived(root: string, name: string, owner: string, da
 }
 export async function unmarkReceived(root: string, name: string, dataDir?: string): Promise<void> {
   await rm(receivedMarker(root, name, dataDir), { force: true });
+}
+/** Synchronous read for activation decisions, which run while listing and building skill roots. */
+export function receivedOwnerSync(root: string, name: string, dataDir?: string): string | undefined {
+  try { return readFileSync(receivedMarker(root, name, dataDir), "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
 }
 export async function receivedOwner(root: string, name: string, dataDir?: string): Promise<string | undefined> {
   try { return await readFile(receivedMarker(root, name, dataDir), "utf8"); }

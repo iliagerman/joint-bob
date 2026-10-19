@@ -20,9 +20,13 @@ export type RelayResourceSettings = z.infer<typeof relayResourceSettingsSchema>;
 export type RelayEnabledResources = z.infer<typeof relayEnabledSchema>;
 export const defaultRelayResourceSettings = (): RelayResourceSettings => ({ skills: defaultToggles(), mcp: defaultToggles(), plugins: defaultToggles() });
 export const emptyRelayEnabledResources = (): RelayEnabledResources => ({ skills: defaultNames(), mcp: defaultNames(), plugins: defaultNames() });
+/** Content digest of every skill the relay enforces, so followers download exactly what the relay signed. */
+const skillDigests = z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/), z.string().regex(/^[a-f0-9]{64}$/)).refine((value) => Object.keys(value).length <= 512, "Too many enforced skills");
 const bodySchema = z.object({
   relayNodeId: z.string().uuid(), version: z.number().int().nonnegative(), rules: relaySkillRulesSchema,
   settings: relayResourceSettingsSchema.default(defaultRelayResourceSettings), enabled: relayEnabledSchema.default(emptyRelayEnabledResources),
+  // Omitted when empty, so machines on releases without it still accept policies that deliver no files.
+  skillDigests: skillDigests.optional(),
 }).strict();
 export const signedRelaySkillPolicySchema = z.object({ body: bodySchema, signature: z.string().max(200) }).strict();
 export type RelaySkillRule = z.infer<typeof rule>;
@@ -43,20 +47,22 @@ function schema(db: DatabaseSync): void {
 export function publishedRelayPolicy(db: DatabaseSync, nodeId: string): SignedRelaySkillPolicy {
   schema(db);
   const row = db.prepare("SELECT version,rules,extra FROM relay_skill_policy WHERE singleton=1").get() as { version: number; rules: string; extra: string | null } | undefined;
-  const extra = row?.extra ? JSON.parse(row.extra) as { settings?: unknown; enabled?: unknown } : {};
+  const extra = row?.extra ? JSON.parse(row.extra) as { settings?: unknown; enabled?: unknown; skillDigests?: Record<string, string> } : {};
+  if (extra.skillDigests && !Object.keys(extra.skillDigests).length) delete extra.skillDigests;
   const body = bodySchema.parse({ relayNodeId: nodeId, version: row?.version ?? 0, rules: row ? JSON.parse(row.rules) : [], ...extra });
   return { body, signature: signClusterMessage(db, nodeId, "relay-skill-policy", JSON.stringify(body)) };
 }
 
-export function publishRelayPolicy(db: DatabaseSync, nodeId: string, rules: RelaySkillRule[], resources?: { settings: RelayResourceSettings; enabled: RelayEnabledResources }): SignedRelaySkillPolicy {
+export function publishRelayPolicy(db: DatabaseSync, nodeId: string, rules: RelaySkillRule[], resources?: { settings: RelayResourceSettings; enabled: RelayEnabledResources; skillDigests?: Record<string, string> }): SignedRelaySkillPolicy {
   relaySkillRulesSchema.parse(rules);
   schema(db);
   const current = db.prepare("SELECT version FROM relay_skill_policy WHERE singleton=1").get() as { version: number } | undefined;
-  const body = bodySchema.parse({ relayNodeId: nodeId, version: (current?.version ?? 0) + 1, rules, ...resources });
+  const digests = resources?.skillDigests && Object.keys(resources.skillDigests).length ? resources.skillDigests : undefined;
+  const body = bodySchema.parse({ relayNodeId: nodeId, version: (current?.version ?? 0) + 1, rules, ...resources, skillDigests: digests });
   const statement = { body, signature: signClusterMessage(db, nodeId, "relay-skill-policy", JSON.stringify(body)) };
   if (encodeControl({ t: "skill-policy", statement }).byteLength > MAX_FRAME) throw new Error(`Relay skill policy exceeds the ${MAX_FRAME}-byte frame limit`);
   db.prepare("INSERT INTO relay_skill_policy(singleton,version,rules,extra) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET version=excluded.version,rules=excluded.rules,extra=excluded.extra")
-    .run(body.version, JSON.stringify(rules), JSON.stringify({ settings: body.settings, enabled: body.enabled }));
+    .run(body.version, JSON.stringify(rules), JSON.stringify({ settings: body.settings, enabled: body.enabled, skillDigests: body.skillDigests }));
   return statement;
 }
 

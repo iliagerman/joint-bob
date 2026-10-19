@@ -1,8 +1,11 @@
+import path from "node:path";
+import { agentResourcePaths } from "../agent-resources.js";
 import { resourceInventory } from "../resource-inventory.js";
+import { buildSkillBundle } from "../skill-sharing.js";
 import { getClusterNode } from "../cluster.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { relayServerInstance } from "./index.js";
-import { emptyRelayEnabledResources, publishedRelayPolicy, publishRelayPolicy, type RelayEnabledResources } from "./resource-policy.js";
+import { emptyRelayEnabledResources, publishedRelayPolicy, publishRelayPolicy, type RelayEnabledResources, type RelayResourceSettings } from "./resource-policy.js";
 import { servingSettings } from "./store.js";
 
 const HARNESSES = ["pi", "claude", "kiro"] as const;
@@ -23,7 +26,22 @@ export async function relayEnabledSnapshot(): Promise<RelayEnabledResources> {
   return result;
 }
 
-/** Keeps followers in step when this relay changes what it has enabled; only relays that enforce or restrict republish. */
+/**
+ * Digests of the skills this relay enforces, so followers can download them. Only skills that are
+ * enabled here and live in this machine's managed skills are offered; the rest are enabled by name only.
+ */
+export async function enforcedSkillDigests(settings: RelayResourceSettings, enabled: RelayEnabledResources): Promise<Record<string, string>> {
+  const digests: Record<string, string> = {};
+  if (!settings.skills.enforce) return digests;
+  const names = [...new Set(HARNESSES.flatMap((harness) => enabled.skills[harness]))].sort();
+  for (const name of names) {
+    try { digests[name] = (await buildSkillBundle(path.join(agentResourcePaths().sharedSkills, name), name)).digest; }
+    catch { /* not a managed skill on this machine, or too large to send */ }
+  }
+  return digests;
+}
+
+/** Keeps followers in step when this relay changes what it has enabled; only relays that enforce or restrict republish; edited enforced skills change their digest. */
 export async function republishRelayResources(): Promise<void> {
   const db = await clusterV2Database();
   if (!servingSettings(db).enabled) return;
@@ -31,7 +49,8 @@ export async function republishRelayResources(): Promise<void> {
   const current = publishedRelayPolicy(db, nodeId).body;
   if (!Object.values(current.settings).some((toggle) => toggle.enforce || !toggle.allowOthers)) return;
   const enabled = await relayEnabledSnapshot();
-  if (JSON.stringify(enabled) === JSON.stringify(current.enabled)) return;
-  publishRelayPolicy(db, nodeId, current.rules, { settings: current.settings, enabled });
+  const skillDigests = await enforcedSkillDigests(current.settings, enabled);
+  if (JSON.stringify(enabled) === JSON.stringify(current.enabled) && JSON.stringify(skillDigests) === JSON.stringify(current.skillDigests ?? {})) return;
+  publishRelayPolicy(db, nodeId, current.rules, { settings: current.settings, enabled, skillDigests });
   relayServerInstance()?.broadcastSkillPolicy();
 }

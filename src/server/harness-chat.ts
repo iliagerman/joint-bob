@@ -585,6 +585,10 @@ async function drainLoop(connection: HarnessChatConnection): Promise<void> {
     await ensureCurrentSession(connection);
     if (pausedDrains.has(queueKey(connection))) return;
     if (harnessTurnBusy(connection.shared)) { wakeWhenHarnessIdle(connection); return; }
+    if (connection.shared.skillsStale) {
+      connection.shared.skillsStale = false;
+      await connection.shared.session.reload().catch((error) => console.warn("Skill reload before the next message failed", error instanceof Error ? error.message : error));
+    }
     if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
     const next = listQueuedPrompts(queueKey(connection))[0];
     if (next?.systemEventId && next.dispatchState === "starting") {

@@ -77,6 +77,11 @@ export async function initializeStartupReadiness(): Promise<void> {
     flags.startupReady = true;
     flags.startupError = undefined;
     console.log("Startup reconciliation completed.");
+    // Relay-enforced skills are installed from the stored policy in the background: readiness never waits on a
+    // relay download. A relay that is offline keeps them as they are until it pushes its policy again.
+    void import("./skill-sharing.js").then(async ({ syncRelaySkills }) => {
+      if (await syncRelaySkills()) await (await import("./realtime.js")).reloadSharedSkills();
+    }).catch((error) => console.warn("Relay skill sync at startup failed", error));
   } catch (error) {
     const failure = error instanceof Error ? error : new Error("Startup reconciliation failed");
     if (flags.startupError?.message !== failure.message) console.warn("Startup reconciliation failed, retrying", failure);

@@ -382,6 +382,46 @@ for (const operation of ["compact", "reload"] as const) {
   });
 }
 
+test("skills changed during a busy turn are reloaded before the next message", async (context) => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+  sockets.push(opened.socket);
+  await waitForChatSession(opened);
+  const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId)!;
+  const session = shared.session;
+  const firstTurn = Promise.withResolvers<void>();
+  const entered = Promise.withResolvers<void>();
+  const order: string[] = [];
+  let prompts = 0, busy = false;
+  context.mock.method(session, "prompt", async (input) => {
+    order.push(`prompt ${++prompts}`);
+    input.onStarted?.();
+    if (prompts > 1) return;
+    busy = true; entered.resolve();
+    try { await firstTurn.promise; } finally { busy = false; }
+  });
+  context.mock.method(session, "isBusy", () => busy);
+  context.mock.method(session, "reload", async () => { order.push("reload"); });
+  const engineLog = process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  const deadline = (label: string) => new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error(label)), 5000).unref());
+  try {
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "long turn" }));
+    await Promise.race([entered.promise, deadline("the first turn never started")]);
+    const { reloadSharedSkills } = await import("../src/server/realtime.js");
+    const result = await Promise.race([reloadSharedSkills(), deadline("reloadSharedSkills waited on the busy turn")]);
+    assert.ok(result.skipped >= 1, "a busy session is not reloaded mid-turn");
+    assert.equal(shared.skillsStale, true);
+    assert.deepEqual(order, ["prompt 1"]);
+    firstTurn.resolve();
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "next message" }));
+    await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "promptStarted").length === 2, 3000);
+    assert.deepEqual(order, ["prompt 1", "reload", "prompt 2"], "the reload runs before the next message starts");
+    assert.equal(shared.skillsStale, false);
+  } finally { firstTurn.resolve(); process.env.JOINT_BOB_TEST_ENGINE_LOG = engineLog; }
+});
+
 for (const stage of ["turn", "preflight"] as const) {
   test(`update fence stops an existing drain after awaiting ${stage}`, async (context) => {
     const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");

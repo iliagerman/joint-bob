@@ -21,6 +21,8 @@ export interface SharedHarnessSession {
   turnStartedAt?: string;
   /** True while the running turn came from a scheduled task rather than a person. */
   scheduledTurn: boolean;
+  /** Skills changed while a turn ran; reloaded before the next message so it sees them. */
+  skillsStale?: boolean;
 }
 
 export const harnessSessions = new Map<string, SharedHarnessSession>();

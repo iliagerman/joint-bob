@@ -324,7 +324,7 @@ class RelayConnection {
       try {
         const current = this.membership;
         if (!current || !this.relayPublicKey) throw new Error("Relay not authenticated");
-        if (receiveRelayPolicy(this.runtime.db, current, this.relayPublicKey, message.statement)) this.runtime.emit("skill-policy-changed");
+        this.runtime.emit(receiveRelayPolicy(this.runtime.db, current, this.relayPublicKey, message.statement) ? "skill-policy-changed" : "skill-policy-received");
       } catch (error) { console.warn(`Relay skill policy rejected: ${(error as Error).message}`); }
       return;
     }

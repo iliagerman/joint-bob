@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -10,16 +10,20 @@ import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships, getSh
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { signClusterRequest } from "../cluster-protocol.js";
+import { getOrCreateClusterIdentity } from "../cluster-identity.js";
 import { getSettings } from "../settings.js";
 import { pauseSyncthingFolders } from "../syncthing.js";
 import { authorizedSkillClusters, buildSkillBundle, ensureSkillSharingSchema, installSkillBundle, listReceivedScopedSkills, listReceivedSkills, setSkillShares, skillBundleDigest, skillClusterIds, skillNodeIds, skillScopeGrants, validateSkillName, type ReceivedScopedSkill, type ReceivedSkill, type SkillConversationGrant, type SkillScopeGrants } from "../skill-sharing.js";
-import { backupRemovedSkill, markReceived, receivedOwner, skillSuppressed, suppressSkill, unlinkSkillAliases, unmarkReceived, withSkillMutation } from "../skill-sharing-files.js";
+import { allowSkillImport, backupRemovedSkill, markReceived, receivedOwner, skillSuppressed, suppressSkill, unlinkSkillAliases, unmarkReceived, withSkillMutation } from "../skill-sharing-files.js";
 import { ensureResourceSharingSchema } from "../cluster-sharing.js";
 import { scopedSkillDirectory, scopedSkillParent, writeScopedSkillIndex } from "../scoped-skills.js";
 import { mayShareProject } from "./sharing-files.js";
 import { sendError } from "./http-auth.js";
 import { app } from "./state.js";
 import { peerFetch } from "../relay/transport.js";
+import { fetchRelaySkillBundle } from "../relay/skill-bundle.js";
+import { relayPolicyLabel, relayPolicySubscriptions } from "../relay/resource-policy.js";
+import { listMemberships, type RelayMembership } from "../relay/store.js";
 import { peerAway } from "../peer-presence.js";
 import { parseResourceFrontmatter } from "../skills.js";
 
@@ -54,6 +58,10 @@ export async function ensureLegacySkillSyncPaused(): Promise<void> {
     throw failure(`Cannot verify legacy skill sync is paused: ${legacyStatus.error}`, 503);
   }
 }
+
+/** Skills a relay enforces are received from the relay, not from a cluster peer; its owner id says so. */
+export const relayOwnerId = (relayNodeId: string): string => `relay:${relayNodeId}`;
+export const relayOwned = (owner: string | undefined): boolean => Boolean(owner?.startsWith("relay:"));
 
 function commonClusters(db: DatabaseSync, local: string, peer: string): string[] {
   return listSharingMemberships(db, local).map((membership) => membership.clusterId).filter((id) =>
@@ -98,6 +106,11 @@ async function removeReceived(db: DatabaseSync, prior: ReceivedSkill): Promise<v
   db.prepare("DELETE FROM received_skills WHERE owner_node_id=? AND name=?").run(prior.ownerNodeId, prior.name);
 }
 
+function relayLabel(db: DatabaseSync, owner: string): string {
+  const relay = listMemberships(db).find((item) => relayOwnerId(item.relayNodeId ?? "") === owner);
+  return relay ? relayPolicyLabel(relay) : "a relay";
+}
+
 async function localView() {
   const db = await clusterV2Database(), node = await getClusterNode();
   ensureSkillSharingSchema(db);
@@ -122,10 +135,10 @@ async function localView() {
     const description = parseResourceFrontmatter(await readFile(path.join(agentResourcePaths().sharedSkills, name, "SKILL.md"), "utf8")).description ?? "";
     skills.push({ name, description, path: await realpath(path.join(agentResourcePaths().sharedSkills, name)), kind: owner ? "received" : "local",
       clusterIds: owner ? [] : skillClusterIds(db, node.id, name), nodeIds: owner ? [] : skillNodeIds(db, node.id, name), ...scopes,
-      receivedFrom: owner, receivedFromName: owner ? nodes.get(owner)?.name ?? owner : null, lastSync: source?.updatedAt });
+      receivedFrom: owner, receivedFromName: owner ? relayOwned(owner) ? relayLabel(db, owner) : nodes.get(owner)?.name ?? owner : null, managedByRelay: relayOwned(owner), lastSync: source?.updatedAt });
   }
   const peerStatus = (db.prepare("SELECT owner_node_id AS ownerNodeId,last_success AS lastSuccess,last_error AS error FROM skill_peer_status").all() as Array<{ ownerNodeId: string; lastSuccess: string | null; error: string | null }>)
-    .map((status) => ({ ...status, ownerName: nodes.get(status.ownerNodeId)?.name ?? status.ownerNodeId }));
+    .map((status) => ({ ...status, ownerName: relayOwned(status.ownerNodeId) ? relayLabel(db, status.ownerNodeId) : nodes.get(status.ownerNodeId)?.name ?? status.ownerNodeId }));
   // Workspaces this node owns; a received "Shared projects" workspace belongs to its owner.
   const registry = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cluster_v2_project_workspaces'").get();
   const workspaces = db.prepare(`SELECT w.id,w.label FROM workspaces w${registry ? " WHERE NOT EXISTS (SELECT 1 FROM cluster_v2_project_workspaces r WHERE r.workspace_id=w.id)" : ""} ORDER BY w.label,w.id`).all() as Array<{ id: string; label: string }>;
@@ -243,6 +256,8 @@ async function signedSkillPost(db: DatabaseSync, local: string, peer: string, cl
 async function installOffered(db: DatabaseSync, local: string, owner: string, cluster: string, offered: { name: string; digest: string }): Promise<void> {
   const root = agentResourcePaths().sharedSkills, destination = path.join(root, offered.name);
   if (await skillSuppressed(root, offered.name)) return;
+  // A relay this node follows enforces this name; its copy wins over a cluster peer's.
+  if (relayOwned(await receivedOwner(root, offered.name))) return;
   const unchanged = await withSkillMutation(async () => {
     const prior = listReceivedSkills(db).find((item) => item.name === offered.name && item.ownerNodeId === owner);
     if (!prior || !await existing(destination)) return false;
@@ -379,11 +394,11 @@ async function syncSkills(): Promise<void> {
     for (const member of listSharingClusterMembers(db, membership.clusterId)) if (member.nodeId !== local) peers.set(member.nodeId, membership.clusterId);
   }
   await withSkillMutation(async () => {
-    for (const prior of listReceivedSkills(db)) if (!peers.has(prior.ownerNodeId)) {
+    for (const prior of listReceivedSkills(db)) if (!peers.has(prior.ownerNodeId) && !relayOwned(prior.ownerNodeId)) {
       try { await removeReceived(db, prior); }
       catch (error) { recordPeerError(db, prior.ownerNodeId, error); }
     }
-    for (const prior of listReceivedScopedSkills(db)) if (!peers.has(prior.ownerNodeId)) {
+    for (const prior of listReceivedScopedSkills(db)) if (!peers.has(prior.ownerNodeId) && !relayOwned(prior.ownerNodeId)) {
       try { await removeScoped(db, prior); }
       catch (error) { recordPeerError(db, prior.ownerNodeId, error); }
     }
@@ -393,6 +408,118 @@ async function syncSkills(): Promise<void> {
   try { await Promise.all([...peers].filter(([owner]) => !peerAway(owner)).map(([owner, cluster]) => syncOwner(db, local, owner, cluster))); }
   finally { writeScopedIndex(db); }
 }
+/**
+ * Installs one skill a followed relay enforces. The relay's configuration wins every conflict:
+ * a local skill, a copy received from a cluster peer, a dismissed copy or a local edit under the
+ * same name is backed up and replaced. Returns true when files changed.
+ */
+async function installRelaySkill(db: DatabaseSync, local: string, relay: RelayMembership, name: string, digest: string): Promise<boolean> {
+  const root = agentResourcePaths().sharedSkills, destination = path.join(root, name), owner = relayOwnerId(relay.relayNodeId!);
+  const current = async () => {
+    const prior = listReceivedSkills(db).find((item) => item.name === name);
+    return prior?.ownerNodeId === owner && await receivedOwner(root, name) === owner && !await skillSuppressed(root, name)
+      && await existing(destination) && (await buildSkillBundle(destination, name)).digest === digest;
+  };
+  if (await withSkillMutation(current)) return false;
+  const bundle = await fetchRelaySkillBundle(db, local, relay, name, digest);
+  return withSkillMutation(async () => {
+    if (await current()) return false;
+    await allowSkillImport(root, name);
+    if (await existing(destination)) {
+      const ownCopy = !await receivedOwner(root, name);
+      const backup = await backupRemovedSkill(destination);
+      // This node's own skill comes back when the relay stops enforcing the name; received copies are fetched again by their owner.
+      if (ownCopy) db.prepare("INSERT OR IGNORE INTO relay_replaced_skills(name,backup) VALUES(?,?)").run(name, backup);
+      console.warn(`Relay ${relayPolicyLabel(relay)} enforces skill ${name}; the copy it replaced is kept at ${backup}`);
+    }
+    db.prepare("DELETE FROM received_skills WHERE name=?").run(name);
+    await markReceived(root, name, owner);
+    await installSkillBundle(bundle, name, destination, path.join(resolveDataDirectory(), "skill-staging"));
+    db.prepare("INSERT INTO received_skills VALUES(?,?,?,?)").run(owner, name, digest, new Date().toISOString());
+    db.prepare("DELETE FROM revoked_scoped_skills WHERE name=?").run(name);
+    return true;
+  });
+}
+
+/**
+ * A relay stopped enforcing a skill: an untouched copy goes and the node's own skill it replaced comes
+ * back; a copy edited here stays as this node's own skill, and the older original stays in the backups.
+ */
+async function removeRelaySkill(db: DatabaseSync, prior: ReceivedSkill): Promise<void> {
+  const root = agentResourcePaths().sharedSkills, destination = path.join(root, prior.name);
+  const replaced = db.prepare("SELECT backup FROM relay_replaced_skills WHERE name=?").get(prior.name) as { backup: string } | undefined;
+  if (await existing(destination) && (await buildSkillBundle(destination, prior.name)).digest !== prior.digest) {
+    await unmarkReceived(root, prior.name);
+    db.prepare("DELETE FROM received_skills WHERE owner_node_id=? AND name=?").run(prior.ownerNodeId, prior.name);
+    db.prepare("DELETE FROM relay_replaced_skills WHERE name=?").run(prior.name);
+    console.warn(`Relay no longer enforces ${prior.name}; the copy edited on this node stays as a local skill`);
+    return;
+  }
+  await removeReceived(db, prior);
+  // removeReceived marks the name revoked, which hides every copy of it; a relay stepping back is not a
+  // revocation, so the node's own copy and native copies with the name load again.
+  db.prepare("DELETE FROM revoked_scoped_skills WHERE name=?").run(prior.name);
+  if (replaced && await existing(replaced.backup) && !await existing(destination)) {
+    await rename(replaced.backup, destination);
+    console.warn(`Relay no longer enforces ${prior.name}; this node's own copy is restored`);
+  }
+  db.prepare("DELETE FROM relay_replaced_skills WHERE name=?").run(prior.name);
+}
+
+let relaySync: Promise<boolean> | undefined;
+/**
+ * Downloads the skills that followed relays enforce and removes the ones they no longer do.
+ * Resolves true when files changed, so the caller can reload open conversations.
+ */
+export function syncRelaySkills(): Promise<boolean> {
+  if (!relaySync) relaySync = syncRelaySkillsNow().finally(() => { relaySync = undefined; });
+  return relaySync;
+}
+async function syncRelaySkillsNow(): Promise<boolean> {
+  const db = await clusterV2Database(), local = (await getClusterNode()).id;
+  ensureSkillSharingSchema(db);
+  db.exec("CREATE TABLE IF NOT EXISTS relay_replaced_skills(name TEXT PRIMARY KEY, backup TEXT NOT NULL)");
+  // Downloads are signed with this node's identity, the one it proved to the relay when it joined.
+  getOrCreateClusterIdentity(db, local);
+  const wanted = new Map<string, { relay: RelayMembership; digest: string }>();
+  for (const { relay, optedIn, statement } of relayPolicySubscriptions(db)) {
+    if (!optedIn || !statement || !relay.relayNodeId || !statement.body.settings.skills.enforce) continue;
+    for (const [name, digest] of Object.entries(statement.body.skillDigests ?? {})) if (!wanted.has(name)) wanted.set(name, { relay, digest });
+  }
+  let changed = false;
+  const errors = new Map<string, Error[]>();
+  const note = (owner: string, error: unknown) => errors.set(owner, [...errors.get(owner) ?? [], error as Error]);
+  const unreachable = new Set<string>();
+  for (const [name, { relay, digest }] of wanted) {
+    const owner = relayOwnerId(relay.relayNodeId!);
+    if (unreachable.has(owner)) continue;
+    try { if (await installRelaySkill(db, local, relay, name, digest)) changed = true; }
+    catch (error) {
+      note(owner, error);
+      // A network failure or timeout means the relay is unreachable now; it pushes its policy again on reconnect.
+      if (error instanceof TypeError || (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name))) unreachable.add(owner);
+    }
+  }
+  await withSkillMutation(async () => {
+    for (const prior of listReceivedSkills(db).filter((item) => relayOwned(item.ownerNodeId))) {
+      const keep = wanted.get(prior.name);
+      if (keep && relayOwnerId(keep.relay.relayNodeId!) === prior.ownerNodeId) continue;
+      try { await removeRelaySkill(db, prior); changed = true; } catch (error) { note(prior.ownerNodeId, error); }
+    }
+  });
+  for (const owner of new Set([...[...wanted.values()].map(({ relay }) => relayOwnerId(relay.relayNodeId!)), ...errors.keys()])) {
+    const failed = errors.get(owner);
+    if (failed?.length) recordPeerError(db, owner, new Error(failed.map((error) => error.message).join("; ")));
+    else db.prepare("INSERT OR REPLACE INTO skill_peer_status VALUES(?,?,NULL)").run(owner, new Date().toISOString());
+  }
+  // A relay this node no longer follows, or that delivers nothing now, leaves no sync status behind.
+  const current = new Set([...[...wanted.values()].map(({ relay }) => relayOwnerId(relay.relayNodeId!)), ...errors.keys()]);
+  for (const { owner_node_id: owner } of db.prepare("SELECT owner_node_id FROM skill_peer_status WHERE owner_node_id LIKE 'relay:%'").all() as Array<{ owner_node_id: string }>) {
+    if (!current.has(owner)) db.prepare("DELETE FROM skill_peer_status WHERE owner_node_id=?").run(owner);
+  }
+  return changed;
+}
+
 export async function refreshSharedSkills(): Promise<void> {
   if (!refresh) refresh = syncSkills().finally(() => { refresh = undefined; });
   return refresh;
@@ -459,6 +586,7 @@ async function removeSkill(name: string) {
     const db = await clusterV2Database(), local = (await getClusterNode()).id;
     const root = agentResourcePaths().sharedSkills, destination = path.join(root, name);
     if (!(await managedNames()).includes(name)) throw failure("Managed skill not found", 404);
+    if (relayOwned(await receivedOwner(root, name))) throw failure("This skill is managed by a relay. Stop following the relay's rules to remove it.", 409);
     // A receiver may dismiss its own copy, never revoke the owner's grants.
     await suppressSkill(root, name);
     setSkillShares(db, local, name, []);
@@ -488,7 +616,7 @@ app.put("/api/resources/skills/:name/sharing", route(async (request) => {
   return shareSkill(nameSchema.parse(request.params.name), selection.clusterIds, selection.nodeIds, { workspaceIds: selection.workspaceIds, projectIds: selection.projectIds, conversations: selection.conversations });
 }));
 app.delete("/api/resources/skills/:name", route(async (request) => removeSkill(nameSchema.parse(request.params.name))));
-app.post("/api/resources/skills/refresh", route(async (request) => { z.object({}).strict().parse(request.body); await refreshSharedSkills(); return localView(); }));
+app.post("/api/resources/skills/refresh", route(async (request) => { z.object({}).strict().parse(request.body); await refreshSharedSkills(); if (await syncRelaySkills().catch((error) => { console.warn(`Relay skill sync failed: ${(error as Error).message}`); return false; })) await (await import("./realtime.js")).reloadSharedSkills(); return localView(); }));
 app.post("/api/cluster/v2/skills/manifest", route(async (request, response) => { z.object({}).strict().parse(request.body); return manifestFor(response.locals.machineNodeId); }, true));
 app.post("/api/cluster/v2/skills/scoped-manifest", route(async (request, response) => { z.object({}).strict().parse(request.body); return scopedManifestFor(response.locals.machineNodeId); }, true));
 app.post("/api/cluster/v2/skills/bundle", route(async (request, response) => bundleFor(response.locals.machineNodeId, z.object({ name: nameSchema }).strict().parse(request.body).name), true));
