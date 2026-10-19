@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.115.0 — 2026-10-19
 
-- Added Custom commands to chat, with your five most recent picks per project and shared commands you can share with clusters, machines, projects, or single conversations, and limited skill sharing to workspaces, projects, or conversations.
+- Added a Custom commands button beside Send in chat, which lists your five most recent picks for the project and searches all available commands, including shared ones.
+- Added sharing for custom commands with clusters, machines, workspaces, projects, or single conversations, where received commands are read-only.
+- Added Share… for skills so each one can load only in the workspaces, projects, or conversations you choose.
 
 ## 2.114.0 — 2026-10-19
 
