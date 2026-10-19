@@ -13,6 +13,7 @@ import { resourceInventory, shareMcpServers, type ResourceInventory } from "../.
 import { activationDecision, setActivationPreference, autoActivateSharedSkills, receivedResource, receivedSkill } from "../../resource-activation.js";
 import { save, settingsDatabase } from "../../settings-store.js";
 import { reloadSharedSkills } from "../realtime.js";
+import { republishRelayResources } from "../../relay/enabled-snapshot.js";
 import { getProject } from "../../store.js";
 import { clusterPeerMayAccessProject } from "../cluster-helpers.js";
 import { sendError, requireFeature, Feature } from "../http-auth.js";
@@ -58,6 +59,7 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
       && ["managed", "global", "project"].includes(item.source) && (item.source !== "project" || Boolean(body.projectId))) : undefined;
     setActivationPreference(body.kind, body.name, body.harness, body.enabled);
     await reloadSharedSkills();
+    await republishRelayResources().catch(() => {});
     const refreshed = await localInventory(body.projectId, body.conversationId);
     const decision = (plugin ? refreshed.plugins.find((item) => item.name === body.name && item.source === plugin.source)?.activation[body.harness]
       : body.kind === "skill" ? refreshed.skills.find((item) => item.name === body.name && item.harnesses.includes(body.harness))?.activation?.[body.harness]
@@ -86,6 +88,7 @@ app.put("/api/resources/activation/bulk", requireFeature(Feature.SETTINGS), asyn
       db.exec("COMMIT");
     } catch (error) { db.exec("ROLLBACK"); throw error; }
     await reloadSharedSkills();
+    await republishRelayResources().catch(() => {});
     response.json({ changed: body.items.length });
   } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation choices"); else next(error); }
 });

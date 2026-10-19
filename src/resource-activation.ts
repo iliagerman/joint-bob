@@ -5,7 +5,7 @@ import { agentResourcePaths } from "./agent-resources.js";
 import { parse as parseYaml } from "yaml";
 import { resolveDataDirectory } from "./data-directory.js";
 import { settingsDatabase, value } from "./settings-store.js";
-import { relaySkillDirective, relayPolicySubscriptions } from "./relay/resource-policy.js";
+import { relaySkillDirective, relayResourceDirective, relayPolicySubscriptions } from "./relay/resource-policy.js";
 import { unavailableSkillNames, type SkillScopeContext } from "./scoped-skills.js";
 import type { HarnessId } from "./types.js";
 
@@ -96,6 +96,9 @@ export function activationDecision(kind: ActivatableResource, name: string, harn
   const preference = activationPreference(kind, name, harness);
   const directive = kind === "skill" ? relaySkillDirective(settingsDatabase(), name, harness) : null;
   if (directive?.action === "block") return { enabled: false, reason: `Blocked by relay: ${directive.relays.join(", ")}`, preference, shared };
+  const resource = relayResourceDirective(settingsDatabase(), kind, name, harness);
+  if (resource?.action === "block") return { enabled: false, reason: `Blocked by relay: ${resource.relays.join(", ")} (not enabled there)`, preference, shared };
+  if (resource?.action === "enable") return { enabled: true, reason: `Enforced by relay: ${resource.relays.join(", ")}`, preference, shared };
   if (preference === false) return { enabled: false, reason: "Disabled on this node", preference, shared };
   if (preference === true) return { enabled: true, reason: "Enabled on this node", preference, shared };
   if (directive?.action === "enable") return { enabled: true, reason: `Enabled by relay: ${directive.relays.join(", ")}`, preference, shared };

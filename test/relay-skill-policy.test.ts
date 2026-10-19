@@ -80,3 +80,28 @@ test("relay skill rules are signed, versioned, cached and require local opt-in",
   setActivationPreference("skill", "policy-fixture", "claude", null);
   setActivationPreference("skill", "policy-fixture", "pi", null);
 });
+
+test("a relay can restrict followers to its enabled resources and enforce them over a local disable", () => {
+  const enabled = { skills: { pi: ["relay-on"], claude: ["relay-on"], kiro: [] }, mcp: { pi: [], claude: ["relay-mcp"], kiro: [] }, plugins: { pi: [], claude: [], kiro: [] } };
+  const toggles = { allowOthers: false, enforce: true };
+  const statement = publishRelayPolicy(relay, relayId, [], { settings: { skills: toggles, mcp: { allowOthers: true, enforce: true }, plugins: { allowOthers: true, enforce: false } }, enabled });
+  assert.equal(receiveRelayPolicy(local, admitted, identity.publicKey, statement), true);
+  assert.equal(activationDecision("skill", "relay-off", "claude", false).enabled, true, "ignored until this node follows the relay");
+  subscribeRelayPolicy(local, member.id, true);
+  try {
+    assert.equal(activationDecision("skill", "relay-off", "claude", false).enabled, false, "skills the relay has not enabled are blocked when others are not allowed");
+    assert.match(activationDecision("skill", "relay-off", "claude", false).reason, /^Blocked by relay/);
+    setActivationPreference("skill", "relay-on", "claude", false);
+    assert.equal(activationDecision("skill", "relay-on", "claude", false).enabled, true, "enforce wins over a local disable");
+    assert.equal(activationDecision("skill", "relay-on", "kiro", false).enabled, false, "enforcement follows the relay's per-agent state");
+    assert.equal(activationDecision("mcp", "other-mcp", "claude", false).enabled, true, "MCP servers keep allowing others");
+    setActivationPreference("mcp", "relay-mcp", "claude", false);
+    assert.equal(activationDecision("mcp", "relay-mcp", "claude", false).enabled, true);
+    assert.equal(activationDecision("plugin", "any-plugin", "claude", false).enabled, true, "plugins are unrestricted");
+  } finally {
+    subscribeRelayPolicy(local, member.id, false);
+    setActivationPreference("skill", "relay-on", "claude", null);
+    setActivationPreference("mcp", "relay-mcp", "claude", null);
+  }
+  assert.equal(activationDecision("skill", "relay-off", "claude", false).enabled, true);
+});

@@ -1,6 +1,7 @@
 // Settings → Resources: the skills and MCP servers agents load, importing skills, and
 // sharing this node's skills with clusters, machines, workspaces and conversations.
 import { api } from "./api.js";
+import { brandIcon } from "./icons.js";
 import { loadSkills } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { normalizedQuery } from "./layout.js";
@@ -409,7 +410,7 @@ function activationControl(kind, item, local, supported) {
   const filter = harnessFilter();
   const agents = supported.filter((id) => (!filter || id === filter) && item.activation?.[id]);
   if (!local || !agents.length) return null;
-  const controls = document.createElement("div");
+  const controls = document.createElement("span");
   controls.className = "resources-activation-controls";
   for (const harness of agents) {
     const decision = item.activation[harness];
@@ -417,20 +418,20 @@ function activationControl(kind, item, local, supported) {
     choice.className = "resources-agent-choice";
     const restriction = item.activationRestrictions?.[harness];
     if (restriction) {
-      const explanation = document.createElement("span");
-      explanation.className = "resources-activation-reason";
-      explanation.textContent = restriction;
-      choice.append(badge(`${harnessLabel(harness)} · read-only`), explanation);
+      const fixed = document.createElement("span");
+      fixed.className = `resources-activation is-locked ${harness}`;
+      fixed.title = `${harnessLabel(harness)} · read-only: ${restriction}`;
+      fixed.append(brandIcon(harness, "resources-harness-icon"), statusMark("lock"));
+      choice.append(fixed);
       controls.append(choice);
       continue;
     }
+    const forced = decision.reason.startsWith("Enforced by relay:") || decision.reason.endsWith("(not enabled there)");
     const label = document.createElement("label");
-    label.className = "resources-activation";
-    label.title = decision.reason;
     const input = document.createElement("input");
-    const selected = decision.preference ?? (decision.reason.startsWith("Blocked by relay:")
+    const selected = forced ? decision.enabled : decision.preference ?? (decision.reason.startsWith("Blocked by relay:")
       ? !decision.shared || view.activation?.autoActivateSharedSkills !== false : decision.enabled);
-    input.type = "checkbox"; input.checked = selected;
+    input.type = "checkbox"; input.checked = selected; input.disabled = forced;
     input.dataset.testid = "resources-activation-toggle";
     input.setAttribute("aria-label", `${selected ? "Disable" : "Enable"} ${item.name} for ${harnessLabel(harness)}`);
     const saveChoice = async (enabled) => {
@@ -448,22 +449,42 @@ function activationControl(kind, item, local, supported) {
     };
     input.addEventListener("change", () => void saveChoice(input.checked));
     const enabled = effectiveEnabled(item, harness);
-    label.append(input, document.createTextNode(harnessLabel(harness)), badge(enabled ? "Enabled" : "Disabled", enabled ? "active" : "off"));
-    if (filter) {
-      const reason = document.createElement("span");
-      reason.className = "resources-activation-reason";
-      reason.textContent = item.enabled === false && decision.enabled ? "Not loaded by the agent's configuration" : decision.reason;
-      label.append(reason);
-    }
+    label.className = `resources-activation ${harness}${enabled ? " is-on" : " is-off"}${forced ? " is-locked" : ""}`;
+    const reason = item.enabled === false && decision.enabled ? "Not loaded by the agent's configuration" : decision.reason;
+    label.title = `${harnessLabel(harness)} · ${enabled ? "enabled" : "disabled"} · ${reason}`;
+    label.append(input, brandIcon(harness, "resources-harness-icon"), statusMark(forced ? "lock" : enabled ? "on" : "off"));
     choice.append(label);
-    if (decision.preference !== null) {
-      const reset = button("Use default", "resources-activation-reset", () => void saveChoice(null));
+    if (filter) {
+      const detail = document.createElement("span");
+      detail.className = "resources-activation-reason";
+      detail.textContent = reason;
+      choice.append(detail);
+    }
+    if (decision.preference !== null && !forced) {
+      const reset = button("↺", "resources-activation-reset", () => void saveChoice(null), "ghost compact");
+      reset.title = `Use the default for ${harnessLabel(harness)}`;
       reset.setAttribute("aria-label", `Use default for ${item.name} for ${harnessLabel(harness)}`);
       choice.append(reset);
     }
     controls.append(choice);
   }
   return controls;
+}
+
+function statusMark(state) {
+  const mark = document.createElement("span");
+  mark.className = `resources-status-mark ${state}`;
+  mark.setAttribute("aria-hidden", "true");
+  mark.textContent = state === "on" ? "✓" : state === "off" ? "✕" : "🔒";
+  return mark;
+}
+
+function harnessIcons(ids) {
+  return ids.map((id) => {
+    const icon = brandIcon(id, `resources-harness-icon static ${id}`);
+    icon.append(Object.assign(document.createElementNS("http://www.w3.org/2000/svg", "title"), { textContent: harnessLabel(id) }));
+    return icon;
+  });
 }
 
 function skillRow(skill, local) {
@@ -484,7 +505,8 @@ function skillRow(skill, local) {
   name.textContent = skill.name;
   head.append(name, badge(ORIGIN_LABELS[skill.origin] ?? skill.origin, `origin-${skill.origin}`));
   if (view.scope === "conversation" && view.engine && skill.activation?.[view.engine]?.enabled) head.append(badge("active", "active"));
-  head.append(...skill.harnesses.map((id) => badge(harnessLabel(id), "harness")));
+  const activation = activationControl("skill", skill, local, skill.harnesses);
+  head.append(...(activation ? [activation] : harnessIcons(skill.harnesses)));
   const actions = document.createElement("span");
   actions.className = "resources-row-actions";
   const policy = local && view.sharing ? policyFor(skill) : undefined;
@@ -503,8 +525,6 @@ function skillRow(skill, local) {
     if (policy) actions.append(skillRemoveButton(skill, false));
   }
   head.append(actions);
-  const activation = activationControl("skill", skill, local, skill.harnesses);
-  if (activation) row.append(activation);
   const description = document.createElement("span");
   description.className = "skill-option-description";
   description.textContent = skill.description;
@@ -537,15 +557,14 @@ function serverRow(server, local, inventory) {
   const harnessDisabled = view.scope === "conversation" && view.engine && server.activation?.[view.engine]?.enabled === false;
   if (harnessDisabled || !server.enabled) head.append(badge(!harnessDisabled && server.source === "project" ? "not approved" : "disabled", "off"));
   else if (view.scope === "conversation" && view.engine && server.harnesses.includes(view.engine)) head.append(badge("active", "active"));
-  head.append(...server.harnesses.map((id) => badge(harnessLabel(id), "harness")));
   const activation = ["shared", "project", "plugin"].includes(server.source) ? activationControl("mcp", server, local, server.harnesses) : null;
+  head.append(...(activation ? [activation] : harnessIcons(server.harnesses)));
   if (!activation && local) head.append(badge(server.source === "enterprise" ? "organization managed" : "agent configured", "off"));
   const target = document.createElement("span");
   target.className = "skill-option-description";
   target.textContent = `${server.transport} · ${server.target}`;
   target.title = target.textContent;
   row.append(head, target);
-  if (activation) row.append(activation);
   return row;
 }
 
@@ -556,11 +575,10 @@ function pluginRow(plugin, local) {
   const head = document.createElement("div");
   head.className = "resources-row-head";
   const name = document.createElement("strong"); name.textContent = plugin.name;
-  head.append(name, badge(plugin.source), ...plugin.harnesses.map((id) => badge(harnessLabel(id), "harness")));
   const activation = ["managed", "global", "project"].includes(plugin.source) ? activationControl("plugin", plugin, local, plugin.harnesses) : null;
+  head.append(name, badge(plugin.source), ...(activation ? [activation] : harnessIcons(plugin.harnesses)));
   if (!activation) head.append(badge(plugin.source === "unverified" ? "cannot inspect safely" : "agent configured · state unknown · read-only"));
   row.append(head);
-  if (activation) row.append(activation);
   return row;
 }
 
@@ -785,6 +803,9 @@ function renderList() {
 
 function countFor(entry, key) { return entry?.inventory ? (key === "skills" ? filteredSkills(entry.inventory) : filteredServers(entry.inventory)).length : 0; }
 
+const RELAY_KINDS = ["skills", "mcp", "plugins"];
+const RELAY_KIND_LABELS = { skills: "skills", mcp: "MCP servers", plugins: "plugins" };
+
 function renderRelayPolicy() {
   const following = view.relayPolicies.filter((policy) => policy.optedIn).length;
   document.querySelector("#resourcesRelayStatus").textContent = following ? `· Following ${following} relay${following === 1 ? "" : "s"} on this node` : "· Not following on this node";
@@ -808,6 +829,12 @@ function renderRelayPolicy() {
     preview.append(line);
   }
   if (!policy.rules.length) preview.append(emptyRow("No skill rules from this relay."));
+  for (const kind of RELAY_KINDS) {
+    const toggles = policy.settings?.[kind];
+    if (!toggles) continue;
+    if (toggles.enforce) preview.append(Object.assign(document.createElement("div"), { textContent: `Enforces the relay's enabled ${RELAY_KIND_LABELS[kind]} on this node.` }));
+    if (!toggles.allowOthers) preview.append(Object.assign(document.createElement("div"), { textContent: `Blocks ${RELAY_KIND_LABELS[kind]} that are not enabled on the relay.` }));
+  }
   const affected = (localEntry()?.inventory?.skills ?? []).filter((skill) => policy.rules.some((rule) => rule.name === skill.name && (rule.harness === "all" || skill.harnesses.includes(rule.harness))));
   const summary = document.createElement("p");
   summary.textContent = `${affected.length} installed skill${affected.length === 1 ? "" : "s"} affected on this node. Blocking overrides every local enable. Local disables override relay enables. Files stay installed.`;
@@ -888,6 +915,10 @@ async function loadInventory() {
       const editor = document.querySelector("#resourcesRelayRules");
       editor.value = published.rules.map((rule) => `${rule.action} ${rule.name} ${rule.harness}`).join("\n");
       editor.dataset.version = String(published.version);
+      for (const kind of RELAY_KINDS) {
+        document.querySelector(`[data-relay-allow="${kind}"]`).checked = published.settings[kind].allowOthers;
+        document.querySelector(`[data-relay-enforce="${kind}"]`).checked = published.settings[kind].enforce;
+      }
     }
     document.querySelector("#resourcesAutoActivate").checked = activation.autoActivateSharedSkills;
     renderRelayPolicy();
@@ -1460,9 +1491,13 @@ document.querySelector("#resourcesRelayPublish").addEventListener("click", async
     if (!match) { toast(`Invalid relay rule: ${line}`); return; }
     rules.push({ action: match[1], name: match[2], harness: match[3] });
   }
-  if (!await confirmAction({ title: "Publish relay skill rules?", message: `Publish ${rules.length} signed rules as a new version to every connected machine that follows this relay?`, confirmLabel: "Publish" })) return;
+  const settings = Object.fromEntries(RELAY_KINDS.map((kind) => [kind, {
+    allowOthers: document.querySelector(`[data-relay-allow="${kind}"]`).checked,
+    enforce: document.querySelector(`[data-relay-enforce="${kind}"]`).checked,
+  }]));
+  if (!await confirmAction({ title: "Publish relay rules?", message: `Publish ${rules.length} signed rules and these skill, MCP server and plugin settings as a new version to every connected machine that follows this relay?`, confirmLabel: "Publish" })) return;
   publishButton.disabled = true;
-  try { await api("/api/relay/serving/skill-policy", { method: "PUT", body: JSON.stringify({ rules }) }); await loadInventory(); }
+  try { await api("/api/relay/serving/skill-policy", { method: "PUT", body: JSON.stringify({ rules, settings }) }); await loadInventory(); }
   catch (error) { toast(error.message); }
   finally { publishButton.disabled = false; }
 });

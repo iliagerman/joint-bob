@@ -1418,7 +1418,7 @@
           </div>
           <label class="checkbox-row resources-auto-activate"><input id="resourcesAutoActivate" type="checkbox" data-testid="resources-auto-activate" checked /> Auto-activate received skills, MCP servers and plugins on this node</label>
           <details class="resources-relay-policy" id="resourcesRelayPolicy" data-testid="resources-relay-policy">
-            <summary data-testid="resources-relay-summary">Relay skill rules <span id="resourcesRelayStatus"></span></summary>
+            <summary data-testid="resources-relay-summary">Relay rules for skills, MCP servers and plugins <span id="resourcesRelayStatus"></span></summary>
             <div class="resources-relay-content">
               <div id="resourcesRelayHelp" data-testid="resources-relay-help">
                 <p>Rules control skill loading, not installation or whether an agent uses a skill. The relay publishes a policy; each receiving node must opt in.</p>
@@ -1434,6 +1434,22 @@
                 <summary data-testid="resources-relay-publisher-summary">Publish rules from this relay</summary>
                 <p>This editor changes the policy this machine publishes, not the relay selected above. It does not install or share skills.</p>
                 <p id="resourcesRelayRuleHelp">One rule per line: <code>block skill-name all</code> or <code>enable skill-name claude</code>. Use an exact skill name and <code>all</code>, <code>pi</code>, <code>claude</code>, or <code>kiro</code>. Publishing replaces the previous policy; an empty editor clears it.</p>
+                <fieldset class="resources-relay-settings" data-testid="resources-relay-settings">
+                  <legend>What following machines may use</legend>
+                  <p class="settings-hint">Applies to machines that follow this relay. Publishing records what this relay has enabled right now and keeps it current when you change it.</p>
+                  <div class="resources-relay-setting" data-relay-kind="skills"><strong>Skills</strong>
+                    <label class="checkbox-row"><input type="checkbox" data-relay-allow="skills" data-testid="resources-relay-allow-skills" checked /> Allow other skills (ones not enabled on this relay)</label>
+                    <label class="checkbox-row"><input type="checkbox" data-relay-enforce="skills" data-testid="resources-relay-enforce-skills" /> Enforce this relay's enabled skills on following machines</label>
+                  </div>
+                  <div class="resources-relay-setting" data-relay-kind="mcp"><strong>MCP servers</strong>
+                    <label class="checkbox-row"><input type="checkbox" data-relay-allow="mcp" data-testid="resources-relay-allow-mcp" checked /> Allow other MCP servers (ones not enabled on this relay)</label>
+                    <label class="checkbox-row"><input type="checkbox" data-relay-enforce="mcp" data-testid="resources-relay-enforce-mcp" /> Enforce this relay's enabled MCP servers on following machines</label>
+                  </div>
+                  <div class="resources-relay-setting" data-relay-kind="plugins"><strong>Plugins</strong>
+                    <label class="checkbox-row"><input type="checkbox" data-relay-allow="plugins" data-testid="resources-relay-allow-plugins" checked /> Allow other plugins (ones not enabled on this relay)</label>
+                    <label class="checkbox-row"><input type="checkbox" data-relay-enforce="plugins" data-testid="resources-relay-enforce-plugins" /> Enforce this relay's enabled plugins on following machines</label>
+                  </div>
+                </fieldset>
                 <label for="resourcesRelayRules">Rule editor</label>
                 <textarea id="resourcesRelayRules" data-testid="resources-relay-rules" rows="4" spellcheck="false" aria-describedby="resourcesRelayRuleHelp" placeholder="block skill-name all"></textarea>
                 <button class="ghost compact" type="button" id="resourcesRelayPublish" data-testid="resources-relay-publish">Publish signed rules</button>
