@@ -26,6 +26,17 @@ registerSkillSharingRoutes();
 registerGitResourceRoutes();
 
 const activationSchema = z.object({ kind: z.enum(["skill", "plugin", "mcp"]), name: z.string().min(1).max(200), harness: z.enum(["pi", "claude", "kiro"]), enabled: z.boolean().nullable(), projectId: z.string().min(1).max(200).optional(), conversationId: z.string().min(1).max(300).optional() }).strict();
+const bulkActivationSchema = activationSchema.omit({ name: true, harness: true }).extend({ enabled: z.boolean(), items: z.array(activationSchema.pick({ name: true, harness: true })).min(1).max(1000) }).strict();
+function activationError(inventory: ResourceInventory, kind: "skill" | "plugin" | "mcp", name: string, harness: "pi" | "claude" | "kiro", projectId?: string): { status: number; message: string } | null {
+  const available = kind === "skill" ? inventory.skills : kind === "mcp" ? inventory.mcpServers : inventory.plugins;
+  const matching = available.filter((item) => item.name === name && item.harnesses.includes(harness));
+  const restricted = matching.find((item) => item.activationRestrictions?.[harness]);
+  if (restricted) return { status: 409, message: restricted.activationRestrictions![harness]! };
+  if (matching.some((item) => kind === "skill" ? Boolean(item.activation?.[harness])
+    : kind === "plugin" ? ["managed", "global", "project"].includes((item as { source?: string }).source ?? "") && ((item as { source?: string }).source !== "project" || Boolean(projectId))
+      : ["shared", "project", "plugin"].includes((item as { source?: string }).source ?? ""))) return null;
+  return { status: 404, message: "Resource is not installed for that agent" };
+}
 app.get("/api/resources/activation", requireFeature(Feature.SETTINGS), (_request, response) => response.json({ autoActivateSharedSkills: autoActivateSharedSkills() }));
 app.put("/api/resources/activation", requireFeature(Feature.SETTINGS), async (request, response, next) => {
   try {
@@ -41,17 +52,10 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
     if (body.projectId && !await getProject(body.projectId)) { sendError(response, 404, "Project not found"); return; }
     if (body.conversationId && !body.projectId) { sendError(response, 400, "Conversation needs a project"); return; }
     const inventory = await localInventory(body.projectId, body.conversationId);
-    const available = body.kind === "skill" ? inventory.skills : body.kind === "mcp" ? inventory.mcpServers : inventory.plugins;
-    const restricted = available.find((item) => item.name === body.name && item.harnesses.includes(body.harness) && item.activationRestrictions?.[body.harness]);
-    if (restricted) { sendError(response, 409, restricted.activationRestrictions![body.harness]!); return; }
+    const error = activationError(inventory, body.kind, body.name, body.harness, body.projectId);
+    if (error) { sendError(response, error.status, error.message); return; }
     const plugin = body.kind === "plugin" ? inventory.plugins.find((item) => item.name === body.name && item.harnesses.includes(body.harness)
       && ["managed", "global", "project"].includes(item.source) && (item.source !== "project" || Boolean(body.projectId))) : undefined;
-    if (!available.some((item) => item.name === body.name && item.harnesses.includes(body.harness)
-      && (body.kind === "skill" ? Boolean(item.activation?.[body.harness])
-        : body.kind === "plugin" ? ["managed", "global", "project"].includes((item as { source?: string }).source ?? "") && ((item as { source?: string }).source !== "project" || Boolean(body.projectId))
-          : ["shared", "project", "plugin"].includes((item as { source?: string }).source ?? "")))) {
-      sendError(response, 404, "Resource is not installed for that agent"); return;
-    }
     setActivationPreference(body.kind, body.name, body.harness, body.enabled);
     await reloadSharedSkills();
     const refreshed = await localInventory(body.projectId, body.conversationId);
@@ -61,6 +65,29 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
       ?? activationDecision(body.kind, body.name, body.harness, body.kind === "skill" ? receivedSkill(body.name) : receivedResource(body.kind, body.name));
     response.json({ ...body, decision });
   } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation choice"); else next(error); }
+});
+
+app.put("/api/resources/activation/bulk", requireFeature(Feature.SETTINGS), async (request, response, next) => {
+  try {
+    const body = bulkActivationSchema.parse(request.body);
+    if (body.projectId && !await getProject(body.projectId)) { sendError(response, 404, "Project not found"); return; }
+    if (body.conversationId && !body.projectId) { sendError(response, 400, "Conversation needs a project"); return; }
+    const identities = body.items.map(({ name, harness }) => `${name}\0${harness}`);
+    if (new Set(identities).size !== identities.length) { sendError(response, 400, "Duplicate activation choice"); return; }
+    const inventory = await localInventory(body.projectId, body.conversationId);
+    for (const item of body.items) {
+      const error = activationError(inventory, body.kind, item.name, item.harness, body.projectId);
+      if (error) { sendError(response, error.status, error.message); return; }
+    }
+    const db = settingsDatabase();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const item of body.items) setActivationPreference(body.kind, item.name, item.harness, body.enabled);
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+    await reloadSharedSkills();
+    response.json({ changed: body.items.length });
+  } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation choices"); else next(error); }
 });
 
 interface NodeInventory {

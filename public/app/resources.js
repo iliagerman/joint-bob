@@ -624,9 +624,11 @@ function bulkChoices(inventory, kind) {
     ? (row) => ["shared", "project", "plugin"].includes(row.source)
     : (row) => ["managed", "global", "project"].includes(row.source);
   const filter = harnessFilter();
+  const all = kind === "skill" ? inventory.skills : kind === "mcp" ? inventory.mcpServers : inventory.plugins ?? [];
+  const restricted = new Set(all.flatMap((row) => Object.keys(row.activationRestrictions ?? {}).map((harness) => `${row.name}\0${harness}`)));
   const choices = new Map();
   for (const row of rows.filter(eligible)) for (const harness of row.harnesses) {
-    if (filter && harness !== filter || !row.activation?.[harness] || row.activationRestrictions?.[harness]) continue;
+    if (filter && harness !== filter || !row.activation?.[harness] || row.activationRestrictions?.[harness] || restricted.has(`${row.name}\0${harness}`)) continue;
     const key = `${row.name}\0${harness}`;
     choices.set(key, { name: row.name, harness, preference: row.activation[harness].preference });
   }

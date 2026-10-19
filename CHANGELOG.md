@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added Enable all shown and Disable all shown to Resources, which switch every matching agent choice at once, including ones on other pages, and change nothing if any choice cannot be switched.
+
 ## 2.115.0 — 2026-10-19
 
 - Added a Custom commands button beside Send in chat, which lists your five most recent picks for the project and searches all available commands, including shared ones.
