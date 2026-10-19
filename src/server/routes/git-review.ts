@@ -146,7 +146,7 @@ function handleGitError(response: Response, error: unknown, next: (error?: unkno
 // ---- GitHub pull requests and Actions ----
 
 const githubQuery = z.object({
-  op: z.enum(["issues", "pulls", "pull", "runs", "run", "log"]),
+  op: z.enum(["issues", "issue", "pulls", "pull", "runs", "run", "log"]),
   state: z.enum(["open", "closed", "all"]).optional(),
   page: z.coerce.number().int().min(1).max(1000).optional(),
   id: z.coerce.number().int().positive().optional(),
@@ -181,6 +181,7 @@ async function githubRead(projectId: string, cwd: string, query: Record<string, 
   }
   if (op === "runs") return { repository: github.repository, runs: await github.runs(page) };
   if (!id) throw new GitReviewError(400, "GitHub item ID required");
+  if (op === "issue") return { repository: github.repository, ...await github.issue(id) };
   if (op === "pull") return github.pull(id);
   if (op === "run") return github.run(id);
   return github.log(id);

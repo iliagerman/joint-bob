@@ -23,6 +23,12 @@ test("project Git opens without a conversation, switches repositories, and issue
     requests.push(url.pathname + url.search);
     const repository = url.searchParams.get("repository");
     const project = projects.find((item) => url.pathname.includes(item.id));
+    if (project && url.searchParams.get("op") === "issue") return route.fulfill({ json: {
+      repository: { owner: "fixture", repo: repository },
+      issue: { number: 1, title: `${repository} issue`, state: "open", html_url: `https://github.com/fixture/${repository}/issues/1`, body: "Full **issue body** text", user: { login: "tester" }, labels: [], assignees: [], comments: 1, created_at: "2026-10-01T12:00:00Z", updated_at: "2026-10-02T12:00:00Z" },
+      comments: [{ user: { login: "reviewer" }, body: "A fixture comment", created_at: "2026-10-02T12:00:00Z" }],
+      truncated: false,
+    } });
     if (!project || url.searchParams.get("op") !== "issues") return route.fulfill({ status: 400, json: { error: "Unexpected fixture request" } });
     if (project.id === projects[1].id && repository === "server") return route.fulfill({ status: 403, json: { error: "GitHub request failed (HTTP 403)" } });
     const secondPage = url.searchParams.get("page") === "2";
@@ -70,6 +76,14 @@ test("project Git opens without a conversation, switches repositories, and issue
   assert.match(await page.getByTestId("project-issue-row").filter({ hasText: "client issue" }).innerText(), new RegExp(projects[1].name));
   await page.getByTestId("project-issues-more").click();
   await page.getByTestId("project-issue-row").filter({ hasText: "Older issue" }).waitFor();
+  await page.getByTestId("project-issues-sort").selectOption("created-asc");
+  await page.getByTestId("project-issue-link").first().click();
+  await page.getByTestId("project-issue-detail").getByText("Full issue body").waitFor();
+  await page.getByTestId("project-issue-detail").getByText("A fixture comment").waitFor();
+  assert.match(await page.getByTestId("project-issue-github").getAttribute("href") ?? "", /^https:\/\/github\.com\/fixture\/.+\/issues\/1$/);
+  assert.equal(await page.getByTestId("project-issue-start").count(), 1);
+  assert.equal(await page.getByTestId("project-issue-start-worktree").count(), 1);
+  await page.getByTestId("project-issue-back").click();
   await page.getByTestId("project-issues-state").selectOption("closed");
   await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="project-issue-row"]')].length === 2 && [...document.querySelectorAll('[data-testid="project-issue-row"]')].every((row) => row.textContent?.includes("closed")));
   await page.getByTestId("project-issues-search").fill("server");
@@ -77,6 +91,19 @@ test("project Git opens without a conversation, switches repositories, and issue
   await page.setViewportSize({ width: 390, height: 844 });
   const bounds = await page.getByTestId("project-issues-dialog").boundingBox();
   assert.ok(bounds && bounds.width <= 390, `issues fit mobile: ${JSON.stringify(bounds)}`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByTestId("project-issues-search").fill("");
+  await page.getByTestId("project-issue-link").first().click();
+  await page.getByTestId("project-issue-detail").getByText("Full issue body").waitFor();
+  await page.getByTestId("project-issue-start-worktree").click();
+  await page.locator("#choiceDialog[open]").waitFor();
+  await page.locator('#choiceDialog input[value="pi"]').check();
+  await page.getByTestId("choice-accept-button").click();
+  await page.locator("#newSessionNameDialog[open]").waitFor();
+  assert.equal(await page.locator("#newSessionWorktreeSelect").inputValue(), "new", "starting from an issue preselects a new worktree");
+  assert.match(await page.evaluate(async () => (await import("/app/state.js")).state.newSessionDraft.referenceDraft), /Full \*\*issue body\*\*[\s\S]*A fixture comment/);
+  await page.keyboard.press("Escape");
+  await page.locator("#newSessionNameDialog[open]").waitFor({ state: "hidden" });
   assert.ok(requests.every((request) => request.includes("repository=")), "every issue request names its repository");
   assert.deepEqual(errors, []);
 });

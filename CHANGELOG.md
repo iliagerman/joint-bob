@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added an issue view to the project Issues list that shows an issue's full description and comments, with buttons to start a conversation on it, start one in a new worktree, or open it on GitHub.
+
 ## 2.120.3 — 2026-10-19
 
 - Fixed dialogs opened from the keyboard drawing a square outline around their rounded card; buttons inside still show their focus ring.

@@ -240,12 +240,20 @@ export async function startNewHarnessConversation(harnessId, references = null) 
   const harness = state.harnesses.find((candidate) => candidate.id === harnessId && candidate.runtimeConfigured);
   if (!harness) throw new Error(`Harness ${harnessId} is unavailable`);
   if (!harness.ready) throw new Error(harness.unavailableReason);
-  const title = references ? `Review ${references.count} reference${references.count === 1 ? "" : "s"}` : `New ${harness.label} conversation`;
+  const title = references?.title ?? (references ? `Review ${references.count} reference${references.count === 1 ? "" : "s"}` : `New ${harness.label} conversation`);
   return openNewSessionNameDialog(harness.newSessionPath, title, null, false, references?.draft);
 }
 
 export async function startConversationWithReferences(draft, count) {
   return chooseNewSessionHarness({ draft, count });
+}
+
+/** Starts a conversation for a GitHub issue in its project, optionally in a new worktree; the issue text pre-fills the composer. */
+export async function startConversationFromIssue({ projectId, title, draft, newWorktree }) {
+  if (state.activeProjectId !== projectId) await selectProject(projectId);
+  if (newWorktree) preselectedWorktreeId = NEW_WORKTREE;
+  try { return await chooseNewSessionHarness({ draft, title }); }
+  finally { preselectedWorktreeId = null; }
 }
 
 export function renderNewSessionHarnesses() {

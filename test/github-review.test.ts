@@ -23,7 +23,7 @@ test("issues project public fields, filter PRs, and paginate using the unfiltere
     assert.deepEqual(await github.issues("closed", 2), { issues: [], hasMore: false });
     assert.deepEqual(calls, ["open&per_page=30&page=1", "closed&per_page=30&page=2"].map((query) => ({ url: `https://api.github.com/repos/acme/widget/issues?state=${query}&sort=updated&direction=desc`, auth: "Bearer test-token" })));
     await assert.rejects(github.issues("open", 0), /Invalid page/);
-    await assert.rejects(github.issues("all" as "open"), /Invalid issue state/);
+    await assert.rejects(github.issues("merged" as "open"), /Invalid issue state/);
     assert.equal(calls.length, 2);
   });
 });

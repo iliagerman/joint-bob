@@ -1,5 +1,7 @@
 import { api } from "./api.js";
+import { renderMarkdown } from "../markdown.js";
 import { projectGitUrl } from "./project-git-url.js";
+import { toast } from "./shell.js";
 import { state } from "./state.js";
 
 const dialog = document.querySelector("#projectIssuesDialog");
@@ -13,10 +15,13 @@ const errors = document.querySelector("#projectIssuesErrors");
 const status = document.querySelector("#projectIssuesStatus");
 const more = document.querySelector("#projectIssuesMore");
 const apply = document.querySelector("#projectIssuesApply");
+const detail = document.querySelector("#projectIssueDetail");
+const controls = dialog.querySelector(".project-issues-controls");
 let sources = [];
 let notices = [];
 let controller = null;
 let busy = false;
+let detailController = null;
 
 function text(tag, className, value) {
   const element = document.createElement(tag);
@@ -31,6 +36,8 @@ export function openProjectIssues(projectId = null) {
   issueState.value = "open";
   sort.value = "created-desc";
   search.value = "";
+  detail.replaceChildren();
+  showDetail(false);
   if (!dialog.open) dialog.showModal();
   void reload();
 }
@@ -115,7 +122,7 @@ function mergedIssues() {
     const key = `${source.remote.toLowerCase()}#${issue.number}`;
     const existing = merged.get(key);
     if (existing) existing.origins.add(`${source.projectName} / ${source.repository}`);
-    else merged.set(key, { ...issue, remote: source.remote, origins: new Set([`${source.projectName} / ${source.repository}`]) });
+    else merged.set(key, { ...issue, remote: source.remote, source, origins: new Set([`${source.projectName} / ${source.repository}`]) });
   }
   const [field, direction] = sort.value.split("-");
   const sign = direction === "asc" ? 1 : -1;
@@ -147,6 +154,11 @@ function issueRow(issue) {
   title.target = "_blank";
   title.rel = "noopener noreferrer";
   title.dataset.testid = "project-issue-link";
+  title.addEventListener("click", (event) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+    event.preventDefault();
+    void openIssue(issue);
+  });
   head.append(title);
   for (const label of issue.labels ?? []) {
     const chip = text("span", "project-issue-label", typeof label === "string" ? label : label.name);
@@ -166,6 +178,127 @@ function issueRow(issue) {
     row.append(comments);
   }
   return row;
+}
+
+function githubUrl(issue) {
+  return `https://github.com/${issue.remote.split("/").map(encodeURIComponent).join("/")}/issues/${encodeURIComponent(issue.number)}`;
+}
+
+function showDetail(visible) {
+  detail.hidden = !visible;
+  controls.hidden = visible;
+  list.hidden = visible;
+  if (visible) { errors.hidden = true; more.hidden = true; }
+}
+
+function closeIssue() {
+  detailController?.abort();
+  detail.replaceChildren();
+  showDetail(false);
+  render();
+}
+
+const COMMENT_LIMIT = 20_000;
+
+/** What the agent gets: the issue as GitHub shows it, bounded so a long thread cannot flood the composer. */
+function issueDraft(issue, comments) {
+  const lines = [
+    `GitHub issue #${issue.number}: ${issue.title}`,
+    githubUrl(issue),
+    `Repository: ${issue.remote}`,
+    `State: ${issue.state} · opened by ${issue.user?.login ?? "unknown"} on ${new Date(issue.created_at).toLocaleDateString()}`,
+  ];
+  const labels = (issue.labels ?? []).map((label) => typeof label === "string" ? label : label.name);
+  if (labels.length) lines.push(`Labels: ${labels.join(", ")}`);
+  lines.push("", "Description:", issue.body?.trim() || "(no description)");
+  let used = 0;
+  const shown = [];
+  for (const comment of comments) {
+    const entry = `@${comment.user?.login ?? "unknown"}: ${comment.body?.trim() ?? ""}`;
+    if (used + entry.length > COMMENT_LIMIT) { shown.push(`(${comments.length - shown.length} more comments on GitHub)`); break; }
+    used += entry.length;
+    shown.push(entry);
+  }
+  if (shown.length) lines.push("", `Comments (${comments.length}):`, ...shown.flatMap((entry) => [entry, ""]));
+  lines.push("", "Task:", "Work on this issue.", "");
+  return lines.join("\n");
+}
+
+async function startFromIssue(issue, comments, newWorktree) {
+  const { startConversationFromIssue } = await import("./new-session.js");
+  const opened = await startConversationFromIssue({
+    projectId: issue.source.projectId,
+    title: `#${issue.number} ${issue.title}`.slice(0, 120),
+    draft: issueDraft(issue, comments),
+    newWorktree,
+  });
+  if (opened) dialog.close();
+}
+
+async function openIssue(listed) {
+  detailController?.abort();
+  detailController = new AbortController();
+  const { signal } = detailController;
+  let issue = listed;
+  let comments = [];
+  const paint = () => {
+    detail.replaceChildren();
+    const back = text("button", "ghost compact", "← Back to issues");
+    back.type = "button";
+    back.dataset.testid = "project-issue-back";
+    back.addEventListener("click", closeIssue);
+    const head = text("div", "project-issue-detail-head", "");
+    const heading = text("h3", "", `${issue.title} `);
+    heading.append(text("span", "project-issue-number", `#${issue.number}`));
+    const badge = text("span", `project-issue-badge ${issue.state}`, issue.state === "closed" ? "Closed" : "Open");
+    const github = text("a", "ghost compact project-issue-github", "Open on GitHub ↗");
+    github.href = githubUrl(issue);
+    github.target = "_blank";
+    github.rel = "noopener noreferrer";
+    github.dataset.testid = "project-issue-github";
+    const actions = text("div", "project-issue-actions", "");
+    const start = text("button", "primary compact", "Start conversation");
+    const worktree = text("button", "ghost compact", "Conversation in new worktree");
+    for (const [button, testid, newWorktree] of [[start, "project-issue-start", false], [worktree, "project-issue-start-worktree", true]]) {
+      button.type = "button";
+      button.dataset.testid = testid;
+      button.addEventListener("click", () => { startFromIssue(issue, comments, newWorktree).catch((error) => toast(error.message)); });
+    }
+    actions.append(start, worktree, github);
+    head.append(heading, badge);
+    const labels = text("div", "project-issue-head", "");
+    for (const label of issue.labels ?? []) {
+      const chip = text("span", "project-issue-label", typeof label === "string" ? label : label.name);
+      if (label.color && /^[0-9a-f]{6}$/i.test(label.color)) chip.style.setProperty("--label", `#${label.color}`);
+      labels.append(chip);
+    }
+    const meta = text("p", "project-issue-meta", `${issue.user?.login ?? "unknown"} opened this on ${new Date(issue.created_at).toLocaleString()} · ${issue.remote} · ${issue.comments ?? comments.length} comments`);
+    const body = text("div", "project-issue-markdown", "");
+    if (issue.body) renderMarkdown(body, issue.body);
+    else body.append(text("p", "muted", "No description provided."));
+    detail.append(back, head, actions, meta, labels, body);
+    for (const comment of comments) {
+      const card = text("section", "project-issue-comment", "");
+      card.append(text("strong", "", comment.user?.login ?? "unknown"), text("span", "project-issue-when", ` commented on ${new Date(comment.created_at).toLocaleString()}`));
+      const content = text("div", "project-issue-markdown", "");
+      if (comment.body) renderMarkdown(content, comment.body);
+      card.append(content);
+      detail.append(card);
+    }
+  };
+  showDetail(true);
+  paint();
+  status.textContent = `Loading #${listed.number} from GitHub…`;
+  try {
+    const loaded = await api(projectGitUrl(listed.source, "github", { op: "issue", id: listed.number }), { signal });
+    issue = { ...listed, ...loaded.issue, origins: listed.origins };
+    comments = loaded.comments;
+    if (loaded.truncated) toast("Showing the first comments only; open the issue on GitHub for the rest.");
+    paint();
+    status.textContent = `#${issue.number} · ${comments.length} comments loaded`;
+  } catch (error) {
+    if (!signal.aborted) { status.textContent = ""; toast(`Could not load the issue thread: ${error.message}`); }
+  }
 }
 
 function render() {
@@ -190,4 +323,4 @@ more.addEventListener("click", () => { void loadMore(); });
 document.querySelector("#projectIssuesRefresh").addEventListener("click", () => { void reload(); });
 document.querySelector("#projectIssuesClose").addEventListener("click", () => dialog.close());
 document.querySelector("#allProjectIssuesButton").addEventListener("click", () => openProjectIssues());
-dialog.addEventListener("close", () => { controller?.abort(); setBusy(false); });
+dialog.addEventListener("close", () => { controller?.abort(); detailController?.abort(); setBusy(false); });

@@ -51,6 +51,13 @@ async function issues(call: GithubCall, state: "open" | "closed" | "all", page: 
   };
 }
 
+async function issueDetail(call: GithubCall, number: number) {
+  assertId(number, "issue");
+  const [issue, comments] = await Promise.all([call(`/issues/${number}`), collection(call, `/issues/${number}/comments`)]);
+  if ("pull_request" in (issue as object)) throw new GitReviewError(404, "That number is a pull request, not an issue");
+  return { issue, comments: comments.items, truncated: comments.truncated };
+}
+
 function tokenFor(credentials: Credentials, repository: { owner: string; host?: string }): string | undefined {
   return typeof credentials === "object" ? credentials.tokenFor(repository) : credentials;
 }
@@ -227,6 +234,7 @@ export async function createGitHubReview(cwd: string, credentials: Credentials, 
   return {
     repository: { owner, repo },
     issues: (state: "open" | "closed" | "all", page = 1) => issues(call, state, page),
+    issue: (number: number) => issueDetail(call, number),
     pulls: (state: "open" | "closed", page: number) => call(`/pulls?state=${state}&per_page=30&page=${page}&sort=updated&direction=desc`),
     create: (head: string, target: string, title: string, body: string, draft: boolean) => {
       if (!BRANCH.test(head) || !BRANCH.test(target) || head === target) throw new GitReviewError(400, "Choose different, valid head and base branches");
