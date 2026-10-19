@@ -4067,10 +4067,10 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-hosting-when { color: var(--muted); font: 11px var(--mono); white-space: nowrap; }
 .git-hosting-chevron { color: var(--muted); font-size: 18px; }
 .git-hosting-indicator { width: 22px; flex: none; text-align: center; font-size: 16px; color: var(--muted); }
-.git-hosting-indicator.is-success, .git-hosting-step.is-success .git-hosting-step-mark { color: #3fb950; }
-.git-hosting-indicator.is-failure, .git-hosting-step.is-failure .git-hosting-step-mark { color: #f85149; }
+.git-hosting-indicator.is-success, .git-hosting-status-mark.is-success { color: #3fb950; }
+.git-hosting-indicator.is-failure, .git-hosting-status-mark.is-failure { color: #f85149; }
 .git-hosting-indicator.is-merged { color: #a371f7; }
-.git-hosting-indicator.is-running, .git-hosting-step.is-running .git-hosting-step-mark { color: #d29922; }
+.git-hosting-indicator.is-running, .git-hosting-status-mark.is-running { color: #d29922; }
 .git-hosting-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .git-hosting-chip, .git-hosting-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font: 11px/1.6 var(--mono); }
 .git-hosting-chip { color: var(--muted); background: var(--field); }
@@ -4112,6 +4112,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-hosting-patch .is-hunk { color: var(--muted); }
 .git-hosting-actions { position: sticky; bottom: -18px; z-index: 2; background: var(--surface); }
 .git-hosting-nav-job { border-radius: 6px; }
+.git-hosting-nav-job, .git-hosting-graph-job { display: flex; align-items: center; gap: 8px; }
 .git-hosting-nav-job.is-failure, .git-hosting-graph-job.is-failure { color: #f85149; }
 .git-hosting-graph-job.is-running { color: #d29922; }
 .git-hosting-job-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -4121,7 +4122,9 @@ li.git-hosting-step { display: flex; align-items: center; gap: 10px; padding: 7p
 li.git-hosting-step.is-failure { background: color-mix(in srgb, #f85149 10%, transparent); }
 .git-hosting-step-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 li.git-hosting-step .git-hosting-note { margin: 0; }
-.git-hosting-step-mark { width: 14px; text-align: center; }
+.git-hosting-status-mark { display: inline-flex; flex: 0 0 18px; width: 18px; height: 18px; align-items: center; justify-content: center; font-size: 16px; line-height: 1; color: var(--muted); }
+.git-hosting-status-mark.is-running { flex-basis: 16px; width: 16px; height: 16px; box-sizing: border-box; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; font-size: 0; animation: git-hosting-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .git-hosting-status-mark.is-running { animation: none; } }
 .git-hosting-log-line.is-error { display: inline-block; width: 100%; color: #ff7b72; background: color-mix(in srgb, #f85149 12%, transparent); }
 [data-testid="git-hosting-more"] { margin: 12px auto; display: block; }
 .git-hosting > .git-hosting-back { display: block; width: 100%; text-align: left; }

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Showed running Git pipeline jobs and steps with a spinning indicator that stops when reduced motion is on, and lined up job names beside their status in the pipeline list and graph.
+
 ## 2.116.3 — 2026-10-19
 
 - Fixed Resources so tall lists and the panel scroll instead of cutting off content, and long skill descriptions wrap in full.

@@ -80,8 +80,25 @@ test("GitHub PR and pipeline tabs show list-first navigation and mobile workflow
   await page.locator('.git-hosting-graph-group[data-group="build"]').waitFor();
   assert.equal(await page.locator(".git-hosting-graph-job").count(), 4);
   assert.equal(await page.getByTestId("git-hosting-nav-job-15").innerText(), "◌ release", "a running job is not shown as passed");
-  assert.equal(await page.getByTestId("git-hosting-graph-job-15").innerText(), "◌ release");
+  assert.equal((await page.getByTestId("git-hosting-graph-job-15").innerText()).replace(/\s+/g, " "), "◌ release");
   assert.equal(await page.getByTestId("git-hosting-nav-job-12").innerText(), "✓ build (node 20)");
+  await page.getByTestId("git-hosting-graph-job-15").click();
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const indicators = page.locator(".git-hosting-graph-job.is-running .git-hosting-status-mark, .git-hosting-step.is-running .git-hosting-status-mark" + (width > 700 ? ", .git-hosting-nav-job.is-running .git-hosting-status-mark" : ""));
+    assert.equal(await indicators.count(), width > 700 ? 3 : 2, "running jobs and steps have dedicated visible indicators");
+    for (const indicator of await indicators.all()) {
+      const visual = await indicator.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height, border: parseFloat(style.borderTopWidth), animation: style.animationName };
+      });
+      assert.ok(visual.width >= 16 && visual.height >= 16, `running indicator must be at least 16px: ${JSON.stringify(visual)}`);
+      assert.ok(visual.border >= 2, "running indicator has a clear stroke");
+      assert.equal(visual.animation, "git-hosting-spin");
+    }
+  }
   await page.getByTestId("git-hosting-job-log").click();
   await page.getByText("FAIL src/retry.ts").waitFor();
   await page.getByTestId("git-hosting-back").click();

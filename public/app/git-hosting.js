@@ -100,8 +100,15 @@ function patchView(patch) {
 
 // Only a completed, non-failed job earns a check; queued and running jobs have no conclusion yet.
 function jobMark(job) {
-  if (job.status !== "completed") return "◌";
-  return job.conclusion === "failure" ? "✕" : job.conclusion === "skipped" ? "–" : "✓";
+  const mark = node("span", `git-hosting-status-mark is-${tone(job.status, job.conclusion)}`, job.status !== "completed" ? "◌" : job.conclusion === "failure" ? "✕" : job.conclusion === "skipped" ? "–" : "✓");
+  mark.setAttribute("aria-label", (job.status === "completed" ? job.conclusion : job.status).replaceAll("_", " "));
+  return mark;
+}
+
+function jobButton(job, className, testId) {
+  const element = button("", () => selectJob(job.id), className, testId);
+  element.append(jobMark(job), document.createTextNode(` ${job.name}`));
+  return element;
 }
 
 function status(text) { elements.gitReviewStatus.textContent = text; }
@@ -478,7 +485,7 @@ function renderRunDetail() {
   const workspace = node("div", "git-hosting-workspace");
   const nav = node("aside", "git-hosting-job-nav");
   nav.append(node("h4", "", "All jobs"));
-  for (const job of jobs) nav.append(button(`${jobMark(job)} ${job.name}`, () => selectJob(job.id), `git-hosting-nav-job is-${tone(job.status, job.conclusion)}${jobId === job.id ? " is-active" : ""}`, `git-hosting-nav-job-${job.id}`));
+  for (const job of jobs) nav.append(jobButton(job, `git-hosting-nav-job is-${tone(job.status, job.conclusion)}${jobId === job.id ? " is-active" : ""}`, `git-hosting-nav-job-${job.id}`));
   const main = node("div", "git-hosting-workspace-main");
   main.append(renderGraph(groups, jobs));
   if (graphWarning) main.append(node("p", "git-hosting-note", graphWarning));
@@ -507,7 +514,7 @@ function renderGraph(groups, jobs) {
       if (group.needs.length) card.append(node("small", "", `Needs ${group.needs.join(", ")}`));
       for (const id of group.jobIds) {
         const job = jobs.find((item) => item.id === id);
-        card.append(button(`${jobMark(job)} ${job.name}`, () => selectJob(id), `git-hosting-graph-job is-${tone(job.status, job.conclusion)}${jobId === id ? " is-active" : ""}`, `git-hosting-graph-job-${id}`));
+        card.append(jobButton(job, `git-hosting-graph-job is-${tone(job.status, job.conclusion)}${jobId === id ? " is-active" : ""}`, `git-hosting-graph-job-${id}`));
       }
       column.append(card);
     }
@@ -554,7 +561,7 @@ function renderJob(job) {
   const steps = node("ol", "git-hosting-steps");
   for (const step of job.steps) {
     const item = node("li", `git-hosting-step is-${tone(step.status, step.conclusion)}`);
-    item.append(node("span", "git-hosting-step-mark", step.status !== "completed" ? "◌" : step.conclusion === "failure" ? "✕" : step.conclusion === "skipped" ? "–" : "✓"), node("span", "git-hosting-step-name", step.name), node("span", "git-hosting-note", span(step.started_at, step.completed_at) || step.conclusion || step.status));
+    item.append(jobMark(step), node("span", "git-hosting-step-name", step.name), node("span", "git-hosting-note", span(step.started_at, step.completed_at) || step.conclusion || step.status));
     steps.append(item);
   }
   section.append(steps);
