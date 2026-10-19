@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.116.2 — 2026-10-19
 
 - Switched two default task categories on OpenAI Codex from GPT-6 Sol to GPT-6.1 Sol.
 
