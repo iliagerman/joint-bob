@@ -57,6 +57,45 @@ test("markdown renders Hebrew and English blocks in their natural directions", {
       { dir: "auto", computed: "rtl", align: "start" }, { dir: "auto", computed: "ltr", align: "start" },
     ]);
     assert.equal(directions.host, "auto");
+
+    // English labels keep the paragraph LTR; embedded Hebrew still reads RTL.
+    // Use logical-order text, not the terminal workaround that caused the report.
+    const source = "Tenant: fixture\nProject: ז'בוטינסקי 133 תל אביב\nSalesperson: דנה לוי\nSalesperson ID: 27105";
+    const mixed = await page.evaluate(async (source) => {
+      const { appendMessage, renderBubbleContent } = await import("/app/chat-transcript.js");
+      const results = [];
+      for (const role of ["user", "assistant"]) {
+        const bubble = appendMessage(role, "Tenant: fixture", false);
+        renderBubbleContent(bubble, source);
+        await new Promise(requestAnimationFrame);
+        const paragraph = bubble.querySelector(".message-content p");
+        const positions = ["Project:", "ז'בוטינסקי", "133", "תל אביב", "דנה לוי", "27105"].map((token) => {
+          const node = [...paragraph.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent.includes(token));
+          const start = node.textContent.indexOf(token);
+          const [first, last] = [start, start + token.length - 1].map((offset) => {
+            const range = document.createRange();
+            range.setStart(node, offset);
+            range.setEnd(node, offset + 1);
+            const rect = range.getBoundingClientRect();
+            return { x: rect.x, y: rect.y, width: rect.width };
+          });
+          return { token, first, last };
+        });
+        results.push({ role, raw: bubble._raw, text: paragraph.innerText, direction: getComputedStyle(paragraph).direction, positions });
+      }
+      return results;
+    }, source);
+    for (const message of mixed) {
+      assert.equal(message.raw, source, `${message.role}: copy keeps logical-order text`);
+      assert.equal(message.text, source, `${message.role}: rendering keeps letters and word order`);
+      assert.equal(message.direction, "ltr", `${message.role}: English labels anchor the lines`);
+      for (const { token, first, last } of message.positions) {
+        assert.ok(first.width > 0 && last.width > 0, `${message.role}: ${token} is rendered`);
+        assert.equal(first.y, last.y, `${message.role}: ${token} stays on one line`);
+        assert.ok(/[\u0590-\u05ff]/.test(token) ? first.x > last.x : first.x < last.x,
+          `${message.role}: ${token} must read in its natural direction: ${JSON.stringify({ first, last })}`);
+      }
+    }
   } finally {
     await browser?.close();
     if (server) await stopDevNode(server);

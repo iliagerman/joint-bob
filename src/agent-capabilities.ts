@@ -103,6 +103,13 @@ function taskEnvironment(identity: AgentCapabilityIdentity): NodeJS.ProcessEnv {
 
 export const agentCapabilities: AgentCapability[] = [
   {
+    id: "conversation-text",
+    instructions: { path: "/virtual/JOINT_BOB_TEXT.md", content: `# Joint Bob conversation text
+
+Responses appear in Joint Bob's web UI, not a terminal. The browser handles Unicode bidirectional text. Write Hebrew, Arabic, and other RTL text in normal Unicode logical order, including mixed-language messages. Never reverse letters or word groups for display. Terminal-only visual-order workarounds, including the hebrew-visual-order skill, do not apply here. Keep English labels, numbers, punctuation, code, paths, and URLs in their original order; let the browser handle visual placement.`, },
+    environment: () => ({}),
+  },
+  {
     id: "bob-goal",
     instructions: { path: "/virtual/JOINT_BOB_GOALS.md", content: goalInstructions },
     environment: () => ({}),

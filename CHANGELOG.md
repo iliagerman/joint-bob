@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added editing of GitHub issue titles, descriptions, and open or closed state from the Issues view.
+
 ## 2.121.1 — 2026-10-19
 
 - Fixed command search to rank visible names and accept abbreviations without matching hidden prompt text.

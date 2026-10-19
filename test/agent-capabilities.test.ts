@@ -7,6 +7,15 @@ import test from "node:test";
 
 const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+function assertWebChatInstructions(instructions: string): void {
+  assert.match(instructions, /Joint Bob conversation text/);
+  assert.match(instructions, /web UI, not a terminal/);
+  assert.match(instructions, /normal Unicode logical order/);
+  assert.match(instructions, /Never reverse letters or word groups/);
+  assert.match(instructions, /hebrew-visual-order/);
+  assert.match(instructions, /English labels, numbers, punctuation, code, paths, and URLs/);
+}
+
 async function waitFor(check: () => boolean | Promise<boolean>, message: string): Promise<void> {
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
@@ -101,6 +110,7 @@ test("shared capabilities reach Claude, Pi, and Kiro channels with one logical t
       assert.match(systemPrompt, /Joint Bob browser/);
       assert.match(systemPrompt, /Joint Bob secret accounts/);
       assert.match(systemPrompt, /Joint Bob goals/);
+      assertWebChatInstructions(systemPrompt);
       const bash = pi.session.agent.state.tools.find((tool: { name: string }) => tool.name === "bash");
       const result = await bash.execute("probe", { command: `${JSON.stringify(process.execPath)} -e 'console.log(JSON.stringify((${capabilityFlags.toString()})()))'` });
       const outputLines = (result.content[0] as { text: string }).text.trim().split("\n").filter(Boolean);
@@ -117,6 +127,7 @@ test("shared capabilities reach Claude, Pi, and Kiro channels with one logical t
       const profileName = await kiroAgentProfile({ cwd: root, projectId: project.id, sessionId: conversationId, conversationId }, "fixture credentials");
       const profile = JSON.parse(await readFile(path.join(configPath, "agents", `${profileName}.json`), "utf8")) as { prompt: string };
       for (const marker of ["FIXTURE_CAPABILITY_TEXT", "Joint Bob tasks", "Joint Bob browser", "Joint Bob secret accounts", "Joint Bob goals", "fixture credentials"]) assert.match(profile.prompt, new RegExp(marker));
+      assertWebChatInstructions(profile.prompt);
 
       const records = (await readFile(capture, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { flags?: ReturnType<typeof capabilityFlags>; instructions?: string });
       const adapterFlags = records.filter((record) => record.flags).map((record) => record.flags!);
@@ -124,6 +135,7 @@ test("shared capabilities reach Claude, Pi, and Kiro channels with one logical t
       for (const flags of adapterFlags) assert.deepEqual(flags, { taskCli: true, taskSocket: true, taskToken: true, browser: true, secretCli: true, fixture: "yes", managedShell: true, claudeShell: true, kiroShell: true });
       const claudeInstructions = records.find((record) => record.instructions)?.instructions ?? "";
       for (const marker of ["FIXTURE_CAPABILITY_TEXT", "Joint Bob tasks", "Joint Bob browser", "Joint Bob secret accounts", "Joint Bob goals"]) assert.match(claudeInstructions, new RegExp(marker));
+      assertWebChatInstructions(claudeInstructions);
 
       const client = await import("../scripts/supervisor-client.mjs");
       const control = client.readSupervisorControl(state)!;
@@ -147,6 +159,13 @@ test("shared capabilities reach Claude, Pi, and Kiro channels with one logical t
     else process.env.JOINT_BOB_DATA_DIR = previousData;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("web chat instructions override terminal-only Hebrew reversal", async () => {
+  const { agentCapabilityInstructionFiles } = await import("../src/agent-capabilities.js");
+  const instructions = agentCapabilityInstructionFiles().find((file) => file.path === "/virtual/JOINT_BOB_TEXT.md");
+  assert.ok(instructions, "All harnesses need the web chat's Unicode text contract");
+  assertWebChatInstructions(instructions.content);
 });
 
 test("task capability reports unavailable without creating supervisor state", async () => {

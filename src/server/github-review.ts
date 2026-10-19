@@ -34,19 +34,23 @@ function issueUser({ login, html_url, avatar_url }: GitHubIssueUser): GitHubIssu
   return { login, html_url, avatar_url };
 }
 
+function publicIssue(item: GitHubIssue): GitHubIssue {
+  return {
+    number: item.number, title: item.title, html_url: item.html_url, state: item.state,
+    ...(item.body !== undefined ? { body: item.body } : {}),
+    user: item.user ? issueUser(item.user) : null,
+    labels: item.labels.map(({ name, color, description }) => ({ name, color, ...(description !== undefined ? { description } : {}) })),
+    assignees: item.assignees.map(issueUser), comments: item.comments,
+    created_at: item.created_at, updated_at: item.updated_at,
+  };
+}
+
 async function issues(call: GithubCall, state: "open" | "closed" | "all", page: number): Promise<{ issues: GitHubIssue[]; hasMore: boolean }> {
   if (state !== "open" && state !== "closed" && state !== "all") throw new GitReviewError(400, "Invalid issue state");
   assertId(page, "page");
   const batch = await call(`/issues?state=${state}&per_page=30&page=${page}&sort=updated&direction=desc`) as Array<GitHubIssue & { pull_request?: unknown }>;
   return {
-    issues: batch.filter((item) => !("pull_request" in item)).map((item) => ({
-      number: item.number, title: item.title, html_url: item.html_url, state: item.state,
-      ...(item.body !== undefined ? { body: item.body } : {}),
-      user: item.user ? issueUser(item.user) : null,
-      labels: item.labels.map(({ name, color, description }) => ({ name, color, ...(description !== undefined ? { description } : {}) })),
-      assignees: item.assignees.map(issueUser), comments: item.comments,
-      created_at: item.created_at, updated_at: item.updated_at,
-    })),
+    issues: batch.filter((item) => !("pull_request" in item)).map(publicIssue),
     hasMore: batch.length === 30,
   };
 }
@@ -235,6 +239,11 @@ export async function createGitHubReview(cwd: string, credentials: Credentials, 
     repository: { owner, repo },
     issues: (state: "open" | "closed" | "all", page = 1) => issues(call, state, page),
     issue: (number: number) => issueDetail(call, number),
+    editIssue: (number: number, title: string, body: string, state: "open" | "closed") => {
+      assertId(number, "issue");
+      if (!title.trim() || title.length > 256 || body.length > 65536 || !["open", "closed"].includes(state)) throw new GitReviewError(400, "Invalid issue title, description or state");
+      return call(`/issues/${number}`, "PATCH", { title: title.trim(), body, state }).then((issue) => ({ issue: publicIssue(issue as GitHubIssue) }));
+    },
     pulls: (state: "open" | "closed", page: number) => call(`/pulls?state=${state}&per_page=30&page=${page}&sort=updated&direction=desc`),
     create: (head: string, target: string, title: string, body: string, draft: boolean) => {
       if (!BRANCH.test(head) || !BRANCH.test(target) || head === target) throw new GitReviewError(400, "Choose different, valid head and base branches");

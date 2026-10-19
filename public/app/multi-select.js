@@ -8,7 +8,7 @@ import { fuzzyMatch } from "./fuzzy.js";
  *
  * Options are `{ value, label, detail? }`.
  */
-export function createMultiSelect({ id, testid, label, prompt, placeholder = "Search", emptyText = "No matches" }) {
+export function createMultiSelect({ id, testid, label, prompt, placeholder = "Search", emptyText = "No matches", alwaysSearch = false }) {
   const root = document.createElement("div");
   root.className = "searchable-select multi-select";
   root.dataset.testid = testid;
@@ -99,7 +99,7 @@ export function createMultiSelect({ id, testid, label, prompt, placeholder = "Se
   }
 
   function open() {
-    search.value = ""; search.hidden = options.length < 7;
+    search.value = ""; search.hidden = !alwaysSearch && options.length < 7;
     popover.hidden = false; trigger.setAttribute("aria-expanded", "true");
     render();
     (search.hidden ? list.querySelector("[role='option']") || clear : search).focus();

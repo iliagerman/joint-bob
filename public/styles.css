@@ -3917,8 +3917,10 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .project-issues-controls { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); gap: 10px 16px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .project-issues-controls label { display: grid; gap: 4px; min-width: 0; color: var(--muted); font-size: 12px; }
 .project-issues-controls select { width: 100%; min-width: 0; }
-.project-issues-controls select[multiple] { padding: 4px; background-image: none; }
-.project-issues-controls select[multiple] option { padding: 5px 8px; }
+.project-issues-project-picker { display: grid; align-content: end; gap: 4px; min-width: 0; }
+.project-issues-project-picker .searchable-select-trigger { min-height: 40px; }
+.project-issues-project-picker .searchable-select-popover { z-index: 5; }
+.project-issues-project-picker .searchable-select-option { font-size: 13px; }
 .project-issues-controls input[type="search"] { grid-column: 1 / -1; }
 .project-issues-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
 .project-issues-filters label { flex: 1 1 130px; }
@@ -3950,6 +3952,12 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .project-issue-markdown > :last-child { margin-bottom: 0; }
 .project-issue-comment { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
 .project-issue-when { color: var(--muted); font-size: 12px; }
+.project-issue-view { margin-top: 6px; }
+.project-issue-editor { display: grid; gap: 14px; }
+.project-issue-editor label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.project-issue-editor :is(input, textarea, select) { width: 100%; min-width: 0; }
+.project-issue-editor textarea { resize: vertical; font: 13px/1.6 var(--mono); }
+.project-issue-edit-error { margin: 0; color: var(--danger, #f87171); }
 @media (max-width: 700px) {
   .project-issues-controls { grid-template-columns: minmax(0, 1fr); padding: 10px 14px; }
   .project-issues-content { padding-inline: 14px; }
@@ -4224,6 +4232,8 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .resources-badge { font: 600 9px/1 var(--mono); font-style: normal; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 6px; white-space: nowrap; }
 .resources-badge.active, .resources-badge.status-new { color: var(--accent); border-color: var(--accent); }
 .resources-badge.status-changed { color: var(--warning, #d9a441); border-color: currentColor; }
+.resources-badge.relay { color: var(--accent); border-color: var(--accent); }
+.resources-badge.local { color: var(--muted); }
 .resources-badge.off { color: var(--danger, #d9534f); border-color: currentColor; }
 .resources-node { display: flex; justify-content: space-between; gap: 8px; padding: 8px 2px 2px; font-size: 12px; color: var(--muted); }
 .resources-node strong { color: var(--text); }

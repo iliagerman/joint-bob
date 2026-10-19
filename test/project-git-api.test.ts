@@ -55,6 +55,17 @@ test("project Git discovers repositories and confines every selection to an exac
         assert.ok([400, 403, 404].includes(result.status), `${repository}: ${result.status} ${JSON.stringify(result.body)}`);
       }
     }
+    for (const body of [
+      { action: "edit-issue", number: 1, title: " ", body: "", state: "open" },
+      { action: "edit-issue", number: 1, title: "Title", body: "", state: "merged" },
+      { action: "edit-issue", number: 1, title: "Title", body: "", state: "open", repository: "other" },
+    ]) {
+      assert.equal((await api(node, session, "POST", `${route}/github?repository=frontend`, body)).status, 400, "issue edit rejects invalid or unscoped fields before contacting GitHub");
+    }
+    await git(path.join(project.path, "frontend"), ["remote", "add", "origin", "https://github.com/fixture/synthetic.git"]);
+    const edit = await api<{ error: string }>(node, session, "POST", `${route}/github?repository=frontend`, { action: "edit-issue", number: 1, title: "Title", body: "", state: "open" });
+    assert.equal(edit.status, 403);
+    assert.match(edit.body.error, /Attach a GitHub token/);
     assert.equal((await api(node, session, "GET", `${route}/github?repository=frontend&op=issues&page=0`)).status, 400);
     assert.equal((await api(node, session, "GET", "/projects/missing/git/repositories")).status, 404);
     assert.equal((await fetch(`${node.url}/api${route}/repositories`)).status, 401);

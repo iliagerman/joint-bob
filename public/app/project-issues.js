@@ -3,9 +3,11 @@ import { renderMarkdown } from "../markdown.js";
 import { projectGitUrl } from "./project-git-url.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
+import { createMultiSelect } from "./multi-select.js";
 
 const dialog = document.querySelector("#projectIssuesDialog");
-const projects = document.querySelector("#projectIssuesProjects");
+const projects = createMultiSelect({ id: "projectIssuesProjects", testid: "project-issues-projects", label: "Projects", prompt: "Select projects", placeholder: "Search projects", emptyText: "No projects found", alwaysSearch: true });
+document.querySelector("#projectIssuesProjectPicker").replaceWith(projects.root);
 const repository = document.querySelector("#projectIssuesRepository");
 const issueState = document.querySelector("#projectIssuesState");
 const sort = document.querySelector("#projectIssuesSort");
@@ -32,7 +34,9 @@ function text(tag, className, value) {
 
 export function openProjectIssues(projectId = null) {
   controller?.abort();
-  projects.replaceChildren(...state.projects.map((project) => new Option(project.name, project.id, false, !projectId || project.id === projectId)));
+  detailController?.abort();
+  projects.setOptions(state.projects.map((project) => ({ value: project.id, label: project.name })));
+  projects.setValues(state.projects.filter((project) => !projectId || project.id === projectId).map((project) => project.id));
   issueState.value = "open";
   sort.value = "created-desc";
   search.value = "";
@@ -61,7 +65,7 @@ async function reload() {
   controller?.abort();
   controller = new AbortController();
   const signal = controller.signal;
-  const selected = new Set([...projects.selectedOptions].map((option) => option.value));
+  const selected = projects.values;
   const chosen = state.projects.filter((project) => selected.has(project.id));
   const next = [];
   const warnings = [];
@@ -180,7 +184,11 @@ function issueRow(issue) {
   const when = issue.state === "closed" ? new Date(issue.updated_at).toLocaleDateString() : created;
   const meta = text("p", "project-issue-meta", `#${issue.number} ${verb} on ${when} by ${issue.user?.login ?? "unknown"} · updated ${new Date(issue.updated_at).toLocaleDateString()} · ${issue.remote} · ${issue.state}`);
   const origin = text("p", "project-issue-origin", [...issue.origins].join(" · "));
-  body.append(head, meta, origin);
+  const view = text("button", "ghost compact project-issue-view", "View issue");
+  view.type = "button";
+  view.dataset.testid = "project-issue-view";
+  view.addEventListener("click", () => { void openIssue(issue); });
+  body.append(head, meta, origin, view);
   row.append(icon, body);
   if (issue.comments) {
     const comments = text("span", "project-issue-comments", `💬 ${issue.comments}`);
@@ -251,6 +259,7 @@ async function openIssue(listed) {
   const { signal } = detailController;
   let issue = listed;
   let comments = [];
+  let loaded = false;
   const paint = () => {
     detail.replaceChildren();
     const back = text("button", "ghost compact", "← Back to issues");
@@ -271,10 +280,24 @@ async function openIssue(listed) {
     const worktree = text("button", "ghost compact", "Conversation in new worktree");
     for (const [button, testid, newWorktree] of [[start, "project-issue-start", false], [worktree, "project-issue-start-worktree", true]]) {
       button.type = "button";
+      button.disabled = !loaded;
       button.dataset.testid = testid;
       button.addEventListener("click", () => { startFromIssue(issue, comments, newWorktree).catch((error) => toast(error.message)); });
     }
-    actions.append(start, worktree, github);
+    const edit = text("button", "ghost compact", "Edit issue");
+    edit.type = "button";
+    edit.dataset.testid = "project-issue-edit";
+    edit.disabled = !loaded;
+    edit.addEventListener("click", () => editIssue(issue, signal, (updated) => {
+      issue = { ...issue, ...updated };
+      for (const source of sources) {
+        if (source.remote?.toLowerCase() !== issue.remote.toLowerCase()) continue;
+        source.issues = source.issues.map((item) => item.number === issue.number ? { ...item, ...updated } : item);
+      }
+      paint();
+      status.textContent = `#${issue.number} saved on GitHub`;
+    }, paint));
+    actions.append(start, worktree, edit, github);
     head.append(heading, badge);
     const labels = text("div", "project-issue-head", "");
     for (const label of issue.labels ?? []) {
@@ -300,10 +323,12 @@ async function openIssue(listed) {
   paint();
   status.textContent = `Loading #${listed.number} from GitHub…`;
   try {
-    const loaded = await api(projectGitUrl(listed.source, "github", { op: "issue", id: listed.number }), { signal });
-    issue = { ...listed, ...loaded.issue, origins: listed.origins };
-    comments = loaded.comments;
-    if (loaded.truncated) toast("Showing the first comments only; open the issue on GitHub for the rest.");
+    const thread = await api(projectGitUrl(listed.source, "github", { op: "issue", id: listed.number }), { signal });
+    if (signal.aborted) return;
+    issue = { ...listed, ...thread.issue, origins: listed.origins };
+    comments = thread.comments;
+    loaded = true;
+    if (thread.truncated) toast("Showing the first comments only; open the issue on GitHub for the rest.");
     paint();
     status.textContent = `#${issue.number} · ${comments.length} comments loaded`;
   } catch (error) {
@@ -311,10 +336,73 @@ async function openIssue(listed) {
   }
 }
 
+function editIssue(issue, signal, saved, cancel) {
+  const form = text("form", "project-issue-editor", "");
+  const field = (labelText, control, testid) => {
+    const label = text("label", "", labelText);
+    control.dataset.testid = testid;
+    label.append(control);
+    form.append(label);
+    return control;
+  };
+  form.append(text("h3", "", `Edit issue #${issue.number}`));
+  const title = field("Title", document.createElement("input"), "project-issue-edit-title");
+  title.type = "text";
+  title.value = issue.title;
+  title.required = true;
+  title.maxLength = 256;
+  const body = field("Description (Markdown)", document.createElement("textarea"), "project-issue-edit-body");
+  body.value = issue.body ?? "";
+  body.rows = 12;
+  body.maxLength = 65536;
+  const issueState = field("State", document.createElement("select"), "project-issue-edit-state");
+  issueState.append(new Option("Open", "open"), new Option("Closed", "closed"));
+  issueState.value = issue.state;
+  const error = text("p", "project-issue-edit-error", "");
+  error.setAttribute("role", "alert");
+  error.dataset.testid = "project-issue-edit-error";
+  error.hidden = true;
+  const actions = text("div", "project-issue-actions", "");
+  const save = text("button", "primary compact", "Save changes");
+  save.type = "submit";
+  save.dataset.testid = "project-issue-edit-save";
+  const discard = text("button", "ghost compact", "Cancel");
+  discard.type = "button";
+  discard.dataset.testid = "project-issue-edit-cancel";
+  discard.addEventListener("click", cancel);
+  actions.append(save, discard);
+  form.append(error, actions);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (save.disabled) return;
+    const controls = [title, body, issueState, save, discard];
+    controls.forEach((control) => { control.disabled = true; });
+    error.hidden = true;
+    save.textContent = "Saving…";
+    try {
+      const result = await api(projectGitUrl(issue.source, "github"), {
+        method: "POST",
+        body: JSON.stringify({ action: "edit-issue", number: issue.number, title: title.value, body: body.value, state: issueState.value }),
+        signal,
+      });
+      if (!signal.aborted) saved(result.issue);
+    } catch (failure) {
+      if (!signal.aborted) {
+        error.textContent = failure.message;
+        error.hidden = false;
+        controls.forEach((control) => { control.disabled = false; });
+        save.textContent = "Save changes";
+      }
+    }
+  });
+  detail.replaceChildren(form);
+  title.focus();
+}
+
 function render() {
   const query = search.value.trim().toLowerCase();
   const all = mergedIssues();
-  const visible = all.filter((issue) => `${issue.number} ${issue.title} ${issue.remote} ${[...issue.origins].join(" ")} ${issue.user?.login ?? ""} ${(issue.labels ?? []).map((label) => typeof label === "string" ? label : label.name).join(" ")}`.toLowerCase().includes(query));
+  const visible = all.filter((issue) => (issueState.value === "all" || issue.state === issueState.value) && `${issue.number} ${issue.title} ${issue.remote} ${[...issue.origins].join(" ")} ${issue.user?.login ?? ""} ${(issue.labels ?? []).map((label) => typeof label === "string" ? label : label.name).join(" ")}`.toLowerCase().includes(query));
   list.replaceChildren(...visible.map(issueRow));
   if (!visible.length) list.append(text("p", "muted", sources.length ? "No matching issues in the loaded results." : "No repositories available. Check the project selection or errors below."));
   const failures = selectedSources().filter((source) => source.error);

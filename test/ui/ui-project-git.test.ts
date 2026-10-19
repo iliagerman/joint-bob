@@ -18,11 +18,18 @@ test("project Git opens without a conversation, switches repositories, and issue
     await writeFile(path.join(cwd, `${repository}.txt`), `${repository} file\n`);
   }
   const requests: string[] = [];
+  let editedIssue: Record<string, unknown> | null = null;
+  let rejectEdit = true;
   await page.route("**/api/projects/*/git/github*", async (route) => {
     const url = new URL(route.request().url());
     requests.push(url.pathname + url.search);
     const repository = url.searchParams.get("repository");
     const project = projects.find((item) => url.pathname.includes(item.id));
+    if (route.request().method() === "POST") {
+      if (rejectEdit) return route.fulfill({ status: 403, json: { error: "You do not have permission to edit this issue" } });
+      editedIssue = route.request().postDataJSON();
+      return route.fulfill({ json: { issue: { number: 1, title: editedIssue!.title, body: editedIssue!.body, state: editedIssue!.state, user: { login: "tester" }, labels: [], comments: 1, created_at: "2026-10-01T12:00:00Z", updated_at: "2026-10-03T12:00:00Z" } } });
+    }
     if (project && url.searchParams.get("op") === "issue") return route.fulfill({ json: {
       repository: { owner: "fixture", repo: repository },
       issue: { number: 1, title: `${repository} issue`, state: "open", html_url: `https://github.com/fixture/${repository}/issues/1`, body: "Full **issue body** text", user: { login: "tester" }, labels: [], assignees: [], comments: 1, created_at: "2026-10-01T12:00:00Z", updated_at: "2026-10-02T12:00:00Z" },
@@ -73,7 +80,16 @@ test("project Git opens without a conversation, switches repositories, and issue
   assert.equal(await icon.evaluate((svg) => svg.namespaceURI), "http://www.w3.org/2000/svg");
   assert.equal(await icon.getAttribute("aria-hidden"), "true");
   assert.equal(await icon.locator("circle").count(), 2, "open issues have a ring and dot");
-  await page.getByTestId("project-issues-projects").selectOption(projects.map((project) => project.id));
+  await page.getByTestId("project-issues-projects-trigger").click();
+  const projectSearch = page.getByTestId("project-issues-projects-search");
+  await projectSearch.fill(projects[1].name);
+  assert.equal(await page.getByTestId("project-issues-projects-option").count(), 1, "project dropdown filters even a short list");
+  await page.getByTestId("project-issues-projects-option").click();
+  await projectSearch.fill("no-such-project");
+  await page.getByTestId("project-issues-projects-options").getByText("No projects found").waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(await page.getByTestId("project-issues-dialog").evaluate((element: HTMLDialogElement) => element.open), true, "Escape closes dropdown, not issues");
+  assert.match(await page.getByTestId("project-issues-projects-trigger").innerText(), new RegExp(projects[1].name));
   await page.getByTestId("project-issues-apply").click();
   await page.getByTestId("project-issues-errors").getByText(/GitHub request failed/).waitFor();
   assert.equal(await page.getByTestId("project-issue-row").count(), 2, "shared repository issues are deduplicated");
@@ -87,7 +103,24 @@ test("project Git opens without a conversation, switches repositories, and issue
   assert.match(await page.getByTestId("project-issue-github").getAttribute("href") ?? "", /^https:\/\/github\.com\/fixture\/.+\/issues\/1$/);
   assert.equal(await page.getByTestId("project-issue-start").count(), 1);
   assert.equal(await page.getByTestId("project-issue-start-worktree").count(), 1);
+  await page.getByTestId("project-issue-edit").click();
+  await page.getByTestId("project-issue-edit-title").fill("Discard this edit");
+  await page.getByTestId("project-issue-edit-cancel").click();
+  assert.equal(editedIssue, null, "cancel does not mutate GitHub");
+  await page.getByTestId("project-issue-edit").click();
+  await page.getByTestId("project-issue-edit-title").fill("Edited issue title");
+  await page.getByTestId("project-issue-edit-body").fill("Edited **description**");
+  await page.getByTestId("project-issue-edit-state").selectOption("closed");
+  await page.getByTestId("project-issue-edit-save").click();
+  await page.getByTestId("project-issue-edit-error").getByText(/permission/).waitFor();
+  assert.equal(await page.getByTestId("project-issue-edit-title").inputValue(), "Edited issue title", "failed saves preserve edits");
+  rejectEdit = false;
+  await page.getByTestId("project-issue-edit-save").click();
+  await page.getByTestId("project-issue-detail").getByRole("heading", { name: "Edited issue title #1" }).waitFor();
+  await page.getByTestId("project-issue-detail").getByText("Edited description").waitFor();
+  assert.deepEqual(editedIssue, { action: "edit-issue", number: 1, title: "Edited issue title", body: "Edited **description**", state: "closed" });
   await page.getByTestId("project-issue-back").click();
+  assert.equal(await page.getByTestId("project-issue-row").filter({ hasText: "Edited issue title" }).count(), 0, "closed edit no longer matches the open filter");
   await page.getByTestId("project-issues-state").selectOption("closed");
   await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="project-issue-row"]')].length === 2 && [...document.querySelectorAll('[data-testid="project-issue-row"]')].every((row) => row.textContent?.includes("closed")));
   assert.equal(await icon.locator("circle").count(), 1, "closed issues retain their ring");
@@ -110,6 +143,18 @@ test("project Git opens without a conversation, switches repositories, and issue
   assert.match(await page.evaluate(async () => (await import("/app/state.js")).state.newSessionDraft.referenceDraft), /Full \*\*issue body\*\*[\s\S]*A fixture comment/);
   await page.keyboard.press("Escape");
   await page.locator("#newSessionNameDialog[open]").waitFor({ state: "hidden" });
+  await row.getByTestId("project-menu-button").click();
+  await page.getByTestId("project-issues-button").click();
+  await page.getByTestId("project-issue-row").filter({ hasText: "client issue" }).getByTestId("project-issue-view").click();
+  await page.getByTestId("project-issue-start").click();
+  await page.locator('#choiceDialog input[value="pi"]').check();
+  await page.getByTestId("choice-accept-button").click();
+  await page.locator("#newSessionNameDialog[open]").waitFor();
+  assert.notEqual(await page.locator("#newSessionWorktreeSelect").inputValue(), "new", "normal issue conversation does not force a new worktree");
+  const draft = await page.evaluate(async () => (await import("/app/state.js")).state.newSessionDraft);
+  assert.equal(draft.projectId, projects[0].id);
+  assert.match(draft.referenceDraft, /Full \*\*issue body\*\*[\s\S]*A fixture comment/);
+  await page.keyboard.press("Escape");
   assert.ok(requests.every((request) => request.includes("repository=")), "every issue request names its repository");
   assert.deepEqual(errors, []);
 });

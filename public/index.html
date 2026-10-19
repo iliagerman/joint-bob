@@ -1399,7 +1399,7 @@
             </select>
             <select id="resourcesHarnessSelect" aria-label="Agent" data-testid="resources-harness-select"></select>
             <select id="resourcesStateSelect" aria-label="Resource state" data-testid="resources-state-select">
-              <option value="">All resources</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="unknown">Agent managed / unknown</option>
+              <option value="">All resources</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="relay">Controlled by a relay</option><option value="unknown">Agent managed / unknown</option>
             </select>
             <label class="search-shell" for="resourcesSearchInput">
               <span class="sr-only">Search skills and tools</span>
@@ -1426,7 +1426,7 @@
                   <li>On the relay machine, open <strong>Publish rules from this relay</strong>, enter rules, then publish.</li>
                   <li>On each receiving machine, choose that relay below, review its signed rules, and click <strong>Follow this relay's rules</strong>.</li>
                 </ol>
-                <p><strong>Block</strong> overrides local enables on following nodes. <strong>Enable</strong> does not override a local disable. Joining a relay is not consent to follow it. Rules keep files installed; instructions already read remain in open conversations.</p>
+                <p><strong>Block</strong> overrides local enables on following nodes. <strong>Enable</strong> does not override a local disable. <strong>Enforce</strong> does: enforced skills are installed on following nodes with their files, locked on, and take effect from the next message. The relay wins name conflicts for every agent it enforces: other copies with the same name are replaced, and a Claude copy outside managed skills needs strict resource isolation or Claude will not start. Joining a relay is not consent to follow it. Rules keep files installed; instructions already read remain in open conversations.</p>
               </div>
               <label>Follow rules on this node<select id="resourcesRelaySelect" data-testid="resources-relay-select"><option value="">Choose a relay</option></select></label>
               <div id="resourcesRelayPreview" data-testid="resources-relay-preview"></div>
@@ -1799,7 +1799,7 @@
           <button type="button" class="ghost compact" id="projectIssuesClose" data-testid="project-issues-close" aria-label="Close issues">Close</button>
         </header>
         <div class="project-issues-controls">
-          <label>Projects<select id="projectIssuesProjects" multiple size="3" data-testid="project-issues-projects"></select></label>
+          <div class="project-issues-project-picker"><label for="projectIssuesProjects">Projects</label><div id="projectIssuesProjectPicker"></div></div>
           <div class="project-issues-filters">
             <button type="button" class="primary compact" id="projectIssuesApply" data-testid="project-issues-apply">Apply selection</button>
             <label>Repository<select id="projectIssuesRepository" data-testid="project-issues-repository"><option value="">All repositories</option></select></label>

@@ -118,6 +118,29 @@ test("pull request mutations require token and send only scoped, validated reque
   });
 });
 
+test("issue edits validate fields, require a token, and PATCH the issue rather than a PR", async () => {
+  await fixture("https://github.com/acme/widget.git", async (dir) => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    const request: typeof fetch = async (input, init) => {
+      calls.push({ url: String(input), method: init?.method ?? "GET", body: JSON.parse(String(init?.body)) });
+      return Response.json({ number: 42, title: "Fixed title", body: "", state: "closed", labels: [], assignees: [], secret: "omit" });
+    };
+    const anonymous = await createGitHubReview(dir, undefined, request);
+    await assert.rejects(anonymous.editIssue(42, "Title", "", "open"), /GitHub token/);
+    assert.equal(calls.length, 0);
+    const github = await createGitHubReview(dir, "test-token", request);
+    const result = await github.editIssue(42, " Fixed title ", "", "closed");
+    assert.equal(result.issue.title, "Fixed title");
+    assert.equal("secret" in result.issue, false);
+    assert.deepEqual(calls, [{ url: "https://api.github.com/repos/acme/widget/issues/42", method: "PATCH", body: { title: "Fixed title", body: "", state: "closed" } }]);
+    assert.throws(() => github.editIssue(0, "Title", "", "open"), /Invalid issue/);
+    assert.throws(() => github.editIssue(42, " ", "", "open"), /Invalid issue/);
+    assert.throws(() => github.editIssue(42, "Title", "x".repeat(65537), "open"), /Invalid issue/);
+    assert.throws(() => github.editIssue(42, "Title", "", "merged" as "open"), /Invalid issue/);
+    assert.equal(calls.length, 1);
+  });
+});
+
 test("workflow details include actual matrix jobs and declared dependencies", async () => {
   await fixture("https://github.com/acme/widget.git", async (dir) => {
     const workflow = `jobs:\n  changed:\n    runs-on: ubuntu-latest\n  test:\n    needs: changed\n    name: Build and test \${{ matrix.node }}\n    strategy:\n      matrix:\n        node: [20, 22]\n  report:\n    needs: [test]\n`;

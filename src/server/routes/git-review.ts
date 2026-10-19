@@ -152,6 +152,7 @@ const githubQuery = z.object({
   id: z.coerce.number().int().positive().optional(),
 });
 const githubAction = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("edit-issue"), number: z.number().int().positive(), title: z.string().trim().min(1).max(256), body: z.string().max(65536), state: z.enum(["open", "closed"]) }).strict(),
   z.object({ action: z.literal("create"), head: z.string().min(1).max(200), base: z.string().min(1).max(200), title: z.string().trim().min(1).max(256), body: z.string().max(65536), draft: z.boolean() }).strict(),
   z.object({ action: z.literal("comment"), number: z.number().int().positive(), body: z.string().trim().min(1).max(65536) }).strict(),
   z.object({ action: z.literal("review"), number: z.number().int().positive(), event: z.enum(["APPROVE", "REQUEST_CHANGES"]), body: z.string().max(65536) }).strict(),
@@ -192,6 +193,7 @@ async function githubWrite(projectId: string, cwd: string, body: unknown) {
   if (!parsed.success) throw new GitReviewError(400, "Invalid GitHub action");
   const github = await githubClient(projectId, cwd);
   const action = parsed.data;
+  if (action.action === "edit-issue") return github.editIssue(action.number, action.title, action.body, action.state);
   if (action.action === "create") return github.create(action.head, action.base, action.title, action.body, action.draft);
   if (action.action === "comment") return github.comment(action.number, action.body);
   if (action.action === "close") return github.close(action.number);
