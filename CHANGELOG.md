@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed Resources paging so Next reaches every skill when descriptions wrap to different heights, instead of bouncing back to an earlier page.
+
 ## 2.120.0 — 2026-10-19
 
 - Added sorting to the project Issues list by newest, oldest, recently updated, most or least commented, or title, and an All option for issue states.

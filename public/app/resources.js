@@ -742,11 +742,21 @@ function paged(items, page, size) {
 }
 
 let refitting = false;
-/** Fit whole rows when possible; an oversized single row remains scrollable. */
+const fittedFor = {};
+/** Whether this list was already fitted at its current size; rows differ in height, so refitting on every page would bounce Next back. */
+function alreadyFitted(list, key) {
+  const signature = `${view.tab}:${list.clientWidth}x${list.clientHeight}`;
+  if (fittedFor[key] === signature) return true;
+  fittedFor[key] = signature;
+  return false;
+}
+
+/** Fit whole rows when the list's size changes; an oversized single row remains scrollable. */
 function fitPage(list, key, pageKey, rerender) {
   const children = [...list.children];
   const rows = children.filter((child) => child.classList.contains("resources-row"));
   if (!rows.length || !list.clientHeight) return;
+  if (!refitting && alreadyFitted(list, key)) return;
   const gap = parseFloat(getComputedStyle(list).rowGap) || 0;
   const rowHeight = Math.max(...rows.map((row) => row.offsetHeight)) + gap;
   const other = children.filter((child) => !rows.includes(child)).reduce((sum, child) => sum + child.offsetHeight + gap, 0);
@@ -1353,7 +1363,7 @@ function renderGit() {
 function fitGitPage() {
   const list = elements.resourcesGitItems;
   const rows = [...list.children].filter((child) => child.classList.contains("resources-row"));
-  if (!rows.length || !list.clientHeight || refitting) return;
+  if (!rows.length || !list.clientHeight || refitting || alreadyFitted(list, "git")) return;
   const gap = parseFloat(getComputedStyle(list).rowGap) || 0;
   const size = Math.max(1, Math.floor((list.clientHeight + gap) / (Math.max(...rows.map((row) => row.offsetHeight)) + gap)));
   if (size === pageSizes.git) return;
