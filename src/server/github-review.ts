@@ -34,8 +34,8 @@ function issueUser({ login, html_url, avatar_url }: GitHubIssueUser): GitHubIssu
   return { login, html_url, avatar_url };
 }
 
-async function issues(call: GithubCall, state: "open" | "closed", page: number): Promise<{ issues: GitHubIssue[]; hasMore: boolean }> {
-  if (state !== "open" && state !== "closed") throw new GitReviewError(400, "Invalid issue state");
+async function issues(call: GithubCall, state: "open" | "closed" | "all", page: number): Promise<{ issues: GitHubIssue[]; hasMore: boolean }> {
+  if (state !== "open" && state !== "closed" && state !== "all") throw new GitReviewError(400, "Invalid issue state");
   assertId(page, "page");
   const batch = await call(`/issues?state=${state}&per_page=30&page=${page}&sort=updated&direction=desc`) as Array<GitHubIssue & { pull_request?: unknown }>;
   return {
@@ -226,7 +226,7 @@ export async function createGitHubReview(cwd: string, credentials: Credentials, 
   };
   return {
     repository: { owner, repo },
-    issues: (state: "open" | "closed", page = 1) => issues(call, state, page),
+    issues: (state: "open" | "closed" | "all", page = 1) => issues(call, state, page),
     pulls: (state: "open" | "closed", page: number) => call(`/pulls?state=${state}&per_page=30&page=${page}&sort=updated&direction=desc`),
     create: (head: string, target: string, title: string, body: string, draft: boolean) => {
       if (!BRANCH.test(head) || !BRANCH.test(target) || head === target) throw new GitReviewError(400, "Choose different, valid head and base branches");

@@ -6,6 +6,7 @@ const dialog = document.querySelector("#projectIssuesDialog");
 const projects = document.querySelector("#projectIssuesProjects");
 const repository = document.querySelector("#projectIssuesRepository");
 const issueState = document.querySelector("#projectIssuesState");
+const sort = document.querySelector("#projectIssuesSort");
 const search = document.querySelector("#projectIssuesSearch");
 const list = document.querySelector("#projectIssuesList");
 const errors = document.querySelector("#projectIssuesErrors");
@@ -28,6 +29,7 @@ export function openProjectIssues(projectId = null) {
   controller?.abort();
   projects.replaceChildren(...state.projects.map((project) => new Option(project.name, project.id, false, !projectId || project.id === projectId)));
   issueState.value = "open";
+  sort.value = "created-desc";
   search.value = "";
   if (!dialog.open) dialog.showModal();
   void reload();
@@ -115,24 +117,53 @@ function mergedIssues() {
     if (existing) existing.origins.add(`${source.projectName} / ${source.repository}`);
     else merged.set(key, { ...issue, remote: source.remote, origins: new Set([`${source.projectName} / ${source.repository}`]) });
   }
-  return [...merged.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.remote.localeCompare(b.remote) || b.number - a.number);
+  const [field, direction] = sort.value.split("-");
+  const sign = direction === "asc" ? 1 : -1;
+  const compare = {
+    created: (a, b) => a.created_at.localeCompare(b.created_at),
+    updated: (a, b) => a.updated_at.localeCompare(b.updated_at),
+    comments: (a, b) => (a.comments ?? 0) - (b.comments ?? 0),
+    title: (a, b) => a.title.localeCompare(b.title),
+  }[field] ?? ((a, b) => a.updated_at.localeCompare(b.updated_at));
+  return [...merged.values()].sort((a, b) => sign * compare(a, b) || a.remote.localeCompare(b.remote) || b.number - a.number);
 }
+
+const STATE_ICON = {
+  open: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>',
+  closed: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M5.5 8.2l1.8 1.8 3.2-3.5"/></svg>',
+};
 
 function issueRow(issue) {
   const row = text("article", "project-issue-row", "");
   row.dataset.testid = "project-issue-row";
-  const title = text("a", "project-issue-title", `#${issue.number} ${issue.title}`);
+  const icon = text("span", `project-issue-state ${issue.state}`, "");
+  icon.innerHTML = STATE_ICON[issue.state] ?? STATE_ICON.open;
+  icon.title = issue.state;
+  icon.setAttribute("aria-label", issue.state);
+  const body = text("div", "project-issue-body", "");
+  const head = text("div", "project-issue-head", "");
+  const title = text("a", "project-issue-title", issue.title);
   title.href = `https://github.com/${issue.remote.split("/").map(encodeURIComponent).join("/")}/issues/${encodeURIComponent(issue.number)}`;
   title.target = "_blank";
   title.rel = "noopener noreferrer";
   title.dataset.testid = "project-issue-link";
-  const meta = text("p", "project-issue-meta", `${issue.state} · ${issue.remote} · ${issue.user?.login ?? "unknown"} · ${new Date(issue.updated_at).toLocaleDateString()}`);
+  head.append(title);
+  for (const label of issue.labels ?? []) {
+    const chip = text("span", "project-issue-label", typeof label === "string" ? label : label.name);
+    if (label.color && /^[0-9a-f]{6}$/i.test(label.color)) chip.style.setProperty("--label", `#${label.color}`);
+    head.append(chip);
+  }
+  const created = new Date(issue.created_at).toLocaleDateString();
+  const verb = issue.state === "closed" ? "closed" : "opened";
+  const when = issue.state === "closed" ? new Date(issue.updated_at).toLocaleDateString() : created;
+  const meta = text("p", "project-issue-meta", `#${issue.number} ${verb} on ${when} by ${issue.user?.login ?? "unknown"} · updated ${new Date(issue.updated_at).toLocaleDateString()} · ${issue.remote} · ${issue.state}`);
   const origin = text("p", "project-issue-origin", [...issue.origins].join(" · "));
-  row.append(title, meta, origin);
-  if (issue.labels?.length) {
-    const labels = text("div", "project-issue-labels", "");
-    for (const label of issue.labels) labels.append(text("span", "git-hosting-chip", typeof label === "string" ? label : label.name));
-    row.append(labels);
+  body.append(head, meta, origin);
+  row.append(icon, body);
+  if (issue.comments) {
+    const comments = text("span", "project-issue-comments", `💬 ${issue.comments}`);
+    comments.title = `${issue.comments} comments`;
+    row.append(comments);
   }
   return row;
 }
@@ -153,6 +184,7 @@ function render() {
 apply.addEventListener("click", () => { void reload(); });
 issueState.addEventListener("change", () => { void reload(); });
 repository.addEventListener("change", render);
+sort.addEventListener("change", render);
 search.addEventListener("input", render);
 more.addEventListener("click", () => { void loadMore(); });
 document.querySelector("#projectIssuesRefresh").addEventListener("click", () => { void reload(); });

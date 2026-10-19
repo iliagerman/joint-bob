@@ -3920,11 +3920,16 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .project-issues-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
 .project-issues-filters label { flex: 1 1 130px; }
 .project-issues-content { min-height: 0; overflow-y: auto; padding: 0 20px 16px; }
-.project-issue-row { padding: 16px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.project-issue-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.project-issue-state { flex: none; margin-top: 2px; color: #3fb950; display: inline-flex; }
+.project-issue-state.closed { color: #a371f7; }
+.project-issue-body { flex: 1; min-width: 0; }
+.project-issue-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.project-issue-label { --label: #8b949e; padding: 1px 8px; border: 1px solid color-mix(in srgb, var(--label) 55%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--label) 18%, transparent); color: color-mix(in srgb, var(--label) 70%, var(--text)); font-size: 11px; font-weight: 600; }
+.project-issue-comments { flex: none; color: var(--muted); font-size: 12px; }
 .project-issue-title { color: var(--text); font-size: 15px; font-weight: 650; text-decoration: none; }
 .project-issue-title:hover { text-decoration: underline; }
-.project-issue-row .project-issue-meta, .project-issue-row .project-issue-origin { margin: 6px 0 0; color: var(--muted); font: 500 11px/1.5 var(--mono); }
-.project-issue-labels { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.project-issue-row .project-issue-meta, .project-issue-row .project-issue-origin { margin: 4px 0 0; color: var(--muted); font: 500 11px/1.5 var(--mono); }
 .project-issues-errors { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--line); border-left: 3px solid var(--warning, #d9a441); border-radius: var(--radius-ctl); font-size: 12px; overflow-wrap: anywhere; }
 #projectIssuesMore { margin-top: 14px; }
 @media (max-width: 700px) {

@@ -1803,7 +1803,8 @@
           <div class="project-issues-filters">
             <button type="button" class="primary compact" id="projectIssuesApply" data-testid="project-issues-apply">Apply selection</button>
             <label>Repository<select id="projectIssuesRepository" data-testid="project-issues-repository"><option value="">All repositories</option></select></label>
-            <label>State<select id="projectIssuesState" data-testid="project-issues-state"><option value="open">Open</option><option value="closed">Closed</option></select></label>
+            <label>State<select id="projectIssuesState" data-testid="project-issues-state"><option value="open">Open</option><option value="closed">Closed</option><option value="all">All</option></select></label>
+            <label>Sort by<select id="projectIssuesSort" data-testid="project-issues-sort"><option value="created-desc">Newest</option><option value="created-asc">Oldest</option><option value="updated-desc">Recently updated</option><option value="updated-asc">Least recently updated</option><option value="comments-desc">Most commented</option><option value="comments-asc">Least commented</option><option value="title-asc">Title A–Z</option></select></label>
             <button type="button" class="ghost compact" id="projectIssuesRefresh" data-testid="project-issues-refresh">Refresh</button>
           </div>
           <label class="sr-only" for="projectIssuesSearch">Search loaded issues</label>

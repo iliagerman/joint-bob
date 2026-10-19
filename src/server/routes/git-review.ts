@@ -147,7 +147,7 @@ function handleGitError(response: Response, error: unknown, next: (error?: unkno
 
 const githubQuery = z.object({
   op: z.enum(["issues", "pulls", "pull", "runs", "run", "log"]),
-  state: z.enum(["open", "closed"]).optional(),
+  state: z.enum(["open", "closed", "all"]).optional(),
   page: z.coerce.number().int().min(1).max(1000).optional(),
   id: z.coerce.number().int().positive().optional(),
 });
@@ -175,7 +175,10 @@ async function githubRead(projectId: string, cwd: string, query: Record<string, 
   const { op, id, page = 1, state = "open" } = parsed.data;
   const github = await githubClient(projectId, cwd);
   if (op === "issues") return { repository: github.repository, ...await github.issues(state, page) };
-  if (op === "pulls") return { repository: github.repository, pulls: await github.pulls(state, page) };
+  if (op === "pulls") {
+    if (state === "all") throw new GitReviewError(400, "Invalid GitHub request");
+    return { repository: github.repository, pulls: await github.pulls(state, page) };
+  }
   if (op === "runs") return { repository: github.repository, runs: await github.runs(page) };
   if (!id) throw new GitReviewError(400, "GitHub item ID required");
   if (op === "pull") return github.pull(id);

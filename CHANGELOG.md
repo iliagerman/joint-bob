@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added sorting by newest, oldest, recent updates, comments or title, an All option for states, and open or closed icons, colored labels, comment counts and opened or closed dates to the project Issues list.
+
 ## 2.119.0 — 2026-10-19
 
 - Added relay settings in Resources so a relay can block skills, MCP servers and plugins it has not enabled, or enforce its enabled ones, on the machines that follow it.
