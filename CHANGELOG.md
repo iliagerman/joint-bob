@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.121.0 — 2026-10-19
 
-- Added an issue view to the project Issues list that shows an issue's full description and comments, with buttons to start a conversation on it, start one in a new worktree, or open it on GitHub.
+- Added an issue view to the Issues list that shows the full description and comments, with buttons to start a conversation on the issue, start one in a new worktree, or open it on GitHub.
 
 ## 2.120.3 — 2026-10-19
 
