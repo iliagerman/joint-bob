@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.116.3 — 2026-10-19
 
-- Fixed Resources so relay rules fold away by default with their steps explained, long skill descriptions wrap, and tall lists scroll instead of cutting off content.
+- Fixed Resources so tall lists and the panel scroll instead of cutting off content, and long skill descriptions wrap in full.
+- Fixed the Auto-update option for Git repositories in Resources so its checkbox and label stay on one line.
+- Moved the relay skill rules in Resources into a section that starts folded, with a short explanation of how publishing and following a relay's rules work.
+- Showed how many relays this node follows in Resources, with clear messages when no relay is admitted or none is chosen.
+- Moved rule publishing for this machine into its own collapsible editor, with the rule syntax and a note that publishing replaces the previous policy.
 
 ## 2.116.2 — 2026-10-19
 
