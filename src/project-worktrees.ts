@@ -521,13 +521,17 @@ function gitIgnoredPaths(projectPath: string, paths: string[]): Promise<Set<stri
     const child = spawn("git", ["-C", projectPath, "check-ignore", "-z", "--stdin"]);
     let stdout = "";
     let stderr = "";
+    let inputError: Error | undefined;
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk; });
     child.stderr.on("data", (chunk: Buffer) => { stderr += chunk; });
     child.on("error", reject);
+    // Git can exit before reading stdin, for example when this is not a repository.
+    child.stdin.on("error", (error: Error) => { inputError = error; });
     child.on("close", (code) => {
       // Exit status 1 means no path matched; anything else (not a repository, git missing) must not pass silently.
-      if (code === 0 || code === 1) resolve(new Set(stdout.split("\0").filter(Boolean)));
-      else reject(new Error(stderr.trim() || `git check-ignore exited with status ${code}`));
+      if (code !== 0 && code !== 1) reject(new Error(stderr.trim() || `git check-ignore exited with status ${code}`));
+      else if (inputError) reject(inputError);
+      else resolve(new Set(stdout.split("\0").filter(Boolean)));
     });
     child.stdin.end(paths.map((file) => `${file}\0`).join(""));
   });

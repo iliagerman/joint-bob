@@ -69,6 +69,10 @@ test("project Git opens without a conversation, switches repositories, and issue
   await page.getByTestId("project-issues-button").click();
   await page.getByTestId("project-issue-row").filter({ hasText: "client issue" }).waitFor();
   assert.equal(await page.getByTestId("project-issue-row").count(), 2);
+  const icon = page.getByTestId("project-issue-row").first().locator(".project-issue-state svg");
+  assert.equal(await icon.evaluate((svg) => svg.namespaceURI), "http://www.w3.org/2000/svg");
+  assert.equal(await icon.getAttribute("aria-hidden"), "true");
+  assert.equal(await icon.locator("circle").count(), 2, "open issues have a ring and dot");
   await page.getByTestId("project-issues-projects").selectOption(projects.map((project) => project.id));
   await page.getByTestId("project-issues-apply").click();
   await page.getByTestId("project-issues-errors").getByText(/GitHub request failed/).waitFor();
@@ -86,6 +90,8 @@ test("project Git opens without a conversation, switches repositories, and issue
   await page.getByTestId("project-issue-back").click();
   await page.getByTestId("project-issues-state").selectOption("closed");
   await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="project-issue-row"]')].length === 2 && [...document.querySelectorAll('[data-testid="project-issue-row"]')].every((row) => row.textContent?.includes("closed")));
+  assert.equal(await icon.locator("circle").count(), 1, "closed issues retain their ring");
+  assert.equal(await icon.locator("path").getAttribute("d"), "M5.5 8.2l1.8 1.8 3.2-3.5", "closed issues show a checkmark");
   await page.getByTestId("project-issues-search").fill("server");
   assert.equal(await page.getByTestId("project-issue-row").count(), 1);
   await page.setViewportSize({ width: 390, height: 844 });

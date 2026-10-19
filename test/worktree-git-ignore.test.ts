@@ -40,6 +40,14 @@ test("a path outside a git repository fails instead of passing unfiltered", asyn
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("git exiting before reading a large path list rejects without an uncaught pipe error", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-worktree-ignore-pipe-"));
+  try {
+    const deletes = Array.from({ length: 16_384 }, (_, index) => `src/${"a".repeat(200)}/${index}.ts`);
+    await assert.rejects(withoutGitIgnored(root, { gitBase: null, writes: [], deletes, uncommittedPaths: [] }), /not a git repository/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("a worktree's pull request leaves out what the project's .gitignore ignores, end to end", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jb-worktree-ignore-"));
   const projectPath = path.join(root, "project");

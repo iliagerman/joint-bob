@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Made the machine owner's saved commands available on its twins automatically, including commands saved before pairing, with no sharing step.
+- Fixed a crash when preparing a worktree's pull request with many changed paths and git stopped reading them early.
 
 ## 2.121.1 — 2026-10-19
 

@@ -135,16 +135,26 @@ function mergedIssues() {
   return [...merged.values()].sort((a, b) => sign * compare(a, b) || a.remote.localeCompare(b.remote) || b.number - a.number);
 }
 
-const STATE_ICON = {
-  open: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>',
-  closed: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M5.5 8.2l1.8 1.8 3.2-3.5"/></svg>',
-};
+function issueStateIcon(state) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  for (const [name, value] of Object.entries({ viewBox: "0 0 16 16", width: "16", height: "16", fill: "none", stroke: "currentColor", "stroke-width": "1.5", "aria-hidden": "true" })) svg.setAttribute(name, value);
+  const parts = [
+    ["circle", { cx: "8", cy: "8", r: "6.25" }],
+    state === "closed" ? ["path", { d: "M5.5 8.2l1.8 1.8 3.2-3.5" }] : ["circle", { cx: "8", cy: "8", r: "1.5", fill: "currentColor", stroke: "none" }],
+  ];
+  for (const [tag, attributes] of parts) {
+    const part = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [name, value] of Object.entries(attributes)) part.setAttribute(name, value);
+    svg.append(part);
+  }
+  return svg;
+}
 
 function issueRow(issue) {
   const row = text("article", "project-issue-row", "");
   row.dataset.testid = "project-issue-row";
   const icon = text("span", `project-issue-state ${issue.state}`, "");
-  icon.innerHTML = STATE_ICON[issue.state] ?? STATE_ICON.open;
+  icon.append(issueStateIcon(issue.state));
   icon.title = issue.state;
   icon.setAttribute("aria-label", issue.state);
   const body = text("div", "project-issue-body", "");
