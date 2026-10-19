@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.116.0 — 2026-10-19
 
-- Added Enable all shown and Disable all shown to Resources, which switch every matching agent choice at once, including ones on other pages, and change nothing if any choice cannot be switched.
+- Added Enable all shown and Disable all shown to Resources, which switch every matching agent choice at once, even on other pages; if any choice cannot be switched, none change.
 
 ## 2.115.0 — 2026-10-19
 
