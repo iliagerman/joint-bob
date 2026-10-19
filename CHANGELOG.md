@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.114.0 — 2026-10-19
 
-- Added project menu options to browse any Git repository in a project without opening a conversation, and to view GitHub issues across several selected projects.
+- Added project-level Git access with machine and repository selection, without opening a conversation.
+- Added per-project and combined GitHub issue views with repository and state filters, search, and pagination.
 
 ## 2.113.0 — 2026-10-18
 
