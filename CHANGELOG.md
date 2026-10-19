@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.120.2 — 2026-10-19
 
-- Fixed deleting a skill so every tool's link to it is removed, with your original skill folder left untouched, and broken links no longer stop other skills from loading.
+- Fixed skill deletion to clean up chained links without deleting their original targets, keep a recoverable backup of managed copies, and tolerate broken links when loading skills.
 
 ## 2.120.1 — 2026-10-19
 
