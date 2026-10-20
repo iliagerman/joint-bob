@@ -75,7 +75,7 @@ test("Resources edits per-agent skill activation and node auto-activate default"
     assert.equal(await relaySettings.evaluate((element) => element.tagName), "DETAILS", "relay controls are collapsible instead of crowding the list");
     assert.equal(await relaySettings.evaluate((element: HTMLDetailsElement) => element.open), false, "relay settings start collapsed");
     await page.getByTestId("resources-relay-summary").click();
-    await page.getByTestId("resources-relay-help").getByText(/each receiving node must opt in/).waitFor();
+    await page.getByTestId("resources-relay-help").getByText(/There is no opt-in/).waitFor();
     await page.getByTestId("resources-relay-publisher-summary").click();
     const publisher = page.getByTestId("resources-relay-publish");
     await publisher.waitFor();
@@ -107,20 +107,18 @@ test("Resources edits per-agent skill activation and node auto-activate default"
     await page.getByTestId("resources-refresh-button").click();
     await page.getByTestId("resources-relay-select").locator(`option[value="${membershipId}"]`).waitFor({ state: "attached" });
     await page.getByTestId("resources-relay-select").selectOption(membershipId);
-    await page.getByTestId("resources-relay-preview").getByText(/Not following/).waitFor();
-    assert.equal(await row.getByText(/Blocked by relay/).count(), 0, "publishing alone does not force a node to follow");
-    await page.getByTestId("resources-relay-follow").click();
-    await page.getByTestId("confirm-accept-button").click();
+    assert.equal(await page.getByTestId("resources-relay-follow").count(), 0, "a joined relay's rules apply without an opt-in");
     await row.getByText(/Blocked by relay: Home relay · cached-policy.fixture.example/).waitFor();
-    await page.getByTestId("resources-relay-preview").getByText(/Signed version 1 · Following/).waitFor();
+    await page.getByTestId("resources-relay-preview").getByText(/Signed version 1 · Enforced on this node/).waitFor();
     const relayOptions = await page.getByTestId("resources-relay-select").locator("option").allTextContents();
     assert.ok(relayOptions.includes("Home relay · cached-policy.fixture.example"));
     assert.equal(relayOptions.some((label) => label.includes("my-laptop")), false, "relay picker names the server, not this machine's membership");
     assert.equal(await toggle.isChecked(), true, "checkbox shows saved enable, not relay's effective block");
     await toggle.uncheck();
     await page.getByTestId("resources-status").getByText(/disabled for Claude/).waitFor();
-    await page.getByTestId("resources-relay-follow").getByText("Stop following").waitFor();
-    await page.getByTestId("resources-relay-follow").click();
+    const leaving = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    try { updateMembership(leaving, membershipId, { status: "revoked" }); } finally { leaving.close(); }
+    await page.getByTestId("resources-refresh-button").click();
     await row.getByText("Disabled on this node", { exact: true }).waitFor();
     assert.equal(await toggle.isChecked(), false, "removing relay block preserves the local disable");
   } finally {

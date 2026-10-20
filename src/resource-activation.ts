@@ -93,10 +93,10 @@ export function receivedSkillPath(directory: string, root: string, first: string
   return false;
 }
 
-/** The label of a followed relay that enforces this skill for this agent, if any. Only skills published with a digest count: their files are delivered. */
+/** The label of an admitted relay that enforces this skill for this agent, if any. Only skills published with a digest count: their files are delivered. */
 export function relayEnforcedSkill(name: string, harness: HarnessId): string | null {
-  for (const { relay, optedIn, statement } of relayPolicySubscriptions(settingsDatabase())) {
-    if (!optedIn || !statement || !statement.body.settings.skills.enforce) continue;
+  for (const { relay, statement } of relayPolicySubscriptions(settingsDatabase())) {
+    if (!statement || !statement.body.settings.skills.enforce) continue;
     if (!((statement.body.enabled.skills as Record<string, string[]>)[harness] ?? []).includes(name) || statement.body.skillDigests?.[name] === undefined) continue;
     return relayPolicyLabel(relay);
   }
@@ -109,7 +109,7 @@ export function relayDeliveredSkill(name: string, root = agentResourcePaths().sh
 }
 
 /**
- * `fromRelay` marks the managed copy a followed relay delivered. When a relay enforces a skill for an
+ * `fromRelay` marks the managed copy a relay delivered. When a relay enforces a skill for an
  * agent, that copy is the only one the agent loads; every other copy with the same name is replaced.
  */
 export function activationDecision(kind: ActivatableResource, name: string, harness: HarnessId, shared: boolean, fromRelay = false): ActivationDecision {
@@ -147,7 +147,7 @@ export function blockedSkillNames(harness: HarnessId, context: SkillScopeContext
   schema();
   const local = settingsDatabase().prepare("SELECT name FROM resource_activation WHERE kind='skill' AND harness=? AND enabled=0")
     .all(harness) as Array<{ name: string }>;
-  const relay = relayPolicySubscriptions(settingsDatabase()).filter(({ optedIn }) => optedIn)
+  const relay = relayPolicySubscriptions(settingsDatabase())
     .flatMap(({ statement }) => (statement?.body.rules ?? []).filter((rule) => rule.action === "block" && (rule.harness === "all" || rule.harness === harness)).map((rule) => rule.name));
   return [...new Set([...local.map((item) => item.name), ...relay, ...unavailableSkillNames(context)])];
 }

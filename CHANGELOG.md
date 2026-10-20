@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed relay rules to apply as soon as a machine joins a relay, with no separate Follow step, and leaving the relay now removes the skills it delivered.
+
 ## 2.125.0 — 2026-10-20
 
 - Added Jira as a secret account type, storing your site URL, Atlassian email, and API token for attached agents to use with the Jira REST API.

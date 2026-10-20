@@ -468,7 +468,7 @@ async function removeRelaySkill(db: DatabaseSync, prior: ReceivedSkill): Promise
 
 let relaySync: Promise<boolean> | undefined;
 /**
- * Downloads the skills that followed relays enforce and removes the ones they no longer do.
+ * Downloads the skills that admitted relays enforce and removes the ones they no longer do.
  * Resolves true when files changed, so the caller can reload open conversations.
  */
 export function syncRelaySkills(): Promise<boolean> {
@@ -482,8 +482,8 @@ async function syncRelaySkillsNow(): Promise<boolean> {
   // Downloads are signed with this node's identity, the one it proved to the relay when it joined.
   getOrCreateClusterIdentity(db, local);
   const wanted = new Map<string, { relay: RelayMembership; digest: string }>();
-  for (const { relay, optedIn, statement } of relayPolicySubscriptions(db)) {
-    if (!optedIn || !statement || !relay.relayNodeId || !statement.body.settings.skills.enforce) continue;
+  for (const { relay, statement } of relayPolicySubscriptions(db)) {
+    if (!statement || !relay.relayNodeId || !statement.body.settings.skills.enforce) continue;
     for (const [name, digest] of Object.entries(statement.body.skillDigests ?? {})) if (!wanted.has(name)) wanted.set(name, { relay, digest });
   }
   let changed = false;
@@ -512,7 +512,7 @@ async function syncRelaySkillsNow(): Promise<boolean> {
     if (failed?.length) recordPeerError(db, owner, new Error(failed.map((error) => error.message).join("; ")));
     else db.prepare("INSERT OR REPLACE INTO skill_peer_status VALUES(?,?,NULL)").run(owner, new Date().toISOString());
   }
-  // A relay this node no longer follows, or that delivers nothing now, leaves no sync status behind.
+  // A relay this node left, or that delivers nothing now, leaves no sync status behind.
   const current = new Set([...[...wanted.values()].map(({ relay }) => relayOwnerId(relay.relayNodeId!)), ...errors.keys()]);
   for (const { owner_node_id: owner } of db.prepare("SELECT owner_node_id FROM skill_peer_status WHERE owner_node_id LIKE 'relay:%'").all() as Array<{ owner_node_id: string }>) {
     if (!current.has(owner)) db.prepare("DELETE FROM skill_peer_status WHERE owner_node_id=?").run(owner);

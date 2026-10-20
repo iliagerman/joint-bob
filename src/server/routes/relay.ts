@@ -12,7 +12,7 @@ import { setOtherUsersMayUsePhone } from "../../relay/phone-policy.js";
 import { normalizeRelayOrigin, phoneAddress, RELAY_NAME_PATTERN } from "../../relay/protocol.js";
 import { RelayServerError } from "../../relay/relay-server.js";
 import { enforcedSkillDigests, relayEnabledSnapshot } from "../../relay/enabled-snapshot.js";
-import { publishRelayPolicy, publishedRelayPolicy, relayPolicyLabel, relayPolicySubscriptions, relayResourceSettingsSchema, relaySkillRulesSchema, subscribeRelayPolicy } from "../../relay/resource-policy.js";
+import { publishRelayPolicy, publishedRelayPolicy, relayPolicyLabel, relayPolicySubscriptions, relayResourceSettingsSchema, relaySkillRulesSchema } from "../../relay/resource-policy.js";
 import { reloadSharedSkills } from "../realtime.js";
 import { enrollLink, LOCAL_RELAY_ID, RelayRuntimeError } from "../../relay/runtime.js";
 import {
@@ -97,19 +97,9 @@ async function membershipView(response: Response): Promise<unknown> {
 app.get("/api/relays", handle(async (_request, response) => { response.json(await membershipView(response)); }));
 app.get("/api/relays/skill-policies", handle(async (_request, response) => {
   const db = await clusterV2Database();
-  response.json({ subscriptions: relayPolicySubscriptions(db).map(({ relay, optedIn, statement, updatedAt }) => ({
-    id: relay.id, name: relayPolicyLabel(relay), origin: relay.origin, optedIn, version: statement?.body.version ?? null,
+  response.json({ subscriptions: relayPolicySubscriptions(db).map(({ relay, statement, updatedAt }) => ({
+    id: relay.id, name: relayPolicyLabel(relay), origin: relay.origin, version: statement?.body.version ?? null,
     rules: statement?.body.rules ?? [], settings: statement?.body.settings ?? null, skillDigestCount: Object.keys(statement?.body.skillDigests ?? {}).length, updatedAt,
-  })) });
-}));
-app.put("/api/relays/:id/skill-policy-subscription", handle(async (request, response) => {
-  const db = await clusterV2Database();
-  const { optedIn } = z.object({ optedIn: z.boolean() }).strict().parse(request.body);
-  subscribeRelayPolicy(db, uuid.parse(request.params.id), optedIn);
-  await (await import("../skill-sharing.js")).syncRelaySkills().catch((error) => console.warn(`Relay skill sync failed: ${(error as Error).message}`));
-  await reloadSharedSkills();
-  response.json({ subscriptions: relayPolicySubscriptions(db).map(({ relay, optedIn, statement }) => ({
-    id: relay.id, optedIn, rules: statement?.body.rules ?? [], version: statement?.body.version ?? null,
   })) });
 }));
 app.get("/api/relay/serving/skill-policy", handle(async (_request, response) => {

@@ -57,10 +57,10 @@ test("an admitted machine downloads only the skills the relay enforces, verified
   }
 });
 
-test("a following node installs enforced skills as relay-managed and removes them when it stops following", async () => {
+test("a connected node installs enforced skills as relay-managed without opting in and removes them when it leaves the relay", async () => {
   const { clusterV2Database } = await import("../src/cluster-v2-store.js");
   const { getClusterNode } = await import("../src/cluster.js");
-  const { receiveRelayPolicy, relayPolicySubscriptions, subscribeRelayPolicy } = await import("../src/relay/resource-policy.js");
+  const { receiveRelayPolicy, relayPolicySubscriptions } = await import("../src/relay/resource-policy.js");
   const { syncRelaySkills, relayOwnerId } = await import("../src/server/skill-sharing.js");
   const { listReceivedSkills } = await import("../src/skill-sharing.js");
   const { receivedOwner } = await import("../src/skill-sharing-files.js");
@@ -91,19 +91,17 @@ test("a following node installs enforced skills as relay-managed and removes the
     const statement = publishRelayPolicy(relayDb, relayId, [], { settings, enabled, skillDigests: { [NAME]: built.digest } });
     const admitted = { ...membership, status: "admitted" as const, relayNodeId: relayId, fingerprint: relayIdentity.fingerprint };
     assert.equal(receiveRelayPolicy(db, admitted, relayIdentity.publicKey, statement), true);
-    assert.equal(await syncRelaySkills(), false, "a relay that is not followed delivers nothing");
 
-    subscribeRelayPolicy(db, membership.id, true);
     assert.equal(await syncRelaySkills(), true, JSON.stringify(db.prepare("SELECT * FROM skill_peer_status").all()));
     const owner = relayOwnerId(relayId);
     assert.equal(await receivedOwner(agentResourcePaths().sharedSkills, NAME), owner);
     assert.equal(listReceivedSkills(db).find((item) => item.name === NAME)?.ownerNodeId, owner);
     assert.ok((await buildSkillBundle(destination, NAME)).digest === built.digest, "installed files match the signed digest");
     assert.equal(await syncRelaySkills(), false, "an unchanged policy installs nothing again");
-    assert.equal(relayPolicySubscriptions(db).find((item) => item.relay.id === membership.id)?.optedIn, true);
+    assert.equal(relayPolicySubscriptions(db).find((item) => item.relay.id === membership.id)?.statement?.body.version, statement.body.version);
 
-    subscribeRelayPolicy(db, membership.id, false);
-    assert.equal(await syncRelaySkills(), true, "unfollowing removes what the relay delivered");
+    updateMembership(db, membership.id, { status: "revoked" });
+    assert.equal(await syncRelaySkills(), true, "leaving the relay removes what it delivered");
     assert.equal(listReceivedSkills(db).some((item) => item.name === NAME), false);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -118,7 +116,7 @@ test("a following node installs enforced skills as relay-managed and removes the
 test("the relay's copy wins over a local skill or a local edit under the same name", async () => {
   const { clusterV2Database } = await import("../src/cluster-v2-store.js");
   const { getClusterNode } = await import("../src/cluster.js");
-  const { receiveRelayPolicy, subscribeRelayPolicy } = await import("../src/relay/resource-policy.js");
+  const { receiveRelayPolicy } = await import("../src/relay/resource-policy.js");
   const { syncRelaySkills, relayOwnerId } = await import("../src/server/skill-sharing.js");
   const { receivedOwner } = await import("../src/skill-sharing-files.js");
   const { mkdtemp, readFile } = await import("node:fs/promises");
@@ -147,7 +145,6 @@ test("the relay's copy wins over a local skill or a local edit under the same na
     enabled.skills.claude.push(NAME);
     const statement = publishRelayPolicy(relayDb, relayId, [], { settings, enabled, skillDigests: { [NAME]: built.digest } });
     receiveRelayPolicy(db, { ...membership, status: "admitted", relayNodeId: relayId, fingerprint: relayIdentity.fingerprint }, relayIdentity.publicKey, statement);
-    subscribeRelayPolicy(db, membership.id, true);
     assert.equal(await syncRelaySkills(), true, JSON.stringify(db.prepare("SELECT * FROM skill_peer_status").all()));
     assert.match(await readFile(path.join(destination, "SKILL.md"), "utf8"), /Relay version/, "the local skill is replaced");
     assert.equal(await receivedOwner(agentResourcePaths().sharedSkills, NAME), relayOwnerId(relayId));
@@ -156,14 +153,14 @@ test("the relay's copy wins over a local skill or a local edit under the same na
     assert.equal(await syncRelaySkills(), true);
     assert.match(await readFile(path.join(destination, "SKILL.md"), "utf8"), /Relay version/, "a local edit is overwritten on the next sync");
 
-    subscribeRelayPolicy(db, membership.id, false);
+    updateMembership(db, membership.id, { status: "revoked" });
     assert.equal(await syncRelaySkills(), true);
-    assert.match(await readFile(path.join(destination, "SKILL.md"), "utf8"), /Local version/, "unfollowing restores this node's own skill");
+    assert.match(await readFile(path.join(destination, "SKILL.md"), "utf8"), /Local version/, "leaving the relay restores this node's own skill");
     const { unavailableSkillNames } = await import("../src/scoped-skills.js");
     assert.equal(unavailableSkillNames().includes(NAME), false, "the restored skill is available to agents again");
     assert.equal(await receivedOwner(agentResourcePaths().sharedSkills, NAME), undefined);
   } finally {
-    subscribeRelayPolicy(db, membership.id, false);
+    updateMembership(db, membership.id, { status: "revoked" });
     await syncRelaySkills().catch(() => false);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     db.prepare("DELETE FROM relay_skill_subscriptions WHERE membership_id=?").run(membership.id);
@@ -177,7 +174,7 @@ test("the relay's copy wins over a local skill or a local edit under the same na
 test("an enforced skill replaces every other copy with its name for the agents it is enforced for", async () => {
   const { clusterV2Database } = await import("../src/cluster-v2-store.js");
   const { getClusterNode } = await import("../src/cluster.js");
-  const { receiveRelayPolicy, subscribeRelayPolicy } = await import("../src/relay/resource-policy.js");
+  const { receiveRelayPolicy } = await import("../src/relay/resource-policy.js");
   const { activationDecision, relayDeliveredSkill } = await import("../src/resource-activation.js");
   const { syncRelaySkills } = await import("../src/server/skill-sharing.js");
   const { mkdtemp, readFile } = await import("node:fs/promises");
@@ -204,7 +201,6 @@ test("an enforced skill replaces every other copy with its name for the agents i
     enabled.skills.pi.push(NAME);
     const statement = publishRelayPolicy(relayDb, relayId, [], { settings, enabled, skillDigests: { [NAME]: built.digest } });
     receiveRelayPolicy(db, { ...membership, status: "admitted", relayNodeId: relayId, fingerprint: relayIdentity.fingerprint }, relayIdentity.publicKey, statement);
-    subscribeRelayPolicy(db, membership.id, true);
     assert.equal(await syncRelaySkills(), true);
     assert.equal(relayDeliveredSkill(NAME), true);
     assert.equal(activationDecision("skill", NAME, "pi", true, true).enabled, true, "the relay's copy loads");
@@ -212,13 +208,13 @@ test("an enforced skill replaces every other copy with its name for the agents i
     assert.equal(activationDecision("skill", NAME, "pi", false).enabled, false);
     assert.equal(activationDecision("skill", NAME, "pi", true).enabled, false, "a cluster or scoped copy is replaced too");
     assert.equal(activationDecision("skill", NAME, "kiro", false).enabled, true, "kiro is not enforced, so the local decision stands");
-    subscribeRelayPolicy(db, membership.id, false);
+    updateMembership(db, membership.id, { status: "revoked" });
     assert.equal(await syncRelaySkills(), true);
-    assert.equal(activationDecision("skill", NAME, "pi", false).enabled, true, "stopping follow returns the local decision");
+    assert.equal(activationDecision("skill", NAME, "pi", false).enabled, true, "leaving the relay returns the local decision");
     assert.equal(await readFile(path.join(managed, "SKILL.md"), "utf8").then(() => true, () => false), false, "syncRelaySkills removes the delivered copy");
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    subscribeRelayPolicy(db, membership.id, false);
+    updateMembership(db, membership.id, { status: "revoked" });
     await syncRelaySkills().catch(() => false);
     db.prepare("DELETE FROM relay_skill_subscriptions WHERE membership_id=?").run(membership.id);
     db.prepare("DELETE FROM relay_memberships WHERE id=?").run(membership.id);
@@ -238,10 +234,10 @@ test("a policy without delivered skills keeps its old shape, so machines on olde
   } finally { relayDb.close(); }
 });
 
-test("local copies keep working until the relay's copy arrives, and an edited relay copy stays as a local skill after unfollowing", async () => {
+test("local copies keep working until the relay's copy arrives, and an edited relay copy stays as a local skill after leaving the relay", async () => {
   const { clusterV2Database } = await import("../src/cluster-v2-store.js");
   const { getClusterNode } = await import("../src/cluster.js");
-  const { receiveRelayPolicy, subscribeRelayPolicy } = await import("../src/relay/resource-policy.js");
+  const { receiveRelayPolicy } = await import("../src/relay/resource-policy.js");
   const { activationDecision } = await import("../src/resource-activation.js");
   const { syncRelaySkills } = await import("../src/server/skill-sharing.js");
   const { listReceivedSkills } = await import("../src/skill-sharing.js");
@@ -274,7 +270,6 @@ test("local copies keep working until the relay's copy arrives, and an edited re
     enabled.skills.pi.push(NAME);
     const statement = publishRelayPolicy(relayDb, relayId, [], { settings, enabled, skillDigests: { [NAME]: built.digest } });
     receiveRelayPolicy(db, { ...membership, status: "admitted", relayNodeId: relayId, fingerprint: relayIdentity.fingerprint }, relayIdentity.publicKey, statement);
-    subscribeRelayPolicy(db, membership.id, true);
 
     assert.equal(await syncRelaySkills(), false, "the download failed");
     assert.match(String((db.prepare("SELECT last_error FROM skill_peer_status WHERE owner_node_id=?").get(`relay:${relayId}`) as { last_error: string | null }).last_error), /503/);
@@ -285,14 +280,14 @@ test("local copies keep working until the relay's copy arrives, and an edited re
     assert.equal(activationDecision("skill", NAME, "pi", false).enabled, false, "once delivered, the relay's copy replaces it");
 
     await writeFile(path.join(managed, "SKILL.md"), `---\nname: ${NAME}\ndescription: Edited here\n---\nEdited\n`);
-    subscribeRelayPolicy(db, membership.id, false);
+    updateMembership(db, membership.id, { status: "revoked" });
     assert.equal(await syncRelaySkills(), true);
     assert.match(await readFile(path.join(managed, "SKILL.md"), "utf8"), /Edited here/, "the edited copy is kept");
     assert.equal(await receivedOwner(agentResourcePaths().sharedSkills, NAME), undefined, "and is now this node's own skill");
     assert.equal(listReceivedSkills(db).some((item) => item.name === NAME), false);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    subscribeRelayPolicy(db, membership.id, false);
+    updateMembership(db, membership.id, { status: "revoked" });
     await syncRelaySkills().catch(() => false);
     db.prepare("DELETE FROM skill_peer_status WHERE owner_node_id=?").run(`relay:${relayId}`);
     db.prepare("DELETE FROM relay_skill_subscriptions WHERE membership_id=?").run(membership.id);

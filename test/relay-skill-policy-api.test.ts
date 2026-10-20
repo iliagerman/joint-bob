@@ -7,7 +7,7 @@ import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type Signed
 import { waitForAssertion } from "./async-assertion.js";
 
 // Real node processes and WebSocket policy delivery, not a database reopen standing in for a restart.
-test("opted-in relay blocks and per-harness choices survive receiver and publisher restarts and reconnect", { timeout: 120_000 }, async () => {
+test("joined relay blocks and per-harness choices survive receiver and publisher restarts and reconnect", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "relay-policy-api-"));
   const children: Awaited<ReturnType<typeof startDevNode>>[] = [];
   try {
@@ -24,24 +24,21 @@ test("opted-in relay blocks and per-harness choices survive receiver and publish
     assert.equal((await api(r, sr, "PUT", "/relay/serving/skill-policy", { rules })).status, 200);
     const token = await api<{ link: string }>(r, sr, "POST", "/relay/serving/tokens", { label: "receiver" });
     assert.equal((await api(n, sn, "POST", "/relays", { link: token.body.link })).status, 201);
-    const subscription = async (session: SignedIn) => (await api<{ subscriptions: Array<{ id: string; optedIn: boolean; version: number }> }>(n, session, "GET", "/relays/skill-policies")).body.subscriptions[0];
+    const subscription = async (session: SignedIn) => (await api<{ subscriptions: Array<{ id: string; version: number }> }>(n, session, "GET", "/relays/skill-policies")).body.subscriptions[0];
     await waitForAssertion(async () => assert.equal((await subscription(sn))?.version, 1), 15_000);
-    const id = (await subscription(sn)).id;
     const enabled = async (harness: string) => {
       const inventory = await api<{ nodes: Array<{ inventory: { skills: Array<{ name: string; activation: Record<string, { enabled: boolean; preference: boolean | null }> }> } }> }>(n, sn, "GET", "/resources/inventory");
       return inventory.body.nodes[0].inventory.skills.find((item) => item.name === "policy-restart")!.activation[harness];
     };
-    assert.equal((await subscription(sn)).optedIn, false);
-    assert.equal((await enabled("pi")).enabled, true, "joining a relay alone grants no resource control");
+    assert.equal((await enabled("pi")).enabled, false, "joining a relay enforces its rules without an opt-in");
     assert.equal((await api(n, sn, "PUT", "/resources/activation/item", { kind: "skill", name: "policy-restart", harness: "pi", enabled: true })).status, 200);
     assert.equal((await api(n, sn, "PUT", "/resources/activation/item", { kind: "skill", name: "policy-restart", harness: "claude", enabled: false })).status, 200);
-    assert.equal((await api(n, sn, "PUT", `/relays/${id}/skill-policy-subscription`, { optedIn: true })).status, 200);
-    assert.equal((await enabled("pi")).enabled, false);
+    assert.equal((await enabled("pi")).enabled, false, "the relay block wins over a local enable");
+    assert.equal((await api(n, sn, "PUT", `/relays/${(await subscription(sn)).id}/skill-policy-subscription`, { optedIn: false })).status, 404, "there is no way to opt out");
     await stopDevNode(children[1]);
     await stopDevNode(children[0]);
     children[1] = await startDevNode(receiver, n);
     sn = await signIn(receiver, n);
-    assert.equal((await subscription(sn)).optedIn, true);
     assert.equal((await enabled("pi")).enabled, false, "cached block remains while publisher is offline");
     assert.equal((await enabled("pi")).preference, true);
     assert.equal((await enabled("claude")).enabled, false);

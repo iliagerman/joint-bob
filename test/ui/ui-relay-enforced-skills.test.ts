@@ -16,7 +16,7 @@ import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 const skillName = "relay-enforced-fixture";
 
-test("a followed relay installs its enforced skill over the local one, marks it in the list, and unfollowing restores the local skill", { timeout: 180_000 }, async () => {
+test("a joined relay installs its enforced skill over the local one without an opt-in, marks it in the list, and leaving it restores the local skill", { timeout: 180_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "relay-enforced-ui-"));
   let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
   let browser: Awaited<ReturnType<typeof launchChrome>> | undefined;
@@ -81,13 +81,12 @@ test("a followed relay installs its enforced skill over the local one, marks it 
     await page.getByTestId("resources-refresh-button").click();
     const row = page.getByTestId("resources-skill-row").filter({ hasText: skillName });
     await row.waitFor();
-    assert.equal(await row.getByText("from relay").count(), 0, "nothing is installed before this node follows the relay");
     await page.getByTestId("resources-relay-summary").click();
+    await page.getByTestId("resources-relay-status").getByText(/1 relay policy enforced on this node/).waitFor();
+    assert.equal(await page.getByTestId("resources-relay-follow").count(), 0, "there is no opt-in to follow a relay");
     await page.getByTestId("resources-relay-select").locator(`option[value="${membershipId}"]`).waitFor({ state: "attached" });
     await page.getByTestId("resources-relay-select").selectOption(membershipId);
-    await page.getByTestId("resources-relay-follow").click();
-    await page.getByText(/enforces 1 skills and will install them here with their files, scripts included/).waitFor();
-    await page.getByTestId("confirm-accept-button").click();
+    await page.getByTestId("resources-relay-preview").getByText(/Signed version 1 · Enforced on this node/).waitFor();
 
     await row.getByText("from relay").waitFor();
     await row.getByText(/Enforced by Team relay/).waitFor();
@@ -107,11 +106,12 @@ test("a followed relay installs its enforced skill over the local one, marks it 
     await row.waitFor();
     await page.getByTestId("resources-state-select").selectOption("");
 
-    await page.getByTestId("resources-relay-follow").getByText("Stop following").waitFor();
-    await page.getByTestId("resources-relay-follow").click();
+    const leaving = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    try { updateMembership(leaving, membershipId, { status: "revoked" }); } finally { leaving.close(); }
+    await page.getByTestId("resources-refresh-button").click();
     await row.getByText("from relay").waitFor({ state: "detached" });
-    assert.equal(await page.getByText(/Receiving from 1 relay/).count(), 0, "an unfollowed relay leaves no sync status");
-    assert.match(await readFile(path.join(managed, "SKILL.md"), "utf8"), /Local version/, "unfollowing restores this node's own skill");
+    assert.equal(await page.getByText(/Receiving from 1 relay/).count(), 0, "a relay this node left leaves no sync status");
+    assert.match(await readFile(path.join(managed, "SKILL.md"), "utf8"), /Local version/, "leaving the relay restores this node's own skill");
     assert.equal(await toggle.isDisabled(), false, "the node manages the skill again");
   } finally {
     if (browser) await browser.close();

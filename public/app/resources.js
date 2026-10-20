@@ -81,7 +81,7 @@ function isRelayForced(decision) {
   return decision.reason.startsWith("Enforced by relay:") || decision.reason.startsWith("Replaced by relay:") || decision.reason.endsWith("(not enabled there)");
 }
 
-/** What the followed relays do to one resource: how many agents it enforces or blocks, and which relays. */
+/** What the admitted relays do to one resource: how many agents it enforces or blocks, and which relays. */
 function relayControl(item) {
   const decisions = Object.values(item.activation ?? {});
   const forced = decisions.filter(isRelayForced);
@@ -531,9 +531,9 @@ function skillRow(skill, local) {
         ? `${control.relays.join(", ")} enforces its own copy of this skill, so agents load the relay's copy instead of this one.`
         : `${control.relays.join(", ")} controls this skill${all ? "" : " for some agents"}. Locked agents cannot be changed on this node; the others you manage here.`;
       head.append(mark);
-    } else if (view.relayPolicies.some((item) => item.optedIn)) {
+    } else if (view.relayPolicies.some((item) => item.version !== null)) {
       const mark = badge("managed here", "local");
-      mark.title = "No relay you follow controls this skill. Enable or disable it per agent on this node.";
+      mark.title = "No relay this node joined controls this skill. Enable or disable it per agent on this node.";
       head.append(mark);
     }
   }
@@ -547,7 +547,7 @@ function skillRow(skill, local) {
     const status = document.createElement("small");
     status.dataset.testid = "skill-sharing-summary";
     status.textContent = `Enforced by ${policy.receivedFromName || "a relay"}`;
-    status.title = `Delivered by ${policy.receivedFromName || "a relay"} with its files. Stop following the relay's rules to remove it.${policy.lastSync ? ` Last sync ${new Date(policy.lastSync).toLocaleString()}.` : ""}`;
+    status.title = `Delivered by ${policy.receivedFromName || "a relay"} with its files. It stays while the relay enforces it; leave the relay to remove it.${policy.lastSync ? ` Last sync ${new Date(policy.lastSync).toLocaleString()}.` : ""}`;
     actions.append(status);
   } else if (policy?.kind === "received") {
     const status = document.createElement("small");
@@ -870,8 +870,11 @@ const RELAY_KINDS = ["skills", "mcp", "plugins"];
 const RELAY_KIND_LABELS = { skills: "skills", mcp: "MCP servers", plugins: "plugins" };
 
 function renderRelayPolicy() {
-  const following = view.relayPolicies.filter((policy) => policy.optedIn).length;
-  document.querySelector("#resourcesRelayStatus").textContent = following ? `· Following ${following} relay${following === 1 ? "" : "s"} on this node` : "· Not following on this node";
+  // Joining a relay accepts its rules; there is no opt-in, so every admitted relay with a signed policy applies.
+  const applied = view.relayPolicies.filter((policy) => policy.version !== null).length;
+  const waiting = view.relayPolicies.length - applied;
+  document.querySelector("#resourcesRelayStatus").textContent = view.relayPolicies.length
+    ? `· ${applied} relay polic${applied === 1 ? "y" : "ies"} enforced on this node${waiting ? ` · ${waiting} awaiting a signed policy` : ""}` : "";
   const select = document.querySelector("#resourcesRelaySelect");
   const selected = select.value;
   select.replaceChildren(new Option("Choose a relay", ""), ...view.relayPolicies.map((item) => new Option(item.name || item.origin, item.id)));
@@ -880,11 +883,11 @@ function renderRelayPolicy() {
   preview.replaceChildren();
   const policy = view.relayPolicies.find((item) => item.id === select.value);
   if (!policy) {
-    preview.append(emptyRow(view.relayPolicies.length ? "Choose a relay to review its rules before following." : "No admitted relays on this node. Join a relay in Settings → Relays first."));
+    preview.append(emptyRow(view.relayPolicies.length ? "Choose a relay to review the rules it enforces on this node." : "No admitted relays on this node. Join a relay in Settings → Relays first."));
     return;
   }
   const heading = document.createElement("p");
-  heading.textContent = policy.version === null ? "No signed policy received yet. Wait for this relay to reconnect." : `Signed version ${policy.version} · ${policy.optedIn ? "Following" : "Not following"}${policy.updatedAt ? ` · received ${new Date(policy.updatedAt).toLocaleString()}` : ""}`;
+  heading.textContent = policy.version === null ? "No signed policy received yet. Wait for this relay to reconnect." : `Signed version ${policy.version} · Enforced on this node${policy.updatedAt ? ` · received ${new Date(policy.updatedAt).toLocaleString()}` : ""}`;
   preview.append(heading);
   for (const rule of policy.rules) {
     const line = document.createElement("div");
@@ -903,16 +906,6 @@ function renderRelayPolicy() {
   const enforced = policy.settings?.skills?.enforce ? policy.skillDigestCount ?? 0 : 0;
   summary.textContent = `${affected.length} installed skill${affected.length === 1 ? "" : "s"} affected by its rules${enforced ? `; it enforces ${enforced} skill${enforced === 1 ? "" : "s"}, installed here with their files` : ""}. Blocking overrides every local enable. Enforced skills cannot be disabled on this node. Local disables override other relay enables.`;
   preview.append(summary);
-  const action = button(policy.optedIn ? "Stop following" : "Follow this relay's rules", "resources-relay-follow", async () => {
-    if (!policy.optedIn && policy.version === null) { toast("Wait for a signed policy before following this relay."); return; }
-    if (!policy.optedIn && !await confirmAction({ title: `Follow ${policy.name || policy.origin}?`, message: `This relay can enable or block skills on this node. Preview the ${policy.rules.length} rules above before allowing updates.${policy.settings?.skills?.enforce && policy.skillDigestCount ? ` It also enforces ${policy.skillDigestCount} skills and will install them here with their files, scripts included, and keep them up to date. Local skills with the same names are backed up and replaced.` : ""}`, confirmLabel: "Follow relay" })) return;
-    action.disabled = true;
-    try {
-      await api(`/api/relays/${encodeURIComponent(policy.id)}/skill-policy-subscription`, { method: "PUT", body: JSON.stringify({ optedIn: !policy.optedIn }) });
-      await loadInventory();
-    } catch (error) { action.disabled = false; toast(error.message); }
-  }, "ghost compact");
-  preview.append(action);
 }
 
 function renderSummary() {
@@ -943,7 +936,7 @@ function render() {
   keepSpace(document.querySelector("#resourcesStateSelect"), stateTab);
   keepSpace(document.querySelector("#resourcesControlsHint"), stateTab);
   keepSpace(document.querySelector(".resources-auto-activate"), stateTab);
-  // The relay rules exist only on nodes that follow or serve a relay; there they keep their place on every listing tab.
+  // The relay rules exist only on nodes that joined or serve a relay; there they keep their place on every listing tab.
   const relayPolicy = document.querySelector("#resourcesRelayPolicy");
   const relayRelevant = view.relayPolicies.length > 0 || !document.querySelector("#resourcesRelayPublisher").hidden;
   relayPolicy.hidden = !listing || !relayRelevant;
@@ -1565,7 +1558,7 @@ document.querySelector("#resourcesRelayPublish").addEventListener("click", async
     allowOthers: document.querySelector(`[data-relay-allow="${kind}"]`).checked,
     enforce: document.querySelector(`[data-relay-enforce="${kind}"]`).checked,
   }]));
-  if (!await confirmAction({ title: "Publish relay rules?", message: `Publish ${rules.length} signed rules and these skill, MCP server and plugin settings as a new version to every connected machine that follows this relay?`, confirmLabel: "Publish" })) return;
+  if (!await confirmAction({ title: "Publish relay rules?", message: `Publish ${rules.length} signed rules and these skill, MCP server and plugin settings as a new version to every machine connected to this relay? They are enforced there at once.`, confirmLabel: "Publish" })) return;
   publishButton.disabled = true;
   try { await api("/api/relay/serving/skill-policy", { method: "PUT", body: JSON.stringify({ rules, settings }) }); await loadInventory(); }
   catch (error) { toast(error.message); }

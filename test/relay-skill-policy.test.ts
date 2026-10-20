@@ -8,7 +8,7 @@ import test from "node:test";
 import { clusterPublicKeyFingerprint, getOrCreateClusterIdentity } from "../src/cluster-identity.js";
 import { activationDecision, setActivationPreference } from "../src/resource-activation.js";
 import { relaySkillDirective } from "../src/relay/resource-policy.js";
-import { publishRelayPolicy, publishedRelayPolicy, receiveRelayPolicy, relayPolicySubscriptions, subscribeRelayPolicy } from "../src/relay/resource-policy.js";
+import { publishRelayPolicy, publishedRelayPolicy, receiveRelayPolicy, relayPolicySubscriptions } from "../src/relay/resource-policy.js";
 import { createMembership, updateMembership } from "../src/relay/store.js";
 import { settingsDatabase } from "../src/settings-store.js";
 
@@ -22,7 +22,7 @@ const admitted = { ...member, status: "admitted" as const, relayNodeId: relayId,
 
 test.after(() => { local.prepare("DELETE FROM relay_skill_subscriptions WHERE membership_id=?").run(member.id); local.prepare("DELETE FROM relay_memberships WHERE id=?").run(member.id); relay.close(); });
 
-test("an opted-in relay block remains cached and effective after node restart and policy reconnect", async () => {
+test("an admitted relay block remains cached and effective after node restart and policy reconnect", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "relay-policy-restart-"));
   const file = path.join(directory, "node.db");
   let db = new DatabaseSync(file);
@@ -35,7 +35,6 @@ test("an opted-in relay block remains cached and effective after node restart an
     const admittedMembership = { ...membership, status: "admitted" as const, relayNodeId: sourceRelayId, fingerprint: sourceIdentity.fingerprint };
     const statement = publishRelayPolicy(sourceRelay, sourceRelayId, [{ action: "block", name: "restart-probe", harness: "pi" }]);
     assert.equal(receiveRelayPolicy(db, admittedMembership, sourceIdentity.publicKey, statement), true);
-    subscribeRelayPolicy(db, membership.id, true);
     db.close();
     db = new DatabaseSync(file);
     assert.equal(relayPolicySubscriptions(db).find((item) => item.relay.id === membership.id)?.statement?.body.version, statement.body.version);
@@ -45,16 +44,13 @@ test("an opted-in relay block remains cached and effective after node restart an
   } finally { db.close(); sourceRelay.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("relay skill rules are signed, versioned, cached and require local opt-in", () => {
+test("relay skill rules are signed, versioned, cached and enforced without an opt-in", () => {
   const first = publishRelayPolicy(relay, relayId, [
     { action: "enable", name: "policy-fixture", harness: "claude" },
     { action: "block", name: "policy-fixture", harness: "pi" },
   ]);
   assert.equal(first.body.version, 1);
   assert.equal(receiveRelayPolicy(local, admitted, identity.publicKey, first), true);
-  assert.equal(relayPolicySubscriptions(local).find((item) => item.relay.id === member.id)?.optedIn, false);
-  assert.equal(activationDecision("skill", "policy-fixture", "claude", true).reason.includes("relay"), false);
-  subscribeRelayPolicy(local, member.id, true);
   assert.equal(activationDecision("skill", "policy-fixture", "claude", true).enabled, true);
   assert.equal(activationDecision("skill", "policy-fixture", "pi", false).enabled, false);
   assert.equal(activationDecision("skill", "policy-fixture", "kiro", false).enabled, true);
@@ -75,19 +71,17 @@ test("relay skill rules are signed, versioned, cached and require local opt-in",
   assert.throws(() => receiveRelayPolicy(local, admitted, getOrCreateClusterIdentity(new DatabaseSync(":memory:"), randomUUID()).publicKey, next), /signature is invalid/);
   assert.equal(clusterPublicKeyFingerprint(identity.publicKey), admitted.fingerprint);
   assert.equal(relayPolicySubscriptions(local).find((item) => item.relay.id === member.id)?.statement?.body.version, 2, "last signed version remains cached");
-  subscribeRelayPolicy(local, member.id, false);
-  assert.equal(activationDecision("skill", "policy-fixture", "kiro", false).enabled, true);
+  assert.equal(receiveRelayPolicy(local, admitted, identity.publicKey, publishRelayPolicy(relay, relayId, [])), true);
+  assert.equal(activationDecision("skill", "policy-fixture", "kiro", false).enabled, true, "a cleared policy lifts its rules");
   setActivationPreference("skill", "policy-fixture", "claude", null);
   setActivationPreference("skill", "policy-fixture", "pi", null);
 });
 
-test("a relay can restrict followers to its enabled resources and enforce them over a local disable", () => {
+test("a relay can restrict connected nodes to its enabled resources and enforce them over a local disable", () => {
   const enabled = { skills: { pi: ["relay-on"], claude: ["relay-on"], kiro: [] }, mcp: { pi: [], claude: ["relay-mcp"], kiro: [] }, plugins: { pi: [], claude: [], kiro: [] } };
   const toggles = { allowOthers: false, enforce: true };
   const statement = publishRelayPolicy(relay, relayId, [], { settings: { skills: toggles, mcp: { allowOthers: true, enforce: true }, plugins: { allowOthers: true, enforce: false } }, enabled });
   assert.equal(receiveRelayPolicy(local, admitted, identity.publicKey, statement), true);
-  assert.equal(activationDecision("skill", "relay-off", "claude", false).enabled, true, "ignored until this node follows the relay");
-  subscribeRelayPolicy(local, member.id, true);
   try {
     assert.equal(activationDecision("skill", "relay-off", "claude", false).enabled, false, "skills the relay has not enabled are blocked when others are not allowed");
     assert.match(activationDecision("skill", "relay-off", "claude", false).reason, /^Blocked by relay/);
@@ -99,7 +93,7 @@ test("a relay can restrict followers to its enabled resources and enforce them o
     assert.equal(activationDecision("mcp", "relay-mcp", "claude", false).enabled, true);
     assert.equal(activationDecision("plugin", "any-plugin", "claude", false).enabled, true, "plugins are unrestricted");
   } finally {
-    subscribeRelayPolicy(local, member.id, false);
+    receiveRelayPolicy(local, admitted, identity.publicKey, publishRelayPolicy(relay, relayId, []));
     setActivationPreference("skill", "relay-on", "claude", null);
     setActivationPreference("mcp", "relay-mcp", "claude", null);
   }

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { clusterPublicKeyFingerprint, signClusterMessage, verifyClusterMessage } from "../cluster-identity.js";
-import { listMemberships, membership, type RelayMembership } from "./store.js";
+import { listMemberships, type RelayMembership } from "./store.js";
 import { encodeControl, MAX_FRAME } from "./protocol.js";
 import type { HarnessId } from "../types.js";
 
@@ -83,21 +83,17 @@ export function receiveRelayPolicy(db: DatabaseSync, relay: RelayMembership, pub
   return true;
 }
 
-export function subscribeRelayPolicy(db: DatabaseSync, membershipId: string, optedIn: boolean): void {
-  const relay = membership(db, membershipId);
-  if (!relay || relay.status !== "admitted") throw new Error("Only an admitted relay may control skills");
+/**
+ * The signed policy of every admitted relay. Joining a relay accepts its rules: there is no opt-in,
+ * so the legacy opted_in column is ignored.
+ */
+export function relayPolicySubscriptions(db: DatabaseSync): Array<{ relay: RelayMembership; statement: SignedRelaySkillPolicy | null; updatedAt: string | null }> {
   schema(db);
-  db.prepare("INSERT INTO relay_skill_subscriptions(membership_id,opted_in) VALUES(?,?) ON CONFLICT(membership_id) DO UPDATE SET opted_in=excluded.opted_in")
-    .run(membershipId, Number(optedIn));
-}
-
-export function relayPolicySubscriptions(db: DatabaseSync): Array<{ relay: RelayMembership; optedIn: boolean; statement: SignedRelaySkillPolicy | null; updatedAt: string | null }> {
-  schema(db);
-  const rows = db.prepare("SELECT membership_id,opted_in,statement,updated_at FROM relay_skill_subscriptions").all() as Array<{ membership_id: string; opted_in: number; statement: string | null; updated_at: string | null }>;
+  const rows = db.prepare("SELECT membership_id,statement,updated_at FROM relay_skill_subscriptions").all() as Array<{ membership_id: string; statement: string | null; updated_at: string | null }>;
   const byId = new Map(rows.map((row) => [row.membership_id, row]));
   return listMemberships(db).filter((relay) => relay.status === "admitted").map((relay) => {
     const row = byId.get(relay.id);
-    return { relay, optedIn: row?.opted_in === 1, statement: row?.statement ? signedRelaySkillPolicySchema.parse(JSON.parse(row.statement)) : null, updatedAt: row?.updated_at ?? null };
+    return { relay, statement: row?.statement ? signedRelaySkillPolicySchema.parse(JSON.parse(row.statement)) : null, updatedAt: row?.updated_at ?? null };
   });
 }
 
@@ -107,9 +103,9 @@ export function relayPolicyLabel(relay: RelayMembership): string {
   return relay.environment ? `${relay.environment} · ${host}` : host;
 }
 
-/** A relay is a policy author only after this machine opts in. Blocking wins across authors. */
+/** Every admitted relay is a policy author. Blocking wins across authors. */
 export function relaySkillDirective(db: DatabaseSync, name: string, harness: HarnessId): { action: "enable" | "block"; relays: string[] } | null {
-  const matched = relayPolicySubscriptions(db).filter(({ optedIn }) => optedIn).flatMap(({ relay, statement }) =>
+  const matched = relayPolicySubscriptions(db).flatMap(({ relay, statement }) =>
     (statement?.body.rules ?? []).filter((item) => item.name === name && (item.harness === "all" || item.harness === harness))
       .map((item) => ({ action: item.action, label: relayPolicyLabel(relay) })));
   const action = matched.some((item) => item.action === "block") ? "block" : matched.length ? "enable" : null;
@@ -119,13 +115,13 @@ export function relaySkillDirective(db: DatabaseSync, name: string, harness: Har
 const KIND_KEY = { skill: "skills", mcp: "mcp", plugin: "plugins" } as const;
 
 /**
- * What opted-in relays say about one resource beyond per-skill rules.
+ * What admitted relays say about one resource beyond per-skill rules.
  * `forced` means the relay's enforce setting wins over a local disable.
  */
 export function relayResourceDirective(db: DatabaseSync, kind: keyof typeof KIND_KEY, name: string, harness: HarnessId): { action: "enable" | "block"; relays: string[]; forced: boolean } | null {
   const key = KIND_KEY[kind];
   const listed = (enabled: RelayEnabledResources): string[] => (enabled[key] as Record<string, string[]>)[harness] ?? [];
-  const subscribed = relayPolicySubscriptions(db).filter(({ optedIn, statement }) => optedIn && statement);
+  const subscribed = relayPolicySubscriptions(db).filter(({ statement }) => statement);
   const blocking = subscribed.filter(({ statement }) => !statement!.body.settings[key].allowOthers && !listed(statement!.body.enabled).includes(name));
   if (blocking.length) return { action: "block", relays: blocking.map(({ relay }) => relayPolicyLabel(relay)), forced: true };
   const enforcing = subscribed.filter(({ statement }) => statement!.body.settings[key].enforce && listed(statement!.body.enabled).includes(name));
