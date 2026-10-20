@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SignedIn } from "./dev-nodes.js";
-import { addMember } from "./node-script.js";
 
 type Command = { id: string; name: string; prompt: string };
 type Catalog = { commands: Command[]; recentIds: string[] };
@@ -17,7 +16,9 @@ test("saved command ownership, sharing targets and usage stay isolated between l
   const server = await startDevNode(environment, node, { JOINT_BOB_TEST_MULTI_USER_READY: "1" });
   try {
     const admin = await signIn(environment, node);
-    const member = addMember(environment, node, "bea", "bea@example.test");
+    const createdMember = await api<{ oneTimePassword: string }>(node, admin, "POST", "/users", { username: "bea", email: "bea@example.test" });
+    assert.equal(createdMember.status, 201);
+    const member = createdMember.body;
     const login = await fetch(`${node.url}/api/auth/login`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "bea", password: member.oneTimePassword }),

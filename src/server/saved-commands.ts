@@ -13,14 +13,15 @@ import { listTwinUpdateTargets } from "../twin-updates.js";
 import { getProject, listProjects, listWorkspaces } from "../store.js";
 import { commandId, commandInScope, commandPeerGrant, commandPolicies, commandPresetSchema, commandSelectionSchema, emptyCommandSelection, recentCommandIds, recordCommandUse, setCommandPolicy, type CommandSelection } from "../saved-commands.js";
 import { peerFetch } from "../relay/transport.js";
+import { commandManifestSchema, pruneReceivedCommands, readReceivedCommands, replaceReceivedCommands, retainCommandGrants, type CommandOffer } from "../received-commands.js";
+import { nodesBlockedBetween } from "../node-blocks.js";
+import { whilePeerOptional } from "../peer-presence.js";
+import { settled, warnOnChange } from "./quiet-log.js";
 import { mayShareProject } from "./sharing-files.js";
 import { sendError } from "./http-auth.js";
 import { app } from "./state.js";
 
 const contextSchema = z.object({ projectId: z.string().min(1).max(300), conversationId: z.string().min(1).max(300).optional() }).strict();
-const offerSchema = commandPresetSchema.extend({ id: z.string().min(1).max(600), ownerNodeId: z.string().uuid(), global: z.boolean(), grantClusterIds: z.array(z.string().uuid()).max(100), twinRelationshipId: z.string().uuid().optional(), projectIds: z.array(z.string()).max(500), conversations: commandSelectionSchema.shape.conversations }).strict();
-const manifestSchema = z.object({ ownerNodeId: z.string().uuid(), commands: z.array(offerSchema).max(5000) }).strict();
-type Offer = z.infer<typeof offerSchema>;
 function failure(message: string, status = 400): Error { return Object.assign(new Error(message), { status }); }
 
 async function peers() {
@@ -40,7 +41,7 @@ async function peers() {
     const node = nodes.get(twin.nodeId) ?? { nodeId: twin.nodeId, name: twin.name, url: twin.url, clusterIds: [], incarnations: [] };
     nodes.set(twin.nodeId, { ...node, twinRelationshipId: twin.relationshipId });
   }
-  return { db, local, clusters, nodes: [...nodes.values()] };
+  return { db, local, clusters, nodes: [...nodes.values()].filter((node) => !nodesBlockedBetween(db, local, node.nodeId)) };
 }
 function expandedProjects(db: Awaited<ReturnType<typeof clusterV2Database>>, selection: CommandSelection): string[] {
   const ids = new Set(selection.projectIds);
@@ -53,7 +54,7 @@ async function manifestFor(receiver: string) {
   const { db, local, nodes } = await peers();
   const peer = nodes.find((n) => n.nodeId === receiver);
   if (!peer) throw failure("Forbidden", 403);
-  const commands: Offer[] = [];
+  const commands: CommandOffer[] = [];
   for (const policy of commandPolicies(db)) {
     const grant = commandPeerGrant(db, local, receiver, policy);
     if (!grant.common) continue;
@@ -88,39 +89,78 @@ async function manifestFor(receiver: string) {
   return { ownerNodeId: local, commands };
 }
 
-/** Pull on reads: revoked/edited commands never survive as stale, usable cached prompts. */
-async function receivedCommands(session: AuthSession) {
+type Peer = Awaited<ReturnType<typeof peers>>["nodes"][number];
+async function commandPost(db: Awaited<ReturnType<typeof clusterV2Database>>, local: string, node: Peer, target: string) {
+  const body = Buffer.from("{}");
+  return peerFetch(new URL(target, node.url), { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000), body,
+    headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, local, node.nodeId, "POST", target, body) } }, node.nodeId);
+}
+async function fetchManifest(db: Awaited<ReturnType<typeof clusterV2Database>>, local: string, node: Peer): Promise<CommandOffer[]> {
+  const response = await commandPost(db, local, node, "/api/cluster/v2/commands/manifest");
+  if (!response.ok) {
+    await response.body?.cancel();
+    if (response.status === 403) return []; // The owner explicitly withdrew access.
+    throw failure(`Command peer returned ${response.status}`);
+  }
+  const reader = response.body!.getReader();
+  const chunks: Uint8Array[] = []; let bytes = 0;
+  try { for (;;) { const part = await reader.read(); if (part.done) break; bytes += part.value.length; if (bytes > 4 * 1024 * 1024) throw failure("Command manifest exceeds limit"); chunks.push(part.value); } }
+  finally { await reader.cancel(); }
+  const manifest = commandManifestSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+  if (manifest.ownerNodeId !== node.nodeId || manifest.commands.some((c) => c.ownerNodeId !== node.nodeId || !c.id.startsWith(`${node.nodeId}/`))) throw failure("Wrong command owner");
+  return manifest.commands;
+}
+async function syncCommandOwner(owner: string): Promise<void> {
+  const { db, local, nodes } = await peers(), node = nodes.find((n) => n.nodeId === owner);
+  if (!node) return;
+  let commands: CommandOffer[];
+  try {
+    commands = await fetchManifest(db, local, node);
+    settled(`commands:${owner}`);
+  } catch (error) {
+    warnOnChange(`commands:${owner}`, `Command sync from ${owner} failed; keeping the last synced commands: ${(error as Error).message}`);
+    return;
+  }
+  const current = await peers(), currentNode = current.nodes.find((n) => n.nodeId === owner);
+  pruneReceivedCommands(db, current.nodes);
+  if (currentNode) replaceReceivedCommands(db, currentNode, retainCommandGrants(commands, node, currentNode));
+}
+const commandSyncs = new Map<string, Promise<void>>();
+function refreshCommandOwner(owner: string, changed = false): Promise<void> {
+  const pending = commandSyncs.get(owner);
+  if (pending && !changed) return pending;
+  // Change notices must fetch after an older in-flight snapshot, not reuse it.
+  const work = (async () => { await pending; await syncCommandOwner(owner); })();
+  commandSyncs.set(owner, work);
+  return work.finally(() => { if (commandSyncs.get(owner) === work) commandSyncs.delete(owner); });
+}
+export async function refreshSharedCommands(): Promise<void> {
+  const { db, nodes } = await peers();
+  pruneReceivedCommands(db, nodes);
+  await Promise.all(nodes.map((node) => refreshCommandOwner(node.nodeId)));
+}
+/** Saves never depend on a peer being online. Periodic pulls catch up missed notices. */
+export async function announceCommandChanges(): Promise<void> {
   const { db, local, nodes } = await peers();
-  const target = "/api/cluster/v2/commands/manifest";
-  const ownerSession = session.role === "admin" && !session.isRemoteLogin;
-  const replies = await Promise.all(nodes.filter((n) => ownerSession && n.twinRelationshipId || n.clusterIds.some((id) => accountInCluster(db, session.accountId, id))).map(async (node) => {
+  await Promise.all(nodes.map(async (node) => {
     try {
-      const body = Buffer.from("{}");
-      const response = await peerFetch(new URL(target, node.url), { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000), body,
-        headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, local, node.nodeId, "POST", target, body) } }, node.nodeId);
-      if (!response.ok) { await response.body?.cancel(); return []; }
-      const reader = response.body?.getReader();
-      if (!reader) return [];
-      const chunks: Uint8Array[] = []; let bytes = 0;
-      try { for (;;) { const part = await reader.read(); if (part.done) break; bytes += part.value.length; if (bytes > 4 * 1024 * 1024) throw failure("Command manifest exceeds limit"); chunks.push(part.value); } }
-      finally { await reader.cancel(); }
-      const manifest = manifestSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      if (manifest.ownerNodeId !== node.nodeId || manifest.commands.some((c) => c.ownerNodeId !== node.nodeId || !c.id.startsWith(`${node.nodeId}/`))) throw failure("Wrong command owner");
-      // A leave/rejoin while the request was in flight invalidates this response.
-      const current = await peers();
-      const currentNode = current.nodes.find((n) => n.nodeId === node.nodeId);
-      if (!currentNode) return [];
-      return manifest.commands.flatMap(({ grantClusterIds, twinRelationshipId, ...command }) => {
-        const twinGrant = ownerSession && Boolean(twinRelationshipId)
-          && twinRelationshipId === node.twinRelationshipId && twinRelationshipId === currentNode.twinRelationshipId;
-        const clusterGrant = grantClusterIds.some((id) => accountInCluster(db, session.accountId, id)
-          && currentNode.incarnations.some((incarnation) => incarnation.startsWith(`${id}:`) && node.incarnations.includes(incarnation)));
-        if (!twinGrant && !clusterGrant) return [];
-        return [{ ...command, global: command.global || twinGrant, receivedFrom: node.nodeId, receivedFromName: node.name, kind: "received" as const, clusterIds: [], nodeIds: [], workspaceIds: [] }];
-      });
-    } catch { return []; } // An unreachable owner grants nothing until it can be checked again.
+      const response = await commandPost(db, local, node, "/api/cluster/v2/commands/changed");
+      await response.body?.cancel();
+      if (!response.ok) throw failure(`Command peer returned ${response.status}`);
+      settled(`command-notice:${node.nodeId}`);
+    } catch (error) { warnOnChange(`command-notice:${node.nodeId}`, `Command change notice to ${node.nodeId} failed: ${(error as Error).message}`); }
   }));
-  return replies.flat();
+}
+async function receivedCommands(session: AuthSession) {
+  await whilePeerOptional(refreshSharedCommands);
+  const { db, nodes } = await peers();
+  const ownerSession = session.role === "admin" && !session.isRemoteLogin;
+  return nodes.flatMap((node) => readReceivedCommands(db, node).flatMap(({ grantClusterIds, twinRelationshipId, ...command }) => {
+    const twinGrant = ownerSession && Boolean(twinRelationshipId);
+    const clusterGrant = grantClusterIds.some((id) => accountInCluster(db, session.accountId, id));
+    if (!twinGrant && !clusterGrant) return [];
+    return [{ ...command, global: command.global || twinGrant, receivedFrom: node.nodeId, receivedFromName: node.name, kind: "received" as const, clusterIds: [], nodeIds: [], workspaceIds: [] }];
+  }));
 }
 async function inventory(session: AuthSession) {
   const { db, local } = await peers();
@@ -167,6 +207,7 @@ export function registerSavedCommandRoutes(): void {
     if (settings.presets.length >= 50) throw failure("You can save up to 50 commands. Remove one in Settings → Commands first.");
     const saved = updatePersonalSettings({ conversationCommands: { ...settings, presets: [...settings.presets, preset] } }, undefined, session.accountId);
     const command = saved.conversationCommands.presets.at(-1)!;
+    await announceCommandChanges();
     return { command: { ...command, id: commandId(local, session.accountId, command.id!) } };
   }));
   app.post("/api/commands/:id/use", route(async (request, session) => {
@@ -195,8 +236,14 @@ export function registerSavedCommandRoutes(): void {
     for (const id of expandedProjects(db, selection)) if (!projects.some((p) => p.id === id)) throw failure("Workspace contains inaccessible projects", 403);
     try { setCommandPolicy(db, local, session.accountId, preset.id!, session.role === "admin", selection); }
     catch (error) { throw failure((error as Error).message); }
+    await announceCommandChanges();
     return { id: request.params.id, ...selection };
   }));
   app.post("/api/commands/refresh", route(async (request, session) => { z.object({}).strict().parse(request.body); return { commands: await inventory(session) }; }));
+  app.post("/api/cluster/v2/commands/changed", route(async (request, _session, response) => {
+    z.object({}).strict().parse(request.body);
+    await refreshCommandOwner(response.locals.machineNodeId, true);
+    return { ok: true };
+  }, true));
   app.post("/api/cluster/v2/commands/manifest", route(async (request, _session, response) => { z.object({}).strict().parse(request.body); return manifestFor(response.locals.machineNodeId); }, true));
 }

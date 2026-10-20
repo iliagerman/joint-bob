@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed shared saved commands to stay available on recipient machines while their owner is offline, with edits, deletions, and revoked access syncing in the background.
+
 ## 2.122.2 — 2026-10-20
 
 - Fixed the auto-respond dialog opening late from the mobile focus menu, where it could pop up behind whatever you had moved on to. It now opens at once, and Save becomes available once the harness list loads.

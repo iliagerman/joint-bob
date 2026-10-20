@@ -46,7 +46,7 @@ export async function openCommandSharing(id) {
     const form = document.createElement("form"); form.className = "dialog-card secret-sharing-card command-share-card";
     const heading = document.createElement("h3"); heading.textContent = `Share ${command.name}`;
     const hint = document.createElement("p");
-    hint.textContent = "The machine owner's commands are automatically shared with its twins. Choose any additional sharing here. Cluster and machine grants cover every project there. Narrower grants apply only to their projects or conversations. Other accounts' commands stay private without grants. Received copies are read-only and require this machine to be online.";
+    hint.textContent = "The machine owner's commands are automatically shared with its twins. Choose any additional sharing here. Cluster and machine grants cover every project there. Narrower grants apply only to their projects or conversations. Other accounts' commands stay private without grants. Received copies are read-only and stay available while this machine is offline. Changes and revocations sync when the machines can connect.";
     form.append(heading, hint);
     const checks = [];
     function check(group, field, value, label, checked) {

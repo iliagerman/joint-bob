@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SignedIn } from "./dev-nodes.js";
-import { addMember } from "./node-script.js";
 
 test("received commands respect each account's cluster even when the same nodes share multiple clusters", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "command-cluster-accounts-"));
@@ -15,12 +14,13 @@ test("received commands respect each account's cluster even when the same nodes 
     const a = ea.nodes[0], b = eb.nodes[0];
     for (const env of [ea, eb]) children.push(await startDevNode(env, env.nodes[0], { JOINT_BOB_TEST_MULTI_USER_READY: "1" }));
     const [sa, sb] = await Promise.all([signIn(ea, a), signIn(eb, b)]);
-    const createdMember = addMember(eb, b, "bea", "bea@example.test");
-    const login = await fetch(`${b.url}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "bea", password: createdMember.oneTimePassword }) });
+    const createdMember = await api<{ oneTimePassword: string }>(b, sb, "POST", "/users", { username: "bea", email: "bea@example.test" });
+    assert.equal(createdMember.status, 201);
+    const login = await fetch(`${b.url}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "bea", password: createdMember.body.oneTimePassword }) });
     assert.equal(login.status, 200);
     const loginBody = await login.json() as { csrfToken: string };
     const member: SignedIn = { cookie: login.headers.get("set-cookie")!.split(";")[0], csrfToken: loginBody.csrfToken };
-    const changed = await fetch(`${b.url}/api/auth/change-password`, { method: "POST", headers: { Cookie: member.cookie, "x-csrf-token": member.csrfToken, "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: createdMember.oneTimePassword, newPassword: "synthetic-command-cluster-password" }) });
+    const changed = await fetch(`${b.url}/api/auth/change-password`, { method: "POST", headers: { Cookie: member.cookie, "x-csrf-token": member.csrfToken, "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: createdMember.body.oneTimePassword, newPassword: "synthetic-command-cluster-password" }) });
     assert.equal(changed.status, 204);
     const folder = path.join(root, "bea-project"); await mkdir(folder);
     const project = await api<{ project: { id: string } }>(b, member, "POST", "/projects", { name: "Bea", type: "bea--personal", path: folder });
@@ -53,5 +53,13 @@ test("received commands respect each account's cluster even when the same nodes 
     assert.deepEqual(memberCommands.body.commands.map((command) => command.name), ["Member prompt"], "a shared peer is not permission to read every cluster's commands");
     const targets = await api<{ clusters: Array<{ id: string }> }>(b, sb, "GET", "/commands/sharing");
     assert.equal(targets.body.clusters.some((cluster) => cluster.id === ids[1]), false, "private member clusters remain absent from admin command targets");
+    await stopDevNode(children[0]);
+    await stopDevNode(children[1]);
+    children[1] = await startDevNode(eb, b, { JOINT_BOB_TEST_MULTI_USER_READY: "1" });
+    for (const [session, projectId, expected] of [[sb, b.projects[0].id, "Admin prompt"], [member, project.body.project.id, "Member prompt"]] as const) {
+      const offline = await api<{ commands: Array<{ name: string }> }>(b, session, "GET", `/commands?projectId=${projectId}`);
+      assert.equal(offline.status, 200);
+      assert.deepEqual(offline.body.commands.map((command) => command.name), [expected], "persisted manifests still enforce account membership when the owner is offline");
+    }
   } finally { await Promise.all(children.map(stopDevNode)); await rm(root, { recursive: true, force: true }); }
 });

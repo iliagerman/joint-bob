@@ -81,5 +81,25 @@ test("commands explicitly share, edit, scope and revoke over authenticated clust
     saved.presets = [];
     await api(a, sa, "PUT", "/settings/personal", { conversationCommands: saved });
     assert.equal((await view()).body.commands.some((c: any) => c.id === id), false, "deleting a preset revokes its prompt");
+    for (const [name, selection] of [["Cluster offline", { clusterIds: [clusterId] }], ["Node offline", { nodeIds: [b.nodeId] }]] as const) {
+      const created = await api<{ command: { id: string } }>(a, sa, "POST", "/commands", { name, prompt: `${name} prompt` });
+      assert.equal(created.status, 200);
+      const commandId = created.body.command.id;
+      const sharingRoute = `/commands/${encodeURIComponent(commandId)}/sharing`;
+      assert.equal((await api(a, sa, "PUT", sharingRoute, selection)).status, 200);
+      // No command read or explicit refresh on B before A goes offline.
+      await stopDevNode(children[0]);
+      await stopDevNode(children[1]);
+      children[1] = await startDevNode(eb, b);
+      assert.equal((await view()).body.commands.find((c: any) => c.id === commandId)?.prompt, `${name} prompt`, "explicit grants persist without twin trust");
+      assert.equal((await api(b, sb, "POST", `/commands/${encodeURIComponent(commandId)}/use`, { projectId: bProject.id })).status, 200);
+      children[0] = await startDevNode(ea, a);
+      assert.equal((await api(a, sa, "PUT", sharingRoute, empty)).status, 200);
+      await stopDevNode(children[0]);
+      assert.equal((await view()).body.commands.some((c: any) => c.id === commandId), false, "revocation is synced before the owner sleeps");
+      children[0] = await startDevNode(ea, a);
+    }
+    const changed = await fetch(`${a.url}/api/cluster/v2/commands/changed`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    assert.equal(changed.status, 401, "change notifications require a machine signature");
   } finally { await Promise.all(children.map(stopDevNode)); await rm(root, { recursive: true, force: true }); }
 });

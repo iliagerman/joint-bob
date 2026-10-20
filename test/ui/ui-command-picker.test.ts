@@ -21,13 +21,13 @@ test("command search ranks names, supports abbreviations and ignores hidden prom
   await options.waitFor();
   assert.deepEqual(await options.allTextContents(), ["prompte to prod"]);
   await search.fill("d");
-  assert.deepEqual(await options.allTextContents(), ["Deploy", "prompte to prod"]);
+  assert.deepEqual(await options.allTextContents(), ["Deploy", "prompte to prod"], "hidden prompt matches must not hide the relevant name match");
   await search.fill("  PR REV  ");
-  assert.deepEqual(await options.allTextContents(), ["pr_review"]);
+  assert.deepEqual(await options.allTextContents(), ["pr_review"], "search tolerates case, separators and abbreviations");
   await search.fill("release steps");
-  assert.deepEqual(await options.allTextContents(), []);
+  assert.deepEqual(await options.allTextContents(), [], "search uses the visible command name, not its prompt");
   await search.fill("");
-  assert.deepEqual(await options.allTextContents(), ["prompte to prod"]);
+  assert.deepEqual(await options.allTextContents(), ["prompte to prod"], "clearing search restores recents");
 });
 
 test("command picker limits recents, searches received commands, preserves drafts on errors and stale replies", { timeout: 240_000 }, async (t) => {

@@ -32,6 +32,7 @@ test("saved commands paste into chat through a keyboard shortcut without sending
   await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  await page.locator("#messages .message", { hasText: "We keep re-threading" }).waitFor();
   assert.equal(await page.getByTestId("saved-commands-button").innerText(), "");
   assert.equal(await page.getByTestId("saved-commands-button").getAttribute("aria-label"), "Custom commands");
   assert.equal(await page.getByTestId("saved-commands-button").locator("svg").count(), 1);
@@ -51,6 +52,7 @@ test("saved commands paste into chat through a keyboard shortcut without sending
   await page.reload();
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  await page.locator("#messages .message", { hasText: "We keep re-threading" }).waitFor();
   await page.getByTestId("chat-message-input").click();
   await page.keyboard.press("Control+Alt+Shift+L");
   await page.getByTestId("saved-commands-dialog").waitFor({ state: "visible" });
@@ -82,6 +84,7 @@ test("saved commands paste into chat through a keyboard shortcut without sending
   await page.reload();
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  await page.locator("#messages .message", { hasText: "We keep re-threading" }).waitFor();
   await page.getByTestId("saved-commands-button").click();
   await page.getByTestId("saved-commands-search").fill("Conversation command");
   await page.getByTestId("saved-commands-options").getByText("Conversation command", { exact: true }).click();

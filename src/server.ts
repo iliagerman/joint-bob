@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
 import { inBackground } from "./peer-presence.js";
+import { refreshSharedCommands } from "./server/saved-commands.js";
 import { placeConversationsWith } from "./session-listing-revisions.js";
 import { ensureConversationRecordSchema } from "./conversation-records.js";
 import { clusterV2Database } from "./cluster-v2-store.js";
@@ -175,6 +176,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         // Tells every peer this machine is back and catches up from them, hubs included.
         announceReturn(false).catch((error) => console.warn("Announcing this machine's return failed", error));
         removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
+        refreshSharedCommands().catch((error) => console.warn("Command sync failed", error));
         syncNtfyServiceShares().catch((error) => console.warn("ntfy service share sync failed", error));
         syncGitResourceShares().catch((error) => console.warn("Repository share sync failed", error));
       }
@@ -192,6 +194,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     // First run comes a quarter hour after start, clear of the release health check.
     setInterval(() => { if (clusterWorkAllowed()) inBackground(() => runReplicationHousekeeping()).catch((error) => console.warn("Replication housekeeping failed", error)); }, 15 * 60_000).unref();
     setInterval(() => inBackground(() => reconcileManagedAgentResources()).catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
+    setInterval(() => { if (clusterWorkAllowed()) inBackground(refreshSharedCommands).catch((error) => console.warn("Command sync failed", error)); }, 30_000).unref();
     // Git repositories cannot announce new commits, so their remotes are asked every six hours.
     scheduleGitSourceUpdateChecks();
     // Empty drafts go an hour after their last activity; the first sweep waits out the release health check.

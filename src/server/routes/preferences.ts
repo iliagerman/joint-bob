@@ -28,7 +28,7 @@ import { broadcastToAllClients, reloadSharedSkills } from "../realtime.js";
 import { auditQuerySchema, labelIconRequestSchema, recentSessionIdentitySchema, recentSessionSchema, registeredHarnessIdSchema, resourcePathsSchema, runtimeCheckSchema, settingsSchema, userPinSchema, userPreferencesSchema } from "../schemas.js";
 import { generateLabelIcon } from "../label-icon.js";
 import { app } from "../state.js";
-import { registerSavedCommandRoutes } from "../saved-commands.js";
+import { announceCommandChanges, registerSavedCommandRoutes } from "../saved-commands.js";
 
 registerSavedCommandRoutes();
 
@@ -322,7 +322,10 @@ app.put("/api/settings/personal", async (request, response, next) => {
     const input = personalSettingsSchema.parse(request.body) as Parameters<typeof updatePersonalSettings>[0];
     // A visitor's settings belong to their home node; the edit goes there first.
     if (session.isRemoteLogin) await forwardRoamingEdit(session.accountId, { settings: input as Record<string, unknown> });
-    else updatePersonalSettings(input, undefined, session.userId);
+    else {
+      updatePersonalSettings(input, undefined, session.userId);
+      if (input.conversationCommands) await announceCommandChanges();
+    }
     response.json(isNodeAdmin(session) ? getSettings() : personalSettingsView());
   } catch (error) {
     if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
@@ -394,6 +397,7 @@ app.put("/api/settings", async (request, response, next) => {
     await assertManagedHomeChangeAllowed(homePath);
     await ensureManagedHome(homePath, (await listWorkspaces()).map((workspace) => workspace.id));
     const settings = updateSettings(payload, session.userId);
+    if (payload.conversationCommands) await announceCommandChanges();
     clearHarnessSessionCache();
     resetSyncthingConnection();
     response.json(settings);
