@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.122.1 — 2026-10-20
 
-- Fixed the offline app update failing entirely when one file could not be downloaded, and stopped offline pages from mixing in styles from an older version.
+- Fixed app updates failing entirely when one file could not be downloaded, which could leave a page on an older version's styles and show each skill's agent switches as a tall stack of checkboxes. Offline pages also no longer mix in files from an older version.
 
 ## 2.122.0 — 2026-10-19
 
