@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.124.0 — 2026-10-20
 
 - Added "Deploy to prod" and "Hotfix" to the default conversation labels, with 🚀 and 🔥 icons.
 
