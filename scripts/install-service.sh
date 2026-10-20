@@ -71,7 +71,17 @@ NPM_BIN="$(command -v npm)" || { echo "npm is required after runtime setup" >&2;
 "${NPM_BIN}" --version >/dev/null
 cd "${REPO_ROOT}"
 if [ "${mode}" = --build-only ]; then
-  "${NPM_BIN}" ci
+  # npm rewrites public lockfile URLs to the user's configured registry. Installed
+  # releases must not depend on a developer's private registry or scoped .npmrc.
+  (
+    npm_config_dir="$(mktemp -d)"
+    trap 'rm -rf "${npm_config_dir}"' EXIT
+    touch "${npm_config_dir}/user.npmrc" "${npm_config_dir}/global.npmrc"
+    export NPM_CONFIG_USERCONFIG="${npm_config_dir}/user.npmrc" npm_config_userconfig="${npm_config_dir}/user.npmrc"
+    export NPM_CONFIG_GLOBALCONFIG="${npm_config_dir}/global.npmrc" npm_config_globalconfig="${npm_config_dir}/global.npmrc"
+    export NPM_CONFIG_REGISTRY=https://registry.npmjs.org npm_config_registry=https://registry.npmjs.org
+    "${NPM_BIN}" ci --registry=https://registry.npmjs.org --no-audit --no-fund
+  )
   "${NPM_BIN}" run build
   # Pinned to playwright-core, so the detected chromium.executablePath() matches this release.
   if [ -z "${JOINT_BOB_BROWSER_EXECUTABLE:-}" ]; then

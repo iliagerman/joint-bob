@@ -49,6 +49,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
+      - name: Reject private dependency URLs before installation
+        run: node scripts/check-public-dependencies.mjs package-lock.json npm-shrinkwrap.json
       - run: npm ci
       - run: npm run typecheck
       - name: Install native synchronization test dependency
@@ -81,6 +83,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           node scripts/prepare-release.mjs
+      - name: Reject private dependency URLs before packing
+        if: steps.release.outputs.publish == 'true'
+        run: node scripts/check-public-dependencies.mjs package-lock.json npm-shrinkwrap.json
       # Packing builds dist (prepack), which needs the dev dependencies.
       - run: npm ci
         if: steps.release.outputs.publish == 'true'
@@ -93,6 +98,18 @@ jobs:
           tar -tzf joint-bob.tar.gz | grep -q 'package/bin/joint-bob.mjs'
           tar -xOf joint-bob.tar.gz package/.joint-bob-release | grep -qx "commit=$GITHUB_SHA"
           sha256sum joint-bob.tar.gz > joint-bob.tar.gz.sha256
+          # Verify the actual shipped lockfile, then install with no credentials or warm cache.
+          smoke=$(mktemp -d)
+          trap 'rm -rf "$smoke"' EXIT
+          tar -xzf joint-bob.tar.gz -C "$smoke"
+          node scripts/check-public-dependencies.mjs "$smoke/package/npm-shrinkwrap.json"
+          mkdir "$smoke/home"
+          touch "$smoke/user.npmrc" "$smoke/global.npmrc"
+          cd "$smoke/package"
+          env -i PATH="$PATH" HOME="$smoke/home" \
+            NPM_CONFIG_USERCONFIG="$smoke/user.npmrc" NPM_CONFIG_GLOBALCONFIG="$smoke/global.npmrc" \
+            NPM_CONFIG_CACHE="$smoke/cache" \
+            npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
       - uses: softprops/action-gh-release@v2
         if: steps.release.outputs.publish == 'true'
         with:
