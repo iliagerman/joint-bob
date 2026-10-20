@@ -95,6 +95,27 @@ test("Jira accounts replicate and incoming credentials retain their provider", a
   });
 });
 
+test("Azure service principal accounts replicate with their provider and fields", async () => {
+  await withNode("azure", async ({ secrets, replication }) => {
+    const variables = ["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"].map((name) => ({ name, kind: "value" as const, value: `synthetic-${name}` }));
+    const account = await secrets.saveSecretAccount({ label: "Azure", provider: "azure", variables });
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+    assert.equal(events.find((event: { entityKey: string }) => event.entityKey === account.id)?.value.provider, "azure");
+    const remoteId = randomUUID();
+    const timestamp = new Date().toISOString();
+    await replication.receiveSecretCredentialEvents([{
+      id: randomUUID(), entityKey: remoteId, operation: "upsert",
+      value: { label: "Remote Azure", provider: "azure", variables },
+      originNodeId: peerId, updatedAt: timestamp, createdAt: timestamp,
+    }]);
+    const remote = (await secrets.listSecretAccounts()).find((item: { id: string }) => item.id === remoteId);
+    assert.equal(remote?.provider, "azure");
+    assert.deepEqual(remote?.variables, variables.map(({ name, kind }) => ({ name, kind, configured: true })));
+  });
+});
+
 test("replicated accounts carry their workspace attachments", async () => {
   await withNode("workspace-outbox", async ({ dataDir, secrets, replication }) => {
     const database = new DatabaseSync(path.join(dataDir, "node.db"));

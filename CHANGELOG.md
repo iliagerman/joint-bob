@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added Azure service principal as a secret account type, storing your tenant ID, client ID, client secret, and optional subscription ID for attached agents to use with Azure SDKs.
+
 ## 2.125.1 — 2026-10-20
 
 - Changed relay rules to apply as soon as a machine joins a relay, covering blocks, enforced skills, MCP servers and plugins, with no separate Follow step; leaving the relay now removes all of them.

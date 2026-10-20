@@ -25,10 +25,11 @@ let secretScopeTarget = null;
 let secretTypeFilter = "all";
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
-const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", openai: "OpenAI", zai: "Z.AI", grafana: "Grafana", datadog: "Datadog", jira: "Jira", postgres: "PostgreSQL", mssql: "MS SQL", mongodb: "MongoDB", website: "Website", ssh: "SSH", certificate: "Certificate", custom: "Custom" };
+const providerLabels = { aws: "AWS", azure: "Azure service principal", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", openai: "OpenAI", zai: "Z.AI", grafana: "Grafana", datadog: "Datadog", jira: "Jira", postgres: "PostgreSQL", mssql: "MS SQL", mongodb: "MongoDB", website: "Website", ssh: "SSH", certificate: "Certificate", custom: "Custom" };
 /** Shown under the provider picker so the choice explains itself before anything is typed. */
 const providerHints = {
   aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
+  azure: "Azure service principal with a client secret. Enter AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET. AZURE_SUBSCRIPTION_ID is optional. Azure Identity SDKs read these variables; the Azure CLI requires separate sign-in.",
   google: "Paste the Google service account JSON. It is stored privately and GOOGLE_APPLICATION_CREDENTIALS points gcloud and the Google SDKs at it.",
   github: "Use an API token or a GitHub App installation (App ID, installation ID and private key). Either powers pull requests, the gh CLI and HTTPS git. An SSH key can also provide git access. List the owners this account serves.",
   stripe: "A Stripe API key. STRIPE_API_KEY is exported to attached agent sessions for use with Stripe tools and SDKs. Use a restricted or test key when possible.",
@@ -65,6 +66,7 @@ export function providerBadge(provider, testid) {
 
 function secretProviderPresets(provider) {
   if (provider === "aws") return [{ name: "AWS_ACCESS_KEY_ID", kind: "value" }, { name: "AWS_SECRET_ACCESS_KEY", kind: "value" }];
+  if (provider === "azure") return ["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_SUBSCRIPTION_ID"].map((name) => ({ name, kind: "value" }));
   if (provider === "google") return [{ name: "GOOGLE_APPLICATION_CREDENTIALS", kind: "file" }];
   if (provider === "github") return [{ name: "GH_TOKEN", kind: "value" }];
   if (provider === "stripe") return [{ name: "STRIPE_API_KEY", kind: "value" }];
@@ -634,6 +636,7 @@ async function saveSecretAccount() {
     const value = row.querySelector("[data-secret-value]").value;
     return { name, kind, ...(value === "" ? {} : { value }) };
   });
+  if (provider === "azure") variables = variables.filter((item) => item.name !== "AZURE_SUBSCRIPTION_ID" || item.value !== undefined || editingSecretAccount?.variables?.some((saved) => saved.name === item.name));
   if (provider === "cloudflare") variables = variables.filter((item) => item.value !== undefined || (editingSecretAccountId && editingSecretAccount?.variables?.some((saved) => saved.name === item.name)));
   if (!variables.length || !variables.every((item) => item.name) || new Set(variables.map((item) => item.name)).size !== variables.length || (!editingSecretAccountId && variables.some((item) => item.value === undefined))) throw new Error("Enter at least one variable with a value, using unique names");
   if (provider === "website" && !websiteOrigin) throw new Error("Website accounts need a website origin. Enter the exact HTTPS origin the login lives at.");

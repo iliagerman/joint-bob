@@ -14,7 +14,7 @@ import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "./cluster-v2-errors.js";
 import { applyGithubAccounts, assertGithubAccountsDistinct, assertGithubVariableNames, finalizeGithubVariables, githubAccount, githubAccountContext, githubAccountSummary, githubOwnerFromRemote, GITHUB_TOKEN_VARIABLE, type GithubAccount, type GithubAccountSummary } from "./github-credentials.js";
 
-export type SecretProvider = "aws" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "zai" | "grafana" | "datadog" | "jira" | "postgres" | "mssql" | "mongodb" | "custom" | "website" | "ssh" | "certificate";
+export type SecretProvider = "aws" | "azure" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "zai" | "grafana" | "datadog" | "jira" | "postgres" | "mssql" | "mongodb" | "custom" | "website" | "ssh" | "certificate";
 export type SecretKind = "value" | "file";
 /** Attachment tiers, broadest first. Resolution merges them in this order. */
 export type SecretScopeType = "workspace" | "project" | "conversation";
@@ -121,7 +121,7 @@ function assertScope(scopeType: string, scopeId: string): asserts scopeType is S
 }
 
 function assertInput(input: SecretAccountInput): void {
-  if (!(["aws", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "jira", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
+  if (!(["aws", "azure", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "jira", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
   if (!input.label.trim() || input.label.trim().length > 64 || /[\x00-\x1f\x7f]/.test(input.label)) throw new Error("Secret account label must be between 1 and 64 characters without control characters");
   if (input.variables.length < 1 || input.variables.length > 20) throw new Error("Secret accounts need between 1 and 20 variables");
   const names = new Set<string>();
@@ -628,6 +628,7 @@ export async function persistConversationSecretAccounts(engine: ConversationEngi
 /** Tells the agent which tool each provider's variables already unlock, so it runs the CLI instead of asking for keys. */
 const providerHints: Record<SecretProvider, string> = {
   aws: "the AWS CLI and AWS SDKs read these automatically",
+  azure: "Azure service principal credentials: Azure Identity EnvironmentCredential reads AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET. AZURE_SUBSCRIPTION_ID optionally selects the subscription for management SDKs. Azure CLI requires separate authentication; these variables do not sign az in automatically. Prefer SDK environment authentication; never print credentials or put them in command arguments",
   google: "gcloud and the Google SDKs read GOOGLE_APPLICATION_CREDENTIALS automatically",
   github: "the gh CLI, the GitHub API and git push all read these automatically",
   stripe: "use STRIPE_API_KEY to configure the Stripe CLI or SDK",

@@ -62,6 +62,34 @@ test("secret accounts redact saved values, retain omitted edits, and expose only
   });
 });
 
+test("Azure service principal credentials stay encrypted, scoped and redacted", async () => {
+  await withSecrets("azure", async (secrets) => {
+    const { secretAccountSchema } = await import("../src/server/schemas.js");
+    const variables = ["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_SUBSCRIPTION_ID"].map((name) => ({ name, kind: "value" as const, value: `synthetic-${name}` }));
+    const input = secretAccountSchema.parse({ label: "Azure test", provider: "azure", variables });
+    const account = await secrets.saveSecretAccount(input);
+    assert.equal(account.provider, "azure");
+    assert.deepEqual(secrets.genericSecretEnvironment("project-a"), {});
+    await secrets.saveSecretAccount({ ...input, id: account.id, variables: variables.map(({ name, kind }) => ({ name, kind })) });
+    await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+    assert.deepEqual(secrets.genericSecretEnvironment("project-a"), Object.fromEntries(variables.map(({ name, value }) => [name, value])));
+    const context = secrets.agentCredentialContext("project-a");
+    assert.match(context, /Azure Identity EnvironmentCredential/);
+    assert.match(context, /do not sign az in automatically/);
+    const database = new DatabaseSync(path.join(secrets.dataDir, "node.db"));
+    try {
+      const row = database.prepare("SELECT variables_encrypted FROM secret_accounts WHERE id = ?").get(account.id) as { variables_encrypted: string };
+      for (const { value } of variables) {
+        assert.ok(!JSON.stringify(await secrets.listSecretAccounts()).includes(value));
+        assert.ok(!context.includes(value));
+        assert.ok(!row.variables_encrypted.includes(value));
+      }
+    } finally { database.close(); }
+    await secrets.saveSecretAccount({ ...input, id: account.id, variables: variables.slice(0, 3) });
+    assert.equal(secrets.genericSecretEnvironment("project-a").AZURE_SUBSCRIPTION_ID, undefined);
+  });
+});
+
 test("Jira credentials stay redacted, retain edits and export only when attached", async () => {
   await withSecrets("jira", async (secrets) => {
     const variables = [
