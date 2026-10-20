@@ -102,10 +102,30 @@ function matchesState(item) {
   return !state || state === actual;
 }
 
+/** Where a skill on this node came from: a relay that delivered it, another node that shared it, or this node itself. */
+function skillSource(skill) {
+  const policy = view.sharing ? policyFor(skill) : undefined;
+  if (policy?.managedByRelay) return { key: policy.receivedFrom, label: policy.receivedFromName || "A relay", rank: 0 };
+  if (policy?.kind === "received") return { key: `node:${policy.receivedFrom}`, label: `From ${policy.receivedFromName || policy.receivedFrom}`, rank: 1 };
+  return { key: "local", label: "This node", rank: 2 };
+}
+
+function relaySourceKey(policy) { return `relay:${policy.relayNodeId}`; }
+
+/** Only this node's skills have a known source, so a source filter hides other nodes' skills. */
+function matchesSource(skill, local) {
+  const source = document.querySelector("#resourcesSourceSelect").value;
+  if (!source) return true;
+  if (!local) return false;
+  const own = skillSource(skill);
+  return source === "local" ? own.rank !== 0 : own.key === source;
+}
+
 function filteredSkills(inventory) {
   const query = normalizedQuery(elements.resourcesSearchInput.value || "");
   const harness = harnessFilter();
-  return skillManagementInventory(inventory).filter((skill) => (!harness || skill.harnesses.includes(harness)) && matchesState(skill) && matches(query, skill.name, skill.description));
+  const local = view.nodes.some((entry) => entry.node.local && entry.inventory === inventory);
+  return skillManagementInventory(inventory).filter((skill) => (!harness || skill.harnesses.includes(harness)) && matchesState(skill) && matchesSource(skill, local) && matches(query, skill.name, skill.description));
 }
 
 function filteredServers(inventory) {
@@ -523,18 +543,21 @@ function skillRow(skill, local) {
   if (local) {
     const control = relayControl(skill);
     const policy = view.sharing ? policyFor(skill) : undefined;
-    if (policy?.managedByRelay) head.append(badge("from relay", "relay"));
+    if (policy?.managedByRelay) {
+      const from = badge(`from ${(policy.receivedFromName || "relay").split(" · ")[0]}`, "relay");
+      from.title = `Delivered by ${policy.receivedFromName || "a relay"} with its files. Its agents' on/off state is locked while it enforces this skill.`;
+      head.append(from);
+    }
     if (control.forced + control.advised > 0) {
       const all = control.forced === control.total && control.total > 0;
+      if (policy?.managedByRelay && all && !control.replaced) { /* the "from" badge already says so */ }
+      else {
       const mark = badge(control.replaced ? "replaced by relay" : all ? "relay-managed" : "partly relay-managed", "relay");
       mark.title = control.replaced
         ? `${control.relays.join(", ")} enforces its own copy of this skill, so agents load the relay's copy instead of this one.`
         : `${control.relays.join(", ")} controls this skill${all ? "" : " for some agents"}. Locked agents cannot be changed on this node; the others you manage here.`;
       head.append(mark);
-    } else if (view.relayPolicies.some((item) => item.version !== null)) {
-      const mark = badge("managed here", "local");
-      mark.title = "No relay this node joined controls this skill. Enable or disable it per agent on this node.";
-      head.append(mark);
+      }
     }
   }
   if (view.scope === "conversation" && view.engine && skill.activation?.[view.engine]?.enabled) head.append(badge("active", "active"));
@@ -629,6 +652,18 @@ function toolRow(tool) {
   return row;
 }
 
+function sourceHeading(label, count) {
+  const heading = document.createElement("div");
+  heading.className = "resources-node resources-source";
+  heading.dataset.testid = "resources-source-heading";
+  const name = document.createElement("strong");
+  name.textContent = label;
+  const detail = document.createElement("span");
+  detail.textContent = `${count} skill${count === 1 ? "" : "s"}`;
+  heading.append(name, detail);
+  return heading;
+}
+
 function nodeHeading(entry, count, noun) {
   const heading = document.createElement("div");
   heading.className = "resources-node";
@@ -656,7 +691,8 @@ function selectedServers() {
 
 let peerStatusExpanded = false;
 function peerStatus() {
-  const peers = view.sharing?.peerStatus ?? [];
+  // Relay sync health is shown with the relay itself, in the Relays section.
+  const peers = (view.sharing?.peerStatus ?? []).filter((peer) => !peer.ownerNodeId.startsWith("relay:"));
   if (!peers.length) return null;
   const details = document.createElement("details");
   details.className = "resources-peer-status";
@@ -665,9 +701,7 @@ function peerStatus() {
   details.addEventListener("click", (event) => { if (event.target instanceof Element && event.target.closest("summary")) peerStatusExpanded = !details.open; });
   const failing = peers.filter((peer) => peer.error).length;
   const summary = document.createElement("summary");
-  const relays = peers.filter((peer) => peer.ownerNodeId.startsWith("relay:")).length, nodes = peers.length - relays;
-  const sources = [nodes ? `${nodes} node${nodes === 1 ? "" : "s"}` : "", relays ? `${relays} relay${relays === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
-  summary.textContent = `Receiving from ${sources}${failing ? ` · ${failing} failing` : ""}`;
+  summary.textContent = `Receiving from ${peers.length} node${peers.length === 1 ? "" : "s"}${failing ? ` · ${failing} failing` : ""}`;
   details.append(summary);
   for (const peer of peers) {
     const status = emptyRow(`${peer.ownerName || peer.ownerNodeId}: ${peer.error || `Last synced ${new Date(peer.lastSuccess).toLocaleString()}`}`);
@@ -851,11 +885,23 @@ function renderList() {
     counts.set(entry, rows.length);
     for (const item of rows) items.push({ entry, item });
   }
+  const grouped = skills && document.querySelector("#resourcesSortSelect").value === "source";
+  const groupOf = ({ entry, item }) => entry.node.local ? skillSource(item) : { key: "", label: entry.node.name, rank: 3 };
+  const groupSizes = new Map();
+  if (grouped) {
+    for (const row of items) { const { key } = groupOf(row); groupSizes.set(key, (groupSizes.get(key) ?? 0) + 1); }
+    items.sort((left, right) => { const a = groupOf(left), b = groupOf(right); return a.rank - b.rank || a.label.localeCompare(b.label) || left.item.name.localeCompare(right.item.name); });
+  }
   const { current, shown } = paged(items, view.page, pageSizes.list);
   view.page = current;
-  let heading = null;
-  for (const { entry, item } of shown) {
-    if (multiple && entry !== heading) { list.append(nodeHeading(entry, counts.get(entry), noun)); heading = entry; }
+  let heading = null, group = null;
+  for (const row of shown) {
+    const { entry, item } = row;
+    if (multiple && entry !== heading) { list.append(nodeHeading(entry, counts.get(entry), noun)); heading = entry; group = null; }
+    if (grouped) {
+      const source = groupOf(row);
+      if (source.key !== group) { list.append(sourceHeading(source.label, groupSizes.get(source.key))); group = source.key; }
+    }
     list.append(skills ? skillRow(item, entry.node.local) : plugins ? pluginRow(item, entry.node.local)
       : tools ? toolRow(item) : serverRow(item, entry.node.local, entry.inventory));
   }
@@ -869,12 +915,24 @@ function countFor(entry, key) { return entry?.inventory ? (key === "skills" ? fi
 const RELAY_KINDS = ["skills", "mcp", "plugins"];
 const RELAY_KIND_LABELS = { skills: "skills", mcp: "MCP servers", plugins: "plugins" };
 
+/** One filter entry per admitted relay, with how many of its skills this node holds. */
+function renderSourceOptions() {
+  const select = document.querySelector("#resourcesSourceSelect");
+  const selected = select.value;
+  const held = (key) => (view.sharing?.skills ?? []).filter((skill) => skill.managedByRelay && skill.receivedFrom === key).length;
+  const relays = view.relayPolicies.filter((policy) => policy.relayNodeId);
+  select.replaceChildren(new Option("All sources", ""), new Option("Not from a relay", "local"),
+    ...relays.map((policy) => new Option(`${policy.name || policy.origin} (${held(relaySourceKey(policy))})`, relaySourceKey(policy))));
+  select.value = [...select.options].some((option) => option.value === selected) ? selected : "";
+}
+
 function renderRelayPolicy() {
   // Joining a relay accepts its rules; there is no opt-in, so every admitted relay with a signed policy applies.
   const applied = view.relayPolicies.filter((policy) => policy.version !== null).length;
   const waiting = view.relayPolicies.length - applied;
   document.querySelector("#resourcesRelayStatus").textContent = view.relayPolicies.length
     ? `· ${applied} relay polic${applied === 1 ? "y" : "ies"} enforced on this node${waiting ? ` · ${waiting} awaiting a signed policy` : ""}` : "";
+  renderSourceOptions();
   const select = document.querySelector("#resourcesRelaySelect");
   const selected = select.value;
   select.replaceChildren(new Option("Choose a relay", ""), ...view.relayPolicies.map((item) => new Option(item.name || item.origin, item.id)));
@@ -886,9 +944,23 @@ function renderRelayPolicy() {
     preview.append(emptyRow(view.relayPolicies.length ? "Choose a relay to review the rules it enforces on this node." : "No admitted relays on this node. Join a relay in Settings → Relays first."));
     return;
   }
+  const sync = (view.sharing?.peerStatus ?? []).find((peer) => peer.ownerNodeId === relaySourceKey(policy));
+  const delivered = (view.sharing?.skills ?? []).filter((skill) => skill.managedByRelay && skill.receivedFrom === relaySourceKey(policy)).length;
   const heading = document.createElement("p");
   heading.textContent = policy.version === null ? "No signed policy received yet. Wait for this relay to reconnect." : `Signed version ${policy.version} · Enforced on this node${policy.updatedAt ? ` · received ${new Date(policy.updatedAt).toLocaleString()}` : ""}`;
   preview.append(heading);
+  if (sync || delivered) {
+    const line = document.createElement("p");
+    line.dataset.testid = "resources-relay-sync";
+    line.textContent = `${delivered} skill${delivered === 1 ? "" : "s"} delivered here · ${sync?.error ? `sync failing: ${sync.error}` : sync?.lastSuccess ? `last synced ${new Date(sync.lastSuccess).toLocaleString()}` : "not synced yet"}`;
+    preview.append(line);
+  }
+  if (delivered) preview.append(button("Show its skills", "resources-relay-show-skills", () => {
+    document.querySelector("#resourcesSourceSelect").value = relaySourceKey(policy);
+    document.querySelector("#resourcesStateSelect").value = "";
+    view.page = 0;
+    render();
+  }, "ghost compact"));
   for (const rule of policy.rules) {
     const line = document.createElement("div");
     line.textContent = `${rule.action === "block" ? "Block" : "Enable"} ${rule.name} for ${rule.harness === "all" ? "all agents" : harnessLabel(rule.harness)}`;
@@ -934,6 +1006,10 @@ function render() {
   const stateTab = ["skills", "mcp", "plugins"].includes(view.tab);
   const keepSpace = (element, show) => { element.hidden = !listing; element.style.visibility = show ? "" : "hidden"; };
   keepSpace(document.querySelector("#resourcesStateSelect"), stateTab);
+  // Source and sort apply to skills only; the source filter exists only where a relay delivers skills.
+  keepSpace(document.querySelector("#resourcesSortSelect"), view.tab === "skills");
+  keepSpace(document.querySelector("#resourcesSourceSelect"), view.tab === "skills");
+  if (view.relayPolicies.every((policy) => !policy.relayNodeId)) document.querySelector("#resourcesSourceSelect").hidden = true;
   keepSpace(document.querySelector("#resourcesControlsHint"), stateTab);
   keepSpace(document.querySelector(".resources-auto-activate"), stateTab);
   // The relay rules exist only on nodes that joined or serve a relay; there they keep their place on every listing tab.
@@ -1512,6 +1588,7 @@ function configure({ scope = "conversation", projectId = state.activeProjectId, 
   view.selectedServers.clear();
   setStatus("");
   elements.resourcesSearchInput.value = "";
+  document.querySelector("#resourcesSourceSelect").value = "";
   elements.resourcesHarnessSelect.value = view.engine ?? "";
   elements.resourcesScopeSelect.value = view.scope;
   for (const option of elements.resourcesScopeSelect.options) option.disabled = option.value !== "cluster" && !view.projectId;
@@ -1566,6 +1643,8 @@ document.querySelector("#resourcesRelayPublish").addEventListener("click", async
 });
 elements.resourcesHarnessSelect.addEventListener("change", () => { view.page = 0; render(); });
 document.querySelector("#resourcesStateSelect").addEventListener("change", () => { view.page = 0; render(); });
+document.querySelector("#resourcesSourceSelect").addEventListener("change", () => { view.page = 0; render(); });
+document.querySelector("#resourcesSortSelect").addEventListener("change", () => { view.page = 0; render(); });
 document.querySelector("#resourcesAutoActivate").addEventListener("change", async (event) => {
   const input = event.currentTarget;
   input.disabled = true;

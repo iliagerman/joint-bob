@@ -4208,11 +4208,9 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .resources-git-auto-update > input, .resources-git-auto-update > span { flex: none; }
 .resources-badge.status-edited, .resources-badge.update { color: var(--warning, #d9a441); border-color: currentColor; }
 .resources-paths { display: grid; gap: 12px; align-content: start; overflow-y: auto; scrollbar-width: thin; }
-.resources-toolbar { display: grid; grid-template-columns: auto auto auto auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.resources-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .resources-toolbar > [hidden] { display: none; }
-/* The git tab shows neither the scope nor the agent filter: search takes the row. */
-.resources-toolbar:has(> #resourcesHarnessSelect[hidden]):has(> #resourcesScopeSelect[hidden]):has(> #resourcesNodeSelect[hidden]) { grid-template-columns: minmax(0, 1fr) auto; }
-.resources-toolbar .search-shell { margin: 0; }
+.resources-toolbar .search-shell { flex: 1 1 160px; min-width: 0; margin: 0; }
 .resources-toolbar .search-shell input { border-color: var(--line); }
 /* The share dialog scrolls between its title and its buttons, never past either. */
 .skill-share-card .dialog-actions { position: sticky; bottom: -22px; margin-bottom: -22px; padding: 10px 0 22px; background: var(--surface); }
@@ -4238,6 +4236,7 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .resources-badge.off { color: var(--danger, #d9534f); border-color: currentColor; }
 .resources-node { display: flex; justify-content: space-between; gap: 8px; padding: 8px 2px 2px; font-size: 12px; color: var(--muted); }
 .resources-node strong { color: var(--text); }
+.resources-source { border-bottom: 1px solid var(--line); padding-bottom: 4px; }
 .resources-sources { display: flex; flex-wrap: wrap; gap: 6px; }
 .resources-sources:empty { display: none; }
 .resources-status:empty { display: none; }
@@ -4300,12 +4299,7 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 @media (max-width: 640px) {
   /* Phones keep every row's controls and drop what repeats elsewhere, so a page holds more rows. */
   .resources-panel > #resourcesSummary, .resources-panel > #resourcesControlsHint { display: none; }
-  .resources-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
-  .resources-toolbar #resourcesNodeSelect { grid-column: 1 / 2; }
-  .resources-toolbar #resourcesScopeSelect { grid-column: 2 / 3; }
-  .resources-toolbar #resourcesHarnessSelect { grid-column: 1 / 2; }
-  .resources-toolbar .search-shell { grid-column: 2 / 3; }
-  .resources-toolbar:has(> #resourcesHarnessSelect[hidden]):has(> #resourcesScopeSelect[hidden]) .search-shell { grid-column: auto; }
+  .resources-toolbar > select { flex: 1 1 40%; min-width: 0; }
   .resources-tabs { overflow-x: auto; scrollbar-width: none; }
   .resources-tabs button { white-space: nowrap; padding: 6px 8px; }
   .resources-row .resources-badge.harness, .resources-row-actions > small { display: none; }

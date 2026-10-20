@@ -88,10 +88,11 @@ test("a joined relay installs its enforced skill over the local one without an o
     await page.getByTestId("resources-relay-select").selectOption(membershipId);
     await page.getByTestId("resources-relay-preview").getByText(/Signed version 1 · Enforced on this node/).waitFor();
 
-    await row.getByText("from relay").waitFor();
+    await row.getByText("from Team relay").waitFor();
     await row.getByText(/Enforced by Team relay/).waitFor();
     assert.equal(await row.getByTestId("skill-remove-button").count(), 0, "a relay-managed skill cannot be removed here");
-    await page.getByText("Receiving from 1 relay").waitFor();
+    await page.getByTestId("resources-relay-sync").getByText(/1 skill delivered here · last synced/).waitFor();
+    assert.equal(await page.getByText(/Receiving from \d+ relay/).count(), 0, "relay sync health lives with the relay, not in the node list");
     assert.match(await readFile(path.join(managed, "SKILL.md"), "utf8"), /Relay version/, "the relay's files replace the local skill");
     assert.equal(downloads, 1);
 
@@ -106,10 +107,28 @@ test("a joined relay installs its enforced skill over the local one without an o
     await row.waitFor();
     await page.getByTestId("resources-state-select").selectOption("");
 
+    // Filter the list to one relay's skills, and group the list by where skills came from.
+    await page.getByTestId("resources-harness-select").selectOption("");
+    await page.getByTestId("resources-search-input").fill("");
+    const relayKey = await page.getByTestId("resources-source-select").locator("option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value).find((value) => value.startsWith("relay:")));
+    assert.ok(relayKey, "the source filter lists the joined relay");
+    await page.getByTestId("resources-source-select").selectOption(relayKey!);
+    await row.waitFor();
+    assert.equal(await page.getByTestId("resources-skill-row").count(), 1, "only the relay's skill is listed");
+    await page.getByTestId("resources-source-select").selectOption("local");
+    await row.waitFor({ state: "detached" });
+    await page.getByTestId("resources-source-select").selectOption("");
+    await page.getByTestId("resources-sort-select").selectOption("source");
+    await page.getByTestId("resources-source-heading").first().getByText(/Team relay/).waitFor();
+    await page.getByTestId("resources-source-heading").first().getByText("1 skill", { exact: true }).waitFor();
+    await page.getByTestId("resources-sort-select").selectOption("");
+    await page.getByTestId("resources-search-input").fill(skillName);
+    await page.getByTestId("resources-harness-select").selectOption("pi");
+
     const leaving = new DatabaseSync(path.join(node.dataDir, "node.db"));
     try { updateMembership(leaving, membershipId, { status: "revoked" }); } finally { leaving.close(); }
     await page.getByTestId("resources-refresh-button").click();
-    await row.getByText("from relay").waitFor({ state: "detached" });
+    await row.getByText("from Team relay").waitFor({ state: "detached" });
     assert.equal(await page.getByText(/Receiving from 1 relay/).count(), 0, "a relay this node left leaves no sync status");
     assert.match(await readFile(path.join(managed, "SKILL.md"), "utf8"), /Local version/, "leaving the relay restores this node's own skill");
     assert.equal(await toggle.isDisabled(), false, "the node manages the skill again");

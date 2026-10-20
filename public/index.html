@@ -1401,6 +1401,8 @@
             <select id="resourcesStateSelect" aria-label="Resource state" data-testid="resources-state-select">
               <option value="">All resources</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="relay">Controlled by a relay</option><option value="unknown">Agent managed / unknown</option>
             </select>
+            <select id="resourcesSourceSelect" aria-label="Skill source" data-testid="resources-source-select" hidden><option value="">All sources</option></select>
+            <select id="resourcesSortSelect" aria-label="Sort skills" data-testid="resources-sort-select"><option value="">Sort by name</option><option value="source">Group by source</option></select>
             <label class="search-shell" for="resourcesSearchInput">
               <span class="sr-only">Search skills and tools</span>
               <input id="resourcesSearchInput" type="search" autocomplete="off" placeholder="Search" data-testid="resources-search-input" />
@@ -1418,17 +1420,13 @@
           </div>
           <label class="checkbox-row resources-auto-activate"><input id="resourcesAutoActivate" type="checkbox" data-testid="resources-auto-activate" checked /> Auto-activate received skills, MCP servers and plugins on this node</label>
           <details class="resources-relay-policy" id="resourcesRelayPolicy" data-testid="resources-relay-policy">
-            <summary data-testid="resources-relay-summary">Relay rules for skills, MCP servers and plugins <span id="resourcesRelayStatus" data-testid="resources-relay-status"></span></summary>
+            <summary data-testid="resources-relay-summary">Relays: what they enforce on this node <span id="resourcesRelayStatus" data-testid="resources-relay-status"></span></summary>
             <div class="resources-relay-content">
               <div id="resourcesRelayHelp" data-testid="resources-relay-help">
-                <p>Rules control skill loading, not installation or whether an agent uses a skill. The relay publishes a signed policy; every node connected to it enforces that policy. There is no opt-in.</p>
-                <ol>
-                  <li>On the relay machine, open <strong>Publish rules from this relay</strong>, enter rules, then publish.</li>
-                  <li>Every connected machine applies the new version as soon as it arrives. Choose a relay below to review what it enforces on this node.</li>
-                </ol>
-                <p><strong>Block</strong> overrides local enables on connected nodes. <strong>Enable</strong> does not override a local disable. <strong>Enforce</strong> does: enforced skills are installed on connected nodes with their files, locked on, and take effect from the next message. The relay wins name conflicts for every agent it enforces: other copies with the same name are replaced, and a Claude copy outside managed skills needs strict resource isolation or Claude will not start. Joining a relay accepts its rules; leave the relay to stop them. Rules keep files installed; instructions already read remain in open conversations.</p>
+                <p>Every relay this node joined publishes a signed policy that applies here at once. There is no opt-in. It can block skills, MCP servers and plugins, or enforce its own: enforced skills are installed with their files and locked on. Use the Source filter above the list to see one relay's skills, or Group by source to see them side by side.</p>
+                <p><strong>Block</strong> beats a local enable. <strong>Enable</strong> does not beat a local disable. <strong>Enforce</strong> does, and replaces any same-named copy (a Claude copy outside managed skills needs strict resource isolation, or Claude will not start). Rules keep files installed; instructions already read remain in open conversations. Leave a relay in Settings → Relays to remove what it delivered.</p>
               </div>
-              <label>Rules enforced on this node<select id="resourcesRelaySelect" data-testid="resources-relay-select"><option value="">Choose a relay</option></select></label>
+              <label>Relay<select id="resourcesRelaySelect" data-testid="resources-relay-select"><option value="">Choose a relay</option></select></label>
               <div id="resourcesRelayPreview" data-testid="resources-relay-preview"></div>
               <details id="resourcesRelayPublisher" hidden>
                 <summary data-testid="resources-relay-publisher-summary">Publish rules from this relay</summary>

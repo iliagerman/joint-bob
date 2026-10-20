@@ -98,7 +98,7 @@ app.get("/api/relays", handle(async (_request, response) => { response.json(awai
 app.get("/api/relays/skill-policies", handle(async (_request, response) => {
   const db = await clusterV2Database();
   response.json({ subscriptions: relayPolicySubscriptions(db).map(({ relay, statement, updatedAt }) => ({
-    id: relay.id, name: relayPolicyLabel(relay), origin: relay.origin, version: statement?.body.version ?? null,
+    id: relay.id, relayNodeId: relay.relayNodeId, name: relayPolicyLabel(relay), origin: relay.origin, version: statement?.body.version ?? null,
     rules: statement?.body.rules ?? [], settings: statement?.body.settings ?? null, skillDigestCount: Object.keys(statement?.body.skillDigests ?? {}).length, updatedAt,
   })) });
 }));

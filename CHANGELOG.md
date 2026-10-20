@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a source filter and a group-by-source sort to Resources skills, so you can see which relay or node each skill came from and show one relay's skills on their own, with each relay's sync status shown beside it.
+
 ## 2.127.0 — 2026-10-20
 
 - Fixed the keyboard focus ring on the relay picker in Resources, which was cut off at the edge of its list.
