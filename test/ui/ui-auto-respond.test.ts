@@ -66,6 +66,34 @@ test("the auto respond dialog opens from the chat menu with the default rules an
     await page.getByTestId("auto-respond-stop-instructions").fill("Stop now");
     assert.equal(await page.getByTestId("auto-respond-preset").inputValue(), "", "editing a preset's rule makes it Custom");
     await page.getByTestId("auto-respond-cancel-button").click();
+
+    // The AI-DLC driver handles routine approval gates instead of handing every decision to the human.
+    await page.getByTestId("chat-auto-respond-button").click();
+    await page.getByTestId("auto-respond-preset").selectOption("aidlc-driver");
+    const aidlcInstructions = await page.getByTestId("auto-respond-instructions").inputValue();
+    const aidlcStopInstructions = await page.getByTestId("auto-respond-stop-instructions").inputValue();
+    assert.match(aidlcInstructions, /authorized to answer routine AI-DLC approval gates on the user's behalf/);
+    assert.match(aidlcInstructions, /on-demand workflow plans/);
+    assert.match(aidlcInstructions, /Approve.*Edit.*Reject/s, "the responder makes an explicit, reviewed choice rather than blindly approving");
+    assert.match(aidlcInstructions, /original request/);
+    assert.doesNotMatch(aidlcStopInstructions, /Blocked on user decision/);
+    assert.match(aidlcStopInstructions, /no pending review or approval gate/, "a proposed plan is not treated as a finished phase");
+    assert.match(aidlcStopInstructions, /Routine plan approval.*delegated to you.*explicit user decision/s);
+    assert.match(aidlcStopInstructions, /credentials/);
+    assert.match(aidlcStopInstructions, /decision the user explicitly reserved for themselves/);
+    assert.match(aidlcStopInstructions, /destructive.*production.*spending money/s);
+    assert.equal(await page.getByTestId("auto-respond-limit").inputValue(), "");
+    assert.equal(await page.getByTestId("auto-respond-use-tools").isChecked(), true);
+    await page.getByTestId("auto-respond-save-button").click();
+    await page.getByTestId("auto-respond-dialog").waitFor({ state: "hidden" });
+    await page.getByTestId("auto-respond-pill").waitFor({ state: "visible" });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByTestId("auto-respond-pill").waitFor({ state: "visible" });
+    await page.getByTestId("chat-auto-respond-button").click();
+    assert.equal(await page.getByTestId("auto-respond-preset").inputValue(), "aidlc-driver");
+    assert.equal(await page.getByTestId("auto-respond-instructions").inputValue(), aidlcInstructions, "delegated approval instructions survive save and reload");
+    assert.equal(await page.getByTestId("auto-respond-stop-instructions").inputValue(), aidlcStopInstructions, "the saved stop rules keep genuine human-only blockers");
+    await page.getByTestId("auto-respond-cancel-button").click();
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

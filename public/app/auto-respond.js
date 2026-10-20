@@ -18,8 +18,17 @@ const PRESETS = {
     maxResponses: null,
   },
   "aidlc-driver": {
-    instructions: "Drive the AI-DLC (AI Development Lifecycle) process forward using common sense, available documentation, and best-practice recommendations. Read the project's AI-DLC configuration, understand the current phase, and execute the next logical steps. Use available tools to inspect code, run tests, and validate changes. Make reasonable decisions based on the context and documented patterns.",
-    stopInstructions: "Current AI-DLC phase is complete\nAll phase requirements are satisfied\nBlocked on user decision or external dependency\nTests are failing and require manual intervention",
+    instructions: [
+      "Drive the AI-DLC (AI Development Lifecycle) process forward. Read the project's AI-DLC configuration, understand the current phase, and guide the agent through the next steps. Use available tools to inspect code, run tests, and validate claims; the agent makes the changes.",
+      "You are authorized to answer routine AI-DLC approval gates on the user's behalf, including on-demand workflow plans and stage confirmations. Review the proposal against the original request, project documentation, and available evidence. Reply with an explicit Approve when it fits, Edit with concrete changes when it needs revision, or Reject with a reason and a suitable alternative when it does not. Use the option wording requested by the agent. A workflow asking for an explicit user decision is a prompt for your reviewed reply, not by itself a reason to stop.",
+      "Keep decisions within the original scope and any limits the user set. Prefer the agent's recommendation when supported by the evidence; otherwise choose the simplest option that meets the request. Ask the agent to supply missing evidence or fix problems rather than approving unchecked work. Keep replies short and give the agent a clear next step.",
+    ].join("\n\n"),
+    stopInstructions: [
+      "The current AI-DLC phase is complete and verified, with no pending review or approval gate.",
+      "Continuing needs credentials, private information, or a decision the user explicitly reserved for themselves. Routine plan approval, edits, rejection, and stage confirmations are delegated to you, even when the workflow requests an explicit user decision.",
+      "Continuing requires a destructive or hard-to-undo action, production deployment, sending messages or email, or spending money. Routine workflow approval does not authorize these actions.",
+      "An external dependency or failing test needs manual intervention that the agent cannot perform.",
+    ].join("\n"),
     useTools: true,
     maxResponses: null,
   },

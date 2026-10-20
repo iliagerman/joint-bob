@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added the Deploy to prod and Hotfix conversation labels, which now always appear in the label list alongside your own labels.
+- Changed the AI-DLC driver auto-respond preset to answer routine AI-DLC plan and stage approvals itself, stopping only for decisions that need you, credentials, or destructive, production, or spending actions.
 
 ## 2.128.0 — 2026-10-20
 
