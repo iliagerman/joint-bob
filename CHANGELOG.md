@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.125.0 — 2026-10-20
 
-- Added Jira as a secret account type, with fields for the site URL, your Atlassian email, and an API token that attached agents use for the Jira REST API.
+- Added Jira as a secret account type, storing your site URL, Atlassian email, and API token for attached agents to use with the Jira REST API.
 
 ## 2.124.1 — 2026-10-20
 
