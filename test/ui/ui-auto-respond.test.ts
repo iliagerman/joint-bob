@@ -35,7 +35,7 @@ test("the auto respond dialog opens from the chat menu with the default rules an
     assert.equal(await page.getByTestId("auto-respond-limit").inputValue(), "10");
     assert.match(await page.getByTestId("auto-respond-instructions").inputValue(), /add a way to test it/, "the default asks the agent for a way to test what it built");
     assert.equal(await page.getByTestId("auto-respond-use-tools").isChecked(), true, "the responder may check the work by default");
-    assert.ok(await page.getByTestId("auto-respond-harness").locator("option").count() > 0, "a harness can be chosen");
+    await page.getByTestId("auto-respond-harness").locator("option").first().waitFor({ state: "attached" });
     await page.getByTestId("auto-respond-cancel-button").click();
     await page.getByTestId("auto-respond-dialog").waitFor({ state: "hidden" });
     assert.equal(await page.getByTestId("session-auto-respond-badge").count(), 0, "the conversation row shows no badge while it is off");

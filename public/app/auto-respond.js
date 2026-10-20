@@ -76,18 +76,11 @@ function fillPickers(saved) {
   if (harness) fillModelOptions(harness, picker.models, elements.autoRespondModel, elements.autoRespondThinking, saved && saved.harnessId === harness.id ? saved : undefined);
 }
 
+// Opens at once: listing harnesses and models can take seconds, and a dialog that
+// appeared only afterwards popped up behind whatever the user had moved on to.
 async function openAutoRespond() {
   elements.chatMoreMenu.open = false;
-  if (!picker.harnesses.length) {
-    const [harnessBody, modelBody] = await Promise.all([api("/api/harnesses"), api("/api/models")]);
-    picker.harnesses = harnessBody.harnesses.filter((harness) => harness.runtimeConfigured);
-    picker.models = modelBody.models;
-    elements.autoRespondHarness.replaceChildren(...picker.harnesses.map(harnessOption));
-  }
   const saved = state.autoRespond;
-  const savedPick = saved ? { harnessId: saved.harnessId, provider: saved.provider, modelId: saved.modelId, thinkingLevel: saved.thinkingLevel } : undefined;
-  elements.autoRespondHarness.value = picker.harnesses.some((harness) => harness.id === (saved?.harnessId ?? state.engine)) ? (saved?.harnessId ?? state.engine) : picker.harnesses[0]?.id ?? "";
-  fillPickers(savedPick);
 
   // Detect if current config matches a preset
   let matchingPreset = "";
@@ -108,6 +101,18 @@ async function openAutoRespond() {
   elements.autoRespondEnabled.checked = !saved || saved.status !== "off";
   renderStatus();
   elements.autoRespondDialog.showModal();
+
+  if (!picker.harnesses.length) {
+    elements.saveAutoRespondButton.disabled = true;
+    const [harnessBody, modelBody] = await Promise.all([api("/api/harnesses"), api("/api/models")]);
+    picker.harnesses = harnessBody.harnesses.filter((harness) => harness.runtimeConfigured);
+    picker.models = modelBody.models;
+    elements.autoRespondHarness.replaceChildren(...picker.harnesses.map(harnessOption));
+    elements.saveAutoRespondButton.disabled = false;
+  }
+  const savedPick = saved ? { harnessId: saved.harnessId, provider: saved.provider, modelId: saved.modelId, thinkingLevel: saved.thinkingLevel } : undefined;
+  elements.autoRespondHarness.value = picker.harnesses.some((harness) => harness.id === (saved?.harnessId ?? state.engine)) ? (saved?.harnessId ?? state.engine) : picker.harnesses[0]?.id ?? "";
+  fillPickers(savedPick);
 }
 
 function applyPreset() {

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the auto respond dialog opening late from the mobile focus menu, where it could pop up behind whatever the user had moved on to. It now opens at once and enables Save once the harness list loads.
+
 ## 2.122.1 — 2026-10-20
 
 - Fixed app updates failing entirely when one file could not be downloaded, which could leave a page on an older version's styles and show each skill's agent switches as a tall stack of checkboxes. Offline pages also no longer mix in files from an older version.
