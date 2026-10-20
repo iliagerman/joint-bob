@@ -108,7 +108,8 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(serviceWorker, /\/vendor\/codemirror\/lib\/codemirror\.js/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/keymap\/vim\.js/);
   assert.match(serviceWorker, /self\.addEventListener\("fetch"/);
-  assert.match(serviceWorker, /fetch\(request\)\.catch\(async \(\) => \(await caches\.match\(request\)\) \|\| caches\.match\("\/"\)\)/);
+  // Network first; offline, the current release's cache (behaviour covered in pwa-worker-fallback.test.ts).
+  assert.match(serviceWorker, /fetch\(request\)\.catch\(async \(\) => \{\s*const cache = await caches\.open\(CACHE_NAME\);/);
 });
 
 test("empty states never stack up in the transcript", async () => {
