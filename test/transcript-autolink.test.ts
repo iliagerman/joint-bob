@@ -7,7 +7,7 @@ test("bare URLs in assistant prose become anchors that open in a new tab", async
 
   // Plain text is scanned for http(s) URLs before file paths.
   assert.match(markdown, /const URL_RE = /);
-  assert.match(markdown, /function urlNodes\(text, resolveFileUrl\)/);
+  assert.match(markdown, /function urlNodes\(text, resolveFileUrl, literal = false\)/);
   assert.match(markdown, /dataset\.testid = "chat-auto-link"/);
 
   // The anchor is a safe new-tab link.

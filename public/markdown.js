@@ -86,9 +86,9 @@ const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/g;
 // URLs at the end of a sentence swallow the punctuation; trim it back off.
 const URL_TRAILING_RE = /[),.;:!?\]}'"]+$/;
 
-// Plain prose can hold a bare URL. Link those first, then hand what is left to
-// the file-path linker so a URL is never mistaken for a path.
-function urlNodes(text, resolveFileUrl) {
+// Link URLs before file paths. Code keeps non-URL text literal.
+function urlNodes(text, resolveFileUrl, literal = false) {
+  const remainingNodes = (value) => literal ? [textNode(value)] : pathNodes(value, resolveFileUrl);
   const nodes = [];
   const source = String(text ?? "");
   URL_RE.lastIndex = 0;
@@ -98,7 +98,7 @@ function urlNodes(text, resolveFileUrl) {
     const raw = match[0].replace(URL_TRAILING_RE, "");
     const href = safeUrl(raw);
     if (!href) continue;
-    if (match.index > last) nodes.push(...pathNodes(source.slice(last, match.index), resolveFileUrl));
+    if (match.index > last) nodes.push(...remainingNodes(source.slice(last, match.index)));
     const anchor = document.createElement("a");
     anchor.href = href;
     anchor.target = "_blank";
@@ -109,7 +109,7 @@ function urlNodes(text, resolveFileUrl) {
     nodes.push(anchor);
     last = match.index + raw.length;
   }
-  if (last < source.length) nodes.push(...pathNodes(source.slice(last), resolveFileUrl));
+  if (last < source.length) nodes.push(...remainingNodes(source.slice(last)));
   return nodes;
 }
 
@@ -133,7 +133,7 @@ function inlineNodes(text, resolveFileUrl) {
       const code = document.createElement("code");
       code.dir = "ltr";
       const codeText = groups.codeText.replace(/\n+$/, "");
-      code.textContent = codeText;
+      code.append(...urlNodes(codeText, undefined, true));
       nodes.push(isFilePath(codeText) ? fileLink(codeText, resolveFileUrl, code) : code);
     } else if (groups.bold !== undefined) {
       const strong = document.createElement("strong");
@@ -164,6 +164,8 @@ function inlineNodes(text, resolveFileUrl) {
           anchor.title = `Open ${groups.url}`;
         }
         anchor.append(...inlineNodes(groups.linkText, resolveFileUrl));
+        // An explicit Markdown link owns its label, even when the label is a URL.
+        for (const nested of anchor.querySelectorAll("a")) nested.replaceWith(...nested.childNodes);
         nodes.push(anchor);
       }
     }
@@ -249,7 +251,7 @@ export function buildCodeBlock(language, code) {
   const pre = document.createElement("pre");
   const codeEl = document.createElement("code");
   if (language) codeEl.className = `language-${language}`;
-  codeEl.textContent = code.replace(/\n+$/, "");
+  codeEl.append(...urlNodes(code.replace(/\n+$/, ""), undefined, true));
   pre.append(codeEl);
 
   wrapper.append(bar, pre);

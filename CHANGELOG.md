@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed response links so URLs in inline code and code blocks are clickable, and a link whose label is a URL no longer nests a second link inside it.
+
 ## 2.124.0 — 2026-10-20
 
 - Added "Deploy to prod" and "Hotfix" to the default conversation labels, with 🚀 and 🔥 icons.
