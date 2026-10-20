@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.125.1 — 2026-10-20
 
-- Changed relay rules to apply as soon as a machine joins a relay, with no separate Follow step, and leaving the relay now removes the skills it delivered.
+- Changed relay rules to apply as soon as a machine joins a relay, covering blocks, enforced skills, MCP servers and plugins, with no separate Follow step; leaving the relay now removes all of them.
 
 ## 2.125.0 — 2026-10-20
 
