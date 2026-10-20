@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added "Deploy to prod" and "Hotfix" to the default conversation labels, with 🚀 and 🔥 icons.
+
 ## 2.123.1 — 2026-10-20
 
 - Fixed the auto-respond status in the conversation toolbar so clicking it opens the auto-respond dialog, and it can be reached and opened from the keyboard.

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const DEFAULT_CONVERSATION_LABELS = ["Research", "Bug", "Feature", "POC"];
+export const DEFAULT_CONVERSATION_LABELS = ["Research", "Bug", "Feature", "POC", "Deploy to prod", "Hotfix"];
 export const classificationSchema = z.string().trim().min(1).max(80);
 export const conversationLabelsSchema = z.array(classificationSchema.refine(
   (label) => !["other", "__other__"].includes(label.toLowerCase()),
@@ -8,7 +8,7 @@ export const conversationLabelsSchema = z.array(classificationSchema.refine(
 )).max(50).transform((labels) => labels.filter((label, index) =>
   labels.findIndex((candidate) => candidate.toLowerCase() === label.toLowerCase()) === index));
 
-export const DEFAULT_CONVERSATION_LABEL_ICONS: Record<string, string> = { Research: "🔬", Bug: "🐞", Feature: "✨", POC: "🧪" };
+export const DEFAULT_CONVERSATION_LABEL_ICONS: Record<string, string> = { Research: "🔬", Bug: "🐞", Feature: "✨", POC: "🧪", "Deploy to prod": "🚀", Hotfix: "🔥" };
 /** A label's icon is a short glyph (an emoji, usually); a label without an entry shows its name. */
 export const labelIconSchema = z.string().trim().min(1).max(16);
 export const conversationLabelIconsSchema = z.record(classificationSchema, labelIconSchema);

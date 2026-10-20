@@ -15,7 +15,7 @@ test("classification settings and conversation labels persist, validate, and rem
   try {
     const auth = await signIn(environment, node);
     const settings = (await api<SettingsResponse>(node, auth, "GET", "/settings")).body;
-    assert.deepEqual(settings.conversationLabels, ["Research", "Bug", "Feature", "POC"]);
+    assert.deepEqual(settings.conversationLabels, ["Research", "Bug", "Feature", "POC", "Deploy to prod", "Hotfix"]);
     const input = { ...settings, ...settings.runtimeOverrides, conversationLabels: ["Research", "Bug", "Feature", "POC", " Support ", "support"] };
     assert.equal((await api(node, auth, "PUT", "/settings", input)).status, 200);
     assert.deepEqual((await api<SettingsResponse>(node, auth, "GET", "/settings")).body.conversationLabels, ["Research", "Bug", "Feature", "POC", "Support"]);
