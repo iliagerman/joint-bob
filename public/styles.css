@@ -4280,7 +4280,8 @@ li.git-hosting-step .git-hosting-note { margin: 0; }
 .resources-relay-policy summary { cursor: pointer; overflow-wrap: anywhere; }
 .resources-relay-policy summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #resourcesRelayStatus { color: var(--muted); }
-.resources-relay-content { max-height: 32vh; overflow-y: auto; scrollbar-width: thin; padding-right: 4px; }
+/* The scroller clips at its edge; padding cancelled by a negative margin keeps the focus rings of its controls visible. */
+.resources-relay-content { max-height: 32vh; overflow-y: auto; scrollbar-width: thin; padding: 4px 6px; margin: -4px -6px; }
 .resources-relay-settings { display: grid; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 8px 12px; margin: 8px 0; }
 .resources-relay-settings legend { padding: 0 4px; font-weight: 600; }
 .resources-relay-setting { display: grid; gap: 4px; }

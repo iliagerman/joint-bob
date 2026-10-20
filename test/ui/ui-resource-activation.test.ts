@@ -76,6 +76,12 @@ test("Resources edits per-agent skill activation and node auto-activate default"
     assert.equal(await relaySettings.evaluate((element: HTMLDetailsElement) => element.open), false, "relay settings start collapsed");
     await page.getByTestId("resources-relay-summary").click();
     await page.getByTestId("resources-relay-help").getByText(/There is no opt-in/).waitFor();
+    const ringRoom = await page.evaluate(() => {
+      const scroller = document.querySelector(".resources-relay-content")!.getBoundingClientRect();
+      const select = document.querySelector("#resourcesRelaySelect")!.getBoundingClientRect();
+      return Math.min(select.left - scroller.left, scroller.right - select.right);
+    });
+    assert.ok(ringRoom >= 3, `the relay picker's 3px focus ring fits inside its scroller (${ringRoom}px)`);
     await page.getByTestId("resources-relay-publisher-summary").click();
     const publisher = page.getByTestId("resources-relay-publish");
     await publisher.waitFor();

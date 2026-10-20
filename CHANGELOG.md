@@ -5,6 +5,10 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Fixed the keyboard focus ring on the relay picker in Resources, which was cut off at the edge of its list.
+
+## 2.126.0 — 2026-10-20
+
 - Added Azure service principal as a secret account type, storing your tenant ID, client ID, client secret, and optional subscription ID for attached agents to use with Azure SDKs.
 
 ## 2.125.1 — 2026-10-20
