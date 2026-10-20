@@ -154,7 +154,9 @@ function save(event) {
   else toast("Not connected");
 }
 
-elements.autoRespondButton.addEventListener("click", () => void openAutoRespond().catch((error) => toast(error.message)));
+for (const button of [elements.autoRespondButton, elements.autoRespondPill]) {
+  button.addEventListener("click", () => void openAutoRespond().catch((error) => toast(error.message)));
+}
 elements.cancelAutoRespondButton.addEventListener("click", () => elements.autoRespondDialog.close());
 elements.autoRespondForm.addEventListener("submit", save);
 elements.autoRespondHarness.addEventListener("change", () => fillPickers());

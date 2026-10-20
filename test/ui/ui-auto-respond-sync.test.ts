@@ -84,6 +84,20 @@ test("the open conversation's auto badge follows live state even when the list s
     assert.match(await badge.getAttribute("title") ?? "", /You stopped the turn/);
     await refresh();
     assert.equal(await badge.textContent(), "Auto stopped", "a stale active snapshot cannot hide the live stop");
+
+    const pill = page.getByTestId("auto-respond-pill");
+    assert.equal(await pill.evaluate((element) => element.tagName), "BUTTON", "the conversation badge is keyboard-accessible");
+    await pill.click();
+    await page.getByTestId("auto-respond-dialog").waitFor({ state: "visible" });
+    assert.match(await page.getByTestId("auto-respond-status").innerText(), /Stopped: You stopped the turn/);
+    await publish("stopped", 2, "The responder timed out");
+    await page.waitForFunction(() => document.querySelector('[data-testid="auto-respond-status"]')?.textContent?.includes("The responder timed out"));
+    await page.getByTestId("auto-respond-cancel-button").click();
+    await pill.focus();
+    await page.keyboard.press("Enter");
+    await page.getByTestId("auto-respond-dialog").waitFor({ state: "visible" });
+    assert.match(await page.getByTestId("auto-respond-status").innerText(), /The responder timed out/);
+    await page.getByTestId("auto-respond-cancel-button").click();
     await publish("active", 0);
     assert.equal(await badge.textContent(), "Auto 0/10", "resuming clears the stopped badge");
     await publish("active", 3);

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the auto-respond status in the conversation toolbar so clicking it opens the auto-respond dialog, and it can be reached and opened from the keyboard.
+
 ## 2.123.0 — 2026-10-20
 
 - Added offline availability for shared saved commands, so recipients keep them on their machine while the owner is offline, including after a restart.
