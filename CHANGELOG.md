@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.129.1 — 2026-10-20
 
-- Removed the relay rules panel and receiving-node sync status from Resources, and kept its filters on a single row.
+- Removed the relay rules panel, its publish editor, and the receiving-node sync status from Resources, along with the badge that showed whether the selected relay blocks or enables a skill.
+- Changed the Resources filter row to stay on one line, scrolling sideways on narrow screens instead of wrapping.
+- Widened the cards in the usage changes panel.
 
 ## 2.129.0 — 2026-10-20
 
