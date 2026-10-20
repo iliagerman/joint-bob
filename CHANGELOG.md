@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.123.0 — 2026-10-20
 
-- Changed shared saved commands to stay available on recipient machines while their owner is offline, with edits, deletions, and revoked access syncing in the background.
+- Added offline availability for shared saved commands, so recipients keep them on their machine while the owner is offline, including after a restart.
+- Changed shared saved commands to sync in the background, so edits and deletions reach connected recipients right away and missed changes are caught up on startup and every 30 seconds.
+- Changed shared saved commands to stop being available once a machine leaves its cluster, is unpaired, or is blocked.
 
 ## 2.122.2 — 2026-10-20
 
