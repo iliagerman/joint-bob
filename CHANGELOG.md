@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.129.0 — 2026-10-20
 
-- Added the Deploy to prod and Hotfix conversation labels, which now always appear in the label list alongside your own labels.
+- Fixed built-in conversation labels such as Deploy to prod and Hotfix disappearing once you saved your own label list; they now always appear alongside your labels.
 - Changed the AI-DLC driver auto-respond preset to answer routine AI-DLC plan and stage approvals itself, stopping only for decisions that need you, credentials, or destructive, production, or spending actions.
 - Added a badge on Resources skills showing whether the selected relay blocks or enables them, updated as soon as you switch relays, and made skill search tolerate small typos in names.
 
