@@ -70,31 +70,7 @@ test("Resources edits per-agent skill activation and node auto-activate default"
     });
     assert.equal(serving.status, 204);
     await page.getByTestId("resources-refresh-button").click();
-    const relaySettings = page.getByTestId("resources-relay-policy");
-    await relaySettings.waitFor();
-    assert.equal(await relaySettings.evaluate((element) => element.tagName), "DETAILS", "relay controls are collapsible instead of crowding the list");
-    assert.equal(await relaySettings.evaluate((element: HTMLDetailsElement) => element.open), false, "relay settings start collapsed");
-    await page.getByTestId("resources-relay-summary").click();
-    await page.getByTestId("resources-relay-help").getByText(/There is no opt-in/).waitFor();
-    const ringRoom = await page.evaluate(() => {
-      const scroller = document.querySelector(".resources-relay-content")!.getBoundingClientRect();
-      const select = document.querySelector("#resourcesRelaySelect")!.getBoundingClientRect();
-      return Math.min(select.left - scroller.left, scroller.right - select.right);
-    });
-    assert.ok(ringRoom >= 3, `the relay picker's 3px focus ring fits inside its scroller (${ringRoom}px)`);
-    await page.getByTestId("resources-relay-publisher-summary").click();
-    const publisher = page.getByTestId("resources-relay-publish");
-    await publisher.waitFor();
-    await page.getByTestId("resources-relay-rules").fill(`block ${skillName} pi`);
-    await publisher.click();
-    const [published] = await Promise.all([
-      page.waitForResponse((response) => response.url().endsWith("/api/relay/serving/skill-policy") && response.request().method() === "PUT"),
-      page.getByTestId("confirm-accept-button").click(),
-    ]);
-    assert.equal(published.status(), 200, await published.text());
-    const policy = await api<{ version: number; rules: unknown[] }>(node, session, "GET", "/relay/serving/skill-policy");
-    assert.equal(policy.body.version, 1);
-    assert.equal(policy.body.rules.length, 1);
+    assert.equal(await page.getByTestId("resources-relay-policy").count(), 0, "relay details are absent even on a serving node");
 
     // A signed cached block must not hide the saved local preference or prevent disabling it.
     const receiver = new DatabaseSync(path.join(node.dataDir, "node.db"));
@@ -111,14 +87,8 @@ test("Resources edits per-agent skill activation and node auto-activate default"
     } finally { receiver.close(); relay.close(); }
     await page.getByTestId("resources-harness-select").selectOption("claude");
     await page.getByTestId("resources-refresh-button").click();
-    await page.getByTestId("resources-relay-select").locator(`option[value="${membershipId}"]`).waitFor({ state: "attached" });
-    await page.getByTestId("resources-relay-select").selectOption(membershipId);
-    assert.equal(await page.getByTestId("resources-relay-follow").count(), 0, "a joined relay's rules apply without an opt-in");
     await row.getByText(/Blocked by relay: Home relay · cached-policy.fixture.example/).waitFor();
-    await page.getByTestId("resources-relay-preview").getByText(/Signed version 1 · Enforced on this node/).waitFor();
-    const relayOptions = await page.getByTestId("resources-relay-select").locator("option").allTextContents();
-    assert.ok(relayOptions.includes("Home relay · cached-policy.fixture.example"));
-    assert.equal(relayOptions.some((label) => label.includes("my-laptop")), false, "relay picker names the server, not this machine's membership");
+    assert.equal(await page.getByTestId("resources-relay-policy").count(), 0, "joined relay does not restore the removed section");
     assert.equal(await toggle.isChecked(), true, "checkbox shows saved enable, not relay's effective block");
     await toggle.uncheck();
     await page.getByTestId("resources-status").getByText(/disabled for Claude/).waitFor();

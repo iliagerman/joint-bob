@@ -83,25 +83,15 @@ test("a joined relay installs its enforced skill over the local one without an o
     await page.getByTestId("resources-refresh-button").click();
     const row = page.getByTestId("resources-skill-row").filter({ hasText: skillName });
     await row.waitFor();
-    await page.getByTestId("resources-relay-summary").click();
-    await page.getByTestId("resources-relay-status").getByText(/1 relay policy enforced on this node/).waitFor();
-    assert.equal(await page.getByTestId("resources-relay-follow").count(), 0, "there is no opt-in to follow a relay");
-    await page.getByTestId("resources-relay-select").locator(`option[value="${membershipId}"]`).waitFor({ state: "attached" });
-    await page.getByTestId("resources-relay-select").selectOption(membershipId);
-    await page.getByTestId("resources-relay-preview").getByText(/Signed version 1 · Enforced on this node/).waitFor();
+    assert.equal(await page.getByTestId("resources-relay-policy").count(), 0, "relay details are removed without changing enforcement");
 
     await row.getByText("from Team relay").waitFor();
     await row.getByText(/Enforced by Team relay/).waitFor();
-    const selectedRelayRule = row.getByText("blocked by selected relay");
-    await selectedRelayRule.waitFor();
-    assert.match(await selectedRelayRule.getAttribute("title"), /blocks this skill for some agents/);
     assert.equal(await row.getByTestId("skill-remove-button").count(), 0, "a relay-managed skill cannot be removed here");
-    await page.getByTestId("resources-relay-sync").getByText(/1 skill delivered here · last synced/).waitFor();
     assert.equal(await page.getByText(/Receiving from \d+ relay/).count(), 0, "relay sync health lives with the relay, not in the node list");
     assert.match(await readFile(path.join(managed, "SKILL.md"), "utf8"), /Relay version/, "the relay's files replace the local skill");
     assert.equal(downloads, 1);
 
-    await page.getByTestId("resources-relay-preview").getByText(/it enforces 1 skill, installed here with their files/).waitFor();
     await page.getByTestId("resources-harness-select").selectOption("pi");
     const toggle = row.getByTestId("resources-activation-toggle");
     assert.equal(await toggle.isChecked(), true);

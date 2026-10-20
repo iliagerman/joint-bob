@@ -6,7 +6,7 @@ import test from "node:test";
 import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
-test("Resources keeps relay publishing compact and scrolls skill content taller than its page", { timeout: 120_000 }, async () => {
+test("Resources uses one filter row without relay details and scrolls tall skill content", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "resource-layout-ui-"));
   let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
   let browser: Awaited<ReturnType<typeof launchChrome>> | undefined;
@@ -37,6 +37,10 @@ test("Resources keeps relay publishing compact and scrolls skill content taller 
     const row = page.getByTestId("resources-skill-row").filter({ hasText: "tall-skill" });
     await row.waitFor();
     const list = page.getByTestId("resources-list"), panel = page.getByTestId("resources-panel");
+    const filters = await page.locator(".resources-toolbar > select:visible").evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().top));
+    assert.ok(filters.length >= 5, "precondition: all resource filters loaded");
+    assert.ok(Math.max(...filters) - Math.min(...filters) < 2, `desktop filters share one row: ${filters}`);
+    assert.equal(await page.getByTestId("resources-relay-policy").count(), 0, "relay details removed from Resources");
     for (const [width, height] of [[1440, 900], [1440, 560], [390, 620]]) {
       await page.setViewportSize({ width, height });
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -63,16 +67,6 @@ test("Resources keeps relay publishing compact and scrolls skill content taller 
       assert.ok(reachable, `last agent switch reachable at ${width}x${height}`);
       assert.ok(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1), "panel fits horizontally");
     }
-    await page.getByTestId("resources-relay-summary").click();
-    await page.getByTestId("resources-relay-publisher-summary").click();
-    const editor = page.getByTestId("resources-relay-rules");
-    await editor.fill(Array.from({ length: 40 }, (_, i) => `block skill-${i} all`).join("\n"));
-    assert.ok(await editor.evaluate((element) => element.scrollHeight > element.clientHeight), "long policy scrolls inside a bounded editor");
-    await page.getByTestId("resources-relay-publish").scrollIntoViewIfNeeded();
-    const publishBox = await page.getByTestId("resources-relay-publish").boundingBox();
-    assert.ok(publishBox && publishBox.y >= 0 && publishBox.y + publishBox.height <= 620, "publish action reachable on a small screen");
-    await page.getByTestId("resources-relay-summary").click();
-    assert.equal(await editor.isVisible(), false, "editor is out of the way when collapsed");
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

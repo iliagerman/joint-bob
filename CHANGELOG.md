@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Removed the relay rules panel and receiving-node sync status from Resources, and kept its filters on a single row.
+
 ## 2.129.0 — 2026-10-20
 
 - Fixed built-in conversation labels such as Deploy to prod and Hotfix disappearing once you saved your own label list; they now always appear alongside your labels.

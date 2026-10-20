@@ -6,7 +6,7 @@ import test from "node:test";
 import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
-test("received skill errors stay expanded while resource pages refit", { timeout: 120_000 }, async () => {
+test("Resources omits receiving-node status even when a peer is failing", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "resource-peer-status-"));
   let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
   let browser: Awaited<ReturnType<typeof launchChrome>> | undefined;
@@ -39,18 +39,12 @@ test("received skill errors stay expanded while resource pages refit", { timeout
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-resources").click();
     await page.getByTestId("resources-list-pager").getByTestId("resources-page-label").waitFor();
-    const summary = page.locator(".resources-peer-status summary");
-    await summary.getByText("Receiving from 4 nodes · 1 failing", { exact: true }).waitFor();
+    assert.equal(await page.locator(".resources-peer-status").count(), 0, "receiving-node section removed");
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.ok(await page.getByTestId("resources-skill-row").count() < 30, "precondition: paginated list");
-    await summary.click();
-    await page.getByText("Fixture peer 0: Synthetic sync failure").waitFor();
-    await page.evaluate(`new Promise(resolve => {
-      let remaining = 8;
-      const frame = () => { if (--remaining) requestAnimationFrame(frame); else resolve(); };
-      requestAnimationFrame(frame);
-    })`);
-    assert.equal(await page.locator(".resources-peer-status").evaluate((details: HTMLDetailsElement) => details.open), true);
+    await page.getByTestId("resources-refresh-button").click();
+    await page.getByTestId("resources-skill-row").first().waitFor();
+    assert.equal(await page.locator(".resources-peer-status").count(), 0, "refresh does not restore receiving-node status");
   } finally {
     if (browser) await browser.close();
     if (server) await stopDevNode(server);
