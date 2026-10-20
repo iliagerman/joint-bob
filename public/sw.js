@@ -3,8 +3,15 @@ const APP_SHELL = ["/", "/index.html", "/styles.css", "/focus.css", "/app/focus-
 
 
 self.addEventListener("install", (event) => {
-  // "reload" skips the browser's HTTP cache, so a new cache never stores an older file.
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL.map((url) => new Request(url, { cache: "reload" })))));
+  // "reload" skips the browser's HTTP cache, so a new cache never stores an older file. Each file is
+  // cached on its own: one refused or timed-out request (a busy relay gateway, a slow link) must not
+  // fail the install and leave the previous worker, with its older cache, in charge.
+  // Only the app page itself is required: without it the network is down, and the old worker stays.
+  event.waitUntil(caches.open(CACHE_NAME).then(async (cache) => {
+    const results = await Promise.allSettled(APP_SHELL.map((url) => cache.add(new Request(url, { cache: "reload" }))));
+    const page = results[APP_SHELL.indexOf("/")];
+    if (page?.status === "rejected") throw page.reason;
+  }));
   self.skipWaiting();
 });
 
@@ -73,5 +80,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   if (request.method !== "GET" || url.pathname.startsWith("/api/") || url.pathname.startsWith("/ws")) return;
-  event.respondWith(fetch(request).catch(async () => (await caches.match(request)) || caches.match("/")));
+  // Offline answers come only from this release's cache. Another release's stylesheet under this
+  // release's scripts draws a broken page, and the app page is no answer to a script or stylesheet.
+  event.respondWith(fetch(request).catch(async () => {
+    const cache = await caches.open(CACHE_NAME);
+    return (await cache.match(request)) || (request.mode === "navigate" && await cache.match("/")) || Response.error();
+  }));
 });

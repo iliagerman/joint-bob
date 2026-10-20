@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the offline app update failing entirely when one file could not be downloaded, and stopped offline pages from mixing in styles from an older version.
+
 ## 2.122.0 — 2026-10-19
 
 - Added a searchable project selector to the Issues view.
