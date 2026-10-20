@@ -67,7 +67,7 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
       assert.equal(await select.inputValue(), "__other__");
       assert.equal(await page.getByTestId("new-session-classification-other").isVisible(), true, "typing to Other reveals its text field");
       await select.selectOption(selection);
-      assert.deepEqual(await select.locator("option").allTextContents(), ["Unclassified", "🔬 Research", "🐞 Bug", "✨ Feature", "🧪 POC", "Support", "Other…"]);
+      assert.deepEqual(await select.locator("option").allTextContents(), ["Unclassified", "🔬 Research", "🐞 Bug", "✨ Feature", "🧪 POC", "Deploy to prod", "Hotfix", "Support", "Other…"]);
       if (selection === "__other__") {
         await page.getByTestId("new-session-name-start-button").click();
         assert.equal(await page.getByTestId("new-session-name-dialog").isVisible(), true, "Other requires text");

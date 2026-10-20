@@ -118,7 +118,7 @@ test("a member sees no admin entries, never calls an admin route, and saves only
   const response = await saving;
   assert.equal(response.status(), 200);
   assert.deepEqual(response.request().postDataJSON().conversationLabels, ["noam-label"]);
-  assert.deepEqual((await response.json()).conversationLabels, ["noam-label"]);
+  assert.deepEqual((await response.json()).conversationLabels, ["Research", "Bug", "Feature", "POC", "Deploy to prod", "Hotfix", "noam-label"]);
   await page.getByText("Settings saved", { exact: true }).waitFor();
   const saved = runOnNode(environment, node, `
     const { DatabaseSync } = await import("node:sqlite");

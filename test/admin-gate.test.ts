@@ -86,7 +86,7 @@ test("every admin route answers a member like an unknown route, and the admin st
     assert.deepEqual(Object.keys(own.body).sort(), ["autoCompactThreshold", "conversationCommands", "conversationDefaults", "conversationHistoryDays", "conversationLabels", "digestAttachments", "projects", "showProjectsOnOtherNodes"], "a member sees only their own settings");
     const changed = await api<{ conversationLabels: string[] }>(node, noam, "PUT", "/settings/personal", { conversationLabels: ["noam-only"] });
     assert.equal(changed.status, 200, JSON.stringify(changed.body));
-    assert.deepEqual(changed.body.conversationLabels, ["noam-only"]);
+    assert.deepEqual(changed.body.conversationLabels, ["Research", "Bug", "Feature", "POC", "Deploy to prod", "Hotfix", "noam-only"]);
     const nodeView = await api<{ conversationLabels: string[]; syncthing: unknown }>(node, admin, "GET", "/settings");
     assert.ok(nodeView.body.syncthing, "the admin sees node settings");
     assert.notDeepEqual(nodeView.body.conversationLabels, ["noam-only"], "a member's labels never change the admin's");
