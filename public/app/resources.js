@@ -4,6 +4,7 @@ import { api } from "./api.js";
 import { brandIcon } from "./icons.js";
 import { loadSkills } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
+import { fuzzyMatch } from "./fuzzy.js";
 import { normalizedQuery } from "./layout.js";
 import { openSettings } from "./settings.js";
 import { confirmAction, toast } from "./shell.js";
@@ -53,7 +54,8 @@ function button(text, testid, onClick, className = "ghost compact") {
 
 function setStatus(text) { elements.resourcesStatus.textContent = text; }
 
-function matches(query, ...fields) { return !query || fields.join("\n").toLowerCase().includes(query); }
+/** The first field (the name) matches fuzzily; the others only by exact substring, so long descriptions do not match everything. */
+function matches(query, first, ...rest) { return !query || fuzzyMatch(query, first) !== null || rest.join("\n").toLowerCase().includes(query); }
 
 function harnessFilter() { return elements.resourcesHarnessSelect.value; }
 
@@ -558,6 +560,16 @@ function skillRow(skill, local) {
         : `${control.relays.join(", ")} controls this skill${all ? "" : " for some agents"}. Locked agents cannot be changed on this node; the others you manage here.`;
       head.append(mark);
       }
+    }
+  }
+  if (local) {
+    const relay = view.relayPolicies.find((item) => item.id === document.querySelector("#resourcesRelaySelect").value);
+    const rules = relay?.rules.filter((rule) => rule.name === skill.name) ?? [];
+    if (rules.length) {
+      const blocked = rules.some((rule) => rule.action === "block");
+      const mark = badge(blocked ? "blocked by selected relay" : "enabled by selected relay", "relay");
+      mark.title = `${relay.name || relay.origin} ${blocked ? "blocks" : "enables"} this skill${rules.some((rule) => rule.harness !== "all") ? " for some agents" : ""}.`;
+      head.append(mark);
     }
   }
   if (view.scope === "conversation" && view.engine && skill.activation?.[view.engine]?.enabled) head.append(badge("active", "active"));
@@ -1620,7 +1632,7 @@ elements.resourcesScopeSelect.addEventListener("change", () => {
   view.page = 0;
   void loadInventory();
 });
-document.querySelector("#resourcesRelaySelect").addEventListener("change", renderRelayPolicy);
+document.querySelector("#resourcesRelaySelect").addEventListener("change", () => { renderRelayPolicy(); render(); });
 document.querySelector("#resourcesNodeSelect").addEventListener("change", (event) => { view.nodeId = event.currentTarget.value; view.page = 0; render(); });
 document.querySelector("#resourcesRelayPublish").addEventListener("click", async (event) => {
   const publishButton = event.currentTarget;

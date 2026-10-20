@@ -51,6 +51,9 @@ test("Settings → Resources shows a conversation's skills and MCP servers, keep
     const active = skill.getByText("active", { exact: true });
     await active.waitFor();
     await skill.getByText("managed", { exact: true }).waitFor();
+    await page.getByTestId("resources-search-input").fill("hndy");
+    await skill.waitFor();
+    await page.getByTestId("resources-search-input").fill("handy");
     await skill.getByTestId("resources-activation-toggle").uncheck();
     await page.getByTestId("resources-status").getByText(/disabled for Pi/).waitFor();
     assert.equal(await skill.getByText("active", { exact: true }).count(), 0, "conversation does not mark a per-harness disabled skill active");

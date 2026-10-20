@@ -46,8 +46,10 @@ test("a joined relay installs its enforced skill over the local one without an o
     await page.getByTestId("login-password-input").fill(environment.password);
     await page.getByTestId("login-submit-button").click();
     await page.getByText("Internal Assistant", { exact: true }).waitFor();
+    const inventoryLoaded = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/resources/inventory" && response.ok());
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-resources").click();
+    await inventoryLoaded;
     await page.getByTestId("resources-search-input").waitFor();
 
     // Switching between listing tabs keeps the toolbar and tab strip where they are.
@@ -74,7 +76,7 @@ test("a joined relay installs its enforced skill over the local one without an o
       const enabled = emptyRelayEnabledResources();
       enabled.skills.pi.push(skillName);
       receiveRelayPolicy(receiver, { ...membership, status: "admitted", relayNodeId: relayId, fingerprint: identity.fingerprint }, identity.publicKey,
-        publishRelayPolicy(relay, relayId, [], { settings, enabled, skillDigests: { [skillName]: built.digest } }));
+        publishRelayPolicy(relay, relayId, [{ action: "enable", name: skillName, harness: "pi" }, { action: "block", name: skillName, harness: "claude" }], { settings, enabled, skillDigests: { [skillName]: built.digest } }));
     } finally { receiver.close(); relay.close(); }
 
     await page.getByTestId("resources-search-input").fill(skillName);
@@ -90,6 +92,9 @@ test("a joined relay installs its enforced skill over the local one without an o
 
     await row.getByText("from Team relay").waitFor();
     await row.getByText(/Enforced by Team relay/).waitFor();
+    const selectedRelayRule = row.getByText("blocked by selected relay");
+    await selectedRelayRule.waitFor();
+    assert.match(await selectedRelayRule.getAttribute("title"), /blocks this skill for some agents/);
     assert.equal(await row.getByTestId("skill-remove-button").count(), 0, "a relay-managed skill cannot be removed here");
     await page.getByTestId("resources-relay-sync").getByText(/1 skill delivered here · last synced/).waitFor();
     assert.equal(await page.getByText(/Receiving from \d+ relay/).count(), 0, "relay sync health lives with the relay, not in the node list");
