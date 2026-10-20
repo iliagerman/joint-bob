@@ -2260,6 +2260,7 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 .secret-provider-icon.zai { color: #5c68d7; }
 .secret-provider-icon.grafana { color: #f46800; }
 .secret-provider-icon.datadog { color: #8a55ad; }
+.secret-provider-icon.jira { color: #2684ff; }
 .secret-provider-icon.postgres { color: #336791; }
 .secret-provider-icon.mssql { color: #cc2927; }
 .secret-provider-icon.mongodb { color: #47a248; }

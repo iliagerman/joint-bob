@@ -70,6 +70,31 @@ test("new provider accounts can be replicated without losing their type", async 
   });
 });
 
+test("Jira accounts replicate and incoming credentials retain their provider", async () => {
+  await withNode("jira", async ({ secrets, replication }) => {
+    const variables = [
+      { name: "JIRA_URL", kind: "value" as const, value: "https://synthetic.atlassian.net" },
+      { name: "JIRA_EMAIL", kind: "value" as const, value: "synthetic@example.test" },
+      { name: "JIRA_API_TOKEN", kind: "value" as const, value: "synthetic-jira-token" },
+    ];
+    const account = await secrets.saveSecretAccount({ label: "Jira", provider: "jira", variables });
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+    assert.equal(events.find((event: { entityKey: string }) => event.entityKey === account.id)?.value.provider, "jira");
+    const remoteId = randomUUID();
+    const timestamp = new Date().toISOString();
+    await replication.receiveSecretCredentialEvents([{
+      id: randomUUID(), entityKey: remoteId, operation: "upsert",
+      value: { label: "Remote Jira", provider: "jira", variables },
+      originNodeId: peerId, updatedAt: timestamp, createdAt: timestamp,
+    }]);
+    const remote = (await secrets.listSecretAccounts()).find((item: { id: string }) => item.id === remoteId);
+    assert.equal(remote?.provider, "jira");
+    assert.deepEqual(remote?.variables, variables.map(({ name, kind }) => ({ name, kind, configured: true })));
+  });
+});
+
 test("replicated accounts carry their workspace attachments", async () => {
   await withNode("workspace-outbox", async ({ dataDir, secrets, replication }) => {
     const database = new DatabaseSync(path.join(dataDir, "node.db"));

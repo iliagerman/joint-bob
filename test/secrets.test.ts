@@ -62,6 +62,33 @@ test("secret accounts redact saved values, retain omitted edits, and expose only
   });
 });
 
+test("Jira credentials stay redacted, retain edits and export only when attached", async () => {
+  await withSecrets("jira", async (secrets) => {
+    const variables = [
+      { name: "JIRA_URL", kind: "value" as const, value: "https://synthetic.atlassian.net" },
+      { name: "JIRA_EMAIL", kind: "value" as const, value: "synthetic@example.test" },
+      { name: "JIRA_API_TOKEN", kind: "value" as const, value: "synthetic-jira-token" },
+    ];
+    const account = await secrets.saveSecretAccount({ label: "Jira test", provider: "jira", variables });
+    assert.equal(account.provider, "jira");
+    assert.deepEqual(secrets.genericSecretEnvironment("project-a"), {});
+    await secrets.saveSecretAccount({ id: account.id, label: "Jira test", provider: "jira", variables: variables.map(({ name, kind }) => ({ name, kind })) });
+    await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+    assert.deepEqual(secrets.genericSecretEnvironment("project-a"), Object.fromEntries(variables.map(({ name, value }) => [name, value])));
+    const context = secrets.agentCredentialContext("project-a");
+    assert.match(context, /jira.*JIRA_URL.*JIRA_EMAIL.*JIRA_API_TOKEN.*Jira Cloud REST API/);
+    for (const { value } of variables) {
+      assert.ok(!JSON.stringify(await secrets.listSecretAccounts()).includes(value));
+      assert.ok(!context.includes(value));
+    }
+    const database = new DatabaseSync(path.join(secrets.dataDir, "node.db"));
+    try {
+      const row = database.prepare("SELECT variables_encrypted FROM secret_accounts WHERE id = ?").get(account.id) as { variables_encrypted: string };
+      for (const { value } of variables) assert.ok(!row.variables_encrypted.includes(value));
+    } finally { database.close(); }
+  });
+});
+
 test("SSH accounts keep keys private, preserve edits and reject invalid connection fields", async () => {
   await withSecrets("ssh", async (secrets) => {
     const pem = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" }).toString();
