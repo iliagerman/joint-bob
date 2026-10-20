@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.128.0 — 2026-10-20
 
-- Added a source filter and a group-by-source sort to Resources skills, so you can see which relay or node each skill came from and show one relay's skills on their own, with each relay's sync status shown beside it.
+- Added a Source filter to Resources skills that lists each relay you joined with how many of its skills this node holds, and a "Show its skills" button that filters the list down to one relay's skills.
+- Added a Group by source sort to Resources skills, with headings showing whether each skill came from a relay, another node, or this node.
+- Changed the relay part of Resources into one section, with each relay's sync status shown beside its rules, the node list showing only nodes, and the how-to text shortened to a note.
+- Changed relay-delivered skills to show a single "from" badge naming their relay, and removed the "managed here" badge from skills no relay controls.
 
 ## 2.127.0 — 2026-10-20
 
