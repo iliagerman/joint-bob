@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.122.2 — 2026-10-20
 
-- Fixed the auto respond dialog opening late from the mobile focus menu, where it could pop up behind whatever the user had moved on to. It now opens at once and enables Save once the harness list loads.
+- Fixed the auto-respond dialog opening late from the mobile focus menu, where it could pop up behind whatever you had moved on to. It now opens at once, and Save becomes available once the harness list loads.
 
 ## 2.122.1 — 2026-10-20
 
