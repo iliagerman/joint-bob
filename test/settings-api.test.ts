@@ -128,8 +128,8 @@ test("settings API persists runtime and Syncthing choices without returning secr
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
-      conversationLabels: ["Research", "Bug", "Feature", "POC"],
-      conversationLabelIcons: { Research: "🔬", Bug: "🐞", Feature: "✨", POC: "🧪" },
+      conversationLabels: ["Research", "Bug", "Feature", "POC", "Deploy to prod", "Hotfix"],
+      conversationLabelIcons: { Research: "🔬", Bug: "🐞", Feature: "✨", POC: "🧪", "Deploy to prod": "🚀", Hotfix: "🔥" },
       restartRequired: { pi: true, claude: true, kiro: false },
     });
 
@@ -172,8 +172,8 @@ test("settings API persists runtime and Syncthing choices without returning secr
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
-      conversationLabels: ["Research", "Bug", "Feature", "POC"],
-      conversationLabelIcons: { Research: "🔬", Bug: "🐞", Feature: "✨", POC: "🧪" },
+      conversationLabels: ["Research", "Bug", "Feature", "POC", "Deploy to prod", "Hotfix"],
+      conversationLabelIcons: { Research: "🔬", Bug: "🐞", Feature: "✨", POC: "🧪", "Deploy to prod": "🚀", Hotfix: "🔥" },
       restartRequired: { pi: false, claude: false, kiro: false },
     });
 
