@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { appendAuditEvent } from "./audit.js";
 import { resolveDataDirectory } from "./data-directory.js";
-import { conversationLabelIconsSchema, conversationLabelsSchema, DEFAULT_CONVERSATION_LABEL_ICONS, DEFAULT_CONVERSATION_LABELS, iconsForLabels } from "./conversation-labels.js";
+import { conversationLabelIconsSchema, conversationLabelsSchema, DEFAULT_CONVERSATION_LABEL_ICONS, DEFAULT_CONVERSATION_LABELS, iconsForLabels, storedConversationLabelIconsSchema } from "./conversation-labels.js";
 import { conversationDefaultsSchema, type ConversationDefault } from "./harnesses/defaults.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime, detectExecutable, runtimeOverrides } from "./harnesses/runtime-configuration.js";
@@ -80,8 +80,9 @@ function syncCheck(defaults: Record<string, ConversationDefault>): SyncCheckSett
 function labelIcons(): Record<string, string> {
   const stored = setting("conversationLabelIcons");
   if (!stored) return { ...DEFAULT_CONVERSATION_LABEL_ICONS };
-  const parsed = conversationLabelIconsSchema.safeParse(JSON.parse(stored.value));
-  return parsed.success ? parsed.data : { ...DEFAULT_CONVERSATION_LABEL_ICONS };
+  const parsed = storedConversationLabelIconsSchema.safeParse(JSON.parse(stored.value));
+  const icons = { ...DEFAULT_CONVERSATION_LABEL_ICONS, ...(parsed.success ? parsed.data : {}) };
+  return iconsForLabels(Object.keys(icons), icons);
 }
 
 function validateSyncCheck(input: SyncCheckSettings): SyncCheckSettings {
@@ -588,6 +589,10 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const resources = input.resources ? normalizeResourcePaths(input.resources) : previous.resources;
   const conversationLabels = conversationLabelsSchema.parse(input.conversationLabels ?? previous.conversationLabels);
   const conversationLabelIcons = iconsForLabels(conversationLabels, conversationLabelIconsSchema.parse(input.conversationLabelIcons ?? previous.conversationLabelIcons));
+  // Only labels the caller could edit can have deliberately cleared icons. Built-ins
+  // added to an older label list must still pick up their defaults on read.
+  const editableLabels = input.conversationLabelIcons === undefined ? previous.conversationLabels : input.conversationLabels ?? previous.conversationLabels;
+  const clearedIcons = Object.fromEntries(editableLabels.map((label) => [label.trim(), ""]));
   const conversationHistoryDays = input.conversationHistoryDays ?? previous.conversationHistoryDays;
   const conversationRetentionDays = input.conversationRetentionDays ?? previous.conversationRetentionDays;
   if (!Number.isInteger(conversationRetentionDays) || conversationRetentionDays < 1 || conversationRetentionDays > 3650) throw new Error("Conversation retention must be between 1 and 3650 days");
@@ -624,7 +629,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.homePath", path.resolve(homePath));
     save(db, "conversationLabels", JSON.stringify(conversationLabels));
-    save(db, "conversationLabelIcons", JSON.stringify(conversationLabelIcons));
+    save(db, "conversationLabelIcons", JSON.stringify({ ...clearedIcons, ...conversationLabelIcons }));
     save(db, "conversationHistoryDays", String(conversationHistoryDays));
     save(db, "conversationRetentionDays", String(conversationRetentionDays));
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed missing Deploy to prod and Hotfix icons in saved label settings, and gave the usage Cluster and Repeated work views their own period and project controls.
+
 ## 2.129.1 — 2026-10-20
 
 - Removed the relay rules panel, its publish editor, and the receiving-node sync status from Resources, along with the badge that showed whether the selected relay blocks or enables a skill.

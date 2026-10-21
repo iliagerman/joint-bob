@@ -154,7 +154,13 @@ button.usage-select:hover .usage-name { text-decoration: underline; text-decorat
 .usage-breakdown :is(th, td).usage-text-cell { text-align: left; }
 .usage-flag { color: var(--amber); font-weight: 600; }
 .usage-insight-panel { overflow-y: auto; overscroll-behavior: contain; }
-.usage-insight-flows { display: grid; gap: 10px; max-width: 760px; padding: 14px; }
+.usage-ledger:has(> .usage-feature-controls-host:not([hidden])) { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.usage-feature-controls { align-items: end; padding: 12px; border-bottom: 1px solid var(--line); }
+.usage-feature-controls > label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.usage-feature-controls > label[hidden] { display: none; }
+.usage-feature-controls > button { min-height: 32px; }
+.usage-insight-flows { display: grid; gap: 10px; max-width: 960px; padding: 14px; }
+.usage-insight-flows .usage-feature-controls { padding: 0 0 12px; }
 .usage-insight-flows p { margin: 0; color: var(--muted); font-size: 12.5px; }
 .usage-insight-flows button { justify-self: start; }
 .usage-insight-flows > div { display: grid; gap: 10px; min-width: 0; }

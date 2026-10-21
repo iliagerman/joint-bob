@@ -13,6 +13,7 @@ import { suggestNewSkills, suggestRemovals } from "../../usage-skill-suggestions
 import { readSkillContents } from "../../skill-contents.js";
 import { calendarBounds } from "../../usage-calendar.js";
 import { suggestRepeatableFlows, suggestSkillImprovements } from "../../usage-analysis.js";
+import { selectAnalysisConversations } from "../../usage-analysis-scope.js";
 import { usageDatabase } from "../../usage-ledger.js";
 import { createUsageDraft, draftApproval, draftInput, getUsageDraft, installUsageDraft } from "../../usage-drafts.js";
 import { actorOwns } from "../../ownership.js";
@@ -251,26 +252,30 @@ app.get("/api/usage/skills/suggestions", async (request, response, next) => {
     next(error);
   }
 });
-/** Cluster cost reports contain only explicitly shared projects visible to the person.
- * Membership alone grants no visibility into any unshared project on a member's node. */
-const analysisSchema = z.object({ projectId: z.string().min(1).max(200) }).strict();
+/** Analysis has its own bounded scope, independent of dashboard filters. */
+const analysisSchema = z.object({
+  projectId: z.string().min(1).max(200), from: date.optional(), to: date.optional(),
+  timeZone: z.string().min(1).max(100).default("UTC"), limit: z.coerce.number().int().min(1).max(100).default(100),
+}).strict().refine((value) => !value.from || !value.to || value.from <= value.to, { message: "from must not be after to" });
 app.get("/api/usage/analysis/preview", async (request, response, next) => {
   try {
-    const { projectId } = analysisSchema.parse(request.query);
+    const scope = analysisSchema.parse(request.query);
     const visible = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
-    if (!visible.some(({ id }) => id === projectId)) { sendError(response, 404, "Project not found"); return; }
-    response.json({ projectId, model: null, estimatedModelCostUsd: 0, maxConversations: 100, data: "local saved conversation metadata, turn timing and usage events only; no transcript text or external model", output: "review-only suggestions; no installation or sharing", redaction: "titles are grouping keys and never returned" });
-  } catch (error) { if (error instanceof z.ZodError) { sendError(response, 400, error.message); return; } next(error); }
+    if (!visible.some(({ id }) => id === scope.projectId)) { sendError(response, 404, "Project not found"); return; }
+    const selection = selectAnalysisConversations(scope);
+    response.json({ projectId: scope.projectId, model: null, estimatedModelCostUsd: 0, maxConversations: scope.limit,
+      conversations: selection.rows.length, totalConversations: selection.totalConversations, truncated: selection.truncated,
+      data: "local saved conversation metadata, turn timing and usage events only; no transcript text or external model", output: "review-only suggestions; no installation or sharing", redaction: "titles are grouping keys and never returned" });
+  } catch (error) { if (error instanceof z.ZodError || error instanceof RangeError) { sendError(response, 400, error.message); return; } next(error); }
 });
 app.post("/api/usage/analysis", async (request, response, next) => {
   try {
-    const { projectId } = analysisSchema.parse(request.body);
+    const scope = analysisSchema.parse(request.body), { projectId } = scope;
     const visible = await projectsWithSharedNames({ includeSyncStatus: false, includeUsage: false });
     if (!visible.some(({ id }) => id === projectId)) { sendError(response, 404, "Project not found"); return; }
     const db = usageDatabase();
-    const rows = db.prepare("SELECT conversation_id conversationId, MAX(title) title FROM usage_inventory WHERE project_id=? GROUP BY conversation_id ORDER BY conversation_id LIMIT 101").all(projectId) as unknown as Array<{ conversationId: string; title: string }>;
-    if (rows.length > 100) { sendError(response, 413, "Select a smaller project; analysis is limited to 100 conversations"); return; }
-    const timings = db.prepare("SELECT conversation_id conversationId,payload FROM usage_difficulty WHERE project_id=? ORDER BY occurred_at DESC LIMIT 5001").all(projectId) as unknown as Array<{ conversationId: string; payload: string }>;
+    const { rows, bounds, totalConversations, truncated, selectedWhere, selectedParameters } = selectAnalysisConversations(scope);
+    const timings = db.prepare(`SELECT conversation_id conversationId,payload FROM usage_difficulty WHERE ${selectedWhere} ORDER BY occurred_at DESC LIMIT 5001`).all(...selectedParameters) as unknown as Array<{ conversationId: string; payload: string }>;
     const duration = new Map<string, number>();
     if (timings.length <= 5000) for (const row of timings) {
       const turn = JSON.parse(row.payload) as { startedAt?: string; endedAt?: string };
@@ -279,18 +284,18 @@ app.post("/api/usage/analysis", async (request, response, next) => {
       if (Number.isFinite(elapsed) && elapsed >= 0) duration.set(row.conversationId, (duration.get(row.conversationId) ?? 0) + elapsed);
     }
     const candidates = rows.map((row) => ({ ...row, projectId,
-      costUsd: usageTotals({ projectIds: [projectId], conversationId: row.conversationId }).apiCostUsd,
+      costUsd: usageTotals({ projectIds: [projectId], conversationId: row.conversationId, ...bounds }).apiCostUsd,
       durationMs: duration.get(row.conversationId) ?? null }));
-    const events = db.prepare("SELECT payload FROM model_usage_events WHERE project_id=? ORDER BY occurred_at DESC LIMIT 5001").all(projectId) as unknown as Array<{ payload: string }>;
+    const events = db.prepare(`SELECT payload FROM model_usage_events WHERE ${selectedWhere} ORDER BY occurred_at DESC LIMIT 5001`).all(...selectedParameters) as unknown as Array<{ payload: string }>;
     const improvements = events.length <= 5000 ? suggestSkillImprovements(events.flatMap(({ payload }) => {
       const event = usageEventSchema.parse(JSON.parse(payload));
       return (event.skillReads ?? []).map((skill) => ({ skillId: `${skill.id}:${skill.version}`, projectId, conversationId: event.conversationId,
         costUsd: event.apiCostUsd, durationMs: duration.get(event.conversationId) ?? null, toolErrors: event.toolErrors }));
     })) : [];
     response.json({ projectId, model: null, actualModelCostUsd: 0, scope: "saved conversation metadata, timing and usage events only",
-      coverage: { conversations: rows.length, timingComplete: timings.length <= 5000, eventsComplete: events.length <= 5000 },
+      coverage: { conversations: rows.length, totalConversations, truncated, timingComplete: timings.length <= 5000, eventsComplete: events.length <= 5000 },
       suggestions: [...suggestRepeatableFlows(candidates), ...improvements] });
-  } catch (error) { if (error instanceof z.ZodError) { sendError(response, 400, error.message); return; } next(error); }
+  } catch (error) { if (error instanceof z.ZodError || error instanceof RangeError) { sendError(response, 400, error.message); return; } next(error); }
 });
 app.post("/api/usage/analysis/drafts", async (request, response, next) => {
   try {

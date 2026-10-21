@@ -674,9 +674,9 @@ async function loadCompare({ force = false } = {}) {
 const changes = initUsageChanges({ host: document.querySelector("#usageChanges"), scopeParameters });
 const insights = initUsageInsights({
   scopeParameters, periodRange,
-  clusterValues: () => clusterValues,
   projectId: () => filters.elements.projectId.value,
   active: () => dialog.open && activeTab === "insights",
+  setIndependent: (independent) => { if (activeTab === "insights") filters.hidden = independent; },
 });
 let redrawFrame = 0;
 new ResizeObserver(() => {

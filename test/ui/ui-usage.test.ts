@@ -410,8 +410,9 @@ test("skills and time reads the seeded node's reports, by day and hour, and asks
   assert.equal(await dialog.getByTestId("usage-insight-view-cluster").count(), 0, "a node in no cluster has no cluster report to offer");
   await dialog.getByTestId("usage-insight-view-flows").click();
   await dialog.getByTestId("usage-analysis").click();
-  await dialog.getByTestId("usage-analysis-results").getByText("Select one project before analysis.").waitFor();
-  await dialog.getByTestId("usage-project-filter").selectOption(node.projects[0].id);
+  assert.equal(await dialog.getByTestId("usage-flows-project").evaluate((select: HTMLSelectElement) => select.validity.valueMissing), true);
+  assert.equal(await dialog.getByTestId("usage-analysis-run").count(), 0, "analysis requires a project in its own controls");
+  await dialog.getByTestId("usage-flows-project").selectOption(node.projects[0].id);
   await dialog.getByTestId("usage-analysis").click();
   await dialog.getByTestId("usage-analysis-run").waitFor();
   await dialog.getByTestId("usage-analysis-run").click();

@@ -2,10 +2,11 @@ import { z } from "zod";
 
 export const DEFAULT_CONVERSATION_LABELS = ["Research", "Bug", "Feature", "POC", "Deploy to prod", "Hotfix"];
 export const classificationSchema = z.string().trim().min(1).max(80);
-export const conversationLabelsSchema = z.array(classificationSchema.refine(
+export const conversationLabelsInputSchema = z.array(classificationSchema.refine(
   (label) => !["other", "__other__"].includes(label.toLowerCase()),
   "Other is reserved for free-text classifications",
-)).max(50).transform((labels) => {
+)).max(50);
+export const conversationLabelsSchema = conversationLabelsInputSchema.transform((labels) => {
   const available = [...DEFAULT_CONVERSATION_LABELS, ...labels];
   return available.filter((label, index) => available.findIndex((candidate) => candidate.toLowerCase() === label.toLowerCase()) === index);
 });
@@ -14,6 +15,8 @@ export const DEFAULT_CONVERSATION_LABEL_ICONS: Record<string, string> = { Resear
 /** A label's icon is a short glyph (an emoji, usually); a label without an entry shows its name. */
 export const labelIconSchema = z.string().trim().min(1).max(16);
 export const conversationLabelIconsSchema = z.record(classificationSchema, labelIconSchema);
+/** Empty stored overrides distinguish an intentionally cleared icon from a missing new default. */
+export const storedConversationLabelIconsSchema = z.record(classificationSchema, labelIconSchema.or(z.literal("")));
 
 /** Keeps icons for labels still in the list, so renaming or removing a label never leaves a stray icon. */
 export function iconsForLabels(labels: string[], icons: Record<string, string>): Record<string, string> {

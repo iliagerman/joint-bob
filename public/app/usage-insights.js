@@ -1,8 +1,7 @@
 import { api } from "./api.js";
 import { state } from "./state.js";
-import { confirmAction } from "./shell.js";
 import { harnessLabel } from "../harness-metadata.js";
-import { formatUsageCost } from "./usage-format.js";
+import { createClusterReport, createRepeatedWork } from "./usage-feature-reports.js";
 import { renderUsageTrend } from "./usage-charts.js";
 import { renderSkillDetail } from "./usage-skill-detail.js";
 import { buildDraftForm, renderSuggestions, suggestedName } from "./usage-skill-suggestions-view.js";
@@ -40,7 +39,7 @@ function order(left, right, direction) {
   return (typeof left === "string" ? left.localeCompare(right) : left - right) * direction;
 }
 
-export function initUsageInsights({ scopeParameters, periodRange, clusterValues, projectId, active }) {
+export function initUsageInsights({ scopeParameters, periodRange, projectId, active, setIndependent }) {
   const statsHost = document.querySelector("#usageInsightStats");
   const findingsHost = document.querySelector("#usageFindings");
   const viewsNav = document.querySelector("#usageInsightViews");
@@ -66,6 +65,11 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
   let pageSize = 12;
   const pages = new Map();
   const sorts = new Map();
+  const cluster = createClusterReport(() => { if (active() && view === "cluster") { pages.delete("cluster"); render(); } });
+  const flows = createRepeatedWork();
+  const controlsHost = element("div", undefined, "usage-feature-controls-host");
+  body.before(controlsHost);
+  const independent = () => view === "cluster" || view === "flows";
 
   /* ---- Loading ---- */
 
@@ -90,12 +94,9 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
   /** Reports only one view needs are read when that view opens. */
   function ensure(section) {
     if (data[section]) return;
-    const scope = scopeQuery();
-    if (section === "hours") { scope.set("bucket", "hour"); void request("hours", `/api/usage/days?${scope}`); return; }
-    if (section !== "cluster") return;
-    const chosen = [...clusterValues()].filter((value) => value !== "local");
-    if (chosen.length !== 1) { data.cluster = { unavailable: chosen.length ? "Choose a single cluster in the filter above." : "Choose a cluster in the filter above to see what its shared projects cost." }; return; }
-    void request("cluster", `/api/usage/clusters/${encodeURIComponent(chosen[0])}/report?${scope}`);
+    if (section === "hours") { const scope = scopeQuery(); scope.set("bucket", "hour"); void request("hours", `/api/usage/days?${scope}`); return; }
+    if (section === "cluster") cluster.ensure();
+    if (section === "flows") flows.sync();
   }
 
   /** Suggestions are read only when asked for: they scan every conversation title in the scope. */
@@ -125,6 +126,7 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
 
   /** Coming back to the tab within a minute, with the same filters, shows what is already here. */
   function load({ force = false } = {}) {
+    if (independent()) { ensure(view); render(); return; }
     const scope = scopeQuery();
     const fresh = scope.toString() === loadedScope && Date.now() - loadedAt < RELOAD_AFTER_MS && !Object.values(data).some((entry) => entry.error);
     if (fresh && !force) { render(); return; }
@@ -154,6 +156,8 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     generation++;
     data = {};
     loadedScope = "";
+    cluster.reset();
+    flows.reset();
   }
 
   /* ---- What the reports say ---- */
@@ -293,7 +297,8 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
     }
     if (current === "days") return data.days?.value ? daysTable(data.days.value.days, data.timing?.value?.days) : { message: waiting("days", "daily activity") };
     if (current === "hours") return data.hours?.value ? hoursTable(data.hours.value.days) : { message: waiting("hours", "hourly activity") };
-    return data.cluster?.value ? clusterTable(data.cluster.value) : { message: waiting("cluster", "cluster report") };
+    const entry = cluster.entry;
+    return entry?.value ? clusterTable(entry.value) : { message: entry?.unavailable || (entry?.error ? `Cluster report unavailable: ${entry.error}. Use the controls here to change the selection or refresh the report.` : "Loading cluster report…") };
   }
 
   /* ---- Drawing ---- */
@@ -466,7 +471,7 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
         tab: detail.tab, content: data[`content:${detail.name}`], names: { projects: report?.projectNames ?? {}, conversations: report?.conversationTitles ?? {} } }));
       return;
     }
-    if (view === "flows") { body.replaceChildren(flows); return; }
+    if (view === "flows") { body.replaceChildren(flows.root); return; }
     if (view === "suggest") { body.replaceChildren(renderSuggestions(data.suggest, suggestionPages)); return; }
     const table = tableFor(view);
     if (table.message) {
@@ -523,7 +528,7 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
   function renderFootnote() {
     const unread = data.skills?.value?.coverage?.missing || 0;
     const untimed = data.timing?.value?.unknownHistoricalTiming || 0;
-    const report = data.cluster?.value;
+    const report = cluster.entry?.value;
     footnote.textContent = {
       skills: `A skill counts when an agent loads it: a SKILL.md read, Claude's Skill tool, or /skill:name. A turn that loads several skills is counted under each, so rows overlap and do not add up. Comparisons show what was observed, not what a skill caused.${unread ? ` ${count(unread, "session")} could not be read.` : ""}`,
       unused: "Installed on this node now, and not loaded by any agent in this period and scope. Kiro sessions and skills that exist only on other nodes are not covered.",
@@ -537,6 +542,10 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
   }
 
   function render(updateBody = true) {
+    setIndependent(independent());
+    statsHost.hidden = findingsHost.hidden = independent();
+    controlsHost.hidden = view !== "cluster";
+    if (view === "cluster" && !controlsHost.contains(cluster.controls)) controlsHost.replaceChildren(cluster.controls);
     renderStats();
     renderFindings();
     renderViews();
@@ -565,59 +574,14 @@ export function initUsageInsights({ scopeParameters, periodRange, clusterValues,
   }
   new ResizeObserver(() => refit()).observe(body);
 
-  /* ---- Repeated work: review-only suggestions from saved titles, turn times and usage ---- */
-
-  const flows = element("div", undefined, "usage-insight-flows");
-  const analysisHost = element("div");
-  analysisHost.dataset.testid = "usage-analysis-results";
-  const analyse = element("button", "Look for repeated work");
-  analyse.type = "button";
-  analyse.dataset.testid = "usage-analysis";
-  flows.append(
-    element("p", "Finds conversations in one project whose titles repeat, and skills whose turns keep hitting tool errors. It reads saved titles, turn times and usage on this node only: no transcript text and no model. Nothing is installed or shared without your review."),
-    analyse, analysisHost,
-  );
-
-  function suggestionCard(suggestion, project) {
-    const card = element("article", undefined, "subscription-card");
-    card.append(element("h4", `${suggestion.label} · candidate ${suggestion.kind}`), element("p", `Heuristic confidence ${(suggestion.confidence * 100).toFixed(0)}% · ${formatUsageCost({ apiCostUsd: suggestion.associatedCostUsd, partial: false })} associated known cost. No savings estimated. Review evidence before drafting; nothing installed or shared.`));
-    for (const evidence of suggestion.evidence) {
-      const link = element("a", evidence.conversationId); link.href = evidence.href; link.target = "_blank"; link.rel = "noopener noreferrer";
-      card.append(link);
-    }
-    const form = buildDraftForm({ project, kind: suggestion.kind, evidenceIds: suggestion.evidence.map((item) => item.conversationId) });
-    card.append(form);
-    return card;
-  }
-
-  analyse.addEventListener("click", async () => {
-    analysisHost.replaceChildren();
-    const project = projectId();
-    if (!project) { analysisHost.append(element("p", "Select one project before analysis.")); return; }
-    try {
-      const preview = await api(`/api/usage/analysis/preview?${new URLSearchParams({ projectId: project })}`);
-      analysisHost.append(element("p", `Preflight: ${preview.maxConversations} conversations maximum · no model · $0 estimated model cost · ${preview.data}.`));
-      const run = element("button", "Run local analysis"); run.type = "button"; run.dataset.testid = "usage-analysis-run";
-      analysisHost.append(run);
-      run.addEventListener("click", async () => {
-        run.disabled = true;
-        try {
-          const result = await api("/api/usage/analysis", { method: "POST", body: JSON.stringify({ projectId: project }) });
-          if (projectId() !== project) return;
-          run.remove();
-          if (!result.suggestions.length) analysisHost.append(element("p", "No repeated title patterns with three or more conversations. No savings inferred."));
-          analysisHost.append(...result.suggestions.map((suggestion) => suggestionCard(suggestion, project)));
-        } catch (error) { analysisHost.append(element("p", `Analysis unavailable: ${error.message}`)); run.disabled = false; }
-      });
-    } catch (error) { analysisHost.append(element("p", `Preflight unavailable: ${error.message}`)); }
-  });
-
   /* ---- Controls ---- */
 
   function show(next, skill = "") {
+    const wasIndependent = independent();
     view = next;
     detail = skill && next === "skills" ? { name: skill, tab: "stats" } : null;
     ensure(view);
+    if (wasIndependent && !independent()) { load(); return; }
     render();
   }
   viewsNav.addEventListener("click", (event) => {
