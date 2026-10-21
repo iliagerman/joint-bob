@@ -70,6 +70,7 @@ import { cleanupAbandonedByTheWayConversations } from "./server/routes/sessions.
 import { sweepConversationRetention } from "./server/conversation-retention.js";
 import { sweepWorktrees } from "./server/worktree-cleanup.js";
 import { startCronScheduler } from "./server/cron.js";
+import { startConversationDigests } from "./server/conversation-digest-runner.js";
 import { startQuickNoteScheduler } from "./server/quick-note-dispatch.js";
 import "./server/routes/cron.js";
 import "./server/routes/tasks.js";
@@ -143,6 +144,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     startUpdateScheduler();
     startHarnessUpdateScheduler();
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
+    startConversationDigests();
     void startQuickNoteScheduler().catch(error => console.error("Quick note recovery failed; scheduler not started", error));
     // Relays connect out at once: a machine without a direct URL is reachable only through them.
     void startRelay().catch(error => console.error("Relay startup failed", error));

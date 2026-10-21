@@ -1024,10 +1024,17 @@
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Activity summary</legend>
-            <label>Summary model<select id="settingsSummaryHarness" data-testid="settings-summary-harness"></select></label>
+            <p class="settings-hint" id="settingsSummaryRelayNote" data-testid="settings-summary-relay-note" hidden></p>
+            <label>Update the summary<select id="settingsSummaryUpdates" data-testid="settings-summary-updates">
+              <option value="each-message">After each message</option>
+              <option value="panel">While the Activity panel is open</option>
+              <option value="manual">Only when asked</option>
+            </select></label>
+            <label>Written by<select id="settingsSummaryHarness" data-testid="settings-summary-harness"></select></label>
             <label id="settingsSummaryModelLabel">Model<select id="settingsSummaryModel" data-testid="settings-summary-model"></select></label>
             <label id="settingsSummaryThinkingLabel">Effort<select id="settingsSummaryThinking" data-testid="settings-summary-thinking"></select></label>
-            <p class="settings-hint">Writes the running summary in a conversation's Activity panel. Same as conversation uses the conversation's own agent and model at that agent's default effort. Changes save immediately.</p>
+            <p class="settings-hint">Applies to every conversation on this machine. Automatic lets the routing classifier pick the model when routing is on, and otherwise uses the conversation's own agent and model. Each update hands the writer the current summary and the messages since. Changes save immediately; only this machine's admin can change them.</p>
+            <label class="checkbox-row" id="settingsSummaryRelay" hidden><input type="checkbox" id="settingsSummaryRelayApply" data-testid="settings-summary-relay-apply" /> Use these settings on every machine of the relay this machine serves</label>
           </fieldset>
         </section>
 

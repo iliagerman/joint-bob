@@ -14,18 +14,11 @@ const OVERLAY_QUERY = window.matchMedia("(max-width: 900px)");
 const FOLLOW_THRESHOLD_PX = 32;
 const NAMES_SHOWN = 3;
 const PROMPT_SHOWN = 90;
-// While the agent works, the summary is brought up to date at most this often.
-const LIVE_SUMMARY_INTERVAL_MS = 3 * 60_000;
 
 let currentGroup = null;
 let groupCount = 0;
-let summaryDirty = true;
-let summaryRequest = 0;
-let summaryConversation = "";
-// A turn ended in this conversation since its summary was last written.
-let turnEndedIn = "";
-// When each conversation's summary was last asked to update, for the live interval.
-const lastSummaryWrite = new Map();
+// The open conversation's summary and the policy that keeps it, as its node reported them.
+const summary = { digest: null, policy: null, writing: false };
 
 // Whether the person last opened or collapsed the panel this session. Browser storage is not used
 // for it; a reload falls back to the width default.
@@ -48,8 +41,8 @@ export function setActivityPanelOpen(open, remember = true) {
   elements.activityToggleButton.setAttribute("aria-expanded", String(open));
   elements.activityToggleButton.classList.toggle("active", open);
   if (remember) chosenOpen = open;
-  if (opening && remember) refreshActivitySummary({ opened: true });
-  else if (open && summaryDirty) refreshActivitySummary();
+  // Opening the panel yourself asks for the summary to catch up, whatever the policy.
+  if (opening && remember) requestSummary();
 }
 
 function listAtBottom() {
@@ -182,12 +175,6 @@ export function clearActivity() {
   syncStepsCount();
 }
 
-function conversationRef() {
-  const projectId = state.activeConversationProjectId || state.activeProjectId;
-  const conversationId = state.activeConversationId;
-  return projectId && conversationId ? { projectId, conversationId, key: `${projectId}:${conversationId}` } : null;
-}
-
 function showSummary(text, status = "") {
   elements.activitySummaryStatus.textContent = status;
   elements.activitySummaryText.classList.toggle("placeholder", !text.markdown);
@@ -202,131 +189,70 @@ function digestStatus(digest) {
   return [`${digest.turns} turn${digest.turns === 1 ? "" : "s"}`, when, writer].filter(Boolean).join(" · ");
 }
 
-/** The agent and model the open conversation runs on, for a summary that follows it. */
-function conversationModel() {
-  if (!state.engine) return undefined;
-  const key = state.activeModelKey || "";
-  const slash = key.indexOf("/");
-  return slash > 0 ? { harnessId: state.engine, provider: key.slice(0, slash), modelId: key.slice(slash + 1) } : { harnessId: state.engine };
+function waitingText(policy) {
+  if (policy?.updates === "each-message") return "The summary is written after the agent's next answer.";
+  if (policy?.updates === "panel") return "The summary is written while this panel is open.";
+  return "No summary yet.";
 }
 
-/** Names who writes the next summary: the Summary model setting, or the conversation's own model. */
-function syncSummaryModelButton() {
-  const chosen = state.summaryModel;
-  elements.activitySummaryModelButton.textContent = chosen
-    ? `Model: ${chosen.modelId}`
-    : `Model: as conversation${state.activeModelKey ? ` (${state.activeModelKey.slice(state.activeModelKey.indexOf("/") + 1)})` : ""}`;
+/** Draws the summary, its status line, and who writes it, from what the node last said. */
+function renderSummary(statusOverride = "") {
+  const { digest, policy, writing } = summary;
+  elements.activitySummaryRefreshButton.textContent = digest ? "Update summary" : "Write summary";
+  elements.activitySummaryRefreshButton.hidden = !state.activeConversationId;
+  elements.activitySummaryRefreshButton.disabled = writing;
+  const status = statusOverride || (writing ? (digest ? "Updating…" : "Writing…") : digest ? digestStatus(digest) : "");
+  if (digest) showSummary({ markdown: digest.summary }, status);
+  else showSummary({ plain: state.activeConversationId ? (writing ? "Writing the summary…" : waitingText(policy)) : "The summary appears after the first answer." }, status);
+  const writer = policy ? `Writer: ${policy.writer}` : "";
+  elements.activitySummaryModelButton.textContent = writer;
+  elements.activitySummaryModelButton.hidden = !writer;
+  elements.activitySummaryModelButton.title = policy ? `Summaries update ${policy.updates === "each-message" ? "after each message" : policy.updates === "panel" ? "while this panel is open" : "only when asked"}, set by ${policy.from}. Change it in Settings → Conversations.` : "";
 }
 
-function digestPath(ref) {
-  return `/api/projects/${encodeURIComponent(ref.projectId)}/conversations/${encodeURIComponent(ref.conversationId)}/digest`;
+/** Asks the conversation's node to bring the summary up to date; it writes only when something is new. */
+function requestSummary() {
+  const socket = state.socket;
+  if (!state.activeConversationId || !socket || socket.readyState !== WebSocket.OPEN) return false;
+  socket.send(JSON.stringify({ type: "refreshDigest" }));
+  return true;
 }
 
-function summaryFailure(error) {
-  if (error.status === 404) return "No summary on this machine: its copy of the conversation is not here yet.";
-  return `Could not update the summary: ${error.message || "unknown error"}`;
+/** A conversation opened: its node sent the stored summary and the policy with it. */
+export function activityReady(payload) {
+  summary.digest = payload.digest ?? null;
+  summary.policy = payload.summaryPolicy ?? null;
+  summary.writing = false;
+  renderSummary();
+  if (activityPanelOpen() && summary.policy?.updates === "panel") requestSummary();
 }
 
-function setSummaryButton(hasDigest) {
-  elements.activitySummaryRefreshButton.textContent = hasDigest ? "Update summary" : "Write summary";
+/** The node is writing a summary, wrote one, had nothing to write yet, or could not write it. */
+export function activityDigestEvent(event) {
+  summary.writing = event.state === "writing";
+  if (event.state === "done" || event.digest) summary.digest = event.digest ?? summary.digest;
+  if (event.state === "error") {
+    console.warn("Activity summary not written", event.error);
+    renderSummary(summary.digest ? `${digestStatus(summary.digest)} · not updated` : "");
+    if (!summary.digest) showSummary({ plain: `Could not write the summary: ${event.error || "unknown error"}` });
+    return;
+  }
+  renderSummary();
 }
 
 /**
- * Brings the summary up to date while the panel is open; a closed panel only notes
- * that it is behind. A summary is written when the person opens the panel, when a
- * turn ends here, every few minutes while the agent works, when one already exists
- * and has fallen behind, or on the button. Merely landing on an idle conversation
- * with the panel already open writes nothing, so browsing old ones costs nothing.
- * `afterTurn` marks the call made as a turn ends; `opened` the person opening the
- * panel; `live` the agent's progress during a turn; `force` the button.
- */
-export async function refreshActivitySummary({ force = false, afterTurn = false, opened = false, live = false } = {}) {
-  const ref = conversationRef();
-  if (afterTurn && ref) turnEndedIn = ref.key;
-  if (!activityPanelOpen()) {
-    summaryDirty = true;
-    return;
-  }
-  summaryDirty = false;
-  syncSummaryModelButton();
-  const request = ++summaryRequest;
-  if (!ref) {
-    summaryConversation = "";
-    setSummaryButton(false);
-    elements.activitySummaryRefreshButton.hidden = true;
-    showSummary({ plain: "The summary appears after the first answer." });
-    return;
-  }
-  if (ref.key !== summaryConversation) {
-    summaryConversation = ref.key;
-    showSummary({ plain: "Loading…" });
-  }
-  elements.activitySummaryRefreshButton.disabled = true;
-  try {
-    const current = await api(digestPath(ref));
-    if (request !== summaryRequest) return;
-    setSummaryButton(Boolean(current.digest));
-    elements.activitySummaryRefreshButton.hidden = !current.turns;
-    if (current.digest) showSummary({ markdown: current.digest.summary }, digestStatus(current.digest));
-    else showSummary({ plain: current.turns ? "No summary yet." : "The summary appears after the first answer." });
-    if (!current.stale) return;
-    const sinceWrite = Date.now() - (lastSummaryWrite.get(ref.key) ?? 0);
-    // While the agent works, only its own progress (a step or a message) brings an update.
-    const write = force || opened || turnEndedIn === ref.key
-      || (state.sessionBusy ? live && sinceWrite >= LIVE_SUMMARY_INTERVAL_MS : Boolean(current.digest));
-    if (!write) {
-      if (state.sessionBusy) elements.activitySummaryStatus.textContent = current.digest ? `${digestStatus(current.digest)} · updating as the agent works` : "Written in a few minutes as the agent works";
-      return;
-    }
-    lastSummaryWrite.set(ref.key, Date.now());
-    elements.activitySummaryStatus.textContent = current.digest ? "Updating…" : "Writing…";
-    const conversation = conversationModel();
-    const updated = await api(digestPath(ref), { method: "POST", body: JSON.stringify(conversation ? { conversation } : {}) });
-    if (request !== summaryRequest) return;
-    if (turnEndedIn === ref.key) turnEndedIn = "";
-    if (updated.digest) {
-      setSummaryButton(true);
-      showSummary({ markdown: updated.digest.summary }, digestStatus(updated.digest));
-    }
-    if (updated.error) {
-      console.warn("Activity summary not written", updated.error);
-      if (updated.digest) elements.activitySummaryStatus.textContent = `${digestStatus(updated.digest)} · not updated`;
-      else showSummary({ plain: summaryFailure({ message: updated.error }) });
-    }
-  } catch (error) {
-    if (request !== summaryRequest) return;
-    console.warn("Activity summary failed", error);
-    const message = summaryFailure(error);
-    if (elements.activitySummaryText.classList.contains("placeholder")) showSummary({ plain: message });
-    else elements.activitySummaryStatus.textContent = message;
-  } finally {
-    if (request === summaryRequest) elements.activitySummaryRefreshButton.disabled = false;
-  }
-}
-
-/**
- * The agent finished a message or a step. While it works, the open panel's summary
- * follows it at most every few minutes; between those, nothing is fetched.
+ * The agent finished a message or its turn. The node keeps summaries itself after each
+ * message; the panel-only policy needs the page to ask, while the panel is open.
  */
 export function activityProgressed() {
-  const ref = conversationRef();
-  if (!ref || !activityPanelOpen() || !state.sessionBusy) return;
-  if (Date.now() - (lastSummaryWrite.get(ref.key) ?? 0) < LIVE_SUMMARY_INTERVAL_MS) return;
-  refreshActivitySummary({ live: true });
+  if (summary.policy?.updates === "panel" && activityPanelOpen()) requestSummary();
 }
 
-/** A conversation opened or reconnected: its summary is fetched when the panel shows. */
+/** Leaving a conversation: nothing is known about the next one until it is ready. */
 export function activityConversationChanged() {
-  if (conversationRef()?.key === summaryConversation) {
-    refreshActivitySummary();
-    return;
-  }
-  summaryRequest += 1;
-  summaryConversation = "";
-  summaryDirty = true;
-  showSummary({ plain: "" });
-  elements.activitySummaryRefreshButton.disabled = false;
-  if (activityPanelOpen()) refreshActivitySummary();
+  summary.digest = null;
+  summary.writing = false;
+  renderSummary();
 }
 
 elements.activityToggleButton.addEventListener("click", () => setActivityPanelOpen(!activityPanelOpen()));
@@ -334,12 +260,22 @@ elements.activityPanelCloseButton.addEventListener("click", () => {
   setActivityPanelOpen(false);
   elements.activityToggleButton.focus();
 });
-elements.activitySummaryRefreshButton.addEventListener("click", () => refreshActivitySummary({ force: true }));
+elements.activitySummaryRefreshButton.addEventListener("click", () => {
+  if (!requestSummary()) return;
+  summary.writing = true;
+  renderSummary();
+});
 elements.activitySummaryModelButton.addEventListener("click", () => {
   // Loaded on demand: Settings pulls in most of the app, which this module must not.
   import("./settings.js").then(({ openSettings }) => openSettings("conversations")).catch((error) => console.warn("Could not open Settings", error));
 });
-document.addEventListener("summary-model-changed", syncSummaryModelButton);
+// A changed setting shows at once; the conversation's next open brings its node's own view.
+document.addEventListener("summary-policy-changed", () => {
+  api("/api/conversation-summary/settings").then((settings) => {
+    summary.policy = settings.effective.view;
+    renderSummary();
+  }).catch((error) => console.warn("Could not reload the summary policy", error));
+});
 elements.activityPanel.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || !OVERLAY_QUERY.matches) return;
   event.stopPropagation();

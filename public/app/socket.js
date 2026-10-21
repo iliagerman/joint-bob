@@ -7,7 +7,7 @@ import { clearAttachments } from "./attachments.js";
 import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
-import { activityConversationChanged, activityProgressed, refreshActivitySummary } from "./activity-panel.js";
+import { activityConversationChanged, activityDigestEvent, activityProgressed, activityReady } from "./activity-panel.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncLiveActivity, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { refreshBudgetNotice } from "./budget-dialog.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
@@ -312,7 +312,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     state.activeConversationId = payload.conversationId || payload.sessionId || null;
     state.activeConversationProjectId = payload.project?.id || state.activeProjectId;
     refreshBudgetNotice();
-    activityConversationChanged();
+    activityReady(payload);
     state.conversationSegments = payload.segments || null;
     state.scheduledTurn = payload.scheduledTurn === true;
     state.scheduledAssistantText = "";
@@ -489,6 +489,10 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     syncQueuedMessageOrder(prompts.map((prompt) => prompt.id));
     return;
   }
+  if (payload.type === "conversationDigest") {
+    activityDigestEvent(payload);
+    return;
+  }
   if (payload.type === "promptStarted") {
     state.scheduledTurn = payload.scheduled === true;
     clearQueuedMark(payload.queueId);
@@ -587,7 +591,6 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     updateToolMessage(bubble, payload.text || "", payload.isError ? "Failed" : "Done", payload.isError, durationMs);
     state.toolBubbles.delete(payload.toolCallId);
     syncLiveActivity();
-    activityProgressed();
     return;
   }
   if (payload.type === "assistantError") {
@@ -627,7 +630,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     setStatus("Connected", true);
     state.sessionBusy = false;
     syncLiveActivity();
-    refreshActivitySummary({ afterTurn: true });
+    activityProgressed();
     if (state.lastTurnStartedAt) {
       const finishedAt = Date.parse(payload.timestamp || "");
       finishTurnTimer(Number.isFinite(finishedAt) ? finishedAt : Date.now());

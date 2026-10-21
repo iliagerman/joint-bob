@@ -574,6 +574,7 @@ export const userPreferencesSchema = z.object({
     provider: z.string().trim().min(1).max(200).optional(),
     modelId: z.string().trim().min(1).max(300),
     thinkingLevel: z.string().trim().min(1).max(40),
+  // Accepted from 2.131–2.133 pages and roaming profiles, and ignored: summaries follow the node or relay policy now.
   }).strict().nullable().optional(),
 }).strict();
 export const socketMessageSchema = z.object({

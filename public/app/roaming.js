@@ -15,7 +15,6 @@ export async function reloadTravellingPreferences() {
     setTheme(preferences.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
     state.completionSound = preferences.completionSound;
     state.gitReviewer = preferences.gitReviewer;
-    state.summaryModel = preferences.summaryModel ?? null;
     setPanelCollapsed("projects", Boolean(preferences.projectsPanelCollapsed));
     setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
     setFocusUi(preferences.focusUiEnabled);

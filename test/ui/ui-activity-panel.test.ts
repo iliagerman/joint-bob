@@ -1,18 +1,18 @@
 // Activity panel browser suite: tool calls leave the main thread for a collapsible
-// sidebar, the thread keeps one marker per run of steps, and the sidebar shows a
-// running summary of the conversation. The summary model is a stand-in module,
-// so the test exercises the real route, store and rendering without an agent.
+// sidebar, the thread keeps one marker per turn, and the sidebar shows a running
+// summary the conversation's node keeps after each message. The summary writer and
+// Claude are stand-ins, so the test drives the real server, socket and rendering.
 //
 // Run with `npm run test:file -- test/ui/ui-activity-panel.test.ts`.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
 import { type Browser, type BrowserContext, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
-import { projectNamed, seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
+import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 import { claudeProjectDir } from "../../src/session-paths.js";
 
 const PROJECT_NAME = "Infra Scripts";
@@ -30,8 +30,49 @@ let context: BrowserContext;
 let page: Page;
 const consoleErrors: string[] = [];
 const failedResponses: string[] = [];
-let summaryWrites = 0;
-const summaryBodies: Array<{ conversation?: { harnessId: string; provider?: string; modelId?: string } }> = [];
+let calls: string;
+
+/** Every summary the stand-in writer was asked for, oldest first. */
+async function summaryCalls(): Promise<Array<{ material: string; instructions: string; run: { harnessId: string; source: string } }>> {
+  return (await readFile(calls, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+/** A stand-in Claude Code: streams one answer and appends the turn to the transcript, as the real one does. */
+async function installFakeClaude(transcripts: string): Promise<string> {
+  const fake = path.join(root, "fake-claude.mjs");
+  await writeFile(fake, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+if (process.argv[2] === "auth") { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }
+let input = "";
+await new Promise((resolve) => process.stdin.on("data", (chunk) => { input += chunk; }).on("end", resolve));
+const args = process.argv.slice(2);
+const supplied = args.indexOf("--session-id");
+const sessionId = supplied >= 0 ? args[supplied + 1] : args[args.indexOf("--resume") + 1];
+let prompt = input.trim() || "a request";
+for (const line of input.split("\\n")) {
+  try {
+    const content = JSON.parse(line).message?.content;
+    const text = typeof content === "string" ? content : (content ?? []).map((part) => part.text ?? "").join("");
+    if (text.trim()) prompt = text.trim();
+  } catch {}
+}
+console.log(JSON.stringify({ type: "system", subtype: "init", session_id: sessionId }));
+const answer = "Row counts match on every table.";
+for (const chunk of answer.match(/.{1,8}/g)) {
+  console.log(JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: chunk } } }));
+  await new Promise((resolve) => setTimeout(resolve, 150));
+}
+const stamp = new Date().toISOString();
+appendFileSync(${JSON.stringify(transcripts)} + "/" + sessionId + ".jsonl", [
+  { type: "user", uuid: sessionId + "-p-" + Date.now(), timestamp: stamp, message: { role: "user", content: [{ type: "text", text: prompt }] } },
+  { type: "assistant", uuid: sessionId + "-a-" + Date.now(), timestamp: stamp, message: { role: "assistant", content: [{ type: "text", text: answer }] } },
+].map((record) => JSON.stringify(record)).join("\\n") + "\\n");
+console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: answer }] } }));
+console.log(JSON.stringify({ type: "result", is_error: false }));
+`);
+  await chmod(fake, 0o755);
+  return fake;
+}
 
 async function writeTranscript(): Promise<void> {
   const project = projectNamed(node, PROJECT_NAME);
@@ -61,20 +102,33 @@ before(async () => {
   environment = await seedDevEnvironment(root, 1);
   node = environment.nodes[0];
   await writeTranscript();
+  calls = path.join(root, "digest-calls.jsonl");
   const generator = path.join(root, "digest-generator.mjs");
-  await writeFile(generator, 'export default async () => "**Goal** — rotate the staging certificates.\\n\\n**Done so far**\\n- Rotated staging.pem";\n');
+  // A writer that ignores the format rules (a heading, a long code block) proves the panel still never scrolls sideways.
+  await writeFile(generator, `import { appendFile } from "node:fs/promises";
+export default async (input) => {
+  await appendFile(${JSON.stringify(calls)}, JSON.stringify(input) + "\\n");
+  const asked = /User: (.*)/.exec(input.material)?.[1] ?? "the work";
+  return "**Goal** — " + asked + "\\n\\n## Done so far\\n- Rotated staging.pem\\n\\n\\\`\\\`\\\`json\\n{\\"apartment\\":\\"" + "x".repeat(400) + "\\"}\\n\\\`\\\`\\\`";
+};
+`);
   server = await startDevNode(environment, node, { JOINT_BOB_DIGEST_GENERATOR: generator });
+  const project = projectNamed(node, PROJECT_NAME);
+  const fake = await installFakeClaude(claudeProjectDir(project.path, path.join(environment.home, ".claude", "projects")));
+  const admin = await signIn(environment, node);
+  const current = (await api<{ pi: { executable: string; configPath: string; sessionPath: string }; claude: { configPath: string; sessionPath: string }; syncthing: { endpoint: string } }>(node, admin, "GET", "/settings")).body;
+  const configured = await api(node, admin, "PUT", "/settings", {
+    pi: { executable: current.pi.executable, configPath: current.pi.configPath, sessionPath: current.pi.sessionPath },
+    claude: { executable: fake, configPath: current.claude.configPath, sessionPath: current.claude.sessionPath },
+    syncthing: { endpoint: current.syncthing.endpoint },
+  });
+  assert.equal(configured.status, 200, JSON.stringify(configured.body));
 
   browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
   page = await context.newPage();
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   page.on("pageerror", (error) => consoleErrors.push(error.stack || error.message));
-  page.on("request", (request) => {
-    if (request.method() !== "POST" || !request.url().endsWith("/digest")) return;
-    summaryWrites += 1;
-    summaryBodies.push(JSON.parse(request.postData() || "{}"));
-  });
   page.on("response", (response) => {
     if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`);
   });
@@ -125,19 +179,24 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.ok(messagesBox && panelBox && messagesBox.x + messagesBox.width <= panelBox.x + 1, `thread (${JSON.stringify(messagesBox)}) ends where the panel (${JSON.stringify(panelBox)}) begins`);
   assert.ok(panelBox.width >= 280, `panel is readable (${panelBox.width}px)`);
 
-  // Landing on an idle conversation with the panel already open spends no model call.
-  await page.getByTestId("activity-summary-text").getByText("No summary yet.").waitFor({ timeout: 15_000 });
-  assert.equal(summaryWrites, 0, "no summary is written just because the conversation opened");
+  // Landing on an idle conversation that has no summary spends no model call; the next answer writes one.
+  await page.getByTestId("activity-summary-text").getByText("The summary is written after the agent's next answer.").waitFor({ timeout: 15_000 });
+  assert.equal((await summaryCalls()).length, 0, "no summary is written just because the conversation opened");
+  assert.equal(await page.getByTestId("activity-summary-model").innerText(), "Writer: automatic");
   await page.getByTestId("activity-summary-refresh").filter({ hasText: "Write summary" }).waitFor();
   // Opening the panel yourself is asking to see the summary, so it is written.
   await page.getByTestId("activity-panel-close").click();
   await page.getByTestId("chat-activity-toggle").click();
   await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).waitFor({ timeout: 15_000 });
-  assert.equal(summaryWrites, 1);
-  assert.equal(summaryBodies[0].conversation?.harnessId, "claude", "the summary follows the conversation's agent by default");
+  const [firstCall] = await summaryCalls();
+  assert.equal(firstCall.material, "User: Rotate the staging certificates\n\nAssistant: Checking the certificates first.\n\nAssistant: Rotated staging.pem.", "the writer reads what was said, not the tool output");
+  assert.deepEqual([firstCall.run.harnessId, firstCall.run.source], ["claude", "conversation"], "automatic without a routing classifier uses the conversation's agent");
   assert.equal(await page.getByTestId("activity-summary-refresh").innerText(), "Update summary");
-  assert.match(await page.getByTestId("activity-summary-text").innerText(), /rotate the staging certificates/);
+  assert.match(await page.getByTestId("activity-summary-text").innerText(), /Rotate the staging certificates/);
   assert.match(await page.getByTestId("activity-summary-status").innerText(), /1 turn/);
+  // Headings and long code wrap inside the panel: nothing scrolls sideways.
+  const widths = await page.getByTestId("activity-summary").evaluate((box) => ({ box: [box.scrollWidth, box.clientWidth], text: [box.querySelector(".activity-summary-text").scrollWidth, box.querySelector(".activity-summary-text").clientWidth] }));
+  assert.ok(widths.box[0] <= widths.box[1] && widths.text[0] <= widths.text[1] + 1, `the summary does not scroll sideways (${JSON.stringify(widths)})`);
 
   // A long turn's steps fill the panel, and the summary keeps its room above them.
   await page.evaluate(async () => {
@@ -168,22 +227,25 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.getByTestId("activity-summary-toggle").click();
   await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).waitFor();
 
-  // The model that writes summaries is named in the panel and chosen in Settings.
+  // Who writes summaries, and when, is this machine's setting in Settings → Conversations.
   const modelButton = page.getByTestId("activity-summary-model");
-  assert.match(await modelButton.innerText(), /^Model: as conversation/);
   await modelButton.click();
   const harnessPicker = page.getByTestId("settings-summary-harness");
   await harnessPicker.locator("option[value='pi']").waitFor({ state: "attached", timeout: 15_000 });
-  assert.equal(await harnessPicker.inputValue(), "", "Same as conversation is the default");
+  assert.equal(await page.getByTestId("settings-summary-updates").inputValue(), "each-message", "after each message is the default");
+  assert.equal(await harnessPicker.inputValue(), "automatic", "automatic is the default writer");
   assert.equal(await page.getByTestId("settings-summary-model").isVisible(), false);
-  const saved = page.waitForResponse((response) => response.url().endsWith("/api/preferences") && response.request().method() === "PUT");
+  const saved = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/settings") && response.request().method() === "PUT");
   await harnessPicker.selectOption("pi");
   assert.equal((await saved).status(), 200);
   await page.getByTestId("settings-summary-model").waitFor();
   const chosenModel = await page.getByTestId("settings-summary-model").evaluate((select: HTMLSelectElement) => select.selectedOptions[0]?.dataset.modelId || select.value);
-  assert.equal(await modelButton.innerText(), `Model: ${chosenModel}`);
-  const preferences = await page.evaluate(() => fetch("/api/preferences").then((response) => response.json()));
-  assert.equal(preferences.summaryModel?.harnessId, "pi");
+  await page.waitForFunction((expected) => document.querySelector("[data-testid='activity-summary-model']")?.textContent === expected, `Writer: ${chosenModel}`);
+  const stored = await page.evaluate(() => fetch("/api/conversation-summary/settings").then((response) => response.json()));
+  assert.deepEqual([stored.node.writer.source, stored.node.writer.harnessId], ["fixed", "pi"]);
+  const restored = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/settings") && response.request().method() === "PUT");
+  await harnessPicker.selectOption("automatic");
+  assert.equal((await restored).status(), 200);
   await page.keyboard.press("Escape");
   await page.locator("#settingsDialog[open]").waitFor({ state: "detached" });
 
@@ -211,11 +273,6 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.keyboard.press("Control+Alt+Shift+KeyS");
   await panel.waitFor({ state: "visible" });
 
-  // A conversation the agent is working in gets its summary from the agent's progress, without a click.
-  await page.locator(".session-card", { hasText: LIVE_TITLE }).first().click();
-  await page.locator("#messages").getByText("Migration 42 is running.").waitFor({ timeout: 20_000 });
-  await page.getByTestId("activity-summary-text").getByText("No summary yet.").waitFor({ timeout: 15_000 });
-  assert.equal(summaryWrites, 1, "landing on an idle conversation writes nothing");
   // While a turn runs, the thread itself ends with a row naming what is happening.
   const working = page.locator("#messages").getByTestId("live-activity");
   const lastInThread = () => page.locator("#messages").evaluate((box) => box.lastElementChild?.getAttribute("data-testid"));
@@ -231,12 +288,30 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   });
   assert.match(await working.innerText(), /Working…/);
   assert.equal(await lastInThread(), "live-activity", "new answers land above the working row");
-  await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).waitFor({ timeout: 15_000 });
-  assert.equal(summaryWrites, 2);
   await working.click();
   await page.waitForFunction(() => document.querySelector("#activityList .activity-group.highlighted"));
   await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "agent_end" }));
   await working.waitFor({ state: "detached" });
+
+  // A real answer: the conversation's node writes the summary after it, with the panel closed.
+  await page.locator(".session-card", { hasText: LIVE_TITLE }).first().click();
+  await page.locator("#messages").getByText("Migration 42 is running.").waitFor({ timeout: 20_000 });
+  await page.getByTestId("activity-panel-close").click();
+  await panel.waitFor({ state: "hidden" });
+  const before = (await summaryCalls()).length;
+  await page.getByTestId("chat-message-input").fill("Check the row counts");
+  await page.getByTestId("chat-send-button").click();
+  await page.locator("#messages").getByText("Row counts match on every table.").first().waitFor({ timeout: 30_000 });
+  for (const until = Date.now() + 20_000; (await summaryCalls()).length === before && Date.now() < until;) await new Promise((resolve) => setTimeout(resolve, 250));
+  const liveCalls = (await summaryCalls()).slice(before);
+  assert.equal(liveCalls.length, 1, "one summary after the answer, though nobody had the panel open");
+  assert.match(liveCalls[0].material, /User: Run the database migration[\s\S]*User: Check the row counts\n\nAssistant: Row counts match on every table\.$/);
+  // The node pushed it to the page while the panel was closed; opening the panel shows it as is.
+  await page.getByTestId("activity-summary-text").getByText("Run the database migration").waitFor({ state: "attached", timeout: 15_000 });
+  await page.getByTestId("chat-activity-toggle").click();
+  await page.getByTestId("activity-summary-text").getByText("Run the database migration").waitFor();
+  await page.waitForTimeout(1_500);
+  assert.equal((await summaryCalls()).length, before + 1, "opening the panel on an up-to-date summary writes nothing more");
 
   // On a phone the panel floats over the thread instead of squeezing it.
   await page.setViewportSize({ width: 390, height: 844 });

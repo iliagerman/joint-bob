@@ -85,6 +85,9 @@ if (process.argv.includes('--input-format')) {
   const settings = { ...current, claude: { ...current.claude, executable } };
   const saved = await fetch(`${node.url}/api/settings`, { method: "PUT", headers, body: JSON.stringify(settings) });
   assert.ok(saved.ok, "the node accepts the fake Claude executable");
+  // This suite asserts every agent invocation; conversation summaries, written after each answer by default, would add their own.
+  const summaries = await fetch(`${node.url}/api/conversation-summary/settings`, { method: "PUT", headers, body: JSON.stringify({ updates: "manual", writer: { source: "automatic" } }) });
+  assert.ok(summaries.ok, "summaries wait to be asked for in this suite");
 
   browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });

@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed the Activity summary to update after each answer by default, even with the panel closed, by folding the new messages into the current summary.
+- Added Settings → Conversations choices for when the Activity summary updates and which agent writes it (automatic uses the routing classifier when routing is on), and let a relay set them for its machines.
+- Fixed the Activity summary scrolling sideways on long code or headings.
+
 ## 2.133.0 — 2026-10-21
 
 - Fixed the Activity panel's summary being squeezed to a few pixels by a long list of steps; it now keeps its height and the steps scroll beneath it.

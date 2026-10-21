@@ -1,19 +1,20 @@
 import { storeTranscriptSummary, storedTranscriptSummary } from "./transcript-summary-store.js";
 
 /**
- * The running summary shown in a conversation's activity sidebar. It is rebuilt
- * incrementally: each refresh hands the model the previous summary plus only the
- * turns that are new (and the last covered turn again, since it may have still been
- * running), so a long conversation costs one short call per turn rather than a
- * re-read of the whole history. Tool output never goes in; only what was asked and
- * answered. Summaries are local to the node that wrote them.
+ * The running summary shown in a conversation's activity sidebar. Each update hands the
+ * writer the current summary and only the messages that came after it, and the writer
+ * folds them in, so a long conversation costs one short call per message rather than a
+ * re-read of its history. Tool output never goes in; only what was said. Summaries are
+ * kept on the node that runs the conversation and pushed to its open pages.
  */
 export interface ConversationDigest {
   summary: string;
-  /** How many user turns the summary covers. */
+  /** How many of the conversation's user and assistant messages the summary covers. */
+  messages?: number;
+  /** How many user turns the summary covers, for display. */
   turns: number;
-  /** Length of the last covered turn's answer, so a turn that kept going reads as new. */
-  lastAnswerLength: number;
+  /** Kept for summaries written before `messages` existed. */
+  lastAnswerLength?: number;
   updatedAt: string;
   /** Who wrote it, so the panel can say so. */
   model?: DigestModel;
@@ -23,16 +24,17 @@ export interface DigestModel {
   harnessId: string;
   provider: string;
   modelId: string;
-  /** "setting" for the person's Summary model, "conversation" for the conversation's own, "fallback" when that could not run here. */
-  source: "setting" | "conversation" | "fallback";
+  /** setting: chosen in Settings or by the relay; classifier: picked by routing; conversation: the conversation's own; fallback: the first agent that could run here. */
+  source: "setting" | "classifier" | "conversation" | "fallback";
 }
 
-export interface DigestTurn { user: string; assistant: string }
+/** One thing said in the conversation: a person's message or an agent's answer. */
+export interface DigestMessage { role: "user" | "assistant"; text: string }
 
 const STORE_KIND = "conversation-digest";
 const USER_LIMIT = 2_000;
 const ANSWER_LIMIT = 6_000;
-// The material handed to the model; the oldest new turns give way first.
+// The material handed to the model; the oldest new messages give way first.
 const MATERIAL_LIMIT = 60_000;
 const SUMMARY_LIMIT = 6_000;
 
@@ -48,70 +50,87 @@ export function saveDigest(projectId: string, conversationId: string, digest: Co
   storeTranscriptSummary(STORE_KIND, storeKey(projectId, conversationId), digest);
 }
 
-/** The turns there is something to summarize in: a prompt the agent has not answered yet adds nothing. */
-export function answeredTurns<T extends DigestTurn>(turns: T[]): T[] {
-  return turns.at(-1)?.assistant.trim() ? turns : turns.slice(0, -1);
+/** The conversation's spoken messages, without tool output, and without a closing prompt the agent has not answered yet. */
+export function digestMessages(messages: ReadonlyArray<{ role: string; text: string }>): DigestMessage[] {
+  const said = messages
+    .filter((message) => (message.role === "user" || message.role === "assistant") && message.text.trim())
+    .map((message) => ({ role: message.role as DigestMessage["role"], text: message.text.trim() }));
+  let end = said.length;
+  while (end > 0 && said[end - 1].role === "user") end -= 1;
+  return said.slice(0, end);
 }
 
-/** True when the transcript holds answered turns, or answer text, the stored summary has not seen. */
-export function digestIsStale(digest: ConversationDigest | undefined, turns: DigestTurn[]): boolean {
-  const answered = answeredTurns(turns);
-  if (!answered.length) return false;
-  if (!digest) return true;
-  if (answered.length !== digest.turns) return true;
-  return (answered.at(-1)?.assistant.length ?? 0) !== digest.lastAnswerLength;
+export function turnCount(messages: DigestMessage[]): number {
+  return messages.filter((message) => message.role === "user").length;
+}
+
+/** How many messages the stored summary already covers. A summary from before message counts restarts at its last covered turn. */
+export function coveredMessages(digest: ConversationDigest | undefined, messages: DigestMessage[]): number {
+  if (!digest) return 0;
+  if (typeof digest.messages === "number") return digest.messages <= messages.length ? digest.messages : 0;
+  let turns = 0;
+  for (const [index, message] of messages.entries()) {
+    if (message.role !== "user") continue;
+    turns += 1;
+    if (turns === digest.turns) return index;
+  }
+  return 0;
+}
+
+/** True when the conversation holds answered messages the stored summary has not seen. */
+export function digestIsStale(digest: ConversationDigest | undefined, messages: DigestMessage[]): boolean {
+  return messages.length > coveredMessages(digest, messages);
 }
 
 function clip(text: string, limit: number): string {
-  const trimmed = text.trim();
-  return trimmed.length <= limit ? trimmed : `${trimmed.slice(0, limit)} …`;
+  return text.length <= limit ? text : `${text.slice(0, limit)} …`;
 }
 
-/** Keeps how a long answer began and, mostly, where it has got to: a running turn's latest state is at its end. */
+/** Keeps how a long answer began and, mostly, where it got to. */
 function clipAnswer(text: string, limit: number): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= limit) return trimmed;
+  if (text.length <= limit) return text;
   const head = Math.floor(limit * 0.3);
-  return `${trimmed.slice(0, head)} … ${trimmed.slice(trimmed.length - (limit - head))}`;
+  return `${text.slice(0, head)} … ${text.slice(text.length - (limit - head))}`;
 }
 
-/** The turns the next refresh must read: everything after the summary, plus its last turn again. */
-export function turnsToSummarize(digest: ConversationDigest | undefined, turns: DigestTurn[]): { from: number; turns: DigestTurn[] } {
-  const from = digest ? Math.max(0, Math.min(digest.turns, turns.length) - 1) : 0;
-  return { from, turns: turns.slice(from) };
+function line(message: DigestMessage): string {
+  return message.role === "user" ? `User: ${clip(message.text, USER_LIMIT)}` : `Assistant: ${clipAnswer(message.text, ANSWER_LIMIT)}`;
 }
 
-/** Numbered turn blocks, newest kept first when the whole set does not fit. */
-export function digestMaterial(from: number, turns: DigestTurn[]): string {
-  const blocks: string[] = [];
+/** The messages after the summary, newest kept first when they do not all fit; a first summary always keeps the opening request. */
+export function digestMaterial(messages: DigestMessage[], from: number): string {
+  const fresh = messages.slice(from);
+  const lines: string[] = [];
   let size = 0;
-  for (let index = turns.length - 1; index >= 0; index -= 1) {
-    const turn = turns[index];
-    const block = [`### Turn ${from + index + 1}`, `User: ${clip(turn.user, USER_LIMIT) || "(no text)"}`, `Assistant: ${clipAnswer(turn.assistant, ANSWER_LIMIT) || "(no answer yet)"}`].join("\n");
-    if (size + block.length > MATERIAL_LIMIT && blocks.length) {
-      blocks.unshift(`(${index + 1} earlier new turn${index ? "s" : ""} omitted for length)`);
+  for (let index = fresh.length - 1; index >= 0; index -= 1) {
+    const entry = line(fresh[index]);
+    if (size + entry.length > MATERIAL_LIMIT && lines.length) {
+      lines.unshift(`(${index + 1} earlier message${index ? "s" : ""} omitted for length)`);
+      const opening = from === 0 ? messages.find((message) => message.role === "user") : undefined;
+      if (opening) lines.unshift(`First request — ${line(opening)}`);
       break;
     }
-    blocks.unshift(block);
-    size += block.length;
+    lines.unshift(entry);
+    size += entry.length;
   }
-  return blocks.join("\n\n");
+  return lines.join("\n\n");
 }
 
 export function digestPrompt(previous: string | undefined): string {
   return [
-    "You keep a running summary of a conversation between a user and a coding agent, shown in a side panel so the user can catch up at a glance.",
+    "You keep a running summary of a conversation between a user and a coding agent. It is shown in a narrow side panel so the user can catch up at a glance.",
     "Use only the material below. Do not run tools, read files, or ask questions.",
     previous
-      ? "Update the existing summary with the new turns. The first new turn may repeat the last turn the summary already covers, in a more complete form; merge it rather than repeating it. Drop details that no longer matter."
-      : "Write the summary from the turns below.",
-    "Answer with Markdown only, no preamble, at most about 250 words, in these sections:",
-    "**Goal** — one or two sentences on what the user wants.",
-    "**Done so far** — short bullets of decisions made and work finished.",
+      ? "Below are the current summary and the messages that came after it. Fold the new messages into the summary: update the goal if it moved, add finished work, replace the current state, keep open questions current, and drop details that no longer matter. Return the whole updated summary."
+      : "Write the summary from the messages below.",
+    "Answer in Markdown, at most about 250 words, with these bold labels, each followed by a sentence or short bullets:",
+    "**Goal** — what the user wants.",
+    "**Done so far** — decisions made and work finished.",
     "**Current state** — what is happening now or was last reported.",
-    "**Open questions** — bullets of anything waiting on the user; omit the section when there is none.",
+    "**Open questions** — anything waiting on the user; leave this label out when there is none.",
+    "No headings, code blocks, tables, raw JSON or long file paths: name files by their name only. Keep lines short; the panel is narrow.",
     "Write in the language the user writes in.",
-    ...(previous ? ["", "Existing summary:", previous] : []),
+    ...(previous ? ["", "Current summary:", previous] : []),
   ].join("\n");
 }
 

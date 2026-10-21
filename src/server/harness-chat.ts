@@ -44,6 +44,8 @@ import { claimConversationLocally, describeConversationOwner, type ForeignConver
 import { flags } from "./state.js";
 import { measureOperation } from "./performance-diagnostics.js";
 import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
+import { conversationLiveModel, requestDigestQuietly, summaryPolicyNow, summaryPolicyView } from "./conversation-digest-runner.js";
+import { storedDigest } from "../conversation-digest.js";
 import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, historyBeforeLiveTurn, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 
 export interface HarnessChatConnection {
@@ -730,6 +732,8 @@ async function restartHarnessSession(connection: HarnessChatConnection): Promise
 
 async function controls(connection: HarnessChatConnection, message: ReturnType<typeof socketMessageSchema.parse>): Promise<boolean> {
   if (message.type === "ping") { send(connection.socket, { type: "pong" }); return true; }
+  // The page asks for the summary to catch up: the button, opening the panel, or the panel-only policy. Read-only viewers may ask too.
+  if (message.type === "refreshDigest") { requestDigestQuietly(connection.project, connection.conversationId, conversationLiveModel(connection.shared)); return true; }
   if (message.type === "models") { await models(connection); return true; }
   if (message.type === "tools") { send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); return true; }
   if (message.type === "compact") {
@@ -974,6 +978,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     const routing = await routingClientState(connection, local.id);
     const routingMode = routing ? routing.mode : "manual";
     const conversationCommands = getSettings().conversationCommands;
+    const summaryPolicy = await summaryPolicyNow();
     const segmentRecords = await listConversationSegments(options.project.id, conversationId);
     const listed = options.listedSessions?.find((session) => session.conversationId === conversationId || session.id === conversationId);
     const startedCandidates = [listed?.createdAt, ...segmentRecords.map((segment) => segment.createdAt), ...browserMessages.map((message) => message.timestamp)]
@@ -983,9 +988,11 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     if (options.socket.readyState !== WebSocket.OPEN) return;
     if (inputs !== inputState() || liveTurn !== shared.liveEvents) continue;
     if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
-    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, digest: storedDigest(options.project.id, conversationId) ?? null, summaryPolicy: summaryPolicyView(summaryPolicy), ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
     for (const event of shared.liveEvents) send(options.socket, event);
     refreshHarnessPromptQueue(connection);
+    // A summary that fell behind while nobody had this open catches up now; one is first written after the next answer.
+    if (summaryPolicy.updates === "each-message" && storedDigest(options.project.id, conversationId)) requestDigestQuietly(options.project, conversationId, conversationLiveModel(shared));
     break;
   }
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {

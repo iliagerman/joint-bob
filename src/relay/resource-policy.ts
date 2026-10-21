@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { clusterPublicKeyFingerprint, signClusterMessage, verifyClusterMessage } from "../cluster-identity.js";
 import { listMemberships, type RelayMembership } from "./store.js";
+import { summaryPolicySchema, type SummaryPolicy } from "../conversation-summary-policy.js";
 import { encodeControl, MAX_FRAME } from "./protocol.js";
 import type { HarnessId } from "../types.js";
 
@@ -27,6 +28,8 @@ const bodySchema = z.object({
   settings: relayResourceSettingsSchema.default(defaultRelayResourceSettings), enabled: relayEnabledSchema.default(emptyRelayEnabledResources),
   // Omitted when empty, so machines on releases without it still accept policies that deliver no files.
   skillDigests: skillDigests.optional(),
+  // How member machines keep conversation summaries. Omitted when the relay leaves it to each machine.
+  summary: summaryPolicySchema.optional(),
 }).strict();
 export const signedRelaySkillPolicySchema = z.object({ body: bodySchema, signature: z.string().max(200) }).strict();
 export type RelaySkillRule = z.infer<typeof rule>;
@@ -47,22 +50,25 @@ function schema(db: DatabaseSync): void {
 export function publishedRelayPolicy(db: DatabaseSync, nodeId: string): SignedRelaySkillPolicy {
   schema(db);
   const row = db.prepare("SELECT version,rules,extra FROM relay_skill_policy WHERE singleton=1").get() as { version: number; rules: string; extra: string | null } | undefined;
-  const extra = row?.extra ? JSON.parse(row.extra) as { settings?: unknown; enabled?: unknown; skillDigests?: Record<string, string> } : {};
+  const extra = row?.extra ? JSON.parse(row.extra) as { settings?: unknown; enabled?: unknown; skillDigests?: Record<string, string>; summary?: SummaryPolicy | null } : {};
   if (extra.skillDigests && !Object.keys(extra.skillDigests).length) delete extra.skillDigests;
+  if (!extra.summary) delete extra.summary;
   const body = bodySchema.parse({ relayNodeId: nodeId, version: row?.version ?? 0, rules: row ? JSON.parse(row.rules) : [], ...extra });
   return { body, signature: signClusterMessage(db, nodeId, "relay-skill-policy", JSON.stringify(body)) };
 }
 
-export function publishRelayPolicy(db: DatabaseSync, nodeId: string, rules: RelaySkillRule[], resources?: { settings: RelayResourceSettings; enabled: RelayEnabledResources; skillDigests?: Record<string, string> }): SignedRelaySkillPolicy {
+/** `summary` undefined keeps the published summary policy; null removes it. */
+export function publishRelayPolicy(db: DatabaseSync, nodeId: string, rules: RelaySkillRule[], resources?: { settings: RelayResourceSettings; enabled: RelayEnabledResources; skillDigests?: Record<string, string> }, summary?: SummaryPolicy | null): SignedRelaySkillPolicy {
   relaySkillRulesSchema.parse(rules);
   schema(db);
-  const current = db.prepare("SELECT version FROM relay_skill_policy WHERE singleton=1").get() as { version: number } | undefined;
+  const current = db.prepare("SELECT version,extra FROM relay_skill_policy WHERE singleton=1").get() as { version: number; extra: string | null } | undefined;
   const digests = resources?.skillDigests && Object.keys(resources.skillDigests).length ? resources.skillDigests : undefined;
-  const body = bodySchema.parse({ relayNodeId: nodeId, version: (current?.version ?? 0) + 1, rules, ...resources, skillDigests: digests });
+  const kept = summary === undefined ? (current?.extra ? (JSON.parse(current.extra) as { summary?: SummaryPolicy | null }).summary ?? undefined : undefined) : summary ?? undefined;
+  const body = bodySchema.parse({ relayNodeId: nodeId, version: (current?.version ?? 0) + 1, rules, ...resources, skillDigests: digests, ...(kept ? { summary: kept } : {}) });
   const statement = { body, signature: signClusterMessage(db, nodeId, "relay-skill-policy", JSON.stringify(body)) };
   if (encodeControl({ t: "skill-policy", statement }).byteLength > MAX_FRAME) throw new Error(`Relay skill policy exceeds the ${MAX_FRAME}-byte frame limit`);
   db.prepare("INSERT INTO relay_skill_policy(singleton,version,rules,extra) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET version=excluded.version,rules=excluded.rules,extra=excluded.extra")
-    .run(body.version, JSON.stringify(rules), JSON.stringify({ settings: body.settings, enabled: body.enabled, skillDigests: body.skillDigests }));
+    .run(body.version, JSON.stringify(rules), JSON.stringify({ settings: body.settings, enabled: body.enabled, skillDigests: body.skillDigests, summary: body.summary ?? null }));
   return statement;
 }
 
@@ -95,6 +101,11 @@ export function relayPolicySubscriptions(db: DatabaseSync): Array<{ relay: Relay
     const row = byId.get(relay.id);
     return { relay, statement: row?.statement ? signedRelaySkillPolicySchema.parse(JSON.parse(row.statement)) : null, updatedAt: row?.updated_at ?? null };
   });
+}
+
+/** The summary policy each admitted relay publishes, by relay label; relays that leave it to each machine have none. */
+export function relaySummaryPolicies(db: DatabaseSync): Array<{ relay: string; summary?: SummaryPolicy }> {
+  return relayPolicySubscriptions(db).map(({ relay, statement }) => ({ relay: relayPolicyLabel(relay), ...(statement?.body.summary ? { summary: statement.body.summary } : {}) }));
 }
 
 /** Membership.name is this machine's assigned name, not the relay server's identity. */
