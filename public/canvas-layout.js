@@ -228,7 +228,7 @@ export const CANVAS_KEYMAP_COMMANDS = [
   "page1", "page2", "page3", "page4", "page5", "page6", "page7", "page8", "page9",
   "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat", "newKiroChat", "quickNote", "toggleNotes",
   "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename", "browser", "scheduledTasks",
-  "backgroundTasks", "chatFiles", "sessionActions", "markDone", "autoRespond", "git", "explainConversation", "costs",
+  "backgroundTasks", "chatFiles", "sessionActions", "markDone", "autoRespond", "git", "explainConversation", "costs", "activity",
 ];
 /** Every command rides one modifier pair - Control+Option on a Mac, Control+Alt
  *  elsewhere, the same two physical keys - so a button badge can name the key alone.
@@ -277,6 +277,7 @@ export const DEFAULT_CANVAS_KEYMAP = {
     git: ["ctrl", "alt", "shift", "G"],
     explainConversation: ["ctrl", "alt", "shift", "E"],
     costs: ["ctrl", "alt", "shift", "C"],
+    activity: ["ctrl", "alt", "shift", "S"],
     paneSearch: commandChord("F"),
     recentPane: commandChord("L"),
     focusPane: commandChord("G"),

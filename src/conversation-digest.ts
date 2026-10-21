@@ -31,7 +31,7 @@ export interface DigestTurn { user: string; assistant: string }
 
 const STORE_KIND = "conversation-digest";
 const USER_LIMIT = 2_000;
-const ANSWER_LIMIT = 4_000;
+const ANSWER_LIMIT = 6_000;
 // The material handed to the model; the oldest new turns give way first.
 const MATERIAL_LIMIT = 60_000;
 const SUMMARY_LIMIT = 6_000;
@@ -48,17 +48,31 @@ export function saveDigest(projectId: string, conversationId: string, digest: Co
   storeTranscriptSummary(STORE_KIND, storeKey(projectId, conversationId), digest);
 }
 
-/** True when the transcript holds turns, or answer text, the stored summary has not seen. */
+/** The turns there is something to summarize in: a prompt the agent has not answered yet adds nothing. */
+export function answeredTurns<T extends DigestTurn>(turns: T[]): T[] {
+  return turns.at(-1)?.assistant.trim() ? turns : turns.slice(0, -1);
+}
+
+/** True when the transcript holds answered turns, or answer text, the stored summary has not seen. */
 export function digestIsStale(digest: ConversationDigest | undefined, turns: DigestTurn[]): boolean {
-  if (!turns.length) return false;
+  const answered = answeredTurns(turns);
+  if (!answered.length) return false;
   if (!digest) return true;
-  if (turns.length !== digest.turns) return true;
-  return (turns.at(-1)?.assistant.length ?? 0) !== digest.lastAnswerLength;
+  if (answered.length !== digest.turns) return true;
+  return (answered.at(-1)?.assistant.length ?? 0) !== digest.lastAnswerLength;
 }
 
 function clip(text: string, limit: number): string {
   const trimmed = text.trim();
   return trimmed.length <= limit ? trimmed : `${trimmed.slice(0, limit)} …`;
+}
+
+/** Keeps how a long answer began and, mostly, where it has got to: a running turn's latest state is at its end. */
+function clipAnswer(text: string, limit: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= limit) return trimmed;
+  const head = Math.floor(limit * 0.3);
+  return `${trimmed.slice(0, head)} … ${trimmed.slice(trimmed.length - (limit - head))}`;
 }
 
 /** The turns the next refresh must read: everything after the summary, plus its last turn again. */
@@ -73,7 +87,7 @@ export function digestMaterial(from: number, turns: DigestTurn[]): string {
   let size = 0;
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index];
-    const block = [`### Turn ${from + index + 1}`, `User: ${clip(turn.user, USER_LIMIT) || "(no text)"}`, `Assistant: ${clip(turn.assistant, ANSWER_LIMIT) || "(no answer yet)"}`].join("\n");
+    const block = [`### Turn ${from + index + 1}`, `User: ${clip(turn.user, USER_LIMIT) || "(no text)"}`, `Assistant: ${clipAnswer(turn.assistant, ANSWER_LIMIT) || "(no answer yet)"}`].join("\n");
     if (size + block.length > MATERIAL_LIMIT && blocks.length) {
       blocks.unshift(`(${index + 1} earlier new turn${index ? "s" : ""} omitted for length)`);
       break;

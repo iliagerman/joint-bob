@@ -15,7 +15,9 @@ test("a digest is stale when turns were added or the last answer grew", () => {
   assert.equal(digestIsStale(undefined, []), false, "an empty conversation has nothing to summarize");
   assert.equal(digestIsStale(undefined, turns), true);
   assert.equal(digestIsStale(digest, turns), false);
-  assert.equal(digestIsStale(digest, [...turns, turn("c", "")]), true);
+  assert.equal(digestIsStale(digest, [...turns, turn("c", "")]), false, "a new prompt with no answer yet adds nothing to summarize");
+  assert.equal(digestIsStale(digest, [...turns, turn("c", "Working on it.")]), true);
+  assert.equal(digestIsStale(undefined, [turn("a", "")]), false, "a first prompt still waiting has no summary to write");
   assert.equal(digestIsStale(digest, [turn("a", "one"), turn("b", "two, then more")]), true);
 });
 
@@ -36,6 +38,10 @@ test("material numbers turns from where the summary left off and drops the oldes
   assert.ok(bounded.length < 70_000, `material stays bounded (${bounded.length})`);
   assert.match(bounded, /earlier new turns omitted for length/);
   assert.match(bounded, /### Turn 40\nUser: question 40/, "the newest turn is always kept");
+
+  // A long answer keeps its opening and, mostly, where it has got to.
+  const running = digestMaterial(0, [turn("ship it", `started the build ${"x".repeat(20_000)} now waiting for review`)]);
+  assert.match(running, /Assistant: started the build x+ … x+ now waiting for review$/);
 });
 
 test("the prompt carries the previous summary only when there is one", () => {
@@ -133,7 +139,10 @@ test("the digest route summarizes a conversation incrementally and only for visi
     assert.equal((await api(node, auth, "POST", `/projects/${project.id}/conversations/00000000-0000-4000-8000-000000000000/digest`, {})).status, 404);
 
     // A model that fails leaves the stored summary in place and says why.
-    await appendFile(transcript, record("user", 8, [{ type: "text", text: "FAIL please" }]) + "\n");
+    await appendFile(transcript, [
+      record("user", 8, [{ type: "text", text: "FAIL please" }]),
+      record("assistant", 9, [{ type: "text", text: "Trying." }]),
+    ].join("\n") + "\n");
     let failed = await api<DigestResponse & { error?: string }>(node, auth, "POST", endpoint, {});
     for (const until = Date.now() + 15_000; !failed.body.error && Date.now() < until;) {
       await new Promise((resolve) => setTimeout(resolve, 200));

@@ -5,14 +5,17 @@ import { elements } from "./elements.js";
 import { state } from "./state.js";
 
 // The activity sidebar holds a conversation's intermediate work — tool calls and
-// thinking — so the main thread reads as what the agent actually said. Each run
-// of steps between two pieces of text is one group here, and one compact marker
-// in the main thread that opens the panel on that group.
+// thinking — so the main thread reads as what the agent actually said. Each turn's
+// steps are one group here, headed by the prompt that started the turn, and one
+// line under that prompt in the main thread that opens the panel on the group.
 
 // Below this width the panel floats over the transcript instead of sharing the row.
 const OVERLAY_QUERY = window.matchMedia("(max-width: 900px)");
 const FOLLOW_THRESHOLD_PX = 32;
 const NAMES_SHOWN = 3;
+const PROMPT_SHOWN = 90;
+// While the agent works, the summary is brought up to date at most this often.
+const LIVE_SUMMARY_INTERVAL_MS = 3 * 60_000;
 
 let currentGroup = null;
 let groupCount = 0;
@@ -21,6 +24,8 @@ let summaryRequest = 0;
 let summaryConversation = "";
 // A turn ended in this conversation since its summary was last written.
 let turnEndedIn = "";
+// When each conversation's summary was last asked to update, for the live interval.
+const lastSummaryWrite = new Map();
 
 // Whether the person last opened or collapsed the panel this session. Browser storage is not used
 // for it; a reload falls back to the width default.
@@ -35,13 +40,16 @@ export function activityPanelOpen() {
   return !elements.activityPanel.hidden;
 }
 
+/** `remember` marks the person's own open or collapse, which also asks for an up-to-date summary. */
 export function setActivityPanelOpen(open, remember = true) {
+  const opening = open && !activityPanelOpen();
   elements.activityPanel.hidden = !open;
   elements.messagesWrap.classList.toggle("activity-open", open);
   elements.activityToggleButton.setAttribute("aria-expanded", String(open));
   elements.activityToggleButton.classList.toggle("active", open);
   if (remember) chosenOpen = open;
-  if (open && summaryDirty) refreshActivitySummary();
+  if (opening && remember) refreshActivitySummary({ opened: true });
+  else if (open && summaryDirty) refreshActivitySummary();
 }
 
 function listAtBottom() {
@@ -71,8 +79,8 @@ export function currentActivityGroup() {
   return currentGroup?.marker.isConnected ? currentGroup : null;
 }
 
-/** Starts a group; insertMarker places its marker in the main thread. */
-export function startActivityGroup(insertMarker, startedAt) {
+/** Starts a turn's group; insertMarker places its marker in the main thread. */
+export function startActivityGroup(insertMarker, startedAt, prompt = "") {
   groupCount += 1;
   const id = `activity-group-${groupCount}`;
   const section = document.createElement("section");
@@ -91,6 +99,14 @@ export function startActivityGroup(insertMarker, startedAt) {
     heading.append(time);
   }
   section.append(heading);
+  const text = String(prompt || "").replace(/\s+/g, " ").trim();
+  if (text) {
+    const asked = document.createElement("p");
+    asked.className = "activity-group-prompt";
+    asked.textContent = text.length > PROMPT_SHOWN ? `${text.slice(0, PROMPT_SHOWN)}…` : text;
+    asked.title = text;
+    section.append(asked);
+  }
 
   const marker = document.createElement("button");
   marker.type = "button";
@@ -144,7 +160,6 @@ export function syncActivityGroup(group) {
   group.marker.querySelector(".activity-marker-label").textContent = parts.join(" · ");
   group.section.querySelector(".activity-group-title").textContent = parts.join(" · ");
   group.marker.dataset.status = running || (thinking && !tools.length) ? "running" : failed ? "error" : "done";
-  group.marker.classList.toggle("pending-review", Boolean(group.section.querySelector(".pending-review")));
   group.marker.title = `${parts.join(" · ")} — show in the activity panel`;
   syncStepsCount();
 }
@@ -217,13 +232,15 @@ function setSummaryButton(hasDigest) {
 }
 
 /**
- * Brings the summary up to date while the panel is open; a closed panel only
- * notes that it is behind. A model call is made when a turn ends here, when an
- * existing summary has fallen behind, or on the button — never just because a
- * conversation was opened, so browsing old conversations costs nothing.
- * `afterTurn` marks the call made as a turn ends; `force` is the button.
+ * Brings the summary up to date while the panel is open; a closed panel only notes
+ * that it is behind. A summary is written when the person opens the panel, when a
+ * turn ends here, every few minutes while the agent works, when one already exists
+ * and has fallen behind, or on the button. Merely landing on an idle conversation
+ * with the panel already open writes nothing, so browsing old ones costs nothing.
+ * `afterTurn` marks the call made as a turn ends; `opened` the person opening the
+ * panel; `live` the agent's progress during a turn; `force` the button.
  */
-export async function refreshActivitySummary({ force = false, afterTurn = false } = {}) {
+export async function refreshActivitySummary({ force = false, afterTurn = false, opened = false, live = false } = {}) {
   const ref = conversationRef();
   if (afterTurn && ref) turnEndedIn = ref.key;
   if (!activityPanelOpen()) {
@@ -253,11 +270,15 @@ export async function refreshActivitySummary({ force = false, afterTurn = false 
     if (current.digest) showSummary({ markdown: current.digest.summary }, digestStatus(current.digest));
     else showSummary({ plain: current.turns ? "No summary yet." : "The summary appears after the first answer." });
     if (!current.stale) return;
-    const write = force || (!state.sessionBusy && (Boolean(current.digest) || turnEndedIn === ref.key));
+    const sinceWrite = Date.now() - (lastSummaryWrite.get(ref.key) ?? 0);
+    // While the agent works, only its own progress (a step or a message) brings an update.
+    const write = force || opened || turnEndedIn === ref.key
+      || (state.sessionBusy ? live && sinceWrite >= LIVE_SUMMARY_INTERVAL_MS : Boolean(current.digest));
     if (!write) {
-      if (state.sessionBusy) elements.activitySummaryStatus.textContent = current.digest ? `${digestStatus(current.digest)} · updates when the turn ends` : "Written when the turn ends";
+      if (state.sessionBusy) elements.activitySummaryStatus.textContent = current.digest ? `${digestStatus(current.digest)} · updating as the agent works` : "Written in a few minutes as the agent works";
       return;
     }
+    lastSummaryWrite.set(ref.key, Date.now());
     elements.activitySummaryStatus.textContent = current.digest ? "Updating…" : "Writing…";
     const conversation = conversationModel();
     const updated = await api(digestPath(ref), { method: "POST", body: JSON.stringify(conversation ? { conversation } : {}) });
@@ -281,6 +302,17 @@ export async function refreshActivitySummary({ force = false, afterTurn = false 
   } finally {
     if (request === summaryRequest) elements.activitySummaryRefreshButton.disabled = false;
   }
+}
+
+/**
+ * The agent finished a message or a step. While it works, the open panel's summary
+ * follows it at most every few minutes; between those, nothing is fetched.
+ */
+export function activityProgressed() {
+  const ref = conversationRef();
+  if (!ref || !activityPanelOpen() || !state.sessionBusy) return;
+  if (Date.now() - (lastSummaryWrite.get(ref.key) ?? 0) < LIVE_SUMMARY_INTERVAL_MS) return;
+  refreshActivitySummary({ live: true });
 }
 
 /** A conversation opened or reconnected: its summary is fetched when the panel shows. */

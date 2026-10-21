@@ -240,16 +240,53 @@ function appendBeforeQueuedMessages(node) {
   host.insertBefore(node, host.querySelector(":scope > .queued-batch-controls, :scope > .message.queued"));
 }
 
-// Tool calls and thinking go to the activity panel. Consecutive steps share one
-// group and one marker in the thread; anything the thread shows after that
-// marker (text, an error, a new segment) means the next step starts a new group.
+/** The message that opened the turn now being written: the newest one the person sent. */
+function turnOpener(host) {
+  const sent = host.querySelectorAll(":scope > .message.user:not(.queued)");
+  return sent[sent.length - 1] ?? null;
+}
+
+// Tool calls and thinking go to the activity panel. A turn's steps share one group
+// and one marker, placed right under the message that opened the turn, so the
+// thread reads as prompt, a one-line count of the work, then what the agent said.
 function activityGroupHere(startedAt) {
   const host = messageHost();
-  const queued = host.querySelector(":scope > .queued-batch-controls, :scope > .message.queued");
-  const last = queued ? queued.previousElementSibling : host.lastElementChild;
+  const opener = turnOpener(host);
   const group = currentActivityGroup();
-  if (group && group.marker === last) return group;
-  return startActivityGroup((marker) => appendBeforeQueuedMessages(marker), startedAt);
+  if (group && group.host === host && group.opener === opener) return group;
+  const created = startActivityGroup((marker) => {
+    if (!opener) return appendBeforeQueuedMessages(marker);
+    const actions = opener.nextElementSibling?.classList.contains("message-actions") ? opener.nextElementSibling : null;
+    (actions ?? opener).after(marker);
+  }, startedAt, opener?._raw);
+  return Object.assign(created, { host, opener });
+}
+
+// Only the newest answer of a turn carries its model line. An earlier answer by the
+// same model drops its line, and its copy button moves into its own timestamp row
+// (shown on hover), so a long turn is not a column of repeated chips. An answer by a
+// different model keeps its line: the switch is worth seeing.
+function quietEarlierAnswers(bubble) {
+  const model = bubble.nextElementSibling?.querySelector(".message-attribution")?.getAttribute("aria-label");
+  if (!model) return;
+  let node = bubble.previousElementSibling;
+  while (node && !node.matches(".message.user:not(.queued)")) {
+    const previous = node.previousElementSibling;
+    const answer = node.matches(".message-actions") ? previous : null;
+    if (answer?.matches(".message.assistant") && node.querySelector(".message-attribution")?.getAttribute("aria-label") === model) {
+      let meta = answer.querySelector(":scope > .message-meta");
+      if (!meta) {
+        meta = document.createElement("div");
+        meta.className = "message-meta";
+        answer.append(meta);
+      }
+      const copy = node.querySelector(".message-copy");
+      if (copy) meta.append(copy);
+      node.remove();
+      answer.classList.add("quiet-answer");
+    }
+    node = previous;
+  }
 }
 
 function prettyText(text) {
@@ -603,6 +640,7 @@ export function appendMessage(role, text, timestamp = true, attachments = [], re
   if (role === "thinking") appendToActivityGroup(activityGroupHere(new Date()), bubble);
   else appendBeforeQueuedMessages(bubble);
   if (isMarkdown) appendCopyButton(bubble, role === "assistant" ? assistantAttribution(attribution) : null);
+  if (role === "assistant") quietEarlierAnswers(bubble);
   requestPinChat();
   return bubble;
 }

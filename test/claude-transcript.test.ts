@@ -98,6 +98,10 @@ test("a reloaded Claude transcript keeps the tool bubbles between the spoken blo
         { type: "tool_result", tool_use_id: "tool-1", content: "plan body" },
       ] } }),
       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "The plan is parked." }] } }),
+      // Newer Claude Code repeats each request's messages in untimed blob records; none of them is chat.
+      JSON.stringify({ type: "api-request-blob", sessionId: "s", hash: "h", message: { role: "assistant", content: [{ type: "text", text: "The plan is parked." }, { type: "tool_use", id: "tool-1", name: "Read", input: {} }] } }),
+      JSON.stringify({ type: "api-request-blob", sessionId: "s", hash: "h", message: { role: "system", content: [{ type: "text", text: "You are Claude Code." }] } }),
+      JSON.stringify({ type: "api-request-blob", sessionId: "s", hash: "h", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tool-1", content: "plan body" }] } }),
       JSON.stringify({ type: "user", message: { role: "user", content: [
         { type: "tool_result", tool_use_id: "missing", content: "exit 1", is_error: true },
       ] } }),

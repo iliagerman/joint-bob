@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
-import { type ConversationDigest, type DigestModel, digestIsStale, digestMaterial, digestPrompt, parseDigestAnswer, saveDigest, storedDigest, turnsToSummarize } from "../../conversation-digest.js";
+import { answeredTurns, type ConversationDigest, type DigestModel, digestIsStale, digestMaterial, digestPrompt, parseDigestAnswer, saveDigest, storedDigest, turnsToSummarize } from "../../conversation-digest.js";
 import { listDiscoveredHarnesses } from "../../harnesses/registry.js";
 import { getUserPreferences } from "../../preferences.js";
 import { getSettings } from "../../settings.js";
@@ -79,7 +79,8 @@ async function conversationListed(project: ProjectRecord, conversationId: string
 async function conversationTranscript(project: ProjectRecord, conversationId: string) {
   try {
     const { messages, lastHarness } = await loadConversationMessages(project, conversationId);
-    return { messages, lastHarness, turns: buildTurns(messages) };
+    // A prompt still waiting for its first answer has nothing to summarize yet.
+    return { messages, lastHarness, turns: answeredTurns(buildTurns(messages)) };
   } catch (error) {
     throw new DigestError(404, error instanceof Error ? error.message : "Conversation not found");
   }

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed the Activity panel to group each turn's steps under the prompt that started it, keep its summary current while the agent works, and stopped reloaded conversations from showing every answer twice.
+
 ## 2.131.0 — 2026-10-21
 
 - Added a `/bob-restart` command that reopens a conversation's session in place, keeping the conversation and its settings, and that refuses to run while a turn is still going.

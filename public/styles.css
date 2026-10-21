@@ -1916,15 +1916,18 @@ select.chat-toolbar-control {
 .activity-summary-text :is(p, ul, ol) { margin: 0 0 6px; }
 .activity-summary-text :is(ul, ol) { padding-left: 18px; }
 .activity-summary-text li + li { margin-top: 2px; }
-.activity-marker { display: flex; align-items: center; align-self: flex-start; gap: 8px; max-width: 100%; min-height: 28px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: transparent; font-family: var(--mono); font-size: 11px; cursor: pointer; }
-.activity-marker:hover, .activity-marker:focus-visible { color: var(--text); border-color: var(--line-strong); }
+/* One quiet line per turn under the prompt: a count of the work, not a card. */
+.activity-marker { display: flex; align-items: center; align-self: flex-start; gap: 7px; max-width: 100%; min-height: 24px; margin: -4px 0 -2px 9px; padding: 2px 6px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-family: var(--mono); font-size: 11px; cursor: pointer; }
+.activity-marker:hover, .activity-marker:focus-visible { color: var(--text); background: var(--field); }
 .activity-marker-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--live); }
 .activity-marker[data-status="running"] .activity-marker-dot { background: var(--amber); animation: dot-breathe 1.2s ease-in-out infinite; }
 .activity-marker[data-status="error"] .activity-marker-dot { background: var(--danger); }
-.activity-marker[data-status="error"] { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
 .activity-marker-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.activity-marker-chevron { flex: none; font-size: 15px; line-height: 1; }
-.activity-marker.pending-review { border-color: color-mix(in srgb, var(--amber) 52%, var(--line)); background: color-mix(in srgb, var(--amber) 11%, transparent); }
+.activity-marker-chevron { flex: none; font-size: 14px; line-height: 1; }
+.activity-group-prompt { margin: 0; padding: 0 2px; overflow: hidden; color: var(--text); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+/* Earlier answers in a turn drop their model line; their copy button sits in the timestamp row, shown on hover. */
+.message.quiet-answer > .message-meta .message-copy { min-width: 24px; min-height: 24px; margin-left: auto; opacity: 0; }
+.message.quiet-answer:hover > .message-meta .message-copy, .message.quiet-answer > .message-meta .message-copy:focus-visible { opacity: 1; }
 .activity-toggle.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 @media (max-width: 900px) {
   .messages-wrap.activity-open { flex-direction: column; }

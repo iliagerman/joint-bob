@@ -526,6 +526,10 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
   const messages: ChatMessage[] = [];
   for (const [index, line] of lines.entries()) {
     const record = JSON.parse(line) as UnknownRecord;
+    // Only user and assistant records are the conversation. Newer Claude Code also writes
+    // `api-request-blob` records that repeat each request's messages (system prompts
+    // included) without a time; reading them showed every answer twice.
+    if (typeof record.type === "string" && record.type !== "user" && record.type !== "assistant") continue;
     const message = asRecord(record.message);
     const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
     const stamp = timestamp ? { timestamp } : {};

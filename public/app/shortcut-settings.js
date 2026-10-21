@@ -54,6 +54,7 @@ const COMMAND_ROWS = [
   { command: "autoRespond", label: "Chat: set up auto respond" },
   { command: "git", label: "Chat: open git" },
   { command: "explainConversation", label: "Chat: explain what this conversation did" },
+  { command: "activity", label: "Chat: show or collapse the activity panel (steps and summary)" },
   { command: "toggleView", label: "Switch between the canvas and the conversation you left" },
   { command: "recentPane", label: "Canvas: jump to the conversation you were in before" },
   { command: "focusPane", label: "Canvas: bring the current conversation forward, or put it back" },

@@ -18,6 +18,8 @@ import { claudeProjectDir } from "../../src/session-paths.js";
 const PROJECT_NAME = "Infra Scripts";
 const CONVERSATION_TITLE = "Certificate rotation";
 const CONVERSATION_ID = "7b1d2e3f-4051-4b6c-9d7e-8f9a0b1c2d3e";
+const LIVE_TITLE = "Database migration";
+const LIVE_ID = "8c2e3f40-5162-4c7d-8e9f-0a1b2c3d4e5f";
 
 let root: string;
 let environment: DevEnvironment;
@@ -33,7 +35,13 @@ const summaryBodies: Array<{ conversation?: { harnessId: string; provider?: stri
 
 async function writeTranscript(): Promise<void> {
   const project = projectNamed(node, PROJECT_NAME);
-  const transcript = path.join(claudeProjectDir(project.path, path.join(environment.home, ".claude", "projects")), `${CONVERSATION_ID}.jsonl`);
+  const directory = claudeProjectDir(project.path, path.join(environment.home, ".claude", "projects"));
+  await writeFile(path.join(directory, `${LIVE_ID}.jsonl`), `${[
+    { type: "ai-title", aiTitle: LIVE_TITLE, cwd: project.path, timestamp: "2026-09-02T10:00:00.000Z" },
+    { type: "user", uuid: `${LIVE_ID}-0`, cwd: project.path, timestamp: "2026-09-02T10:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "Run the database migration" }] } },
+    { type: "assistant", uuid: `${LIVE_ID}-1`, cwd: project.path, timestamp: "2026-09-02T10:00:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "Migration 42 is running." }] } },
+  ].map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+  const transcript = path.join(directory, `${CONVERSATION_ID}.jsonl`);
   const at = (index: number) => new Date(Date.parse("2026-09-01T10:00:00Z") + index * 2_000).toISOString();
   const record = (role: "user" | "assistant", index: number, content: unknown[]) => ({ type: role, uuid: `${CONVERSATION_ID}-${index}`, cwd: project.path, timestamp: at(index), message: { role, content } });
   const records = [
@@ -93,27 +101,37 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.locator("#messages").getByText("Rotated staging.pem.").waitFor({ timeout: 20_000 });
   await waitFrames();
 
-  // The thread: text and one marker for the two steps between the answers, no tool bubbles.
+  // The thread: the prompt, one line counting the turn's steps, then what the agent said. No tool bubbles.
   assert.equal(await page.locator("#messages .tool-output").count(), 0, "no tool bubble stays in the thread");
   const marker = page.locator("#messages").getByTestId("activity-marker");
-  assert.equal(await marker.count(), 1);
+  assert.equal(await marker.count(), 1, "one marker per turn, not one per run of steps");
   assert.match(await marker.innerText(), /2 steps · Bash · Read/);
-  const order = await page.locator("#messages").evaluate((box) => [...box.querySelectorAll(".message.assistant, [data-testid='activity-marker']")].map((node) => node.textContent?.includes("Checking") ? "intro" : node.textContent?.includes("Rotated") ? "answer" : "marker"));
-  assert.deepEqual(order, ["intro", "marker", "answer"], "the marker sits where the steps ran");
+  const order = await page.locator("#messages").evaluate((box) => [...box.querySelectorAll(".message.user, .message.assistant, [data-testid='activity-marker']")]
+    .map((node) => node.matches(".message.user") ? "prompt" : node.textContent?.includes("Checking") ? "intro" : node.textContent?.includes("Rotated") ? "answer" : "marker"));
+  assert.deepEqual(order, ["prompt", "marker", "intro", "answer"], "the marker sits under the prompt that started the turn");
+  // Only the turn's newest answer carries the model line; the earlier one keeps copy in its own row.
+  assert.equal(await page.locator("#messages").getByTestId("assistant-attribution").count(), 1);
+  const intro = page.locator("#messages .message.assistant", { hasText: "Checking" });
+  assert.equal(await intro.evaluate((element) => element.classList.contains("quiet-answer")), true);
+  assert.equal(await intro.locator(".message-meta").getByTestId("message-copy-button").count(), 1);
 
   // A wide window opens the panel beside the thread, not over it.
   const panel = page.getByTestId("activity-panel");
   await panel.waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded"), "true");
   assert.equal(await panel.locator(".tool-output").count(), 2);
+  assert.equal(await panel.locator(".activity-group-prompt").innerText(), "Rotate the staging certificates", "a group is headed by its turn's prompt");
   const [messagesBox, panelBox] = await Promise.all([page.locator("#messages").boundingBox(), panel.boundingBox()]);
   assert.ok(messagesBox && panelBox && messagesBox.x + messagesBox.width <= panelBox.x + 1, `thread (${JSON.stringify(messagesBox)}) ends where the panel (${JSON.stringify(panelBox)}) begins`);
   assert.ok(panelBox.width >= 280, `panel is readable (${panelBox.width}px)`);
 
-  // Opening a conversation never spends a model call; the first summary is asked for.
+  // Landing on an idle conversation with the panel already open spends no model call.
   await page.getByTestId("activity-summary-text").getByText("No summary yet.").waitFor({ timeout: 15_000 });
   assert.equal(summaryWrites, 0, "no summary is written just because the conversation opened");
-  await page.getByTestId("activity-summary-refresh").filter({ hasText: "Write summary" }).click();
+  await page.getByTestId("activity-summary-refresh").filter({ hasText: "Write summary" }).waitFor();
+  // Opening the panel yourself is asking to see the summary, so it is written.
+  await page.getByTestId("activity-panel-close").click();
+  await page.getByTestId("chat-activity-toggle").click();
   await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).waitFor({ timeout: 15_000 });
   assert.equal(summaryWrites, 1);
   assert.equal(summaryBodies[0].conversation?.harnessId, "claude", "the summary follows the conversation's agent by default");
@@ -156,6 +174,27 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await panel.waitFor({ state: "visible" });
   await waitFrames();
   assert.equal(await panel.locator(".activity-group.highlighted").count(), 1);
+
+  // Control+Option+Shift+S shows and collapses the panel, and the button says so.
+  assert.equal(await page.getByTestId("chat-activity-toggle").locator(".shortcut-hint").innerText(), "⇧S");
+  await page.keyboard.press("Control+Alt+Shift+KeyS");
+  await panel.waitFor({ state: "hidden" });
+  await page.keyboard.press("Control+Alt+Shift+KeyS");
+  await panel.waitFor({ state: "visible" });
+
+  // A conversation the agent is working in gets its summary from the agent's progress, without a click.
+  await page.locator(".session-card", { hasText: LIVE_TITLE }).first().click();
+  await page.locator("#messages").getByText("Migration 42 is running.").waitFor({ timeout: 20_000 });
+  await page.getByTestId("activity-summary-text").getByText("No summary yet.").waitFor({ timeout: 15_000 });
+  assert.equal(summaryWrites, 1, "landing on an idle conversation writes nothing");
+  await page.evaluate(async () => {
+    const { handleSocketPayload } = await import("/app/socket.js");
+    handleSocketPayload({ type: "agent_start" });
+    handleSocketPayload({ type: "assistantFinal", text: "Migration 42 finished; checking row counts." });
+  });
+  await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).waitFor({ timeout: 15_000 });
+  assert.equal(summaryWrites, 2);
+  await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "agent_end" }));
 
   // On a phone the panel floats over the thread instead of squeezing it.
   await page.setViewportSize({ width: 390, height: 844 });

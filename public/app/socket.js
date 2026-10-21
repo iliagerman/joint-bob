@@ -7,7 +7,7 @@ import { clearAttachments } from "./attachments.js";
 import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
-import { activityConversationChanged, refreshActivitySummary } from "./activity-panel.js";
+import { activityConversationChanged, activityProgressed, refreshActivitySummary } from "./activity-panel.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { refreshBudgetNotice } from "./budget-dialog.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
@@ -540,6 +540,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     else renderBubbleContent(state.assistantBubble, text);
     state.assistantBubble = null;
     state.assistantRawText = "";
+    activityProgressed();
     return;
   }
   if (payload.type === "thinkingStart") {
@@ -582,6 +583,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const durationMs = bubble._startedAt && Number.isFinite(finishedAt) ? Math.max(0, finishedAt - bubble._startedAt) : undefined;
     updateToolMessage(bubble, payload.text || "", payload.isError ? "Failed" : "Done", payload.isError, durationMs);
     state.toolBubbles.delete(payload.toolCallId);
+    activityProgressed();
     return;
   }
   if (payload.type === "assistantError") {
@@ -637,6 +639,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     restoreConversationTimer(payload.messages, state.lastTurnStartedAt);
     if (state.followChat) requestPinChat();
     else restoreChatScrollTop(resumeFromTop);
+    activityProgressed();
     return;
   }
   if (payload.type === "sessionFileChanged") {
