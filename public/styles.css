@@ -1883,9 +1883,10 @@ select.chat-toolbar-control {
 .messages-wrap { --activity-width: clamp(300px, 28vw, 420px); }
 .activity-panel { display: flex; flex: 0 0 var(--activity-width); flex-direction: column; width: var(--activity-width); min-height: 0; border-left: 1px solid var(--line); background: var(--surface); }
 .activity-panel[hidden] { display: none; }
-.activity-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 6px 14px; }
+.activity-panel-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 6px 14px; }
 .activity-panel-header h2 { margin: 0; color: var(--text); font-size: 13px; font-weight: 650; letter-spacing: 0.01em; }
-.activity-summary { flex: 0 1 auto; max-height: 42%; margin: 0 10px 8px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); scrollbar-width: thin; }
+/* The summary keeps its height and the steps take what is left: a long steps list once squeezed it to a few pixels. */
+.activity-summary { flex: 0 0 auto; max-height: 42%; margin: 0 10px 8px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); scrollbar-width: thin; }
 .activity-summary > summary { position: sticky; top: 0; display: flex; align-items: baseline; gap: 8px; padding: 8px 11px; list-style: none; cursor: pointer; background: var(--panel); color: var(--text); font-size: 12px; font-weight: 650; }
 .activity-summary > summary::-webkit-details-marker { display: none; }
 .activity-summary-status { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-align: right; }
@@ -1899,8 +1900,8 @@ select.chat-toolbar-control {
 .activity-summary-refresh[hidden] { display: none; }
 .activity-summary-model { min-width: 0; max-width: 100%; min-height: 26px; overflow: hidden; padding: 2px 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .activity-summary-model:hover, .activity-summary-model:focus-visible { color: var(--text); }
-.activity-steps-heading { display: flex; align-items: center; justify-content: space-between; padding: 4px 14px 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
-.activity-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: 12px; min-height: 0; padding: 0 10px 14px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.activity-steps-heading { display: flex; flex: none; align-items: center; justify-content: space-between; padding: 4px 14px 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.activity-list { display: flex; flex: 1 1 0; flex-direction: column; gap: 12px; min-height: 0; padding: 0 10px 14px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .activity-empty { margin: 8px 4px; color: var(--muted); font-size: 12px; }
 .activity-empty[hidden] { display: none; }
 .activity-group { display: flex; flex-direction: column; gap: 6px; padding: 6px; border-radius: var(--radius-ctl); transition: background-color 0.6s ease; }

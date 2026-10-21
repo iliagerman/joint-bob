@@ -139,6 +139,21 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.match(await page.getByTestId("activity-summary-text").innerText(), /rotate the staging certificates/);
   assert.match(await page.getByTestId("activity-summary-status").innerText(), /1 turn/);
 
+  // A long turn's steps fill the panel, and the summary keeps its room above them.
+  await page.evaluate(async () => {
+    const transcript = await import("/app/chat-transcript.js");
+    for (let index = 0; index < 300; index += 1) {
+      const bubble = transcript.appendToolMessage("Bash", `long-${index}`, 0, Date.now(), { target: `step ${index}` });
+      transcript.updateToolMessage(bubble, "ok", "Done", false, 10);
+    }
+  });
+  await waitFrames();
+  const summaryBox = await page.getByTestId("activity-summary").boundingBox();
+  assert.ok(summaryBox && summaryBox.height >= 120, `the summary is not squeezed by a long steps list (${summaryBox?.height}px)`);
+  assert.equal(await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).isVisible(), true);
+  const stepsBox = await page.getByTestId("activity-list").boundingBox();
+  assert.ok(stepsBox && summaryBox && stepsBox.y >= summaryBox.y + summaryBox.height, "the steps list scrolls below the summary");
+
   // The model that writes summaries is named in the panel and chosen in Settings.
   const modelButton = page.getByTestId("activity-summary-model");
   assert.match(await modelButton.innerText(), /^Model: as conversation/);
@@ -159,7 +174,7 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.locator("#settingsDialog[open]").waitFor({ state: "detached" });
 
   // Steps stay inspectable in the panel.
-  await panel.getByText("Bash", { exact: true }).click();
+  await panel.getByText("Bash", { exact: true }).first().click();
   await panel.getByText("production.pem").waitFor();
 
   // Collapsing hands the width back and is remembered.

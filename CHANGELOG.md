@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the Activity panel's summary being squeezed to a few pixels by a long list of steps; it now keeps its height and the steps scroll beneath it.
+
 ## 2.132.0 — 2026-10-21
 
 - Fixed Claude conversations showing every answer twice after they reload, because Claude Code's request records were read as chat.
