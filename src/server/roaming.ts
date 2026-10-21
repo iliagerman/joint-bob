@@ -32,7 +32,7 @@ export function ensureRoamingSchema(db: DatabaseSync): void {
 
 const accountId = z.string().regex(/^[0-9a-f]{32}$/);
 /** What of your preferences follows you; where you are in the UI stays with the device. */
-const roamingPreferences = userPreferencesSchema.pick({ theme: true, completionSound: true, focusUiEnabled: true, projectsPanelCollapsed: true, chatsPanelCollapsed: true, canvasKeymap: true, gitReviewer: true, summaryModel: true });
+const roamingPreferences = userPreferencesSchema.pick({ theme: true, completionSound: true, terminalDock: true, focusUiEnabled: true, projectsPanelCollapsed: true, chatsPanelCollapsed: true, canvasKeymap: true, gitReviewer: true, summaryModel: true });
 const profileEvent = z.object({
   id: z.string().max(100), originNodeId: z.string().max(100), entityType: z.enum(["user.pin", "user.recent"]),
   entityKey: z.string().max(1000), operation: z.enum(["upsert", "delete"]), payload: z.record(z.string(), z.unknown()), createdAt: z.string().max(40),

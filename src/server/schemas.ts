@@ -544,6 +544,11 @@ export const userPreferencesSchema = z.object({
   theme: z.enum(["light", "dark"]).nullable().optional(),
   notificationsEnabled: z.boolean().optional(),
   completionSound: z.enum(["off", "chime", "bell"]).optional(),
+  terminalDock: z.object({
+    orientation: z.enum(["horizontal", "vertical"]),
+    horizontalSize: z.number().int().min(180).max(2500),
+    verticalSize: z.number().int().min(180).max(2500),
+  }).strict().optional(),
   installDismissed: z.boolean().optional(),
   mobileView: z.enum(["projects", "sessions", "board", "chat", "canvas"]).optional(),
   activeProjectId: z.string().trim().min(1).max(120).nullable().optional(),

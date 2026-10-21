@@ -18,6 +18,56 @@ function terminalCssColor(name, fallback) {
 // Nerd Font families come first so a powerline prompt draws its glyphs instead of
 // tofu boxes; the browser falls through to the plain mono stack when none exist.
 const TERMINAL_FONT = '"MesloLGS NF", "JetBrainsMono Nerd Font", "FiraCode Nerd Font", "Hack Nerd Font", "SauceCodePro Nerd Font", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
+const TERMINAL_MIN_SIZE = 180;
+
+function terminalSizeBounds(orientation = state.terminalOrientation) {
+  const viewport = orientation === "horizontal" ? window.innerHeight : window.innerWidth;
+  return { min: TERMINAL_MIN_SIZE, max: Math.max(TERMINAL_MIN_SIZE, Math.floor(viewport * 0.82)) };
+}
+
+function saveTerminalDockPreference() {
+  savePreferencesInBackground({ terminalDock: {
+    orientation: state.terminalOrientation,
+    horizontalSize: state.terminalDockSizes.horizontal,
+    verticalSize: state.terminalDockSizes.vertical,
+  } });
+}
+
+function setTerminalDockSize(size, persist = true) {
+  const { min, max } = terminalSizeBounds();
+  const next = Math.max(min, Math.min(max, Math.round(Number(size) || min)));
+  state.terminalDockSizes[state.terminalOrientation] = next;
+  document.body.style.setProperty("--terminal-dock-size", `${next}px`);
+  elements.terminalResizeHandle.setAttribute("aria-valuemin", String(min));
+  elements.terminalResizeHandle.setAttribute("aria-valuemax", String(max));
+  elements.terminalResizeHandle.setAttribute("aria-valuenow", String(next));
+  if (persist) saveTerminalDockPreference();
+  if (!elements.terminalPanel.hidden) requestAnimationFrame(fitTerminalOnceVisible);
+}
+
+function setTerminalOrientation(orientation, persist = true) {
+  if (orientation !== "horizontal" && orientation !== "vertical") return;
+  state.terminalOrientation = orientation;
+  document.body.dataset.terminalOrientation = orientation;
+  elements.terminalPanel.dataset.orientation = orientation;
+  elements.terminalHorizontalButton.setAttribute("aria-pressed", String(orientation === "horizontal"));
+  elements.terminalVerticalButton.setAttribute("aria-pressed", String(orientation === "vertical"));
+  elements.terminalResizeHandle.setAttribute("aria-orientation", orientation);
+  setTerminalDockSize(state.terminalDockSizes[orientation], false);
+  if (persist) saveTerminalDockPreference();
+  if (!elements.terminalPanel.hidden) requestAnimationFrame(fitTerminalOnceVisible);
+}
+
+export function applyTerminalDockPreference(preference) {
+  if (!preference || typeof preference !== "object") return;
+  for (const orientation of ["horizontal", "vertical"]) {
+    const size = preference[orientation === "horizontal" ? "horizontalSize" : "verticalSize"];
+    if (Number.isFinite(size) && size >= TERMINAL_MIN_SIZE && size <= 2500) state.terminalDockSizes[orientation] = Math.round(size);
+  }
+  setTerminalOrientation(preference.orientation, false);
+}
+
+setTerminalOrientation(state.terminalOrientation, false);
 
 function loadTerminalScript(src) {
   return new Promise((resolve, reject) => {
@@ -80,7 +130,7 @@ function setTerminalStatus(connection, text) {
 function fitTerminalOnceVisible() {
   // The dialog was hidden when the emulator attached, so measure now that it is in the top layer.
   const emulator = state.terminalEmulator;
-  if (!emulator || !elements.terminalDialog.open) return;
+  if (!emulator || elements.terminalPanel.hidden) return;
   state.terminalFit.fit();
   if (state.terminalSocket?.readyState === WebSocket.OPEN) {
     state.terminalSocket.send(JSON.stringify({ type: "terminalResize", cols: emulator.cols, rows: emulator.rows }));
@@ -111,7 +161,8 @@ async function openProjectTerminal() {
   const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
   closeTerminalSocket();
   setTerminalStatus("connecting", `Connecting to ${node?.name || "node"}...`);
-  elements.terminalDialog.showModal();
+  elements.terminalPanel.hidden = false;
+  document.body.classList.add("terminal-open");
   const emulator = ensureTerminalEmulator();
   emulator.reset();
   requestAnimationFrame(() => { fitTerminalOnceVisible(); emulator.focus(); });
@@ -138,6 +189,49 @@ async function openProjectTerminal() {
     if (state.terminalSocket === socket) emulator.write("\r\nCould not connect to terminal.\r\n");
   });
 }
+function closeTerminalPanel() {
+  if (elements.terminalPanel.hidden) return;
+  elements.terminalPanel.hidden = true;
+  document.body.classList.remove("terminal-open");
+  closeTerminalSocket();
+}
+
+function beginTerminalResize(event) {
+  if (event.button !== 0 && event.pointerType === "mouse") return;
+  event.preventDefault();
+  state.terminalResize = {
+    pointerId: event.pointerId,
+    orientation: state.terminalOrientation,
+    startX: event.clientX,
+    startY: event.clientY,
+    startSize: state.terminalDockSizes[state.terminalOrientation],
+  };
+  elements.terminalResizeHandle.setPointerCapture(event.pointerId);
+}
+
+function moveTerminalResize(event) {
+  const resize = state.terminalResize;
+  if (!resize || resize.pointerId !== event.pointerId) return;
+  const delta = resize.orientation === "horizontal" ? resize.startY - event.clientY : resize.startX - event.clientX;
+  setTerminalDockSize(resize.startSize + delta, false);
+}
+
+function endTerminalResize(event) {
+  if (state.terminalResize?.pointerId !== event.pointerId) return;
+  state.terminalResize = null;
+  saveTerminalDockPreference();
+}
+
+function resizeTerminalByKeyboard(event) {
+  const step = event.shiftKey ? 64 : 24;
+  const increaseKey = state.terminalOrientation === "horizontal" ? "ArrowUp" : "ArrowLeft";
+  const decreaseKey = state.terminalOrientation === "horizontal" ? "ArrowDown" : "ArrowRight";
+  if (event.key === increaseKey) setTerminalDockSize(state.terminalDockSizes[state.terminalOrientation] + step);
+  else if (event.key === decreaseKey) setTerminalDockSize(state.terminalDockSizes[state.terminalOrientation] - step);
+  else return;
+  event.preventDefault();
+}
+
 export async function continueTaskOnNode(task, destination) {
   if (!task) throw new Error("Active ticket was not found");
   if (!task.sessionPath) throw new Error("Send a message first, then continue this ticket on another node");
@@ -158,17 +252,21 @@ elements.openTerminalButton.addEventListener("click", async () => {
   catch (error) { toast(error.message, 8000); }
 });
 elements.clearTerminalButton.addEventListener("click", () => { state.terminalEmulator?.clear(); });
-elements.closeTerminalButton.addEventListener("click", () => elements.terminalDialog.close());
-elements.terminalDialog.addEventListener("close", closeTerminalSocket);
-elements.terminalDialog.addEventListener("cancel", (event) => {
-  if (state.terminalEmulator?.buffer.active.type === "alternate") event.preventDefault();
-});
+elements.closeTerminalButton.addEventListener("click", closeTerminalPanel);
+elements.terminalHorizontalButton.addEventListener("click", () => setTerminalOrientation("horizontal"));
+elements.terminalVerticalButton.addEventListener("click", () => setTerminalOrientation("vertical"));
+elements.terminalResizeHandle.addEventListener("pointerdown", beginTerminalResize);
+elements.terminalResizeHandle.addEventListener("pointermove", moveTerminalResize);
+elements.terminalResizeHandle.addEventListener("pointerup", endTerminalResize);
+elements.terminalResizeHandle.addEventListener("pointercancel", endTerminalResize);
+elements.terminalResizeHandle.addEventListener("keydown", resizeTerminalByKeyboard);
+window.addEventListener("resize", () => setTerminalDockSize(state.terminalDockSizes[state.terminalOrientation], false));
 /**
  * Escape closes the terminal - except while a full-screen program is running in it.
  * vim, less and htop draw on the alternate screen buffer and Escape is one of their
  * real keys, so there it belongs to the shell and the dialog stays put.
  */
-elements.terminalDialog.addEventListener("keydown", (event) => {
+elements.terminalPanel.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
   if (state.terminalEmulator?.buffer.active.type === "alternate") {
     event.preventDefault();
@@ -179,5 +277,5 @@ elements.terminalDialog.addEventListener("keydown", (event) => {
     return;
   }
   event.preventDefault();
-  elements.terminalDialog.close();
+  closeTerminalPanel();
 }, true);

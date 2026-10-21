@@ -1210,7 +1210,7 @@ test("the terminal fills its frame without overflowing it", async () => {
   // older page that did not load xterm. Opening the terminal must recover.
   await page.evaluate(() => { delete window.Terminal; delete window.FitAddon; });
   await page.getByTestId("chat-open-terminal-button").click();
-  await page.getByTestId("terminal-dialog").waitFor({ state: "visible", timeout: 20_000 });
+  await page.getByTestId("terminal-panel").waitFor({ state: "visible", timeout: 20_000 });
   assert.deepEqual(await page.evaluate(() => [typeof window.Terminal, typeof window.FitAddon?.FitAddon]), ["function", "function"]);
   // The shell has to answer before the emulator holds a real screen to measure.
   await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
@@ -1229,7 +1229,7 @@ test("the terminal fills its frame without overflowing it", async () => {
   assert.ok(box.screenWidth <= box.viewportWidth, `terminal screen ${box.screenWidth}px overflows its ${box.viewportWidth}px viewport`);
 
   await page.getByTestId("terminal-close-button").click();
-  await page.getByTestId("terminal-dialog").waitFor({ state: "hidden" });
+  await page.getByTestId("terminal-panel").waitFor({ state: "hidden" });
 });
 
 // Every shortcut is edited in one place now: one row per command, each a recorder
@@ -1513,21 +1513,21 @@ test("a digit typed into a dialog's search box names a row, and Enter opens it",
 // to the dialog the rest of the time.
 test("Escape closes the terminal, and reaches the shell while a full-screen program runs", async () => {
   await page.getByTestId("chat-open-terminal-button").click();
-  await page.getByTestId("terminal-dialog").waitFor({ state: "visible", timeout: 20_000 });
+  await page.getByTestId("terminal-panel").waitFor({ state: "visible", timeout: 20_000 });
   await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
 
   // Wide enough for the 80-odd columns most shell output is written for.
-  const width = await page.getByTestId("terminal-dialog").locator(".terminal-card").evaluate((card) => card.getBoundingClientRect().width);
+  const width = await page.getByTestId("terminal-panel").evaluate((panel) => panel.getBoundingClientRect().width);
   assert.ok(width >= 1100, `the terminal card is only ${width}px wide`);
 
   await page.keyboard.press("Escape");
-  await page.getByTestId("terminal-dialog").waitFor({ state: "hidden" });
+  await page.getByTestId("terminal-panel").waitFor({ state: "hidden" });
 
   // The alternate screen buffer is what vim, less and htop draw on. Entering it
   // directly proves the guard without depending on which programs the box has.
   await page.getByTestId("chat-open-terminal-button").click();
   await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
-  await page.getByTestId("terminal-dialog").locator(".xterm-helper-textarea").focus();
+  await page.getByTestId("terminal-panel").locator(".xterm-helper-textarea").focus();
   await page.keyboard.type("printf '\\033[?1049h'; read -r line");
   await page.keyboard.press("Enter");
   await page.waitForFunction(async (modulePath) => {
@@ -1549,7 +1549,7 @@ test("Escape closes the terminal, and reaches the shell while a full-screen prog
   await page.keyboard.press("Escape");
   assert.deepEqual(await page.evaluate(() => window.__terminalEscapeInputs), ["\u001b"],
     "Escape is sent to the shell exactly once");
-  assert.equal(await page.getByTestId("terminal-dialog").isVisible(), true,
+  assert.equal(await page.getByTestId("terminal-panel").isVisible(), true,
     "Escape belongs to the shell while a full-screen program is running");
   await page.evaluate(() => {
     window.__restoreTerminalSend();
@@ -1558,7 +1558,7 @@ test("Escape closes the terminal, and reaches the shell while a full-screen prog
   });
 
   await page.getByTestId("terminal-close-button").click();
-  await page.getByTestId("terminal-dialog").waitFor({ state: "hidden" });
+  await page.getByTestId("terminal-panel").waitFor({ state: "hidden" });
 });
 
 test("the journey produced no console errors and no failed requests", () => {

@@ -174,6 +174,8 @@ export async function initializeApplication() {
     api("/api/recents", { signal: AbortSignal.timeout(BOOT_REQUEST_TIMEOUT_MS) }),
   ]);
   preferences = await migrateLegacyPreferences(preferences);
+  const { applyTerminalDockPreference } = await import("./terminal.js");
+  applyTerminalDockPreference(preferences.terminalDock);
   state.preferencesLoaded = false;
   setTheme(preferences.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
   state.installDismissed = preferences.installDismissed;

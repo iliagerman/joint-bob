@@ -291,10 +291,17 @@ function parseCanvasKeymap(value: string): CanvasKeymapPreference {
   }
 }
 
+export interface TerminalDockPreference {
+  orientation: "horizontal" | "vertical";
+  horizontalSize: number;
+  verticalSize: number;
+}
+
 export interface UserPreferences {
   theme: "light" | "dark" | null;
   notificationsEnabled: boolean;
   completionSound: "off" | "chime" | "bell";
+  terminalDock: TerminalDockPreference;
   installDismissed: boolean;
   mobileView: "projects" | "sessions" | "board" | "chat" | "canvas";
   activeProjectId: string | null;
@@ -329,6 +336,7 @@ interface PreferenceRow {
   theme: UserPreferences["theme"];
   notifications_enabled: number;
   completion_sound: UserPreferences["completionSound"];
+  terminal_dock: string;
   install_dismissed: number;
   mobile_view: UserPreferences["mobileView"];
   active_project_id: string | null;
@@ -364,6 +372,7 @@ function preferencesDatabase(): DatabaseSync {
       theme TEXT,
       notifications_enabled INTEGER NOT NULL DEFAULT 0,
       completion_sound TEXT NOT NULL DEFAULT 'chime',
+      terminal_dock TEXT NOT NULL DEFAULT '{"orientation":"horizontal","horizontalSize":320,"verticalSize":440}',
       install_dismissed INTEGER NOT NULL DEFAULT 0,
       mobile_view TEXT NOT NULL DEFAULT 'projects',
       active_project_id TEXT,
@@ -382,6 +391,7 @@ function preferencesDatabase(): DatabaseSync {
   `);
   const columns = database.prepare("PRAGMA table_info(user_preferences)").all() as Array<{ name: string }>;
   if (!columns.some((column) => column.name === "completion_sound")) database.exec("ALTER TABLE user_preferences ADD COLUMN completion_sound TEXT NOT NULL DEFAULT 'chime'");
+  if (!columns.some((column) => column.name === "terminal_dock")) database.exec(`ALTER TABLE user_preferences ADD COLUMN terminal_dock TEXT NOT NULL DEFAULT '{"orientation":"horizontal","horizontalSize":320,"verticalSize":440}'`);
   if (!columns.some((column) => column.name === "active_session_id")) database.exec("ALTER TABLE user_preferences ADD COLUMN active_session_id TEXT");
   if (!columns.some((column) => column.name === "active_node_id")) database.exec("ALTER TABLE user_preferences ADD COLUMN active_node_id TEXT");
   if (!columns.some((column) => column.name === "pinned_project_ids")) database.exec("ALTER TABLE user_preferences ADD COLUMN pinned_project_ids TEXT NOT NULL DEFAULT '[]'");
@@ -415,6 +425,28 @@ function parseStringList(value: string): string[] {
   } catch {
     return [];
   }
+}
+
+export const DEFAULT_TERMINAL_DOCK_PREFERENCE: TerminalDockPreference = {
+  orientation: "horizontal", horizontalSize: 320, verticalSize: 440,
+};
+
+export function normalizeTerminalDockPreference(value: unknown): TerminalDockPreference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_TERMINAL_DOCK_PREFERENCE };
+  const source = value as Record<string, unknown>;
+  const size = (candidate: unknown, fallback: number) => typeof candidate === "number" && Number.isFinite(candidate)
+    ? Math.max(180, Math.min(2500, Math.round(candidate)))
+    : fallback;
+  return {
+    orientation: source.orientation === "vertical" ? "vertical" : "horizontal",
+    horizontalSize: size(source.horizontalSize, DEFAULT_TERMINAL_DOCK_PREFERENCE.horizontalSize),
+    verticalSize: size(source.verticalSize, DEFAULT_TERMINAL_DOCK_PREFERENCE.verticalSize),
+  };
+}
+
+function parseTerminalDockPreference(value: string): TerminalDockPreference {
+  try { return normalizeTerminalDockPreference(JSON.parse(value)); }
+  catch { return { ...DEFAULT_TERMINAL_DOCK_PREFERENCE }; }
 }
 
 /** The read map is bounded; the conversations read longest ago fall off first. */
@@ -669,6 +701,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     theme: row.theme,
     notificationsEnabled: row.notifications_enabled === 1,
     completionSound: row.completion_sound,
+    terminalDock: parseTerminalDockPreference(row.terminal_dock),
     installDismissed: row.install_dismissed === 1,
     mobileView: row.mobile_view,
     activeProjectId: row.active_project_id,
@@ -692,7 +725,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
 
 function currentPreferences(userId: string): UserPreferences {
   const row = preferencesDatabase().prepare(`
-    SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
+    SELECT theme, notifications_enabled, completion_sound, terminal_dock, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
       pinned_project_ids, pinned_session_paths, focus_ui_enabled, projects_panel_collapsed, chats_panel_collapsed,
       last_seen_version, canvas_layout, canvas_keymap, conversation_last_read, project_conversation_visibility, git_reviewer
@@ -725,6 +758,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["theme", "theme", (value) => value as string | null],
     ["notificationsEnabled", "notifications_enabled", (value) => value ? 1 : 0],
     ["completionSound", "completion_sound", (value) => value as string],
+    ["terminalDock", "terminal_dock", (value) => JSON.stringify(normalizeTerminalDockPreference(value))],
     ["installDismissed", "install_dismissed", (value) => value ? 1 : 0],
     ["mobileView", "mobile_view", (value) => value as string],
     ["activeProjectId", "active_project_id", (value) => value as string | null],

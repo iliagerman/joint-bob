@@ -1654,9 +1654,10 @@
       </section>
     </dialog>
 
-    <dialog id="terminalDialog" data-testid="terminal-dialog">
-      <div class="dialog-card terminal-card">
-        <div class="terminal-heading">
+    <section id="terminalPanel" class="terminal-dock" data-testid="terminal-panel" aria-label="Terminal" role="region" hidden>
+      <div class="terminal-resize-handle" id="terminalResizeHandle" data-testid="terminal-resize-handle" role="separator" tabindex="0" aria-label="Resize terminal panel" aria-orientation="horizontal"></div>
+      <div class="terminal-card">
+        <header class="terminal-heading">
           <div class="terminal-title">
             <span class="eyebrow">Selected node shell</span>
             <h2>Terminal</h2>
@@ -1665,16 +1666,20 @@
             <span class="terminal-status-dot" aria-hidden="true"></span>
             <span class="terminal-status-text" id="terminalStatusText">Disconnected</span>
           </span>
-        </div>
+          <div class="terminal-actions">
+            <div class="terminal-orientation" role="group" aria-label="Terminal panel orientation">
+              <button class="ghost compact" id="terminalHorizontalButton" type="button" data-testid="terminal-orientation-horizontal" aria-pressed="true" title="Dock terminal at the bottom">Bottom</button>
+              <button class="ghost compact" id="terminalVerticalButton" type="button" data-testid="terminal-orientation-vertical" aria-pressed="false" title="Dock terminal on the right">Right</button>
+            </div>
+            <button class="ghost compact" id="clearTerminalButton" type="button" data-testid="terminal-clear-button">Clear</button>
+            <button class="ghost compact" id="closeTerminalButton" type="button" data-testid="terminal-close-button">Close</button>
+          </div>
+        </header>
         <div class="terminal-frame">
           <div class="terminal-output" id="terminalHost" data-testid="terminal-output"></div>
         </div>
-        <div class="dialog-actions">
-          <button class="ghost compact" id="clearTerminalButton" type="button" data-testid="terminal-clear-button">Clear</button>
-          <button class="ghost compact" id="closeTerminalButton" type="button" data-testid="terminal-close-button">Close terminal</button>
-        </div>
       </div>
-    </dialog>
+    </section>
 
     <dialog id="recentSessionsDialog" data-testid="recent-sessions-dialog">
       <div class="dialog-card">

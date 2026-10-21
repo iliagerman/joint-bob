@@ -92,7 +92,8 @@ test("people join clusters themselves and roam only where they signed in", { tim
 
     // Ana's profile reaches B only once she signs in there.
     assert.equal((await api(a, sa, "PUT", "/settings/personal", { conversationHistoryDays: 42 })).status, 200);
-    assert.equal((await api(a, sa, "PUT", "/preferences", { theme: "dark" })).status, 200);
+    const homeTerminalDock = { orientation: "vertical", horizontalSize: 360, verticalSize: 540 };
+    assert.equal((await api(a, sa, "PUT", "/preferences", { theme: "dark", terminalDock: homeTerminalDock })).status, 200);
     const anaId = accountIdFor(a.nodeId, "ana");
     const rowsOnB = () => {
       const db = new DatabaseSync(path.join(b.dataDir, "node.db"), { readOnly: true });
@@ -106,10 +107,15 @@ test("people join clusters themselves and roam only where they signed in", { tim
       assert.equal(status.body.loaded, true, "her home sent her profile");
     });
     assert.equal((await api<{ conversationHistoryDays: number }>(b, anaOnB, "GET", "/settings")).body.conversationHistoryDays, 42, "her settings are hers on B");
-    assert.equal((await api<{ theme: string }>(b, anaOnB, "GET", "/preferences")).body.theme, "dark", "and so is her theme");
+    const visitorPreferences = await api<{ theme: string; terminalDock: unknown }>(b, anaOnB, "GET", "/preferences");
+    assert.equal(visitorPreferences.body.theme, "dark", "and so is her theme");
+    assert.deepEqual(visitorPreferences.body.terminalDock, homeTerminalDock, "the terminal dock setting follows her to B");
     assert.equal(await nodeStatus(a, sa, b.nodeId), "signed in", "My nodes shows where she is signed in");
 
     // An edit on B goes home, and comes back from there.
+    const visitorTerminalDock = { orientation: "horizontal", horizontalSize: 300, verticalSize: 480 };
+    assert.equal((await api(b, anaOnB, "PUT", "/preferences", { terminalDock: visitorTerminalDock })).status, 200);
+    assert.deepEqual((await api(a, sa, "GET", "/preferences")).body.terminalDock, visitorTerminalDock, "the dock edit landed at home");
     assert.equal((await api(b, anaOnB, "PUT", "/settings/personal", { conversationHistoryDays: 77 })).status, 200);
     assert.equal((await api<{ conversationHistoryDays: number }>(a, sa, "GET", "/settings")).body.conversationHistoryDays, 77, "the edit landed at home");
     assert.equal((await api<{ conversationHistoryDays: number }>(b, anaOnB, "GET", "/settings")).body.conversationHistoryDays, 77);

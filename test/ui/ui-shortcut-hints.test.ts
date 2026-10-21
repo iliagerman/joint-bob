@@ -316,7 +316,7 @@ test("chat shortcuts focus selectors and open actions", async () => {
     await page.keyboard.press(`Control+Alt+${key}`);
     assert.equal(await page.evaluate(() => document.activeElement?.id), id, `${key} focuses ${id}`);
   }
-  for (const [key, target, close] of [["M", "model-dialog", "model-dialog-close-button"], ["X", "terminal-dialog", "terminal-close-button"], ["E", "rename-session-input", null]]) {
+  for (const [key, target, close] of [["M", "model-dialog", "model-dialog-close-button"], ["X", "terminal-panel", "terminal-close-button"], ["E", "rename-session-input", null]]) {
     await page.keyboard.press(`Control+Alt+${key}`);
     await page.getByTestId(target!).waitFor({ timeout: 5000 });
     if (close) await page.getByTestId(close).click();

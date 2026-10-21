@@ -49,6 +49,20 @@ test("preferences store v6 canvas layouts and reject invalid trees", async () =>
     assert.deepEqual((await defaults.json() as { canvasLayout: unknown }).canvasLayout,
       { version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" });
 
+    const terminalDefaultsResponse = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    const terminalDefaults = await terminalDefaultsResponse.json() as { terminalDock: unknown };
+    assert.deepEqual(terminalDefaults.terminalDock, { orientation: "horizontal", horizontalSize: 320, verticalSize: 440 });
+    const terminalDock = { orientation: "vertical", horizontalSize: 360, verticalSize: 512 };
+    const savedTerminalDock = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ terminalDock }) });
+    assert.equal(savedTerminalDock.status, 200);
+    assert.deepEqual((await savedTerminalDock.json() as { terminalDock: unknown }).terminalDock, terminalDock);
+    const readTerminalDock = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.deepEqual((await readTerminalDock.json() as { terminalDock: unknown }).terminalDock, terminalDock);
+    const invalidTerminalDock = await fetch(`${node.baseUrl}/api/preferences`, {
+      method: "PUT", headers, body: JSON.stringify({ terminalDock: { ...terminalDock, verticalSize: 179 } }),
+    });
+    assert.equal(invalidTerminalDock.status, 400);
+
     const focusDefaults = await fetch(`${node.baseUrl}/api/preferences`, { headers });
     assert.equal((await focusDefaults.json()).focusUiEnabled, false, "existing accounts keep the classic interface");
     for (const focusUiEnabled of [true, false]) {
