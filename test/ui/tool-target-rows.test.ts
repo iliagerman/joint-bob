@@ -39,6 +39,8 @@ test("collapsed tool rows show the file a call read and the skill it loaded", as
     const transcript = await import("/app/chat-transcript.js");
     transcript.clearChat();
     document.querySelector("#chatPanel").style.display = "flex";
+    // Steps start collapsed in the activity panel; open them to see the rows.
+    (await import("/app/activity-panel.js")).setActivityStepsOpen(true);
     const skill = transcript.appendToolMessage("read", "target-skill", 0, 1700000000000, { skill: "brainstorming" });
     transcript.updateToolMessage(skill, "# Brainstorming", "Done", false, 100);
     const file = transcript.appendToolMessage("read", "target-file", 0, 1700000000000, { target: "src/pi-service.ts" });
