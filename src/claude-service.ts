@@ -589,6 +589,24 @@ export async function runClaudeConversationPrompt(options: ClaudeRunOptions & { 
   });
 }
 
+/**
+ * A Claude process that takes control requests only, never a prompt. It loads the same
+ * plugins, MCP servers, account and config folder a turn here would, so what it signs in to
+ * is what the next turn finds.
+ */
+export function spawnClaudeControl(cwd: string, projectId?: string): ChildProcessWithoutNullStreams {
+  const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+    ...claudeResourceIsolationArgs(cwd, claudeAgentResourceArgs(undefined, getScopedResourcePaths(projectId, undefined, "claude"), undefined, cwd))];
+  const configPath = claudeConfigPath();
+  trustWorkspace(cwd);
+  return spawnInRuntime(currentRuntime(), getSettings().claude.executable || "claude", args, {
+    detached: process.platform !== "win32",
+    cwd,
+    env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+}
+
 export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const args = [
     "-p",

@@ -1,4 +1,11 @@
 import { existsSync, realpathSync } from "node:fs";
+import type { NextFunction, Response } from "express";
+import { actingAccount } from "../../account-context.js";
+import { multiUserEnabled, runInRuntime, serviceRuntime } from "../../account-runtime.js";
+import { spawnClaudeControl } from "../../claude-service.js";
+import { resolveDataDirectory } from "../../data-directory.js";
+import { createClaudeMcpAuth, McpAuthError, type McpAuthContext } from "../../harnesses/claude/mcp-auth.js";
+import { runtimeForAccount, withProjectRuntime } from "../../project-runtime.js";
 import { listGitSourceRecords } from "../../git-resources.js";
 import os from "node:os";
 import path from "node:path";
@@ -220,4 +227,77 @@ app.post("/api/resources/mcp/share", async (request, response, next) => {
     if (error instanceof Error && /^(Servers are already shared|Unknown MCP config source|MCP config source is unreadable)/.test(error.message)) { sendError(response, 400, error.message); return; }
     next(error);
   }
+});
+
+// Signing in to a Claude MCP server from the app. It runs as the account a turn would run as:
+// the project's in multi-user mode, or the person's own account, so each person's token stays
+// in their own Claude config and never reaches anyone else's agents.
+const mcpAuth = createClaudeMcpAuth(spawnClaudeControl);
+const mcpAuthScopeSchema = z.object({ projectId: z.string().min(1).max(200).optional() }).strict();
+const mcpAuthServerSchema = mcpAuthScopeSchema.extend({ serverName: z.string().min(1).max(300) }).strict();
+const mcpAuthFinishSchema = z.object({ flowId: z.string().uuid(), callbackUrl: z.string().url().max(8192).optional() }).strict();
+const mcpAuthCancelSchema = z.object({ flowId: z.string().uuid() }).strict();
+
+function mcpAuthOwner(): string {
+  return actingAccount()?.accountId ?? "node";
+}
+
+async function inMcpAuthScope<T>(projectId: string | undefined, work: (context: McpAuthContext) => Promise<T>): Promise<T> {
+  const ownerKey = mcpAuthOwner();
+  if (projectId) {
+    const project = await getProject(projectId);
+    if (!project) throw new McpAuthError(404, "Project not found");
+    return withProjectRuntime(projectId, () => work({ cwd: project.path, projectId, ownerKey }));
+  }
+  const account = actingAccount();
+  const runtime = multiUserEnabled() && account ? runtimeForAccount(account.accountId) : serviceRuntime();
+  // The service's own runs start in its data folder, never a shared temp folder; an account's in its home.
+  return runInRuntime(runtime, () => work({ cwd: runtime.name ? runtime.home : resolveDataDirectory(), ownerKey }));
+}
+
+function mcpAuthFailure(error: unknown, response: Response, next: NextFunction, invalid: string): void {
+  if (error instanceof z.ZodError) { sendError(response, 400, invalid); return; }
+  if (error instanceof McpAuthError) { sendError(response, error.statusCode, error.message); return; }
+  next(error);
+}
+
+app.get("/api/resources/mcp/auth", async (request, response, next) => {
+  try {
+    const query = mcpAuthScopeSchema.parse(request.query);
+    // Claude failing to start is an answer about this machine, not a failed request.
+    response.json(await inMcpAuthScope(query.projectId, (context) => mcpAuth.status(context))
+      .then((servers) => ({ servers }), (error: unknown) => {
+        if (error instanceof McpAuthError && error.statusCode === 404) throw error;
+        return { servers: [], error: error instanceof Error ? error.message : "Claude could not report its MCP servers" };
+      }));
+  } catch (error) { mcpAuthFailure(error, response, next, "Invalid MCP sign-in query"); }
+});
+
+app.post("/api/resources/mcp/auth/start", async (request, response, next) => {
+  try {
+    const body = mcpAuthServerSchema.parse(request.body);
+    response.json(await inMcpAuthScope(body.projectId, (context) => mcpAuth.start(context, body.serverName)));
+  } catch (error) { mcpAuthFailure(error, response, next, "Invalid MCP sign-in request"); }
+});
+
+app.post("/api/resources/mcp/auth/finish", async (request, response, next) => {
+  try {
+    const body = mcpAuthFinishSchema.parse(request.body);
+    response.json({ server: await mcpAuth.finish(body.flowId, mcpAuthOwner(), body.callbackUrl) });
+  } catch (error) { mcpAuthFailure(error, response, next, "Invalid MCP sign-in completion"); }
+});
+
+app.post("/api/resources/mcp/auth/cancel", (request, response, next) => {
+  try {
+    mcpAuth.cancel(mcpAuthCancelSchema.parse(request.body).flowId, mcpAuthOwner());
+    response.json({ ok: true });
+  } catch (error) { mcpAuthFailure(error, response, next, "Invalid MCP sign-in cancel"); }
+});
+
+app.post("/api/resources/mcp/auth/sign-out", async (request, response, next) => {
+  try {
+    const body = mcpAuthServerSchema.parse(request.body);
+    await inMcpAuthScope(body.projectId, (context) => mcpAuth.signOut(context, body.serverName));
+    response.json({ ok: true });
+  } catch (error) { mcpAuthFailure(error, response, next, "Invalid MCP sign-out request"); }
 });

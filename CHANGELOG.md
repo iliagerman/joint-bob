@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Added a `/bob-restart` command that reopens a conversation's session in place, keeping the conversation and its settings, and that refuses to run while a turn is still going.
 - Added the file, command, pattern, or skill that each tool call in chat acted on to its collapsed row, so you can see what ran without opening its output, including in reloaded conversations.
 - Fixed hidden scheduled runs still counting toward pending reviews and notifications; they now stay out of both, and their pending reviews return once the task is shown again.
+- Added Check Claude sign-ins, Sign in, and Sign out for Claude MCP servers in Resources, so you can connect one to Claude without opening a terminal, including finishing from a browser on another machine by pasting its address.
 
 ## 2.130.0 — 2026-10-21
 

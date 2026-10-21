@@ -18,6 +18,8 @@ const view = {
   scope: "cluster", projectId: null, conversationId: null, engine: null, tab: "skills", configured: false, nodeId: "",
   nodes: [], sharing: null, activation: null, relayPolicies: [], loading: false, candidates: [], scanRoot: "", request: 0,
   page: 0, scanPage: 0, selected: new Set(), selectedServers: new Set(), scanSelected: new Set(), bulkBusy: false,
+  // Claude MCP sign-ins for the person viewing: checked once per scope, and the sign-in waiting for its browser.
+  mcpAuth: { key: null, servers: null, loading: false, error: "", flow: null, busy: false },
 };
 // Rows per page, refitted to whatever height the panel gives each list.
 const pageSizes = { list: 8, scan: 8, git: 6 };
@@ -602,6 +604,150 @@ function serverShareable(server, inventory) {
   return (server.source === "user" || server.source === "local") && !inventory.mcpServers.some((item) => item.source === "shared" && item.name === server.name);
 }
 
+/* ---- Claude MCP sign-in ---- */
+
+const MCP_AUTH_LABELS = { connected: "connected", "needs-auth": "needs sign-in", failed: "failed", pending: "connecting", disabled: "disabled" };
+
+/** Sign-in runs as the account a turn here would use, so its scope is the project being viewed, if any. */
+function mcpAuthProject() { return view.scope !== "cluster" && view.projectId ? view.projectId : null; }
+function mcpAuthKey() { return mcpAuthProject() ?? ""; }
+
+function signInApplies(server, local) {
+  return local && server.enabled && server.harnesses.includes("claude") && server.transport !== "stdio";
+}
+
+async function loadMcpAuth(force = false) {
+  const auth = view.mcpAuth;
+  const key = mcpAuthKey();
+  if (auth.loading || (!force && auth.key === key && auth.servers)) return;
+  auth.loading = true; auth.error = ""; auth.key = key;
+  renderShareBar();
+  try {
+    const params = new URLSearchParams();
+    if (mcpAuthProject()) params.set("projectId", mcpAuthProject());
+    const body = await api(`/api/resources/mcp/auth?${params}`);
+    if (auth.key !== key) return;
+    auth.servers = new Map(body.servers.map((entry) => [entry.name, entry]));
+    if (body.error) { auth.error = body.error; setStatus(`Could not check Claude sign-ins: ${body.error}`); }
+    else setStatus(body.servers.length ? "" : "Claude loads no MCP servers here.");
+  } catch (error) {
+    if (auth.key === key) { auth.error = error.message; setStatus(`Could not check Claude sign-ins: ${error.message}`); }
+  } finally {
+    if (auth.key === key) { auth.loading = false; if (view.tab === "mcp") render(); }
+  }
+}
+
+function mcpAuthControls(server) {
+  // Statuses checked for another scope may describe a different account's sign-ins.
+  const entry = view.mcpAuth.key === mcpAuthKey() ? view.mcpAuth.servers?.get(server.name) : undefined;
+  if (!entry) return [];
+  const status = badge(MCP_AUTH_LABELS[entry.status] ?? entry.status, entry.status === "connected" ? "active" : "off");
+  status.dataset.testid = "resources-mcp-auth-status";
+  if (entry.error) status.title = entry.error;
+  const busy = view.mcpAuth.busy || Boolean(view.mcpAuth.flow);
+  if (entry.status === "needs-auth") {
+    const signIn = button("Sign in", "resources-mcp-sign-in", () => void startMcpSignIn(server.name), "primary compact");
+    signIn.disabled = busy;
+    return [status, signIn];
+  }
+  if (entry.status === "connected") {
+    const signOut = button("Sign out", "resources-mcp-sign-out", () => void signOutMcp(server.name));
+    signOut.disabled = busy;
+    return [status, signOut];
+  }
+  return [status];
+}
+
+async function startMcpSignIn(serverName) {
+  // Opened inside the click so the browser allows it; it is pointed at the sign-in page once that is known.
+  const tab = window.open("about:blank", "_blank");
+  view.mcpAuth.busy = true;
+  render();
+  try {
+    const started = await api("/api/resources/mcp/auth/start", { method: "POST", body: JSON.stringify({ serverName, ...(mcpAuthProject() ? { projectId: mcpAuthProject() } : {}) }) });
+    if (!started.authUrl) {
+      tab?.close();
+      toast(`Signed in to ${serverName}`);
+      await loadMcpAuth(true);
+      return;
+    }
+    view.mcpAuth.flow = { ...started, key: mcpAuthKey() };
+    if (tab) { tab.opener = null; tab.location.href = started.authUrl; }
+    setStatus("");
+  } catch (error) {
+    tab?.close();
+    toast(error.message);
+  } finally {
+    view.mcpAuth.busy = false;
+    render();
+  }
+}
+
+async function finishMcpSignIn(callbackUrl) {
+  const flow = view.mcpAuth.flow;
+  if (!flow) return;
+  view.mcpAuth.busy = true;
+  renderShareBar();
+  try {
+    const { server } = await api("/api/resources/mcp/auth/finish", { method: "POST", body: JSON.stringify({ flowId: flow.flowId, ...(callbackUrl ? { callbackUrl } : {}) }) });
+    view.mcpAuth.servers?.set(server.name, server);
+    if (server.status === "connected") {
+      view.mcpAuth.flow = null;
+      toast(`Signed in to ${server.name}. New Claude runs load it.`);
+      setStatus("");
+    } else {
+      setStatus(`Not signed in to ${server.name} yet. Finish in the sign-in tab; if it ends on a page that will not load, paste that page's address and choose Done.`);
+    }
+  } catch (error) {
+    if (/sign-in has ended/.test(error.message)) view.mcpAuth.flow = null;
+    toast(error.message);
+  } finally {
+    view.mcpAuth.busy = false;
+    render();
+  }
+}
+
+async function cancelMcpSignIn() {
+  const flow = view.mcpAuth.flow;
+  view.mcpAuth.flow = null;
+  render();
+  if (flow) await api("/api/resources/mcp/auth/cancel", { method: "POST", body: JSON.stringify({ flowId: flow.flowId }) }).catch(() => {});
+}
+
+async function signOutMcp(serverName) {
+  if (!await confirmAction({ title: `Sign out of ${serverName}?`, message: "Claude forgets your sign-in for this server on this machine. Your other accounts and other people are not affected.", confirmLabel: "Sign out", destructive: true })) return;
+  view.mcpAuth.busy = true;
+  render();
+  try {
+    await api("/api/resources/mcp/auth/sign-out", { method: "POST", body: JSON.stringify({ serverName, ...(mcpAuthProject() ? { projectId: mcpAuthProject() } : {}) }) });
+    toast(`Signed out of ${serverName}`);
+  } catch (error) { toast(error.message); }
+  finally { view.mcpAuth.busy = false; await loadMcpAuth(true); }
+}
+
+function mcpSignInLine() {
+  const flow = view.mcpAuth.flow;
+  const line = document.createElement("div");
+  line.className = "resources-share-line";
+  line.dataset.testid = "resources-mcp-sign-in-pending";
+  const note = document.createElement("span");
+  note.textContent = `Signing in to ${flow.serverName}. Finish in the new tab, then choose Done. If that tab ends on a page that will not load, paste its address here.`;
+  const input = document.createElement("input");
+  input.type = "url"; input.dataset.testid = "resources-mcp-callback-url"; input.autocomplete = "off"; input.spellcheck = false;
+  input.placeholder = flow.callbackPort ? `http://localhost:${flow.callbackPort}/callback?code=…` : "Address the sign-in tab ended on";
+  input.style.flex = "1"; input.style.minWidth = "12rem";
+  // The list redraws this bar whenever it re-fits; keep what was pasted.
+  input.value = flow.callbackUrl ?? "";
+  input.addEventListener("input", () => { flow.callbackUrl = input.value; });
+  input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void finishMcpSignIn(input.value.trim()); } });
+  const done = button("Done", "resources-mcp-sign-in-done", () => void finishMcpSignIn(input.value.trim()), "primary compact");
+  const reopen = button("Open sign-in page", "resources-mcp-sign-in-reopen", () => { const tab = window.open(flow.authUrl, "_blank"); if (tab) tab.opener = null; });
+  const cancel = button("Cancel", "resources-mcp-sign-in-cancel", () => void cancelMcpSignIn());
+  for (const control of [input, done, reopen, cancel]) control.disabled = view.mcpAuth.busy;
+  line.append(note, input, done, reopen, cancel);
+  return line;
+}
+
 function serverRow(server, local, inventory) {
   const row = document.createElement("div");
   row.className = "resources-row";
@@ -624,6 +770,7 @@ function serverRow(server, local, inventory) {
   const activation = ["shared", "project", "plugin"].includes(server.source) ? activationControl("mcp", server, local, server.harnesses) : null;
   head.append(...(activation ? [activation] : harnessIcons(server.harnesses)));
   if (!activation && local) head.append(badge(server.source === "enterprise" ? "organization managed" : "agent configured", "off"));
+  if (signInApplies(server, local)) head.append(...mcpAuthControls(server));
   const target = document.createElement("span");
   target.className = "skill-option-description";
   target.textContent = `${server.transport} · ${server.target}`;
@@ -761,12 +908,20 @@ function renderShareBar() {
     open.disabled = !chosen.length;
     line.append(count, all, clear, open);
     if (!view.sharing.legacy.verified) line.append(emptyRow(view.sharing.legacy.error || "Legacy sync status not yet verified. Sharing verifies it before proceeding."));
+  } else if (view.tab === "mcp" && view.mcpAuth.flow) {
+    // A sign-in waiting for its browser owns the bar until it is done or cancelled.
+    bar.append(mcpSignInLine());
+    return;
   } else if (view.tab === "mcp") {
     const chosen = selectedServers();
     count.textContent = chosen.length ? `${chosen.length} server${chosen.length === 1 ? "" : "s"} selected` : "Tick a server that only one agent loads to let Claude and Kiro here load it too.";
     const share = button("Share with every agent here", "resources-share-mcp-button", () => void shareSelectedServers(), "primary compact");
     share.disabled = !chosen.length;
-    line.append(count, share);
+    const auth = view.mcpAuth;
+    const check = button(auth.loading ? "Checking Claude sign-ins…" : "Check Claude sign-ins", "resources-mcp-auth-check", () => void loadMcpAuth(true));
+    check.disabled = auth.loading || auth.busy;
+    if (auth.error) check.title = auth.error;
+    line.append(count, share, check);
   } else {
     count.textContent = view.tab === "plugins" ? "Plugin activation on this node" : "Skill activation on this node";
     line.append(count);
@@ -1488,6 +1643,8 @@ function configure({ scope = "conversation", projectId = state.activeProjectId, 
   view.page = 0;
   view.selected.clear();
   view.selectedServers.clear();
+  if (view.mcpAuth.flow) void cancelMcpSignIn();
+  view.mcpAuth = { key: null, servers: null, loading: false, error: "", flow: null, busy: false };
   setStatus("");
   elements.resourcesSearchInput.value = "";
   document.querySelector("#resourcesSourceSelect").value = "";

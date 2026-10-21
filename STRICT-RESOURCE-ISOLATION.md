@@ -60,6 +60,31 @@ instructions can remain in a resumed transcript. Start a new conversation when
 changing policy. Managed Pi package declarations are refreshed on session open;
 existing Pi sessions can reload skill changes.
 
+## Signing in to Claude MCP servers
+
+Claude keeps an MCP server's OAuth token under a key made from the server's name
+and its type, URL and headers, in the config folder of the account that signed in.
+A token saved by a native terminal `claude` is found here only when the managed copy
+of the plugin matches the native one exactly. Plugins often put their version in a
+header, such as Figma's `X-Figma-Plugin-Bundle`, so an older managed copy looks for a
+different key and reports "needs authentication".
+
+Settings → Resources → MCP → **Check Claude sign-ins** shows each Claude HTTP/SSE
+server's state, and **Sign in** runs the CLI's own flow (`mcp_authenticate`) in a
+control-only Claude process (`spawnClaudeControl`). That process loads the same
+plugins, MCP configuration, account and config folder as a turn. The token therefore
+lands where the next turn looks, with no terminal and no copied plugin. A browser
+on the node completes the sign-in through the CLI's localhost listener. A browser
+elsewhere ends on a page that won't load; pasting that address hands it to the
+waiting flow (`mcp_oauth_callback_url`). **Sign out** calls `mcp_clear_auth`.
+
+Sign-in runs as the account a turn would run as: the viewed project's account, or
+the person's own account in multi-user mode. Each person's tokens stay in their own
+Claude config. Projects received from a cluster run as the cluster's account, so a
+sign-in there is shared by everyone working in that cluster's projects on this node.
+Only the person who started a sign-in can finish or cancel it, and an abandoned one
+closes after 10 minutes.
+
 ## Configuration
 
 The node settings API accepts a boolean `strictResourceIsolation` alongside its
