@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.130.0 — 2026-10-21
 
-- Fixed missing Deploy to prod and Hotfix icons in saved label settings, and gave the usage Cluster and Repeated work views their own period and project controls.
+- Fixed missing Deploy to prod and Hotfix icons in saved label settings, so built-in labels keep their icons unless you clear them.
+- Added period and project controls to the usage Cluster and Repeated work views, independent of the dashboard filters.
+- Changed usage analysis to use the 100 most recently active conversations in its own chosen period and project, instead of refusing projects with more conversations than that.
+- Added a count of analyzed and total conversations to usage analysis results, with a note when some were left out.
 
 ## 2.129.1 — 2026-10-20
 
