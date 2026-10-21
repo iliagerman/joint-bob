@@ -712,6 +712,22 @@ async function cancelCurrentAndResumeQueue(connection: HarnessChatConnection): P
   void (draining ?? Promise.resolve()).then(resume, resume).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
 }
 
+/** Closes the live harness session and opens it again from its transcript, keeping the conversation and its settings. */
+async function restartHarnessSession(connection: HarnessChatConnection): Promise<void> {
+  const old = connection.shared;
+  if (harnessSessionBusy(old)) throw new Error("Stop the current turn before restarting");
+  const settings = old.session.settings();
+  const others = [...old.clients].filter((client) => client !== connection.socket);
+  disposeHarnessSession(old);
+  // Other windows on this conversation reconnect and reopen it themselves.
+  for (const client of others) send(client, { type: "sessionFileChanged" });
+  await ensureCurrentSession(connection);
+  await connection.shared.session.configure(settings);
+  sendHarnessStatus(connection.shared);
+  send(connection.socket, { type: "restarted" });
+  void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
+}
+
 async function controls(connection: HarnessChatConnection, message: ReturnType<typeof socketMessageSchema.parse>): Promise<boolean> {
   if (message.type === "ping") { send(connection.socket, { type: "pong" }); return true; }
   if (message.type === "models") { await models(connection); return true; }
@@ -733,6 +749,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
     return true;
   }
   await writable(connection);
+  if (message.type === "restart") { await restartHarnessSession(connection); return true; }
   if (message.type === "setEngine") { if (!message.engine) throw new Error("Engine is required"); await switchHarness(connection, message.engine); return true; }
   if (message.type === "abort" || message.type === "stop") {
     // Stop must also end auto respond, or the responder would restart the agent a moment later.

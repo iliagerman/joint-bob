@@ -4,6 +4,7 @@ export const LOCAL_COMMANDS = [
   { name: "model", description: "Choose the session model", invocation: "/model ", kind: "web" },
   { name: "tools", description: "Configure available tools", invocation: "/tools ", kind: "web" },
   { name: "compact", description: "Compact conversation context", invocation: "/compact ", kind: "web" },
+  { name: "bob-restart", description: "Close and reopen the harness without starting a new conversation", invocation: "/bob-restart", kind: "web" },
   { name: "bob-btw", description: "Open a temporary side conversation", invocation: "/bob-btw", kind: "web" },
 ];
 
@@ -15,6 +16,7 @@ const COMMAND_ALIASES = new Map([
   ["model", "model"],
   ["tools", "tools"],
   ["compact", "compact"],
+  ["bob-restart", "bobRestart"],
   ["bob-btw", "bobBtw"],
 ]);
 

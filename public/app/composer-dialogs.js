@@ -353,6 +353,14 @@ export function composerCommandHandlers() {
       }
       toast("Compacting conversation…");
     },
+    bobRestart: () => {
+      setInputValue("");
+      if (!sendSocket({ type: "restart" })) {
+        toast("Conversation is not connected yet");
+        return;
+      }
+      toast("Restarting harness…");
+    },
     bobBtw: () => {
       setInputValue("");
       void openByTheWay();

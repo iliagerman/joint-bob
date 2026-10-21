@@ -513,6 +513,22 @@ test("Claude queue resumes after compaction completes", async () => {
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"), 1500);
 });
 
+test("Claude restart reopens the same conversation with a fresh harness session", async () => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "claude:new");
+  sockets.push(opened.socket);
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+  const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+  const { findHarnessSession } = await import("../src/server/harness-sessions.js");
+  const before = findHarnessSession(fixture.projectId, "claude", sessionId)!;
+  opened.socket.send(JSON.stringify({ type: "restart" }));
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "restarted" || frame.type === "error"));
+  assert.deepEqual(opened.messages.filter((frame) => frame.type === "error"), []);
+  const after = findHarnessSession(fixture.projectId, "claude", sessionId)!;
+  assert.ok(after && after !== before, "a new harness session replaces the old one");
+  assert.equal(after.session.id, sessionId);
+  assert.ok(after.clients.size > 0, "the socket is attached to the reopened session");
+});
+
 test("Pi queued authenticated override replaces an unauthenticated current model", async (context) => {
   const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
   sockets.push(opened.socket);

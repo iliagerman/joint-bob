@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a `/bob-restart` command that reopens a conversation's session in place, keeping the conversation and its settings, and that refuses to run while a turn is still going.
+
 ## 2.130.0 — 2026-10-21
 
 - Fixed missing Deploy to prod and Hotfix icons in saved label settings, so built-in labels keep their icons unless you clear them.

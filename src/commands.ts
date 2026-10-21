@@ -26,6 +26,7 @@ const UNIVERSAL_COMMANDS = [
   { name: "model", description: "Choose the session model" },
   { name: "tools", description: "Configure available tools" },
   { name: "compact", description: "Compact conversation context" },
+  { name: "bob-restart", description: "Close and reopen the harness without starting a new conversation" },
   { name: "bob-btw", description: "Open a temporary side conversation" },
   { name: "bob-goal", description: "Run an objective to completion; arguments: <objective>, status, cancel" },
 ] as const;

@@ -9,6 +9,7 @@ function commandHandlers(calls: Array<[string, string]>) {
     model: (argument: string) => calls.push(["model", argument]),
     tools: (argument: string) => calls.push(["tools", argument]),
     compact: (argument: string) => calls.push(["compact", argument]),
+    bobRestart: (argument: string) => calls.push(["bob-restart", argument]),
     bobBtw: (argument: string) => calls.push(["bob-btw", argument]),
   };
 }
@@ -18,7 +19,7 @@ test("composer commands execute UI actions instead of becoming prompts", () => {
   const prompts: string[] = [];
   const handlers = commandHandlers(calls);
 
-  for (const command of ["/help", "/skills", "/skill", "/skils", "/model", "/tools", "/compact keep decisions", "/bob-btw"]) {
+  for (const command of ["/help", "/skills", "/skill", "/skils", "/model", "/tools", "/compact keep decisions", "/bob-restart", "/bob-btw"]) {
     assert.equal(dispatchComposerInput(command, false, handlers, (message) => prompts.push(message)), "command");
   }
 
@@ -30,6 +31,7 @@ test("composer commands execute UI actions instead of becoming prompts", () => {
     ["model", ""],
     ["tools", ""],
     ["compact", "keep decisions"],
+    ["bob-restart", ""],
     ["bob-btw", ""],
   ]);
   assert.deepEqual(prompts, []);
@@ -40,12 +42,12 @@ test("agent commands, unknown slash text, and messages remain prompts", () => {
   const prompts: string[] = [];
   const handlers = commandHandlers(calls);
 
-  for (const message of ["/skill:debugging", "/review", "/unknown", "inspect the tests"]) {
+  for (const message of ["/skill:debugging", "/review", "/restart", "/unknown", "inspect the tests"]) {
     assert.equal(dispatchComposerInput(message, false, handlers, (prompt) => prompts.push(prompt)), "prompt");
   }
 
   assert.deepEqual(calls, []);
-  assert.deepEqual(prompts, ["/skill:debugging", "/review", "/unknown", "inspect the tests"]);
+  assert.deepEqual(prompts, ["/skill:debugging", "/review", "/restart", "/unknown", "inspect the tests"]);
 });
 
 test("attachments keep slash-looking text on the prompt path", () => {
