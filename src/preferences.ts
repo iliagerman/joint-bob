@@ -315,6 +315,8 @@ export interface UserPreferences {
   projectConversationVisibility: Record<string, { done: boolean; scheduled: boolean }>;
   /** Default Git reviewer; null means choose from the conversation's last harness. */
   gitReviewer: GitReviewerPreference | null;
+  /** Agent and model that write activity summaries; null means the conversation's own. */
+  summaryModel: GitReviewerPreference | null;
 }
 
 export interface GitReviewerPreference {
@@ -343,6 +345,7 @@ interface PreferenceRow {
   last_seen_version: string | null;
   canvas_layout: string;
   git_reviewer: string;
+  summary_model: string;
   canvas_keymap: string;
   conversation_last_read: string;
   project_conversation_visibility: string;
@@ -394,6 +397,7 @@ function preferencesDatabase(): DatabaseSync {
   if (!columns.some((column) => column.name === "canvas_keymap")) database.exec("ALTER TABLE user_preferences ADD COLUMN canvas_keymap TEXT NOT NULL DEFAULT '{\"modifiers\":[\"meta\",\"shift\"],\"recentPane\":\"E\",\"focusPane\":\"G\",\"paneSearch\":\"F\"}'");
   if (!columns.some((column) => column.name === "conversation_last_read")) database.exec("ALTER TABLE user_preferences ADD COLUMN conversation_last_read TEXT NOT NULL DEFAULT '{}'");
   if (!columns.some((column) => column.name === "git_reviewer")) database.exec("ALTER TABLE user_preferences ADD COLUMN git_reviewer TEXT NOT NULL DEFAULT 'null'");
+  if (!columns.some((column) => column.name === "summary_model")) database.exec("ALTER TABLE user_preferences ADD COLUMN summary_model TEXT NOT NULL DEFAULT 'null'");
   if (!columns.some((column) => column.name === "project_conversation_visibility")) database.exec("ALTER TABLE user_preferences ADD COLUMN project_conversation_visibility TEXT NOT NULL DEFAULT '{}'");
   return database;
 }
@@ -686,6 +690,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     conversationLastRead: parseConversationLastRead(row.conversation_last_read),
     projectConversationVisibility: parseProjectConversationVisibility(row.project_conversation_visibility),
     gitReviewer: JSON.parse(row.git_reviewer) as GitReviewerPreference | null,
+    summaryModel: JSON.parse(row.summary_model) as GitReviewerPreference | null,
   };
 }
 
@@ -694,7 +699,7 @@ function currentPreferences(userId: string): UserPreferences {
     SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
       pinned_project_ids, pinned_session_paths, focus_ui_enabled, projects_panel_collapsed, chats_panel_collapsed,
-      last_seen_version, canvas_layout, canvas_keymap, conversation_last_read, project_conversation_visibility, git_reviewer
+      last_seen_version, canvas_layout, canvas_keymap, conversation_last_read, project_conversation_visibility, git_reviewer, summary_model
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -742,6 +747,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["conversationLastRead", "conversation_last_read", (value) => JSON.stringify(boundConversationLastRead(value as Record<string, number>))],
     ["projectConversationVisibility", "project_conversation_visibility", (value) => JSON.stringify(value)],
     ["gitReviewer", "git_reviewer", (value) => JSON.stringify(value)],
+    ["summaryModel", "summary_model", (value) => JSON.stringify(value)],
   ];
   for (const [property, column, serialize] of fields) {
     if (partial[property] === undefined) continue;

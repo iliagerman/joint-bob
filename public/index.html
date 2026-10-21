@@ -291,6 +291,7 @@
             <button class="ghost icon-button chat-recents-button chat-running-button" id="chatRunningConversationsButton" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-shortcut-hint="runningConversations" data-testid="chat-running-conversations-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg><span class="reviews-badge running-badge" data-running-count data-testid="chat-running-conversations-badge" hidden>0</span></button>
             <button class="ghost compact background-tasks-trigger" id="backgroundTasksButton" data-shortcut-hint="backgroundTasks" type="button" aria-controls="backgroundTasksDialog" aria-haspopup="dialog" aria-label="Tasks" data-testid="background-tasks-open" title="Tasks"><svg class="chat-toolbar-icon background-tasks-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 10.5 10 13l-2.5 2.5"/><path d="M13 15.5h3.5"/></svg><span class="background-tasks-label">Tasks</span> <span class="background-tasks-badge" id="backgroundTasksBadge" hidden></span></button>
             <button class="ghost compact background-tasks-trigger chat-story-trigger" id="chatStoryButton" data-shortcut-hint="explainConversation" type="button" aria-label="Change story" data-testid="chat-story-button" title="Explain what this conversation did, from its own turns and commits"><svg class="chat-toolbar-icon background-tasks-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4.5h10.5a3 3 0 0 1 3 3V19.5H8a3 3 0 0 1-3-3z"/><path d="M8.5 9h6M8.5 12.5h6"/></svg><span class="background-tasks-label">Story</span></button>
+            <button class="ghost compact background-tasks-trigger activity-toggle" id="activityToggleButton" type="button" aria-expanded="false" aria-controls="activityPanel" aria-label="Activity" data-testid="chat-activity-toggle" title="Show tool calls, thinking and a running summary beside the chat"><svg class="chat-toolbar-icon background-tasks-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M14.5 4.5v15"/><path d="M17 8.5h1M17 11.5h1M17 14.5h1"/></svg><span class="background-tasks-label">Activity</span></button>
             <details class="chat-more" id="chatMoreMenu">
               <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
               <div class="chat-more-actions">
@@ -322,6 +323,28 @@
           <button class="jump-to-bottom" id="jumpToBottomButton" type="button" hidden aria-label="Jump to the newest message" title="Jump to the newest message" data-testid="chat-jump-to-bottom-button">
             <span aria-hidden="true">↓</span>
           </button>
+          <!-- Intermediate work lives beside the conversation: the main thread keeps
+               what the agent said, this panel keeps how it got there. -->
+          <aside class="activity-panel" id="activityPanel" aria-label="Conversation activity" data-testid="activity-panel" hidden>
+            <header class="activity-panel-header">
+              <h2>Activity</h2>
+              <button class="ghost icon-button activity-panel-close" id="activityPanelCloseButton" type="button" aria-label="Collapse activity" title="Collapse activity" data-testid="activity-panel-close"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"/></svg></button>
+            </header>
+            <details class="activity-summary" id="activitySummary" open data-testid="activity-summary">
+              <summary data-testid="activity-summary-toggle"><span>Summary</span><span class="activity-summary-status" id="activitySummaryStatus" data-testid="activity-summary-status"></span></summary>
+              <div class="activity-summary-body">
+                <div class="activity-summary-text md" id="activitySummaryText" data-testid="activity-summary-text"></div>
+                <div class="activity-summary-actions">
+                  <button class="ghost compact activity-summary-refresh" id="activitySummaryRefreshButton" type="button" data-testid="activity-summary-refresh">Update summary</button>
+                  <button class="ghost compact activity-summary-model" id="activitySummaryModelButton" type="button" title="Choose the agent and model that write summaries" data-testid="activity-summary-model"></button>
+                </div>
+              </div>
+            </details>
+            <div class="activity-steps-heading"><span>Steps</span><span class="activity-steps-count" id="activityStepsCount" data-testid="activity-steps-count"></span></div>
+            <div class="activity-list" id="activityList" data-testid="activity-list">
+              <p class="activity-empty">Tool calls and thinking from this conversation appear here.</p>
+            </div>
+          </aside>
         </div>
 
         <div class="reconnect-banner" id="reconnectBanner" role="status" data-testid="chat-reconnect-banner" hidden>
@@ -984,6 +1007,13 @@
             <legend>New conversations</legend>
             <label class="checkbox-row"><input id="settingsNewConversationWorktree" type="checkbox" data-testid="settings-new-conversation-worktree" /> Start each new conversation in its own worktree</label>
             <p class="settings-hint">The new-conversation dialog then picks New worktree: a Joint Bob worktree named after the conversation is created and the conversation runs in it. You can still choose the project folder or an existing worktree. A conversation that runs on another node starts in the project folder, because a new worktree reaches other nodes only after it syncs.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Activity summary</legend>
+            <label>Summary model<select id="settingsSummaryHarness" data-testid="settings-summary-harness"></select></label>
+            <label id="settingsSummaryModelLabel">Model<select id="settingsSummaryModel" data-testid="settings-summary-model"></select></label>
+            <label id="settingsSummaryThinkingLabel">Effort<select id="settingsSummaryThinking" data-testid="settings-summary-thinking"></select></label>
+            <p class="settings-hint">Writes the running summary in a conversation's Activity panel. Same as conversation uses the conversation's own agent and model at that agent's default effort. Changes save immediately.</p>
           </fieldset>
         </section>
 

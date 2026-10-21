@@ -188,6 +188,7 @@ export async function initializeApplication() {
   state.conversationLastRead = preferences.conversationLastRead || {};
   state.projectConversationVisibility = preferences.projectConversationVisibility || {};
   state.gitReviewer = preferences.gitReviewer;
+  state.summaryModel = preferences.summaryModel ?? null;
   state.replicatedPinnedProjectIds = pins.projectIds || [];
   state.pinnedConversations = pins.conversations || [];
   state.recentSessions = recents.recentSessions || [];

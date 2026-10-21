@@ -7,6 +7,7 @@ import { clearAttachments } from "./attachments.js";
 import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
+import { activityConversationChanged, refreshActivitySummary } from "./activity-panel.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { refreshBudgetNotice } from "./budget-dialog.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
@@ -207,6 +208,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     state.conversationSegments = null;
     state.activeConversationId = null;
     state.activeConversationProjectId = null;
+    activityConversationChanged();
     setAutoRespond(null);
     syncBackgroundTasks();
     state.scheduledTurn = false;
@@ -310,6 +312,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     state.activeConversationId = payload.conversationId || payload.sessionId || null;
     state.activeConversationProjectId = payload.project?.id || state.activeProjectId;
     refreshBudgetNotice();
+    activityConversationChanged();
     state.conversationSegments = payload.segments || null;
     state.scheduledTurn = payload.scheduledTurn === true;
     state.scheduledAssistantText = "";
@@ -616,6 +619,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     state.scheduledTurn = false;
     setStatus("Connected", true);
     state.sessionBusy = false;
+    refreshActivitySummary({ afterTurn: true });
     if (state.lastTurnStartedAt) {
       const finishedAt = Date.parse(payload.timestamp || "");
       finishTurnTimer(Number.isFinite(finishedAt) ? finishedAt : Date.now());

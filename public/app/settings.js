@@ -24,6 +24,7 @@ import { createSearchableSelect } from "./searchable-select.js";
 import { refreshSessionsQuietly } from "./socket.js";
 import { loadWorkspaces } from "./workspaces.js";
 import { loadGitReviewerSettings } from "./git-reviewer-options.js";
+import { loadSummaryModelSettings } from "./summary-model-settings.js";
 import { labelIconsValue, loadLabelIcons } from "./label-icons.js";
 import { createSettingsSearch } from "./settings-search.js";
 
@@ -117,6 +118,7 @@ function selectSettingsTab(requested) {
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
+  if (name === "conversations") void loadSummaryModelSettings().catch((error) => toast(error.message));
   if (name === "users") void loadUsers().catch((error) => toast(error.message));
   if (name === "account") void loadMyNodes().catch((error) => toast(error.message));
   if (name === "node") {

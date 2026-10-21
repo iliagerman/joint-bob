@@ -52,6 +52,8 @@ export const state = {
   // Mirrors the server-side preference so read marks follow the account.
   conversationLastRead: {},
   gitReviewer: null,
+  // Agent and model for activity summaries; null follows the conversation.
+  summaryModel: null,
   replicatedPinnedProjectIds: [],
   pinnedConversations: [],
   recentSessions: [],

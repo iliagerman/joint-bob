@@ -4,6 +4,7 @@ import { completedConversationDuration, formatDateTime, formatDuration } from ".
 import { openQueuedModelPicker, queuedReasoningLevels } from "./composer-dialogs.js";
 import { renderMarkdown } from "../markdown.js";
 import { markAutoReply } from "./auto-respond.js";
+import { appendToActivityGroup, clearActivity, currentActivityGroup, startActivityGroup, syncActivityGroup } from "./activity-panel.js";
 import { elements } from "./elements.js";
 import { brandIcon, menuIcon } from "./icons.js";
 import { openFileAction, projectFileUrl } from "./project-files.js";
@@ -12,8 +13,10 @@ import { state } from "./state.js";
 
 export function clearThinkingBubble() {
   if (state.thinkingBubble) {
+    const group = state.thinkingBubble._activityGroup;
     state.thinkingBubble.remove();
     state.thinkingBubble = null;
+    syncActivityGroup(group);
   }
 }
 
@@ -187,6 +190,7 @@ export function clearChat() {
   state.assistantBubble = null;
   state.thinkingBubble = null;
   state.toolBubbles.clear();
+  clearActivity();
   currentSegment = null;
   // A dwell begun on the conversation being left must not stamp the next one.
   latestMessageAt = 0;
@@ -234,6 +238,18 @@ function messageHost() {
 function appendBeforeQueuedMessages(node) {
   const host = messageHost();
   host.insertBefore(node, host.querySelector(":scope > .queued-batch-controls, :scope > .message.queued"));
+}
+
+// Tool calls and thinking go to the activity panel. Consecutive steps share one
+// group and one marker in the thread; anything the thread shows after that
+// marker (text, an error, a new segment) means the next step starts a new group.
+function activityGroupHere(startedAt) {
+  const host = messageHost();
+  const queued = host.querySelector(":scope > .queued-batch-controls, :scope > .message.queued");
+  const last = queued ? queued.previousElementSibling : host.lastElementChild;
+  const group = currentActivityGroup();
+  if (group && group.marker === last) return group;
+  return startActivityGroup((marker) => appendBeforeQueuedMessages(marker), startedAt);
 }
 
 function prettyText(text) {
@@ -584,7 +600,8 @@ export function appendMessage(role, text, timestamp = true, attachments = [], re
     scheduleMarkViewed();
   }
   renderBubbleContent(bubble, presentation.text);
-  appendBeforeQueuedMessages(bubble);
+  if (role === "thinking") appendToActivityGroup(activityGroupHere(new Date()), bubble);
+  else appendBeforeQueuedMessages(bubble);
   if (isMarkdown) appendCopyButton(bubble, role === "assistant" ? assistantAttribution(attribution) : null);
   requestPinChat();
   return bubble;
@@ -929,7 +946,7 @@ export function appendToolMessage(toolName, toolCallId, startedAt = Date.now(), 
   const content = document.createElement("pre");
   content.className = "message-content";
   bubble.append(summary, content);
-  appendBeforeQueuedMessages(bubble);
+  appendToActivityGroup(activityGroupHere(recordedAt ? new Date(recordedAt) : null), bubble);
   requestPinChat();
   return bubble;
 }
@@ -957,6 +974,7 @@ export function updateToolMessage(bubble, text, status, isError = false, recorde
   const label = !elapsed ? status : status === "Running" ? `${status} ${elapsed}` : `${status} in ${elapsed}`;
   bubble.querySelector(".tool-status").textContent = label;
   renderBubbleContent(bubble, text);
+  syncActivityGroup(bubble._activityGroup);
 }
 
 function markPendingReview(bubble, recordedAt) {
