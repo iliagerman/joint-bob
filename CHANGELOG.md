@@ -3,9 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.132.0 — 2026-10-21
 
-- Changed the Activity panel to group each turn's steps under the prompt that started it, keep its summary current while the agent works, and stopped reloaded conversations from showing every answer twice.
+- Fixed Claude conversations showing every answer twice after they reload, because Claude Code's request records were read as chat.
+- Changed the Activity panel to show one line per turn under each prompt, with that turn's steps grouped beneath it.
+- Changed the Activity panel's summary to update while the agent works, at most every three minutes, and again when each turn ends.
+- Changed the Activity summary to skip a prompt that has no answer yet and to keep the latest part of long answers.
+- Changed earlier answers in a turn from the same model to drop their model chip, with their copy button moved to the timestamp row.
+- Added Control+Option+Shift+S to show or collapse the Activity panel.
 
 ## 2.131.0 — 2026-10-21
 
