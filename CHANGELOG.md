@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.135.0 — 2026-10-22
 
 - Fixed a machine shutting down when the Claude CLI exits before reading its prompt (or a Pi worker stops mid-request); the run now fails with the CLI's own error instead.
 - Added statistics and skill suggestions to the Activity panel. Statistics count turns, steps, failures, agent time, and how often each tool and skill was used; suggestions name up to three skills the summary writer thinks would help, either installed ones the conversation did not load or new ones for work it repeats by hand. Steps now start collapsed under their own header, and an answer shows the skills its turn loaded beside the model.

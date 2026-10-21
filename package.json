@@ -1,6 +1,6 @@
 {
   "name": "joint-bob",
-  "version": "2.134.0",
+  "version": "2.135.0",
   "description": "Private multi-node workspace for Pi and Claude coding agents",
   "private": false,
   "license": "MIT",
