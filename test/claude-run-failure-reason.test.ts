@@ -77,3 +77,38 @@ test("runClaudePrompt falls back to stderr when the CLI reports no result", asyn
     else process.env.JOINT_BOB_DATA_DIR = previousDataDir;
   }
 });
+
+/** A CLI that exits without reading its prompt breaks the pipe; the run fails, the process lives on. */
+test("runClaudePrompt survives a CLI that exits before reading the prompt", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-claude-epipe-"));
+  const previousDataDir = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  const uncaught: unknown[] = [];
+  const onUncaught = (error: unknown) => { uncaught.push(error); };
+  process.on("uncaughtException", onUncaught);
+  try {
+    const fakeClaude = path.join(root, "claude-fake");
+    await writeFile(fakeClaude, ["#!/bin/sh", "echo 'claude: unknown option' >&2", "exit 2", ""].join("\n"), "utf8");
+    await chmod(fakeClaude, 0o755);
+
+    const settings = await import(`../src/settings.ts?claude-epipe=${Date.now()}-${Math.random()}`);
+    settings.updateSettings({
+      projects: { homePath: path.join(root, "home") },
+      claude: { executable: fakeClaude, configPath: path.join(root, "claude-config"), sessionPath: path.join(root, "claude-projects") },
+      syncthing: { endpoint: "" },
+    });
+    const { runClaudePrompt } = await import(`../src/claude-service.ts?claude-epipe=${Date.now()}-${Math.random()}`);
+
+    // Larger than a pipe's buffer, so the write is still going when the CLI has gone.
+    const result = await runClaudePrompt({ cwd: root, projectId: "epipe-project", prompt: "x".repeat(4 * 1024 * 1024), onEvent: () => {} }).done;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "claude: unknown option");
+    assert.deepEqual(uncaught, [], "the broken pipe is not an uncaught error");
+  } finally {
+    process.off("uncaughtException", onUncaught);
+    if (previousDataDir === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previousDataDir;
+  }
+});

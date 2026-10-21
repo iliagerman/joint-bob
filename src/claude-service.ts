@@ -641,6 +641,10 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     env: { ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() },
     stdio: ["pipe", "pipe", "pipe"],
   });
+  // Claude can exit before reading its prompt (a broken install, an unknown flag). The run then
+  // fails through "close" with its stderr; the broken pipe must not become an uncaught error
+  // that takes the whole node down.
+  child.stdin.on("error", () => {});
   child.stdin.write(options.prompt);
   child.stdin.end();
 

@@ -85,6 +85,9 @@ class PiWorker {
       env: runtimeEnvironment(runtime, { ...process.env, PI_CODING_AGENT_DIR: path.join(runtime.home, ".pi", "agent"), JOINT_BOB_PI_WORKER: "1" }),
       stdio: ["pipe", "pipe", "pipe"],
     });
+    // A write racing the worker's exit fails with a broken pipe; the exit handler below rejects
+    // what was pending, so the error itself must not become uncaught and stop the node.
+    this.child.stdin.on("error", () => {});
     createInterface({ input: this.child.stdout }).on("line", (line) => this.receive(line));
     this.child.stderr.on("data", (chunk) => { const text = String(chunk).trim(); if (text && !/ExperimentalWarning|trace-warnings/.test(text)) console.warn(`Pi worker (${runtime.name}): ${text.slice(0, 500)}`); });
     this.child.once("exit", () => {
