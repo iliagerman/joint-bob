@@ -4,7 +4,7 @@ import { completedConversationDuration, formatDateTime, formatDuration } from ".
 import { openQueuedModelPicker, queuedReasoningLevels } from "./composer-dialogs.js";
 import { renderMarkdown } from "../markdown.js";
 import { markAutoReply } from "./auto-respond.js";
-import { appendToActivityGroup, clearActivity, currentActivityGroup, revealActivityGroup, setActivityPanelOpen, startActivityGroup, syncActivityGroup } from "./activity-panel.js";
+import { activityGroupSkills, activityStatsChanged, appendToActivityGroup, clearActivity, currentActivityGroup, revealActivityGroup, setActivityPanelOpen, startActivityGroup, syncActivityGroup } from "./activity-panel.js";
 import { elements } from "./elements.js";
 import { brandIcon, menuIcon } from "./icons.js";
 import { openFileAction, projectFileUrl } from "./project-files.js";
@@ -211,6 +211,7 @@ export function restoreConversationTimer(messages, activeTurnStartedAt = 0) {
   state.lastTurnStartedAt = activeTurnStartedAt;
   renderConversationTimer();
   if (activeTurnStartedAt) startDurationTicker();
+  activityStatsChanged();
 }
 
 export function startTurnTimer(startedAt = Date.now()) {
@@ -230,6 +231,7 @@ export function finishTurnTimer(finishedAt = Date.now()) {
   }
   state.lastTurnStartedAt = 0;
   renderConversationTimer(finishedAt);
+  activityStatsChanged();
 }
 
 function renderConversationTimer(now = Date.now()) {
@@ -321,6 +323,32 @@ function activityGroupHere(startedAt) {
     (actions ?? opener).after(marker);
   }, startedAt, opener?._raw);
   return Object.assign(created, { host, opener });
+}
+
+// The skills a turn loaded show beside its newest answer's model line, so the thread
+// says which skills shaped the answer without opening the activity panel.
+function showTurnSkills(group) {
+  if (!group?.host?.isConnected) return;
+  const rows = [];
+  let node = group.opener?.isConnected ? group.opener.nextElementSibling : group.host.firstElementChild;
+  while (node && !node.matches(".message.user:not(.queued)")) {
+    if (node.matches(".message-actions") && node.querySelector(".message-attribution")) rows.push(node);
+    node = node.nextElementSibling;
+  }
+  for (const row of rows) row.querySelector(".message-skills")?.remove();
+  const names = activityGroupSkills(group);
+  const row = rows[rows.length - 1];
+  if (!row || !names.length) return;
+  const chip = document.createElement("span");
+  chip.className = "message-skills";
+  chip.dataset.testid = "message-skills";
+  chip.title = `Skill${names.length === 1 ? "" : "s"} used in this turn: ${names.join(", ")}`;
+  chip.setAttribute("aria-label", chip.title);
+  const label = document.createElement("span");
+  label.className = "message-skills-label";
+  label.textContent = names.length === 1 ? "skill" : "skills";
+  chip.append(label, document.createTextNode(names.join(", ")));
+  row.querySelector(".message-attribution").after(chip);
 }
 
 // Only the newest answer of a turn carries its model line. An earlier answer by the
@@ -701,7 +729,13 @@ export function appendMessage(role, text, timestamp = true, attachments = [], re
   if (role === "thinking") appendToActivityGroup(activityGroupHere(new Date()), bubble);
   else appendBeforeQueuedMessages(bubble);
   if (isMarkdown) appendCopyButton(bubble, role === "assistant" ? assistantAttribution(attribution) : null);
-  if (role === "assistant") quietEarlierAnswers(bubble);
+  if (role === "assistant") {
+    quietEarlierAnswers(bubble);
+    const group = currentActivityGroup();
+    const host = messageHost();
+    if (group && group.host === host && group.opener === turnOpener(host)) showTurnSkills(group);
+  }
+  if (isMarkdown) activityStatsChanged();
   requestPinChat();
   return bubble;
 }
@@ -1045,7 +1079,11 @@ export function appendToolMessage(toolName, toolCallId, startedAt = Date.now(), 
   const content = document.createElement("pre");
   content.className = "message-content";
   bubble.append(summary, content);
-  appendToActivityGroup(activityGroupHere(recordedAt ? new Date(recordedAt) : null), bubble);
+  bubble.dataset.tool = toolName;
+  if (toolTarget?.skill) bubble.dataset.skill = toolTarget.skill;
+  const group = activityGroupHere(recordedAt ? new Date(recordedAt) : null);
+  appendToActivityGroup(group, bubble);
+  if (toolTarget?.skill) showTurnSkills(group);
   requestPinChat();
   return bubble;
 }
@@ -1074,6 +1112,7 @@ export function updateToolMessage(bubble, text, status, isError = false, recorde
   bubble.querySelector(".tool-status").textContent = label;
   renderBubbleContent(bubble, text);
   syncActivityGroup(bubble._activityGroup);
+  if (bubble.dataset.skill) showTurnSkills(bubble._activityGroup);
 }
 
 function markPendingReview(bubble, recordedAt) {

@@ -28,6 +28,10 @@ process.stdout.write('{"models":[{"model_id":"default","model_name":"Kiro defaul
   process.env.PATH = `${testBin}${path.delimiter}${process.env.PATH}`;
 }
 process.env.JOINT_BOB_BIND_HOST = "127.0.0.1";
+// Nodes write a conversation's summary after each answer. In tests a stand-in writes it, so a
+// summary never opens an agent session (and an extra engine run) the test did not ask for;
+// tests about summaries pass their own writer.
+process.env.JOINT_BOB_DIGEST_GENERATOR ??= path.resolve("test/fixtures/digest-generator.mjs");
 // Nodes start without workspaces; test fixtures create projects in these two.
 process.env.JOINT_BOB_TEST_DEFAULT_WORKSPACES = "1";
 // Native-service launch settings must not leak into disposable test fixtures.

@@ -18,6 +18,18 @@ export interface ConversationDigest {
   updatedAt: string;
   /** Who wrote it, so the panel can say so. */
   model?: DigestModel;
+  /** Skills the writer thinks would help this conversation; absent on summaries from before suggestions. */
+  suggestions?: SkillSuggestion[];
+}
+
+/** An installed skill the conversation could have loaded, or a new one for work it keeps doing by hand. */
+export interface SkillSuggestion { kind: "use" | "new"; skill: string; reason: string }
+
+/** What the writer is told about skills: the ones the conversation's agent can load, the ones it loaded, and the last suggestions. */
+export interface DigestSkills {
+  catalog: Array<{ name: string; description: string }>;
+  used: string[];
+  suggestions?: SkillSuggestion[];
 }
 
 export interface DigestModel {
@@ -37,6 +49,12 @@ const ANSWER_LIMIT = 6_000;
 // The material handed to the model; the oldest new messages give way first.
 const MATERIAL_LIMIT = 60_000;
 const SUMMARY_LIMIT = 6_000;
+// The line that separates the summary from the skill suggestions in the writer's answer.
+const SUGGESTIONS_MARK = "@@skills";
+const MAX_SUGGESTIONS = 3;
+const CATALOG_LIMIT = 80;
+const CATALOG_DESCRIPTION_LIMIT = 110;
+const REASON_LIMIT = 200;
 
 function storeKey(projectId: string, conversationId: string): string {
   return `${projectId}:${conversationId}`;
@@ -116,7 +134,37 @@ export function digestMaterial(messages: DigestMessage[], from: number): string 
   return lines.join("\n\n");
 }
 
-export function digestPrompt(previous: string | undefined): string {
+/** A skill's own name, without the plugin Claude puts in front of a plugin's skill. */
+export function bareSkillName(name: string): string {
+  return (name.split(":").at(-1) ?? name).trim().toLowerCase();
+}
+
+/** The skills the conversation loaded, in the order first loaded; a load that failed does not count. */
+export function usedSkills(messages: ReadonlyArray<{ role: string; isError?: boolean; toolTarget?: { skill?: string } }>): string[] {
+  const names = new Map<string, string>();
+  for (const message of messages) {
+    const skill = message.toolTarget?.skill;
+    if (!skill || message.isError === true || (message.role !== "toolResult" && message.role !== "toolCall")) continue;
+    if (!names.has(bareSkillName(skill))) names.set(bareSkillName(skill), skill);
+  }
+  return [...names.values()];
+}
+
+function skillInstructions(skills: DigestSkills): string[] {
+  const catalog = skills.catalog.slice(0, CATALOG_LIMIT).map((skill) => `- ${skill.name}: ${clip(skill.description.replace(/\s+/g, " ").trim(), CATALOG_DESCRIPTION_LIMIT)}`);
+  return [
+    "",
+    `After the summary, write a line with only ${SUGGESTIONS_MARK}. Under it, suggest at most ${MAX_SUGGESTIONS} skills that would clearly help with this conversation's work, one per line, and write nothing under it when none would; most conversations need none:`,
+    "use <installed skill name> — <why, in under 15 words> for an installed skill below that fits the work but was not used.",
+    "new <short-kebab-case-name> — <why, in under 15 words> for a procedure the conversation repeats by hand that no installed skill covers.",
+    "Never suggest a skill the conversation already used.",
+    skills.used.length ? `Skills the conversation used: ${skills.used.join(", ")}.` : "The conversation has not used a skill.",
+    ...(skills.suggestions?.length ? ["Your last suggestions; keep, change or drop them:", ...skills.suggestions.map((item) => `${item.kind} ${item.skill} — ${item.reason}`)] : []),
+    ...(catalog.length ? ["Installed skills:", ...catalog] : ["No skills are installed, so suggest only new ones."]),
+  ];
+}
+
+export function digestPrompt(previous: string | undefined, skills?: DigestSkills): string {
   return [
     "You keep a running summary of a conversation between a user and a coding agent. It is shown in a narrow side panel so the user can catch up at a glance.",
     "Use only the material below. Do not run tools, read files, or ask questions.",
@@ -130,13 +178,50 @@ export function digestPrompt(previous: string | undefined): string {
     "**Open questions** — anything waiting on the user; leave this label out when there is none.",
     "No headings, code blocks, tables, raw JSON or long file paths: name files by their name only. Keep lines short; the panel is narrow.",
     "Write in the language the user writes in.",
+    ...(skills ? skillInstructions(skills) : []),
     ...(previous ? ["", "Current summary:", previous] : []),
   ].join("\n");
 }
 
+function unfenced(text: string): string {
+  const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i.exec(text.trim());
+  return (fenced ? fenced[1] : text).trim();
+}
+
 /** The model's answer, without a wrapping code fence and bounded in size. */
 export function parseDigestAnswer(answer: string): string {
-  const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i.exec(answer.trim());
-  const text = (fenced ? fenced[1] : answer).trim();
+  const text = unfenced(answer);
   return text.length <= SUMMARY_LIMIT ? text : `${text.slice(0, SUMMARY_LIMIT)} …`;
+}
+
+/**
+ * The writer's answer split into the summary and its skill suggestions. Suggestions are
+ * undefined when the answer has no suggestions line, so the last ones stand. An installed
+ * skill must be in the catalog, and a skill the conversation already used is never suggested.
+ */
+export function parseDigestReply(answer: string, skills: DigestSkills): { summary: string; suggestions?: SkillSuggestion[] } {
+  const text = unfenced(answer);
+  const mark = new RegExp(`^[ \\t]*${SUGGESTIONS_MARK}[ \\t]*$`, "m").exec(text);
+  if (!mark) return { summary: parseDigestAnswer(text) };
+  const installed = new Map(skills.catalog.map((skill) => [bareSkillName(skill.name), skill.name]));
+  const taken = new Set(skills.used.map(bareSkillName));
+  const suggestions: SkillSuggestion[] = [];
+  for (const line of text.slice(mark.index + mark[0].length).split("\n")) {
+    const found = /^\s*(?:[-*•]|\d+[.)])?\s*(use|new)\s+`?([\w.:-]{1,80})`?\s*(?:—|–|-|:)\s*(.+)$/i.exec(line);
+    if (!found || suggestions.length >= MAX_SUGGESTIONS) continue;
+    const kind = found[1].toLowerCase() as SkillSuggestion["kind"];
+    const bare = bareSkillName(found[2]);
+    if (taken.has(bare)) continue;
+    if (kind === "use" && !installed.has(bare)) continue;
+    if (kind === "new" && installed.has(bare)) continue;
+    taken.add(bare);
+    suggestions.push({ kind, skill: kind === "use" ? installed.get(bare)! : found[2].toLowerCase(), reason: clip(found[3].trim(), REASON_LIMIT) });
+  }
+  return { summary: parseDigestAnswer(text.slice(0, mark.index)), suggestions };
+}
+
+/** Earlier suggestions, without any skill the conversation has since used. */
+export function keptSuggestions(suggestions: SkillSuggestion[] | undefined, used: string[]): SkillSuggestion[] {
+  const taken = new Set(used.map(bareSkillName));
+  return (suggestions ?? []).filter((item) => !taken.has(bareSkillName(item.skill)));
 }

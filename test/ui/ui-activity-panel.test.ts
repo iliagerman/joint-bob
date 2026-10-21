@@ -1,7 +1,8 @@
 // Activity panel browser suite: tool calls leave the main thread for a collapsible
 // sidebar, the thread keeps one marker per turn, and the sidebar shows a running
-// summary the conversation's node keeps after each message. The summary writer and
-// Claude are stand-ins, so the test drives the real server, socket and rendering.
+// summary the conversation's node keeps after each message, statistics of the steps and
+// skills, and the skills the summary writer suggests. The summary writer and Claude are
+// stand-ins, so the test drives the real server, socket and rendering.
 //
 // Run with `npm run test:file -- test/ui/ui-activity-panel.test.ts`.
 import assert from "node:assert/strict";
@@ -88,8 +89,8 @@ async function writeTranscript(): Promise<void> {
   const records = [
     { type: "ai-title", aiTitle: CONVERSATION_TITLE, cwd: project.path, timestamp: at(0) },
     record("user", 0, [{ type: "text", text: "Rotate the staging certificates" }]),
-    record("assistant", 1, [{ type: "text", text: "Checking the certificates first." }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls certs" } }]),
-    record("user", 2, [{ type: "tool_result", tool_use_id: "t1", content: "staging.pem\nproduction.pem" }]),
+    record("assistant", 1, [{ type: "text", text: "Checking the certificates first." }, { type: "tool_use", id: "t0", name: "Skill", input: { skill: "cert-tools" } }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls certs" } }]),
+    record("user", 2, [{ type: "tool_result", tool_use_id: "t0", content: "Launching skill: cert-tools" }, { type: "tool_result", tool_use_id: "t1", content: "staging.pem\nproduction.pem" }]),
     record("assistant", 3, [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "certs/staging.pem" } }]),
     record("user", 4, [{ type: "tool_result", tool_use_id: "t2", content: "-----BEGIN CERTIFICATE-----" }]),
     record("assistant", 5, [{ type: "text", text: "Rotated staging.pem." }]),
@@ -105,11 +106,12 @@ before(async () => {
   calls = path.join(root, "digest-calls.jsonl");
   const generator = path.join(root, "digest-generator.mjs");
   // A writer that ignores the format rules (a heading, a long code block) proves the panel still never scrolls sideways.
+  // It also suggests a new skill, and one the conversation already loaded, which is dropped.
   await writeFile(generator, `import { appendFile } from "node:fs/promises";
 export default async (input) => {
   await appendFile(${JSON.stringify(calls)}, JSON.stringify(input) + "\\n");
   const asked = /User: (.*)/.exec(input.material)?.[1] ?? "the work";
-  return "**Goal** — " + asked + "\\n\\n## Done so far\\n- Rotated staging.pem\\n\\n\\\`\\\`\\\`json\\n{\\"apartment\\":\\"" + "x".repeat(400) + "\\"}\\n\\\`\\\`\\\`";
+  return "**Goal** — " + asked + "\\n\\n## Done so far\\n- Rotated staging.pem\\n\\n\\\`\\\`\\\`json\\n{\\"apartment\\":\\"" + "x".repeat(400) + "\\"}\\n\\\`\\\`\\\`\\n@@skills\\nnew cert-renewal — the renewal steps are repeated by hand\\nnew cert-tools — already loaded";
 };
 `);
   server = await startDevNode(environment, node, { JOINT_BOB_DIGEST_GENERATOR: generator });
@@ -159,7 +161,7 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.equal(await page.locator("#messages .tool-output").count(), 0, "no tool bubble stays in the thread");
   const marker = page.locator("#messages").getByTestId("activity-marker");
   assert.equal(await marker.count(), 1, "one marker per turn, not one per run of steps");
-  assert.match(await marker.innerText(), /2 steps · Bash · Read/);
+  assert.match(await marker.innerText(), /3 steps · Skill · Bash · Read/);
   const order = await page.locator("#messages").evaluate((box) => [...box.querySelectorAll(".message.user, .message.assistant, [data-testid='activity-marker']")]
     .map((node) => node.matches(".message.user") ? "prompt" : node.textContent?.includes("Checking") ? "intro" : node.textContent?.includes("Rotated") ? "answer" : "marker"));
   assert.deepEqual(order, ["prompt", "marker", "intro", "answer"], "the marker sits under the prompt that started the turn");
@@ -168,13 +170,34 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   const intro = page.locator("#messages .message.assistant", { hasText: "Checking" });
   assert.equal(await intro.evaluate((element) => element.classList.contains("quiet-answer")), true);
   assert.equal(await intro.locator(".message-meta").getByTestId("message-copy-button").count(), 1);
+  // The skills the turn loaded sit beside its model line.
+  const skillsChip = page.locator("#messages").getByTestId("message-skills");
+  assert.equal(await skillsChip.count(), 1);
+  assert.match(await skillsChip.innerText(), /skill\s*cert-tools/);
+  assert.equal(await skillsChip.evaluate((chip) => chip.previousElementSibling?.getAttribute("data-testid")), "assistant-attribution");
 
   // A wide window opens the panel beside the thread, not over it.
   const panel = page.getByTestId("activity-panel");
   await panel.waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded"), "true");
-  assert.equal(await panel.locator(".tool-output").count(), 2);
-  assert.equal(await panel.locator(".activity-group-prompt").innerText(), "Rotate the staging certificates", "a group is headed by its turn's prompt");
+  assert.equal(await panel.locator(".tool-output").count(), 3);
+  assert.equal(await panel.locator(".activity-group-prompt").textContent(), "Rotate the staging certificates", "a group is headed by its turn's prompt");
+  // The steps start collapsed under their count; the summary, statistics and suggestions start open.
+  assert.equal(await page.getByTestId("activity-list").isVisible(), false, "steps are collapsed by default");
+  assert.equal(await page.getByTestId("activity-steps-toggle").getAttribute("aria-expanded"), "false");
+  assert.equal(await page.getByTestId("activity-steps-count").innerText(), "3");
+  for (const section of ["activity-summary", "activity-stats", "activity-suggestions"]) assert.equal(await page.getByTestId(section).evaluate((details: HTMLDetailsElement) => details.open), true, `${section} is open`);
+  // Statistics count the steps, their tools and the skills loaded.
+  const stats = page.getByTestId("activity-stats-body");
+  assert.equal(await page.getByTestId("activity-stats-status").innerText(), "3 steps · 1 skill");
+  assert.deepEqual(await stats.locator(".activity-stat").evaluateAll((boxes) => boxes.map((box) => box.textContent)), ["1turn", "3steps", "0failed", "10sagent time"]);
+  assert.deepEqual(await page.getByTestId("activity-stats-tools").getByTestId("activity-usage-row").evaluateAll((rows) => rows.map((row) => row.querySelector(".activity-usage-name")?.textContent + " " + row.querySelector(".activity-usage-count")?.textContent)), ["Bash 1", "Read 1", "Skill 1"]);
+  assert.deepEqual(await page.getByTestId("activity-stats-skills").getByTestId("activity-usage-row").evaluateAll((rows) => rows.map((row) => row.querySelector(".activity-usage-name")?.textContent)), ["cert-tools"]);
+  assert.equal(await page.getByTestId("activity-suggestions-body").innerText(), "Suggestions come with the next summary.");
+  // The steps open under their header and collapse again.
+  await page.getByTestId("activity-steps-toggle").click();
+  await page.getByTestId("activity-list").waitFor();
+  assert.equal(await page.getByTestId("activity-steps-toggle").getAttribute("aria-expanded"), "true");
   const [messagesBox, panelBox] = await Promise.all([page.locator("#messages").boundingBox(), panel.boundingBox()]);
   assert.ok(messagesBox && panelBox && messagesBox.x + messagesBox.width <= panelBox.x + 1, `thread (${JSON.stringify(messagesBox)}) ends where the panel (${JSON.stringify(panelBox)}) begins`);
   assert.ok(panelBox.width >= 280, `panel is readable (${panelBox.width}px)`);
@@ -195,6 +218,21 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.match(await page.getByTestId("activity-summary-text").innerText(), /Rotate the staging certificates/);
   assert.match(await page.getByTestId("activity-summary-status").innerText(), /1 turn/);
   // Headings and long code wrap inside the panel: nothing scrolls sideways.
+  // The writer's suggestion shows in its own section; the skill already loaded is not suggested.
+  const suggestion = page.getByTestId("activity-suggestion");
+  await suggestion.first().waitFor();
+  assert.equal(await suggestion.count(), 1);
+  assert.match(await suggestion.innerText(), /new\s*cert-renewal\s*the renewal steps are repeated by hand/i);
+  assert.equal(await page.getByTestId("activity-suggestions-status").innerText(), "1");
+  // Statistics and suggestions collapse to their headers like the summary.
+  await page.getByTestId("activity-stats-toggle").click();
+  assert.equal(await stats.isVisible(), false);
+  await page.getByTestId("activity-stats-toggle").click();
+  await stats.waitFor();
+  await page.getByTestId("activity-suggestions-toggle").click();
+  assert.equal(await suggestion.isVisible(), false);
+  await page.getByTestId("activity-suggestions-toggle").click();
+  await suggestion.waitFor();
   const widths = await page.getByTestId("activity-summary").evaluate((box) => ({ box: [box.scrollWidth, box.clientWidth], text: [box.querySelector(".activity-summary-text").scrollWidth, box.querySelector(".activity-summary-text").clientWidth] }));
   assert.ok(widths.box[0] <= widths.box[1] && widths.text[0] <= widths.text[1] + 1, `the summary does not scroll sideways (${JSON.stringify(widths)})`);
 
@@ -250,19 +288,22 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.locator("#settingsDialog[open]").waitFor({ state: "detached" });
 
   // Steps stay inspectable in the panel.
-  await panel.getByText("Bash", { exact: true }).first().click();
+  await panel.locator(".tool-output .tool-name", { hasText: "Bash" }).first().click();
   await panel.getByText("production.pem").waitFor();
 
   // Collapsing hands the width back and is remembered.
+  await page.getByTestId("activity-steps-toggle").click();
+  await page.getByTestId("activity-list").waitFor({ state: "hidden" });
   await page.getByTestId("activity-panel-close").click();
   await panel.waitFor({ state: "hidden" });
   assert.equal(await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded"), "false");
   const widened = await page.locator("#messages").boundingBox();
   assert.ok(widened && messagesBox && widened.width > messagesBox.width + 200, "the thread takes the freed width");
 
-  // The marker reopens the panel on its group.
+  // The marker reopens the panel on its group, with the steps open.
   await marker.click();
   await panel.waitFor({ state: "visible" });
+  await page.getByTestId("activity-list").waitFor();
   await waitFrames();
   assert.equal(await panel.locator(".activity-group.highlighted").count(), 1);
 
@@ -279,7 +320,12 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "agent_start" }));
   await working.waitFor();
   assert.match(await working.innerText(), /Working…/);
-  await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "toolStart", toolName: "Bash", toolCallId: "live-1", toolTarget: { target: "npm run migrate" } }));
+  await page.evaluate(async () => {
+    const { handleSocketPayload } = await import("/app/socket.js");
+    handleSocketPayload({ type: "toolStart", toolName: "Skill", toolCallId: "live-0", toolTarget: { skill: "db-tools" } });
+    handleSocketPayload({ type: "toolEnd", toolName: "Skill", toolCallId: "live-0", text: "Launching skill: db-tools" });
+    handleSocketPayload({ type: "toolStart", toolName: "Bash", toolCallId: "live-1", toolTarget: { target: "npm run migrate" } });
+  });
   assert.match(await working.innerText(), /Running Bash · npm run migrate/);
   await page.evaluate(async () => {
     const { handleSocketPayload } = await import("/app/socket.js");
@@ -288,6 +334,11 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   });
   assert.match(await working.innerText(), /Working…/);
   assert.equal(await lastInThread(), "live-activity", "new answers land above the working row");
+  // The turn's skills move to its newest answer, and the statistics count the new ones.
+  assert.equal(await skillsChip.count(), 1);
+  assert.match(await skillsChip.innerText(), /skills\s*cert-tools, db-tools/);
+  assert.equal(await skillsChip.evaluate((chip) => chip.closest(".message-actions")?.previousElementSibling?.textContent?.includes("Migration 42 finished")), true);
+  await page.waitForFunction(() => document.querySelector("[data-testid='activity-stats-status']")?.textContent === "305 steps · 2 skills");
   await working.click();
   await page.waitForFunction(() => document.querySelector("#activityList .activity-group.highlighted"));
   await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "agent_end" }));

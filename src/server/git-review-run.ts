@@ -135,6 +135,7 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
       input.onText?.(soFar);
     }
   });
+  let turnTimer: NodeJS.Timeout | undefined;
   try {
     const base = session.settings();
     const settings: HarnessModelSettings = {
@@ -155,6 +156,7 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
         reject(new GitReviewRunError(504, "Review timed out"));
       }, REVIEW_TURN_TIMEOUT_MS);
       timer.unref();
+      turnTimer = timer;
       const stop = session.subscribe((event) => {
         if (event.type === "agent_end") {
           clearTimeout(timer);
@@ -168,6 +170,8 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
         }
       });
     });
+    // A prompt that fails before the turn ends leaves `done` unawaited; its later outcome is moot.
+    done.catch(() => undefined);
     await session.prompt({ text: reviewPrompt(input) });
     await done;
     const answer = collectAnswer(events);
@@ -183,6 +187,7 @@ export async function runGitReview(input: RunGitReviewInput): Promise<RunGitRevi
     if (error instanceof GitReviewRunError) throw error;
     throw new GitReviewRunError(502, error instanceof Error ? error.message : "Review failed");
   } finally {
+    clearTimeout(turnTimer);
     unsubscribe();
     try {
       if (session.isBusy()) await session.cancel();

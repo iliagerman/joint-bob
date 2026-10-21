@@ -330,18 +330,30 @@
               <h2>Activity</h2>
               <button class="ghost icon-button activity-panel-close" id="activityPanelCloseButton" type="button" aria-label="Collapse activity" title="Collapse activity" data-testid="activity-panel-close"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"/></svg></button>
             </header>
-            <details class="activity-summary" id="activitySummary" open data-testid="activity-summary">
-              <summary data-testid="activity-summary-toggle" title="Show or collapse the summary"><span class="activity-summary-chevron" aria-hidden="true">›</span><span>Summary</span><span class="activity-summary-status" id="activitySummaryStatus" data-testid="activity-summary-status"></span></summary>
-              <div class="activity-summary-body">
-                <div class="activity-summary-text md" id="activitySummaryText" data-testid="activity-summary-text"></div>
-                <div class="activity-summary-actions">
-                  <button class="ghost compact activity-summary-refresh" id="activitySummaryRefreshButton" type="button" data-testid="activity-summary-refresh">Update summary</button>
-                  <button class="ghost compact activity-summary-model" id="activitySummaryModelButton" type="button" title="Choose the agent and model that write summaries" data-testid="activity-summary-model"></button>
+            <!-- The overview (summary, statistics, skill suggestions) keeps its place above the
+                 steps, which open on demand and scroll on their own. -->
+            <div class="activity-overview" id="activityOverview" data-testid="activity-overview">
+              <details class="activity-section activity-summary" id="activitySummary" open data-testid="activity-summary">
+                <summary data-testid="activity-summary-toggle" title="Show or collapse the summary"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Summary</span><span class="activity-section-status" id="activitySummaryStatus" data-testid="activity-summary-status"></span></summary>
+                <div class="activity-section-body">
+                  <div class="activity-summary-text md" id="activitySummaryText" data-testid="activity-summary-text"></div>
+                  <div class="activity-summary-actions">
+                    <button class="ghost compact activity-summary-refresh" id="activitySummaryRefreshButton" type="button" data-testid="activity-summary-refresh">Update summary</button>
+                    <button class="ghost compact activity-summary-model" id="activitySummaryModelButton" type="button" title="Choose the agent and model that write summaries" data-testid="activity-summary-model"></button>
+                  </div>
                 </div>
-              </div>
-            </details>
-            <div class="activity-steps-heading"><span>Steps</span><span class="activity-steps-count" id="activityStepsCount" data-testid="activity-steps-count"></span></div>
-            <div class="activity-list" id="activityList" data-testid="activity-list">
+              </details>
+              <details class="activity-section activity-stats" id="activityStats" open data-testid="activity-stats">
+                <summary data-testid="activity-stats-toggle" title="Show or collapse the statistics"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Statistics</span><span class="activity-section-status" id="activityStatsStatus" data-testid="activity-stats-status"></span></summary>
+                <div class="activity-section-body activity-stats-body" id="activityStatsBody" data-testid="activity-stats-body"></div>
+              </details>
+              <details class="activity-section activity-suggestions" id="activitySuggestions" open data-testid="activity-suggestions">
+                <summary data-testid="activity-suggestions-toggle" title="Show or collapse the skill suggestions"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Skill suggestions</span><span class="activity-section-status" id="activitySuggestionsStatus" data-testid="activity-suggestions-status"></span></summary>
+                <div class="activity-section-body activity-suggestions-body" id="activitySuggestionsBody" data-testid="activity-suggestions-body"></div>
+              </details>
+            </div>
+            <button class="activity-steps-heading" id="activityStepsToggle" type="button" aria-expanded="false" aria-controls="activityList" title="Show or collapse the steps" data-testid="activity-steps-toggle"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Steps</span><span class="activity-steps-count" id="activityStepsCount" data-testid="activity-steps-count"></span></button>
+            <div class="activity-list" id="activityList" data-testid="activity-list" hidden>
               <p class="activity-empty">Tool calls and thinking from this conversation appear here.</p>
             </div>
           </aside>

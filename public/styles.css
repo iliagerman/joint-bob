@@ -1830,6 +1830,8 @@ select.chat-toolbar-control {
 .message.assistant + .message-actions { align-self: flex-start; justify-content: flex-start; max-width: calc(100% - 18px); margin-left: 9px; }
 .message-attribution { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: min(520px, calc(100vw - 100px)); height: 24px; padding: 0 7px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: color-mix(in srgb, var(--field) 62%, transparent); color: var(--muted); font-family: var(--mono); font-size: 10px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
 .message-attribution-icon { width: 12px; height: 12px; flex: none; color: var(--text); }
+.message-skills { display: inline-flex; flex: 0 3 auto; align-items: center; gap: 5px; min-width: 0; max-width: 260px; height: 24px; padding: 0 7px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--amber) 8%, transparent); color: var(--muted); font-family: var(--mono); font-size: 10px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+.message-skills-label { flex: none; color: var(--amber); }
 .message-attribution-icon.pi { color: var(--accent); }
 .message-copy { display: inline-grid; place-items: center; min-width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); opacity: 0.6; transition: background-color 140ms ease, color 140ms ease, opacity 140ms ease; }
 .message-copy:hover, .message-copy:focus-visible { opacity: 1; color: var(--text); background: var(--field); }
@@ -1886,14 +1888,40 @@ select.chat-toolbar-control {
 .activity-panel-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 6px 14px; }
 .activity-panel-header h2 { margin: 0; color: var(--text); font-size: 13px; font-weight: 650; letter-spacing: 0.01em; }
 /* The summary keeps its height and the steps take what is left: a long steps list once squeezed it to a few pixels. */
-.activity-summary { flex: 0 0 auto; max-height: 42%; margin: 0 10px 8px; overflow-x: hidden; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); scrollbar-width: thin; }
-.activity-summary > summary { position: sticky; top: 0; display: flex; align-items: baseline; gap: 8px; padding: 8px 11px; list-style: none; cursor: pointer; background: var(--panel); color: var(--text); font-size: 12px; font-weight: 650; }
-.activity-summary > summary::-webkit-details-marker { display: none; }
-.activity-summary-chevron { flex: none; color: var(--muted); font-size: 14px; line-height: 1; transform: rotate(0); transition: transform 0.16s ease; }
-.activity-summary[open] .activity-summary-chevron { transform: rotate(90deg); }
-.activity-summary > summary:hover .activity-summary-chevron { color: var(--text); }
-.activity-summary-status { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-align: right; }
-.activity-summary-body { display: grid; gap: 8px; padding: 0 11px 10px; }
+/* The overview (summary, statistics, suggestions) sits above the steps and scrolls on its own;
+   with the steps open it keeps at most about half the panel, so neither pushes the other away. */
+.activity-overview { display: flex; flex: 0 1 auto; flex-direction: column; gap: 8px; min-height: 0; padding: 0 10px 8px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.activity-panel.steps-open .activity-overview { max-height: 55%; }
+.activity-section { flex: none; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.activity-section > summary { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 8px; padding: 8px 11px; list-style: none; cursor: pointer; border-radius: var(--radius-ctl); background: var(--panel); color: var(--text); font-size: 12px; font-weight: 650; }
+.activity-section > summary::-webkit-details-marker { display: none; }
+.activity-section-chevron { flex: none; color: var(--muted); font-size: 14px; line-height: 1; transform: rotate(0); transition: transform 0.16s ease; }
+.activity-section[open] > summary .activity-section-chevron, .activity-steps-heading[aria-expanded="true"] .activity-section-chevron { transform: rotate(90deg); }
+.activity-section > summary:hover .activity-section-chevron, .activity-steps-heading:hover .activity-section-chevron { color: var(--text); }
+.activity-section-status { min-width: 0; margin-left: auto; overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.activity-section-body { display: grid; gap: 8px; min-width: 0; padding: 0 11px 10px; }
+.activity-placeholder { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.activity-stats-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); gap: 6px; }
+.activity-stat { display: grid; gap: 1px; min-width: 0; padding: 6px 8px; border-radius: 6px; background: var(--field); }
+.activity-stat-value { overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.activity-stat-value.failed { color: var(--danger); }
+.activity-stat-label { color: var(--muted); font-size: 10.5px; }
+.activity-usage { display: grid; gap: 5px; min-width: 0; }
+.activity-usage h3 { margin: 2px 0 0; color: var(--muted); font-family: var(--mono); font-size: 10.5px; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; }
+.activity-usage-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 2px 8px; font-size: 12px; }
+.activity-usage-name { min-width: 0; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+.activity-usage-count { color: var(--muted); font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.activity-usage-count .failed { color: var(--danger); }
+.activity-usage-bar { grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 2px; background: var(--line); }
+.activity-usage-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.activity-usage.skills .activity-usage-bar > span { background: var(--amber); }
+.activity-usage-more { color: var(--muted); font-size: 11px; }
+.activity-suggestion { display: grid; gap: 3px; min-width: 0; padding: 7px 8px; border-radius: 6px; background: var(--field); }
+.activity-suggestion-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.activity-suggestion-kind { flex: none; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+.activity-suggestion-kind.new { background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--amber); }
+.activity-suggestion-name { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.activity-suggestion-reason { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .activity-summary-text { color: var(--text); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
 .activity-summary-text.placeholder { color: var(--muted); }
 .activity-summary-text > :first-child { margin-top: 0; }
@@ -1903,7 +1931,9 @@ select.chat-toolbar-control {
 .activity-summary-refresh[hidden] { display: none; }
 .activity-summary-model { min-width: 0; max-width: 100%; min-height: 26px; overflow: hidden; padding: 2px 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .activity-summary-model:hover, .activity-summary-model:focus-visible { color: var(--text); }
-.activity-steps-heading { display: flex; flex: none; align-items: center; justify-content: space-between; padding: 4px 14px 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.activity-steps-heading { display: flex; flex: none; align-items: baseline; gap: 8px; min-height: 0; margin: 0 10px 8px; padding: 8px 11px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); color: var(--text); font: inherit; font-size: 12px; font-weight: 650; text-align: left; cursor: pointer; }
+.activity-steps-count { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; font-weight: 400; }
+.activity-list[hidden] { display: none; }
 .activity-list { display: flex; flex: 1 1 0; flex-direction: column; gap: 12px; min-height: 0; padding: 0 10px 14px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .activity-empty { margin: 8px 4px; color: var(--muted); font-size: 12px; }
 .activity-empty[hidden] { display: none; }

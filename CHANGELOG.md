@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Added statistics and skill suggestions to the Activity panel. Statistics count turns, steps, failures, agent time, and how often each tool and skill was used; suggestions name up to three skills the summary writer thinks would help, either installed ones the conversation did not load or new ones for work it repeats by hand. Steps now start collapsed under their own header, and an answer shows the skills its turn loaded beside the model.
 - Changed the terminal to dock along the bottom or the right of the workspace instead of covering the chat, with a draggable divider whose size and position follow your account.
 
 ## 2.134.0 — 2026-10-21

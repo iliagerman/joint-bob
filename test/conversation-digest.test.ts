@@ -3,8 +3,8 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, parseDigestAnswer, turnCount, type ConversationDigest, type DigestMessage } from "../src/conversation-digest.js";
-import { routedSummaryModel } from "../src/server/conversation-digest-runner.js";
+import { coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, keptSuggestions, parseDigestAnswer, parseDigestReply, turnCount, usedSkills, type ConversationDigest, type DigestMessage } from "../src/conversation-digest.js";
+import { routedSummaryModel } from "../src/conversation-summary-routing.js";
 import { claudeProjectDir } from "../src/session-paths.js";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 
@@ -58,6 +58,48 @@ test("the prompt folds new messages into the current summary and keeps the panel
   assert.equal(parseDigestAnswer("  plain  "), "plain");
 });
 
+test("the writer suggests installed skills by their exact name, new ones for repeated work, and never one already used", () => {
+  const skills = {
+    catalog: [{ name: "brainstorming", description: "Explore intent before building" }, { name: "pdf", description: "Work with PDF files" }],
+    used: ["joint-bob-resources:pdf"],
+    suggestions: [{ kind: "new" as const, skill: "cert-rotation", reason: "the rotation repeats" }],
+  };
+  const prompt = digestPrompt("**Goal** — x", skills);
+  assert.match(prompt, /write a line with only @@skills/);
+  assert.match(prompt, /Skills the conversation used: joint-bob-resources:pdf\./);
+  assert.match(prompt, /Your last suggestions; keep, change or drop them:\nnew cert-rotation — the rotation repeats/);
+  assert.match(prompt, /Installed skills:\n- brainstorming: Explore intent before building\n- pdf: Work with PDF files/);
+  assert.match(prompt, /Current summary:\n\*\*Goal\*\* — x$/, "the current summary still comes last");
+  assert.doesNotMatch(digestPrompt(undefined), /@@skills/, "without skill context the prompt asks for no suggestions");
+
+  const reply = parseDigestReply([
+    "```markdown", "**Goal** — y", "```", "@@skills",
+    "- use Brainstorming — plan the rotation first",
+    "use pdf — already loaded",
+    "use made-up — not installed",
+    "new brainstorming — an installed name is not new",
+    "new cert-rotation: the same five steps every week",
+    "2. new rotate-ca — rotate the CA the same way",
+    "new fourth — over the limit",
+  ].join("\n"), skills);
+  assert.equal(reply.summary, "**Goal** — y", "the summary's code fence is removed when suggestions follow it");
+  assert.deepEqual(reply.suggestions, [
+    { kind: "use", skill: "brainstorming", reason: "plan the rotation first" },
+    { kind: "new", skill: "cert-rotation", reason: "the same five steps every week" },
+    { kind: "new", skill: "rotate-ca", reason: "rotate the CA the same way" },
+  ]);
+  assert.deepEqual(parseDigestReply("**Goal** — z", skills), { summary: "**Goal** — z" }, "an answer without the suggestions line leaves the last ones standing");
+  assert.deepEqual(parseDigestReply("**Goal** — z\n@@skills\n", skills), { summary: "**Goal** — z", suggestions: [] }, "an empty list clears them");
+  assert.deepEqual(keptSuggestions([{ kind: "use", skill: "pdf", reason: "r" }, { kind: "new", skill: "cert-rotation", reason: "r" }], ["joint-bob-resources:pdf"]), [{ kind: "new", skill: "cert-rotation", reason: "r" }]);
+  assert.deepEqual(usedSkills([
+    { role: "toolResult", toolTarget: { skill: "pdf" } },
+    { role: "toolResult", toolTarget: { skill: "joint-bob-resources:pdf" } },
+    { role: "toolResult", isError: true, toolTarget: { skill: "broken" } },
+    { role: "assistant", toolTarget: { skill: "mentioned" } },
+    { role: "toolCall", toolTarget: { skill: "brainstorming" } },
+  ]), ["pdf", "brainstorming"], "a failed load and a mere mention do not count");
+});
+
 test("the routing classifier's tier writes the summary only when it is sure and the model is allowed", () => {
   const levels = { "2": { provider: "anthropic", modelId: "haiku", thinkingLevel: "low", description: "easy" }, "8": { modelId: "opus", thinkingLevel: "high", description: "hard" } };
   const own = { harnessId: "claude", provider: "claude", modelId: "sonnet" };
@@ -75,7 +117,7 @@ test("the digest route folds new messages into the summary and follows the node'
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-digest-"));
   const generator = path.join(root, "digest-generator.mjs");
   const calls = path.join(root, "calls.jsonl");
-  await writeFile(generator, `import { appendFile } from "node:fs/promises";\nexport default async (input) => { if (input.material.includes("FAIL please")) throw new Error("model unavailable"); await appendFile(${JSON.stringify(calls)}, JSON.stringify(input) + "\\n"); return "\`\`\`markdown\\n**Goal** — summary " + input.material.split("\\n\\n").length + "\\n\`\`\`"; };\n`);
+  await writeFile(generator, `import { appendFile } from "node:fs/promises";\nexport default async (input) => { if (input.material.includes("FAIL please")) throw new Error("model unavailable"); await appendFile(${JSON.stringify(calls)}, JSON.stringify(input) + "\\n"); return "\`\`\`markdown\\n**Goal** — summary " + input.material.split("\\n\\n").length + "\\n\`\`\`\\n@@skills\\nnew cert-rotation — the same steps each time\\nuse made-up — not installed\\nnew pdf — already used"; };\n`);
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
   const project = projectNamed(node, "Infra Scripts");
@@ -84,8 +126,8 @@ test("the digest route folds new messages into the summary and follows the node'
   const record = (role: "user" | "assistant", index: number, content: unknown[]) => JSON.stringify({ type: role, uuid: `${conversationId}-${index}`, cwd: project.path, timestamp: new Date(Date.parse("2026-09-01T10:00:00Z") + index * 1_000).toISOString(), message: { role, content } });
   await writeFile(transcript, [
     record("user", 0, [{ type: "text", text: "Rotate the staging certificates" }]),
-    record("assistant", 1, [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls certs" } }]),
-    record("user", 2, [{ type: "tool_result", tool_use_id: "t1", content: "staging.pem" }]),
+    record("assistant", 1, [{ type: "tool_use", id: "t0", name: "Skill", input: { skill: "pdf" } }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls certs" } }]),
+    record("user", 2, [{ type: "tool_result", tool_use_id: "t0", content: "Launching skill: pdf" }, { type: "tool_result", tool_use_id: "t1", content: "staging.pem" }]),
     record("assistant", 3, [{ type: "text", text: "Rotated staging.pem." }]),
   ].join("\n") + "\n");
   const server = await startDevNode(environment, node, { JOINT_BOB_DIGEST_GENERATOR: generator });
@@ -117,6 +159,8 @@ test("the digest route folds new messages into the summary and follows the node'
     const [firstCall] = await callsMade();
     assert.equal(firstCall.material, "User: Rotate the staging certificates\n\nAssistant: Rotated staging.pem.", "only what was said, never tool output");
     assert.doesNotMatch(firstCall.instructions, /Current summary:/);
+    assert.match(firstCall.instructions, /Skills the conversation used: pdf\./, "the writer knows which skills were loaded");
+    assert.deepEqual(first.body.digest?.suggestions, [{ kind: "new", skill: "cert-rotation", reason: "the same steps each time" }], "an uninstalled or already used skill is not suggested");
     assert.deepEqual(firstCall.run, { ...sonnet, thinkingLevel: "", source: "conversation" });
 
     assert.equal((await api<DigestResponse>(node, auth, "GET", endpoint)).body.stale, false);

@@ -1,14 +1,15 @@
 import { getDifficultyClassifier } from "../classifiers/registry.js";
-import type { DifficultyClassification } from "../classifiers/contract.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { type ConversationDigest, type DigestModel, coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, parseDigestAnswer, saveDigest, storedDigest, turnCount } from "../conversation-digest.js";
+import { type ConversationDigest, type DigestModel, type DigestSkills, coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, keptSuggestions, parseDigestReply, saveDigest, storedDigest, turnCount, usedSkills } from "../conversation-digest.js";
 import { effectiveSummaryPolicy, type EffectiveSummaryPolicy, summaryWriterLabel } from "../conversation-summary-policy.js";
+import { type ConversationModel, routedSummaryModel, type SummaryRun } from "../conversation-summary-routing.js";
 import { getHarness } from "../harnesses.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
 import { resourceOwner } from "../ownership.js";
 import { relaySummaryPolicies } from "../relay/resource-policy.js";
 import { activeRoutingConfig, routingConfigDatabase } from "../routing-configs.js";
-import { automaticRoutingModelAllowed, type RoutingMapping } from "../routing-policy.js";
+import { type RoutingMapping } from "../routing-policy.js";
+import { resourceInventory } from "../resource-inventory.js";
 import { genericSecretEnvironment } from "../secrets.js";
 import { getSettings } from "../settings.js";
 import { getProject } from "../store.js";
@@ -24,11 +25,6 @@ export class DigestError extends Error {
     super(message);
   }
 }
-
-/** The agent and model a conversation is using: live from its session, or as the page reports it. */
-export interface ConversationModel { harnessId: string; provider?: string; modelId?: string }
-
-export interface SummaryRun extends DigestModel { thinkingLevel: string }
 
 // Messages often arrive in bursts (an answer, then the turn's end); one write covers them.
 const AUTO_DELAY_MS = 2_500;
@@ -54,19 +50,6 @@ function lastAttribution(messages: ChatMessage[]): ConversationModel | undefined
     if (attribution) return { harnessId: attribution.harnessId, provider: attribution.provider, modelId: attribution.modelId };
   }
   return undefined;
-}
-
-/**
- * The routing configuration's model for a classified summary task, on the conversation's
- * agent, or null when the classification is unsure, abstained, unmapped or not allowed.
- */
-export function routedSummaryModel(levels: Record<string, RoutingMapping | null> | undefined, classification: DifficultyClassification | null, threshold: number, own: ConversationModel, fixedProvider?: string): SummaryRun | null {
-  if (!classification || classification.abstained || classification.confidence < threshold) return null;
-  const mapping = levels?.[String(classification.level)] ?? null;
-  if (!mapping) return null;
-  const provider = mapping.provider ?? fixedProvider ?? own.provider ?? "";
-  if (!automaticRoutingModelAllowed(provider, mapping.modelId)) return null;
-  return { harnessId: own.harnessId, provider, modelId: mapping.modelId, thinkingLevel: mapping.thinkingLevel, source: "classifier" };
 }
 
 /** Asks the project's routing classifier which of its tiers should write this summary. */
@@ -127,6 +110,21 @@ export async function digestState(project: ProjectRecord, conversationId: string
   return { digest, stale: digestIsStale(digest ?? undefined, said), turns: turnCount(said) };
 }
 
+/** The skills the conversation's agent can load in this project, which the writer may suggest. */
+async function skillCatalog(project: ProjectRecord, conversationId: string, harnessId: string): Promise<DigestSkills["catalog"]> {
+  try {
+    const { skills } = await resourceInventory({ projectPath: project.path, projectId: project.id, conversationId });
+    const seen = new Set<string>();
+    return skills
+      .filter((skill) => skill.harnesses.includes(harnessId as HarnessId) && skill.activation?.[harnessId as HarnessId]?.enabled !== false)
+      .filter((skill) => !seen.has(skill.name) && Boolean(seen.add(skill.name)))
+      .map((skill) => ({ name: skill.name, description: skill.description }));
+  } catch (error) {
+    console.warn("Summary skill catalog unavailable", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
+    return [];
+  }
+}
+
 async function writeDigest(project: ProjectRecord, conversationId: string, live: ConversationModel | undefined, onWriting: () => void): Promise<ConversationDigest> {
   const { messages, lastHarness } = await conversationTranscript(project, conversationId);
   const said = digestMessages(messages);
@@ -136,8 +134,10 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
     throw new DigestError(409, "Nothing to summarize yet");
   }
   const material = digestMaterial(said, coveredMessages(previous, said));
-  const instructions = digestPrompt(previous?.summary);
   onWriting();
+  const used = usedSkills(messages);
+  const skills: DigestSkills = { catalog: await skillCatalog(project, conversationId, live?.harnessId ?? lastAttribution(messages)?.harnessId ?? lastHarness), used, suggestions: keptSuggestions(previous?.suggestions, used) };
+  const instructions = digestPrompt(previous?.summary, skills);
   const run = await summaryRun(await summaryPolicyNow(), project, live, messages, lastHarness, material);
   const model: DigestModel = { harnessId: run.harnessId, provider: run.provider, modelId: run.modelId, source: run.source };
   const override = process.env.JOINT_BOB_DIGEST_GENERATOR;
@@ -154,9 +154,9 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
     model.provider = result.provider;
     model.modelId = result.modelId;
   }
-  const summary = parseDigestAnswer(answer);
-  if (!summary) throw new DigestError(502, "The agent returned an empty summary; try again");
-  const digest: ConversationDigest = { summary, messages: said.length, turns: turnCount(said), updatedAt: new Date().toISOString(), model };
+  const reply = parseDigestReply(answer, skills);
+  if (!reply.summary) throw new DigestError(502, "The agent returned an empty summary; try again");
+  const digest: ConversationDigest = { summary: reply.summary, messages: said.length, turns: turnCount(said), updatedAt: new Date().toISOString(), model, suggestions: reply.suggestions ?? skills.suggestions };
   saveDigest(project.id, conversationId, digest);
   return digest;
 }
