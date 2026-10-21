@@ -3,7 +3,7 @@ import { harnessLabel } from "../harness-metadata.js";
 import { isNodeAdmin } from "./node-admin.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { syncBrowserButton } from "./browser.js";
-import { clearThinkingBubble } from "./chat-transcript.js";
+import { clearThinkingBubble, syncLiveActivity } from "./chat-transcript.js";
 import { changeReasoningLevel, hideCommandAutocomplete, renderReasoningOptions, renderToolsDialog, syncModelButton } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { syncQuickActionLabels } from "./focus-ui.js";
@@ -189,6 +189,7 @@ export function updateStatus(status) {
   if (!status.isStreaming) clearThinkingBubble();
   const turnBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
   state.sessionBusy = turnBusy;
+  syncLiveActivity();
   elements.abortButton.disabled = !turnBusy;
   setStatus(turnBusy ? `${harnessLabel(state.harnesses, state.engine)} is working` : status.backgroundRunning ? "Background tasks running" : "Connected", true, false, turnBusy);
   if (status.sessionName) syncChatTitleFromSessions(status.sessionName);

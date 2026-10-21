@@ -8,7 +8,7 @@ import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
 import { activityConversationChanged, activityProgressed, refreshActivitySummary } from "./activity-panel.js";
-import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
+import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncLiveActivity, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { refreshBudgetNotice } from "./budget-dialog.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
@@ -492,6 +492,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "promptStarted") {
     state.scheduledTurn = payload.scheduled === true;
     clearQueuedMark(payload.queueId);
+    syncLiveActivity();
     return;
   }
   if (payload.type === "promptRouted") {
@@ -546,6 +547,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "thinkingStart") {
     if (state.scheduledTurn) return;
     state.thinkingBubble = appendMessage("thinking", "Thinking…\n");
+    syncLiveActivity();
     return;
   }
   if (payload.type === "thinkingDelta") {
@@ -567,6 +569,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const bubble = appendToolMessage(payload.toolName, payload.toolCallId, Number.isFinite(startedAt) ? startedAt : Date.now(), undefined, payload.toolTarget);
     state.toolBubbles.set(payload.toolCallId, bubble);
     startDurationTicker();
+    syncLiveActivity();
     return;
   }
   if (payload.type === "toolUpdate") {
@@ -583,6 +586,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const durationMs = bubble._startedAt && Number.isFinite(finishedAt) ? Math.max(0, finishedAt - bubble._startedAt) : undefined;
     updateToolMessage(bubble, payload.text || "", payload.isError ? "Failed" : "Done", payload.isError, durationMs);
     state.toolBubbles.delete(payload.toolCallId);
+    syncLiveActivity();
     activityProgressed();
     return;
   }
@@ -599,6 +603,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const startedAt = Date.parse(payload.timestamp || "");
     startTurnTimer(Number.isFinite(startedAt) ? startedAt : Date.now());
     state.sessionBusy = true;
+    syncLiveActivity();
     // The turn starting means the agent has everything sent before it.
     markUserMessagesRead();
     const session = state.sessions.find((candidate) => state.activeSessionId
@@ -621,6 +626,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     state.scheduledTurn = false;
     setStatus("Connected", true);
     state.sessionBusy = false;
+    syncLiveActivity();
     refreshActivitySummary({ afterTurn: true });
     if (state.lastTurnStartedAt) {
       const finishedAt = Date.parse(payload.timestamp || "");
@@ -637,6 +643,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     logTranscriptChanges(state.activeConversationId || state.activeSessionId, payload.messages, "synchronized update");
     const resumeFromTop = rerenderChatTranscript(payload.messages, segments, state.conversationStartedAt);
     restoreConversationTimer(payload.messages, state.lastTurnStartedAt);
+    syncLiveActivity();
     if (state.followChat) requestPinChat();
     else restoreChatScrollTop(resumeFromTop);
     activityProgressed();

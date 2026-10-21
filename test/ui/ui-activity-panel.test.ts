@@ -153,6 +153,20 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.equal(await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).isVisible(), true);
   const stepsBox = await page.getByTestId("activity-list").boundingBox();
   assert.ok(stepsBox && summaryBox && stepsBox.y >= summaryBox.y + summaryBox.height, "the steps list scrolls below the summary");
+  // The summary stays at the top while the steps scroll.
+  await page.getByTestId("activity-list").evaluate((list) => { list.scrollTop = list.scrollHeight; });
+  await waitFrames();
+  assert.deepEqual(await page.getByTestId("activity-summary").boundingBox(), summaryBox, "scrolling the steps leaves the summary where it is");
+  assert.equal(await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).isVisible(), true);
+  // It collapses to its header line and opens again.
+  await page.getByTestId("activity-summary-toggle").click();
+  assert.equal(await page.getByTestId("activity-summary-text").isVisible(), false);
+  assert.equal(await page.getByTestId("activity-summary-toggle").isVisible(), true, "the collapsed summary keeps its header");
+  assert.match(await page.getByTestId("activity-summary-status").innerText(), /1 turn/);
+  const collapsed = await page.getByTestId("activity-summary").boundingBox();
+  assert.ok(collapsed && collapsed.height < 50, `collapsed to one line (${collapsed?.height}px)`);
+  await page.getByTestId("activity-summary-toggle").click();
+  await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).waitFor();
 
   // The model that writes summaries is named in the panel and chosen in Settings.
   const modelButton = page.getByTestId("activity-summary-model");
@@ -202,14 +216,27 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.locator("#messages").getByText("Migration 42 is running.").waitFor({ timeout: 20_000 });
   await page.getByTestId("activity-summary-text").getByText("No summary yet.").waitFor({ timeout: 15_000 });
   assert.equal(summaryWrites, 1, "landing on an idle conversation writes nothing");
+  // While a turn runs, the thread itself ends with a row naming what is happening.
+  const working = page.locator("#messages").getByTestId("live-activity");
+  const lastInThread = () => page.locator("#messages").evaluate((box) => box.lastElementChild?.getAttribute("data-testid"));
+  await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "agent_start" }));
+  await working.waitFor();
+  assert.match(await working.innerText(), /Working…/);
+  await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "toolStart", toolName: "Bash", toolCallId: "live-1", toolTarget: { target: "npm run migrate" } }));
+  assert.match(await working.innerText(), /Running Bash · npm run migrate/);
   await page.evaluate(async () => {
     const { handleSocketPayload } = await import("/app/socket.js");
-    handleSocketPayload({ type: "agent_start" });
+    handleSocketPayload({ type: "toolEnd", toolName: "Bash", toolCallId: "live-1", text: "migrated" });
     handleSocketPayload({ type: "assistantFinal", text: "Migration 42 finished; checking row counts." });
   });
+  assert.match(await working.innerText(), /Working…/);
+  assert.equal(await lastInThread(), "live-activity", "new answers land above the working row");
   await page.getByTestId("activity-summary-text").locator("strong", { hasText: "Goal" }).waitFor({ timeout: 15_000 });
   assert.equal(summaryWrites, 2);
+  await working.click();
+  await page.waitForFunction(() => document.querySelector("#activityList .activity-group.highlighted"));
   await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "agent_end" }));
+  await working.waitFor({ state: "detached" });
 
   // On a phone the panel floats over the thread instead of squeezing it.
   await page.setViewportSize({ width: 390, height: 844 });

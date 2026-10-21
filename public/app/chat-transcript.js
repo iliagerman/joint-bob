@@ -4,7 +4,7 @@ import { completedConversationDuration, formatDateTime, formatDuration } from ".
 import { openQueuedModelPicker, queuedReasoningLevels } from "./composer-dialogs.js";
 import { renderMarkdown } from "../markdown.js";
 import { markAutoReply } from "./auto-respond.js";
-import { appendToActivityGroup, clearActivity, currentActivityGroup, startActivityGroup, syncActivityGroup } from "./activity-panel.js";
+import { appendToActivityGroup, clearActivity, currentActivityGroup, revealActivityGroup, setActivityPanelOpen, startActivityGroup, syncActivityGroup } from "./activity-panel.js";
 import { elements } from "./elements.js";
 import { brandIcon, menuIcon } from "./icons.js";
 import { openFileAction, projectFileUrl } from "./project-files.js";
@@ -17,7 +17,65 @@ export function clearThinkingBubble() {
     state.thinkingBubble.remove();
     state.thinkingBubble = null;
     syncActivityGroup(group);
+    if (liveActivity) syncLiveActivity();
   }
+}
+
+// The thread's own sign that the agent is working. Its steps live in the activity
+// panel, so one row at the end of the conversation names what runs now, and opens
+// the panel on it. It goes away when the turn ends.
+let liveActivity = null;
+
+function liveActivityRow() {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "live-activity";
+  row.dataset.testid = "live-activity";
+  const dot = document.createElement("span");
+  dot.className = "live-activity-dot";
+  dot.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.className = "live-activity-label";
+  const time = document.createElement("span");
+  time.className = "live-activity-time";
+  row.append(dot, label, time);
+  row.addEventListener("click", () => {
+    const section = row._step?._activityGroup?.section ?? currentActivityGroup()?.section;
+    if (section?.isConnected) revealActivityGroup(section);
+    else setActivityPanelOpen(true);
+  });
+  return row;
+}
+
+function renderLiveActivityTime(now = Date.now()) {
+  if (!liveActivity) return;
+  liveActivity.querySelector(".live-activity-time").textContent = liveActivity._step?._startedAt ? formatDuration(Math.max(1, now - liveActivity._step._startedAt)) : "";
+}
+
+/** Shows, updates or removes the working row from the running steps and the turn state. */
+export function syncLiveActivity() {
+  const step = [...state.toolBubbles.values()].at(-1) ?? null;
+  if (!state.sessionBusy && !step) {
+    liveActivity?.remove();
+    liveActivity = null;
+    return;
+  }
+  if (!liveActivity) liveActivity = liveActivityRow();
+  // It stays the last thing before the queued prompts, even when one of them starts.
+  const after = liveActivity.nextElementSibling;
+  if (liveActivity.parentElement !== messageHost() || (after && !after.matches(".queued-batch-controls, .message.queued"))) {
+    liveActivity.remove();
+    appendBeforeQueuedMessages(liveActivity);
+  }
+  const target = step?.querySelector(".tool-target")?.textContent;
+  const label = step
+    ? `Running ${step.querySelector(".tool-name")?.textContent || "a tool"}${target ? ` · ${target}` : ""}`
+    : state.thinkingBubble ? "Thinking…" : "Working…";
+  liveActivity._step = step;
+  liveActivity.querySelector(".live-activity-label").textContent = label;
+  liveActivity.title = `${label} — show the steps in the activity panel`;
+  renderLiveActivityTime();
+  requestPinChat();
 }
 
 export function showChatEmptyState(title, copy) {
@@ -140,6 +198,7 @@ function tickDurations() {
   for (const bubble of state.toolBubbles.values()) {
     if (bubble._startedAt) bubble.querySelector(".tool-status").textContent = `Running ${formatDuration(now - bubble._startedAt)}`;
   }
+  renderLiveActivityTime(now);
   renderConversationTimer(now);
   if (!state.toolBubbles.size && !state.lastTurnStartedAt) {
     clearInterval(state.durationTicker);
@@ -184,6 +243,7 @@ function renderConversationTimer(now = Date.now()) {
 
 export function clearChat() {
   elements.messages.replaceChildren();
+  liveActivity = null;
   elements.jumpToBottomButton.hidden = true;
   elements.turnTimer.hidden = true;
   elements.turnTimer.textContent = "";
@@ -235,9 +295,10 @@ function messageHost() {
   return currentSegment ?? elements.messages;
 }
 
+// New content goes above the working row and the queued prompts, which stay last.
 function appendBeforeQueuedMessages(node) {
   const host = messageHost();
-  host.insertBefore(node, host.querySelector(":scope > .queued-batch-controls, :scope > .message.queued"));
+  host.insertBefore(node, host.querySelector(":scope > .live-activity, :scope > .queued-batch-controls, :scope > .message.queued"));
 }
 
 /** The message that opened the turn now being written: the newest one the person sent. */

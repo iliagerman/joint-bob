@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Fixed the Activity panel's summary being squeezed to a few pixels by a long list of steps; it now keeps its height and the steps scroll beneath it.
+- Added a working line at the end of the chat that names the step running now and, when clicked, opens the Activity panel on its steps, staying until the turn ends; the Activity summary now stays pinned above the steps and collapses to one line.
 
 ## 2.132.0 — 2026-10-21
 

@@ -1889,6 +1889,9 @@ select.chat-toolbar-control {
 .activity-summary { flex: 0 0 auto; max-height: 42%; margin: 0 10px 8px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); scrollbar-width: thin; }
 .activity-summary > summary { position: sticky; top: 0; display: flex; align-items: baseline; gap: 8px; padding: 8px 11px; list-style: none; cursor: pointer; background: var(--panel); color: var(--text); font-size: 12px; font-weight: 650; }
 .activity-summary > summary::-webkit-details-marker { display: none; }
+.activity-summary-chevron { flex: none; color: var(--muted); font-size: 14px; line-height: 1; transform: rotate(0); transition: transform 0.16s ease; }
+.activity-summary[open] .activity-summary-chevron { transform: rotate(90deg); }
+.activity-summary > summary:hover .activity-summary-chevron { color: var(--text); }
 .activity-summary-status { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-align: right; }
 .activity-summary-body { display: grid; gap: 8px; padding: 0 11px 10px; }
 .activity-summary-text { color: var(--text); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -1925,6 +1928,13 @@ select.chat-toolbar-control {
 .activity-marker[data-status="error"] .activity-marker-dot { background: var(--danger); }
 .activity-marker-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-marker-chevron { flex: none; font-size: 14px; line-height: 1; }
+/* The working row: the last line of the thread while a turn runs, naming the step in progress. */
+.live-activity { display: flex; align-items: center; align-self: flex-start; gap: 8px; max-width: 100%; min-height: 28px; margin-left: 9px; padding: 3px 10px; border: 1px dashed var(--line-strong); border-radius: 999px; color: var(--muted); background: transparent; font-family: var(--mono); font-size: 11px; cursor: pointer; }
+.live-activity:hover, .live-activity:focus-visible { color: var(--text); border-color: var(--accent); }
+.live-activity-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--amber); animation: dot-breathe 1.2s ease-in-out infinite; }
+.live-activity-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-activity-time { flex: none; }
+.live-activity-time:empty { display: none; }
 .activity-group-prompt { margin: 0; padding: 0 2px; overflow: hidden; color: var(--text); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 /* Earlier answers in a turn drop their model line; their copy button sits in the timestamp row, shown on hover. */
 .message.quiet-answer > .message-meta .message-copy { min-width: 24px; min-height: 24px; margin-left: auto; opacity: 0; }
