@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.134.0 — 2026-10-21
 
 - Changed the Activity summary to update after each answer by default, even with the panel closed, by folding the new messages into the current summary.
 - Added Settings → Conversations choices for when the Activity summary updates and which agent writes it (automatic uses the routing classifier when routing is on), and let a relay set them for its machines.
