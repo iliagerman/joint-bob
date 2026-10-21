@@ -126,6 +126,33 @@ test("the pending reviews endpoint groups conversations needing review across pr
     assert.equal(groups[0].sessions.length, 1);
     assert.ok(groups[0].sessions[0].updatedAt, "Pending entries must carry a review watermark");
 
+    const { getClusterNode } = await import("../src/cluster.js");
+    const owner = await getClusterNode();
+    const listed = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions`, { headers: { Cookie: cookie } });
+    const { sessions } = await listed.json() as { sessions: Array<{ id: string; path: string }> };
+    const target = sessions.find((session) => session.path === groups[0].sessions[0].path)!;
+    assert.ok(target);
+    const input = {
+      projectId: fixture.projectId, name: "Quiet report", prompt: "Report", engine: "claude",
+      sessionId: target.id, ownerNodeId: owner.id, enabled: false, markForReview: true,
+      hideFromHistory: true,
+      schedule: { frequency: "hourly", hour: 9, minute: 0, weekday: 1, timezone: "UTC" },
+    };
+    const created = await fetch(`${node.baseUrl}/api/cron`, {
+      method: "POST", headers, body: JSON.stringify({ nodeId: owner.id, command: { action: "create", input } }),
+    });
+    assert.equal(created.status, 200);
+    const { task } = await created.json() as { task: { id: string } };
+    assert.deepEqual(await pending(), [], "hiding a schedule removes already-pending reviews even with markForReview enabled");
+    const hiddenList = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions`, { headers: { Cookie: cookie } });
+    const hidden = await hiddenList.json() as { sessions: Array<{ path: string }> };
+    assert.ok(!hidden.sessions.some((session) => session.path === target.path), "hidden conversations cannot contribute to counts or notifications");
+    const shown = await fetch(`${node.baseUrl}/api/cron`, {
+      method: "POST", headers, body: JSON.stringify({ nodeId: owner.id, command: { action: "update", id: task.id, input: { ...input, hideFromHistory: false } } }),
+    });
+    assert.equal(shown.status, 200);
+    assert.equal((await pending())[0]?.sessions.length, 1, "unhiding restores the pending review without erasing its watermark");
+
     const marked = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions/reviewed-all`, {
       method: "PUT",
       headers,

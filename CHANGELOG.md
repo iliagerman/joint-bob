@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Added a `/bob-restart` command that reopens a conversation's session in place, keeping the conversation and its settings, and that refuses to run while a turn is still going.
 - Added the file, command, pattern, or skill that each tool call in chat acted on to its collapsed row, so you can see what ran without opening its output, including in reloaded conversations.
+- Fixed hidden scheduled runs still counting toward pending reviews and notifications; they now stay out of both, and their pending reviews return once the task is shown again.
 
 ## 2.130.0 — 2026-10-21
 
@@ -17,6 +18,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 2.129.1 — 2026-10-20
 
+- Fixed missing Deploy to prod and Hotfix icons in saved label settings, while keeping custom icons and intentional icon removals.
 - Removed the relay rules panel, its publish editor, and the receiving-node sync status from Resources, along with the badge that showed whether the selected relay blocks or enables a skill.
 - Changed the Resources filter row to stay on one line, scrolling sideways on narrow screens instead of wrapping.
 - Widened the cards in the usage changes panel.

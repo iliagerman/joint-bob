@@ -24,6 +24,7 @@ import { listUserPins } from "../user-pins.js";
 import { sessionWatcher } from "./chat.js";
 import { findHarnessSession, harnessTurnBusy } from "./harness-sessions.js";
 import { taskConfig, taskPhase } from "./task-runs.js";
+import { listProjectCronTasks } from "./cron-list.js";
 import { measureOperation } from "./performance-diagnostics.js";
 import { conversationsChanged, sessionListingChanged, sharedProjectListing, sharedProjectListingUse } from "../session-listing-revisions.js";
 
@@ -94,8 +95,14 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
   const searchProject = scope.project;
   sessionWatcher.ensureProject(searchProject);
   const temporarySessionIds = await listByTheWaySessionIds(project.id);
-  const sessions = (await measureOperation("sessions.transcript_catalog", () => listHarnessSessions(searchProject, scope.includedSessionPaths, scope.includedSessionIds)))
-    .filter((session) => !temporarySessionIds.has(session.id) || session.id === includeTemporarySessionId);
+  const catalog = await measureOperation("sessions.transcript_catalog", () => listHarnessSessions(searchProject, scope.includedSessionPaths, scope.includedSessionIds));
+  const hiddenCronTaskIds = new Set(userId && catalog.some((session) => session.cronTaskId)
+    ? (await listProjectCronTasks(project.id)).tasks.filter((task) => task.hideFromHistory).map((task) => task.id)
+    : []);
+  // Viewer lists exclude hidden runs before review synchronization, badges, and notifications.
+  // Internal snapshots still need them for scheduler readiness. Preserve review watermarks.
+  const sessions = catalog.filter((session) => (!session.cronTaskId || !hiddenCronTaskIds.has(session.cronTaskId))
+    && (!temporarySessionIds.has(session.id) || session.id === includeTemporarySessionId));
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
   await measureOperation("sessions.agent_dashboards", refreshConversationWork);
