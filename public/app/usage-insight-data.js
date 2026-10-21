@@ -41,6 +41,79 @@ export function runsSlower(skill, report) {
   return Boolean(base) && skill.timedTurns >= MIN_TURNS && skill.medianDurationMs >= base * CLEARLY_LONGER;
 }
 
+/** Average cost of a turn that loaded every skill; the yardstick for one skill's cost per turn. */
+export const averageTurnCost = (report) => ratio(report.withSkill.costUsd, report.withSkill.turns);
+const perTurn = (skill) => skill.apiEquivalentCostUsd / skill.associatedTurns;
+
+/** Cost per turn clearly above the average turn that loaded a skill. */
+export function costsMore(skill, report) {
+  const average = averageTurnCost(report);
+  return Boolean(average) && skill.associatedTurns >= MIN_TURNS && skill.pricedRequests > 0 && perTurn(skill) >= average * CLEARLY_MORE;
+}
+
+/** One word for the skills table: the worst of failing, slow and costly, or OK. */
+export function skillStatus(skill, report) {
+  if (failsMore(skill, report)) return { key: "fails", label: "Fails often" };
+  if (runsSlower(skill, report)) return { key: "slow", label: "Slow" };
+  if (costsMore(skill, report)) return { key: "costly", label: "Costly" };
+  return { key: "ok", label: "OK" };
+}
+
+const WEEKDAYS = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+const cacheShare = (tokens) => { const input = tokens.input + tokens.cacheRead + tokens.cacheWrite; return input ? tokens.cacheRead / input : null; };
+
+/**
+ * What stands out about one skill, worst first, each against every turn that loaded a skill.
+ * `tone` is bad, warn, info or good. Like the findings, these describe what was observed.
+ */
+export function skillHighlights(skill, report) {
+  const found = [];
+  const all = report.withSkill;
+  const rate = ratio(skill.toolErrors, skill.toolCalls), base = ratio(all.toolErrors, all.toolCalls);
+  const models = skill.models ?? [];
+  const share = (part, whole) => whole > 0 ? Math.round(part / whole * 100) : 0;
+  if (failsMore(skill, report)) {
+    const worst = models.reduce((best, model) => !best || model.toolErrors > best.toolErrors ? model : best, null);
+    found.push({ tone: "bad", text: `${percent(rate)} of its tool calls fail, against ${percent(base)} for all skills.`,
+      detail: worst?.toolErrors ? `${worst.toolErrors.toLocaleString()} of ${count(skill.toolErrors, "failure")} were on ${worst.modelId}.` : `${skill.toolErrors.toLocaleString()} of ${count(skill.toolCalls, "call")} failed.` });
+  }
+  if (runsSlower(skill, report)) found.push({ tone: "warn", text: `A turn takes ${formatDuration(skill.medianDurationMs)} at the median, ${(skill.medianDurationMs / all.medianDurationMs).toFixed(1)}× the ${formatDuration(all.medianDurationMs)} for all skills.`,
+    detail: skill.p90DurationMs ? `The slowest 10% take over ${formatDuration(skill.p90DurationMs)}.` : "" });
+  if (costsMore(skill, report)) {
+    const top = models.reduce((best, model) => !best || model.knownCostUsd > best.knownCostUsd ? model : best, null);
+    found.push({ tone: "warn", text: `A turn costs ${money(perTurn(skill))}, ${(perTurn(skill) / averageTurnCost(report)).toFixed(1)}× the ${money(averageTurnCost(report))} average.`,
+      detail: top && skill.apiEquivalentCostUsd ? `${share(top.knownCostUsd, skill.apiEquivalentCostUsd)}% of that is on ${top.modelId}.` : "" });
+  }
+  const daily = skill.daily ?? [];
+  const weekday = new Map();
+  for (const day of daily) { const index = new Date(`${day.key}T12:00:00`).getDay(); weekday.set(index, (weekday.get(index) ?? 0) + day.turns); }
+  const busiest = [...weekday.entries()].sort((left, right) => right[1] - left[1])[0];
+  const weeks = new Set(daily.map((day) => { const date = new Date(`${day.key}T12:00:00`); date.setDate(date.getDate() - date.getDay()); return date.toDateString(); }));
+  if (busiest && skill.associatedTurns >= MIN_TURNS * 2 && weeks.size >= 2 && busiest[1] / skill.associatedTurns >= 0.5) {
+    found.push({ tone: "info", text: `Used mostly on ${WEEKDAYS[busiest[0]]}: ${share(busiest[1], skill.associatedTurns)}% of its turns.`, detail: "" });
+  }
+  const own = skill.tokens ? cacheShare(skill.tokens) : null;
+  const totals = (report.skills ?? []).reduce((sum, item) => item.tokens ? { input: sum.input + item.tokens.input, cacheRead: sum.cacheRead + item.tokens.cacheRead, cacheWrite: sum.cacheWrite + item.tokens.cacheWrite } : sum, { input: 0, cacheRead: 0, cacheWrite: 0 });
+  const average = cacheShare(totals);
+  if (own !== null && average !== null && own - average >= 0.05) found.push({ tone: "good", text: `Cache read is ${percent(own)}, better than the ${percent(average)} average.`, detail: "" });
+  if (rate !== null && base !== null && skill.toolCalls >= MIN_TOOL_CALLS && rate <= base / 2) found.push({ tone: "good", text: `Tool calls fail less than average: ${percent(rate)} against ${percent(base)}.`, detail: "" });
+  if (!found.length) found.push({ tone: "info", text: "Nothing stands out: cost, failures and time are close to the average for skills.", detail: "" });
+  return found;
+}
+
+const SUGGESTION_KINDS = { failing: "fix", overlap: "merge", unused: "remove" };
+/**
+ * Every suggestion in one list, the most money behind it first: kinds of work worth a skill,
+ * failing skills to fix, overlapping skills to merge, and idle skills to remove.
+ */
+export function rankSuggestions(value) {
+  if (!value) return [];
+  const removals = (value.removals ?? []).map((item, index) => ({ type: SUGGESTION_KINDS[item.kind] ?? "remove", key: `${item.kind}:${item.name}`, index, item, cost: item.knownCostUsd ?? 0 }));
+  const creations = (value.creations ?? []).map((item, index) => ({ type: "new", key: `new:${item.phrase}`, index, item, cost: item.knownCostUsd ?? 0 }));
+  const order = { fix: 0, new: 1, merge: 2, remove: 3 };
+  return [...creations, ...removals].sort((left, right) => right.cost - left.cost || order[left.type] - order[right.type] || left.key.localeCompare(right.key));
+}
+
 /**
  * Installed skills no agent loaded in the scope, one entry per name. Claude names a plugin's
  * skill "plugin:skill", so either form counts as that skill being loaded.
@@ -70,29 +143,31 @@ export function skillFindings(report, unused = null, installedTotal = 0) {
   const top = (rows, value) => rows.reduce((best, row) => !best || value(row) > value(best) ? row : best, null);
   const found = [];
 
+  // Each finding also carries its parts for a card: the figure, what it is set against, and the skill.
   const most = top(skills, (skill) => skill.associatedTurns);
-  found.push({ kind: "Most used", view: "skills", skill: most.name,
+  found.push({ kind: "Most used", tone: "good", view: "skills", skill: most.name, metric: count(most.associatedTurns, "turn"), caption: `in ${count(most.conversations, "conversation")}`, action: "Open skill",
     text: `${most.name} was loaded in ${count(most.associatedTurns, "turn")} across ${count(most.conversations, "conversation")}.` });
 
   const failing = top(skills.filter((skill) => failsMore(skill, report)), (skill) => skill.toolErrors / skill.toolCalls);
-  if (failing) found.push({ kind: "Fails more", view: "skills", skill: failing.name,
-    text: `${percent(failing.toolErrors / failing.toolCalls)} of tool calls fail in turns that load ${failing.name}, against ${percent(ratio(report.withSkill.toolErrors, report.withSkill.toolCalls))} across all turns with a skill.` });
+  const failBase = percent(ratio(report.withSkill.toolErrors, report.withSkill.toolCalls));
+  if (failing) found.push({ kind: "Fails more", tone: "bad", view: "skills", skill: failing.name, metric: percent(failing.toolErrors / failing.toolCalls), against: `vs ${failBase}`, caption: "of its tool calls fail", action: "See why",
+    text: `${percent(failing.toolErrors / failing.toolCalls)} of tool calls fail in turns that load ${failing.name}, against ${failBase} across all turns with a skill.` });
 
   const slow = top(skills.filter((skill) => runsSlower(skill, report)), (skill) => skill.medianDurationMs);
-  if (slow) found.push({ kind: "Slower", view: "skills", skill: slow.name,
+  if (slow) found.push({ kind: "Slower", tone: "warn", view: "skills", skill: slow.name, metric: formatDuration(slow.medianDurationMs), against: `vs ${formatDuration(report.withSkill.medianDurationMs)}`, caption: "median turn", action: "See why",
     text: `Turns that load ${slow.name} take ${formatDuration(slow.medianDurationMs)} at the median, against ${formatDuration(report.withSkill.medianDurationMs)} across all turns with a skill.` });
 
-  const average = ratio(report.withSkill.costUsd, report.withSkill.turns);
-  const perTurn = (skill) => skill.apiEquivalentCostUsd / skill.associatedTurns;
+  const average = averageTurnCost(report);
   const costly = top(skills.filter((skill) => skill.associatedTurns >= MIN_TURNS && skill.pricedRequests > 0), perTurn);
-  if (costly && average && perTurn(costly) >= average * CLEARLY_MORE) found.push({ kind: "Costs more", view: "skills", skill: costly.name,
+  if (costly && average && perTurn(costly) >= average * CLEARLY_MORE) found.push({ kind: "Costs more", tone: "warn", view: "skills", skill: costly.name, metric: money(perTurn(costly)), against: `vs ${money(average)}`, caption: "average per turn", action: "See why",
     text: `Turns that load ${costly.name} cost ${money(perTurn(costly))} each on average, against ${money(average)} across all turns with a skill.` });
 
-  if (unused?.length) found.push({ kind: "Not used", view: "unused",
+  if (unused?.length) found.push({ kind: "Not used", tone: "info", view: "unused", metric: count(unused.length, "skill"), caption: `of ${count(installedTotal, "installed skill")}, not loaded in this period`, action: "See them",
     text: `${unused.length.toLocaleString()} of ${count(installedTotal, "installed skill")} ${unused.length === 1 ? "was" : "were"} not loaded in this period.` });
 
   const once = skills.filter((skill) => skill.associatedTurns === 1).length;
-  if (once >= 2) found.push({ kind: "Used once", view: "skills", text: `${once.toLocaleString()} skills were loaded in a single turn each.` });
+  if (once >= 2) found.push({ kind: "Used once", tone: "info", view: "skills", metric: count(once, "skill"), caption: "loaded in a single turn each", action: "See them",
+    text: `${once.toLocaleString()} skills were loaded in a single turn each.` });
 
   return found.slice(0, MAX_FINDINGS);
 }

@@ -59,12 +59,12 @@ export function createClusterReport(changed) {
   const retry = element("button", "Refresh report", "ghost");
   retry.type = "submit"; retry.dataset.testid = "usage-cluster-refresh";
   form.append(retry);
-  options(cluster, [], "Choose a cluster");
+  options(cluster, [], "All clusters");
   options(project, [], "All shared projects");
   let entry, ticket = 0, key = "", loadedAt = 0, selectedCluster = "";
 
   function sync() {
-    options(cluster, state.clusters || [], "Choose a cluster");
+    options(cluster, state.clusters || [], "All clusters");
     if (!cluster.value && state.clusters?.length === 1) cluster.value = state.clusters[0].id;
     if (selectedCluster !== cluster.value) {
       selectedCluster = cluster.value;
@@ -76,11 +76,12 @@ export function createClusterReport(changed) {
   async function load(force = false) {
     sync();
     const scope = dateScope();
-    if (!cluster.value || !scope) {
+    if (!scope) {
       ++ticket; key = "";
-      entry = { unavailable: !cluster.value ? "Choose a cluster here to see its shared projects." : "Choose a valid start and end date for this report." };
+      entry = { unavailable: "Choose a valid start and end date for this report." };
       changed(); return;
     }
+    if (!cluster.value) { project.disabled = true; await overview(scope, force); return; }
     const query = new URLSearchParams({ ...scope, refresh: "false", ...(project.value ? { projectId: project.value } : {}) });
     const url = `/api/usage/clusters/${encodeURIComponent(cluster.value)}/report?${query}`;
     if (!force && url === key && (entry?.loading || Date.now() - loadedAt < 60_000)) return;
@@ -99,10 +100,41 @@ export function createClusterReport(changed) {
     }
     changed();
   }
+  /** Every cluster at once: what the projects shared with each cost, read in parallel. */
+  async function overview(scope, force) {
+    const clusters = state.clusters || [];
+    if (!clusters.length) { ++ticket; key = ""; entry = { unavailable: "This node is in no cluster yet." }; changed(); return; }
+    const query = new URLSearchParams({ ...scope, refresh: "false" });
+    const url = `overview?${query}|${clusters.map((item) => item.id).join(",")}`;
+    if (!force && url === key && (entry?.loading || Date.now() - loadedAt < 60_000)) return;
+    key = url;
+    const current = ++ticket;
+    entry = { loading: true }; changed();
+    const rows = await Promise.all(clusters.map(async (item) => {
+      const row = { key: item.id, name: item.name, members: item.members.length, projects: null, requests: null, cost: null, partial: false, error: "" };
+      try {
+        const report = await api(`/api/usage/clusters/${encodeURIComponent(item.id)}/report?${query}`, { signal: AbortSignal.timeout(30000) });
+        const priced = report.projects.filter((shared) => Number.isFinite(shared.totals.apiCostUsd));
+        return { ...row, projects: report.projects.length, requests: report.projects.reduce((sum, shared) => sum + shared.totals.requests, 0),
+          cost: priced.length ? priced.reduce((sum, shared) => sum + shared.totals.apiCostUsd, 0) : (report.projects.length ? null : 0),
+          partial: report.projects.some((shared) => shared.totals.partial || !Number.isFinite(shared.totals.apiCostUsd)) };
+      } catch (error) {
+        return { ...row, error: error.name === "TimeoutError" ? "the request timed out" : error.message };
+      }
+    }));
+    if (current !== ticket) return;
+    entry = { overview: rows }; loadedAt = Date.now();
+    changed();
+  }
+  function select(id) {
+    cluster.value = id;
+    selectedCluster = "";
+    void load(true);
+  }
   function reset() { ++ticket; entry = undefined; key = ""; loadedAt = 0; }
   form.addEventListener("change", () => { void load(true); });
   form.addEventListener("submit", (event) => { event.preventDefault(); void load(true); });
-  return { controls: form, ensure: () => { void load(); }, reset, get entry() { return entry; } };
+  return { controls: form, ensure: () => { void load(); }, reset, select, get entry() { return entry; } };
 }
 
 export function createRepeatedWork() {

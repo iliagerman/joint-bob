@@ -78,6 +78,9 @@ test("totals show while a slow grouping is still loading, and a failed grouping 
   assert.equal(await dialog.locator('[data-testid="usage-dimension-projects"] small').textContent(), "…", "a grouping that has not arrived shows no count yet");
   await until(async () => (await dialog.locator('[data-testid="usage-dimension-days"] small').textContent()) === "5", "groupings that arrived show their count");
   assert.equal(requested[0], "summary", "totals are asked for first");
+  const progress = page.getByTestId("usage-progress");
+  assert.equal(await progress.isVisible(), true, "a progress row says what is still loading");
+  assert.match(await progress.locator(".usage-progress-waiting").textContent() ?? "", /^waiting for Projects/, "it names what it is still waiting for");
   assert.equal(requested[1], "projects", "then the grouping on screen");
   assert.deepEqual([...new Set(requested)].sort(), ["classifications", "conversations", "days", "difficulties", "models", "projects", "summary"], "each part is its own request");
 
@@ -97,7 +100,7 @@ test("totals show while a slow grouping is still loading, and a failed grouping 
   // A background refresh is watched through the status route; nothing is re-read until it changes.
   refreshing = true;
   await page.locator("#usageRefresh").click();
-  await page.getByText("Refreshing transcripts in background…", { exact: true }).waitFor();
+  await page.getByText("Refreshing transcripts…", { exact: true }).waitFor();
   const settled = requested.length;
   const polls = statusGets;
   await until(() => statusGets >= polls + 2, "the dashboard polls the status route while a refresh runs");
@@ -106,7 +109,8 @@ test("totals show while a slow grouping is still loading, and a failed grouping 
   // The refresh finishes with new usage: the page reloads once and shows it.
   cost = 30; revision = 2; refreshing = false;
   await page.waitForFunction(() => document.querySelector(".usage-stat strong")?.textContent === "$30");
-  await page.getByText(/^Usage refreshed /).waitFor();
+  await page.getByText(/^Updated /).waitFor();
+  assert.match(await page.locator("#usageStatus").getAttribute("title") ?? "", /^Usage refreshed /, "the full time is in the tooltip");
   const afterReload = requested.length;
   const afterPolls = statusGets;
   await new Promise((resolve) => setTimeout(resolve, 2600));

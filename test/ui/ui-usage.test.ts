@@ -11,6 +11,11 @@ async function until(check: () => Promise<boolean>, message: string): Promise<vo
   assert.fail(message);
 }
 
+/** Filters not in use sit behind "+ Filter"; open it before choosing one. */
+async function openFilters(dialog: any): Promise<void> {
+  if (await dialog.getByTestId("usage-filter-menu").getAttribute("open") === null) await dialog.getByTestId("usage-filter-add").click();
+}
+
 async function login(page: any, environment: any, url: string): Promise<void> {
   await page.goto(url);
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -74,6 +79,7 @@ test("usage dashboard edits subscription price and manual quota on desktop and m
   await page.locator(".subscription-harness-group").filter({ has: page.getByRole("heading", { name: "Claude", exact: true }) }).getByText("Second account").waitFor();
   await page.getByTestId("usage-tab-overview").click();
   const classificationFilter = page.getByTestId("usage-classification-filter");
+  await openFilters(page.getByTestId("usage-dialog"));
   if (await classificationFilter.locator("option").count() > 1) {
     await classificationFilter.selectOption({ index: 1 });
     assert.notEqual(await classificationFilter.inputValue(), "", "existing classification scopes usage");
@@ -253,6 +259,7 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   assert.deepEqual(await breakdowns.locator("tbody .usage-name").allTextContents(), ["Level 3", "Level 10"], "difficulty sorts numerically");
 
   const clusterTrigger = dialog.getByTestId("usage-cluster-filter-trigger");
+  await openFilters(dialog);
   await clusterTrigger.waitFor();
   await clusterTrigger.click();
   const clusterRequest = page.waitForRequest((request: any) => new URL(request.url()).searchParams.get("clusters") === clusterId);
@@ -267,6 +274,8 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   await dialog.getByTestId("usage-cluster-filter-options").getByText("Usage cluster", { exact: true }).click();
   await clusterRequest;
   await dialog.locator("#usageTitle").click();
+  assert.equal(await dialog.getByTestId("usage-filter-menu").getAttribute("open"), null, "a click elsewhere closes the filter menu");
+  assert.equal(await dialog.getByTestId("usage-filter-chip").textContent(), "ClusterUsage cluster×", "the filter in use shows as a chip");
   await dialog.getByTestId("usage-clear-filters").waitFor();
   const clearedRequest = page.waitForRequest((request: any) => new URL(request.url()).pathname === "/api/usage" && !new URL(request.url()).searchParams.has("clusters"));
   await dialog.getByTestId("usage-clear-filters").click();
@@ -353,19 +362,26 @@ test("usage dashboard groups, filters by cluster, paginates, remains responsive,
   const month = dialog.getByTestId("usage-compare-month");
   await month.waitFor();
   const dayOfMonth = today.getDate();
-  assert.equal(await month.getByTestId("usage-compare-month-value").textContent(), `$${dayOfMonth}`, "one dollar a day so far this month");
+  assert.equal(await dialog.getByTestId("usage-compare-month-value").textContent(), `$${dayOfMonth}`, "one dollar a day so far this month");
   assert.equal(await month.getByTestId("usage-compare-row").count(), 4, "this month and the three before it");
   const previousMonthLength = new Date(today.getFullYear(), today.getMonth(), 0).getDate();
   assert.equal(await month.getByTestId("usage-compare-row-value").nth(1).textContent(), `$${Math.min(dayOfMonth, previousMonthLength)}`, "last month through the same day");
-  const week = dialog.getByTestId("usage-compare-week");
-  const elapsed = Number((await week.locator("header p").textContent())!.match(/^Day (\d) of 7/)![1]);
-  assert.equal(await week.getByTestId("usage-compare-week-value").textContent(), `$${elapsed}`);
-  assert.deepEqual(await week.getByTestId("usage-compare-row-value").allTextContents(), Array(4).fill(`$${elapsed}`), "each earlier week through the same weekday");
   const hover = month.getByTestId("usage-compare-hover");
   await hover.hover();
   await month.locator(".usage-compare-tooltip:not([hidden])").waitFor();
   assert.equal(await month.locator(".usage-compare-tooltip span").count(), 4, "the hover lists every period");
+  await month.getByTestId("usage-compare-legend-3").click();
+  assert.equal(await month.getByTestId("usage-compare-legend-3").getAttribute("aria-pressed"), "false", "a legend chip hides its period");
+  assert.equal(await month.locator('.usage-compare-line[data-period="3"]').count(), 0);
+  await hover.hover({ position: { x: 20, y: 20 } });
+  assert.equal(await month.locator(".usage-compare-tooltip span").count(), 3, "a hidden period leaves the hover too");
   assert.equal(await dialog.locator(".usage-card").evaluate((element: HTMLElement) => element.scrollHeight <= element.clientHeight + 1), true, "the comparison fits without scrolling");
+  await dialog.getByTestId("usage-compare-kind-week").click();
+  const week = dialog.getByTestId("usage-compare-week");
+  const elapsed = Number((await week.locator("header p").textContent())!.match(/^Day (\d) of 7/)![1]);
+  assert.equal(await dialog.getByTestId("usage-compare-week-value").textContent(), `$${elapsed}`);
+  assert.deepEqual(await week.getByTestId("usage-compare-row-value").allTextContents(), Array(4).fill(`$${elapsed}`), "each earlier week through the same weekday");
+  assert.equal(await week.locator('.usage-compare-line[data-period="3"]').count(), 1, "hiding a month leaves the weeks alone");
   await dialog.getByTestId("usage-tab-overview").click();
   await page.locator('#usageRefresh:enabled').waitFor();
 
@@ -483,21 +499,24 @@ test("skills and time lists one row per skill, says what stands out, and pages i
   const rows = body.getByTestId("usage-insight-row");
   const names = () => rows.locator(".usage-name").allTextContents();
   await rows.first().waitFor();
-  await dialog.getByTestId("usage-insight-stats").getByText("3 installed here").waitFor();
+  await dialog.getByTestId("usage-insight-stats").getByText("of 3 installed here · 2 not used").waitFor();
 
   const stats = dialog.getByTestId("usage-insight-stats").locator(".usage-stat");
   assert.deepEqual(await stats.locator("strong").allTextContents(), ["24", "300", "$600", "5.0%", "1m 00s", "2"]);
-  assert.deepEqual(await stats.locator("small").allTextContents(), ["3 installed here", "60% of requests", "60% of $1,000", "5.0% without a skill", "2m 00s with a skill", "of 159 turns · 2s queued"]);
+  assert.deepEqual(await stats.locator("small").allTextContents(), ["of 3 installed here · 2 not used", "60% of requests", "60% of $1,000", "5.0% without a skill", "2m 00s with a skill", "of 159 turns · 2s queued"]);
   const findings = dialog.getByTestId("usage-finding");
   assert.deepEqual(await findings.locator(".usage-finding-kind").allTextContents(), ["Most used", "Fails more", "Slower", "Not used"]);
   assert.equal(await findings.nth(1).locator(".usage-finding-text").textContent(), "25% of tool calls fail in turns that load flaky, against 5.0% across all turns with a skill.");
+  assert.deepEqual([await findings.nth(1).locator(".usage-finding-metric").textContent(), await findings.nth(1).locator(".usage-finding-subject").textContent()], ["25%vs 5.0%", "flaky"], "a finding leads with its figure, its baseline and the skill");
 
   // One row per skill, most used first; the list pages, and neither it nor the dialog scrolls.
   assert.deepEqual((await names()).slice(0, 4), ["ponytail", "caveman", "flaky", "slow"]);
   assert.equal(await page.evaluate(async () => (await import('/app/state.js')).state.harnesses.find((harness) => harness.id === 'pi')?.label), "Pi", "the loaded harness metadata supplies Pi's display name");
   assert.equal(await rows.first().locator(".usage-name-detail").textContent(), "59 conversations · Pi · typed 4×");
-  assert.deepEqual(await body.locator("thead th").allTextContents(), ["Skill", "Turns", "Of skill turns", "Trend", "Cost", "Per turn", "Requests", "Tokens", "Cache", "Failed tools", "Median turn", "Projects", "Last used"]);
-  assert.deepEqual(await rows.first().locator("td").allTextContents(), ["ponytail59 conversations · Pi · typed 4×", "118", "39%", "", "$236", "$2", "2,360", "1.24M", "90%", "5.0%", "1m 00s", "1", "Oct 12"]);
+  assert.deepEqual(await body.locator("thead th").allTextContents(), ["Skill", "Turns", "Trend", "Cost", "Per turn", "Failed", "Median", "Status"]);
+  assert.deepEqual(await rows.first().locator("td").allTextContents(), ["ponytail59 conversations · Pi · typed 4×", "118", "", "$236", "$2", "5.0%", "1m 00s", "OK"]);
+  assert.equal(await rows.filter({ hasText: "flaky" }).locator(".usage-status").textContent(), "Fails often", "a skill that fails clearly more is flagged");
+  assert.match(await rows.filter({ hasText: "flaky" }).locator("td").nth(5).getAttribute("class") ?? "", /usage-flag bad/);
   const shown = await rows.count();
   assert.ok(shown >= 3 && shown < 24, `the list pages to what fits: ${shown} rows`);
   assert.equal(await dialog.locator("#usageInsightCount").textContent(), `1–${shown} of 24 skills`);
@@ -517,15 +536,17 @@ test("skills and time lists one row per skill, says what stands out, and pages i
   assert.ok(!(await names()).includes("ponytail"), "the next page shows other skills");
   assert.match(await dialog.getByTestId("usage-insight-pagination").locator("span").textContent() ?? "", /^Page 2 of \d+$/);
 
-  // A finding opens the skill's own page, which replaces the totals while it is open.
+  // A finding opens the skill in a panel beside the list; the totals and the list stay.
   await findings.nth(1).click();
   const detail = dialog.getByTestId("usage-skill-detail");
   await detail.getByRole("heading", { name: "flaky" }).waitFor();
-  assert.equal(await dialog.getByTestId("usage-insight-stats").isVisible(), false);
+  assert.equal(await dialog.getByTestId("usage-insight-stats").isVisible(), true);
+  assert.equal(await rows.first().isVisible(), true, "the list stays beside the panel");
+  assert.equal(await detail.getByTestId("usage-skill-highlight").first().locator("p").evaluate((element: HTMLElement) => element.firstChild?.textContent), "25% of its tool calls fail, against 5.0% for all skills.");
   const tiles = detail.locator(".usage-skill-tiles .usage-stat");
-  assert.deepEqual(await tiles.locator("span").allTextContents().then((labels: string[]) => labels.slice(0, 8)), ["Turns", "Conversations", "Requests", "Cost", "Cost per turn", "Tokens", "Cache read", "Failed tools"]);
-  assert.deepEqual(await tiles.locator("strong").allTextContents().then((values: string[]) => values.slice(0, 8)), ["12", "6", "240", "$24", "$2", "126.0K", "90%", "25%"]);
-  assert.equal(await tiles.nth(7).locator("small").textContent(), "30 of 120 calls · 5.0% across all skill turns");
+  assert.deepEqual(await tiles.locator("span").allTextContents(), ["Turns", "Cost", "Cost per turn", "Failed tools", "Median turn", "Cache read"]);
+  assert.deepEqual(await tiles.locator("strong").allTextContents(), ["12", "$24", "$2", "25%", "1m 00s", "90%"]);
+  assert.equal(await tiles.nth(3).locator("small").textContent(), "30 of 120 calls · 5.0% across all skill turns");
   await detail.getByText("Fix the invoice export").waitFor();
   await detail.getByText("Billing").first().waitFor();
   assert.deepEqual(await detail.locator(".usage-split-legend span").allTextContents(), ["model-one", "model-two"]);
@@ -533,14 +554,14 @@ test("skills and time lists one row per skill, says what stands out, and pages i
   await detail.getByTestId("usage-skill-tab-contents").click();
   await detail.getByText("That skill is not installed on this node").waitFor();
   await detail.getByTestId("usage-skill-back").click();
-  assert.equal(await dialog.getByTestId("usage-insight-stats").isVisible(), true);
+  assert.equal(await dialog.getByTestId("usage-skill-panel").isVisible(), false, "closing the panel gives the list its width back");
   await rows.filter({ hasText: "ponytail" }).first().locator("[data-select]").click();
   await detail.getByTestId("usage-skill-tab-contents").click();
   await detail.getByTestId("usage-skill-text").getByText("Write less code.").waitFor();
   assert.match(await detail.locator(".usage-skill-meta").textContent() ?? "", /4 lines · 0\.0 KB/);
   assert.match(await detail.locator(".usage-source").textContent() ?? "", /Beside it: scripts\//);
   await detail.getByTestId("usage-skill-back").click();
-  await dialog.getByText("Select a skill for its statistics and contents.").waitFor();
+  await dialog.getByText("Select a skill to see what stands out.").waitFor();
 
   await body.locator('[data-sort="cost"]').click();
   assert.equal((await names())[0], "ponytail");
@@ -567,15 +588,17 @@ test("skills and time lists one row per skill, says what stands out, and pages i
 
   // One report failing leaves the others standing.
   timingFails = true;
+  await openFilters(dialog);
   await dialog.getByTestId("usage-project-filter").selectOption(node.projects[0].id);
-  await dialog.getByTestId("usage-insight-stats").getByText("unavailable", { exact: true }).waitFor();
+  await dialog.getByTestId("usage-insight-notice").getByText(/^Failed turns unavailable/).waitFor();
+  assert.equal(await stats.count(), 5, "a figure that cannot be read leaves the strip instead of showing a dash");
   assert.deepEqual((await stats.locator("strong").allTextContents()).slice(0, 2), ["24", "300"]);
   await dialog.getByTestId("usage-insight-view-days").click();
   assert.deepEqual((await rows.first().locator("td").allTextContents()).map((text: string) => text.trim()).slice(1), ["$254.46", "69%", "1,965", "—", "—", "—", "—", "—"]);
   assert.deepEqual(errors, []);
 });
 
-test("suggestions stay unread until asked, then list skills to remove and kinds of work to add, with a reviewed draft", { timeout: 240_000 }, async (t) => {
+test("suggestions are read when the view opens, ranked in one list, and drafts are reviewed before install", { timeout: 240_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await login(page, environment, node.url);
   let suggestionRequests = 0;
@@ -608,41 +631,57 @@ test("suggestions stay unread until asked, then list skills to remove and kinds 
   await page.getByTestId("usage-open").click();
   const dialog = page.getByTestId("usage-dialog");
   await dialog.getByTestId("usage-tab-insights").click();
+  assert.equal(suggestionRequests, 0, "nothing is read before the view opens");
   await dialog.getByTestId("usage-insight-view-suggest").click();
-  await dialog.getByTestId("usage-suggest-run").waitFor();
-  assert.equal(suggestionRequests, 0, "nothing is read until the person asks");
+  const list = dialog.getByTestId("usage-suggest-list");
+  const items = list.getByTestId("usage-suggest-item");
+  await items.first().waitFor();
+  assert.equal(suggestionRequests, 1, "opening the view reads suggestions once");
+  assert.equal(await dialog.getByTestId("usage-insight-stats").isVisible(), false, "the list has the room to itself");
+  assert.deepEqual(await items.locator(".usage-suggest-type").allTextContents(), ["Fix", "Fix", "Fix", "Fix", "New script", "Merge"], "the most money first, six to a page");
+  await dialog.getByText("Page 1 of 2").waitFor();
+  assert.equal(await dialog.getByTestId("usage-suggest-filter-fix").textContent(), "Fix 4");
+  await dialog.getByTestId("usage-insight-view-skills").click();
+  await dialog.getByTestId("usage-insight-view-suggest").click();
+  await items.first().waitFor();
+  assert.equal(suggestionRequests, 1, "coming back shows what was already read");
   await dialog.getByTestId("usage-suggest-run").click();
-  const removals = dialog.getByTestId("usage-suggest-removals");
-  await removals.getByTestId("usage-suggest-removal").first().waitFor();
-  assert.equal(suggestionRequests, 1);
-  assert.equal(await removals.getByTestId("usage-suggest-removal").count(), 3, "three to a page");
-  assert.deepEqual(await removals.locator(".usage-suggest-kind").allTextContents(), ["Unused", "Overlaps", "Fails often"]);
-  await removals.getByText("Page 1 of 2").waitFor();
-  await removals.locator('[data-suggest-page="removals:1"]').click();
-  assert.equal(await removals.getByTestId("usage-suggest-removal").count(), 3);
-  const creations = dialog.getByTestId("usage-suggest-creations");
-  await creations.getByText("May already be covered by").waitFor();
-  assert.equal(await creations.locator("header .usage-suggest-kind").textContent(), "script · 45%");
-  await creations.getByTestId("usage-suggest-draft").click();
-  assert.equal(await creations.getByTestId("usage-draft-name").inputValue(), "deploy-staging");
-  await creations.getByTestId("usage-draft-content").fill("Run the staging deploy script and check the health endpoint.");
+  await until(async () => suggestionRequests === 2, "Check again reads them again");
+
+  await dialog.getByTestId("usage-suggest-filter-new").click();
+  assert.equal(await items.count(), 1);
+  await items.first().getByText("May already be covered by").waitFor();
+  await items.first().getByTestId("usage-suggest-draft").click();
+  await items.first().getByText("Deploy staging cluster").waitFor();
+  assert.equal(await items.first().getByTestId("usage-draft-name").inputValue(), "deploy-staging");
+  await items.first().getByTestId("usage-draft-content").fill("Run the staging deploy script and check the health endpoint.");
   await inventoryRequested;
   const inventoryLoaded = page.waitForResponse('**/api/resources/inventory*');
   releaseInventory();
   await (await inventoryLoaded).finished();
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  assert.equal(await creations.getByTestId("usage-draft-content").count(), 1, "a late inventory read must preserve the open suggestion draft");
-  assert.equal(await creations.getByTestId("usage-draft-content").inputValue(), "Run the staging deploy script and check the health endpoint.", "a late inventory read must preserve typed draft content");
-  await creations.getByTestId("usage-draft-save").click();
-  await creations.getByTestId("usage-draft-review").waitFor();
+  assert.equal(await items.first().getByTestId("usage-draft-content").count(), 1, "a late inventory read must preserve the open suggestion draft");
+  assert.equal(await items.first().getByTestId("usage-draft-content").inputValue(), "Run the staging deploy script and check the health endpoint.", "a late inventory read must preserve typed draft content");
+  await items.first().getByTestId("usage-draft-save").click();
+  await items.first().getByTestId("usage-draft-review").waitFor();
   assert.deepEqual(drafts, [{ projectId: "p1", name: "deploy-staging", kind: "script", content: "Run the staging deploy script and check the health endpoint.", evidenceConversationIds: ["a", "b", "c"] }]);
-  // Reading an unused skill opens its page over the suggestions, and Back returns to them.
+
+  // Dismissed suggestions leave the list and can be shown again.
+  await dialog.getByTestId("usage-suggest-filter-all").click();
+  await items.filter({ hasText: "flaky-0" }).getByTestId("usage-suggest-dismiss").click();
+  assert.equal(await items.filter({ hasText: "flaky-0" }).count(), 0);
+  assert.equal(await dialog.getByTestId("usage-suggest-filter-fix").textContent(), "Fix 3");
+  await dialog.getByTestId("usage-suggest-show-dismissed").click();
+  await items.filter({ hasText: "flaky-0" }).waitFor();
+
+  // Reading an idle skill opens it beside the suggestions, which stay.
   await page.route("**/api/usage/skills/content?*", (route: any) => route.fulfill({ status: 404, json: { error: "That skill is not installed on this node" } }));
-  await removals.locator('[data-page="x"], [data-suggest-page="removals:-1"]').click();
-  await removals.getByTestId("usage-suggest-open").first().click();
+  await dialog.getByTestId("usage-suggest-filter-remove").click();
+  await items.first().getByTestId("usage-suggest-open").click();
   await dialog.getByTestId("usage-skill-detail").getByText("That skill is not installed on this node").waitFor();
+  assert.equal(await list.isVisible(), true, "the suggestions stay beside the panel");
   await dialog.getByTestId("usage-skill-back").click();
-  await dialog.getByTestId("usage-suggest-removals").waitFor();
+  assert.equal(await dialog.getByTestId("usage-skill-panel").isVisible(), false);
 });
 
 test("the comparison says what changed against the previous period, by totals, project, model and skill", { timeout: 240_000 }, async (t) => {
@@ -664,15 +703,26 @@ test("the comparison says what changed against the previous period, by totals, p
   const changes = dialog.getByTestId("usage-changes");
   const headline = changes.getByTestId("usage-changes-headline");
   await headline.waitFor();
-  assert.match(await headline.textContent() ?? "", /^Cost is up 50% on .+, same \d+ days?\. Biggest rises: Contigos \(\+\$700\), gpt-big \(\+\$300\)\.$/);
+  assert.match(await headline.getAttribute("title") ?? "", /^Cost is up 50% on .+, same \d+ days?\. Biggest rises: Contigos \(\+\$700\), gpt-big \(\+\$300\)\.$/);
+  assert.equal(await changes.getByTestId("usage-changes-delta").textContent(), "+$500");
   const totalsRows = changes.getByTestId("usage-changes-totals").locator("tbody tr");
   assert.deepEqual(await totalsRows.first().locator("td").allTextContents(), ["Cost", "$1,500", "$1,000", "▲ 50%"]);
   assert.match(await totalsRows.first().locator("td").nth(3).getAttribute("class") ?? "", /worse/);
   assert.deepEqual(await changes.getByTestId("usage-changes-totals").locator("tbody tr td:first-child").allTextContents(), ["Cost", "Requests", "Tokens", "Cost per request", "Cache read", "Failed tool calls", "Turns", "Median turn", "Failed turns", "Skill turns"]);
-  assert.deepEqual(await changes.getByTestId("usage-changes-projects").locator("tbody tr").first().locator("td").allTextContents(), ["Contigos", "$1,200", "$500", "+$700 · ▲ 140%"]);
-  assert.deepEqual(await changes.getByTestId("usage-changes-skills").locator("tbody tr").first().locator("td").allTextContents(), ["ponytail", "40", "10", "+30 · ▲ 300%"]);
-  await changes.getByTestId("usage-changes-week").click();
-  await changes.getByTestId("usage-changes-week").and(page.locator('[aria-pressed="true"]')).waitFor();
+  const mover = changes.getByTestId("usage-changes-projects").getByTestId("usage-changes-row").first();
+  assert.deepEqual([await mover.locator(".usage-changes-name span").textContent(), await mover.locator(".usage-changes-name small").textContent(), await mover.locator("strong").textContent(), await mover.locator("strong").getAttribute("title")], ["Contigos", "$1,200 · was $500", "+$700", "▲ 140%"]);
+  await changes.getByTestId("usage-changes-tab-skills").click();
+  const skillMover = changes.getByTestId("usage-changes-skills").getByTestId("usage-changes-row").first();
+  assert.deepEqual([await skillMover.locator(".usage-changes-name span").textContent(), await skillMover.locator("strong").textContent()], ["ponytail", "+30"]);
+  // A project that moved narrows the whole dashboard to it.
+  await changes.getByTestId("usage-changes-tab-projects").click();
+  const narrowed = page.waitForRequest((request: any) => new URL(request.url()).searchParams.get("projectId") === "x");
+  await changes.getByTestId("usage-changes-projects").getByTestId("usage-changes-row").first().click();
+  await narrowed;
+  assert.equal(await dialog.getByTestId("usage-filter-chip").textContent(), "Projectx×");
+  await dialog.getByTestId("usage-compare-kind-week").click();
+  await dialog.getByTestId("usage-compare-kind-week").and(page.locator('[aria-pressed="true"]')).waitFor();
+  await dialog.getByTestId("usage-compare-week").waitFor();
 });
 
 test("comparison cancels stale scope response without overwriting newer chart", { timeout: 240_000 }, async (t) => {
@@ -692,6 +742,7 @@ test("comparison cancels stale scope response without overwriting newer chart", 
   const dialog = page.getByTestId("usage-dialog");
   await dialog.getByTestId("usage-tab-compare").click();
   await until(async () => requests === 1, "first comparison request");
+  await openFilters(dialog);
   await dialog.getByTestId("usage-project-filter").selectOption(node.projects[0].id);
   await dialog.getByTestId("usage-compare-month-value").getByText("$9").waitFor();
   release?.();

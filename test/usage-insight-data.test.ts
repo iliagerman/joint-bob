@@ -2,7 +2,7 @@
 // that it stays silent when the evidence is thin.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { failsMore, formatDuration, hoursOfDay, mergeDays, percent, runsSlower, skillFindings, unusedSkills } from "../public/app/usage-insight-data.js";
+import { costsMore, failsMore, formatDuration, hoursOfDay, mergeDays, percent, rankSuggestions, runsSlower, skillFindings, skillHighlights, skillStatus, unusedSkills } from "../public/app/usage-insight-data.js";
 
 function skill(name: string, overrides: Record<string, unknown> = {}) {
   return { id: name, name, associatedTurns: 10, conversations: 4, associatedRequests: 100, pricedRequests: 100, apiEquivalentCostUsd: 10,
@@ -93,4 +93,40 @@ test("hourly buckets fold into the hours of a day", () => {
     { key: "09", cost: 3, partial: true, requests: 30, days: 2 },
     { key: "23", cost: null, partial: false, requests: 4, days: 1 },
   ]);
+});
+
+test("each skill gets one status, the worst of failing, slow and costly", () => {
+  const base = report([]);
+  assert.deepEqual(skillStatus(skill("plain"), base), { key: "ok", label: "OK" });
+  assert.equal(skillStatus(skill("costly", { apiEquivalentCostUsd: 50 }), base).key, "costly");
+  assert.equal(skillStatus(skill("slow", { medianDurationMs: 600_000, apiEquivalentCostUsd: 50 }), base).key, "slow", "slow outranks costly");
+  assert.equal(skillStatus(skill("flaky", { toolErrors: 17, medianDurationMs: 600_000 }), base).key, "fails", "failing outranks both");
+  assert.equal(costsMore(skill("thin", { apiEquivalentCostUsd: 50, associatedTurns: 4 }), base), false, "four turns are too few to judge");
+});
+
+test("what stands out about one skill names the comparison and a likely cause", () => {
+  const flaky = skill("flaky", { toolErrors: 17, apiEquivalentCostUsd: 50, p90DurationMs: 0,
+    models: [{ modelId: "big-model", requests: 80, toolErrors: 15, knownCostUsd: 40 }, { modelId: "small-model", requests: 20, toolErrors: 2, knownCostUsd: 10 }] });
+  const found = skillHighlights(flaky, report([flaky]));
+  assert.deepEqual(found.map((item) => item.tone), ["bad", "warn"]);
+  assert.equal(found[0].text, "17% of its tool calls fail, against 5.0% for all skills.");
+  assert.equal(found[0].detail, "15 of 17 failures were on big-model.");
+  assert.equal(found[1].text, "A turn costs $5, 5.0× the $1 average.");
+  assert.equal(found[1].detail, "80% of that is on big-model.");
+
+  const mondays = ["2026-10-05", "2026-10-12", "2026-10-19", "2026-10-07"].map((key, index) => ({ key, turns: index === 3 ? 2 : 6, knownCostUsd: 1 }));
+  const weekly = skill("weekly", { associatedTurns: 20, toolErrors: 1, daily: mondays, models: [] });
+  assert.deepEqual(skillHighlights(weekly, report([weekly])).map((item) => item.text), ["Used mostly on Mondays: 90% of its turns.", "Tool calls fail less than average: 1.0% against 5.0%."]);
+  assert.deepEqual(skillHighlights(skill("plain", { models: [] }), report([])).map((item) => item.tone), ["info"], "an ordinary skill says nothing stands out");
+});
+
+test("suggestions form one list with the most money behind them first", () => {
+  const ranked = rankSuggestions({
+    removals: [
+      { kind: "unused", name: "idle", knownCostUsd: 0 }, { kind: "failing", name: "flaky", knownCostUsd: 40 }, { kind: "overlap", name: "copy", other: "main", knownCostUsd: 5 },
+    ],
+    creations: [{ phrase: "weekly report", knownCostUsd: 60 }, { phrase: "deploy", knownCostUsd: 5 }],
+  });
+  assert.deepEqual(ranked.map((item) => [item.type, item.key]), [["new", "new:weekly report"], ["fix", "failing:flaky"], ["new", "new:deploy"], ["merge", "overlap:copy"], ["remove", "unused:idle"]]);
+  assert.deepEqual(rankSuggestions(undefined), []);
 });

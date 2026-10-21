@@ -20,6 +20,7 @@ test("Cluster and Repeated work use local selectors, not conflicting global filt
   await page.getByTestId("login-password-input").fill(environment.password);
   await page.getByTestId("login-submit-button").click();
   await page.getByTestId("usage-open").click();
+  await page.getByTestId("usage-filter-add").click();
   await page.locator('#usageFilters [name="projectId"]').selectOption(node.projects[1].id);
   await page.locator('#usageFilters [name="difficulty"]').selectOption("10");
   await page.getByTestId("usage-tab-insights").click();
@@ -71,6 +72,7 @@ test("Cluster and Repeated work use local selectors, not conflicting global filt
   assert.equal(await page.getByTestId("usage-flows-limit").inputValue(), "50");
   await page.getByTestId("usage-tab-overview").click();
   assert.equal(await page.locator("#usageFilters").isVisible(), true);
+  await page.getByTestId("usage-filter-add").click();
   assert.equal(await page.locator('#usageFilters [name="projectId"]').inputValue(), node.projects[1].id);
   assert.equal(await page.locator('#usageFilters [name="difficulty"]').inputValue(), "10");
   await page.locator('#usageFilters [name="projectId"]').selectOption(node.projects[2].id);
@@ -129,5 +131,44 @@ test("Cluster and Repeated work use local selectors, not conflicting global filt
     assert.equal(await controls.evaluate((element) => element.scrollWidth <= element.clientWidth), true, `${view} controls fit mobile width`);
     await page.setViewportSize({ width: 1440, height: 900 });
   }
+  assert.deepEqual(errors, []);
+});
+
+test("Clusters lists every cluster with what its shared projects cost, and a row opens its report", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const cluster = (id: string, name: string, members: number) => ({ id, name, originalNodeId: node.nodeId, managerNodeId: node.nodeId, managerEpoch: 1, closed: false, autoShareProjects: false, pendingDeliveries: 0,
+    members: Array.from({ length: members }, (_, index) => ({ clusterId: id, nodeId: index ? `${id}-${index}` : node.nodeId, name: `Node ${index}`, url: node.url, autoShareProjects: false, joinSequence: index + 1 })) });
+  await page.route("**/api/clusters", (route) => route.fulfill({ json: { clusters: [cluster("home", "Home", 2), cluster("team", "Team", 4)] } }));
+  const totals = (apiCostUsd: number, requests: number) => ({ apiCostUsd, partial: false, requests, pricedRequests: requests });
+  const reports: string[] = [];
+  await page.route("**/api/usage/clusters/*/report?*", (route) => {
+    const id = new URL(route.request().url()).pathname.split("/")[4];
+    reports.push(id);
+    return route.fulfill({ json: { cluster: { id, name: id === "home" ? "Home" : "Team" }, coverage: { missingNodeIds: [], missing: 0 },
+      projects: id === "home" ? [{ id: "a", name: "Alpha", totals: totals(300, 30) }, { id: "b", name: "Beta", totals: totals(100, 10) }] : [{ id: "c", name: "Gamma", totals: totals(50, 5) }],
+      nodes: [], models: [], skills: { skills: [] } } });
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(node.url);
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.getByTestId("usage-open").click();
+  await page.getByTestId("usage-tab-insights").click();
+  const view = page.getByTestId("usage-insight-view-cluster");
+  assert.equal(await view.textContent(), "Clusters2", "the view counts the clusters");
+  await view.click();
+  const rows = page.getByTestId("usage-insight-cluster").getByTestId("usage-insight-row");
+  await rows.nth(1).waitFor();
+  assert.deepEqual(await rows.locator(".usage-name").allTextContents(), ["Home", "Team"], "the costliest cluster first");
+  assert.deepEqual((await rows.first().locator("td").allTextContents()).slice(1), ["2", "40", "$400", "89%"]);
+  assert.equal(await rows.first().locator(".usage-name-detail").textContent(), "2 members");
+  assert.deepEqual([...new Set(reports)].sort(), ["home", "team"], "each cluster's report is read once for the list");
+  await rows.filter({ hasText: "Team" }).locator("[data-select]").click();
+  await page.getByTestId("usage-insight-cluster").getByText("Gamma", { exact: true }).waitFor();
+  assert.equal(await page.getByTestId("usage-cluster-cluster").inputValue(), "team", "the row opens that cluster's report");
+  await page.getByTestId("usage-cluster-cluster").selectOption("");
+  await rows.filter({ hasText: "Home" }).waitFor();
   assert.deepEqual(errors, []);
 });

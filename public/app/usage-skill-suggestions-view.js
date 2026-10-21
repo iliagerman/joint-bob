@@ -1,15 +1,17 @@
 import { api } from "./api.js";
 import { confirmAction } from "./shell.js";
 import { money } from "./usage-insight-data.js";
+import { skeleton } from "./usage-progress.js";
 
 /**
- * The Suggestions view of the Skills & time tab: installed skills to remove or review, and kinds
- * of work that keep recurring with no skill for them. Nothing is read until the person asks, and
- * nothing is installed or removed: a draft is saved for review and installed only after approval.
+ * The Suggestions view of the Skills & time tab: one ranked list of kinds of work worth a skill,
+ * failing skills to fix, overlapping skills to merge and idle skills to remove, each with its
+ * evidence and one action. Nothing is installed or removed: a draft is saved for review and
+ * installed only after approval.
  */
 
-export const PAGE = 3;
-const KINDS = { unused: "Unused", overlap: "Overlaps", failing: "Fails often" };
+export const PAGE = 6;
+const TYPES = [["all", "All"], ["new", "New skill"], ["fix", "Fix"], ["merge", "Merge"], ["remove", "Remove"]];
 const dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 
 function node(tag, text, className) {
@@ -19,6 +21,18 @@ function node(tag, text, className) {
   return item;
 }
 const count = (value, noun) => `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
+const button = (text, className, data = {}) => {
+  const item = node("button", text, className);
+  item.type = "button";
+  for (const [key, value] of Object.entries(data)) item.dataset[key] = value;
+  return item;
+};
+/** A heading with the skill names in code type: `parts` alternates plain text and names. */
+function title(...parts) {
+  const heading = node("h5");
+  parts.forEach((part, index) => heading.append(index % 2 ? node("code", part) : part));
+  return heading;
+}
 
 /** A file-safe skill name for a phrase, or "" when the phrase has letters a name cannot hold. */
 export function suggestedName(phrase) {
@@ -26,102 +40,165 @@ export function suggestedName(phrase) {
   return /^[a-z][a-z0-9-]{1,59}$/.test(name) ? name : "";
 }
 
-function removalCard(item, index) {
-  const card = node("article", undefined, "usage-suggest-card");
-  card.dataset.testid = "usage-suggest-removal";
-  const head = node("header");
-  head.append(node("strong", item.name), node("span", KINDS[item.kind], `usage-suggest-kind ${item.kind}`));
-  const facts = [count(item.turns, "turn"), item.lastUsedAt ? `last used ${dateFormat.format(new Date(item.lastUsedAt))}` : "never loaded", item.turns ? money(item.knownCostUsd) : ""].filter(Boolean).join(" · ");
-  const actions = node("div", undefined, "usage-suggest-actions");
-  const view = node("button", "Read it", "ghost");
-  view.type = "button"; view.dataset.openSkill = item.name; view.dataset.testid = "usage-suggest-open";
-  actions.append(view);
-  if (item.other) {
-    const other = node("button", `Read ${item.other}`, "ghost");
-    other.type = "button"; other.dataset.openSkill = item.other;
-    actions.append(other);
-  }
-  card.append(head, node("p", item.reason), node("small", facts), actions);
-  card.dataset.index = String(index);
-  return card;
+export function checkedAgo(at, now = Date.now()) {
+  const minutes = Math.round((now - at) / 60000);
+  if (minutes < 1) return "Checked just now";
+  if (minutes < 60) return `Checked ${minutes} min ago`;
+  return `Checked at ${new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
 }
 
-function creationCard(item, index) {
-  const card = node("article", undefined, "usage-suggest-card");
-  card.dataset.testid = "usage-suggest-creation";
-  const head = node("header");
-  head.append(node("strong", item.phrase), node("span", `${item.kind} · ${Math.round(item.confidence * 100)}%`, "usage-suggest-kind"));
-  card.append(head);
-  if (item.coveredBy) {
-    const covered = node("p", undefined, "usage-suggest-note");
-    const link = node("button", item.coveredBy, "usage-link");
-    link.type = "button"; link.dataset.openSkill = item.coveredBy;
-    covered.append("May already be covered by ", link, ".");
-    card.append(covered);
+function describe(entry) {
+  const { type, item } = entry;
+  if (type === "new") {
+    const why = node("p", `You asked for this by hand in ${count(item.conversations, "conversation")}, in ${count(item.projects, "project")}, over ${count(item.days, "different day")}.`);
+    if (item.coveredBy) {
+      const link = button(item.coveredBy, "usage-link", { openSkill: item.coveredBy });
+      why.append(" It may already be covered by ", link, ".");
+    }
+    const match = node("span", undefined, "usage-suggest-match");
+    const bar = node("i"); bar.style.setProperty("--match", `${Math.round(item.confidence * 100)}%`);
+    match.append("Match ", bar, ` ${Math.round(item.confidence * 100)}%`);
+    return { label: `New ${item.kind}`, heading: title(item.phrase[0].toUpperCase() + item.phrase.slice(1)), why: [why, match],
+      impact: [money(item.knownCostUsd), "spent on it in this period"] };
   }
-  card.append(node("small", [count(item.conversations, "conversation"), count(item.projects, "project"), count(item.days, "day"), money(item.knownCostUsd)].join(" · ")));
-  const examples = node("ul", undefined, "usage-suggest-examples");
+  const facts = item.turns ? [count(item.turns, "turn"), "loaded in recorded usage"] : ["0 turns", "never loaded"];
+  if (type === "fix") return { label: "Fix", heading: title("", item.name, " fails often"), why: [node("p", item.reason)], impact: item.knownCostUsd ? [money(item.knownCostUsd), `spent in its ${count(item.turns, "turn")}`] : facts };
+  if (type === "merge") return { label: "Merge", heading: title("", item.name, " overlaps ", item.other ?? "another skill"), why: [node("p", item.reason)], impact: facts };
+  return { label: "Remove", heading: title("", item.name, item.turns ? " is rarely used" : " is not used"), why: [node("p", item.reason)], impact: facts };
+}
+
+function actions(entry) {
+  const { type, item, key } = entry;
+  const wrap = node("div", undefined, "usage-suggest-actions");
+  if (type === "new") {
+    const draft = button(`Draft ${item.kind}`, "primary", { draft: String(entry.index), suggestOpen: key });
+    draft.dataset.testid = "usage-suggest-draft";
+    if (!item.draftProjectId) { draft.disabled = true; draft.title = "Spread across projects: no project has three of them to cite."; }
+    wrap.append(draft);
+  } else if (type === "fix") {
+    const open = button("See skill", "primary", { openSkillStats: item.name });
+    open.dataset.testid = "usage-suggest-open";
+    wrap.append(open);
+  } else {
+    const open = button(type === "merge" ? "Compare" : "Read it", type === "merge" ? "primary" : "", { openSkill: item.name });
+    open.dataset.testid = "usage-suggest-open";
+    wrap.append(open);
+  }
+  const dismiss = button(type === "remove" ? "Keep" : "Dismiss", "ghost", { suggestDismiss: key });
+  dismiss.dataset.testid = "usage-suggest-dismiss";
+  dismiss.title = "Hide this suggestion until the page reloads";
+  wrap.append(dismiss);
+  return wrap;
+}
+
+function evidence(entry) {
+  const { type, item } = entry;
+  const wrap = node("div", undefined, "usage-suggest-evidence");
+  if (type !== "new") {
+    const facts = [count(item.turns, "turn"), item.lastUsedAt ? `last used ${dateFormat.format(new Date(item.lastUsedAt))}` : "never loaded", item.turns ? money(item.knownCostUsd) : ""].filter(Boolean).join(" · ");
+    wrap.append(node("p", facts, "usage-suggest-note"));
+    if (item.other) wrap.append(button(`Read ${item.other}`, "ghost", { openSkill: item.other }));
+    return wrap;
+  }
+  const list = node("div");
+  list.append(node("h6", "Conversations it is based on"));
+  const rows = node("ul", undefined, "usage-suggest-examples");
   for (const example of item.examples.slice(0, 3)) {
-    const line = node("li", example.title);
+    const line = node("li");
     line.title = `${example.projectName}\n${example.title}`;
-    examples.append(line);
+    line.append(node("span", example.title), node("small", example.projectName), node("b", money(example.knownCostUsd)));
+    rows.append(line);
   }
-  card.append(examples);
-  const actions = node("div", undefined, "usage-suggest-actions");
-  if (item.draftProjectId) {
-    const draft = node("button", `Draft a ${item.kind}`, "ghost");
-    draft.type = "button"; draft.dataset.draft = String(index); draft.dataset.testid = "usage-suggest-draft";
-    draft.title = `Cites ${item.draftEvidenceIds.length} of these conversations in ${item.draftProjectName}`;
-    actions.append(draft);
-  } else actions.append(node("small", "Spread across projects: no project has three of them to cite.", "usage-suggest-note"));
-  card.append(actions);
-  return card;
+  list.append(rows);
+  if (item.conversations > item.examples.length) list.append(node("p", `and ${count(item.conversations - Math.min(3, item.examples.length), "more conversation")}`, "usage-suggest-note"));
+  const draft = node("div", undefined, "usage-suggest-draft");
+  draft.append(node("p", item.draftProjectId
+    ? `The draft cites ${count(item.draftEvidenceIds.length, "conversation")} in ${item.draftProjectName}. It is saved for you to read first; nothing is installed until you approve it.`
+    : "Spread across projects: no project has three of these conversations to cite, so there is nothing to draft from yet.", "usage-suggest-note"));
+  wrap.append(list, draft);
+  return wrap;
 }
 
-function column(title, hint, items, card, key, page, empty) {
-  const section = node("section", undefined, "usage-suggest-column");
-  section.dataset.testid = `usage-suggest-${key}`;
-  const head = node("header");
-  head.append(node("h4", `${title} `), node("small", hint));
-  head.firstChild.append(node("span", String(items.length), "usage-suggest-count"));
-  const pages = Math.max(1, Math.ceil(items.length / PAGE));
-  const current = Math.min(page, pages);
-  const list = node("div", undefined, "usage-suggest-cards");
-  if (!items.length) list.append(node("p", empty, "usage-split-empty"));
-  items.slice((current - 1) * PAGE, current * PAGE).forEach((item, offset) => list.append(card(item, (current - 1) * PAGE + offset)));
-  section.append(head, list);
+function row(entry, open) {
+  const article = node("article", undefined, `usage-suggest-row${open ? " open" : ""}`);
+  article.dataset.testid = "usage-suggest-item";
+  article.dataset.type = entry.type;
+  article.dataset.key = entry.key;
+  const parts = describe(entry);
+  const label = node("span", parts.label, `usage-suggest-type ${entry.type}`);
+  const main = node("div", undefined, "usage-suggest-main");
+  const toggle = button("", "usage-suggest-toggle", { suggestOpen: entry.key });
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.append(parts.heading);
+  main.append(toggle, ...parts.why);
+  const impact = node("div", undefined, "usage-suggest-impact");
+  impact.append(node("strong", parts.impact[0]), node("small", parts.impact[1]));
+  article.append(label, main, impact, actions(entry));
+  if (open) article.append(evidence(entry));
+  return article;
+}
+
+/**
+ * `entry` is the report's state: undefined or { loading } while it is read, then { value } or { error }.
+ * `ui` holds the person's choices: { type, page, open, dismissed (Set), showDismissed, checkedAt }.
+ */
+export function renderSuggestions(entry, ranked, ui) {
+  const root = node("div", undefined, "usage-suggest");
+  const top = node("div", undefined, "usage-suggest-top");
+  const run = button(entry?.value ? "↻ Check again" : "Find suggestions", "", { suggestRun: "" });
+  run.dataset.testid = "usage-suggest-run";
+  run.disabled = Boolean(entry?.loading);
+  const source = node("span", entry?.loading ? "Looking through skill loads and conversation titles…" : ui.checkedAt ? `${checkedAgo(ui.checkedAt)}, from skill loads and conversation titles on this node` : "From skill loads and conversation titles on this node", "usage-suggest-source");
+  if (!entry?.value) {
+    top.append(source, run);
+    root.append(top);
+    if (entry?.error) root.append(node("p", `Suggestions unavailable: ${entry.error}`, "usage-error"));
+    else root.append(skeleton(4, "usage-suggest-loading"));
+    return root;
+  }
+  const visible = ranked.filter((item) => ui.showDismissed || !ui.dismissed.has(item.key));
+  const total = visible.reduce((sum, item) => sum + item.cost, 0);
+  const sum = node("div", undefined, "usage-suggest-sum");
+  sum.append(node("strong", money(total)), node("small", `spent on the work behind ${count(visible.length, "suggestion")}`));
+  const types = node("div", undefined, "usage-seg small");
+  types.setAttribute("role", "group"); types.setAttribute("aria-label", "Kinds of suggestion");
+  for (const [key, label] of TYPES) {
+    const size = key === "all" ? visible.length : visible.filter((item) => item.type === key).length;
+    if (key !== "all" && !size) continue;
+    const choice = button(`${label} ${size}`, "", { suggestFilter: key });
+    choice.dataset.testid = `usage-suggest-filter-${key}`;
+    choice.setAttribute("aria-pressed", String(ui.type === key));
+    types.append(choice);
+  }
+  top.append(sum, types, source, run);
+  root.append(top);
+  const rows = visible.filter((item) => ui.type === "all" || item.type === ui.type);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  const current = Math.min(ui.page, pages);
+  const list = node("div", undefined, "usage-suggest-list");
+  list.dataset.testid = "usage-suggest-list";
+  if (!rows.length) list.append(node("p", ranked.length ? "Nothing left here: every suggestion of this kind was dismissed." : "No suggestions: every installed skill is in use and looks distinct, and no kind of work keeps recurring.", "usage-split-empty"));
+  for (const item of rows.slice((current - 1) * PAGE, current * PAGE)) list.append(row(item, ui.open === item.key));
+  root.append(list);
+  const foot = node("div", undefined, "usage-suggest-foot");
+  const hiddenCount = ranked.filter((item) => ui.dismissed.has(item.key)).length;
+  const summary = node("span", count(rows.length, "suggestion"));
+  if (hiddenCount) {
+    summary.append(` · ${hiddenCount.toLocaleString()} dismissed `);
+    const toggle = button(ui.showDismissed ? "hide" : "show", "usage-link", { suggestShowDismissed: "" });
+    toggle.dataset.testid = "usage-suggest-show-dismissed";
+    summary.append(toggle);
+  }
+  foot.append(summary);
   if (pages > 1) {
     const pager = node("div", undefined, "usage-pagination");
-    const previous = node("button", "Previous"), next = node("button", "Next");
-    previous.type = next.type = "button";
-    previous.dataset.suggestPage = `${key}:-1`; next.dataset.suggestPage = `${key}:1`;
+    const previous = button("‹", "", { suggestPage: "-1" }), next = button("›", "", { suggestPage: "1" });
+    previous.setAttribute("aria-label", "Previous page"); next.setAttribute("aria-label", "Next page");
     previous.disabled = current <= 1; next.disabled = current >= pages;
     pager.append(previous, node("span", `Page ${current} of ${pages}`), next);
-    section.append(pager);
+    foot.append(pager);
   }
-  return section;
-}
-
-/** `entry` is the tab's state: undefined before the person asks, then { loading }, { value } or { error }. */
-export function renderSuggestions(entry, pages) {
-  const root = node("div", undefined, "usage-suggest");
-  const intro = node("div", undefined, "usage-suggest-intro");
-  intro.append(node("p", "Looks at which skills agents load and at the titles of your conversations, on this node only: no model, no transcript text. Skills to remove are judged over all recorded usage, and ideas for new skills follow the filters above. It only suggests; nothing is installed or removed."));
-  const run = node("button", entry?.value ? "Look again" : "Find suggestions");
-  run.type = "button"; run.dataset.suggestRun = ""; run.dataset.testid = "usage-suggest-run";
-  run.disabled = Boolean(entry?.loading);
-  intro.append(run);
-  root.append(intro);
-  if (!entry) return root;
-  if (entry.loading) { root.append(node("p", "Looking through usage and conversation titles…")); return root; }
-  if (entry.error) { root.append(node("p", `Suggestions unavailable: ${entry.error}`, "usage-error")); return root; }
-  const { removals, creations, installedSkills, conversationsConsidered, truncated } = entry.value;
-  const grid = node("div", undefined, "usage-suggest-grid");
-  grid.append(
-    column("Skills to remove or review", `${count(installedSkills, "installed skill")} checked`, removals, removalCard, "removals", pages.removals, "Every installed skill has been loaded recently and looks distinct."),
-    column("Skills worth adding", `${count(conversationsConsidered, "conversation")} considered${truncated ? ", the costliest" : ""}`, creations, creationCard, "creations", pages.creations, "No kind of work recurs in at least three conversations on two different days."),
-  );
-  root.append(grid);
+  root.append(foot);
   return root;
 }
 

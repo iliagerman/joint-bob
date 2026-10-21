@@ -5,7 +5,8 @@ import { createMultiSelect } from "./multi-select.js";
 import { formatPlanPrice, formatUsageCost } from "./usage-format.js";
 import { renderModelSplit, renderUsageTrend } from "./usage-charts.js";
 import { comparePeriods, isoDate, localeWeekStart, periodWindows, presetRange } from "./usage-periods.js";
-import { renderComparison } from "./usage-compare.js";
+import { renderCompareKpis, renderComparison } from "./usage-compare.js";
+import { createProgress, skeleton } from "./usage-progress.js";
 import { requestComparison } from "./usage-request.js";
 import { initUsageInsights } from "./usage-insights.js";
 import { initUsageChanges } from "./usage-changes.js";
@@ -32,6 +33,15 @@ const sortNote = document.querySelector("#usageSortNote");
 const dateRange = filters.querySelector(".usage-date-range");
 const compareHost = document.querySelector("#usageCompare");
 const compareStatus = document.querySelector("#usageCompareStatus");
+const compareKpis = document.querySelector("#usageCompareKpis");
+const compareKinds = document.querySelector("#usageCompareKinds");
+const compareTop = compareKinds.parentElement;
+const comparePanel = document.querySelector("#usageComparePanel");
+const filterBar = document.querySelector("#usageBar");
+const filterMenu = document.querySelector("#usageFilterMenu");
+const filterChips = document.querySelector("#usageFilterChips");
+const progress = createProgress(document.querySelector("#usageProgress"), { label: false });
+const compareProgress = createProgress(document.querySelector("#usageCompareProgress"));
 // Wide and tall enough, the dialog fits the window and the table pages instead of scrolling.
 const FIT = window.matchMedia("(min-width: 701px) and (min-height: 560px)");
 const PERIOD_FIELDS = new Set(["period", "from", "to"]);
@@ -82,7 +92,9 @@ let clusterValues = new Set();
 let activeTab = "overview";
 let compareGeneration = 0;
 let compareScope = "";
-let compareViews = [];
+let compareView = null;
+let comparisons = null;
+let compareKind = "month";
 let compareAbort = null;
 let comparePoll = null;
 let compareCoverage = null;
@@ -192,6 +204,7 @@ function updateInventory(data) {
   setOptions(filters.elements.classification, inventory.classifications.map((label) => ({
     value: label, label,
   })), "All labels");
+  renderChips();
 }
 
 /** "This node" is usage recorded here; a cluster is usage its other members recorded. */
@@ -438,7 +451,7 @@ function refit() {
   if (dimension !== "conversations") { clientPages.set(dimension, Math.floor(first / size) + 1); renderBreakdowns(); return; }
   page = Math.floor(first / size) + 1;
   clearTimeout(refitTimer);
-  refitTimer = setTimeout(() => void loadUsage({ polling: true, sections: ["conversations"] }), 150);
+  refitTimer = setTimeout(() => { if (dialog.open) void loadUsage({ polling: true, sections: ["conversations"] }); }, 150);
 }
 new ResizeObserver(() => refit()).observe(breakdowns);
 
@@ -460,6 +473,7 @@ async function loadSplit(key) {
 }
 
 const SECTIONS = ["summary", "projects", "conversations", "classifications", "difficulties", "models", "days"];
+const SECTION_NAMES = { summary: "Totals", projects: "Projects", conversations: "Conversations", classifications: "Labels", difficulties: "Difficulty", models: "Models", days: "Days" };
 /** What the open view shows first; the other groupings fill in behind it. */
 function sectionOrder() {
   return [...new Set(["summary", dimension, "days", ...SECTIONS])];
@@ -482,14 +496,25 @@ function renderCoverageNotice() {
   notice.className = coverage.error ? "usage-error" : partial ? "usage-warning" : "";
   notice.replaceChildren();
   if (coverage.error) notice.textContent = coverage.error;
-  else if (partial) {
-    notice.append(element("strong", "Partial coverage"), ` ${missing.toLocaleString()} sessions unavailable · ${unpriced.toLocaleString()} requests unpriced. Values marked `, partialMark(totals), " are lower bounds.");
-    notice.title = notice.textContent.replace("marked  are", "marked with a dot are");
-  }
+  else if (partial) notice.append(estimateBadge(missing, unpriced));
+}
+/** One amber badge for every gap in the figures; "Why?" says what is missing and what the dot means. */
+function estimateBadge(missing, unpriced) {
+  const why = element("details", undefined, "usage-why");
+  why.dataset.testid = "usage-estimate";
+  const summary = element("summary");
+  const gaps = [missing ? `${missing.toLocaleString()} session${missing === 1 ? "" : "s"} not read` : "", unpriced ? `${unpriced.toLocaleString()} request${unpriced === 1 ? "" : "s"} without a price` : ""].filter(Boolean).join(" · ");
+  const dot = element("span", undefined, "usage-partial");
+  dot.setAttribute("aria-hidden", "true");
+  summary.append(dot, element("strong", "Estimated"), ` ${gaps || "some requests unpriced"} `, element("u", "Why?"));
+  const text = element("p", `Costs are API-equivalent estimates, not invoices. ${missing ? `${missing.toLocaleString()} recorded session${missing === 1 ? "" : "s"} could not be read, so ${missing === 1 ? "its" : "their"} usage is missing. ` : ""}${unpriced ? `${unpriced.toLocaleString()} request${unpriced === 1 ? " has" : "s have"} no known price. ` : ""}Figures marked with an amber dot are lower bounds: the real cost is at least that much.`);
+  why.append(summary, text);
+  return why;
 }
 /** Takes one section out of a response and draws it; the rest of the page keeps what it has. */
 function applySection(section, data) {
   hasSnapshot = true;
+  progress.mark(section);
   latest ||= emptySnapshot();
   latest.failed.delete(section);
   latest.coverage = data.coverage;
@@ -541,8 +566,14 @@ function queryString() {
   return scopeParameters().toString();
 }
 function stopPolling(){if(pollTimer)clearTimeout(pollTimer);pollTimer=null;}
+const clock = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+/** The header's short status; the full time is in its tooltip. */
 function settledStatus(coverage) {
-  return coverage.refreshing ? "Refreshing transcripts in background…" : coverage.refreshedAt ? `Usage refreshed ${new Date(coverage.refreshedAt).toLocaleString()}` : "Showing saved usage; first transcript refresh pending";
+  status.title = coverage.refreshedAt ? `Usage refreshed ${new Date(coverage.refreshedAt).toLocaleString()}` : "";
+  if (coverage.refreshing) return "Refreshing transcripts…";
+  if (!coverage.refreshedAt) return "Saved usage · refresh pending";
+  const at = new Date(coverage.refreshedAt);
+  return `Updated ${at.toDateString() === new Date().toDateString() ? clock.format(at) : at.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
 }
 /**
  * While transcripts refresh in the background, ask only whether saved usage changed. Re-reading
@@ -583,17 +614,21 @@ async function loadUsage({ polling = false, sections = null } = {}) {
   const serial = ++loadSerial;
   lastLoadAt = Date.now();
   status.textContent = hasSnapshot ? "Updating usage…" : "Loading usage…";
+  status.title = "";
   if (!hasSnapshot) {
     notice.className = "";
     notice.removeAttribute("role");
     notice.textContent = "";
     latest = null;
-    summary.replaceChildren(element("p", "Loading totals…"));
+    const loadingTotals = element("div", undefined, "usage-strip-loading");
+    loadingTotals.append(element("p", "Loading totals…", "sr-only"), skeleton(2));
+    summary.replaceChildren(loadingTotals);
     trend.replaceChildren();
     breakdowns.replaceChildren(element("p", "Loading breakdowns…"));
   }
   refreshButton.disabled = true;
   const wanted = sections || sectionOrder();
+  if (wanted.length > 1) progress.start(wanted.map((section) => [section, SECTION_NAMES[section] ?? section]));
   let failure = null;
   let coverage = null;
   await Promise.all(wanted.map(async (section, index) => {
@@ -612,6 +647,7 @@ async function loadUsage({ polling = false, sections = null } = {}) {
     } catch (error) {
       if (!current()) return;
       failure ||= error;
+      progress.mark(section, "failed");
       if (latest) { latest.failed.add(section); renderBreakdowns(); }
     }
   }));
@@ -640,48 +676,82 @@ async function loadCompare({ force = false } = {}) {
   parameters.set("to", isoDate(today));
   parameters.set("refresh", "false");
   const scope = parameters.toString();
-  if (!force && scope === compareScope && compareViews.length) return;
+  if (!force && scope === compareScope && compareView) return;
   compareAbort?.abort();
   clearTimeout(comparePoll); comparePoll = null;
-  if (compareScope !== scope) { compareViews = []; compareHost.replaceChildren(); }
+  if (compareScope !== scope) {
+    compareView = null; comparisons = null;
+    compareHost.replaceChildren(skeleton(6, "tall"));
+    compareKpis.replaceChildren(...Array.from({ length: 4 }, () => skeleton(2, "usage-kpi")));
+    changesHost.replaceChildren(skeleton(1, "tall"), skeleton(6));
+  }
   compareScope = scope;
   const generation = ++compareGeneration;
-  compareStatus.className = "";
-  compareStatus.textContent = compareViews.length ? "Updating comparison…" : "Loading comparison…";
+  compareStatus.className = "usage-compare-status";
+  compareStatus.textContent = "";
+  compareProgress.start([["days", "Daily totals"], ["totals", "Totals"], ["skills", "Skills"], ["timing", "Turn times"]], compareView ? "Updating comparison…" : "Loading comparison…");
   const controller = new AbortController();
   compareAbort = controller;
   try {
     const data = await requestComparison(`/api/usage/days?${parameters}`, api, controller.signal);
     if (generation !== compareGeneration || controller.signal.aborted) return;
-    compareHost.replaceChildren();
-    const comparisons = Object.fromEntries(["month", "week"].map((kind) => [kind, comparePeriods(data.days, kind, today, weekStart)]));
-    compareViews = ["month", "week"].map((kind) => renderComparison(compareHost, comparisons[kind]));
-    changes.show(comparisons, { force });
+    compareProgress.mark("days");
+    comparisons = Object.fromEntries(["month", "week"].map((kind) => [kind, comparePeriods(data.days, kind, today, weekStart)]));
+    drawCompare({ force });
     compareCoverage = data.coverage;
     const filtered = scopeFilterCount();
-    const gaps = `${data.coverage.missing} sessions unavailable${data.days.some((row) => row.totals.partial) ? " · some requests unpriced" : ""}`;
-    compareStatus.textContent = `${filtered ? `Filtered by ${filtered} filter${filtered === 1 ? "" : "s"}` : "All recorded usage"} · ${gaps} · ${data.coverage.refreshedAt ? `snapshot ${new Date(data.coverage.refreshedAt).toLocaleString()}` : "saved snapshot; refresh pending"}${data.coverage.refreshing ? " · refreshing" : ""}`;
+    const gaps = [data.coverage.missing ? `${data.coverage.missing.toLocaleString()} sessions not read` : "", data.days.some((row) => row.totals.partial) ? "some requests unpriced" : ""].filter(Boolean);
+    compareStatus.textContent = [filtered ? `Filtered by ${filtered} filter${filtered === 1 ? "" : "s"}` : "", ...gaps, data.coverage.refreshing ? "refreshing" : ""].filter(Boolean).join(" · ");
     if (data.coverage.refreshing && activeTab === "compare" && !document.hidden) comparePoll = setTimeout(() => void loadCompare({ force: true }), 2000);
   } catch (error) {
     if (generation !== compareGeneration || controller.signal.aborted) return;
     compareScope = "";
-    compareStatus.className = "usage-error";
-    compareStatus.textContent = `Comparison ${compareViews.length ? "stale; update" : "unavailable"}: ${error.name === "TimeoutError" ? "Request timed out" : error.message}. Select Refresh usage to retry.`;
+    compareProgress.finish();
+    compareStatus.className = "usage-compare-status usage-error";
+    compareStatus.textContent = `Comparison ${compareView ? "stale; update" : "unavailable"}: ${error.name === "TimeoutError" ? "Request timed out" : error.message}. Select Refresh usage to retry.`;
   } finally {
     if (compareAbort === controller) compareAbort = null;
   }
 }
-const changes = initUsageChanges({ host: document.querySelector("#usageChanges"), scopeParameters });
+/** Draws the chosen kind of period from the comparison already read; switching kinds reads nothing new. */
+function drawCompare({ force = false } = {}) {
+  if (!comparisons) return;
+  for (const button of compareKinds.querySelectorAll("[data-compare-kind]")) button.setAttribute("aria-pressed", String(button.dataset.compareKind === compareKind));
+  renderCompareKpis(compareKpis, comparisons);
+  compareView = renderComparison(compareHost, comparisons[compareKind]);
+  changes.show(comparisons, { kind: compareKind, force });
+}
+compareKinds.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-compare-kind]");
+  if (!button || button.dataset.compareKind === compareKind) return;
+  compareKind = button.dataset.compareKind;
+  if (!comparisons) { for (const item of compareKinds.querySelectorAll("[data-compare-kind]")) item.setAttribute("aria-pressed", String(item === button)); return; }
+  compareProgress.start([["totals", "Totals"], ["skills", "Skills"], ["timing", "Turn times"]], "Updating changes…");
+  drawCompare();
+});
+/** A row in "What changed" narrows the whole dashboard to it. */
+function applyFilter(values) {
+  for (const [name, value] of Object.entries(values)) {
+    const field = filters.elements[name];
+    if (!field) continue;
+    if (field instanceof HTMLSelectElement && ![...field.options].some((option) => option.value === value)) field.add(new Option(value, value));
+    field.value = value;
+  }
+  scopeChanged();
+}
+const changesHost = document.querySelector("#usageChanges");
+const changes = initUsageChanges({ host: changesHost, scopeParameters, progress: compareProgress, onFilter: applyFilter,
+  onSkill: (name) => { showTab("insights"); insights.openSkill(name); } });
 const insights = initUsageInsights({
   scopeParameters, periodRange,
   projectId: () => filters.elements.projectId.value,
   active: () => dialog.open && activeTab === "insights",
-  setIndependent: (independent) => { if (activeTab === "insights") filters.hidden = independent; },
+  setIndependent: (independent) => { if (activeTab === "insights") { filters.hidden = independent; filterBar.hidden = independent; } },
 });
 let redrawFrame = 0;
 new ResizeObserver(() => {
   cancelAnimationFrame(redrawFrame);
-  redrawFrame = requestAnimationFrame(() => { if (activeTab === "compare") for (const view of compareViews) view.redraw(); });
+  redrawFrame = requestAnimationFrame(() => { if (activeTab === "compare") compareView?.redraw(); });
 }).observe(compareHost);
 async function loadDetections(){try{detections=(await api("/api/subscription-usage/detected")).detections||[];detectionError="";renderPlans();}catch(error){detections=[];detectionError=`Detection unavailable: ${error.message}`;renderPlans();}}
 async function loadPlans() {
@@ -701,6 +771,7 @@ function quotaRow(q={}){const row=element("div",undefined,"quota-row");row.datas
 function quotaPayload(row){const value=n=>row.querySelector(`[name="${n}"]`).value,num=n=>value(n)===""?null:Number(value(n)),used=num("used"),limit=num("limit"),reset=row.querySelector('[name="resetsAt"]');return{id:row.dataset.id,label:value("label"),used,limit,remaining:used!==null&&limit!==null?Math.max(0,limit-used):null,unit:value("unit"),resetsAt:value("resetsAt")?(reset.dataset.originalIso&&value("resetsAt")===localDateTime(reset.dataset.originalIso)?reset.dataset.originalIso:new Date(value("resetsAt")).toISOString()):null,capturedAt:row.dataset.dirty?new Date().toISOString():row.dataset.capturedAt,source:"manual"};}
 function showTab(name) {
   activeTab = name;
+  dialog.dataset.tab = name;
   for (const button of dialog.querySelectorAll(".usage-tabs button")) {
     button.setAttribute("aria-pressed", String(button.dataset.testid === `usage-tab-${name}`));
   }
@@ -708,10 +779,15 @@ function showTab(name) {
     panel.hidden = panel.dataset.usagePanel !== name;
   }
   filters.hidden = name === "subscriptions";
+  filterBar.hidden = name === "subscriptions";
+  filterMenu.open = false;
   document.querySelector("#usageStatusRow").hidden = name !== "overview";
   filters.classList.toggle("comparing", name === "compare");
+  // Month or week takes the period's place in the filter bar while comparing, with the comparison's progress beside it.
+  if (name === "compare") { filters.prepend(compareKinds); filterBar.append(compareTop); }
+  else { compareTop.prepend(compareKinds); comparePanel.prepend(compareTop); }
   if (name === "compare") void loadCompare();
-  else { compareAbort?.abort(); clearTimeout(comparePoll); comparePoll = null; ++compareGeneration; }
+  else { compareAbort?.abort(); clearTimeout(comparePoll); comparePoll = null; ++compareGeneration; compareProgress.finish(); changes.stop(); }
   if (name === "insights") insights.load();
   if (name === "overview") requestAnimationFrame(refit);
 }
@@ -794,7 +870,7 @@ document.querySelectorAll("[data-usage-open]").forEach((button) => {
   button.addEventListener("click", () => openUsageDashboard());
 });
 document.querySelector("[data-testid='usage-close']").addEventListener("click", () => dialog.close());
-dialog.addEventListener("close",()=>{stopPolling();clearTimeout(comparePoll);comparePoll=null;requestGeneration++;compareGeneration++;compareAbort?.abort();insights.reset();});
+dialog.addEventListener("close",()=>{stopPolling();clearTimeout(refitTimer);clearTimeout(comparePoll);comparePoll=null;requestGeneration++;compareGeneration++;compareAbort?.abort();progress.finish();compareProgress.finish();filterMenu.open=false;insights.reset();});
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { stopPolling(); clearTimeout(comparePoll); comparePoll=null; compareAbort?.abort(); ++compareGeneration; requestGeneration++; }
   else if (dialog.open) { if (activeTab === "compare") void loadCompare({ force: true }); if (hasSnapshot) void loadUsage({ polling: true }); }
@@ -824,6 +900,7 @@ function showPeriod() {
 function scopeChanged() {
   page = 1;
   clientPages.clear();
+  renderChips();
   if (activeTab === "compare") void loadCompare();
   if (activeTab === "insights") insights.load();
   void loadUsage();
@@ -840,6 +917,44 @@ clearFilters.addEventListener("click", () => {
   clusterValues = new Set();
   clusterFilter.setValues(clusterValues);
   scopeChanged();
+});
+const FILTER_LABELS = { projectId: "Project", conversationId: "Conversation", classification: "Label", difficulty: "Difficulty", modelId: "Model", engine: "Engine", provider: "Provider" };
+/** Each filter in use as a chip that clears it; filters not in use stay behind "+ Filter". */
+function renderChips() {
+  const chip = (label, value, clear) => {
+    const item = element("span", undefined, "usage-chip");
+    item.dataset.testid = "usage-filter-chip";
+    const remove = element("button", "×");
+    remove.type = "button";
+    remove.dataset.clearFilter = clear;
+    remove.setAttribute("aria-label", `Remove ${label.toLowerCase()} filter`);
+    item.append(element("i", label), element("span", value), remove);
+    return item;
+  };
+  const chips = [];
+  if (clusterValues.size) {
+    const names = new Map([["local", "This node"], ...(state.clusters || []).map((cluster) => [cluster.id, cluster.name])]);
+    chips.push(chip(clusterValues.size === 1 ? "Cluster" : "Clusters", [...clusterValues].map((value) => names.get(value) || value).join(", "), "clusters"));
+  }
+  for (const [name, label] of Object.entries(FILTER_LABELS)) {
+    const field = filters.elements[name];
+    if (!field?.value) continue;
+    const text = field instanceof HTMLSelectElement ? field.selectedOptions[0]?.textContent || field.value : field.value;
+    chips.push(chip(label, name === "difficulty" && /^\d+$/.test(field.value) ? `Level ${field.value}` : text, name));
+  }
+  filterChips.replaceChildren(...chips);
+  clearFilters.hidden = !activeFilterCount();
+}
+filterChips.addEventListener("click", (event) => {
+  const name = event.target.closest("[data-clear-filter]")?.dataset.clearFilter;
+  if (!name) return;
+  if (name === "clusters") { clusterValues = new Set(); clusterFilter.setValues(clusterValues); }
+  else filters.elements[name].value = "";
+  scopeChanged();
+});
+// The menu closes when the person clicks anywhere else, including the cluster picker's own popover outside it.
+document.addEventListener("pointerdown", (event) => {
+  if (filterMenu.open && !filterMenu.contains(event.target) && !event.target.closest?.(".searchable-select-popover")) filterMenu.open = false;
 });
 dimensionNav.addEventListener("click", (event) => {
   const button = event.target.closest("[data-dimension]");
@@ -898,6 +1013,7 @@ export function openUsageDashboard(initialFilters = {}) {
   for (const [key, value] of Object.entries(initialFilters)) {
     if (filters.elements[key]) filters.elements[key].value = value;
   }
+  renderChips();
   if (!dialog.open) dialog.showModal();
   showTab("overview");
   syncClusterOptions();

@@ -61,6 +61,18 @@ test("workspaces are listed, created, and drive managed project paths", async ()
     assert.equal(changePassword.status, 204);
     const requestHeaders = { Cookie: cookie, "X-CSRF-Token": loginBody.csrfToken, "Content-Type": "application/json" };
 
+    for (const type of ["", "   "]) {
+      const missingWorkspace = await fetch(`${node.baseUrl}/api/projects`, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify({ name: "housekeeping", type }),
+      });
+      assert.equal(missingWorkspace.status, 400);
+      const failure = await missingWorkspace.json() as { error: string };
+      assert.match(failure.error, /choose a workspace/i);
+      assert.match(failure.error, /Settings > Workspaces/);
+    }
+
     const seeded = await fetch(`${node.baseUrl}/api/workspaces`, { headers: { Cookie: cookie } });
     assert.equal(seeded.status, 200);
     const seededBody = await seeded.json() as { workspaces: Array<{ id: string; label: string }> };

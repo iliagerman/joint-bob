@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { change, comparePeriods, isoDate, localeWeekStart, periodWindows, presetRange } from "../public/app/usage-periods.js";
+import { niceScale, paceOf } from "../public/app/usage-compare.js";
 
 const row = (key: string, apiCostUsd: number | null, partial = false) => ({ key, totals: { apiCostUsd, partial } });
 const everyDay = (from: Date, days: number, cost = 1) => Array.from({ length: days }, (_, index) => row(isoDate(new Date(from.getFullYear(), from.getMonth(), from.getDate() + index)), cost));
@@ -44,4 +45,19 @@ test("week to date compares like with like and flags unpriced days", () => {
 test("relative change has no baseline when nothing was spent", () => {
   assert.equal(change(12, 10), 0.2);
   assert.equal(change(5, 0), null);
+});
+
+test("the month's pace spreads its cost so far over the whole month, once there are days enough to judge", () => {
+  const rows = (dates: string[]) => dates.map((key) => ({ key, totals: { apiCostUsd: 10, partial: false } }));
+  const early = comparePeriods(rows(["2026-10-01", "2026-10-02"]), "month", new Date(2026, 9, 2));
+  assert.equal(paceOf(early), null, "two days say more about those days than about the month");
+  const later = comparePeriods(rows(Array.from({ length: 10 }, (_, index) => `2026-10-${String(index + 1).padStart(2, "0")}`)), "month", new Date(2026, 9, 10));
+  assert.equal(paceOf(later), 310, "$100 over ten days is $310 over October's 31");
+});
+
+test("the chart axis rises in round steps that cover the largest value", () => {
+  assert.deepEqual(niceScale(24_594), { top: 30_000, step: 10_000 });
+  assert.deepEqual(niceScale(5_900), { top: 6_000, step: 2_000 });
+  assert.deepEqual(niceScale(31), { top: 40, step: 10 });
+  assert.deepEqual(niceScale(0), { top: 1, step: 0.25 });
 });

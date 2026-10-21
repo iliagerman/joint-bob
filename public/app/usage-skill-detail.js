@@ -1,10 +1,10 @@
-import { formatDuration, money, percent, ratio } from "./usage-insight-data.js";
+import { formatDuration, money, percent, ratio, skillHighlights } from "./usage-insight-data.js";
 import { renderModelSplit } from "./usage-charts.js";
 
 /**
- * One skill on its own page inside the Skills & time tab: what it is (its SKILL.md), how often
- * agents load it, what those turns cost and how they run, by day, model, project and conversation.
- * Pure drawing: the tab owns the data and the events.
+ * One skill in a panel beside the Skills & time list: what stands out about it, how often agents
+ * load it, what those turns cost and how they run, by day, model, project and conversation, and
+ * its SKILL.md. Pure drawing: the tab owns the data and the events.
  */
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -114,34 +114,46 @@ function listing(title, columns, rows, empty) {
   return section;
 }
 
+// The panel keeps six of the figures; the rest are in the list or the charts below them.
+const PANEL_TILES = ["Turns", "Cost", "Cost per turn", "Failed tools", "Median turn", "Cache read"];
+const MARKS = { bad: "▲", warn: "▲", info: "●", good: "✓" };
+function highlights(skill, report) {
+  const section = node("section", undefined, "usage-skill-stand");
+  section.append(node("h4", "What stands out"));
+  for (const item of skillHighlights(skill, report)) {
+    const line = node("div", undefined, `usage-skill-highlight ${item.tone}`);
+    line.dataset.testid = "usage-skill-highlight";
+    const mark = node("span", MARKS[item.tone], "usage-skill-mark");
+    mark.setAttribute("aria-hidden", "true");
+    const text = node("p", item.text);
+    if (item.detail) text.append(node("small", item.detail));
+    line.append(mark, text);
+    section.append(line);
+  }
+  return section;
+}
 function statistics(skill, report, names) {
   const pane = node("div", undefined, "usage-skill-stats");
   const tiles = node("div", undefined, "usage-skill-tiles");
-  tiles.append(...skillTiles(skill, report).map(([label, value, detail, title]) => tile(label, value, detail, title)));
-  const charts = node("div", undefined, "usage-skill-charts");
+  const all = skillTiles(skill, report);
+  tiles.append(...PANEL_TILES.map((label) => all.find(([name]) => name === label)).filter(Boolean).map(([label, value, detail, title]) => tile(label, value, detail, title)));
   const turns = node("section", undefined, "usage-skill-list");
   turns.append(node("h4", "Turns per day"), dailyChart(skill.daily));
   const models = node("section", undefined, "usage-skill-list");
   models.append(node("h4", "Cost by model"), renderModelSplit(skill.models.map((model) => ({ key: model.modelId, totals: { apiCostUsd: model.knownCostUsd } }))));
-  charts.append(turns, models);
-  const tables = node("div", undefined, "usage-skill-tables");
-  tables.append(
-    listing("Projects", [
-      { label: "Project", left: true, text: (row) => names.projects[row.projectId] || row.projectId },
-      { label: "Turns", text: (row) => row.turns.toLocaleString() },
-      { label: "Convs", text: (row) => row.conversations.toLocaleString() },
-      { label: "Cost", text: (row) => money(row.knownCostUsd) },
-    ], skill.projects.slice(0, 6), "No project."),
+  pane.append(highlights(skill, report), tiles, turns, models,
     listing("Costliest conversations", [
       { label: "Conversation", left: true, text: (row) => names.conversations[row.conversationId] || row.conversationId, title: (row) => `${names.projects[row.projectId] || row.projectId}\n${names.conversations[row.conversationId] || row.conversationId}` },
       { label: "Turns", text: (row) => row.turns.toLocaleString() },
       { label: "Cost", text: (row) => money(row.knownCostUsd) },
-    ], skill.topConversations.slice(0, 6), "No conversation."),
-  );
-  pane.append(tiles, charts, tables);
+    ], skill.topConversations.slice(0, 5), "No conversation."),
+    listing("Projects", [
+      { label: "Project", left: true, text: (row) => names.projects[row.projectId] || row.projectId },
+      { label: "Turns", text: (row) => row.turns.toLocaleString() },
+      { label: "Cost", text: (row) => money(row.knownCostUsd) },
+    ], skill.projects.slice(0, 5), "No project."));
   return pane;
 }
-
 function contents(entry, name) {
   const pane = node("div", undefined, "usage-skill-contents");
   if (!entry || entry.loading) { pane.append(node("p", `Loading ${name}…`)); return pane; }
@@ -180,21 +192,25 @@ export function renderSkillDetail({ name, skill, report, tab, content, names }) 
   const root = node("section", undefined, "usage-skill-detail");
   root.dataset.testid = "usage-skill-detail";
   const head = node("header");
-  const back = node("button", "‹ All skills", "ghost");
-  back.type = "button"; back.dataset.detailBack = ""; back.dataset.testid = "usage-skill-back";
-  const title = node("h3", name);
-  const tabs = node("div", undefined, "usage-skill-tabs");
+  const titles = node("div", undefined, "usage-skill-titles");
+  titles.append(node("h3", name), node("small", skill
+    ? `${count(skill.associatedTurns, "turn")} · ${skill.engines.map((entry) => names.engine?.(entry.engine) ?? entry.engine).join(", ")} · ${when(skill.firstUsedAt)} – ${when(skill.lastUsedAt)}`
+    : "Not loaded in this period"));
+  const close = node("button", "✕", "usage-icon-button");
+  close.type = "button"; close.dataset.detailBack = ""; close.dataset.testid = "usage-skill-back";
+  close.setAttribute("aria-label", `Close ${name}`); close.title = "Close";
+  head.append(titles, close);
+  const tabs = node("div", undefined, "usage-seg small");
   tabs.setAttribute("role", "group"); tabs.setAttribute("aria-label", `${name} views`);
-  for (const [key, label] of [["stats", "Statistics"], ["contents", "Contents"]]) {
-    const button = node("button", label, "usage-dimension");
+  for (const [key, label] of [["stats", "Statistics"], ["contents", "SKILL.md"]]) {
+    const button = node("button", label);
     button.type = "button"; button.dataset.detailTab = key; button.dataset.testid = `usage-skill-tab-${key}`;
     button.setAttribute("aria-pressed", String(tab === key));
     tabs.append(button);
   }
-  head.append(back, title, tabs);
-  root.append(head);
+  root.append(head, tabs);
   if (tab === "contents") root.append(contents(content, name));
   else if (skill) root.append(statistics(skill, report, names));
-  else root.append(node("p", `No agent loaded ${name} in this period and scope, so there is nothing to measure. Its contents are under Contents.`, "usage-split-empty"));
+  else root.append(node("p", `No agent loaded ${name} in this period and scope, so there is nothing to measure. Its instructions are under SKILL.md.`, "usage-split-empty"));
   return root;
 }

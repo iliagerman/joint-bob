@@ -3,15 +3,19 @@ import { isoDate } from "./usage-periods.js";
 import { periodName } from "./usage-compare.js";
 import { formatChange, headline, metricRows, moverTables } from "./usage-changes-data.js";
 import { money } from "./usage-insight-data.js";
+import { skeleton } from "./usage-progress.js";
 
 /**
- * "What changed" under the period cards: the period so far against the previous one over the
- * same days, in totals, projects, models and skills. Each side is read separately and drawn as
- * it arrives; one that fails is left out and says so.
+ * "What changed", beside the comparison chart: the period so far against the previous one over
+ * the same days. Totals, skills and turn times are separate requests for each side, and each part
+ * is drawn as soon as both of its sides have arrived; one that fails is left out and says so.
  */
 
 const TURN_FILTERS = ["provider", "modelId", "classification", "difficulty"];
-const KINDS = [["month", "Month to date"], ["week", "Week to date"]];
+const TABS = [["projects", "Projects"], ["models", "Models"], ["skills", "Skills"]];
+const PARTS = ["totals", "skills", "timing"];
+// Enough movers to explain the change while the panel stays beside the chart without scrolling.
+const MOVERS = 5;
 
 function node(tag, text, className) {
   const item = document.createElement(tag);
@@ -31,131 +35,167 @@ export function windowsOf(comparison) {
   };
 }
 
-export function initUsageChanges({ host, scopeParameters }) {
+/** What the data helpers expect for one side, from whatever parts have arrived. */
+function sideOf(parts) {
+  const usage = parts.totals?.value;
+  return { summary: usage?.summary ?? null, breakdowns: usage?.breakdowns, projects: usage?.projects, skills: parts.skills?.value ?? null, timing: parts.timing?.value ?? null,
+    failed: ["totals", "skills"].some((part) => parts[part]?.error) };
+}
+const settled = (entry) => Boolean(entry && !entry.loading);
+
+export function initUsageChanges({ host, scopeParameters, progress, onFilter, onSkill }) {
   let comparisons = null;
   let kind = "month";
-  let generation = 0;
+  let tab = "projects";
+  // The state on screen; replies for any other state only fill the cache.
+  let displayed = null;
   const cache = new Map();
 
-  async function side(window) {
-    const scope = scopeParameters({ dates: false });
-    scope.set("from", window.from); scope.set("to", window.to); scope.set("refresh", "false");
-    const filteredTurns = TURN_FILTERS.some((name) => scope.has(name));
-    const read = (path, extra) => { const query = new URLSearchParams(scope); for (const [key, value] of Object.entries(extra ?? {})) query.set(key, value); return api(`${path}?${query}`, { signal: AbortSignal.timeout(30000) }); };
-    const [usage, skills, timing] = await Promise.allSettled([
-      read("/api/usage", { sections: "summary,projects,models", pageSize: "1" }), read("/api/usage/skills"), filteredTurns ? Promise.reject(new Error("filtered")) : read("/api/usage/timing"),
-    ]);
-    const value = (result) => result.status === "fulfilled" ? result.value : null;
-    return { summary: value(usage)?.summary ?? null, breakdowns: value(usage)?.breakdowns, projects: value(usage)?.projects, skills: value(skills), timing: value(timing), failed: [usage, skills].some((result) => result.status === "rejected") };
+  function read(window, path, extra, signal) {
+    const query = scopeParameters({ dates: false });
+    query.set("from", window.from); query.set("to", window.to); query.set("refresh", "false");
+    for (const [key, value] of Object.entries(extra ?? {})) query.set(key, value);
+    return api(`${path}?${query}`, { signal });
   }
 
   function draw(state) {
-    host.replaceChildren();
+    displayed = state;
     const comparison = comparisons[kind];
     const previousName = periodName(comparison, comparison.periods[1]);
     const header = node("header");
     header.append(node("h3", "What changed"));
-    const toggle = node("div", undefined, "usage-skill-tabs");
-    toggle.setAttribute("role", "group"); toggle.setAttribute("aria-label", "Period to analyse");
-    for (const [key, label] of KINDS) {
-      const button = node("button", label, "usage-dimension");
-      button.type = "button"; button.dataset.changesKind = key; button.dataset.testid = `usage-changes-${key}`;
-      button.setAttribute("aria-pressed", String(key === kind));
-      toggle.append(button);
+    const tabs = node("div", undefined, "usage-seg small");
+    tabs.setAttribute("role", "group"); tabs.setAttribute("aria-label", "Show changes by");
+    for (const [key, label] of TABS) {
+      const button = node("button", label);
+      button.type = "button"; button.dataset.changesTab = key; button.dataset.testid = `usage-changes-tab-${key}`;
+      button.setAttribute("aria-pressed", String(key === tab));
+      tabs.append(button);
     }
-    header.append(toggle);
-    host.append(header);
-    if (!state || state.loading) { host.append(node("p", "Loading changes…", "usage-changes-headline")); return; }
+    header.append(tabs);
+    host.replaceChildren(header);
     if (state.error) { host.append(node("p", `Changes unavailable: ${state.error}`, "usage-error")); return; }
-    const { now, before } = state.value;
+    const now = sideOf(state.now), before = sideOf(state.before);
+    const totalsReady = settled(state.now.totals) && settled(state.before.totals);
+    if (!totalsReady) { host.append(skeleton(1, "tall"), skeleton(5)); return; }
     if (!now.summary || !before.summary) { host.append(node("p", "Totals for one of the two periods could not be read. Select Refresh usage to try again.", "usage-error")); return; }
-    const tables = moverTables(now, before);
-    const line = headline({ now, before, previousName, days: state.value.days, tables });
-    const lead = node("p", line, "usage-changes-headline");
-    lead.dataset.testid = "usage-changes-headline";
-    header.insertBefore(lead, toggle);
 
-    const grid = node("div", undefined, "usage-changes-grid");
-    const totals = node("article", undefined, "usage-changes-card");
+    const tables = moverTables(now, before);
+    const a = now.summary.apiCostUsd, b = before.summary.apiCostUsd;
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+      const lead = node("div", undefined, "usage-changes-lead");
+      const difference = a - b;
+      const figure = node("strong", `${difference > 0 ? "+" : difference < 0 ? "−" : ""}${money(Math.abs(difference))}`, difference > 0 ? "worse" : difference < 0 ? "better" : undefined);
+      figure.dataset.testid = "usage-changes-delta";
+      const versus = node("span", `vs ${kind === "week" ? previousName.toLowerCase() : previousName}, same ${state.days} day${state.days === 1 ? "" : "s"}`);
+      // The sentence naming the biggest movers stays available on hover; the rows below show them.
+      lead.title = headline({ now, before, previousName, days: state.days, tables });
+      lead.dataset.testid = "usage-changes-headline";
+      lead.append(figure, versus);
+      host.append(lead);
+    }
+
+    const list = node("div", undefined, "usage-changes-list");
+    list.dataset.testid = `usage-changes-${tab}`;
+    const skillsReady = settled(state.now.skills) && settled(state.before.skills);
+    const all = tab === "skills" ? (skillsReady ? tables.skills : undefined) : tables[tab];
+    const rows = all ? all.slice(0, MOVERS) : all;
+    const unit = tab === "skills" ? "count" : "money";
+    if (rows === undefined) list.append(skeleton(4));
+    else if (rows === null) list.append(node("p", "Not available for this period.", "usage-split-empty"));
+    else if (!rows.length) list.append(node("p", tab === "skills" ? "No skill moved." : `No ${tab === "projects" ? "project" : "model"} moved.`, "usage-split-empty"));
+    else {
+      const largest = Math.max(...rows.map((row) => Math.abs(row.delta)));
+      const amount = (value) => unit === "money" ? money(value) : value.toLocaleString();
+      for (const row of rows) {
+        const button = node("button", undefined, "usage-changes-row");
+        button.type = "button";
+        button.dataset.testid = "usage-changes-row";
+        button.dataset.changesKey = row.key;
+        button.title = tab === "skills" ? `Open ${row.name} in Skills & time` : `Show only ${row.name}`;
+        const name = node("span", undefined, "usage-changes-name");
+        name.append(node("span", row.name), node("small", row.isNew ? `${amount(row.current)} · new` : row.gone ? `gone · was ${amount(row.previous)}` : `${amount(row.current)} · was ${amount(row.previous)}`));
+        const bar = node("span", undefined, "usage-changes-bar");
+        const fill = node("i", undefined, row.delta > 0 ? "up" : "down");
+        fill.style.width = `${largest ? Math.abs(row.delta) / largest * 50 : 0}%`;
+        bar.append(fill);
+        const worse = unit === "money" ? row.delta > 0 : null;
+        const value = node("strong", `${row.delta > 0 ? "+" : "−"}${amount(Math.abs(row.delta))}`, worse === null ? undefined : worse ? "worse" : "better");
+        value.title = row.isNew ? "new" : row.gone ? "gone" : formatChange(row.change);
+        button.append(name, bar, value);
+        list.append(button);
+      }
+      list.append(node("p", tab === "skills" ? "Select a skill to open it in Skills & time." : "Select a row to show only that in the whole dashboard.", "usage-changes-hint"));
+    }
+    host.append(list);
+
+    const totals = node("table", undefined, "usage-changes-totals");
     totals.dataset.testid = "usage-changes-totals";
-    totals.append(node("h4", `Totals · ${comparison.periods[0].start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} on, against ${previousName}`));
-    const table = node("table");
     const head = node("tr");
     for (const label of ["", "Now", "Before", "Change"]) head.append(node("th", label));
     const thead = node("thead"); thead.append(head);
     const tbody = node("tbody");
     for (const row of metricRows(now, before)) {
       const line = node("tr");
-      const change = node("td", formatChange(row.change), row.worse === null ? undefined : row.worse ? "worse" : "better");
-      line.append(node("td", row.label), node("td", row.current), node("td", row.previous), change);
+      const changeCell = node("td", formatChange(row.change), row.worse === null ? undefined : row.worse ? "worse" : "better");
+      line.append(node("td", row.label), node("td", row.current), node("td", row.previous), changeCell);
       tbody.append(line);
     }
-    table.append(thead, tbody);
-    totals.append(table);
-    grid.append(totals);
-
-    const card = (title, rows, testid, unit, emptyText) => {
-      const article = node("article", undefined, "usage-changes-card");
-      article.dataset.testid = testid;
-      article.append(node("h4", title));
-      if (rows === null) { article.append(node("p", "Not available for this period.", "usage-split-empty")); grid.append(article); return; }
-      if (!rows.length) { article.append(node("p", emptyText, "usage-split-empty")); grid.append(article); return; }
-      const list = node("table");
-      const listHead = node("tr");
-      for (const label of ["", "Now", "Before", "Change"]) listHead.append(node("th", label));
-      const listBody = node("tbody");
-      for (const row of rows) {
-        const line = node("tr");
-        const label = row.isNew ? "new" : row.gone ? "gone" : formatChange(row.change);
-        const good = unit === "money" ? row.delta < 0 : null;
-        line.append(node("td", row.name), node("td", unit === "money" ? money(row.current) : row.current.toLocaleString()), node("td", unit === "money" ? money(row.previous) : row.previous.toLocaleString()),
-          node("td", `${row.delta > 0 ? "+" : "−"}${unit === "money" ? money(Math.abs(row.delta)) : Math.abs(row.delta).toLocaleString()} · ${label}`, good === null ? undefined : good ? "better" : "worse"));
-        line.firstChild.title = row.name;
-        listBody.append(line);
-      }
-      const listHeadRow = node("thead"); listHeadRow.append(listHead);
-      list.append(listHeadRow, listBody);
-      article.append(list);
-      grid.append(article);
-    };
-    card("Projects · cost", tables.projects, "usage-changes-projects", "money", "No project moved.");
-    card("Models · cost", tables.models, "usage-changes-models", "money", "No model moved.");
-    card("Skills · turns", tables.skills, "usage-changes-skills", "count", "No skill moved.");
-    host.append(grid);
-    if (now.failed || before.failed || !now.timing || !before.timing) host.append(node("p", "Some figures could not be read for one of the periods and are left out.", "usage-source"));
+    totals.append(thead, tbody);
+    host.append(totals);
+    const waiting = PARTS.filter((part) => !settled(state.now[part]) || !settled(state.before[part]));
+    if (waiting.length) host.append(node("p", `Still reading ${waiting.map((part) => ({ totals: "totals", skills: "skills", timing: "turn times" })[part]).join(" and ")}…`, "usage-changes-hint"));
+    else if (now.failed || before.failed || !now.timing || !before.timing) host.append(node("p", "Some figures could not be read for one of the periods and are left out.", "usage-changes-hint"));
   }
 
-  async function load(force = false) {
+  function load(force = false) {
     if (!comparisons) return;
     const key = `${scopeParameters({ dates: false })}|${kind}|${comparisons[kind].elapsed}|${isoDate(comparisons[kind].periods[0].start)}`;
     const cached = cache.get(key);
-    if (cached && !force) { draw(cached); return; }
-    const ticket = ++generation;
-    const loading = { loading: true };
-    cache.set(key, loading);
-    draw(loading);
-    try {
-      const windows = windowsOf(comparisons[kind]);
-      const [now, before] = await Promise.all([side(windows.now), side(windows.before)]);
-      const state = { value: { now, before, days: windows.days } };
-      cache.set(key, state);
-      if (ticket === generation) draw(state);
-    } catch (error) {
-      cache.delete(key);
-      if (ticket === generation) draw({ error: error.message });
+    if (cached && !force) {
+      draw(cached);
+      for (const part of PARTS) if (settled(cached.now[part]) && settled(cached.before[part])) progress?.mark(part, cached.now[part].error || cached.before[part].error ? "failed" : "done");
+      return;
     }
+    const windows = windowsOf(comparisons[kind]);
+    const state = { now: {}, before: {}, days: windows.days };
+    cache.set(key, state);
+    const filteredTurns = TURN_FILTERS.some((name) => scopeParameters({ dates: false }).has(name));
+    const signal = AbortSignal.timeout(30000);
+    const redraw = () => { if (displayed === state) draw(state); };
+    const finished = (part) => {
+      if (!settled(state.now[part]) || !settled(state.before[part])) return;
+      if (displayed === state) progress?.mark(part, state.now[part].error || state.before[part].error ? "failed" : "done");
+    };
+    for (const side of ["now", "before"]) {
+      const requests = {
+        totals: read(windows[side], "/api/usage", { sections: "summary,projects,models", pageSize: "1" }, signal),
+        skills: read(windows[side], "/api/usage/skills", {}, signal),
+        timing: filteredTurns ? Promise.reject(new Error("filtered")) : read(windows[side], "/api/usage/timing", {}, signal),
+      };
+      for (const [part, request] of Object.entries(requests)) {
+        state[side][part] = { loading: true };
+        request.then((value) => { state[side][part] = { value }; }, (error) => { state[side][part] = { error: error.message }; })
+          .then(() => { finished(part); redraw(); });
+      }
+    }
+    draw(state);
   }
 
   host.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-changes-kind]");
-    if (!button || button.dataset.changesKind === kind) return;
-    kind = button.dataset.changesKind;
-    void load();
+    const button = event.target.closest("[data-changes-tab]");
+    if (button) { if (button.dataset.changesTab !== tab) { tab = button.dataset.changesTab; void load(); } return; }
+    const row = event.target.closest("[data-changes-key]");
+    if (!row) return;
+    const key = row.dataset.changesKey;
+    if (tab === "projects") onFilter?.({ projectId: key });
+    else if (tab === "models") onFilter?.({ modelId: key });
+    else onSkill?.(key);
   });
 
   return {
-    /** Called whenever the period cards are redrawn; `force` re-reads after a refresh. */
-    show(next, { force = false } = {}) { comparisons = next; void load(force); },
-    stop() { generation++; },
+    /** Called whenever the comparison is redrawn; `force` re-reads after a refresh. */
+    show(next, { kind: nextKind = kind, force = false } = {}) { comparisons = next; kind = nextKind; load(force); },
+    stop() { displayed = null; },
   };
 }

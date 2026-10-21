@@ -17,7 +17,7 @@ import { normalizeWebsiteOrigin } from "../secrets.js";
 export const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbsolute, "Path must be absolute");
 export const projectSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  type: z.string().trim().min(1).max(40).optional().default("personal"),
+  type: z.string().trim().min(1, "Choose a workspace. If none are available, create one in Settings > Workspaces first.").max(40).optional().default("personal"),
   path: absolutePathSchema.optional(),
   sourcePath: absolutePathSchema.optional(),
   importMode: z.enum(["copy", "move", "move-link"]).optional(),

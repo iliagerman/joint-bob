@@ -10,6 +10,7 @@ Every deployment is a version. The newest section must always match the
 - Fixed hidden scheduled runs still counting toward pending reviews and notifications; they now stay out of both, and their pending reviews return once the task is shown again.
 - Added Check Claude sign-ins, Sign in, and Sign out for Claude MCP servers in Resources, so you can connect one to Claude without opening a terminal, including finishing from a browser on another machine by pasting its address.
 - Added an Activity panel beside each conversation that holds its tool calls and thinking, with a running summary you can update and choose the model for in Settings → Conversations.
+- Redesigned the Costs dashboard around four headline figures, a running-total chart with a table of each period, and a What changed panel beside it, where selecting a project or model narrows the whole dashboard and selecting a skill opens it in Skills & time.
 
 ## 2.130.0 — 2026-10-21
 
