@@ -148,7 +148,6 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.getByTestId("activity-panel-close").click();
   await panel.waitFor({ state: "hidden" });
   assert.equal(await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded"), "false");
-  assert.equal(await page.evaluate(() => localStorage.getItem("joint-bob.activityPanel")), "closed");
   const widened = await page.locator("#messages").boundingBox();
   assert.ok(widened && messagesBox && widened.width > messagesBox.width + 200, "the thread takes the freed width");
 

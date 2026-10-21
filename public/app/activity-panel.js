@@ -9,7 +9,6 @@ import { state } from "./state.js";
 // of steps between two pieces of text is one group here, and one compact marker
 // in the main thread that opens the panel on that group.
 
-const OPEN_KEY = "joint-bob.activityPanel";
 // Below this width the panel floats over the transcript instead of sharing the row.
 const OVERLAY_QUERY = window.matchMedia("(max-width: 900px)");
 const FOLLOW_THRESHOLD_PX = 32;
@@ -23,13 +22,12 @@ let summaryConversation = "";
 // A turn ended in this conversation since its summary was last written.
 let turnEndedIn = "";
 
+// Whether the person last opened or collapsed the panel this session. Browser storage is not used
+// for it; a reload falls back to the width default.
+let chosenOpen = null;
+
 function storedOpen() {
-  try {
-    const stored = localStorage.getItem(OPEN_KEY);
-    if (stored) return stored === "open";
-  } catch {
-    // Storage can be blocked; fall back to the width default.
-  }
+  if (chosenOpen !== null) return chosenOpen;
   return window.innerWidth >= 1280 && !document.body.classList.contains("canvas-pane-mode");
 }
 
@@ -42,9 +40,7 @@ export function setActivityPanelOpen(open, remember = true) {
   elements.messagesWrap.classList.toggle("activity-open", open);
   elements.activityToggleButton.setAttribute("aria-expanded", String(open));
   elements.activityToggleButton.classList.toggle("active", open);
-  if (remember) {
-    try { localStorage.setItem(OPEN_KEY, open ? "open" : "closed"); } catch { /* blocked storage keeps the session choice only */ }
-  }
+  if (remember) chosenOpen = open;
   if (open && summaryDirty) refreshActivitySummary();
 }
 
