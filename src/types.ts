@@ -208,6 +208,12 @@ export interface TaskRecord {
   updatedAt: string;
 }
 
+/** A tool call's subject: a file, command or pattern, or the skill it loaded. */
+export interface ToolTarget {
+  target?: string;
+  skill?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: string;
@@ -221,6 +227,8 @@ export interface ChatMessage {
   };
   // Present on tool roles so the client can label the collapsed tool bubble.
   toolName?: string;
+  /** What the tool call acted on, so the collapsed bubble shows it without expanding. */
+  toolTarget?: ToolTarget;
   /** Present on tool roles that failed, so a reload shows the same failed bubble. */
   isError?: boolean;
   /** Recorded tool runtime. Absent for legacy transcripts that only stored completion. */

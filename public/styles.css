@@ -1696,6 +1696,8 @@ select.chat-toolbar-control {
 .message.tool-output[data-status="done"] .tool-indicator,
 .message.tool-output[data-status="error"] .tool-indicator { animation: none; }
 .message.tool-output .tool-name { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.message.tool-output .tool-target { min-width: 0; overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.message.tool-output .tool-target.tool-skill { color: var(--accent); font-weight: 600; }
 .message.tool-output .tool-status { margin-left: auto; flex: 0 0 auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
 .message.tool-output .tool-chevron { flex: 0 0 auto; color: var(--muted); font-size: 17px; line-height: 1; transform: rotate(0); transition: transform 0.16s ease; }
 .message.tool-output[open] .tool-chevron { transform: rotate(90deg); }

@@ -18,7 +18,8 @@ import { claudeAgentResourceArgs } from "./agent-resources.js";
 import { claudeResourceIsolationArgs } from "./harnesses/claude/resources.js";
 import { agentCapabilityEnvironment, agentCapabilityInstructionFiles } from "./agent-capabilities.js";
 import { getConversationRecord } from "./conversation-records.js";
-import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
+import type { ChatMessage, ContextUsage, SessionSummary, ToolTarget } from "./types.js";
+import { toolTarget } from "./tool-target.js";
 import { stripScheduledPromptMarker } from "./scheduled-prompt.js";
 import { stripHandoffEnvelope } from "./handoff-context.js";
 import { storeTranscriptSummary, storedTranscriptSummary } from "./transcript-summary-store.js";
@@ -521,7 +522,7 @@ export async function claudeSessionContextUsage(sessionPath: string): Promise<Co
 export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessage[]> {
   const filePath = resolveClaudeSessionPath(sessionPath);
   const lines = (await readFile(filePath, "utf8")).split("\n").filter(Boolean);
-  const tools = new Map<string, { name: string; startedAt?: number }>();
+  const tools = new Map<string, { name: string; target?: ToolTarget; startedAt?: number }>();
   const messages: ChatMessage[] = [];
   for (const [index, line] of lines.entries()) {
     const record = JSON.parse(line) as UnknownRecord;
@@ -533,7 +534,10 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
     for (const part of Array.isArray(message.content) ? message.content : []) {
       const block = asRecord(part);
       const recordedAt = timestamp ? Date.parse(timestamp) : NaN;
-      if (block.type === "tool_use") tools.set(String(block.id ?? ""), { name: String(block.name ?? "tool"), ...(Number.isFinite(recordedAt) ? { startedAt: recordedAt } : {}) });
+      if (block.type === "tool_use") {
+        const name = String(block.name ?? "tool");
+        tools.set(String(block.id ?? ""), { name, target: toolTarget(name, block.input), ...(Number.isFinite(recordedAt) ? { startedAt: recordedAt } : {}) });
+      }
       if (block.type !== "tool_result") continue;
       const result = blockText(block.content);
       if (!result.trim()) continue;
@@ -545,6 +549,7 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
         role: "toolResult",
         toolName: tool?.name ?? "tool",
         text: result,
+        ...(tool?.target ? { toolTarget: tool.target } : {}),
         ...(block.is_error === true ? { isError: true } : {}),
         ...(durationMs !== undefined ? { durationMs } : {}),
         ...stamp,
@@ -660,11 +665,13 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
         if (!state.streamedForCurrentMessage) emitText(block.text);
       }
       if (block.type === "tool_use") {
+        const toolName = String(block.name ?? "tool");
         options.onEvent({
           type: "toolStart",
           toolCallId: String(block.id ?? "tool"),
-          toolName: String(block.name ?? "tool"),
+          toolName,
           args: block.input,
+          toolTarget: toolTarget(toolName, block.input),
         });
       }
     }

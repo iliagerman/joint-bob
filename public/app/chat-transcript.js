@@ -897,7 +897,10 @@ export function markPromptRouted(routing) {
 
 // startedAt is 0 for a replayed transcript entry. Its persisted duration, when
 // available, is supplied separately instead of measuring from page load.
-export function appendToolMessage(toolName, toolCallId, startedAt = Date.now(), recordedAt = startedAt) {
+// toolTarget is { target, skill } from the server: the file, command or pattern
+// the call acted on, or the skill it loaded. It shows on the collapsed row so the
+// reader sees what ran without opening the output.
+export function appendToolMessage(toolName, toolCallId, startedAt = Date.now(), recordedAt = startedAt, toolTarget) {
   const bubble = document.createElement("details");
   bubble.className = "message tool-output";
   bubble.dataset.role = "tool-output";
@@ -911,6 +914,7 @@ export function appendToolMessage(toolName, toolCallId, startedAt = Date.now(), 
   const label = document.createElement("strong");
   label.className = "tool-name";
   label.textContent = toolName;
+  const detail = toolTargetElement(toolTarget);
   const status = document.createElement("span");
   status.className = "tool-status";
   status.textContent = "Running";
@@ -918,7 +922,7 @@ export function appendToolMessage(toolName, toolCallId, startedAt = Date.now(), 
   chevron.className = "tool-chevron";
   chevron.setAttribute("aria-hidden", "true");
   chevron.textContent = "›";
-  summary.append(indicator, label, status);
+  summary.append(indicator, label, ...(detail ? [detail] : []), status);
   if (recordedAt) summary.append(messageTimestamp(new Date(recordedAt)));
   summary.append(chevron);
 
@@ -928,6 +932,22 @@ export function appendToolMessage(toolName, toolCallId, startedAt = Date.now(), 
   appendBeforeQueuedMessages(bubble);
   requestPinChat();
   return bubble;
+}
+
+function toolTargetElement(toolTarget) {
+  if (toolTarget?.skill) {
+    const skill = document.createElement("span");
+    skill.className = "tool-target tool-skill";
+    skill.dataset.testid = "tool-skill";
+    skill.textContent = `skill · ${toolTarget.skill}`;
+    return skill;
+  }
+  if (!toolTarget?.target) return null;
+  const target = document.createElement("span");
+  target.className = "tool-target";
+  target.dataset.testid = "tool-target";
+  target.textContent = toolTarget.target;
+  return target;
 }
 
 export function updateToolMessage(bubble, text, status, isError = false, recordedDurationMs) {
@@ -960,7 +980,7 @@ function appendTranscript(messages, segments, conversationStartedAt) {
     const at = message.timestamp ? new Date(message.timestamp) : null;
     const recorded = at && Number.isFinite(at.getTime()) ? at : false;
     if (message.role === "toolResult" || message.role === "toolCall") {
-      const bubble = markPendingReview(appendToolMessage(message.toolName || "tool", `history-${message.id}`, 0, recorded || 0), recorded);
+      const bubble = markPendingReview(appendToolMessage(message.toolName || "tool", `history-${message.id}`, 0, recorded || 0, message.toolTarget), recorded);
       updateToolMessage(bubble, message.text, message.isError ? "Failed" : "Done", message.isError === true, message.durationMs);
       continue;
     }

@@ -560,7 +560,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     clearThinkingBubble();
     finalizeAssistantBubble();
     const startedAt = Date.parse(payload.timestamp || "");
-    const bubble = appendToolMessage(payload.toolName, payload.toolCallId, Number.isFinite(startedAt) ? startedAt : Date.now());
+    const bubble = appendToolMessage(payload.toolName, payload.toolCallId, Number.isFinite(startedAt) ? startedAt : Date.now(), undefined, payload.toolTarget);
     state.toolBubbles.set(payload.toolCallId, bubble);
     startDurationTicker();
     return;

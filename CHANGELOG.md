@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added a `/bob-restart` command that reopens a conversation's session in place, keeping the conversation and its settings, and that refuses to run while a turn is still going.
+- Added the file, command, pattern, or skill that each tool call in chat acted on to its collapsed row, so you can see what ran without opening its output, including in reloaded conversations.
 
 ## 2.130.0 — 2026-10-21
 

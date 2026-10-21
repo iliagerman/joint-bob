@@ -30,7 +30,8 @@ import { forgetTranscriptSummary, storeTranscriptSummary, storedTranscriptSummar
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { agentResourcePaths, commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
 import { activeSkillRoot, blockedSkillNames } from "./resource-activation.js";
-import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
+import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary, ToolTarget } from "./types.js";
+import { toolTarget } from "./tool-target.js";
 import { createCoreSession, type PiCoreHooks, type PiCoreInputs, type PiCredentials, type PiSessionHandle } from "./pi-session-core.js";
 import { currentRuntime, runInRuntime, serviceRuntime } from "./account-runtime.js";
 
@@ -336,6 +337,7 @@ export function simplifyTranscriptEntries(entries: unknown[]): ChatMessage[] {
   let reasoning = "";
   const messages: ChatMessage[] = [];
   const toolStarts = new Map<string, number>();
+  const toolTargets = new Map<string, ToolTarget>();
   for (const [index, entry] of entries.entries()) {
     const record = asRecord(entry);
     if (record.type === "model_change") {
@@ -353,10 +355,13 @@ export function simplifyTranscriptEntries(entries: unknown[]): ChatMessage[] {
     if (!["user", "assistant", "toolResult"].includes(role)) continue;
     const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
     const recordedAt = timestamp ? Date.parse(timestamp) : NaN;
-    if (Number.isFinite(recordedAt) && Array.isArray(message.content)) {
+    if (Array.isArray(message.content)) {
       for (const part of message.content) {
         const block = asRecord(part);
-        if (block.type === "toolCall" && typeof block.id === "string") toolStarts.set(block.id, recordedAt);
+        if (block.type !== "toolCall" || typeof block.id !== "string") continue;
+        if (Number.isFinite(recordedAt)) toolStarts.set(block.id, recordedAt);
+        const target = toolTarget(String(block.name ?? ""), block.arguments);
+        if (target) toolTargets.set(block.id, target);
       }
     }
     const text = role === "user" ? stripHandoffEnvelope(textFromMessage(message)) : textFromMessage(message);
@@ -379,6 +384,8 @@ export function simplifyTranscriptEntries(entries: unknown[]): ChatMessage[] {
       const startedAt = toolStarts.get(toolCallId);
       if (startedAt !== undefined) display.durationMs = Math.max(0, recordedAt - startedAt);
     }
+    const target = toolCallId && role === "toolResult" ? toolTargets.get(toolCallId) : undefined;
+    if (target) display.toolTarget = target;
     messages.push(display);
   }
   return messages;
@@ -680,11 +687,13 @@ export function eventPayload(event: AgentSessionEvent): UnknownRecord {
   }
 
   if (event.type === "tool_execution_start") {
+    const toolName = String(record.toolName ?? "tool");
     return {
       type: "toolStart",
       toolCallId: String(record.toolCallId ?? "tool"),
-      toolName: String(record.toolName ?? "tool"),
+      toolName,
       args: record.args,
+      toolTarget: toolTarget(toolName, record.args),
     };
   }
 
