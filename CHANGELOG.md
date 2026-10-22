@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.136.0 — 2026-10-22
 
-- Changed webhook calls and scheduled runs to stay out of the Needs review count unless you opt in, and added a webhook setting to count its calls.
+- Changed scheduled tasks to stay out of Needs review by default; a task counts its completed runs only when you turn on its review setting.
+- Changed webhook calls to stay out of Needs review by default, with a new webhook setting to count its calls; existing webhooks keep the quiet default.
 
 ## 2.135.1 — 2026-10-22
 
