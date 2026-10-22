@@ -77,6 +77,38 @@ test("queued editor labels Save and Cancel and shows shortcut hints", async () =
   assert.match(await page.locator(".queued-editor").innerText(), /Escape/);
 });
 
+for (const width of [1440, 1024]) {
+  test(`queued editor stays inside a narrow bubble at ${width}px`, async () => {
+    try {
+      await page.setViewportSize({ width, height: 900 });
+      await openEditor();
+      await page.getByTestId("queued-message-71").evaluate((bubble) => { bubble.style.maxWidth = "240px"; });
+      await page.getByTestId("queued-message-edit-input").fill("A longer draft that should wrap inside the message bubble. ".repeat(8));
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const layout = await page.getByTestId("queued-message-71").evaluate((bubble) => ({
+        bubble: bubble.getBoundingClientRect().toJSON(),
+        clientWidth: bubble.clientWidth,
+        scrollWidth: bubble.scrollWidth,
+        controls: [...bubble.querySelectorAll(".queued-editor, .queued-editor > *, .queued-settings > :not([hidden])")].map((control) => ({
+          name: control.getAttribute("data-testid") || control.className,
+          ...control.getBoundingClientRect().toJSON(),
+        })),
+      }));
+      assert.ok(layout.bubble.width > 0, "queued bubble must remain visible");
+      assert.ok(layout.bubble.width < 520, `exercise a narrow bubble: ${layout.bubble.width}`);
+      for (const control of layout.controls) {
+        assert.ok(control.width > 0, `${control.name} must remain visible`);
+        assert.ok(control.left >= layout.bubble.left && control.right <= layout.bubble.right + 1,
+          `${control.name} spills outside the bubble: ${JSON.stringify({ bubble: layout.bubble, control })}`);
+      }
+      assert.ok(layout.scrollWidth <= layout.clientWidth + 1, `bubble overflows: ${layout.scrollWidth} > ${layout.clientWidth}`);
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.getByTestId("queued-message-71").evaluate((bubble) => { bubble.style.maxWidth = ""; });
+    }
+  });
+}
+
 test("Force start sends the selected queued message and its revision", async () => {
   await openQueue();
   const third = page.locator(".message.user.queued").nth(2);

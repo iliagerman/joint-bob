@@ -1806,12 +1806,12 @@ select.chat-toolbar-control {
 @keyframes queued-force-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .queued-force-spinner { animation-duration: 2.4s; } }
 .queued-error { margin: 6px 0 0; color: var(--danger); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
-.queued-editor { display: grid; grid-template-columns: 1fr auto auto; gap: 7px; margin-top: 8px; }
+.queued-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; width: min(520px, 70vw); max-width: 100%; margin-top: 8px; }
 .queued-editor[hidden], .queued-controls[hidden] { display: none; }
 .queued-editor-hints { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
 .queued-settings { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 7px; }
 .queued-settings select { max-width: 100%; }
-.queued-editor textarea { grid-column: 1 / -1; width: min(520px, 70vw); min-height: 80px; resize: vertical; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; }
+.queued-editor textarea { grid-column: 1 / -1; width: 100%; min-width: 0; min-height: 80px; resize: vertical; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; }
 .queued-editor button:first-of-type { grid-column: 2; }
 .message.error { align-self: flex-start; max-width: 100%; border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); color: var(--danger); }
 .message.error .message-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
