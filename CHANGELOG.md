@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.139.0 — 2026-10-22
 
 - Fixed the Activity panel cutting off its statistics: the panel now scrolls as one column, and only the steps list scrolls inside itself.
 - Added the summary instructions to Settings → Conversations → Activity summary: this machine's admin can rewrite what a summary covers and how it reads, or reset it to the built-in text.
