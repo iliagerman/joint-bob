@@ -5,7 +5,8 @@ import { ensureResourceSharingSchema, getResourcePolicyState, ResourceSharingErr
 import { listResourceShares, listSharingClusterMembers, resourceOwner } from "../../cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { canonicalProjectId, getProject, listProjects } from "../../store.js";
+import { canonicalProjectId, getProject, listProjects, listWorkspaces } from "../../store.js";
+import { getWorkspaceSharing, setWorkspaceSharing, workspaceSharingDestinations, workspaceSharingSchema } from "../../workspace-sharing.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
 import { disconnectRevokedRuntimeSockets } from '../runtime-peers.js';
@@ -77,6 +78,29 @@ async function policyProject(request: Request, response: Response) {
   if (!exists) { sendError(response, 409, "Project ownership requires adoption"); return undefined; }
   return { id, db, local: await getClusterNode() };
 }
+
+app.get("/api/workspace-sharing/destinations", route(async (_request, response) => {
+  await requireActive(response);
+  response.json(workspaceSharingDestinations(await clusterV2Database(), (await getClusterNode()).id));
+}));
+
+async function workspaceContext(request: Request, response: Response) {
+  await requireActive(response);
+  const workspace = (await listWorkspaces()).find(workspace => workspace.id === request.params.workspaceId && !workspace.source);
+  if (!workspace) throw new ClusterV2HttpError(404, "Workspace not found");
+  return { db: await clusterV2Database(), local: (await getClusterNode()).id, id: workspace.id };
+}
+app.get("/api/workspaces/:workspaceId/sharing", route(async (request, response) => {
+  const { db, local, id } = await workspaceContext(request, response);
+  response.json(getWorkspaceSharing(db, local, id));
+}));
+app.put("/api/workspaces/:workspaceId/sharing", route(async (request, response) => {
+  const { db, local, id } = await workspaceContext(request, response);
+  const result = setWorkspaceSharing(db, local, id, workspaceSharingSchema.parse(request.body));
+  await disconnectRevokedRuntimeSockets();
+  response.json(result);
+  void announceWorkspaceChanges().catch((error) => console.warn("Shared workspace notice failed", error));
+}));
 
 app.get("/api/clusters/:clusterId/sharing", route(async (request, response) => {
   await requireActive(response);

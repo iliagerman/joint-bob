@@ -7,7 +7,10 @@
 // Incoming channels are handed to the ordinary HTTP server, so every request meets the
 // same routes, signed-request checks and sharing rules as a direct one.
 import { EventEmitter } from "node:events";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { applyMembershipSnapshot, ensureMembershipSchema, prepareMembershipJoin } from "../cluster-membership.js";
+import { recordMembershipEndpoints } from "../cluster-peer-endpoints.js";
+import { ensureRelaySharingGroupSchema, relaySharingGroupId } from "./sharing-groups.js";
 import type { Server } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import WebSocket from "ws";
@@ -16,13 +19,15 @@ import { ChannelHub, type IncomingChannel } from "./hub.js";
 import { channelPrologue, expectAnnouncedPeer, expectPinnedPeer, localRelayIdentity, type LocalRelayIdentity } from "./identity.js";
 import {
   FRAME_CONTROL, MAX_FRAME, RELAY_NAME_PATTERN, authPayload, decodeFrame, encodeControl, normalizeRelayOrigin, pairingCode, relayConnectUrl, welcomePayload,
-  type ChannelKind, type ControlMessage, type PeerListing,
+  virtualRelayUrl, type ChannelKind, type ControlMessage, type PeerListing,
 } from "./protocol.js";
 import type { RelayServer } from "./relay-server.js";
 import { RelayChannelError, RelayStream } from "./stream.js";
 import { PollClient, relayPollUrl, type FrameSocket } from "./poll.js";
 import { createMembership, deleteMembership, lastPeerRoutes, listMemberships, membership, membershipByOrigin, recordPeerRoute, recordRelayTransportEvent, updateMembership, type RelayMembership } from "./store.js";
 import { receiveRelayPolicy } from "./resource-policy.js";
+import { recordRelaySharingHeartbeat } from "../cluster-sharing-policy.js";
+import { reconcileOwnedResourceTopology } from "../cluster-sharing.js";
 
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
@@ -47,6 +52,8 @@ export interface RuntimeHandlers {
   /** The set of admitted relays changed, which can change the URL this machine advertises. */
   membershipsChanged(): void;
   nodeName(): string;
+  /** Enable the application workspace-sharing protocol, not standalone transport consumers. */
+  workspaceSharing?: boolean;
   /** Use long-polling from the start instead of trying WebSockets first. */
   preferPoll?: boolean;
   /** Override only in isolated transport tests. */
@@ -71,6 +78,8 @@ class RelayConnection {
   /** The relay machine's own name on its relay, and whether phones can open it. */
   relayListing: PeerListing | undefined;
   private relayPublicKey: string | undefined;
+  private workspaceRevision = -1;
+  private nextWorkspaceHeartbeat = 0;
   /** Long-polling replaces the WebSocket after it repeatedly fails to open (RELAY-PLAN.md D1). */
   private usePoll: boolean;
   private failedToOpen = 0;
@@ -122,7 +131,7 @@ class RelayConnection {
     let failure = "";
     const transport = this.usePoll ? "poll" : "websocket";
     let lastHeard = Date.now();
-    const heard = (): void => { lastHeard = Date.now(); };
+    const heard = (): void => { lastHeard = Date.now(); this.refreshWorkspaceLease(lastHeard); };
     // A NAT that drops an idle mapping or a relay host that loses power sends no close; notice the silence.
     const watchdog = setInterval(() => {
       if (Date.now() - lastHeard > SILENCE_LIMIT_MS) {
@@ -269,13 +278,23 @@ class RelayConnection {
   /** The relay's node ID from its introduction; phone gateway channels must come from it. */
   relayNodeId: string | undefined;
 
+  private refreshWorkspaceLease(now = Date.now()): void {
+    const current = this.membership;
+    if (!this.connected || this.workspaceRevision < 0 || !current?.relayNodeId || now < this.nextWorkspaceHeartbeat) return;
+    recordRelaySharingHeartbeat(this.runtime.db, current.relayNodeId, true, now);
+    this.nextWorkspaceHeartbeat = now + 30_000;
+  }
+
   private teardown(reason: string): void {
+    if (this.runtime.handlers.workspaceSharing && this.membership?.relayNodeId) recordRelaySharingHeartbeat(this.runtime.db, this.membership.relayNodeId, false);
+    this.nextWorkspaceHeartbeat = 0;
     const wasConnected = this.connected;
     this.connected = false;
     this.hub?.closeAll(reason);
     this.hub = undefined;
     this.online.clear();
     this.listings.clear();
+    this.workspaceRevision = -1;
     if (wasConnected) this.runtime.changed();
   }
 
@@ -320,6 +339,46 @@ class RelayConnection {
   }
 
   private handleControl(message: ControlMessage): void {
+    if (message.t === "workspace-sharing-invitation" || message.t === "workspace-sharing-snapshot") {
+      if (!this.runtime.handlers.workspaceSharing) return;
+      try {
+        const current = this.membership;
+        if (!current || current.status !== "admitted" || !current.relayNodeId || !current.fingerprint) throw new Error("Relay not authenticated");
+        const db = this.runtime.db, groupId = relaySharingGroupId(current.relayNodeId);
+        ensureMembershipSchema(db);
+        ensureRelaySharingGroupSchema(db);
+        if (message.t === "workspace-sharing-invitation") {
+          const invitation = message.invitation;
+          if (invitation.body.clusterId !== groupId || invitation.body.manager.nodeId !== current.relayNodeId) throw new Error("Unexpected relay sharing group");
+          if (db.prepare("SELECT 1 FROM sharing_memberships WHERE cluster_id=? AND node_id=?").get(groupId, this.runtime.nodeId)) {
+            this.ws?.send(encodeControl({ t: "workspace-sharing-refresh" }));
+          } else {
+            // A fresh signed invitation replaces an interrupted, uncommitted handshake.
+            db.prepare("DELETE FROM cluster_v2_membership_joins WHERE cluster_id=?").run(groupId);
+            const request = prepareMembershipJoin(db, { nodeId: this.runtime.nodeId, name: this.runtime.handlers.nodeName(), url: virtualRelayUrl(this.runtime.nodeId) }, invitation, current.fingerprint, randomUUID());
+            db.prepare("INSERT OR IGNORE INTO relay_sharing_groups VALUES(?,?)").run(current.relayNodeId, groupId);
+            this.ws?.send(encodeControl({ t: "workspace-sharing-join", request, secret: invitation.secret }));
+          }
+        } else {
+          if (message.snapshot.body.clusterId !== groupId || message.snapshot.signerNodeId !== current.relayNodeId) throw new Error("Unexpected relay sharing group");
+          if (!this.relayPublicKey || !verifyClusterMessage(this.relayPublicKey, "membership-snapshot", JSON.stringify(message.snapshot.body), message.snapshot.signature)) throw new Error("Invalid relay sharing signature");
+          recordRelaySharingHeartbeat(db, current.relayNodeId, true);
+          this.nextWorkspaceHeartbeat = Date.now() + 30_000;
+          applyMembershipSnapshot(db, this.runtime.nodeId, message.snapshot);
+          recordMembershipEndpoints(db, message.snapshot);
+          db.prepare("INSERT OR IGNORE INTO relay_sharing_groups VALUES(?,?)").run(current.relayNodeId, groupId);
+          this.runtime.refreshWatch();
+          this.runtime.changed();
+          if (this.workspaceRevision !== message.snapshot.body.revision) {
+            this.workspaceRevision = message.snapshot.body.revision;
+            // A reconnect can reuse the same membership revision while local projects changed offline.
+            reconcileOwnedResourceTopology(db, this.runtime.nodeId, groupId);
+            this.runtime.emit("workspace-sharing-ready");
+          }
+        }
+      } catch (error) { console.warn(`Relay workspace sharing rejected: ${(error as Error).message}`); }
+      return;
+    }
     if (message.t === "skill-policy") {
       try {
         const current = this.membership;

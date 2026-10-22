@@ -1,0 +1,50 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+import test from "node:test";
+import { clusterPublicKeyFingerprint, getOrCreateClusterIdentity } from "../src/cluster-identity.js";
+import { applyMembershipSnapshot, prepareMembershipJoin } from "../src/cluster-membership.js";
+import { listSharingClusterMembers, relaySharingGroupActive, recordRelaySharingHeartbeat } from "../src/cluster-sharing-policy.js";
+import { admitMachine, ensureRelaySchema, setMachineStatus, saveServingSettings, servingSettings, createMembership, updateMembership } from "../src/relay/store.js";
+import { ensureRelaySharingGroup, relaySharingInvitation, redeemRelaySharingInvitation, reconcileRelaySharingGroup, relayPeerRequestAllowed } from "../src/relay/sharing-groups.js";
+import { virtualRelayUrl } from "../src/relay/protocol.js";
+
+test("relay workspace group admits only approved machines and removes revoked machines", () => {
+  const server = new DatabaseSync(":memory:"), client = new DatabaseSync(":memory:");
+  try {
+    const relay = randomUUID(), node = randomUUID();
+    const identity = getOrCreateClusterIdentity(server, relay), peer = getOrCreateClusterIdentity(client, node);
+    ensureRelaySchema(server);
+    saveServingSettings(server, { ...servingSettings(server), enabled: true, origin: "http://localhost:9123" });
+    ensureRelaySchema(client);
+    const membership = createMembership(client, "http://localhost:9123", clusterPublicKeyFingerprint(identity.publicKey));
+    updateMembership(client, membership.id, { status: "admitted", relayNodeId: relay });
+    const clusterId = ensureRelaySharingGroup(server, relay, "Fixture relay");
+    assert.throws(() => relaySharingInvitation(server, relay, node, "Fixture relay"), /admitted/);
+    admitMachine(server, node, peer.publicKey, "Fixture member", "test");
+    const invitation = relaySharingInvitation(server, relay, node, "Fixture relay")!;
+    const request = prepareMembershipJoin(client, { nodeId: node, name: "Fixture member", url: virtualRelayUrl(node) }, invitation, clusterPublicKeyFingerprint(identity.publicKey), randomUUID());
+    const snapshot = redeemRelaySharingInvitation(server, relay, node, request, invitation.secret);
+    applyMembershipSnapshot(client, node, snapshot);
+    assert.deepEqual(listSharingClusterMembers(server, clusterId).map(member => member.nodeId), [relay, node]);
+    assert.deepEqual(listSharingClusterMembers(client, clusterId).map(member => member.nodeId), [relay, node]);
+    client.prepare("INSERT INTO relay_sharing_groups VALUES(?,?)").run(relay, clusterId);
+    assert.equal(relaySharingGroupActive(client, clusterId), false, "persisted admitted status must not authorize relay grants without a current connection");
+    recordRelaySharingHeartbeat(client, relay, true, 1000);
+    assert.equal(relaySharingGroupActive(client, clusterId, 1001), true, "authenticated relay traffic renews admission freshness");
+    assert.equal(relaySharingGroupActive(client, clusterId, 91_001), false, "a silent relay cannot keep grants live indefinitely");
+    recordRelaySharingHeartbeat(client, relay, true);
+    client.prepare("UPDATE relay_sharing_live SET epoch='previous-process'").run();
+    assert.equal(relaySharingGroupActive(client, clusterId), false, "a restart invalidates persisted relay freshness");
+    recordRelaySharingHeartbeat(client, relay, true);
+    recordRelaySharingHeartbeat(client, relay, false);
+    assert.equal(relaySharingGroupActive(client, clusterId), false, "disconnect invalidates relay grants immediately");
+    assert.equal(relayPeerRequestAllowed(server, relay, node, "/api/cluster/v2/runtime/projects/presence"), false, "relay membership alone must not authorize runtime access");
+    assert.equal(relayPeerRequestAllowed(server, relay, node, "/api/cluster/v2/resources/policy"), true, "an admitted member can receive an owner-signed grant");
+    setMachineStatus(server, node, "revoked");
+    reconcileRelaySharingGroup(server, relay, "Fixture relay");
+    assert.deepEqual(listSharingClusterMembers(server, clusterId).map(member => member.nodeId), [relay]);
+    assert.equal(relayPeerRequestAllowed(server, relay, node, "/api/cluster/v2/runtime/projects/presence"), false, "a revoked relay key must not become a generic pinned peer");
+    assert.throws(() => redeemRelaySharingInvitation(server, relay, node, request, invitation.secret), /admitted/);
+  } finally { server.close(); client.close(); }
+});

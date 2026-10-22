@@ -99,11 +99,16 @@ export function startRelay(): Promise<void> {
       peerOnline: (nodeId) => markPeerReachable(nodeId),
       membershipsChanged: () => { void republishIfAdvertisedChanged().catch((error) => console.warn("Publishing this machine's relay address failed", error)); },
       nodeName: () => nodeName,
+      workspaceSharing: true,
     }, relayServer);
     setRelayTransport(runtime);
     setPhonePolicyDatabase(db);
     tunnels = new SyncthingTunnels(db, runtime);
     runtime.on("changed", scheduleTunnels);
+    runtime.on("workspace-sharing-ready", () => {
+      void import("../server/shared-workspaces.js").then(({ syncSharedWorkspaces }) => syncSharedWorkspaces())
+        .catch((error) => console.warn("Relay workspace sync failed", error));
+    });
     // A new policy installs or removes the skills it enforces, then reloads idle conversations; busy ones reload before their next message.
     const applyPolicy = (reloadAlways: boolean) => {
       void import("../server/skill-sharing.js").then(async ({ syncRelaySkills }) => {

@@ -19,6 +19,8 @@ import { listTwinRelationships } from "../../cluster-twins.js";
 import { enqueueSecretCredentialSync } from "../../secret-replication.js";
 import { generateSshKeyPair } from "../../github-credentials.js";
 import { Feature, requireFeature } from "../http-auth.js";
+import { ResourceSharingError } from "../../cluster-sharing.js";
+import { setWorkspaceSharing, validateWorkspaceSharing } from "../../workspace-sharing.js";
 
 // Block secrets management for replicated users
 app.use("/api/secrets", requireFeature(Feature.SECRETS_MANAGE));
@@ -151,10 +153,20 @@ app.get("/api/workspaces", async (_request, response, next) => {
 app.put("/api/workspaces", async (request, response, next) => {
   try {
     const payload = workspaceSchema.parse(request.body);
+    const db = await clusterV2Database(), local = (await getClusterNode()).id;
+    if (payload.sharing) {
+      if (actingAccount()?.isRemoteLogin) throw new ResourceSharingError("Workspace sharing must be managed on its home node", 403);
+      validateWorkspaceSharing(db, local, payload.sharing);
+    }
     const workspace = await saveWorkspace(payload);
+    if (payload.sharing) {
+      setWorkspaceSharing(db, local, workspace.id, payload.sharing);
+      void import("../shared-workspaces.js").then(({ announceWorkspaceChanges }) => announceWorkspaceChanges()).catch((error) => console.warn("Shared workspace notice failed", error));
+    }
     await ensureManagedHome(getSettings().projects.homePath, (await listWorkspaces()).map((entry) => entry.id));
     response.json({ workspace });
   } catch (error) {
+    if (error instanceof ResourceSharingError) { response.status(error.statusCode).json({ error: error.message }); return; }
     next(error);
   }
 });

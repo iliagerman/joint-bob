@@ -3,7 +3,7 @@ import { ownedByAdmin } from "./ownership.js";
 import { notifyRelayPeersChanged } from "./relay/events.js";
 
 export type SharedResourceKind = "project" | "ticket" | "secret";
-export interface ResourceShare { clusterId: string; projectId: string | null }
+export interface ResourceShare { clusterId: string; projectId: string | null; nodeIds?: string[] }
 export interface SharingCluster { id: string; name: string }
 export interface SharingClusterState extends SharingCluster { originalNodeId: string; managerNodeId: string | null; managerEpoch: number; closed: boolean }
 export interface SharingMembership { clusterId: string; nodeId: string; autoShareProjects: boolean; joinSequence: number }
@@ -19,10 +19,12 @@ interface MembershipRow { cluster_id: string; node_id: string; auto_share_projec
 interface ClusterRow { id: string; name: string; original_node_id: string; manager_node_id: string | null; manager_epoch: number; next_join_sequence: number; closed: number }
 interface TransferRow { cluster_id: string; transfer_id: string; from_node_id: string; to_node_id: string; expected_epoch: number; status: "prepared" | "accepted" | "committed" }
 interface CountRow { count: number }
-interface ShareRow { cluster_id: string; project_id: string }
+interface ShareRow { cluster_id: string; project_id: string; node_ids: string | null }
 interface OwnerRow { owner_node_id: string; project_id: string | null }
 interface IdRow { cluster_id: string }
 const kinds = new Set<SharedResourceKind>(["project", "ticket", "secret"]);
+const relayLeaseEpoch = `${process.pid}:${process.hrtime.bigint()}`;
+const RELAY_SHARING_LEASE_MS = 90_000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function validateUuid(value: string, label: string): void {
@@ -90,9 +92,14 @@ CREATE TABLE IF NOT EXISTS sharing_explicit_project_selections(cluster_id TEXT P
 CREATE TABLE IF NOT EXISTS sharing_resource_owners(kind TEXT NOT NULL CHECK(kind IN ('project','ticket','secret')), resource_id TEXT NOT NULL, owner_node_id TEXT NOT NULL, project_id TEXT, PRIMARY KEY(kind,resource_id), CHECK((kind='ticket' AND project_id IS NOT NULL AND length(project_id)>0) OR (kind<>'ticket' AND project_id IS NULL)));
 CREATE TABLE IF NOT EXISTS sharing_resource_shares(kind TEXT NOT NULL, resource_id TEXT NOT NULL, cluster_id TEXT NOT NULL REFERENCES sharing_clusters(id), project_id TEXT NOT NULL DEFAULT '', PRIMARY KEY(kind,resource_id,cluster_id,project_id), FOREIGN KEY(kind,resource_id) REFERENCES sharing_resource_owners(kind,resource_id));
 CREATE TABLE IF NOT EXISTS sharing_twins(left_node_id TEXT NOT NULL, right_node_id TEXT NOT NULL, PRIMARY KEY(left_node_id,right_node_id), CHECK(left_node_id < right_node_id));
+CREATE TABLE IF NOT EXISTS relay_sharing_groups(relay_node_id TEXT PRIMARY KEY,cluster_id TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS relay_sharing_live(relay_node_id TEXT PRIMARY KEY,epoch TEXT NOT NULL,expires_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS sharing_memberships_node_id ON sharing_memberships(node_id);
 CREATE INDEX IF NOT EXISTS sharing_resource_shares_cluster_id ON sharing_resource_shares(cluster_id);
 CREATE INDEX IF NOT EXISTS sharing_resource_owners_owner_node_id ON sharing_resource_owners(owner_node_id);`);
+  if (!(db.prepare("PRAGMA table_info(sharing_resource_shares)").all() as Array<{name: string}>).some(column => column.name === "node_ids")) {
+    db.exec("ALTER TABLE sharing_resource_shares ADD COLUMN node_ids TEXT");
+  }
 }
 
 /** INTERNAL topology API. Network callers must first verify a membership invitation or snapshot. */
@@ -104,9 +111,28 @@ export function createSharingCluster(db: DatabaseSync, cluster: SharingCluster, 
   });
 }
 
+/** A restart or a lost authenticated relay connection cannot keep stale admission grants alive. */
+export function recordRelaySharingHeartbeat(db: DatabaseSync, relayNodeId: string, connected: boolean, now = Date.now()): void {
+  db.exec("CREATE TABLE IF NOT EXISTS relay_sharing_live(relay_node_id TEXT PRIMARY KEY,epoch TEXT NOT NULL,expires_at INTEGER NOT NULL)");
+  if (!connected) { db.prepare("DELETE FROM relay_sharing_live WHERE relay_node_id=?").run(relayNodeId); return; }
+  db.prepare("INSERT INTO relay_sharing_live VALUES(?,?,?) ON CONFLICT(relay_node_id) DO UPDATE SET epoch=excluded.epoch,expires_at=excluded.expires_at")
+    .run(relayNodeId, relayLeaseEpoch, now + RELAY_SHARING_LEASE_MS);
+}
+
+export function relaySharingGroupActive(db: DatabaseSync, clusterId: string, now = Date.now()): boolean {
+  const group = db.prepare("SELECT relay_node_id FROM relay_sharing_groups WHERE cluster_id=?").get(clusterId) as {relay_node_id: string}|undefined;
+  if (!group) return true;
+  const has = (table: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table));
+  const local = has("cluster_v2_identity") ? (db.prepare("SELECT node_id FROM cluster_v2_identity WHERE singleton=1").get() as {node_id: string}|undefined)?.node_id : undefined;
+  if (local === group.relay_node_id) return has("relay_serving") && Boolean(db.prepare("SELECT 1 FROM relay_serving WHERE enabled=1 AND origin<>''").get());
+  return has("relay_memberships") && has("relay_sharing_live")
+    && Boolean(db.prepare("SELECT 1 FROM relay_memberships WHERE relay_node_id=? AND status='admitted'").get(group.relay_node_id))
+    && Boolean(db.prepare("SELECT 1 FROM relay_sharing_live WHERE relay_node_id=? AND epoch=? AND expires_at>?").get(group.relay_node_id, relayLeaseEpoch, now));
+}
+
 export function getSharingCluster(db: DatabaseSync, clusterId: string): SharingClusterState {
   validateUuid(clusterId, "Cluster ID"); const row = clusterRow(db, clusterId);
-  return { id: row.id, name: row.name, originalNodeId: row.original_node_id, managerNodeId: row.manager_node_id, managerEpoch: row.manager_epoch, closed: row.closed === 1 };
+  return { id: row.id, name: row.name, originalNodeId: row.original_node_id, managerNodeId: row.manager_node_id, managerEpoch: row.manager_epoch, closed: row.closed === 1 || !relaySharingGroupActive(db, clusterId) };
 }
 export function listSharingClusterMembers(db: DatabaseSync, clusterId: string): SharingMembership[] {
   validateUuid(clusterId, "Cluster ID"); requireCluster(db, clusterId);
@@ -171,9 +197,11 @@ export function removeLostSharingMember(db: DatabaseSync, clusterId: string, nod
 function toMembership(row: MembershipRow): SharingMembership {
   return { clusterId: row.cluster_id, nodeId: row.node_id, autoShareProjects: row.auto_share_projects === 1, joinSequence: row.join_sequence };
 }
-export function listSharingMemberships(db: DatabaseSync, nodeId: string): SharingMembership[] {
+/** Relay resource groups are not login/account/configuration sharing clusters. Opt in only for workspace grants. */
+export function listSharingMemberships(db: DatabaseSync, nodeId: string, includeRelayGroups = false): SharingMembership[] {
   validateUuid(nodeId, "Node ID");
-  const rows = db.prepare("SELECT cluster_id,node_id,auto_share_projects,join_sequence FROM sharing_memberships WHERE node_id=? ORDER BY cluster_id").all(nodeId) as unknown as MembershipRow[];
+  const rows = db.prepare(`SELECT cluster_id,node_id,auto_share_projects,join_sequence FROM sharing_memberships m WHERE node_id=?
+    ${includeRelayGroups ? "" : "AND NOT EXISTS (SELECT 1 FROM relay_sharing_groups r WHERE r.cluster_id=m.cluster_id)"} ORDER BY cluster_id`).all(nodeId) as unknown as MembershipRow[];
   return rows.map(toMembership);
 }
 
@@ -273,8 +301,8 @@ export function resourceOwner(db: DatabaseSync, kind: SharedResourceKind, resour
 }
 export function listResourceShares(db: DatabaseSync, kind: SharedResourceKind, resourceId: string): ResourceShare[] {
   validateResource(kind, resourceId); const policy = policyResource(db, kind, resourceId);
-  const rows = db.prepare("SELECT cluster_id,project_id FROM sharing_resource_shares WHERE kind=? AND resource_id=? ORDER BY cluster_id,project_id").all(policy.kind, policy.id) as unknown as ShareRow[];
-  return rows.map((row) => ({ clusterId: row.cluster_id, projectId: row.project_id || null }));
+  const rows = db.prepare("SELECT cluster_id,project_id,node_ids FROM sharing_resource_shares WHERE kind=? AND resource_id=? ORDER BY cluster_id,project_id").all(policy.kind, policy.id) as unknown as ShareRow[];
+  return rows.map((row) => ({ clusterId: row.cluster_id, projectId: row.project_id || null, ...(row.node_ids === null ? {} : { nodeIds: JSON.parse(row.node_ids) as string[] }) }));
 }
 
 function validateShareSelection(db: DatabaseSync, actor: string, owner: string, kind: SharedResourceKind, shares: ResourceShare[]): void {
@@ -288,13 +316,17 @@ function validateShareSelection(db: DatabaseSync, actor: string, owner: string, 
     const scoped = share.projectId !== null;
     if (modes.has(share.clusterId) && modes.get(share.clusterId) !== scoped) throw new Error("Redundant ambiguous secret scopes for one cluster");
     modes.set(share.clusterId, scoped); requireMembership(db, share.clusterId, actor); requireMembership(db, share.clusterId, owner);
+    if (share.nodeIds !== undefined) {
+      if (kind !== "project" || !share.nodeIds.length || new Set(share.nodeIds).size !== share.nodeIds.length) throw new Error("Invalid node selection");
+      for (const nodeId of share.nodeIds) { validateUuid(nodeId, "Node ID"); requireMembership(db, share.clusterId, nodeId); }
+    }
     if (scoped && !activeProjectShare(db, actor, share.clusterId, share.projectId!)) throw new Error("Scoped secret project is not actively shared to actor in this cluster");
   }
 }
 function activeProjectShare(db: DatabaseSync, nodeId: string, clusterId: string, projectId: string): boolean {
   return db.prepare(`SELECT 1 FROM sharing_resource_shares p JOIN sharing_resource_owners o ON o.kind='project' AND o.resource_id=p.resource_id
     JOIN sharing_memberships om ON om.cluster_id=p.cluster_id AND om.node_id=o.owner_node_id JOIN sharing_memberships rm ON rm.cluster_id=p.cluster_id AND rm.node_id=?
-    WHERE p.kind='project' AND p.resource_id=? AND p.cluster_id=?`).get(nodeId, projectId, clusterId) !== undefined;
+    WHERE p.kind='project' AND p.resource_id=? AND p.cluster_id=? AND (p.node_ids IS NULL OR EXISTS (SELECT 1 FROM json_each(p.node_ids) WHERE value=rm.node_id))`).get(nodeId, projectId, clusterId) !== undefined;
 }
 
 export function setResourceShares(db: DatabaseSync, actorNodeId: string, kind: SharedResourceKind, resourceId: string, shares: ResourceShare[]): void {
@@ -310,8 +342,8 @@ export function setResourceShares(db: DatabaseSync, actorNodeId: string, kind: S
     if (actorNodeId !== owner) throw new Error("Actor is not authorized to change this resource's shares");
     validateShareSelection(db, actorNodeId, owner, kind, shares);
     db.prepare("DELETE FROM sharing_resource_shares WHERE kind=? AND resource_id=?").run(kind, resourceId);
-    const insert = db.prepare("INSERT INTO sharing_resource_shares(kind,resource_id,cluster_id,project_id) VALUES (?,?,?,?)");
-    for (const share of shares) insert.run(kind, resourceId, share.clusterId, share.projectId ?? "");
+    const insert = db.prepare("INSERT INTO sharing_resource_shares(kind,resource_id,cluster_id,project_id,node_ids) VALUES (?,?,?,?,?)");
+    for (const share of shares) insert.run(kind, resourceId, share.clusterId, share.projectId ?? "", share.nodeIds === undefined ? null : JSON.stringify([...share.nodeIds].sort()));
     if (kind === "project") clearInvalidSecretScopes(db, resourceId);
   });
 }
@@ -332,18 +364,19 @@ export function mayReceiveResource(db: DatabaseSync, recipientNodeId: string, ki
   if (recipientNodeId === owner) return true;
   // Twins are the admin's own machines: they get the admin's things, never a member's.
   if (isTrustedTwin(db, recipientNodeId, owner)) return twinMayReceive(db, owner, policy.kind, policy.id, projectId);
-  const rows = db.prepare(`SELECT s.cluster_id,s.project_id FROM sharing_resource_shares s JOIN sharing_memberships om ON om.cluster_id=s.cluster_id AND om.node_id=?
+  const rows = db.prepare(`SELECT s.cluster_id,s.project_id,s.node_ids FROM sharing_resource_shares s JOIN sharing_memberships om ON om.cluster_id=s.cluster_id AND om.node_id=?
     JOIN sharing_memberships rm ON rm.cluster_id=s.cluster_id AND rm.node_id=? WHERE s.kind=? AND s.resource_id=?`).all(owner, recipientNodeId, policy.kind, policy.id) as unknown as ShareRow[];
-  return rows.some((row) => policy.kind !== "secret" || row.project_id === "" || (projectId === row.project_id && activeProjectShare(db, recipientNodeId, row.cluster_id, row.project_id)));
+  return rows.some((row) => relaySharingGroupActive(db, row.cluster_id) && (row.node_ids === null || (JSON.parse(row.node_ids) as string[]).includes(recipientNodeId))
+    && (policy.kind !== "secret" || row.project_id === "" || (projectId === row.project_id && activeProjectShare(db, recipientNodeId, row.cluster_id, row.project_id))));
 }
 
 export function resourceClusterIds(db: DatabaseSync, nodeId: string, kind: SharedResourceKind, resourceId: string): string[] {
   validateUuid(nodeId, "Node ID"); validateResource(kind, resourceId); const policy = policyResource(db, kind, resourceId); const owner = ownerOrThrow(db, policy.kind, policy.id);
   const rows = db.prepare(`SELECT DISTINCT s.cluster_id FROM sharing_resource_shares s JOIN sharing_memberships om ON om.cluster_id=s.cluster_id AND om.node_id=?
-    JOIN sharing_memberships rm ON rm.cluster_id=s.cluster_id AND rm.node_id=? WHERE s.kind=? AND s.resource_id=? AND
+    JOIN sharing_memberships rm ON rm.cluster_id=s.cluster_id AND rm.node_id=? WHERE s.kind=? AND s.resource_id=? AND (rm.node_id=om.node_id OR s.node_ids IS NULL OR EXISTS (SELECT 1 FROM json_each(s.node_ids) WHERE value=rm.node_id)) AND
     (s.project_id='' OR EXISTS (SELECT 1 FROM sharing_resource_shares p JOIN sharing_resource_owners po ON po.kind='project' AND po.resource_id=p.resource_id
       JOIN sharing_memberships pom ON pom.cluster_id=p.cluster_id AND pom.node_id=po.owner_node_id WHERE p.kind='project' AND p.resource_id=s.project_id AND p.cluster_id=s.cluster_id)) ORDER BY s.cluster_id`).all(owner, nodeId, policy.kind, policy.id) as unknown as IdRow[];
-  return rows.map((row) => row.cluster_id);
+  return rows.filter((row) => relaySharingGroupActive(db, row.cluster_id)).map((row) => row.cluster_id);
 }
 
 function twinMayReceive(db: DatabaseSync, owner: string, kind: SharedResourceKind, resourceId: string, projectId?: string): boolean {

@@ -6,6 +6,7 @@ import { fillProjectBases } from "./project-forms.js";
 import { openSecretScope } from "./secrets.js";
 import { confirmAction, toast } from "./shell.js";
 import { shared, state } from "./state.js";
+import { installWorkspaceCreationSharing, openWorkspaceSharing, resetWorkspaceCreationSharing, workspaceCreationSharing } from "./workspace-sharing.js";
 
 export async function loadWorkspaces() {
   shared.workspaces = (await api("/api/workspaces")).workspaces;
@@ -68,6 +69,16 @@ function renderWorkspaces() {
     secrets.addEventListener("click", () => openSecretScope("workspace", workspace.id, workspace.label).catch((error) => toast(error.message)));
     row.append(secrets);
 
+    if (!workspace.source) {
+      const share = document.createElement("button");
+      share.type = "button";
+      share.className = "ghost compact";
+      share.textContent = "Share";
+      share.dataset.testid = "workspace-share-button";
+      share.addEventListener("click", () => openWorkspaceSharing(workspace).catch((error) => toast(error.message)));
+      row.append(share);
+    }
+
     if (isNodeAdmin() && !workspace.source) {
       const budget = document.createElement("button");
       budget.type = "button";
@@ -109,8 +120,13 @@ function renderWorkspaces() {
 async function addWorkspace() {
   const label = elements.workspaceNameInput.value.trim();
   if (!label) return;
-  await api("/api/workspaces", { method: "PUT", body: JSON.stringify({ label }) });
+  if (elements.workspaceAddButton.disabled) return;
+  elements.workspaceAddButton.disabled = true;
+  try {
+    await api("/api/workspaces", { method: "PUT", body: JSON.stringify({ label, sharing: workspaceCreationSharing() }) });
+  } finally { elements.workspaceAddButton.disabled = false; }
   elements.workspaceNameInput.value = "";
+  resetWorkspaceCreationSharing();
   await loadWorkspaces();
   toast(`Added ${label}`);
 }
@@ -123,6 +139,7 @@ export function openProjectPathMapping(project) {
   elements.projectPathDialog.showModal();
 }
 elements.projectWorkspaceInput.addEventListener("change", () => fillProjectBases().catch((error) => toast(error.message)));
+installWorkspaceCreationSharing(elements.workspaceAddButton);
 elements.workspaceAddButton.addEventListener("click", () => addWorkspace().catch((error) => toast(error.message)));
 elements.workspaceNameInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;

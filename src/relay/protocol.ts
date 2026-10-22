@@ -44,6 +44,10 @@ export type ControlMessage =
   | { t: "presence"; online: string[]; offline: string[]; listings?: Record<string, PeerListing> }
   | { t: "gateway"; enabled: boolean }
   | { t: "skill-policy"; statement: import("./resource-policy.js").SignedRelaySkillPolicy }
+  | { t: "workspace-sharing-invitation"; invitation: import("../cluster-membership.js").MembershipInvitation }
+  | { t: "workspace-sharing-join"; request: import("../cluster-membership.js").MembershipJoinRequest; secret: string }
+  | { t: "workspace-sharing-refresh" }
+  | { t: "workspace-sharing-snapshot"; snapshot: import("../cluster-membership.js").SignedMembershipSnapshot }
   | { t: "open"; ref: number; to: string; kind: Exclude<ChannelKind, "gateway"> }
   | { t: "opened"; ref: number; channel: number }
   | { t: "open-failed"; ref: number; error: string }

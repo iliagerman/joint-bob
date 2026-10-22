@@ -15,6 +15,7 @@ import { isAdministrationPath, isNodeBlocked } from "../node-blocks.js";
 import { actingAccountFromSession, runAsAccount } from "../account-context.js";
 import { relayPeerOf, relayTransportOf } from "../relay/stream.js";
 import { otherUsersMayUsePhone } from "../relay/phone-policy.js";
+import { relayPeerRequestAllowed } from "../relay/sharing-groups.js";
 
 const clusterRawBodies = new WeakMap<IncomingMessage, Buffer>();
 
@@ -120,6 +121,7 @@ async function requireClusterV2Auth(request: Request, response: Response, next: 
       return;
     }
     assertRelayChannelSender(request, sender);
+    if (!relayPeerRequestAllowed(database, node.id, sender, request.originalUrl.split("?")[0])) throw new ClusterProtocolError("No shared resource grant");
     response.locals.machineAuth = true;
     response.locals.machineNodeId = sender;
     response.locals.machineProtocol = 2;

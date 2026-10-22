@@ -54,7 +54,7 @@ const resourceId = z.string().min(1).max(300)
   .refine((value) => value === value.trim() && !/[\x00-\x1f\x7f]/.test(value));
 const policyKind = z.enum(["project", "secret"]);
 const sharedKind = z.enum(["project", "secret", "ticket"]);
-const resourceShare = z.object({ clusterId: uuid, projectId: resourceId.nullable() }).strict();
+const resourceShare = z.object({ clusterId: uuid, projectId: resourceId.nullable(), nodeIds: z.array(uuid).min(1).max(10000).optional() }).strict();
 const contextSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("cluster"), id: uuid,
@@ -253,6 +253,8 @@ function currentContexts(
     if (!ownerMember) continue;
     for (const member of members) {
       if (member.nodeId === owner) continue;
+      const fragment = shares.filter((share) => share.clusterId === clusterId && (!share.nodeIds || share.nodeIds.includes(member.nodeId)));
+      if (!fragment.length) continue;
       result.push({
         peer: member.nodeId,
         context: {
@@ -260,7 +262,7 @@ function currentContexts(
           ownerJoinSequence: ownerMember.joinSequence,
           recipientJoinSequence: member.joinSequence,
         },
-        shares: shares.filter((share) => share.clusterId === clusterId),
+        shares: fragment,
       });
     }
   }
@@ -651,7 +653,7 @@ function validateFragment(body: PolicyBody): void {
     if (body.shares.length) throw new Error("Twin resource fragment shares must be empty");
     return;
   }
-  if (body.shares.some((share) => share.clusterId !== body.context.id)) {
+  if (body.shares.some((share) => share.clusterId !== body.context.id || share.nodeIds && !share.nodeIds.includes(body.recipientNodeId))) {
     throw new Error("Invalid context fragment");
   }
   if (body.kind === "project") {

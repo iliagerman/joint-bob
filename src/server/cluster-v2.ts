@@ -183,6 +183,7 @@ export async function redeemV2Membership(request: Request, response: Response, n
     const local = await getClusterNode();
     const db = await clusterV2Database();
     ensureV2HttpSchema(db);
+    if (db.prepare("SELECT 1 FROM relay_sharing_groups WHERE cluster_id=?").get(payload.request.clusterId)) throw new ClusterV2HttpError(403, "Relay membership is managed through the relay");
     db.exec("SAVEPOINT cluster_v2_bootstrap");
     try {
       pinClusterPublicKey(db, payload.request.member.nodeId, payload.request.member.publicKey);

@@ -5,8 +5,8 @@
 // opaque. It also serves the phone gateway: `https://<name>.<relay-domain>` is proxied over
 // a plain channel into that machine's own UI, where the machine's own sign-in rules apply.
 //
-// The relay is a transport only. Admission here grants no access to any cluster, project
-// or conversation: every request still meets the receiving machine's usual checks.
+// Admission grants no project access. A dedicated sharing group lets an owner explicitly
+// share a workspace with every admitted machine; ordinary request checks still apply.
 import { randomBytes } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
@@ -14,6 +14,7 @@ import type { DatabaseSync } from "node:sqlite";
 import WebSocket, { WebSocketServer } from "ws";
 import { clusterPublicKeyFingerprint, getOrCreateClusterIdentity, signClusterMessage, verifyClusterMessage } from "../cluster-identity.js";
 import { publishedRelayPolicy } from "./resource-policy.js";
+import { reconcileRelaySharingGroup, relaySharingInvitation, redeemRelaySharingInvitation } from "./sharing-groups.js";
 import { ChannelHub, type IncomingChannel } from "./hub.js";
 import { isTrustedTwin } from "../cluster-sharing-policy.js";
 import {
@@ -134,6 +135,7 @@ export class RelayServer {
     const self = relayMachine(this.db, this.nodeId);
     if (!self || self.status !== "admitted") admitMachine(this.db, this.nodeId, this.publicKey, this.nodeName(), "self");
     if (this.localSession) this.localSession.gatewayEnabled = relayMachine(this.db, this.nodeId)?.phoneSignIn ?? true;
+    this.broadcastWorkspaceSharing();
     this.heartbeat ??= setInterval(() => this.ping(), HEARTBEAT_MS);
     this.heartbeat.unref();
   }
@@ -360,11 +362,18 @@ export class RelayServer {
     this.sessions.get(machine.nodeId)?.terminate("Replaced by a newer connection");
     this.activate(session);
     session.deliver(encodeControl({ t: "skill-policy", statement: publishedRelayPolicy(this.db, this.nodeId) }));
+    session.deliver(encodeControl({ t: "workspace-sharing-invitation", invitation: relaySharingInvitation(this.db, this.nodeId, machine.nodeId, this.nodeName()) }));
     return session;
   }
 
   broadcastSkillPolicy(): void {
     const frame = encodeControl({ t: "skill-policy", statement: publishedRelayPolicy(this.db, this.nodeId) });
+    for (const session of this.sessions.values()) if (session.kind === "remote") session.deliver(frame);
+  }
+
+  private broadcastWorkspaceSharing(): void {
+    const snapshot = reconcileRelaySharingGroup(this.db, this.nodeId, this.nodeName());
+    const frame = encodeControl({ t: "workspace-sharing-snapshot", snapshot });
     for (const session of this.sessions.values()) if (session.kind === "remote") session.deliver(frame);
   }
 
@@ -492,6 +501,16 @@ export class RelayServer {
 
   private handleControl(session: Session, message: ControlMessage): void {
     switch (message.t) {
+      case "workspace-sharing-join": {
+        if (session.kind !== "remote") return;
+        redeemRelaySharingInvitation(this.db, this.nodeId, session.nodeId, message.request, message.secret);
+        this.broadcastWorkspaceSharing();
+        return;
+      }
+      case "workspace-sharing-refresh": {
+        if (session.kind === "remote") this.broadcastWorkspaceSharing();
+        return;
+      }
       case "watch": {
         if (!Array.isArray(message.nodeIds)) return;
         const wanted = new Set(message.nodeIds.filter((nodeId) => typeof nodeId === "string" && UUID.test(nodeId)).slice(0, MAX_WATCHED));
@@ -623,6 +642,7 @@ export class RelayServer {
     setMachineStatus(this.db, nodeId, status);
     audit(this.db, status === "admitted" ? "resumed" : status, nodeId, `${machine.name} by ${actor}`);
     if (status !== "admitted") this.sessions.get(nodeId)?.terminate(status === "revoked" ? "Removed from the relay" : "Suspended on the relay", { t: "admin", event: status });
+    this.broadcastWorkspaceSharing();
   }
 
   // ------------------------------------------------------------ phone gateway

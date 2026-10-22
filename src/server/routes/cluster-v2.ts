@@ -40,10 +40,13 @@ app.param("clusterId", (_request, response, next, clusterId: string) => {
   const account = actingAccount();
   if (!response.locals.authSession || !account) { next(); return; }
   void clusterV2Database().then((db) => {
-    if (account.isRemoteLogin || !accountInCluster(db, account.accountId, clusterId)) { sendError(response, 404, "Not found"); return; }
+    if (account.isRemoteLogin || db.prepare("SELECT 1 FROM relay_sharing_groups WHERE cluster_id=?").get(clusterId) || !accountInCluster(db, account.accountId, clusterId)) { sendError(response, 404, "Not found"); return; }
     next();
   }, next);
 });
+function manualCluster(db: Awaited<ReturnType<typeof clusterV2Database>>, clusterId: string): void {
+  if (db.prepare("SELECT 1 FROM relay_sharing_groups WHERE cluster_id=?").get(clusterId)) throw new ClusterV2HttpError(403, "Relay membership is managed through the relay");
+}
 function machineOnly(response: Response): string {
   if (response.locals.machineProtocol !== 2 || typeof response.locals.machineNodeId !== "string") throw new ClusterV2HttpError(401, "Unauthorized");
   return response.locals.machineNodeId as string;
@@ -178,15 +181,18 @@ app.post("/api/clusters/:clusterId/close", handler(async (request, response) => 
 app.post("/api/cluster/v2/membership/close", handler(async (request, response) => {
   const actor = machineOnly(response), payload = invitationRequestSchema.parse(request.body);
   const local = await getClusterNode(), db = await clusterV2Database();
+  manualCluster(db, payload.clusterId);
   response.json({ snapshot: closeMembershipCluster(db, local.id, actor, payload.clusterId, payload.expectedEpoch) });
 }));
 
 app.post("/api/cluster/v2/membership/invitations", handler(async (request, response) => {
   const actor = machineOnly(response), payload = invitationRequestSchema.parse(request.body), local = await getClusterNode(), db = await clusterV2Database();
+  manualCluster(db, payload.clusterId);
   response.status(201).json({ invitation: createMembershipInvitation(db, local.id, actor, payload.clusterId, payload.expectedEpoch) });
 }));
 app.post("/api/cluster/v2/membership/remove", handler(async (request, response) => {
   const actor = machineOnly(response), payload = removeSchema.parse(request.body), local = await getClusterNode(), db = await clusterV2Database();
+  manualCluster(db, payload.clusterId);
   response.json({ snapshot: removeMembershipMember(db, local.id, actor, payload.clusterId, payload.targetNodeId, payload.expectedEpoch) });
 }));
 /** A member reports its new name and URL to the manager, which republishes the membership. */

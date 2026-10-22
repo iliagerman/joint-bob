@@ -2526,9 +2526,18 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 .project-type-row code { flex: 0 0 auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
 .project-type-row select { flex: 0 0 auto; width: auto; min-width: 150px; }
 .project-type-empty { margin: 0; color: var(--muted); font-size: 13px; }
-.project-type-add { display: flex; gap: 8px; }
+.project-type-add { display: flex; flex-wrap: wrap; gap: 8px; }
+.workspace-sharing-dialog { box-sizing: border-box; width: 560px; max-height: calc(100dvh - 32px); overflow-y: auto; }
+.workspace-sharing-groups { display: grid; gap: 12px; margin: 16px 0; }
+.workspace-sharing-group { min-width: 0; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
+.workspace-sharing-group legend { padding: 0 5px; font-size: 12px; font-weight: 600; }
+.workspace-sharing-group p { margin: 0 0 8px; font-size: 12px; }
+.workspace-sharing-list { display: grid; gap: 8px; max-height: 180px; overflow-y: auto; }
+.workspace-sharing-list .checkbox-row { min-width: 0; overflow-wrap: anywhere; }
+.workspace-sharing-list input { flex-shrink: 0; }
 .project-type-add input { flex: 1; min-width: 0; }
 .project-type-add button { flex: 0 0 auto; }
+@media (max-width: 600px) { .project-type-add input { flex-basis: 100%; } }
 
 .client-log-output { min-height: 280px; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); color: var(--text); font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .changelog-list { display: grid; gap: 12px; max-height: 46dvh; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }

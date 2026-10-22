@@ -15,6 +15,7 @@ import { sessionWatcher } from "./chat.js";
 import { harnessSessionBusy, harnessSessions } from "./harness-sessions.js";
 import { harnessTaskRuns, projectHasMergeReservation } from "./task-runs.js";
 import { projectUsage } from "../usage-ledger.js";
+import { workspaceSharingSchema } from "../workspace-sharing.js";
 
 function unavailableProjectStatus(message = "No Syncthing folder is configured"): ProjectSyncStatus {
   return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
@@ -160,4 +161,5 @@ export async function relocateProjectWorkspace(project: ProjectRecord, nextWorks
 export const workspaceSchema = z.object({
   id: z.string().trim().max(40).optional(),
   label: z.string().trim().min(1).max(40),
+  sharing: workspaceSharingSchema.optional(),
 }).strict();

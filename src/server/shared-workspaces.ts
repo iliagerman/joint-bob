@@ -26,7 +26,7 @@ function failure(message: string, status = 400): Error { return Object.assign(ne
 async function clusterPeers() {
   const db = await clusterV2Database(), local = (await getClusterNode()).id;
   const nodes = new Map<string, { nodeId: string; url: string; clusterIds: string[] }>();
-  for (const membership of listSharingMemberships(db, local)) {
+  for (const membership of listSharingMemberships(db, local, true)) {
     const cluster = getSharingCluster(db, membership.clusterId);
     if (cluster.closed) continue;
     for (const member of listSharingClusterMembers(db, cluster.id)) {
@@ -48,9 +48,9 @@ async function manifestFor(receiver: string) {
   ensureSelectedSharingSchema(db);
   const workspaces = new Map<string, { id: string; label: string }>();
   const query = db.prepare(`SELECT w.id,w.label FROM cluster_v2_share_selections s JOIN workspaces w ON w.id=s.resource_id
-    WHERE s.kind='workspace' AND s.cluster_id=? AND NOT EXISTS (SELECT 1 FROM cluster_v2_project_workspaces r WHERE r.workspace_id=w.id)
+    WHERE s.kind='workspace' AND s.cluster_id=? AND (s.node_ids IS NULL OR EXISTS(SELECT 1 FROM json_each(s.node_ids) WHERE value=?)) AND NOT EXISTS (SELECT 1 FROM cluster_v2_project_workspaces r WHERE r.workspace_id=w.id)
     AND NOT EXISTS (SELECT 1 FROM cluster_v2_shared_workspaces c WHERE c.workspace_id=w.id AND c.workspace_id<>c.source_workspace_id)`);
-  for (const clusterId of peer.clusterIds) for (const row of query.all(clusterId) as Array<{ id: string; label: string }>) {
+  for (const clusterId of peer.clusterIds) for (const row of query.all(clusterId, receiver) as Array<{ id: string; label: string }>) {
     if (workspaceSchema.safeParse(row).success) workspaces.set(row.id, row);
   }
   return { ownerNodeId: local, workspaces: [...workspaces.values()] };
