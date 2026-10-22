@@ -10,6 +10,7 @@ import { listConversationRecords } from "../src/conversation-records.js";
 import { server } from "../src/server/state.js";
 import { acceptWebhookCall } from "../src/server/webhooks.js";
 import { addProject } from "../src/store.js";
+import { conversationScopeId, getScopeSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "../src/secrets.js";
 import { listTurnFailures } from "../src/turn-failures.js";
 import { createWebhook, webhookDeliveries, webhookInputSchema } from "../src/webhooks.js";
 
@@ -83,6 +84,62 @@ test("a webhook call's files reach the conversation as attachments, and the rest
   } finally {
     for (const socket of endpoint.clients) socket.terminate();
     await new Promise<void>((resolve) => endpoint.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Dropping queueSettings would silently use project defaults instead of the webhook choices.
+test("webhook model and effort travel with the queued turn for new and existing conversations", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-webhook-model-"));
+  const endpoint = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(endpoint, "listening");
+  context.mock.method(server, "address", () => endpoint.address());
+  const prompts: Array<{ queueSettings?: unknown }> = [];
+  const attached: string[][] = [];
+  endpoint.on("connection", async (socket, request) => {
+    const sessionId = new URL(request.url!, "http://localhost").searchParams.get("sessionId")!;
+    attached.push((await getScopeSecretAccounts("conversation", conversationScopeId("pi", sessionId))).accountIds);
+    socket.send(JSON.stringify({ type: "ready", status: { model: { provider: "zai", id: "default-model" }, thinkingLevel: "low" } }));
+    socket.on("message", (raw) => {
+      const prompt = JSON.parse(raw.toString());
+      prompts.push(prompt);
+      socket.send(JSON.stringify({ type: "userMessage", queued: true, requestId: prompt.requestId, queueId: "q" }));
+      socket.send(JSON.stringify({ type: "promptStarted", queueId: "q" }));
+    });
+  });
+  try {
+    const project = await addProject("Webhook models", path.join(root, "project"), { writeInstructions: false });
+    const db = await clusterV2Database();
+    const selected = await saveSecretAccount({ label: "Webhook credential", provider: "custom", variables: [{ name: "WEBHOOK_TEST_KEY", kind: "value", value: "synthetic-webhook-key" }] });
+    const existing = await saveSecretAccount({ label: "Existing credential", provider: "custom", variables: [{ name: "EXISTING_TEST_KEY", kind: "value", value: "synthetic-existing-key" }] });
+    await setScopeSecretAccounts("conversation", conversationScopeId("pi", "existing"), [existing.id]);
+    for (const kind of ["project", "conversation"] as const) {
+      for (const settings of [
+        { model: { provider: "anthropic", modelId: "selected-model" }, reasoning: "high" },
+        { reasoning: "medium" },
+        {},
+      ]) {
+        const { webhook } = createWebhook(db, webhookInputSchema.parse({ name: "Configured", secretAccountIds: [selected.id], target: { kind, projectId: project.id, engine: "pi", ...(kind === "conversation" ? { sessionId: "existing" } : {}) }, ...settings }));
+        acceptWebhookCall(webhook, { method: "POST", headers: {}, query: "", body: "{}" });
+        for (let attempt = 0; attempt < 200 && !webhookDeliveries(db, webhook.id).length; attempt++) await new Promise(resolve => setTimeout(resolve, 25));
+        assert.equal(webhookDeliveries(db, webhook.id)[0]?.status, "delivered");
+      }
+    }
+    assert.deepEqual(attached, [
+      [selected.id], [selected.id], [selected.id],
+      [existing.id, selected.id].sort(), [existing.id, selected.id].sort(), [existing.id, selected.id].sort(),
+    ], "secrets are attached before the socket opens, preserving existing conversation accounts");
+    assert.deepEqual(prompts.map(prompt => prompt.queueSettings), [
+      { harnessId: "pi", provider: "anthropic", modelId: "selected-model", reasoning: "high" },
+      { harnessId: "pi", provider: "zai", modelId: "default-model", reasoning: "medium" },
+      undefined,
+      { harnessId: "pi", provider: "anthropic", modelId: "selected-model", reasoning: "high" },
+      { harnessId: "pi", provider: "zai", modelId: "default-model", reasoning: "medium" },
+      undefined,
+    ]);
+  } finally {
+    for (const socket of endpoint.clients) socket.terminate();
+    await new Promise<void>(resolve => endpoint.close(() => resolve()));
     await rm(root, { recursive: true, force: true });
   }
 });

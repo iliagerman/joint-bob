@@ -412,6 +412,16 @@ export async function getScopeSecretAccounts(scopeType: SecretScopeType, scopeId
   return { accountIds: rows.map((row) => row.account_id) };
 }
 
+/** Checks explicit selections without changing attachments or exposing credential values. */
+export function validateProjectSecretAccounts(projectId: string, accountIds: string[]): void {
+  const canonical = canonicalScopeId("project", projectId);
+  if (!scopeVisible("project", canonical)) throw new NotFoundError("Secret scope not found");
+  if (new Set(accountIds).size !== accountIds.length) throw new Error("Secret account IDs must be unique");
+  const rows = accountIds.map(visibleAccountRow);
+  if (rows.some(row => !accountAllowedForProject(row.id, canonical))) throw new NotFoundError("Secret account not available for this project");
+  assertNoCollision(rows);
+}
+
 export async function setScopeSecretAccounts(scopeType: SecretScopeType, scopeId: string, accountIds: string[]): Promise<void> {
   const canonical = canonicalScopeId(scopeType, scopeId);
   if (!scopeVisible(scopeType, canonical)) throw new NotFoundError("Secret scope not found");

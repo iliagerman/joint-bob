@@ -1215,7 +1215,15 @@
               </label>
               <label>Project<select id="webhooksProject" data-testid="webhooks-project-select"></select></label>
               <label id="webhooksConversationLabel" hidden>Conversation<select id="webhooksConversation" data-testid="webhooks-conversation-select"></select></label>
+              <label>Harness<select id="webhooksHarness" data-testid="webhooks-harness-select"></select></label>
+              <label>Agent / model<select id="webhooksModel" data-testid="webhooks-model-select"></select></label>
+              <label>Effort<select id="webhooksEffort" data-testid="webhooks-effort-select"></select></label>
             </div>
+            <fieldset class="relay-form-section">
+              <legend>Secret accounts</legend>
+              <p class="settings-hint">Project and workspace secrets are inherited. Selected accounts are also attached to each conversation this webhook reaches. Removing a selection affects future calls, not accounts already attached to conversations.</p>
+              <div id="webhooksSecrets" data-testid="webhooks-secret-accounts"></div>
+            </fieldset>
             <label>Context for the agent
               <textarea id="webhooksContext" rows="4" maxlength="10000" placeholder="Optional. For example: Triage new issues and reply with a plan." data-testid="webhooks-context-input"></textarea>
             </label>

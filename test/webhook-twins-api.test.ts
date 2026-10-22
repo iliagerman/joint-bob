@@ -18,7 +18,7 @@ test("webhooks have one chosen twin owner, route management there, and never fal
     for (const node of environment.nodes) servers.push(await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log") }));
     const authA = await signIn(environment, a);
     const authB = await signIn(environment, b);
-    const input = { name: "Twin hook", target: { kind: "project", projectId: a.projects[0].id, engine: "pi" }, attachments: true, senders: { fields: ["sender"], allowed: [] } };
+    const input = { name: "Twin hook", target: { kind: "project", projectId: a.projects[0].id, engine: "pi" }, secretAccountIds: [] as string[], attachments: true, senders: { fields: ["sender"], allowed: [] } };
     const suffix = `?nodeId=${b.nodeId}`;
     const owners = () => api<{ owners: Array<{ id: string }> }>(a, authA, "GET", "/webhooks/owners");
     assert.equal((await owners()).status, 200, "webhook owner choices are available");
@@ -33,6 +33,21 @@ test("webhooks have one chosen twin owner, route management there, and never fal
     assert.ok(projects.body.projects.some(project => project.id === input.target.projectId));
     assert.equal((await api(a, authA, "GET", `/webhooks/projects/${input.target.projectId}/sessions${suffix}`)).status, 200);
     assert.equal((await api(a, authA, "POST", `/webhooks${suffix}`, { ...input, target: { kind: "project", projectId: "missing" } })).status, 404);
+    const credential = await api<{ account: { id: string } }>(b, authB, "POST", "/secrets/accounts", {
+      label: "Webhook fixture", provider: "custom", variables: [{ name: "WEBHOOK_TEST_KEY", kind: "value", value: "synthetic-webhook-key" }],
+    });
+    assert.equal(credential.status, 201);
+    input.secretAccountIds = [credential.body.account.id];
+    const options = await api<{ secretAccounts: Array<{ id: string; label: string }> }>(a, authA, "GET", `/webhooks/options${suffix}`);
+    assert.equal(options.status, 200);
+    assert.ok(options.body.secretAccounts.some(account => account.id === credential.body.account.id));
+    assert.equal(JSON.stringify(options.body).includes("synthetic-webhook-key"), false, "options never contain credential values");
+    assert.equal((await api(a, authA, "POST", `/webhooks${suffix}`, { ...input, secretAccountIds: [randomUUID()] })).status, 400, "unknown accounts cannot be attached");
+    const unrelated = await api<{ account: { id: string } }>(b, authB, "POST", "/secrets/accounts", {
+      label: "Other project", projectId: b.projects[1].id, provider: "custom", variables: [{ name: "OTHER_KEY", kind: "value", value: "synthetic-other-key" }],
+    });
+    assert.equal(unrelated.status, 201);
+    assert.equal((await api(a, authA, "POST", `/webhooks${suffix}`, { ...input, secretAccountIds: [unrelated.body.account.id] })).status, 400, "a project's secret cannot be attached to a different project");
 
     const created = await api<{ webhook: Webhook; secret: string; bases: Array<{ base: string }> }>(a, authA, "POST", `/webhooks${suffix}`, input);
     assert.equal(created.status, 201, JSON.stringify(created.body));
@@ -44,6 +59,8 @@ test("webhooks have one chosen twin owner, route management there, and never fal
     assert.deepEqual((await remote()).body.webhooks.map(hook => hook.id), [webhook.id]);
     const listed = await api<{ webhooks: Webhook[] }>(a, authA, "GET", `/webhooks${suffix}`);
     assert.equal(listed.body.webhooks[0].id, webhook.id);
+    assert.deepEqual(listed.body.webhooks[0].secretAccountIds, input.secretAccountIds);
+    assert.equal(JSON.stringify(listed.body).includes("synthetic-webhook-key"), false);
     const call = (url: string, token = secret) => fetch(`${url}/hooks/${token}`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"sender":"unknown"}' });
     assert.equal((await call(a.url)).status, 404, "the laptop never accepts the owner's secret");
     assert.equal((await call(b.url)).status, 202);

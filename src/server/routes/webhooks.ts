@@ -17,6 +17,8 @@ import { relayMachine } from "../../relay/store.js";
 import { isWebhookOnlyChannel } from "../../relay/stream.js";
 import { peerFetch } from "../../relay/transport.js";
 import { getProject, listProjects } from "../../store.js";
+import { listHarnesses, listHarnessModels } from "../../harnesses.js";
+import { listSecretAccounts, validateProjectSecretAccounts } from "../../secrets.js";
 import { listRuntimePeers } from "../runtime-peers.js";
 import {
   createWebhook, deleteWebhook, getWebhook, listWebhooks, readWebhookPayload, recordWebhookDelivery, regenerateWebhookSecret, updateWebhook,
@@ -135,6 +137,10 @@ async function urlBases(): Promise<Array<{ id: string; label: string; base: stri
 async function checkTarget(input: WebhookInput): Promise<void> {
   const project = await getProject(input.target.projectId);
   if (!project) throw new WebhookError(404, "Project not found on this machine");
+  if (input.secretAccountIds.length) {
+    try { validateProjectSecretAccounts(project.id, input.secretAccountIds); }
+    catch { throw new WebhookError(400, "Selected secret accounts are unavailable for this project or conflict"); }
+  }
   if (input.target.kind !== "conversation") return;
   const { sessionId, engine } = input.target;
   const found = (await listProjectSessionsWithReviewState(project, "", "")).find((session) => session.id === sessionId && session.harnessId === engine);
@@ -146,6 +152,7 @@ async function checkTarget(input: WebhookInput): Promise<void> {
 const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("list") }).strict(),
   z.object({ action: z.literal("projects") }).strict(),
+  z.object({ action: z.literal("options") }).strict(),
   z.object({ action: z.literal("sessions"), projectId: z.string().min(1).max(240) }).strict(),
   z.object({ action: z.literal("create"), input: webhookInputSchema }).strict(),
   z.object({ action: z.literal("update"), id: z.string().uuid(), input: webhookInputSchema }).strict(),
@@ -159,6 +166,14 @@ type Command = z.infer<typeof commandSchema>;
 async function manage(command: Command): Promise<unknown> {
   const db = await clusterV2Database();
   if (command.action === "list") return { webhooks: listWebhooks(db), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS };
+  if (command.action === "options") {
+    const adapters = listHarnesses().filter(({ runtime }) => runtime);
+    return {
+      secretAccounts: (await listSecretAccounts()).map(({ id, label, provider, projectId }) => ({ id, label, provider, projectId })),
+      harnesses: adapters.map(({ id, label, configuration }) => ({ id, label, thinkingLevels: configuration?.thinkingLevels ?? [] })),
+      models: (await Promise.all(adapters.map(async ({ id }) => (await listHarnessModels(id)).map(model => ({ ...model, harnessId: id }))))).flat(),
+    };
+  }
   if (command.action === "projects") return { projects: (await listProjects()).map(({ id, name }) => ({ id, name })) };
   if (command.action === "sessions") {
     const project = await getProject(command.projectId);
@@ -216,6 +231,9 @@ app.post("/api/cluster/v2/webhooks", handle(async (request, response) => {
 app.get("/api/webhooks/owners", handle(async (_request, response) => {
   const local = await getClusterNode();
   response.json({ owners: [{ id: local.id, name: local.name, local: true }, ...(await twinOwners()).map(({ id, name }) => ({ id, name, local: false }))] });
+}));
+app.get("/api/webhooks/options", handle(async (request, response) => {
+  response.json(await route(request, { action: "options" }));
 }));
 app.get("/api/webhooks/projects", handle(async (request, response) => {
   response.json(await route(request, { action: "projects" }));

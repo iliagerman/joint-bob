@@ -39,6 +39,30 @@ test("an update changes the target and keeps the address", () => {
   assert.equal(webhookForSecret(db, secret)?.id, webhook.id);
 });
 
+test("model and effort survive storage, editing, and secret regeneration", () => {
+  const db = new DatabaseSync(":memory:");
+  const configured = input({ model: { provider: "anthropic", modelId: "claude-sonnet" }, reasoning: "high" });
+  const { webhook } = createWebhook(db, configured);
+  assert.deepEqual(webhook.model, { provider: "anthropic", modelId: "claude-sonnet" });
+  assert.equal(webhook.reasoning, "high");
+  assert.equal(regenerateWebhookSecret(db, webhook.id).webhook.reasoning, "high");
+  const updated = updateWebhook(db, webhook.id, input({ reasoning: "low" }));
+  assert.equal(updated.model, null);
+  assert.equal(updated.reasoning, "low");
+  assert.equal(listWebhooks(db)[0].reasoning, "low");
+  assert.equal(updateWebhook(db, webhook.id, input()).reasoning, null);
+});
+
+test("webhook secret selections persist without credential values and can be cleared", () => {
+  const db = new DatabaseSync(":memory:");
+  const accountId = "11111111-1111-4111-8111-111111111111";
+  const { webhook, secret } = createWebhook(db, input({ secretAccountIds: [accountId] }));
+  assert.deepEqual(webhookForSecret(db, secret)?.secretAccountIds, [accountId]);
+  assert.deepEqual(regenerateWebhookSecret(db, webhook.id).webhook.secretAccountIds, [accountId]);
+  assert.deepEqual(updateWebhook(db, webhook.id, input()).secretAccountIds, []);
+  assert.equal(webhookInputSchema.safeParse({ name: "Bad", target: { kind: "project", projectId: "p1" }, secretAccountIds: [accountId, accountId] }).success, false);
+});
+
 test("delivery history is counted and keeps only the latest calls", () => {
   const db = new DatabaseSync(":memory:");
   const { webhook } = createWebhook(db, input());

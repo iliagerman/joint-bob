@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added agent, model, effort and secret account choices to webhooks, so each call runs with the settings chosen for that webhook and the selected secrets are available in the conversation it reaches.
+
 ## 2.140.0 — 2026-10-22
 
 - Added two-way skill sync with one direct twin: after you confirm a preview that makes the two match, skill additions, edits and deletions reach both sides, and skills a relay imposes stay untouched.

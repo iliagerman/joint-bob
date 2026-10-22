@@ -10,6 +10,7 @@ import { listDiscoveredHarnesses } from "../harnesses/registry.js";
 import { ensureSessionTitle } from "../names.js";
 import { getProjectLock } from "../project-locks.js";
 import { getProject } from "../store.js";
+import { conversationScopeId, getScopeSecretAccounts, setScopeSecretAccounts, validateProjectSecretAccounts } from "../secrets.js";
 import { recordTurnFailure } from "../turn-failures.js";
 import { isHarnessId } from "../types.js";
 import {
@@ -17,7 +18,7 @@ import {
 } from "../webhooks.js";
 import { persistTaskAttachments } from "./chat.js";
 import { markSilentWebhookRequest } from "./scheduled-review.js";
-import { queueConversationPrompt, type PromptAttachment } from "./conversation-prompt.js";
+import { queueConversationPrompt, type PromptAttachment, type PromptQueueSettings } from "./conversation-prompt.js";
 import { broadcastToProject } from "./realtime.js";
 
 /** What one chat-socket prompt may carry, as for a browser message (src/server/schemas.ts). */
@@ -56,6 +57,16 @@ async function placeAttachments(cwd: string, attachments: WebhookAttachment[]) {
   return { images, files, listed };
 }
 
+/** Explicit webhook accounts add to, never replace, a conversation's existing attachments. */
+async function attachSecrets(webhook: Webhook, engine: string, sessionId: string): Promise<void> {
+  if (!webhook.secretAccountIds.length) return;
+  if (!isHarnessId(engine)) throw new WebhookError(409, "The webhook's harness is not available");
+  validateProjectSecretAccounts(webhook.target.projectId, webhook.secretAccountIds);
+  const scope = conversationScopeId(engine, sessionId);
+  const { accountIds } = await getScopeSecretAccounts("conversation", scope);
+  await setScopeSecretAccounts("conversation", scope, [...new Set([...accountIds, ...webhook.secretAccountIds])]);
+}
+
 /** Checks the target and queues the message. Throws when the target cannot take it. */
 async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   const local = await getClusterNode();
@@ -67,23 +78,34 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   if (call.body.trim().length > MAX_PAYLOAD_CHARS) attachments.push({ name: PAYLOAD_FILE_NAME, mimeType: "text/plain", data: Buffer.from(call.body) });
   const placed = await placeAttachments(project.path, attachments);
   const message = [webhookMessage(webhook, call), placed.listed].filter(Boolean).join("\n\n");
-  const prompt = { message, images: placed.images, files: placed.files, requestId: randomUUID(), label: "Webhook", until: "started" as const };
+  const engine = webhook.target.engine ?? defaultEngine();
+  const prompt = {
+    message, images: placed.images, files: placed.files, requestId: randomUUID(), label: "Webhook", until: "started" as const,
+    // Apply settings when this turn starts, not while an existing conversation is busy.
+    queueSettings: (status: { model: { provider: string; id: string }; thinkingLevel: string }): PromptQueueSettings | undefined => webhook.model || webhook.reasoning ? {
+      harnessId: engine,
+      provider: webhook.model?.provider ?? status.model.provider,
+      modelId: webhook.model?.modelId ?? status.model.id,
+      reasoning: webhook.reasoning ?? status.thinkingLevel,
+    } : undefined,
+  };
   if (!webhook.markForReview) markSilentWebhookRequest(prompt.requestId);
   if (webhook.target.kind === "conversation") {
     const { sessionId, engine } = webhook.target;
     if (!isHarnessId(engine)) throw new WebhookError(409, "The conversation's agent is not available");
     const ownership = await getConversationOwnership(engine, sessionId);
     if (ownership && ownership.ownerNodeId !== local.id) throw new WebhookError(409, "The conversation lives on another machine; create the webhook there");
+    await attachSecrets(webhook, engine, sessionId);
     await queueConversationPrompt({ projectId: project.id, engine, sessionId, ...prompt });
     return sessionId;
   }
-  const engine = webhook.target.engine ?? defaultEngine();
   if (!isHarnessId(engine) || !listDiscoveredHarnesses().some((adapter) => adapter.id === engine && adapter.runtime)) throw new WebhookError(409, "The webhook's agent is not available on this machine");
   const sessionId = randomUUID();
   await ensureConversationRecord(project.id, engine, sessionId, local.id);
   await ensureSessionTitle(sessionId, webhook.name);
   broadcastToProject(project.id, { type: "sessionsChanged" });
   try {
+    await attachSecrets(webhook, engine, sessionId);
     await queueConversationPrompt({ projectId: project.id, engine, sessionId, ...prompt });
   } catch (error) {
     // The conversation is already listed. It says why it is empty, instead of opening blank.

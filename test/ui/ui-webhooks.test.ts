@@ -6,7 +6,7 @@
 // Chrome binary, and it fails rather than skipping when there is none.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
@@ -14,7 +14,7 @@ import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
 
-interface Hook { id: string; name: string; target: unknown; enabled: boolean; attachments: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
+interface Hook { id: string; name: string; model: { provider: string; modelId: string } | null; reasoning: string | null; secretAccountIds: string[]; target: { engine?: string }; enabled: boolean; attachments: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
 
 let root: string;
 let environment: DevEnvironment;
@@ -24,6 +24,7 @@ let server: ChildProcess;
 let twinServer: ChildProcess;
 let browser: Browser;
 let page: Page;
+let webhookSecretId: string;
 const consoleErrors: string[] = [];
 
 async function hooks(): Promise<Hook[]> {
@@ -42,11 +43,20 @@ before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-webhooks-"));
   environment = await seedDevEnvironment(root, 2);
   node = environment.nodes[0];
+  const modelFile = path.join(environment.home, ".pi", "models.json");
+  const modelConfig = JSON.parse(await readFile(modelFile, "utf8"));
+  modelConfig.providers["dev-environment"].models[0].reasoning = true;
+  await writeFile(modelFile, JSON.stringify(modelConfig));
   const extraEnv = { JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log") };
   server = await startDevNode(environment, node, extraEnv);
   twinServer = await startDevNode(environment, environment.nodes[1], extraEnv);
   await pairTwinNodes(environment);
   session = await signIn(environment, node);
+  const savedSecret = await api<{ account: { id: string } }>(node, session, "POST", "/secrets/accounts", {
+    label: "Webhook fixture credential", provider: "custom", variables: [{ name: "WEBHOOK_FIXTURE_KEY", kind: "value", value: "synthetic-test-key" }],
+  });
+  assert.equal(savedSecret.status, 201);
+  webhookSecretId = savedSecret.body.account.id;
   browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
   page = await context.newPage();
@@ -83,6 +93,10 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), false, "a new webhook reads calls as text unless asked");
   await page.getByTestId("webhooks-name-input").fill("Deals");
+  await page.getByTestId("webhooks-harness-select").selectOption("pi");
+  await page.getByTestId("webhooks-model-select").selectOption("dev-environment|dev-model");
+  await page.getByTestId("webhooks-effort-select").selectOption("high");
+  await page.getByTestId("webhooks-secret-account-checkbox").filter({ visible: true }).first().check();
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });
@@ -96,8 +110,16 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-toggle-button").filter({ hasText: "Turn on" }).click();
   await until(async () => (await hooks())[0].enabled, "the webhook is on again");
 
+  assert.equal((await hooks())[0].target.engine, "pi");
+  assert.deepEqual((await hooks())[0].model, { provider: "dev-environment", modelId: "dev-model" });
+  assert.equal((await hooks())[0].reasoning, "high", "toggle keeps execution settings");
+  assert.deepEqual((await hooks())[0].secretAccountIds, [webhookSecretId], "toggle keeps attached secret selections");
   await page.getByTestId("webhooks-edit-button").click();
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("webhooks-harness-select").inputValue(), "pi");
+  assert.equal(await page.getByTestId("webhooks-model-select").inputValue(), "dev-environment|dev-model");
+  assert.equal(await page.getByTestId("webhooks-effort-select").inputValue(), "high");
+  assert.equal(await page.getByTestId("webhooks-secret-account-checkbox").first().isChecked(), true);
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), true, "the editor shows the stored option");
   await page.getByTestId("webhooks-attachments-toggle").uncheck();
   await page.getByTestId("webhooks-save-button").click();
@@ -183,6 +205,10 @@ test("creating on a twin uses its targets and address and keeps only one copy", 
   const owner = page.getByTestId("webhooks-owner-select");
   await owner.selectOption(twin.nodeId);
   await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#webhooksSave")!.disabled);
+  assert.equal(await page.getByTestId("webhooks-model-select").inputValue(), "", "changing owner clears previous model choices");
+  await page.getByTestId("webhooks-harness-select").selectOption("pi");
+  await page.getByTestId("webhooks-model-select").selectOption("dev-environment|dev-model");
+  await page.getByTestId("webhooks-effort-select").selectOption("medium");
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });
@@ -201,10 +227,29 @@ test("creating on a twin uses its targets and address and keeps only one copy", 
   await page.getByTestId("webhooks-name-input").fill("Twin renamed");
   await page.getByTestId("webhooks-save-button").click();
   await page.getByTestId("webhooks-list").getByText("Twin renamed", { exact: true }).waitFor();
-  assert.equal((await remoteHooks()).body.webhooks[0].name, "Twin renamed");
+  const remote = (await remoteHooks()).body.webhooks[0];
+  assert.equal(remote.name, "Twin renamed");
+  assert.equal(remote.target.engine, "pi");
+  assert.deepEqual(remote.model, { provider: "dev-environment", modelId: "dev-model" });
+  assert.equal(remote.reasoning, "medium");
   await owner.selectOption(node.nodeId);
   await page.getByTestId("webhooks-list").getByText("Deals", { exact: true }).waitFor();
   assert.equal(await page.getByTestId("webhooks-list").getByText("Twin renamed", { exact: true }).count(), 0);
+});
+
+test("an existing conversation fixes the harness while allowing model and effort choices", async () => {
+  await page.getByTestId("webhooks-new-button").click();
+  await page.getByTestId("webhooks-name-input").fill("Existing conversation");
+  await page.getByTestId("webhooks-target-kind-select").selectOption("conversation");
+  await page.waitForFunction(() => Boolean(document.querySelector<HTMLSelectElement>("#webhooksConversation")?.selectedOptions[0]?.dataset.engine));
+  const engine = await page.locator("#webhooksConversation option:checked").getAttribute("data-engine");
+  assert.equal(await page.getByTestId("webhooks-harness-select").isDisabled(), true);
+  assert.equal(await page.getByTestId("webhooks-harness-select").inputValue(), engine);
+  await page.getByTestId("webhooks-save-button").click();
+  await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });
+  const saved = (await hooks()).find(hook => hook.name === "Existing conversation")!;
+  assert.equal(saved.target.engine, engine);
+  await page.getByTestId("webhooks-reveal-done-button").click();
 });
 
 test("the page logged no errors", () => {

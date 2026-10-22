@@ -28,6 +28,9 @@ export const webhookInputSchema = z.object({
     z.object({ kind: z.literal("project"), projectId: z.string().min(1).max(240), engine: z.string().min(1).max(80).optional() }).strict(),
     z.object({ kind: z.literal("conversation"), projectId: z.string().min(1).max(240), sessionId: z.string().min(1).max(240), engine: z.string().min(1).max(80) }).strict(),
   ]),
+  secretAccountIds: z.array(z.string().uuid()).max(100).refine(ids => new Set(ids).size === ids.length, "Secret account IDs must be unique").default([]),
+  model: z.object({ provider: z.string().trim().min(1).max(240), modelId: z.string().trim().min(1).max(240) }).strict().nullable().default(null),
+  reasoning: z.string().trim().min(1).max(80).nullable().default(null),
   context: z.string().trim().max(10_000).default(""),
   enabled: z.boolean().default(true),
   /** Files in a call (multipart parts, or a JSON `attachments` list) reach the conversation as attachments. */
@@ -51,6 +54,9 @@ export interface Webhook {
   id: string;
   name: string;
   target: WebhookInput["target"];
+  secretAccountIds: string[];
+  model: WebhookInput["model"];
+  reasoning: string | null;
   context: string;
   enabled: boolean;
   attachments: boolean;
@@ -98,6 +104,9 @@ export function ensureWebhookSchema(db: DatabaseSync): void {
   if (!columns.some((column) => column.name === "attachments")) db.exec("ALTER TABLE webhooks ADD COLUMN attachments INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "mark_for_review")) db.exec("ALTER TABLE webhooks ADD COLUMN mark_for_review INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "senders")) db.exec("ALTER TABLE webhooks ADD COLUMN senders TEXT");
+  if (!columns.some((column) => column.name === "model")) db.exec("ALTER TABLE webhooks ADD COLUMN model TEXT");
+  if (!columns.some((column) => column.name === "reasoning")) db.exec("ALTER TABLE webhooks ADD COLUMN reasoning TEXT");
+  if (!columns.some((column) => column.name === "secret_account_ids")) db.exec("ALTER TABLE webhooks ADD COLUMN secret_account_ids TEXT NOT NULL DEFAULT '[]'");
   const deliveryColumns = db.prepare("PRAGMA table_info(webhook_deliveries)").all() as Array<{ name: string }>;
   if (!deliveryColumns.some((column) => column.name === "sender")) db.exec("ALTER TABLE webhook_deliveries ADD COLUMN sender TEXT");
 }
@@ -111,7 +120,11 @@ function webhookRow(row: Record<string, unknown>): Webhook {
     ? { kind: "conversation" as const, projectId: String(row.project_id), sessionId: String(row.session_id), engine: String(row.engine) }
     : { kind: "project" as const, projectId: String(row.project_id), ...(row.engine ? { engine: String(row.engine) } : {}) };
   return {
-    id: String(row.id), name: String(row.name), target, context: String(row.context), enabled: row.enabled === 1, attachments: row.attachments === 1, markForReview: row.mark_for_review === 1,
+    id: String(row.id), name: String(row.name), target,
+    secretAccountIds: row.secret_account_ids ? JSON.parse(String(row.secret_account_ids)) as string[] : [],
+    model: row.model ? JSON.parse(String(row.model)) as WebhookInput["model"] : null,
+    reasoning: row.reasoning ? String(row.reasoning) : null,
+    context: String(row.context), enabled: row.enabled === 1, attachments: row.attachments === 1, markForReview: row.mark_for_review === 1,
     senders: row.senders ? JSON.parse(String(row.senders)) as WebhookSenders : null,
     createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     lastReceivedAt: row.last_received_at ? String(row.last_received_at) : null, receivedCount: Number(row.received_count),
@@ -150,16 +163,16 @@ export function createWebhook(db: DatabaseSync, input: WebhookInput): { webhook:
   const id = randomUUID();
   const now = new Date().toISOString();
   const { sessionId, engine } = targetColumns(input.target);
-  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,context,enabled,attachments,mark_for_review,senders,created_at,updated_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), now, now);
+  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,context,enabled,attachments,mark_for_review,senders,model,reasoning,secret_account_ids,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), now, now);
   return { webhook: getWebhook(db, id)!, secret };
 }
 
 export function updateWebhook(db: DatabaseSync, id: string, input: WebhookInput): Webhook {
   ensureWebhookSchema(db);
   const { sessionId, engine } = targetColumns(input.target);
-  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,context=?,enabled=?,attachments=?,mark_for_review=?,senders=?,updated_at=? WHERE id=?`)
-    .run(input.name, input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), new Date().toISOString(), id);
+  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,context=?,enabled=?,attachments=?,mark_for_review=?,senders=?,model=?,reasoning=?,secret_account_ids=?,updated_at=? WHERE id=?`)
+    .run(input.name, input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), new Date().toISOString(), id);
   if (!result.changes) throw new WebhookError(404, "Webhook not found");
   return getWebhook(db, id)!;
 }

@@ -13,6 +13,7 @@ const reveal = byId("webhooksReveal");
 const history = byId("webhooksHistory");
 const field = {
   owner: byId("webhooksOwner"), name: byId("webhooksName"), kind: byId("webhooksTargetKind"), project: byId("webhooksProject"), conversation: byId("webhooksConversation"),
+  harness: byId("webhooksHarness"), model: byId("webhooksModel"), effort: byId("webhooksEffort"),
   conversationLabel: byId("webhooksConversationLabel"), context: byId("webhooksContext"), enabled: byId("webhooksEnabled"),
   attachments: byId("webhooksAttachments"), markForReview: byId("webhooksMarkForReview"), sendersEnabled: byId("webhooksSendersEnabled"), senders: byId("webhooksSenders"),
   senderFields: byId("webhooksSenderFields"), allowedSenders: byId("webhooksAllowedSenders"), save: byId("webhooksSave"),
@@ -27,13 +28,16 @@ let projectNames = new Map();
 let editing = null;
 let wired = false;
 let telegramSenderFields = [];
+let harnesses = [];
+let models = [];
+let secretAccounts = [];
 
 const errorText = (error) => error?.message || "Something went wrong";
 const endpoint = (suffix = "") => `/api/webhooks${suffix}?nodeId=${encodeURIComponent(field.owner.value)}`;
 
 /** The body a PUT or POST sends: everything about the webhook, so saving one setting keeps the others. */
 const hookBody = (hook, changes = {}) => JSON.stringify({
-  name: hook.name, target: hook.target, context: hook.context, enabled: hook.enabled, attachments: hook.attachments, markForReview: hook.markForReview, senders: hook.senders, ...changes,
+  name: hook.name, target: hook.target, context: hook.context, enabled: hook.enabled, attachments: hook.attachments, markForReview: hook.markForReview, senders: hook.senders, model: hook.model, reasoning: hook.reasoning, secretAccountIds: hook.secretAccountIds, ...changes,
 });
 
 /** "123 Ilia" lines to `{ value, label }`; the first word is the value, the rest is the name. */
@@ -180,11 +184,16 @@ async function loadOwner() {
   projectNames.clear();
   field.project.replaceChildren();
   field.conversation.replaceChildren();
+  harnesses = [];
+  models = [];
+  secretAccounts = [];
+  renderSecrets();
+  fillHarnesses();
   await list.reload();
   if (revision !== ownerRevision) return;
   showStatus(status, "Loading owner…");
   try {
-    await Promise.all([loadProjects(), refresh()]);
+    await Promise.all([loadProjects(), refresh(), loadOptions()]);
     if (revision !== ownerRevision) return;
     fillProjects();
     await list.reload();
@@ -202,6 +211,67 @@ async function loadOwner() {
   }
 }
 
+async function loadOptions() {
+  const revision = ownerRevision;
+  const body = await api(endpoint("/options"));
+  if (revision !== ownerRevision) return;
+  harnesses = body.harnesses;
+  models = body.models;
+  secretAccounts = body.secretAccounts;
+  renderSecrets();
+  fillHarnesses();
+}
+
+function selectedSecrets() {
+  return [...byId("webhooksSecrets").querySelectorAll("input:checked")].map(input => input.value);
+}
+
+function renderSecrets(selected = []) {
+  const container = byId("webhooksSecrets");
+  container.replaceChildren();
+  const available = secretAccounts.filter(account => !account.projectId || account.projectId === field.project.value);
+  const accounts = [...available, ...selected.filter(id => !available.some(account => account.id === id)).map(id => ({ id, label: "Unavailable account. Remove to save." }))];
+  for (const account of accounts) {
+    const label = makeNode("label", "checkbox-row");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = account.id;
+    input.checked = selected.includes(account.id);
+    input.dataset.testid = "webhooks-secret-account-checkbox";
+    label.append(input, document.createTextNode(account.provider ? `${account.label} · ${account.provider}` : account.label));
+    container.append(label);
+  }
+  if (!accounts.length) container.append(makeNode("p", "settings-hint", "No secret accounts available. Add accounts in Settings → Secrets on the webhook's owner machine."));
+}
+
+function fillHarnesses(engine = "") {
+  const options = [new Option("Machine default", ""), ...harnesses.map(harness => new Option(harness.label, harness.id))];
+  if (engine && !harnesses.some(({ id }) => id === engine)) options.push(new Option(`${engine} (unavailable)`, engine));
+  field.harness.replaceChildren(...options);
+  field.harness.value = engine;
+  renderExecution();
+}
+
+function renderExecution(modelKey = "", effort = "") {
+  const engine = field.harness.value || harnesses[0]?.id;
+  const available = models.filter(model => model.harnessId === engine);
+  const options = [new Option("Harness default", ""), ...available.map(model => new Option(model.label, `${model.provider}|${model.id}`))];
+  if (modelKey && !options.some(option => option.value === modelKey)) options.push(new Option(`${modelKey.split("|")[1]} (unavailable)`, modelKey));
+  field.model.replaceChildren(...options);
+  field.model.value = modelKey;
+  const selected = available.find(model => `${model.provider}|${model.id}` === modelKey);
+  const levels = [...(selected?.thinkingLevels?.length ? selected.thinkingLevels : harnesses.find(harness => harness.id === engine)?.thinkingLevels || [])];
+  if (effort && !levels.includes(effort)) levels.push(effort);
+  field.effort.replaceChildren(new Option("Harness default", ""), ...levels.filter(level => level !== "default").map(level => new Option(level, level)));
+  field.effort.value = effort;
+}
+
+function syncConversationHarness() {
+  const engine = field.conversation.selectedOptions[0]?.dataset.engine || "";
+  if (engine === field.harness.value) return;
+  fillHarnesses(engine);
+}
+
 function fillProjects(selected) {
   field.project.replaceChildren(...projects.map((project) => new Option(project.name, project.id)));
   if (selected && projectNames.has(selected)) field.project.value = selected;
@@ -214,7 +284,7 @@ async function fillConversations(selected) {
   const projectId = field.project.value;
   if (!projectId) { field.conversation.replaceChildren(new Option("Choose a project first", "")); return; }
   const { sessions } = await api(endpoint(`/projects/${encodeURIComponent(projectId)}/sessions`));
-  if (revision !== ownerRevision || projectId !== field.project.value) return;
+  if (revision !== ownerRevision || projectId !== field.project.value || field.kind.value !== "conversation") return;
   const usable = sessions.filter((session) => !session.readOnly && !session.taskId && !session.doneAt);
   const options = usable.map((session) => {
     const option = new Option(session.title || session.firstMessage || session.id, session.id);
@@ -223,6 +293,7 @@ async function fillConversations(selected) {
   });
   field.conversation.replaceChildren(...(options.length ? options : [new Option("No conversations in this project", "")]));
   if (selected && usable.some((session) => session.id === selected)) field.conversation.value = selected;
+  syncConversationHarness();
 }
 
 function syncSenders() {
@@ -232,6 +303,7 @@ function syncSenders() {
 function syncKind() {
   const conversation = field.kind.value === "conversation";
   field.conversationLabel.hidden = !conversation;
+  field.harness.disabled = conversation;
   if (conversation) void fillConversations(editing?.target.sessionId).catch((error) => showStatus(status, errorText(error), "error"));
 }
 
@@ -245,8 +317,11 @@ async function openForm(hook = null) {
   try { await loadProjects(); } catch (error) { editing = null; showStatus(status, errorText(error), "error"); return; }
   finally { field.owner.disabled = Boolean(editing); }
   fillProjects(hook?.target.projectId);
+  renderSecrets(hook?.secretAccountIds ?? []);
   field.name.value = hook?.name ?? "";
   field.kind.value = hook?.target.kind ?? "project";
+  fillHarnesses(hook?.target.engine ?? "");
+  renderExecution(hook?.model ? `${hook.model.provider}|${hook.model.modelId}` : "", hook?.reasoning ?? "");
   field.context.value = hook?.context ?? "";
   field.enabled.checked = hook?.enabled ?? true;
   field.attachments.checked = hook?.attachments ?? false;
@@ -288,11 +363,15 @@ async function submit(event) {
   if (missing) { showStatus(status, missing.message, "error"); missing.element.focus(); return; }
   const target = field.kind.value === "conversation"
     ? { kind: "conversation", projectId: field.project.value, sessionId: field.conversation.value, engine: field.conversation.selectedOptions[0]?.dataset.engine || "" }
-    : { kind: "project", projectId: field.project.value };
+    : { kind: "project", projectId: field.project.value, ...(field.harness.value ? { engine: field.harness.value } : {}) };
+  const [provider, modelId] = field.model.value.split("|");
+  const model = modelId ? { provider, modelId } : null;
+  // Pin a machine-default selection when it has model overrides, so those cannot land on a different harness.
+  if (target.kind === "project" && !target.engine && (model || field.effort.value)) target.engine = harnesses[0]?.id;
   const senders = field.sendersEnabled.checked
     ? { fields: field.senderFields.value.split(/[\s,]+/).filter(Boolean), allowed: parseAllowed(field.allowedSenders.value) }
     : null;
-  const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders });
+  const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: selectedSecrets() });
   saving = true;
   field.save.disabled = true;
   field.owner.disabled = true;
@@ -326,9 +405,16 @@ function wire() {
   byId("webhooksCancel").addEventListener("click", closeForm);
   byId("webhooksRevealDone").addEventListener("click", () => { reveal.hidden = true; byId("webhooksRevealUrls").replaceChildren(); });
   field.kind.addEventListener("change", syncKind);
+  field.harness.addEventListener("change", () => renderExecution());
+  field.model.addEventListener("change", () => renderExecution(field.model.value));
+  field.conversation.addEventListener("change", syncConversationHarness);
   field.sendersEnabled.addEventListener("change", syncSenders);
   byId("webhooksSenderTelegram").addEventListener("click", () => { field.senderFields.value = telegramSenderFields.join(", "); });
-  field.project.addEventListener("change", () => { if (field.kind.value === "conversation") syncKind(); });
+  field.project.addEventListener("change", () => {
+    const allowed = new Set(secretAccounts.filter(account => !account.projectId || account.projectId === field.project.value).map(account => account.id));
+    renderSecrets(selectedSecrets().filter(id => allowed.has(id)));
+    if (field.kind.value === "conversation") syncKind();
+  });
   field.save.addEventListener("click", (event) => void submit(event));
   // Enter in the name would otherwise submit the whole Settings form.
   field.name.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); field.save.click(); } });
