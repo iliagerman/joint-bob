@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.141.0 — 2026-10-22
 
 - Added agent, model, effort and secret account choices to webhooks, so each call runs with the settings chosen for that webhook and the selected secrets are available in the conversation it reaches.
 
