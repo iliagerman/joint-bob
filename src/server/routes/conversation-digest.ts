@@ -2,8 +2,8 @@ import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { storedDigest } from "../../conversation-digest.js";
-import { nodeSummaryPolicy, saveNodeSummaryPolicy, summaryPolicySchema } from "../../conversation-summary-policy.js";
+import { DEFAULT_SUMMARY_INSTRUCTIONS, storedDigest } from "../../conversation-digest.js";
+import { nodeSummaryInstructions, nodeSummaryPolicy, saveNodeSummaryInstructions, saveNodeSummaryPolicy, summaryInstructionsSchema, summaryPolicySchema } from "../../conversation-summary-policy.js";
 import { relayServerInstance } from "../../relay/index.js";
 import { publishedRelayPolicy, publishRelayPolicy } from "../../relay/resource-policy.js";
 import { servingSettings } from "../../relay/store.js";
@@ -91,7 +91,7 @@ app.post("/api/projects/:projectId/conversations/:conversationId/digest", async 
   }
 });
 
-/** This node's summary policy, the one in force (a joined relay's wins), and the one this node publishes as a relay. */
+/** This node's summary policy, the one in force (a joined relay's wins), the one this node publishes as a relay, and its summary instructions. */
 app.get("/api/conversation-summary/settings", async (_request, response, next) => {
   try {
     const db = await clusterV2Database();
@@ -100,6 +100,7 @@ app.get("/api/conversation-summary/settings", async (_request, response, next) =
       node: nodeSummaryPolicy(),
       effective: { ...effective, view: summaryPolicyView(effective) },
       relayServing: servingSettings(db).enabled ? { policy: publishedRelayPolicy(db, (await getClusterNode()).id).body.summary ?? null } : null,
+      instructions: { custom: nodeSummaryInstructions(), default: DEFAULT_SUMMARY_INSTRUCTIONS },
     });
   } catch (error) {
     next(error);
@@ -110,6 +111,17 @@ app.get("/api/conversation-summary/settings", async (_request, response, next) =
 app.put("/api/conversation-summary/settings", async (request, response, next) => {
   try {
     response.json({ node: saveNodeSummaryPolicy(summaryPolicySchema.parse(request.body)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** Admin only (see ADMIN_ROUTES): this machine's summary instructions; null or the built-in text goes back to the built-in ones. */
+app.put("/api/conversation-summary/instructions", async (request, response, next) => {
+  try {
+    const { instructions } = z.object({ instructions: summaryInstructionsSchema.nullable() }).strict().parse(request.body);
+    const custom = instructions && instructions !== DEFAULT_SUMMARY_INSTRUCTIONS ? instructions : null;
+    response.json({ instructions: { custom: saveNodeSummaryInstructions(custom), default: DEFAULT_SUMMARY_INSTRUCTIONS } });
   } catch (error) {
     next(error);
   }

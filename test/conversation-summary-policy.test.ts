@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { getOrCreateClusterIdentity } from "../src/cluster-identity.js";
-import { defaultSummaryPolicy, effectiveSummaryPolicy, nodeSummaryPolicy, saveNodeSummaryPolicy, summaryWriterLabel } from "../src/conversation-summary-policy.js";
+import { defaultSummaryPolicy, effectiveSummaryPolicy, nodeSummaryInstructions, nodeSummaryPolicy, saveNodeSummaryInstructions, saveNodeSummaryPolicy, summaryWriterLabel } from "../src/conversation-summary-policy.js";
 import { publishedRelayPolicy, publishRelayPolicy, receiveRelayPolicy, relaySummaryPolicies } from "../src/relay/resource-policy.js";
 import { createMembership, updateMembership } from "../src/relay/store.js";
 import { settingsDatabase } from "../src/settings-store.js";
@@ -55,4 +55,16 @@ test("a relay's summary policy travels in its signed policy and wins over the no
   assert.equal(receiveRelayPolicy(local, admitted, identity.publicKey, cleared), true);
   assert.equal(effectiveSummaryPolicy(relaySummaryPolicies(local)).from.kind, "node", "without a relay policy the node's own applies again");
   saveNodeSummaryPolicy(defaultSummaryPolicy());
+});
+
+test("summary instructions are this machine's own, and empty text means the built-in ones", () => {
+  assert.equal(nodeSummaryInstructions(), null);
+  assert.equal(saveNodeSummaryInstructions("  Three bullets for a manager.  "), "Three bullets for a manager.");
+  assert.equal(nodeSummaryInstructions(), "Three bullets for a manager.");
+  assert.throws(() => saveNodeSummaryInstructions("x".repeat(6_001)), "longer than the limit is refused");
+  assert.equal(saveNodeSummaryInstructions("   "), null);
+  assert.equal(nodeSummaryInstructions(), null);
+  saveNodeSummaryInstructions("Keep it short.");
+  assert.equal(saveNodeSummaryInstructions(null), null);
+  assert.equal(nodeSummaryInstructions(), null);
 });

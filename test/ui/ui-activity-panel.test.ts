@@ -233,6 +233,21 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.equal(await suggestion.isVisible(), false);
   await page.getByTestId("activity-suggestions-toggle").click();
   await suggestion.waitFor();
+  // The panel scrolls as one column: no section sits in a scroll box of its own, so scrolling down
+  // to the statistics shows all of them, none cut by a box's edge or hidden under a header.
+  const body = page.getByTestId("activity-body");
+  const overviewScroll = await page.getByTestId("activity-overview").evaluate((box) => [box.scrollHeight, box.clientHeight]);
+  assert.ok(overviewScroll[0] <= overviewScroll[1] + 1, `the overview is not a scroll box of its own (${overviewScroll})`);
+  await body.evaluate((box) => { box.scrollTop = box.scrollHeight; });
+  await waitFrames();
+  await stats.scrollIntoViewIfNeeded();
+  const covered = await stats.evaluate((box) => [...box.querySelectorAll(".activity-stat, .activity-usage-row")].filter((item) => {
+    const rect = item.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return !hit || !item.contains(hit);
+  }).map((item) => item.textContent));
+  assert.deepEqual(covered, [], "every figure and row of the statistics shows, uncovered");
+  await body.evaluate((box) => { box.scrollTop = 0; });
   const widths = await page.getByTestId("activity-summary").evaluate((box) => ({ box: [box.scrollWidth, box.clientWidth], text: [box.querySelector(".activity-summary-text").scrollWidth, box.querySelector(".activity-summary-text").clientWidth] }));
   assert.ok(widths.box[0] <= widths.box[1] && widths.text[0] <= widths.text[1] + 1, `the summary does not scroll sideways (${JSON.stringify(widths)})`);
 
@@ -268,11 +283,17 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   // Who writes summaries, and when, is this machine's setting in Settings → Conversations.
   const modelButton = page.getByTestId("activity-summary-model");
   await modelButton.click();
+  const writerPicker = page.getByTestId("settings-summary-writer");
   const harnessPicker = page.getByTestId("settings-summary-harness");
   await harnessPicker.locator("option[value='pi']").waitFor({ state: "attached", timeout: 15_000 });
   assert.equal(await page.getByTestId("settings-summary-updates").inputValue(), "each-message", "after each message is the default");
-  assert.equal(await harnessPicker.inputValue(), "automatic", "automatic is the default writer");
-  assert.equal(await page.getByTestId("settings-summary-model").isVisible(), false);
+  assert.equal(await writerPicker.inputValue(), "automatic", "automatic is the default writer");
+  for (const picker of ["settings-summary-harness", "settings-summary-model", "settings-summary-thinking"]) assert.equal(await page.getByTestId(picker).isVisible(), false, `${picker} belongs to a chosen writer`);
+  // Choosing the writer here shows its agent, model and effort.
+  const chosen = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/settings") && response.request().method() === "PUT");
+  await writerPicker.selectOption("fixed");
+  assert.equal((await chosen).status(), 200);
+  for (const picker of ["settings-summary-harness", "settings-summary-model", "settings-summary-thinking"]) await page.getByTestId(picker).waitFor();
   const saved = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/settings") && response.request().method() === "PUT");
   await harnessPicker.selectOption("pi");
   assert.equal((await saved).status(), 200);
@@ -282,8 +303,28 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   const stored = await page.evaluate(() => fetch("/api/conversation-summary/settings").then((response) => response.json()));
   assert.deepEqual([stored.node.writer.source, stored.node.writer.harnessId], ["fixed", "pi"]);
   const restored = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/settings") && response.request().method() === "PUT");
-  await harnessPicker.selectOption("automatic");
+  await writerPicker.selectOption("automatic");
   assert.equal((await restored).status(), 200);
+  assert.equal(await harnessPicker.isVisible(), false);
+
+  // The summary instructions start as the built-in text; the admin's own text is saved on leaving the box.
+  const instructionsBox = page.getByTestId("settings-summary-instructions");
+  const instructionsStatus = page.getByTestId("settings-summary-instructions-status");
+  assert.match(await instructionsBox.inputValue(), /^You keep a running summary of a conversation/);
+  assert.equal(await instructionsStatus.innerText(), "built-in instructions");
+  assert.equal(await page.getByTestId("settings-summary-instructions-reset").isDisabled(), true);
+  const instructionsSaved = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/instructions") && response.request().method() === "PUT");
+  await instructionsBox.fill("Summarize for a manager in three bullets.");
+  await instructionsBox.press("Tab");
+  assert.equal((await instructionsSaved).status(), 200);
+  await page.waitForFunction(() => document.querySelector("[data-testid='settings-summary-instructions-status']")?.textContent === "Saved · this machine's own instructions");
+  const withInstructions = await page.evaluate(() => fetch("/api/conversation-summary/settings").then((response) => response.json()));
+  assert.equal(withInstructions.instructions.custom, "Summarize for a manager in three bullets.");
+  const instructionsReset = page.waitForResponse((response) => response.url().endsWith("/api/conversation-summary/instructions") && response.request().method() === "PUT");
+  await page.getByTestId("settings-summary-instructions-reset").click();
+  assert.equal((await instructionsReset).status(), 200);
+  await page.waitForFunction(() => document.querySelector("[data-testid='settings-summary-instructions-status']")?.textContent === "Saved · built-in instructions");
+  assert.match(await instructionsBox.inputValue(), /^You keep a running summary of a conversation/);
   await page.keyboard.press("Escape");
   await page.locator("#settingsDialog[open]").waitFor({ state: "detached" });
 

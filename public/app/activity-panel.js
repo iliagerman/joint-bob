@@ -84,7 +84,6 @@ export function setActivityStepsOpen(open) {
   stepsOpen = open;
   elements.activityList.hidden = !open;
   elements.activityStepsToggle.setAttribute("aria-expanded", String(open));
-  elements.activityPanel.classList.toggle("steps-open", open);
 }
 
 /** The skills loaded by the steps the page holds, each with how often; a load that failed does not count. */

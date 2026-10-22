@@ -330,8 +330,9 @@
               <h2>Activity</h2>
               <button class="ghost icon-button activity-panel-close" id="activityPanelCloseButton" type="button" aria-label="Collapse activity" title="Collapse activity" data-testid="activity-panel-close"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"/></svg></button>
             </header>
-            <!-- The overview (summary, statistics, skill suggestions) keeps its place above the
-                 steps, which open on demand and scroll on their own. -->
+            <!-- One scrolling column: the overview (summary, statistics, skill suggestions), then the
+                 steps, which open on demand and scroll inside their own list. -->
+            <div class="activity-body" id="activityBody" data-testid="activity-body">
             <div class="activity-overview" id="activityOverview" data-testid="activity-overview">
               <details class="activity-section activity-summary" id="activitySummary" open data-testid="activity-summary">
                 <summary data-testid="activity-summary-toggle" title="Show or collapse the summary"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Summary</span><span class="activity-section-status" id="activitySummaryStatus" data-testid="activity-summary-status"></span></summary>
@@ -355,6 +356,7 @@
             <button class="activity-steps-heading" id="activityStepsToggle" type="button" aria-expanded="false" aria-controls="activityList" title="Show or collapse the steps" data-testid="activity-steps-toggle"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Steps</span><span class="activity-steps-count" id="activityStepsCount" data-testid="activity-steps-count"></span></button>
             <div class="activity-list" id="activityList" data-testid="activity-list" hidden>
               <p class="activity-empty">Tool calls and thinking from this conversation appear here.</p>
+            </div>
             </div>
           </aside>
         </div>
@@ -1042,11 +1044,19 @@
               <option value="panel">While the Activity panel is open</option>
               <option value="manual">Only when asked</option>
             </select></label>
-            <label>Written by<select id="settingsSummaryHarness" data-testid="settings-summary-harness"></select></label>
+            <label>Written by<select id="settingsSummaryWriter" data-testid="settings-summary-writer">
+              <option value="automatic">Automatic: routing classifier, else the conversation's model</option>
+              <option value="conversation">The conversation's own agent and model</option>
+              <option value="fixed">An agent, model and effort chosen here</option>
+            </select></label>
+            <label id="settingsSummaryHarnessLabel">Agent<select id="settingsSummaryHarness" data-testid="settings-summary-harness"></select></label>
             <label id="settingsSummaryModelLabel">Model<select id="settingsSummaryModel" data-testid="settings-summary-model"></select></label>
             <label id="settingsSummaryThinkingLabel">Effort<select id="settingsSummaryThinking" data-testid="settings-summary-thinking"></select></label>
             <p class="settings-hint">Applies to every conversation on this machine. Automatic lets the routing classifier pick the model when routing is on, and otherwise uses the conversation's own agent and model. Each update hands the writer the current summary and the messages since. Changes save immediately; only this machine's admin can change them.</p>
             <label class="checkbox-row" id="settingsSummaryRelay" hidden><input type="checkbox" id="settingsSummaryRelayApply" data-testid="settings-summary-relay-apply" /> Use these settings on every machine of the relay this machine serves</label>
+            <label>Summary instructions<textarea id="settingsSummaryInstructions" rows="9" maxlength="6000" spellcheck="false" data-testid="settings-summary-instructions"></textarea></label>
+            <div class="settings-summary-instructions-actions"><span class="settings-hint" id="settingsSummaryInstructionsStatus" data-testid="settings-summary-instructions-status"></span><button type="button" class="ghost compact" id="settingsSummaryInstructionsReset" data-testid="settings-summary-instructions-reset">Reset to default</button></div>
+            <p class="settings-hint">What a summary is for and how it reads. Joint Bob adds the rest itself: the new messages and the current summary to fold them into, and the format for skill suggestions. Saved when you leave the box. These instructions are this machine's own; a relay's policy does not change them.</p>
           </fieldset>
         </section>
 

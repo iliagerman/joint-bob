@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed the Activity panel cutting off its statistics: the panel now scrolls as one column, and only the steps list scrolls inside itself.
+- Added the summary instructions to Settings → Conversations → Activity summary: this machine's admin can rewrite what a summary covers and how it reads, or reset it to the built-in text.
+- Changed how Settings picks who writes summaries: Written by offers Automatic, the conversation's own agent and model, or an agent, model and effort chosen there, each with its own picker.
+
 ## 2.138.0 — 2026-10-22
 
 - Added a node choice to Settings → Resources for changing a trusted twin's skill and plugin activation, and removing several selected skills at once while keeping their backups.

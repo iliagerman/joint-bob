@@ -3,7 +3,7 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, keptSuggestions, parseDigestAnswer, parseDigestReply, turnCount, usedSkills, type ConversationDigest, type DigestMessage } from "../src/conversation-digest.js";
+import { DEFAULT_SUMMARY_INSTRUCTIONS, coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, keptSuggestions, parseDigestAnswer, parseDigestReply, turnCount, usedSkills, type ConversationDigest, type DigestMessage } from "../src/conversation-digest.js";
 import { routedSummaryModel } from "../src/conversation-summary-routing.js";
 import { claudeProjectDir } from "../src/session-paths.js";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
@@ -54,6 +54,12 @@ test("the prompt folds new messages into the current summary and keeps the panel
   assert.doesNotMatch(digestPrompt(undefined), /Current summary:/);
   assert.match(digestPrompt("**Goal** — ship it"), /Fold the new messages into the summary[\s\S]*Current summary:\n\*\*Goal\*\* — ship it$/);
   assert.match(digestPrompt(undefined), /No headings, code blocks, tables, raw JSON or long file paths/);
+  // A machine's own instructions replace what a summary is for and how it reads, never how it is kept.
+  const custom = digestPrompt("**Goal** — ship it", { catalog: [], used: [] }, "Summarize in three bullets for a manager.");
+  assert.ok(custom.startsWith("Summarize in three bullets for a manager.\n"), custom);
+  assert.doesNotMatch(custom, /No headings, code blocks/);
+  assert.match(custom, /Use only the material below[\s\S]*Fold the new messages[\s\S]*@@skills[\s\S]*Current summary:\n\*\*Goal\*\* — ship it$/);
+  assert.ok(digestPrompt(undefined, undefined, "   ").startsWith(DEFAULT_SUMMARY_INSTRUCTIONS), "blank instructions are the built-in ones");
   assert.equal(parseDigestAnswer("```markdown\n**Goal** — x\n```"), "**Goal** — x");
   assert.equal(parseDigestAnswer("  plain  "), "plain");
 });
@@ -192,6 +198,22 @@ test("the digest route folds new messages into the summary and follows the node'
     assert.equal((await api(node, auth, "POST", endpoint, { conversation: { harnessId: "not-a-harness" } })).status, 400, "the reported model is validated");
     assert.equal((await api(node, auth, "PUT", "/conversation-summary/settings", { updates: "each-message", writer: { source: "automatic" } })).status, 200);
 
+    // The machine's admin can replace the summary instructions; the writer gets them first.
+    type Instructions = { instructions: { custom: string | null; default: string } };
+    const shown = await api<{ instructions: Instructions["instructions"] }>(node, auth, "GET", "/conversation-summary/settings");
+    assert.deepEqual(shown.body.instructions, { custom: null, default: DEFAULT_SUMMARY_INSTRUCTIONS });
+    const saved = await api<Instructions>(node, auth, "PUT", "/conversation-summary/instructions", { instructions: "  Summarize for a manager in three bullets.  " });
+    assert.deepEqual([saved.status, saved.body.instructions.custom], [200, "Summarize for a manager in three bullets."]);
+    await append([record("user", 10, [{ type: "text", text: "And the intermediate CA" }]), record("assistant", 11, [{ type: "text", text: "Intermediate rotated." }])]);
+    await api(node, auth, "POST", endpoint, {});
+    const customCall = (await callsMade()).at(-1);
+    assert.ok(customCall.instructions.startsWith("Summarize for a manager in three bullets.\n"), customCall.instructions);
+    assert.match(customCall.instructions, /Fold the new messages into the summary/, "how a summary is kept stays");
+    assert.equal((await api(node, auth, "PUT", "/conversation-summary/instructions", { instructions: "x".repeat(6_001) })).status, 400);
+    const builtIn = await api<Instructions>(node, auth, "PUT", "/conversation-summary/instructions", { instructions: DEFAULT_SUMMARY_INSTRUCTIONS });
+    assert.equal(builtIn.body.instructions.custom, null, "saving the built-in text keeps following the built-in text");
+    assert.equal((await api<Instructions>(node, auth, "PUT", "/conversation-summary/instructions", { instructions: null })).body.instructions.custom, null);
+
     const unstarted = await api<DigestResponse>(node, auth, "GET", `/projects/${project.id}/conversations/00000000-0000-4000-8000-000000000000/digest`);
     assert.deepEqual([unstarted.status, unstarted.body.digest, unstarted.body.stale, unstarted.body.turns], [200, null, false, 0], "a conversation with no transcript yet simply has no summary");
     assert.equal((await api(node, auth, "POST", `/projects/${project.id}/conversations/00000000-0000-4000-8000-000000000000/digest`, {})).status, 404);
@@ -201,7 +223,7 @@ test("the digest route folds new messages into the summary and follows the node'
     const failed = await api<DigestResponse>(node, auth, "POST", endpoint, {});
     assert.equal(failed.status, 200);
     assert.match(failed.body.error ?? "", /model unavailable/);
-    assert.equal(failed.body.digest?.turns, 3, "the last good summary is still returned");
+    assert.equal(failed.body.digest?.turns, 4, "the last good summary is still returned");
     assert.equal((await api(node, auth, "POST", `/projects/not-a-project/conversations/${conversationId}/digest`, {})).status, 404);
   } finally {
     await stopDevNode(server);

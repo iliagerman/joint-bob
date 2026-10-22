@@ -1,7 +1,7 @@
 import { getDifficultyClassifier } from "../classifiers/registry.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { type ConversationDigest, type DigestModel, type DigestSkills, coveredMessages, digestIsStale, digestMaterial, digestMessages, digestPrompt, keptSuggestions, parseDigestReply, saveDigest, storedDigest, turnCount, usedSkills } from "../conversation-digest.js";
-import { effectiveSummaryPolicy, type EffectiveSummaryPolicy, summaryWriterLabel } from "../conversation-summary-policy.js";
+import { effectiveSummaryPolicy, type EffectiveSummaryPolicy, nodeSummaryInstructions, summaryWriterLabel } from "../conversation-summary-policy.js";
 import { type ConversationModel, routedSummaryModel, type SummaryRun } from "../conversation-summary-routing.js";
 import { getHarness } from "../harnesses.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
@@ -137,7 +137,7 @@ async function writeDigest(project: ProjectRecord, conversationId: string, live:
   onWriting();
   const used = usedSkills(messages);
   const skills: DigestSkills = { catalog: await skillCatalog(project, conversationId, live?.harnessId ?? lastAttribution(messages)?.harnessId ?? lastHarness), used, suggestions: keptSuggestions(previous?.suggestions, used) };
-  const instructions = digestPrompt(previous?.summary, skills);
+  const instructions = digestPrompt(previous?.summary, skills, nodeSummaryInstructions());
   const run = await summaryRun(await summaryPolicyNow(), project, live, messages, lastHarness, material);
   const model: DigestModel = { harnessId: run.harnessId, provider: run.provider, modelId: run.modelId, source: run.source };
   const override = process.env.JOINT_BOB_DIGEST_GENERATOR;

@@ -29,6 +29,11 @@ export type SummaryWriter = z.infer<typeof summaryWriterSchema>;
 export type SummaryPolicy = z.infer<typeof summaryPolicySchema>;
 
 const SETTING_KEY = "conversationSummary";
+const INSTRUCTIONS_KEY = "conversationSummaryInstructions";
+export const SUMMARY_INSTRUCTIONS_LIMIT = 6_000;
+
+/** What the writer is told a summary is for and how to write it; empty means the built-in text. */
+export const summaryInstructionsSchema = z.string().trim().max(SUMMARY_INSTRUCTIONS_LIMIT);
 
 export function defaultSummaryPolicy(): SummaryPolicy {
   return { updates: "each-message", writer: { source: "automatic" } };
@@ -49,6 +54,23 @@ export function saveNodeSummaryPolicy(policy: SummaryPolicy): SummaryPolicy {
   const parsed = summaryPolicySchema.parse(policy);
   save(settingsDatabase(), SETTING_KEY, JSON.stringify(parsed));
   return parsed;
+}
+
+/**
+ * This machine's own summary instructions, or null for the built-in ones. They stay out of
+ * the relay's signed policy: machines on older releases reject a policy with fields they do
+ * not know, which would cost them the relay's skill rules too.
+ */
+export function nodeSummaryInstructions(): string | null {
+  const stored = value(INSTRUCTIONS_KEY, "").trim();
+  return stored || null;
+}
+
+/** Saves this machine's summary instructions; null or empty text goes back to the built-in ones. */
+export function saveNodeSummaryInstructions(text: string | null): string | null {
+  const parsed = text === null ? "" : summaryInstructionsSchema.parse(text);
+  save(settingsDatabase(), INSTRUCTIONS_KEY, parsed);
+  return parsed || null;
 }
 
 export interface EffectiveSummaryPolicy extends SummaryPolicy {

@@ -164,20 +164,31 @@ function skillInstructions(skills: DigestSkills): string[] {
   ];
 }
 
-export function digestPrompt(previous: string | undefined, skills?: DigestSkills): string {
+/** What a summary is for and how it reads: the part of the writer's prompt a machine's admin can replace in Settings. */
+export const DEFAULT_SUMMARY_INSTRUCTIONS = [
+  "You keep a running summary of a conversation between a user and a coding agent. It is shown in a narrow side panel so the user can catch up at a glance.",
+  "Answer in Markdown, at most about 250 words, with these bold labels, each followed by a sentence or short bullets:",
+  "**Goal** — what the user wants.",
+  "**Done so far** — decisions made and work finished.",
+  "**Current state** — what is happening now or was last reported.",
+  "**Open questions** — anything waiting on the user; leave this label out when there is none.",
+  "No headings, code blocks, tables, raw JSON or long file paths: name files by their name only. Keep lines short; the panel is narrow.",
+  "Write in the language the user writes in.",
+].join("\n");
+
+/**
+ * The writer's prompt: the instructions (the built-in ones or a machine's own), then what
+ * every summary needs whatever they say: only the material given, how to fold new messages
+ * into the current summary, the skill suggestions, and the current summary itself.
+ */
+export function digestPrompt(previous: string | undefined, skills?: DigestSkills, instructions?: string | null): string {
   return [
-    "You keep a running summary of a conversation between a user and a coding agent. It is shown in a narrow side panel so the user can catch up at a glance.",
+    instructions?.trim() || DEFAULT_SUMMARY_INSTRUCTIONS,
+    "",
     "Use only the material below. Do not run tools, read files, or ask questions.",
     previous
       ? "Below are the current summary and the messages that came after it. Fold the new messages into the summary: update the goal if it moved, add finished work, replace the current state, keep open questions current, and drop details that no longer matter. Return the whole updated summary."
       : "Write the summary from the messages below.",
-    "Answer in Markdown, at most about 250 words, with these bold labels, each followed by a sentence or short bullets:",
-    "**Goal** — what the user wants.",
-    "**Done so far** — decisions made and work finished.",
-    "**Current state** — what is happening now or was last reported.",
-    "**Open questions** — anything waiting on the user; leave this label out when there is none.",
-    "No headings, code blocks, tables, raw JSON or long file paths: name files by their name only. Keep lines short; the panel is narrow.",
-    "Write in the language the user writes in.",
     ...(skills ? skillInstructions(skills) : []),
     ...(previous ? ["", "Current summary:", previous] : []),
   ].join("\n");
