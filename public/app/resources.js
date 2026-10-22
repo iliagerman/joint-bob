@@ -9,6 +9,7 @@ import { normalizedQuery } from "./layout.js";
 import { openSettings } from "./settings.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
+import { renderTwinSkillSync } from "./twin-skill-sync.js";
 
 const ORIGIN_LABELS = { shared: "managed", scoped: "shared here", user: "agent", project: "project" };
 const MCP_SOURCE_LABELS = { shared: "shared", user: "agent", local: "project-local", project: "project", plugin: "plugin" };
@@ -1165,6 +1166,7 @@ function render() {
   else if (view.tab === "git") renderGit();
   else if (listing) renderList();
   renderSummary();
+  renderTwinSkillSync(elements.resourcesPanel, `${view.nodeId}/${view.scope}/${view.projectId}/${view.conversationId}`, view.tab === "skills", loadInventory);
 }
 
 async function loadInventory() {

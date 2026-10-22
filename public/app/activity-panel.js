@@ -216,7 +216,7 @@ export function activityStatsChanged() {
 /** The writer's suggestions, without any skill the conversation has loaded since. */
 function renderSuggestions() {
   const used = new Set([...skillCounts().keys()].map(bareSkill));
-  const suggestions = (summary.digest?.suggestions ?? []).filter((item) => !used.has(bareSkill(item.skill)));
+  const suggestions = (summary.digest?.suggestions ?? []).filter((item) => item.kind === "new" && !used.has(bareSkill(item.skill)));
   elements.activitySuggestionsStatus.textContent = suggestions.length ? String(suggestions.length) : "";
   if (!suggestions.length) {
     const known = Array.isArray(summary.digest?.suggestions);
@@ -232,8 +232,8 @@ function renderSuggestions() {
     head.className = "activity-suggestion-head";
     const kind = document.createElement("span");
     kind.className = `activity-suggestion-kind ${item.kind}`;
-    kind.textContent = item.kind === "use" ? "Use" : "New";
-    kind.title = item.kind === "use" ? "An installed skill this conversation has not loaded" : "A skill to write for work this conversation repeats";
+    kind.textContent = "New";
+    kind.title = "An insight to capture as a skill for future use and knowledge sharing";
     const name = document.createElement("span");
     name.className = "activity-suggestion-name";
     name.textContent = item.skill;

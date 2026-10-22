@@ -2,8 +2,8 @@ import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { getClusterNode } from "../../cluster.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { DEFAULT_SUMMARY_INSTRUCTIONS, storedDigest } from "../../conversation-digest.js";
-import { nodeSummaryInstructions, nodeSummaryPolicy, saveNodeSummaryInstructions, saveNodeSummaryPolicy, summaryInstructionsSchema, summaryPolicySchema } from "../../conversation-summary-policy.js";
+import { DEFAULT_SKILL_SUGGESTION_INSTRUCTIONS, DEFAULT_SUMMARY_INSTRUCTIONS, storedDigest } from "../../conversation-digest.js";
+import { nodeSkillSuggestionInstructions, saveNodeSkillSuggestionInstructions, nodeSummaryInstructions, nodeSummaryPolicy, saveNodeSummaryInstructions, saveNodeSummaryPolicy, summaryInstructionsSchema, summaryPolicySchema } from "../../conversation-summary-policy.js";
 import { relayServerInstance } from "../../relay/index.js";
 import { publishedRelayPolicy, publishRelayPolicy } from "../../relay/resource-policy.js";
 import { servingSettings } from "../../relay/store.js";
@@ -101,6 +101,7 @@ app.get("/api/conversation-summary/settings", async (_request, response, next) =
       effective: { ...effective, view: summaryPolicyView(effective) },
       relayServing: servingSettings(db).enabled ? { policy: publishedRelayPolicy(db, (await getClusterNode()).id).body.summary ?? null } : null,
       instructions: { custom: nodeSummaryInstructions(), default: DEFAULT_SUMMARY_INSTRUCTIONS },
+      skillInstructions: { custom: nodeSkillSuggestionInstructions(), default: DEFAULT_SKILL_SUGGESTION_INSTRUCTIONS },
     });
   } catch (error) {
     next(error);
@@ -122,6 +123,17 @@ app.put("/api/conversation-summary/instructions", async (request, response, next
     const { instructions } = z.object({ instructions: summaryInstructionsSchema.nullable() }).strict().parse(request.body);
     const custom = instructions && instructions !== DEFAULT_SUMMARY_INSTRUCTIONS ? instructions : null;
     response.json({ instructions: { custom: saveNodeSummaryInstructions(custom), default: DEFAULT_SUMMARY_INSTRUCTIONS } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** Admin only: reusable-knowledge extraction instructions, local to this machine. */
+app.put("/api/conversation-summary/skill-instructions", async (request, response, next) => {
+  try {
+    const { instructions } = z.object({ instructions: summaryInstructionsSchema.nullable() }).strict().parse(request.body);
+    const custom = instructions && instructions !== DEFAULT_SKILL_SUGGESTION_INSTRUCTIONS ? instructions : null;
+    response.json({ skillInstructions: { custom: saveNodeSkillSuggestionInstructions(custom), default: DEFAULT_SKILL_SUGGESTION_INSTRUCTIONS } });
   } catch (error) {
     next(error);
   }

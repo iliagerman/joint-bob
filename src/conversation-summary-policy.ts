@@ -73,6 +73,16 @@ export function saveNodeSummaryInstructions(text: string | null): string | null 
   return parsed || null;
 }
 
+export function nodeSkillSuggestionInstructions(): string | null {
+  return value("conversationSkillSuggestionInstructions", "").trim() || null;
+}
+
+export function saveNodeSkillSuggestionInstructions(text: string | null): string | null {
+  const parsed = text === null ? "" : summaryInstructionsSchema.parse(text);
+  save(settingsDatabase(), "conversationSkillSuggestionInstructions", parsed);
+  return parsed || null;
+}
+
 export interface EffectiveSummaryPolicy extends SummaryPolicy {
   /** Where it came from: this node's setting, or the relay that set it. */
   from: { kind: "node" } | { kind: "relay"; relay: string };

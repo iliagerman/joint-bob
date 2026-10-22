@@ -1056,7 +1056,10 @@
             <label class="checkbox-row" id="settingsSummaryRelay" hidden><input type="checkbox" id="settingsSummaryRelayApply" data-testid="settings-summary-relay-apply" /> Use these settings on every machine of the relay this machine serves</label>
             <label>Summary instructions<textarea id="settingsSummaryInstructions" rows="9" maxlength="6000" spellcheck="false" data-testid="settings-summary-instructions"></textarea></label>
             <div class="settings-summary-instructions-actions"><span class="settings-hint" id="settingsSummaryInstructionsStatus" data-testid="settings-summary-instructions-status"></span><button type="button" class="ghost compact" id="settingsSummaryInstructionsReset" data-testid="settings-summary-instructions-reset">Reset to default</button></div>
-            <p class="settings-hint">What a summary is for and how it reads. Joint Bob adds the rest itself: the new messages and the current summary to fold them into, and the format for skill suggestions. Saved when you leave the box. These instructions are this machine's own; a relay's policy does not change them.</p>
+            <p class="settings-hint">What a summary is for and how it reads. Joint Bob adds the new messages, current summary, and output format. Saved when you leave the box. These instructions are this machine's own; a relay's policy does not change them.</p>
+            <label>Skill suggestion instructions<textarea id="settingsSkillInstructions" rows="9" maxlength="6000" spellcheck="false" data-testid="settings-skill-instructions"></textarea></label>
+            <div class="settings-summary-instructions-actions"><span class="settings-hint" id="settingsSkillInstructionsStatus" data-testid="settings-skill-instructions-status"></span><button type="button" class="ghost compact" id="settingsSkillInstructionsReset" data-testid="settings-skill-instructions-reset">Reset to default</button></div>
+            <p class="settings-hint">Find insights learned in conversations worth turning into skills for future use and knowledge sharing, not existing skills to load. Saved when you leave the box. Applies to conversations on this machine; only its admin can edit. Suggestions do not create or share a skill automatically.</p>
           </fieldset>
         </section>
 

@@ -190,7 +190,8 @@ async function publishLocalSkills(roots: string[], options: { root?: string; dat
   const stagedSkills: LocalSkill[] = [];
   try {
     for (const skill of skills) {
-      if (await receivedOwner(paths.sharedSkills, skill.name, options.dataDir)) throw new Error("Received skills cannot be overwritten by import");
+      const owner = await receivedOwner(paths.sharedSkills, skill.name, options.dataDir);
+      if (owner && !owner.startsWith("twin:")) throw new Error("Received skills cannot be overwritten by import");
       const destination = path.join(paths.sharedSkills, skill.name);
       if (overlaps(skill.source, destination) || overlaps(destination, skill.source)) {
         if (path.resolve(skill.source) === path.resolve(destination)) { unchanged.push(skill.name); continue; }

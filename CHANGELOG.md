@@ -8,6 +8,8 @@ Every deployment is a version. The newest section must always match the
 - Fixed a workspace shared with a cluster not appearing on the other members until it had a project; it now shows up for them straight away, ready for their own projects and conversations.
 - Changed stopped and failed Claude turns to say why they ended: a stop for the budget, by you or by inactivity names that reason, and a crash names how Claude exited and the tool it was running instead of a bare "failed after output"; the same stop no longer appears twice.
 - Added a Sharing choice when creating a workspace and a Share button on each workspace, so it can go to chosen clusters, machines or relays, including machines that join a relay later.
+- Added sharing a workspace with individual machines, so only the machines you pick receive it and the rest of their cluster does not.
+- Added two-way skill sync with one direct twin: after you confirm a preview that makes it match this node, skill additions, edits and deletions reach both sides, and relay-imposed skills stay untouched.
 
 ## 2.139.0 — 2026-10-22
 

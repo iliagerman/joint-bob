@@ -64,7 +64,7 @@ test("the prompt folds new messages into the current summary and keeps the panel
   assert.equal(parseDigestAnswer("  plain  "), "plain");
 });
 
-test("the writer suggests installed skills by their exact name, new ones for repeated work, and never one already used", () => {
+test("the writer extracts reusable knowledge, rejects use recommendations, and avoids duplicate skills", () => {
   const skills = {
     catalog: [{ name: "brainstorming", description: "Explore intent before building" }, { name: "pdf", description: "Work with PDF files" }],
     used: ["joint-bob-resources:pdf"],
@@ -72,7 +72,9 @@ test("the writer suggests installed skills by their exact name, new ones for rep
   };
   const prompt = digestPrompt("**Goal** — x", skills);
   assert.match(prompt, /write a line with only @@skills/);
-  assert.match(prompt, /Skills the conversation used: joint-bob-resources:pdf\./);
+  assert.match(prompt, /reusable insights/i);
+  assert.match(prompt, /future use and knowledge sharing/i);
+  assert.match(prompt, /Do not recommend existing skills/);
   assert.match(prompt, /Your last suggestions; keep, change or drop them:\nnew cert-rotation — the rotation repeats/);
   assert.match(prompt, /Installed skills:\n- brainstorming: Explore intent before building\n- pdf: Work with PDF files/);
   assert.match(prompt, /Current summary:\n\*\*Goal\*\* — x$/, "the current summary still comes last");
@@ -90,10 +92,14 @@ test("the writer suggests installed skills by their exact name, new ones for rep
   ].join("\n"), skills);
   assert.equal(reply.summary, "**Goal** — y", "the summary's code fence is removed when suggestions follow it");
   assert.deepEqual(reply.suggestions, [
-    { kind: "use", skill: "brainstorming", reason: "plan the rotation first" },
     { kind: "new", skill: "cert-rotation", reason: "the same five steps every week" },
     { kind: "new", skill: "rotate-ca", reason: "rotate the CA the same way" },
+    { kind: "new", skill: "fourth", reason: "over the limit" },
   ]);
+  const custom = digestPrompt(undefined, skills, undefined, "Capture debugging lessons for teammates.");
+  assert.match(custom, /Capture debugging lessons for teammates\./);
+  assert.doesNotMatch(custom, /Extract reusable insights/);
+  assert.match(custom, /write a line with only @@skills/);
   assert.deepEqual(parseDigestReply("**Goal** — z", skills), { summary: "**Goal** — z" }, "an answer without the suggestions line leaves the last ones standing");
   assert.deepEqual(parseDigestReply("**Goal** — z\n@@skills\n", skills), { summary: "**Goal** — z", suggestions: [] }, "an empty list clears them");
   assert.deepEqual(keptSuggestions([{ kind: "use", skill: "pdf", reason: "r" }, { kind: "new", skill: "cert-rotation", reason: "r" }], ["joint-bob-resources:pdf"]), [{ kind: "new", skill: "cert-rotation", reason: "r" }]);
@@ -214,6 +220,19 @@ test("the digest route folds new messages into the summary and follows the node'
     assert.equal(builtIn.body.instructions.custom, null, "saving the built-in text keeps following the built-in text");
     assert.equal((await api<Instructions>(node, auth, "PUT", "/conversation-summary/instructions", { instructions: null })).body.instructions.custom, null);
 
+    const skillSettings = await api<{ skillInstructions: { custom: string | null; default: string } }>(node, auth, "GET", "/conversation-summary/settings");
+    assert.match(skillSettings.body.skillInstructions.default, /reusable insights/);
+    assert.equal(skillSettings.body.skillInstructions.custom, null);
+    const skillSaved = await api<{ skillInstructions: { custom: string | null } }>(node, auth, "PUT", "/conversation-summary/skill-instructions", { instructions: " Capture debugging lessons for teammates. " });
+    assert.equal(skillSaved.status, 200);
+    assert.equal(skillSaved.body.skillInstructions.custom, "Capture debugging lessons for teammates.");
+    assert.equal((await api(node, auth, "PUT", "/conversation-summary/skill-instructions", { instructions: "x".repeat(6_001) })).status, 400);
+    await append([record("user", 12, [{ type: "text", text: "capture lessons" }]), record("assistant", 13, [{ type: "text", text: "Learned a reusable diagnostic." }])]);
+    await api(node, auth, "POST", endpoint, {});
+    const skillCall = (await readFile(calls, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).at(-1);
+    assert.match(skillCall.instructions, /Capture debugging lessons for teammates\./);
+    assert.equal((await api<{ skillInstructions: { custom: string | null } }>(node, auth, "PUT", "/conversation-summary/skill-instructions", { instructions: null })).body.skillInstructions.custom, null);
+
     const unstarted = await api<DigestResponse>(node, auth, "GET", `/projects/${project.id}/conversations/00000000-0000-4000-8000-000000000000/digest`);
     assert.deepEqual([unstarted.status, unstarted.body.digest, unstarted.body.stale, unstarted.body.turns], [200, null, false, 0], "a conversation with no transcript yet simply has no summary");
     assert.equal((await api(node, auth, "POST", `/projects/${project.id}/conversations/00000000-0000-4000-8000-000000000000/digest`, {})).status, 404);
@@ -223,7 +242,7 @@ test("the digest route folds new messages into the summary and follows the node'
     const failed = await api<DigestResponse>(node, auth, "POST", endpoint, {});
     assert.equal(failed.status, 200);
     assert.match(failed.body.error ?? "", /model unavailable/);
-    assert.equal(failed.body.digest?.turns, 4, "the last good summary is still returned");
+    assert.equal(failed.body.digest?.turns, 5, "the last good summary is still returned");
     assert.equal((await api(node, auth, "POST", `/projects/not-a-project/conversations/${conversationId}/digest`, {})).status, 404);
   } finally {
     await stopDevNode(server);

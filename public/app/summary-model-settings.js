@@ -13,6 +13,30 @@ import { toast } from "./shell.js";
 
 const choices = { harnesses: [], models: [] };
 const instructions = { custom: null, default: "" };
+const skillInstructions = { custom: null, default: "" };
+
+function showSkillInstructions(saved = false) {
+  elements.settingsSkillInstructions.value = skillInstructions.custom ?? skillInstructions.default;
+  elements.settingsSkillInstructionsStatus.textContent = `${saved ? "Saved · " : ""}${skillInstructions.custom ? "this machine's own instructions" : "built-in instructions"}`;
+  elements.settingsSkillInstructions.disabled = !isNodeAdmin();
+  elements.settingsSkillInstructionsReset.disabled = !skillInstructions.custom || !isNodeAdmin();
+}
+
+async function saveSkillInstructions(text) {
+  try {
+    const body = await api("/api/conversation-summary/skill-instructions", { method: "PUT", body: JSON.stringify({ instructions: text }) });
+    Object.assign(skillInstructions, body.skillInstructions);
+    showSkillInstructions(true);
+  } catch (error) {
+    toast(error.message || "Could not save the skill suggestion instructions");
+  }
+}
+
+elements.settingsSkillInstructions.addEventListener("change", () => {
+  const text = elements.settingsSkillInstructions.value.trim();
+  void saveSkillInstructions(text && text !== skillInstructions.default ? text : null);
+});
+elements.settingsSkillInstructionsReset.addEventListener("click", () => void saveSkillInstructions(null));
 
 function chosenHarness() {
   return choices.harnesses.find((harness) => harness.id === elements.settingsSummaryHarness.value);
@@ -83,6 +107,8 @@ export async function loadSummaryModelSettings() {
   elements.settingsSummaryWriter.querySelector("option[value='fixed']").disabled = !choices.harnesses.length;
   fillForm(settings.node);
   Object.assign(instructions, settings.instructions);
+  Object.assign(skillInstructions, settings.skillInstructions);
+  showSkillInstructions();
   const relay = settings.effective.from.kind === "relay" ? settings.effective.from.relay : "";
   elements.settingsSummaryRelayNote.hidden = !relay;
   elements.settingsSummaryRelayNote.textContent = relay ? `The relay ${relay} sets this for its machines: ${settings.effective.view.updates === "each-message" ? "after each message" : settings.effective.view.updates === "panel" ? "while the panel is open" : "only when asked"}, written by ${settings.effective.view.writer}. This machine's own choice below applies if it leaves that relay.` : "";

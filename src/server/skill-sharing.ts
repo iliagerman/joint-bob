@@ -26,6 +26,7 @@ import { relayPolicyLabel, relayPolicySubscriptions } from "../relay/resource-po
 import { listMemberships, type RelayMembership } from "../relay/store.js";
 import { peerAway } from "../peer-presence.js";
 import { parseResourceFrontmatter } from "../skills.js";
+import { noteTwinSkillRemoval, reconcileTwinSkills, registerTwinSkillSyncRoutes } from "./twin-skill-sync.js";
 
 const nameSchema = z.string().min(1).max(200).refine((value) => { try { validateSkillName(value); return true; } catch { return false; } });
 const conversationGrantSchema = z.object({ projectId: z.string().min(1).max(200), conversationId: z.string().min(1).max(300) }).strict();
@@ -521,7 +522,7 @@ async function syncRelaySkillsNow(): Promise<boolean> {
 }
 
 export async function refreshSharedSkills(): Promise<void> {
-  if (!refresh) refresh = syncSkills().finally(() => { refresh = undefined; });
+  if (!refresh) refresh = syncSkills().then(() => reconcileTwinSkills()).finally(() => { refresh = undefined; });
   return refresh;
 }
 
@@ -543,6 +544,7 @@ function skillReceivers(db: DatabaseSync, local: string, names: string[]): Map<s
  * without waiting for their next refresh. Nodes that are away catch up when they return.
  */
 export async function announceSkillChanges(names: string[]): Promise<void> {
+  void reconcileTwinSkills().catch((error) => console.warn(`Twin skill sync pending: ${(error as Error).message}`));
   const db = await clusterV2Database(), local = (await getClusterNode()).id;
   ensureSkillSharingSchema(db);
   const valid = names.filter((name) => { try { validateSkillName(name); return true; } catch { return false; } });
@@ -594,6 +596,7 @@ async function removeSkill(name: string) {
     await unlinkSkillAliases(destination, aliasRoots());
     await unmarkReceived(root, name);
     db.prepare("DELETE FROM received_skills WHERE name=?").run(name);
+    noteTwinSkillRemoval(db, local, name);
     return { removed: name, backup, newConversationRequired: true };
   });
 }
@@ -610,12 +613,17 @@ function route(action: (request: Request, response: HttpResponse) => Promise<unk
   };
 }
 export function registerSkillSharingRoutes(): void {
+registerTwinSkillSyncRoutes(ensureLegacySkillSyncPaused);
 app.get("/api/resources/skills/sharing", route(async () => localView()));
 app.put("/api/resources/skills/:name/sharing", route(async (request) => {
   const selection = selectionSchema.parse(request.body);
   return shareSkill(nameSchema.parse(request.params.name), selection.clusterIds, selection.nodeIds, { workspaceIds: selection.workspaceIds, projectIds: selection.projectIds, conversations: selection.conversations });
 }));
-app.delete("/api/resources/skills/:name", route(async (request) => removeSkill(nameSchema.parse(request.params.name))));
+app.delete("/api/resources/skills/:name", route(async (request) => {
+  const result = await removeSkill(nameSchema.parse(request.params.name));
+  void reconcileTwinSkills().catch((error) => console.warn(`Twin skill deletion pending: ${(error as Error).message}`));
+  return result;
+}));
 app.post("/api/resources/skills/refresh", route(async (request) => { z.object({}).strict().parse(request.body); await refreshSharedSkills(); if (await syncRelaySkills().catch((error) => { console.warn(`Relay skill sync failed: ${(error as Error).message}`); return false; })) await (await import("./realtime.js")).reloadSharedSkills(); return localView(); }));
 app.post("/api/cluster/v2/skills/manifest", route(async (request, response) => { z.object({}).strict().parse(request.body); return manifestFor(response.locals.machineNodeId); }, true));
 app.post("/api/cluster/v2/skills/scoped-manifest", route(async (request, response) => { z.object({}).strict().parse(request.body); return scopedManifestFor(response.locals.machineNodeId); }, true));
