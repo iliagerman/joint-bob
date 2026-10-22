@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed webhook title templates being refused when the agent filled in the bracketed part of a new conversation's title, so the title now applies on each call.
+
 ## 2.143.0 — 2026-10-22
 
 - Added conversation title templates to webhooks that start new conversations: the agent fills the bracketed part of the title on each call, and the fixed text stays exactly as you wrote it.

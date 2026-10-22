@@ -196,7 +196,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.liveRelay || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent || response.locals.worktreeAgent || response.locals.webhookTitleAgent) {
     next();
     return;
   }

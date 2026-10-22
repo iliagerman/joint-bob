@@ -69,7 +69,8 @@ export function webhookTitleAgentEnvironment(identity: AgentCapabilityIdentity):
 
 export function webhookTitleAgentIdentity(token: string): AgentCapabilityIdentity | undefined {
   if (!/^[a-f0-9]{64}$/.test(token)) return undefined;
-  return database().prepare("SELECT project_id AS projectId, engine, conversation_id AS conversationId FROM webhook_title_agent_tokens WHERE token_hash=? AND expires_at>?").get(hash(token), Date.now()) as AgentCapabilityIdentity | undefined;
+  const row = database().prepare("SELECT project_id AS projectId, engine, conversation_id AS conversationId FROM webhook_title_agent_tokens WHERE token_hash=? AND expires_at>?").get(hash(token), Date.now()) as AgentCapabilityIdentity | undefined;
+  return row ? { ...row } : undefined;
 }
 
 export function revokeWebhookTitleAgentTokens(projectId: string, conversationId?: string): void {
