@@ -40,6 +40,13 @@ test("Resources uses one filter row without relay details and scrolls tall skill
     const filters = await page.locator(".resources-toolbar > select:visible").evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().top));
     assert.ok(filters.length >= 5, "precondition: all resource filters loaded");
     assert.ok(Math.max(...filters) - Math.min(...filters) < 2, `desktop filters share one row: ${filters}`);
+    const agentSelect = page.getByTestId("resources-harness-select");
+    await agentSelect.focus();
+    const focusSpace = await agentSelect.evaluate((element) => {
+      const toolbar = element.parentElement!.getBoundingClientRect(), rect = element.getBoundingClientRect();
+      return { top: rect.top - toolbar.top, bottom: toolbar.bottom - rect.bottom };
+    });
+    assert.ok(focusSpace.top >= 4 && focusSpace.bottom >= 4, `scrolling toolbar must leave room for the entire focus ring: ${JSON.stringify(focusSpace)}`);
     assert.equal(await page.getByTestId("resources-relay-policy").count(), 0, "relay details removed from Resources");
     for (const [width, height] of [[1440, 900], [1440, 560], [390, 620]]) {
       await page.setViewportSize({ width, height });

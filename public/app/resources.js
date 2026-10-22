@@ -16,7 +16,7 @@ const SCAN_STATUS_LABELS = { new: "New", changed: "Changed", installed: "Install
 
 const view = {
   scope: "cluster", projectId: null, conversationId: null, engine: null, tab: "skills", configured: false, nodeId: "",
-  nodes: [], sharing: null, activation: null, relayPolicies: [], loading: false, candidates: [], scanRoot: "", request: 0,
+  nodes: [], sharing: null, activation: null, relayPolicies: [], loading: false, ready: false, activationSaving: null, candidates: [], scanRoot: "", request: 0,
   page: 0, scanPage: 0, selected: new Set(), selectedServers: new Set(), scanSelected: new Set(), bulkBusy: false,
   // Claude MCP sign-ins for the person viewing: checked once per scope, and the sign-in waiting for its browser.
   mcpAuth: { key: null, servers: null, loading: false, error: "", flow: null, busy: false },
@@ -63,7 +63,7 @@ function harnessFilter() { return elements.resourcesHarnessSelect.value; }
 
 function renderNodeOptions() {
   const select = document.querySelector("#resourcesNodeSelect");
-  select.replaceChildren(new Option("This node", ""), ...view.nodes.filter((entry) => !entry.node.local).map((entry) => new Option(entry.node.name, entry.node.id)));
+  select.replaceChildren(new Option(`Node: ${localEntry()?.node.name || "This node"}`, ""), ...view.nodes.filter((entry) => !entry.node.local).map((entry) => new Option(`${entry.node.name}${entry.node.manageable ? " (twin)" : " (shared only)"}`, entry.node.id)));
   if (!view.nodes.some((entry) => entry.node.id === view.nodeId)) view.nodeId = "";
   select.value = view.nodeId;
 }
@@ -168,6 +168,13 @@ function shareable(skill) {
   const policy = policyFor(skill);
   return policy ? policy.kind === "local" : skill.origin !== "shared" && skill.origin !== "scoped";
 }
+
+/** Removal uses the existing managed-copy endpoint; relay-owned and independent native copies stay untouched. */
+function removable(skill) {
+  const policy = policyFor(skill);
+  return Boolean(policy && !policy.managedByRelay);
+}
+function selectableSkill(skill) { return shareable(skill) || removable(skill); }
 
 const NO_GRANTS = { clusterIds: [], nodeIds: [], workspaceIds: [], projectIds: [], conversations: [] };
 function grantsOf(policy) {
@@ -443,13 +450,14 @@ function skillRemoveButton(skill, received) {
     } catch (error) { setStatus(error.message); }
     finally { remove.disabled = false; }
   }, "ghost compact danger");
+  remove.disabled = view.bulkBusy;
   return remove;
 }
 
 function activationControl(kind, item, local, supported) {
   const filter = harnessFilter();
   const agents = supported.filter((id) => (!filter || id === filter) && item.activation?.[id]);
-  if (!local || !agents.length) return null;
+  if (!(local || selectedEntry()?.node.manageable) || !view.ready || !agents.length) return null;
   const controls = document.createElement("span");
   controls.className = "resources-activation-controls";
   for (const harness of agents) {
@@ -477,7 +485,7 @@ function activationControl(kind, item, local, supported) {
     const saveChoice = async (enabled) => {
       for (const control of controls.querySelectorAll("input, button")) control.disabled = true;
       try {
-        await api("/api/resources/activation/item", { method: "PUT", body: JSON.stringify({ kind, name: item.name, harness, enabled, ...(view.scope !== "cluster" && view.projectId ? { projectId: view.projectId } : {}), ...(view.scope === "conversation" && view.conversationId ? { conversationId: view.conversationId } : {}) }) });
+        await api("/api/resources/activation/item", { method: "PUT", body: JSON.stringify({ ...nodeTarget(), kind, name: item.name, harness, enabled, ...(view.scope !== "cluster" && view.projectId ? { projectId: view.projectId } : {}), ...(view.scope === "conversation" && view.conversationId ? { conversationId: view.conversationId } : {}) }) });
         await loadInventory();
         setStatus(enabled === null ? `${item.name} uses the default for ${harnessLabel(harness)}.`
           : `${item.name} ${enabled ? "enabled" : "disabled"} for ${harnessLabel(harness)}. Start a new conversation to clear instructions already read.`);
@@ -535,11 +543,13 @@ function skillRow(skill, local) {
   const head = document.createElement("div");
   head.className = "resources-row-head";
   const canShare = local && view.sharing && shareable(skill);
-  if (canShare) {
-    head.append(selectBox(`Select ${skill.name}`, view.selected.has(skillKey(skill)), "resources-skill-select", (checked) => {
+  if (local && view.sharing && selectableSkill(skill)) {
+    const select = selectBox(`Select ${skill.name}`, view.selected.has(skillKey(skill)), "resources-skill-select", (checked) => {
       if (checked) view.selected.add(skillKey(skill)); else view.selected.delete(skillKey(skill));
       renderShareBar();
-    }));
+    });
+    select.disabled = view.bulkBusy;
+    head.append(select);
   }
   const name = document.createElement("strong");
   name.textContent = skill.name;
@@ -828,10 +838,44 @@ function nodeHeading(entry, count, noun) {
 /* ---- Selection bar ---- */
 
 function localEntry() { return view.nodes.find((entry) => entry.node.local); }
+function selectedEntry() { return view.nodeId ? view.nodes.find((entry) => entry.node.id === view.nodeId) : localEntry(); }
+function nodeTarget() { return view.nodeId ? { nodeId: view.nodeId } : {}; }
 
 function selectedSkills() {
   const inventory = localEntry()?.inventory;
-  return (inventory ? skillManagementInventory(inventory) : []).filter((skill) => view.selected.has(skillKey(skill)) && shareable(skill));
+  return (inventory ? skillManagementInventory(inventory) : []).filter((skill) => view.selected.has(skillKey(skill)) && selectableSkill(skill));
+}
+
+async function removeSelectedSkills(skills) {
+  if (view.bulkBusy || view.nodeId || !skills.length) return;
+  const request = view.request, node = localEntry()?.node.name || "this node";
+  if (!await confirmAction({
+    title: `Remove ${skills.length} selected skill${skills.length === 1 ? "" : "s"}?`,
+    message: `Remove these managed copies from ${node}, across all selected pages. Folders are backed up. Owned skills stop being shared; received copies are suppressed on this node without changing the owner's skill. Offline receivers remove revoked copies when they reconnect. Relay-imposed skills and independent native copies stay untouched.`,
+    confirmLabel: "Remove selected", destructive: true,
+  })) return;
+  if (request !== view.request || view.nodeId || view.bulkBusy) { toast("Resource view changed. Review the selection and try again."); return; }
+  view.bulkBusy = true;
+  renderList();
+  const removed = [], failures = [];
+  try {
+    // Each deletion rechecks relay ownership server-side. Continue past individual
+    // refusals, but never retry an uncertain or failed deletion automatically.
+    for (const skill of skills) {
+      try {
+        await api(`/api/resources/skills/${encodeURIComponent(skill.name)}`, { method: "DELETE" });
+        removed.push(skill.name);
+        view.selected.delete(skillKey(skill));
+      } catch (error) { failures.push(`${skill.name}: ${error.message}`); }
+    }
+    const warnings = [];
+    if (removed.length) {
+      try { await api("/api/settings/skills/reload", { method: "POST", body: JSON.stringify({}) }); }
+      catch (error) { warnings.push(`Reload failed: ${error.message}`); }
+    }
+    await Promise.all([loadInventory(), loadSkills(true)]).catch((error) => warnings.push(`Refresh failed: ${error.message}`));
+    setStatus(`Removed ${removed.length} skill${removed.length === 1 ? "" : "s"}.${failures.length ? ` ${failures.length} failed: ${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "; …" : ""}. Failed selections are kept for review.` : ""} Backups are kept on this node. Relay-imposed skills and independent native copies were not removed. Start a new conversation to forget previously read instructions.${warnings.length ? ` ${warnings.join(". ")}` : ""}`);
+  } finally { view.bulkBusy = false; renderList(); }
 }
 
 function selectedServers() {
@@ -869,7 +913,7 @@ async function bulkActivation(kind, enabled, choices) {
   view.bulkBusy = true;
   renderShareBar();
   try {
-    const result = await api("/api/resources/activation/bulk", { method: "PUT", body: JSON.stringify({ kind, enabled, items: choices.map(({ name, harness }) => ({ name, harness })), ...(view.scope !== "cluster" && projectId ? { projectId } : {}), ...(view.scope === "conversation" && conversationId ? { conversationId } : {}) }) });
+    const result = await api("/api/resources/activation/bulk", { method: "PUT", body: JSON.stringify({ ...nodeTarget(), kind, enabled, items: choices.map(({ name, harness }) => ({ name, harness })), ...(view.scope !== "cluster" && projectId ? { projectId } : {}), ...(view.scope === "conversation" && conversationId ? { conversationId } : {}) }) });
     await loadInventory();
     setStatus(`${result.changed} agent choice${result.changed === 1 ? "" : "s"} ${enabled ? "enabled" : "disabled"}. Start a new conversation to clear instructions already read.`);
   } catch (error) { toast(error.message); }
@@ -879,8 +923,9 @@ async function bulkActivation(kind, enabled, choices) {
 function renderShareBar() {
   const bar = elements.resourcesShareBar;
   bar.replaceChildren();
-  const local = localEntry()?.inventory;
-  bar.hidden = Boolean(view.nodeId) || !["skills", "mcp", "tools", "plugins"].includes(view.tab) || !local;
+  const entry = selectedEntry();
+  const local = entry?.inventory;
+  bar.hidden = !view.ready || !(entry?.node.local || entry?.node.manageable) || !["skills", "mcp", "tools", "plugins"].includes(view.tab) || !local;
   if (bar.hidden) return;
   const line = document.createElement("div");
   line.className = "resources-share-line";
@@ -896,23 +941,29 @@ function renderShareBar() {
   }
   const count = document.createElement("span");
   count.dataset.testid = "resources-selected-count";
-  if (view.tab === "skills" && view.sharing) {
+  if (view.tab === "skills" && view.sharing && !view.nodeId) {
     const chosen = selectedSkills();
     count.textContent = chosen.length ? `${chosen.length} skill${chosen.length === 1 ? "" : "s"} selected` : "Skills stay on this node until shared. Tick several to share at once.";
-    const shown = filteredSkills(local).filter(shareable);
+    const shown = filteredSkills(local).filter(selectableSkill);
     const all = button(`Select ${shown.length} shown`, "resources-select-all", () => { for (const skill of shown) view.selected.add(skillKey(skill)); renderList(); });
-    all.disabled = !shown.length;
+    all.title = "Select matching skills across every page. Relay-imposed skills cannot be selected.";
+    all.disabled = view.bulkBusy || !shown.length;
     const clear = button("Clear", "resources-select-clear", () => { view.selected.clear(); renderList(); });
-    clear.disabled = !chosen.length;
-    const open = button("Share…", "resources-share-open", () => void openShareDialog(chosen).catch((error) => toast(error.message)), "primary compact");
-    open.disabled = !chosen.length;
-    line.append(count, all, clear, open);
+    clear.disabled = view.bulkBusy || !chosen.length;
+    const shared = chosen.filter(shareable);
+    const open = button("Share…", "resources-share-open", () => void openShareDialog(shared).catch((error) => toast(error.message)), "primary compact");
+    open.disabled = view.bulkBusy || !shared.length;
+    const removableSkills = [...new Map(chosen.filter(removable).map((skill) => [skill.name, skill])).values()];
+    const remove = button(`Remove selected (${removableSkills.length})`, "resources-remove-selected", () => void removeSelectedSkills(removableSkills), "ghost compact danger");
+    remove.disabled = view.bulkBusy || !removableSkills.length;
+    remove.title = "Back up and remove selected managed copies. Relay-imposed skills and independent native copies stay untouched.";
+    line.append(count, all, clear, open, remove);
     if (!view.sharing.legacy.verified) line.append(emptyRow(view.sharing.legacy.error || "Legacy sync status not yet verified. Sharing verifies it before proceeding."));
-  } else if (view.tab === "mcp" && view.mcpAuth.flow) {
+  } else if (view.tab === "mcp" && view.mcpAuth.flow && !view.nodeId) {
     // A sign-in waiting for its browser owns the bar until it is done or cancelled.
     bar.append(mcpSignInLine());
     return;
-  } else if (view.tab === "mcp") {
+  } else if (view.tab === "mcp" && !view.nodeId) {
     const chosen = selectedServers();
     count.textContent = chosen.length ? `${chosen.length} server${chosen.length === 1 ? "" : "s"} selected` : "Tick a server that only one agent loads to let Claude and Kiro here load it too.";
     const share = button("Share with every agent here", "resources-share-mcp-button", () => void shareSelectedServers(), "primary compact");
@@ -923,7 +974,7 @@ function renderShareBar() {
     if (auth.error) check.title = auth.error;
     line.append(count, share, check);
   } else {
-    count.textContent = view.tab === "plugins" ? "Plugin activation on this node" : "Skill activation on this node";
+    count.textContent = `Activation on ${entry.node.name}${view.nodeId ? " (twin)" : ""}`;
     line.append(count);
   }
   const kind = view.tab === "skills" ? "skill" : view.tab === "mcp" ? "mcp" : "plugin";
@@ -1038,7 +1089,21 @@ function renderList() {
     list.append(skills ? skillRow(item, entry.node.local) : plugins ? pluginRow(item, entry.node.local)
       : tools ? toolRow(item) : serverRow(item, entry.node.local, entry.inventory));
   }
-  if (!items.length && !list.querySelector(".resources-row, .resources-node")) list.append(emptyRow(tools ? "Open a conversation to inspect its reported tools. Tools are not known before its agent starts." : `No ${noun} match.`));
+  if (!items.length && !list.querySelector(".resources-row")) {
+    const entry = selectedEntry();
+    if (view.loading) list.append(emptyRow("Loading selected node…"));
+    else if (entry?.inventory) {
+      list.append(emptyRow(tools ? "Open a conversation to inspect its reported tools. Tools are not known before its agent starts."
+        : `No ${noun} match on ${entry.node.name}.${!entry.node.local && !entry.node.manageable ? " Only explicitly shared resources are visible. This node is not a trusted twin." : " Try clearing filters or including project resources."}`));
+      if (!tools) list.append(button("Clear filters", "resources-clear-filters", () => {
+        elements.resourcesSearchInput.value = "";
+        if (view.scope !== "conversation") elements.resourcesHarnessSelect.value = "";
+        document.querySelector("#resourcesStateSelect").value = "";
+        document.querySelector("#resourcesSourceSelect").value = "";
+        view.page = 0; render();
+      }));
+    }
+  }
   renderPager(elements.resourcesListPager, items.length, view.page, pageSizes.list, (page) => { view.page = page; renderList(); });
   fitPage(list, "list", "page", renderList);
 }
@@ -1057,17 +1122,17 @@ function renderSourceOptions() {
 }
 
 function renderSummary() {
-  const local = localEntry();
-  elements.resourcesSkillsCount.textContent = local ? `(${countFor(local, "skills")})` : "";
-  elements.resourcesMcpCount.textContent = local ? `(${countFor(local, "mcp")})` : "";
-  document.querySelector("#resourcesPluginsCount").textContent = local ? `(${filteredPlugins(local.inventory).length})` : "";
+  const local = selectedEntry();
+  elements.resourcesSkillsCount.textContent = local?.inventory ? `(${countFor(local, "skills")})` : "";
+  elements.resourcesMcpCount.textContent = local?.inventory ? `(${countFor(local, "mcp")})` : "";
+  document.querySelector("#resourcesPluginsCount").textContent = local?.inventory ? `(${filteredPlugins(local.inventory).length})` : "";
   const project = state.projects?.find((item) => item.id === view.projectId);
-  const where = view.scope === "cluster" ? "Every node, without project skills" : `${project?.name ?? "Project"}${view.scope === "project" ? " on every node" : ""}`;
+  const where = view.scope === "cluster" ? "Node-wide resources, without project skills" : `${project?.name ?? "Project"}${view.scope === "conversation" ? " · This conversation" : " · Including project resources"}`;
   const who = view.scope === "conversation" && view.engine ? ` · ${harnessLabel(view.engine)} conversation` : "";
   const offline = view.nodes.filter((entry) => !entry.inventory).length;
   elements.resourcesSummary.textContent = view.tab === "paths" ? "Folders every agent on this node loads skills, prompts, rules and plugins from."
     : view.tab === "git" ? "This node’s Git installs. Item labels show which agents may load each one in new runs, not what open conversations have loaded."
-    : `${where}${who}${offline ? ` · ${offline} node${offline === 1 ? "" : "s"} unavailable` : ""}. Tab counts are for this node.`;
+    : `${local?.node.name || "Selected node"}${local?.node.manageable ? " · Twin management" : local?.node.local ? " · This node" : " · Shared resources only"} · ${where}${who}${offline ? ` · ${offline} node${offline === 1 ? "" : "s"} unavailable` : ""}. Counts follow this node and the active filters.`;
 }
 
 function render() {
@@ -1085,9 +1150,10 @@ function render() {
   // Source and sort apply to skills only; the source filter exists only where a relay delivers skills.
   keepSpace(document.querySelector("#resourcesSortSelect"), view.tab === "skills");
   keepSpace(document.querySelector("#resourcesSourceSelect"), view.tab === "skills");
-  if (view.relayPolicies.every((policy) => !policy.relayNodeId)) document.querySelector("#resourcesSourceSelect").hidden = true;
+  if (view.nodeId || view.relayPolicies.every((policy) => !policy.relayNodeId)) document.querySelector("#resourcesSourceSelect").hidden = true;
   keepSpace(document.querySelector("#resourcesControlsHint"), stateTab);
   keepSpace(document.querySelector(".resources-auto-activate"), stateTab);
+  document.querySelector("#resourcesAutoActivate").disabled = !view.ready || view.activationSaving === view.request || !(selectedEntry()?.node.local || selectedEntry()?.node.manageable);
   elements.resourcesList.hidden = !listing;
   if (!listing) { elements.resourcesListPager.hidden = true; elements.resourcesShareBar.hidden = true; }
   elements.resourcesScopeSelect.parentElement.hidden = view.tab === "paths";
@@ -1104,18 +1170,25 @@ function render() {
 async function loadInventory() {
   const request = ++view.request;
   view.loading = true;
+  view.ready = false;
+  view.activation = null;
+  document.querySelector("#resourcesAutoActivate").indeterminate = true;
   render();
   const params = new URLSearchParams();
   if (view.scope !== "cluster" && view.projectId) params.set("projectId", view.projectId);
   if (view.scope === "conversation" && view.conversationId) params.set("conversationId", view.conversationId);
-  if (view.scope !== "conversation") params.set("cluster", "1");
+  if (view.scope !== "conversation" || view.nodeId) params.set("cluster", "1");
+  const target = selectedEntry();
+  if (view.nodeId && target?.node.manageable) params.set("nodeId", view.nodeId);
   try {
-    const [body, sharing, activation, relayPolicies] = await Promise.all([api(`/api/resources/inventory?${params}`), api("/api/resources/skills/sharing"), api("/api/resources/activation"), api("/api/relays/skill-policies")]);
+    const [body, sharing, activation, relayPolicies] = await Promise.all([api(`/api/resources/inventory?${params}`), api("/api/resources/skills/sharing"), api(`/api/resources/activation${view.nodeId && target?.node.manageable ? `?nodeId=${encodeURIComponent(view.nodeId)}` : ""}`), api("/api/relays/skill-policies")]);
     if (request !== view.request) return;
     view.nodes = body.nodes;
     renderNodeOptions();
     view.sharing = sharing;
     view.activation = activation;
+    view.ready = true;
+    document.querySelector("#resourcesAutoActivate").indeterminate = false;
     view.relayPolicies = relayPolicies.subscriptions ?? [];
     document.querySelector("#resourcesAutoActivate").checked = activation.autoActivateSharedSkills;
     renderSourceOptions();
@@ -1679,20 +1752,33 @@ elements.resourcesScopeSelect.addEventListener("change", () => {
   view.page = 0;
   void loadInventory();
 });
-document.querySelector("#resourcesNodeSelect").addEventListener("change", (event) => { view.nodeId = event.currentTarget.value; view.page = 0; render(); });
+document.querySelector("#resourcesNodeSelect").addEventListener("change", (event) => {
+  view.nodeId = event.currentTarget.value; view.page = 0;
+  view.selected.clear(); view.selectedServers.clear();
+  document.querySelector("#resourcesSourceSelect").value = "";
+  setStatus("");
+  void loadInventory();
+});
 elements.resourcesHarnessSelect.addEventListener("change", () => { view.page = 0; render(); });
 document.querySelector("#resourcesStateSelect").addEventListener("change", () => { view.page = 0; render(); });
 document.querySelector("#resourcesSourceSelect").addEventListener("change", () => { view.page = 0; render(); });
 document.querySelector("#resourcesSortSelect").addEventListener("change", () => { view.page = 0; render(); });
 document.querySelector("#resourcesAutoActivate").addEventListener("change", async (event) => {
   const input = event.currentTarget;
-  input.disabled = true;
+  const request = view.request, nodeId = view.nodeId, enabled = input.checked;
+  view.activationSaving = request;
+  render();
   try {
-    view.activation = await api("/api/resources/activation", { method: "PUT", body: JSON.stringify({ autoActivateSharedSkills: input.checked }) });
+    await api("/api/resources/activation", { method: "PUT", body: JSON.stringify({ ...nodeTarget(), autoActivateSharedSkills: enabled }) });
+    if (request !== view.request) return;
     await loadInventory();
-    setStatus(`Shared resources ${input.checked ? "automatically activate" : "arrive disabled"} unless individually overridden. Start a new conversation to clear instructions already read.`);
-  } catch (error) { input.checked = !input.checked; toast(error.message); }
-  finally { input.disabled = false; }
+    if (view.ready && nodeId === view.nodeId) setStatus(`Shared resources ${enabled ? "automatically activate" : "arrive disabled"} unless individually overridden. Start a new conversation to clear instructions already read.`);
+  } catch (error) {
+    if (request === view.request) { input.checked = !enabled; toast(error.message); }
+  } finally {
+    if (view.activationSaving === request) view.activationSaving = null;
+    render();
+  }
 });
 elements.resourcesSearchInput.addEventListener("input", () => { view.page = 0; git.itemPage = 0; render(); });
 // The panel sits inside the Settings form; Enter here must not save settings.

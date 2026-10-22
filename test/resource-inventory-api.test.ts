@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
+import { signedNodeRequest } from "./signed-node-request.js";
 
 interface NodeInventory { node: { id: string; local: boolean; online: boolean }; inventory?: { skills: Array<{ name: string; path: string; harnesses: string[] }>; mcpServers: Array<{ name: string; file: string }>; plugins: Array<{ name: string; source: string; activation?: Record<string, { enabled: boolean }> }> }; error?: string }
 
@@ -19,7 +21,7 @@ test("the cluster inventory asks each paired node over the signed runtime route"
     await mkdir(path.join(shared, "mcp"), { recursive: true });
     await writeFile(path.join(shared, "mcp/config.json"), JSON.stringify({ mcpServers: { tracker: { command: "tracker-mcp", env: { TOKEN: "never-leaves" } } } }));
     for (const node of environment.nodes) servers.push(await startDevNode(environment, node));
-    await pairTwinNodes(environment);
+    const relationshipId = await pairTwinNodes(environment);
     const [a, b] = environment.nodes;
     const session = await signIn(environment, a);
     const project = a.projects[0];
@@ -38,6 +40,24 @@ test("the cluster inventory asks each paired node over the signed runtime route"
     assert.equal(peer.inventory.mcpServers.find((server) => server.name === "tracker"), undefined, "ungranted MCP names stay private");
     assert.doesNotMatch(JSON.stringify(cluster.body), /never-leaves/);
     assert.ok(cluster.body.nodes.find((entry) => entry.node.local)?.inventory?.skills.find((item) => item.name === "cluster-skill")?.path);
+
+    const managed = await api<{ nodes: NodeInventory[] }>(a, session, "GET", `/resources/inventory?cluster=1&nodeId=${b.nodeId}`);
+    assert.equal(managed.status, 200, "selecting a twin opens its management inventory");
+    const twinSkill = managed.body.nodes.find((entry) => entry.node.id === b.nodeId)?.inventory?.skills.find((item) => item.name === "cluster-skill");
+    assert.ok(twinSkill, "twin management includes unshared skills without changing ordinary peer disclosure");
+    const remoteToggle = await api<{ decision: { preference: boolean } }>(a, session, "PUT", "/resources/activation/item", { nodeId: b.nodeId, kind: "skill", name: "cluster-skill", harness: "pi", enabled: false });
+    assert.equal(remoteToggle.status, 200, JSON.stringify(remoteToggle.body));
+    assert.equal(remoteToggle.body.decision.preference, false);
+    const bSession = await signIn(environment, b);
+    const twinLocal = await api<{ nodes: Array<{ inventory: { skills: Array<{ name: string; activation: { pi: { preference: boolean | null } } }> } }> }>(b, bSession, "GET", "/resources/inventory");
+    assert.equal(twinLocal.body.nodes[0].inventory.skills.find((item) => item.name === "cluster-skill")?.activation.pi.preference, false, "choice is saved on selected twin");
+    const ownLocal = await api<{ nodes: Array<{ inventory: { skills: Array<{ name: string; activation: { pi: { preference: boolean | null } } }> } }> }>(a, session, "GET", "/resources/inventory");
+    assert.equal(ownLocal.body.nodes[0].inventory.skills.find((item) => item.name === "cluster-skill")?.activation.pi.preference, null, "local choice is unchanged");
+    const bulk = await api(a, session, "PUT", "/resources/activation/bulk", { nodeId: b.nodeId, kind: "skill", enabled: true, items: [{ name: "cluster-skill", harness: "pi" }] });
+    assert.equal(bulk.status, 200, JSON.stringify(bulk.body));
+    const auto = await api(a, session, "PUT", "/resources/activation", { nodeId: b.nodeId, autoActivateSharedSkills: false });
+    assert.equal(auto.status, 200, JSON.stringify(auto.body));
+    assert.equal((await api(a, session, "PUT", "/resources/activation/item", { nodeId: "missing", kind: "skill", name: "cluster-skill", harness: "pi", enabled: false })).status, 403);
 
     const nativeSkill = path.join(project.path, ".pi/skills/project-controls/SKILL.md");
     await mkdir(path.dirname(nativeSkill), { recursive: true });
@@ -121,6 +141,28 @@ test("the cluster inventory asks each paired node over the signed runtime route"
     assert.equal((await api(a, session, "GET", "/resources/inventory?projectId=missing")).status, 404);
     assert.equal((await api(a, session, "GET", "/resources/skills/scan?path=relative")).status, 400);
     assert.equal((await api(a, session, "GET", `/resources/skills/scan?path=${encodeURIComponent(path.join(root, "missing"))}`)).status, 400);
+    assert.equal((await fetch(`${b.url}/api/cluster/resources/manage-inventory`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status, 401, "management inventory needs signed machine auth");
+    // Keep the nodes connected as ordinary cluster members after revoking the twin.
+    // This exercises the trusted-twin gate rather than merely rejecting an unknown peer.
+    const membership = await api<{ snapshot: { body: { clusterId: string } } }>(a, session, "POST", "/clusters", { name: "Non-twin management boundary" });
+    assert.equal(membership.status, 201);
+    const invitation = await api<{ link: string }>(a, session, "POST", `/clusters/${membership.body.snapshot.body.clusterId}/invitations`, { expectedEpoch: 1 });
+    assert.equal(invitation.status, 201);
+    assert.ok([200, 201].includes((await api(b, bSession, "POST", "/clusters/join", { link: invitation.body.link, requestId: randomUUID() })).status));
+    assert.equal((await api(b, bSession, "DELETE", `/twins/${relationshipId}`)).status, 200);
+    const ordinary = await signedNodeRequest(environment, a, b, "POST", "/api/cluster/v2/runtime/resources/inventory", {});
+    assert.equal(ordinary.status, 200, "ordinary signed inventory remains available to the connected non-twin");
+    assert.equal((await ordinary.json() as { skills: Array<{ name: string }> }).skills.some((skill) => skill.name === "cluster-skill"), false, "ordinary peer cannot see unshared skills");
+    for (const [method, route, payload] of [
+      ["POST", "manage-inventory", {}],
+      ["GET", "activation", undefined],
+      ["PUT", "activation", { autoActivateSharedSkills: true }],
+      ["PUT", "activation/item", { kind: "skill", name: "cluster-skill", harness: "pi", enabled: false }],
+      ["PUT", "activation/bulk", { kind: "skill", enabled: false, items: [{ name: "cluster-skill", harness: "pi" }] }],
+    ] as const) {
+      const rejected = await signedNodeRequest(environment, a, b, method, `/api/cluster/v2/runtime/resources/${route}`, payload);
+      assert.equal(rejected.status, 403, `${route} refuses a formerly trusted peer`);
+    }
   } finally {
     for (const server of servers) await stopDevNode(server);
     await rm(root, { recursive: true, force: true });

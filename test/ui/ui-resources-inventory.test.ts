@@ -69,7 +69,7 @@ test("Settings → Resources shows a conversation's skills and MCP servers, keep
     assert.doesNotMatch(await dialog.innerText(), /hidden-token/);
 
     await page.getByTestId("resources-scope-select").selectOption("cluster");
-    await page.getByTestId("resources-summary").getByText(/Every node/).waitFor();
+    await page.getByTestId("resources-summary").getByText(/Node-wide resources/).waitFor();
     assert.equal(await page.getByTestId("resources-harness-select").isDisabled(), false);
 
     await page.getByTestId("resources-tab-skills").click();

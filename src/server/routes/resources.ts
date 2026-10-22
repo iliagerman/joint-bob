@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { isTrustedTwin } from "../../cluster-sharing-policy.js";
 import type { NextFunction, Response } from "express";
 import { actingAccount } from "../../account-context.js";
 import { multiUserEnabled, runInRuntime, serviceRuntime } from "../../account-runtime.js";
@@ -45,8 +46,30 @@ function activationError(inventory: ResourceInventory, kind: "skill" | "plugin" 
       : ["shared", "project", "plugin"].includes((item as { source?: string }).source ?? ""))) return null;
   return { status: 404, message: "Resource is not installed for that agent" };
 }
-app.get("/api/resources/activation", requireFeature(Feature.SETTINGS), (_request, response) => response.json({ autoActivateSharedSkills: autoActivateSharedSkills() }));
-app.put("/api/resources/activation", requireFeature(Feature.SETTINGS), async (request, response, next) => {
+// Only an explicitly selected trusted twin can be administered. Ordinary peer
+// inventory stays grant-filtered, and arbitrary URLs or transitive peers are rejected.
+async function managementPeer(nodeId: string) {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  const peer = (await listRuntimePeers()).find((peer) => peer.id === nodeId);
+  return peer && isTrustedTwin(db, local.id, nodeId) ? peer : undefined;
+}
+app.use("/api/resources/activation", requireFeature(Feature.SETTINGS), async (request, response, next) => {
+  try {
+    const nodeId = request.method === "GET" ? request.query.nodeId : request.body?.nodeId;
+    if (nodeId === undefined) { next(); return; }
+    const peer = typeof nodeId === "string" ? await managementPeer(nodeId) : undefined;
+    if (!peer) { sendError(response, 403, "Only trusted twins can be managed remotely"); return; }
+    if (!["", "/", "/item", "/bulk"].includes(request.path)) { sendError(response, 404, "Unknown activation operation"); return; }
+    const { nodeId: _nodeId, ...body } = request.body ?? {};
+    const reply = await runtimeFetch(`${peer.url}/api/cluster/resources/activation${request.path === "/" ? "" : request.path}`, {
+      method: request.method, headers: { "Content-Type": "application/json" },
+      ...(request.method !== "GET" ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(10_000),
+    });
+    response.status(reply.status).json(await reply.json());
+  } catch (error) { next(error); }
+});
+app.get(["/api/resources/activation", "/api/cluster/resources/activation"], requireFeature(Feature.SETTINGS), (_request, response) => response.json({ autoActivateSharedSkills: autoActivateSharedSkills() }));
+app.put(["/api/resources/activation", "/api/cluster/resources/activation"], requireFeature(Feature.SETTINGS), async (request, response, next) => {
   try {
     const body = z.object({ autoActivateSharedSkills: z.boolean() }).strict().parse(request.body);
     save(settingsDatabase(), "autoActivateSharedSkills", String(body.autoActivateSharedSkills));
@@ -54,7 +77,7 @@ app.put("/api/resources/activation", requireFeature(Feature.SETTINGS), async (re
     response.json(body);
   } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation setting"); else next(error); }
 });
-app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), async (request, response, next) => {
+app.put(["/api/resources/activation/item", "/api/cluster/resources/activation/item"], requireFeature(Feature.SETTINGS), async (request, response, next) => {
   try {
     const body = activationSchema.parse(request.body);
     if (body.projectId && !await getProject(body.projectId)) { sendError(response, 404, "Project not found"); return; }
@@ -76,7 +99,7 @@ app.put("/api/resources/activation/item", requireFeature(Feature.SETTINGS), asyn
   } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid activation choice"); else next(error); }
 });
 
-app.put("/api/resources/activation/bulk", requireFeature(Feature.SETTINGS), async (request, response, next) => {
+app.put(["/api/resources/activation/bulk", "/api/cluster/resources/activation/bulk"], requireFeature(Feature.SETTINGS), async (request, response, next) => {
   try {
     const body = bulkActivationSchema.parse(request.body);
     if (body.projectId && !await getProject(body.projectId)) { sendError(response, 404, "Project not found"); return; }
@@ -101,12 +124,12 @@ app.put("/api/resources/activation/bulk", requireFeature(Feature.SETTINGS), asyn
 });
 
 interface NodeInventory {
-  node: { id: string; name: string; local: boolean; online: boolean };
+  node: { id: string; name: string; local: boolean; online: boolean; manageable?: boolean };
   inventory?: ResourceInventory;
   error?: string;
 }
 
-const inventoryQuerySchema = z.object({ projectId: z.string().min(1).max(200).optional(), conversationId: z.string().min(1).max(300).optional(), cluster: z.enum(["0", "1"]).optional() }).strict();
+const inventoryQuerySchema = z.object({ projectId: z.string().min(1).max(200).optional(), conversationId: z.string().min(1).max(300).optional(), cluster: z.enum(["0", "1"]).optional(), nodeId: z.string().min(1).max(200).optional() }).strict();
 const peerInventorySchema = z.object({ projectId: z.string().min(1).max(200).optional() }).strict();
 const scanQuerySchema = z.object({ path: z.string().min(1).max(4096) }).strict();
 const shareMcpSchema = z.object({ file: z.string().min(1).max(4096), names: z.array(z.string().min(1).max(200)).min(1).max(100), projectId: z.string().min(1).max(200).optional() }).strict();
@@ -121,17 +144,27 @@ async function localInventory(projectId?: string, conversationId?: string): Prom
   return resourceInventory(project ? { projectPath: project.path, projectId: project.id, conversationId } : {});
 }
 
-app.get("/api/resources/inventory", async (request, response, next) => {
+app.get("/api/resources/inventory", (request, response, next) => {
+  if (request.query.nodeId !== undefined) requireFeature(Feature.SETTINGS)(request, response, next);
+  else next();
+}, async (request, response, next) => {
   try {
     const query = inventoryQuerySchema.parse(request.query);
     if (query.projectId && !await getProject(query.projectId)) { sendError(response, 404, "Project not found"); return; }
     const local = await getClusterNode();
+    const db = await clusterV2Database();
+    if (query.nodeId && !await managementPeer(query.nodeId)) { sendError(response, 403, "Only trusted twins can be managed remotely"); return; }
     const nodes: NodeInventory[] = [{ node: { id: local.id, name: local.name, local: true, online: true }, inventory: await localInventory(query.projectId, query.conversationId) }];
     if (query.cluster === "1") {
       const peers = await listRuntimePeers(query.projectId);
       nodes.push(...await Promise.all(peers.map(async (peer): Promise<NodeInventory> => {
-        const node = { id: peer.id, name: peer.name, local: false, online: false };
+        const node = { id: peer.id, name: peer.name, local: false, online: false, manageable: isTrustedTwin(db, local.id, peer.id) };
         try {
+          if (query.nodeId === peer.id) {
+            const reply = await runtimeFetch(`${peer.url}/api/cluster/resources/manage-inventory`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: query.projectId, conversationId: query.conversationId }), signal: AbortSignal.timeout(10_000) });
+            if (!reply.ok) throw new Error(`Twin returned ${reply.status}`);
+            return { node: { ...node, online: true }, inventory: await reply.json() as ResourceInventory };
+          }
           const remote = await peerSnapshot(`resources:${query.projectId ?? ""}`, peer.id, async () => {
             const reply = await runtimeFetch(`${peer.url}/api/cluster/resources/inventory`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(query.projectId ? { projectId: query.projectId } : {}), signal: AbortSignal.timeout(4_000) });
             if (!reply.ok) throw new Error(`Peer returned ${reply.status}`);
@@ -148,6 +181,14 @@ app.get("/api/resources/inventory", async (request, response, next) => {
     if (error instanceof z.ZodError) { sendError(response, 400, "Invalid inventory query"); return; }
     next(error);
   }
+});
+
+app.post("/api/cluster/resources/manage-inventory", async (request, response, next) => {
+  try {
+    const body = activationSchema.pick({ projectId: true, conversationId: true }).parse(request.body ?? {});
+    if (body.projectId && !await getProject(body.projectId)) { sendError(response, 404, "Project not found"); return; }
+    response.json(await localInventory(body.projectId, body.conversationId));
+  } catch (error) { if (error instanceof z.ZodError) sendError(response, 400, "Invalid management scope"); else next(error); }
 });
 
 app.post(["/api/cluster/resources/inventory", "/api/cluster/v2/runtime/resources/inventory"], async (request, response, next) => {

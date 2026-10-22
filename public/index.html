@@ -1460,8 +1460,8 @@
             <select id="resourcesNodeSelect" aria-label="Node" data-testid="resources-node-select"><option value="">This node</option></select>
             <select id="resourcesScopeSelect" aria-label="Show resources for" data-testid="resources-scope-select">
               <option value="conversation">This conversation</option>
-              <option value="project">This project, every node</option>
-              <option value="cluster">Every node</option>
+              <option value="project">Include this project's resources</option>
+              <option value="cluster">Node-wide resources only</option>
             </select>
             <select id="resourcesHarnessSelect" aria-label="Agent" data-testid="resources-harness-select"></select>
             <select id="resourcesStateSelect" aria-label="Resource state" data-testid="resources-state-select">
@@ -1484,7 +1484,7 @@
             <button type="button" role="tab" data-resources-tab="git" aria-selected="false" data-testid="resources-tab-git">Git repos <span id="resourcesGitCount"></span></button>
             <button type="button" role="tab" data-resources-tab="paths" aria-selected="false" data-testid="resources-tab-paths">Load paths</button>
           </div>
-          <label class="checkbox-row resources-auto-activate"><input id="resourcesAutoActivate" type="checkbox" data-testid="resources-auto-activate" checked /> Auto-activate received skills, MCP servers and plugins on this node</label>
+          <label class="checkbox-row resources-auto-activate"><input id="resourcesAutoActivate" type="checkbox" data-testid="resources-auto-activate" checked /> Auto-activate received skills, MCP servers and plugins on the selected node</label>
           <div class="resources-share-bar" id="resourcesShareBar" data-testid="resources-share-bar" hidden></div>
           <div class="resources-list resources-page" id="resourcesList" role="tabpanel" data-testid="resources-list"></div>
           <div class="resources-pager" id="resourcesListPager" data-testid="resources-list-pager" hidden></div>

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a node choice to Settings → Resources for changing a trusted twin's skill and plugin activation, and removing several selected skills at once while keeping their backups.
+
 ## 2.137.0 — 2026-10-22
 
 - Added a live status while auto respond decides an answer, naming the check it is running; it stays visible after a reconnect, and Stop now cancels the decision even when pressed before the check starts.
