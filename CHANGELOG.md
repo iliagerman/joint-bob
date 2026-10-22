@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.137.0 — 2026-10-22
 
-- Added a live status while auto respond decides an answer, naming the check it is running, and Stop now ends that decision.
+- Added a live status while auto respond decides an answer, naming the check it is running; it stays visible after a reconnect, and Stop now cancels the decision even when pressed before the check starts.
+- Changed the Activity panel on phones to cover the conversation and scroll as one page instead of a narrow strip with nested scrolling.
 
 ## 2.136.1 — 2026-10-22
 
