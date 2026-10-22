@@ -71,7 +71,7 @@ test("runClaudePrompt falls back to stderr when the CLI reports no result", asyn
 
     assert.equal(result.ok, false);
     assert.equal(result.sawOutput, true);
-    assert.equal(result.error, "transport closed unexpectedly");
+    assert.equal(result.error, "transport closed unexpectedly (Claude exited with code 3)");
   } finally {
     if (previousDataDir === undefined) delete process.env.JOINT_BOB_DATA_DIR;
     else process.env.JOINT_BOB_DATA_DIR = previousDataDir;
@@ -104,11 +104,66 @@ test("runClaudePrompt survives a CLI that exits before reading the prompt", asyn
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(result.ok, false);
-    assert.equal(result.error, "claude: unknown option");
+    assert.equal(result.error, "claude: unknown option (Claude exited with code 2)");
     assert.deepEqual(uncaught, [], "the broken pipe is not an uncaught error");
   } finally {
     process.off("uncaughtException", onUncaught);
     if (previousDataDir === undefined) delete process.env.JOINT_BOB_DATA_DIR;
     else process.env.JOINT_BOB_DATA_DIR = previousDataDir;
   }
+});
+
+async function runFake(label: string, script: string[]) {
+  const root = await mkdtemp(path.join(os.tmpdir(), `joint-bob-claude-${label}-`));
+  const previousDataDir = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  try {
+    const fakeClaude = path.join(root, "claude-fake");
+    await writeFile(fakeClaude, ["#!/bin/sh", "cat >/dev/null", ...script, ""].join("\n"), "utf8");
+    await chmod(fakeClaude, 0o755);
+    const settings = await import(`../src/settings.ts?claude-${label}=${Date.now()}-${Math.random()}`);
+    settings.updateSettings({
+      projects: { homePath: path.join(root, "home") },
+      claude: { executable: fakeClaude, configPath: path.join(root, "claude-config"), sessionPath: path.join(root, "claude-projects") },
+      syncthing: { endpoint: "" },
+    });
+    const { runClaudePrompt } = await import(`../src/claude-service.ts?claude-${label}=${Date.now()}-${Math.random()}`);
+    return await runClaudePrompt({ cwd: root, projectId: `${label}-project`, prompt: "hello", onEvent: () => {} }).done;
+  } finally {
+    if (previousDataDir === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previousDataDir;
+  }
+}
+
+/** A CLI that dies silently mid-tool still says how it ended and what it was running, not "failed after output". */
+test("runClaudePrompt names the exit and the unfinished tool when the CLI dies silently", async () => {
+  const result = await runFake("silent", [
+    `echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the tests."},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"npm test"}}]}}'`,
+    "exit 1",
+  ]);
+  assert.equal(result.ok, false);
+  assert.equal(result.sawOutput, true);
+  assert.equal(result.error, "Claude exited with code 1 while running Bash; it wrote nothing to stderr");
+});
+
+/** A finished tool is not blamed, and a kill by signal says so. */
+test("runClaudePrompt reports a CLI killed by a signal", async () => {
+  const result = await runFake("signal", [
+    `echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}'`,
+    `echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}'`,
+    `echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Read it."}]}}'`,
+    "kill -KILL $$",
+  ]);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "Claude was killed (SIGKILL), often because the machine ran out of memory; it wrote nothing to stderr");
+});
+
+/** An error result without text still carries its subtype. */
+test("runClaudePrompt keeps the result subtype when the error has no text", async () => {
+  const result = await runFake("subtype", [
+    `echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Working."}]}}'`,
+    `echo '{"type":"result","subtype":"error_max_turns","is_error":true}'`,
+    "exit 1",
+  ]);
+  assert.equal(result.error, "Claude run failed (error_max_turns)");
 });

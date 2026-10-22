@@ -720,7 +720,7 @@ async function models(connection: HarnessChatConnection): Promise<void> {
 
 async function cancelCurrentAndResumeQueue(connection: HarnessChatConnection): Promise<void> {
   const draining = drains.get(queueKey(connection));
-  await connection.shared.session.cancel();
+  await connection.shared.session.cancel("You stopped the turn");
   sendHarnessStatus(connection.shared);
   const resume = () => drainHarnessPromptQueue(connection);
   void (draining ?? Promise.resolve()).then(resume, resume).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
@@ -832,7 +832,7 @@ async function queueCommand(connection: HarnessChatConnection, message: ReturnTy
       // starting during preflight). That is benign here: the paused drain plus
       // re-drain still starts the forced prompt, so a cancel that reports no
       // running turn must not surface an error or abort the force start.
-      try { await connection.shared.session.cancel(); }
+      try { await connection.shared.session.cancel("Stopped to run the queued prompt you started now"); }
       catch (error) { if (!/not running/i.test(chatErrorMessage(error))) throw error; }
       if (draining) try { await draining; }
       catch (error) { publish(connection, { type: "error", error: chatErrorMessage(error) }); }

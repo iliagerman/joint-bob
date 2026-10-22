@@ -22,7 +22,8 @@ export interface HarnessSession {
   tools(): HarnessTool[]; setTools(names: string[]): Promise<void>;
   compact(instructions?: string, beforeStart?: () => Promise<void>): Promise<void>; rename(name: string): Promise<void>;
   reload(): Promise<void>; setSafeguards(enabled: boolean): Promise<void>;
-  cancel(): Promise<void>; stopForUpdate(): Promise<void>; dispose(): void;
+  /** `reason` says why Joint Bob stopped the turn; a harness that reports it makes it the turn's failure. */
+  cancel(reason?: string): Promise<void>; stopForUpdate(): Promise<void>; dispose(): void;
 }
 /** A selectable model and the reasoning levels it accepts. */
 export type HarnessModel = ModelSummary & { thinkingLevels: string[] };

@@ -103,7 +103,7 @@ export async function enforceRunningBudgets(): Promise<void> {
       if (!check.exceeded || !check.message) return;
       stopped.add(key);
       recordTurnFailure(shared.engine, shared.session.id, `Stopped: ${check.message}`);
-      await shared.session.cancel();
+      await shared.session.cancel(`Stopped: ${check.message}`);
       console.warn(`Stopped ${shared.engine} conversation ${shared.session.id}: budget used up`);
     } catch (error) { console.warn(`Budget check for ${shared.engine} conversation ${shared.session.id} failed`, error); }
   }));

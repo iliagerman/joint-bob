@@ -163,7 +163,7 @@ export async function reapInactiveHarnessSessions(now = Date.now(), liveShellCal
     shared.watchdogStopping = true;
     try {
       shared.compaction?.abandon(new Error(`Compaction stopped after ${Math.round(timeout / 60_000)} minutes without finishing`));
-      await shared.session.cancel();
+      await shared.session.cancel(`Joint Bob stopped the turn after ${Math.round(timeout / 60_000)} minutes with no input or output`);
       shared.watchdogStoppedAt = now;
       console.warn(`Stopped inactive ${shared.engine} conversation ${shared.session.id}: no input or output since ${new Date(shared.lastActivityAt).toISOString()}`);
     } catch (error) {

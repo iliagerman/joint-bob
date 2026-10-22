@@ -611,6 +611,19 @@ export function spawnClaudeControl(cwd: string, projectId?: string): ChildProces
   });
 }
 
+/**
+ * Why the CLI ended without saying so itself. A turn that dies mid-answer otherwise reads only
+ * "failed after output"; the exit, Claude's stderr and the tool it was in are what point at a cause.
+ */
+export function claudeExitReason(code: number | null, signal: NodeJS.Signals | null, stderr: string, openTools: string[]): string {
+  const exit = signal === "SIGKILL" ? "Claude was killed (SIGKILL), often because the machine ran out of memory"
+    : signal ? `Claude was ended by ${signal}`
+    : `Claude exited with code ${code ?? "unknown"}`;
+  const during = openTools.length ? ` while running ${openTools.join(", ")}` : "";
+  const detail = stderr.trim().slice(0, 2000);
+  return detail ? `${detail} (${exit}${during})` : `${exit}${during}; it wrote nothing to stderr`;
+}
+
 export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const args = [
     "-p",
@@ -654,6 +667,8 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     assistantText: "",
     error: null as string | null,
     tools: null as string[] | null,
+    // Tool calls started and not yet answered, so a run that dies says what it was doing.
+    openTools: new Map<string, string>(),
     // Text already streamed via deltas for the in-flight assistant message, so
     // the completed-message event does not repeat it.
     streamedForCurrentMessage: false,
@@ -692,6 +707,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
       }
       if (block.type === "tool_use") {
         const toolName = String(block.name ?? "tool");
+        state.openTools.set(String(block.id ?? "tool"), toolName);
         options.onEvent({
           type: "toolStart",
           toolCallId: String(block.id ?? "tool"),
@@ -713,6 +729,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     for (const part of content) {
       const block = asRecord(part);
       if (block.type !== "tool_result") continue;
+      state.openTools.delete(String(block.tool_use_id ?? "tool"));
       options.onEvent({
         type: "toolEnd",
         toolCallId: String(block.tool_use_id ?? "tool"),
@@ -761,7 +778,8 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     }
     if (record.type === "result") {
       if (record.is_error) {
-        state.error = typeof record.result === "string" && record.result ? record.result : "Claude run failed";
+        state.error = typeof record.result === "string" && record.result ? record.result
+          : typeof record.subtype === "string" && record.subtype ? `Claude run failed (${record.subtype})` : "Claude run failed";
         if (!state.sawOutput) options.onEvent({ type: "assistantError", error: state.error });
       }
     }
@@ -784,12 +802,12 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
       options.onEvent({ type: "assistantError", error: `Could not start Claude: ${error.message}` });
       resolve({ ok: false, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText, tools: state.tools, error: `Could not start Claude: ${error.message}` });
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (state.buffer) handleLine(state.buffer);
       if (state.sessionId && failUnobservedConversationWork("claude", state.sessionId, "Claude process ended before reporting task completion")) {
         options.onEvent({ type: "conversationWorkChanged" });
       }
-      if (code !== 0 && !state.error && state.stderr.trim()) state.error = state.stderr.trim().slice(0, 2000);
+      if (code !== 0 && !state.error) state.error = claudeExitReason(code, signal, state.stderr, [...state.openTools.values()]);
       if (code !== 0 && !state.sawOutput && state.stderr.trim()) {
         options.onEvent({ type: "assistantError", error: state.stderr.trim().slice(0, 2000) });
       }

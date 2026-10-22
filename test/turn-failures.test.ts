@@ -16,6 +16,15 @@ test("turn failures persist per conversation and read back oldest first", () => 
   assert.deepEqual(listTurnFailures("claude", sessionId), []);
 });
 
+/** The budget guard records its stop and the stopped turn then fails with the same reason. */
+test("the same failure reported twice within a minute is recorded once", () => {
+  const sessionId = `failure-dup-${Date.now()}`;
+  recordTurnFailure("claude", sessionId, "Stopped: budget used up", "2026-09-19T13:36:33.000Z");
+  recordTurnFailure("claude", sessionId, "Stopped: budget used up", "2026-09-19T13:36:34.000Z");
+  recordTurnFailure("claude", sessionId, "Stopped: budget used up", "2026-09-19T13:50:00.000Z");
+  assert.deepEqual(listTurnFailures("claude", sessionId).map(({ failedAt }) => failedAt), ["2026-09-19T13:36:33.000Z", "2026-09-19T13:50:00.000Z"]);
+});
+
 test("failures interleave into the transcript by time and render as error messages", () => {
   const messages: ChatMessage[] = [
     { id: "1", role: "user", text: "hello", timestamp: "2026-09-19T13:30:00.000Z" },

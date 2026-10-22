@@ -59,6 +59,8 @@ class ClaudeSession implements HarnessSession {
   private config: HarnessModelSettings;
   private child: ChildProcessWithoutNullStreams | undefined;
   private running = false;
+  /** Why Joint Bob stopped the running process, which is the turn's failure reason rather than how the process died. */
+  private stopReason: string | undefined;
   private readonly listeners = new Set<Listener>();
   private enabledTools: string[] | undefined;
   private availableTools: string[] = [];
@@ -203,6 +205,7 @@ class ClaudeSession implements HarnessSession {
   async prompt(input: HarnessPrompt): Promise<void> {
     if (this.running) throw new Error("Claude session is busy");
     this.running = true;
+    this.stopReason = undefined;
     const state = { started: false };
     this.emit({ type: "agent_start" });
     try {
@@ -254,7 +257,7 @@ class ClaudeSession implements HarnessSession {
       stopClaudeSession(this.id, this.nativeFile ?? claudeSessionFilePath(this.options.cwd, this.id));
     }
     this.pushAssistant(turn);
-    if (!result.ok) throw new Error(result.error ?? (result.sawOutput ? "Claude prompt failed after output" : "Claude prompt failed before output"));
+    if (!result.ok) throw new Error(this.stopReason ?? result.error ?? (result.sawOutput ? "Claude prompt failed after output" : "Claude prompt failed before output"));
     this.markStarted(input, state);
     if (result.tools !== null) this.availableTools = [...result.tools];
     if (!this.nativeFile && result.sessionId) this.captureSession(result.sessionId);
@@ -330,13 +333,15 @@ class ClaudeSession implements HarnessSession {
     throw new Error("Claude does not support Pi safeguards");
   }
 
-  async cancel(): Promise<void> {
+  async cancel(reason?: string): Promise<void> {
     if (!this.child) throw new Error("Claude session is not running");
+    this.stopReason = reason ?? "Joint Bob stopped Claude";
     await stopProcessGroup(this.child, "Claude");
   }
 
   async stopForUpdate(): Promise<void> {
     if (!this.child) return;
+    this.stopReason = "Joint Bob stopped Claude to install an update";
     await stopProcessGroup(this.child, "Claude");
   }
 

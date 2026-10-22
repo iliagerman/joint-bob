@@ -14,7 +14,12 @@ function database(): ReturnType<typeof conversationRuntimeDatabase> {
 
 /** A harness turn that failed leaves a record the conversation shows on every reopen, not just a passing toast. */
 export function recordTurnFailure(engine: HarnessId, sessionId: string, error: string, failedAt = new Date().toISOString()): void {
-  database().prepare("INSERT INTO conversation_turn_failures VALUES (?, ?, ?, ?)").run(engine, sessionId, failedAt, error);
+  const db = database();
+  // The budget guard records its stop and the stopped turn then fails with the same reason; show it once.
+  const last = db.prepare("SELECT failed_at, error FROM conversation_turn_failures WHERE engine = ? AND session_id = ? ORDER BY failed_at DESC, rowid DESC LIMIT 1")
+    .get(engine, sessionId) as { failed_at: string; error: string } | undefined;
+  if (last?.error === error && Math.abs(Date.parse(failedAt) - Date.parse(last.failed_at)) < 60_000) return;
+  db.prepare("INSERT INTO conversation_turn_failures VALUES (?, ?, ?, ?)").run(engine, sessionId, failedAt, error);
 }
 
 export function listTurnFailures(engine: HarnessId, sessionId: string): TurnFailure[] {
