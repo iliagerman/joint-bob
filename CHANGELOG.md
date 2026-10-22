@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed skill names under an answer being cut off beside a long model label; they now wrap onto more lines so every name stays readable.
+
 ## 2.136.0 — 2026-10-22
 
 - Changed scheduled tasks to stay out of Needs review by default; a task counts its completed runs only when you turn on its review setting.
