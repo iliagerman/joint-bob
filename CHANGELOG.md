@@ -3,13 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.140.0 — 2026-10-22
 
+- Added two-way skill sync with one direct twin: after you confirm a preview that makes the two match, skill additions, edits and deletions reach both sides, and skills a relay imposes stay untouched.
+- Added sharing a workspace with chosen clusters, individual machines or relays, from a Sharing choice when creating it or a Share button on each workspace; machines that join a relay later receive it too.
 - Fixed a workspace shared with a cluster not appearing on the other members until it had a project; it now shows up for them straight away, ready for their own projects and conversations.
-- Changed stopped and failed Claude turns to say why they ended: a stop for the budget, by you or by inactivity names that reason, and a crash names how Claude exited and the tool it was running instead of a bare "failed after output"; the same stop no longer appears twice.
-- Added a Sharing choice when creating a workspace and a Share button on each workspace, so it can go to chosen clusters, machines or relays, including machines that join a relay later.
-- Added sharing a workspace with individual machines, so only the machines you pick receive it and the rest of their cluster does not.
-- Added two-way skill sync with one direct twin: after you confirm a preview that makes it match this node, skill additions, edits and deletions reach both sides, and relay-imposed skills stay untouched.
+- Changed stopped and failed Claude turns to say why they ended: a stop for the budget, by you or by inactivity names that reason, and a crash names how Claude exited and the tool it was running instead of a bare "failed after output".
+- Changed Activity panel skill suggestions to name only new skills worth capturing from the conversation, and added a setting where this machine's admin can rewrite the instructions for them or reset them to the built-in text.
 
 ## 2.139.0 — 2026-10-22
 
