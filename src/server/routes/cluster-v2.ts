@@ -129,6 +129,7 @@ app.post("/api/clusters/join", handler(async (request, response) => {
   // The new members missed earlier shares; ask them once rather than polling.
   // Loaded lazily: a static import closes a module cycle that deadlocks startup.
   void import("../ntfy-share.js").then(({ syncNtfyServiceShares }) => syncNtfyServiceShares()).catch((error) => console.warn("ntfy service share sync after join failed", error));
+  void import("../shared-workspaces.js").then(({ syncSharedWorkspaces }) => syncSharedWorkspaces()).catch((error) => console.warn("Shared workspace sync after join failed", error));
   response.status(result.created ? 201 : 200).json({ snapshot: result.snapshot });
 }));
 

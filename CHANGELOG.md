@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed a workspace shared with a cluster not appearing on the other members until it had a project; it now shows up for them straight away, ready for their own projects and conversations.
+
 ## 2.139.0 — 2026-10-22
 
 - Fixed the Activity panel cutting off its statistics: the panel now scrolls as one column, and only the steps list scrolls inside itself.

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
 import { inBackground } from "./peer-presence.js";
 import { refreshSharedCommands } from "./server/saved-commands.js";
+import { syncSharedWorkspaces } from "./server/shared-workspaces.js";
 import { placeConversationsWith } from "./session-listing-revisions.js";
 import { ensureConversationRecordSchema } from "./conversation-records.js";
 import { clusterV2Database } from "./cluster-v2-store.js";
@@ -180,6 +181,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         announceReturn(false).catch((error) => console.warn("Announcing this machine's return failed", error));
         removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
         refreshSharedCommands().catch((error) => console.warn("Command sync failed", error));
+        syncSharedWorkspaces().catch((error) => console.warn("Shared workspace sync failed", error));
         syncNtfyServiceShares().catch((error) => console.warn("ntfy service share sync failed", error));
         syncGitResourceShares().catch((error) => console.warn("Repository share sync failed", error));
       }

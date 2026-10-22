@@ -622,16 +622,26 @@ function incomingWorkspace(db:DatabaseSync,envelope:ProjectMetadataEnvelope):str
   const workspace=envelope.metadata.workspace,body=envelope.statement.body;
   if(!workspace)return replicaWorkspace(db,body.ownerNodeId);
   // A cluster share from a twin reuses the twin's workspace id, like a twin share does.
-  const merged=body.context.kind==='twin'||isActiveTwin(db,body.ownerNodeId);
-  const id=merged?workspace.id:`shared-${createHash('sha256').update(`${body.ownerNodeId}\0${workspace.id}`).digest('hex').slice(0,24)}`;
+  return mirrorSharedWorkspace(db,body.ownerNodeId,workspace,body.context.kind==='twin'||isActiveTwin(db,body.ownerNodeId));
+}
+
+function mirrorSharedWorkspace(db:DatabaseSync,ownerNodeId:string,workspace:{id:string;label:string},merged:boolean):string{
+  const id=merged?workspace.id:`shared-${createHash('sha256').update(`${ownerNodeId}\0${workspace.id}`).digest('hex').slice(0,24)}`;
   if(reservedWorkspaceIds.has(id))throw new ResourceSharingError('Shared workspace ID is reserved',409);
-  const mapping=db.prepare('SELECT workspace_id FROM cluster_v2_shared_workspaces WHERE owner_node_id=? AND source_workspace_id=?').get(body.ownerNodeId,workspace.id) as {workspace_id:string}|undefined;
+  const mapping=db.prepare('SELECT workspace_id FROM cluster_v2_shared_workspaces WHERE owner_node_id=? AND source_workspace_id=?').get(ownerNodeId,workspace.id) as {workspace_id:string}|undefined;
   if(!merged&&db.prepare('SELECT 1 FROM workspaces WHERE id=?').get(id)&&mapping?.workspace_id!==id)throw new ResourceSharingError('Shared workspace identity conflict',409);
   const now=new Date().toISOString();
   db.prepare(`INSERT INTO workspaces(id,label,created_at,updated_at) VALUES(?,?,?,?)
     ON CONFLICT(id) DO NOTHING`).run(id,workspace.label,now,now);
-  db.prepare('INSERT OR REPLACE INTO cluster_v2_shared_workspaces VALUES(?,?,?)').run(body.ownerNodeId,workspace.id,id);
+  db.prepare('INSERT OR REPLACE INTO cluster_v2_shared_workspaces VALUES(?,?,?)').run(ownerNodeId,workspace.id,id);
   return id;
+}
+
+/** A workspace another node shares with a cluster appears here even before it holds a project, so projects and conversations can be started in it. */
+export async function mirrorOwnerWorkspace(ownerNodeId:string,workspace:{id:string;label:string}):Promise<string>{
+  const db=await projectDatabase();
+  ensureProjectMetadataSchema(db);
+  return mirrorSharedWorkspace(db,ownerNodeId,workspace,isActiveTwin(db,ownerNodeId));
 }
 
 function saveIncomingProject(db: DatabaseSync, envelope: ProjectMetadataEnvelope, managedHome: string): void {

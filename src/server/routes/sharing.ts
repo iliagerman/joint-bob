@@ -14,6 +14,7 @@ import { actingAccount } from "../../account-context.js";
 import { accountInCluster } from "../../cluster-accounts.js";
 import { actorOwns, memberOwnedIds } from "../../ownership.js";
 import { mayShareProject } from "../sharing-files.js";
+import { announceWorkspaceChanges, registerSharedWorkspaceRoutes } from "../shared-workspaces.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const updateSchema = z.object({
@@ -21,6 +22,7 @@ const updateSchema = z.object({
   shares: z.array(z.object({ clusterId: uuid, projectId: z.null() }).strict()),
 }).strict();
 const emptySchema = z.object({}).strict();
+registerSharedWorkspaceRoutes();
 
 function localOnly(response: Response): void {
   if (!response.locals.authSession) throw new ClusterV2HttpError(401, "Unauthorized");
@@ -103,6 +105,7 @@ app.put("/api/clusters/:clusterId/sharing", route(async (request, response) => {
   const result=updateClusterSelection(await clusterV2Database(), (await getClusterNode()).id,
     uuid.parse(request.params.clusterId), selection.projectIds, selection.workspaceIds, personScope());
   await disconnectRevokedRuntimeSockets();response.json(result);
+  void announceWorkspaceChanges().catch((error) => console.warn("Shared workspace notice failed", error));
 }));
 
 app.get("/api/sharing/project/:resourceId", route(async (request, response) => {
