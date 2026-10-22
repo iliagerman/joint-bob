@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.138.0 — 2026-10-22
 
 - Added a node choice to Settings → Resources for changing a trusted twin's skill and plugin activation, and removing several selected skills at once while keeping their backups.
 
