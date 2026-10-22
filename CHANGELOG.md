@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a live status while auto respond decides an answer, naming the check it is running, and Stop now ends that decision.
+
 ## 2.136.1 — 2026-10-22
 
 - Fixed skill names under an answer being cut off beside a long model label; they now wrap onto more lines so every name stays readable.

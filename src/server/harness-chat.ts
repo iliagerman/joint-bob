@@ -68,8 +68,10 @@ const drains = new Map<string, Promise<void>>();
 const idleWakes = new Map<string, () => void>();
 const pausedDrains = new Set<string>();
 const startingIds = new Set<string>();
-// A responder decision in progress, so a person typing, Stop, or a settings change can cancel it.
-const autoAborts = new Map<string, AbortController>();
+// A responder decision in progress, so a person typing, Stop, or a settings change can cancel it,
+// and every client, one that reconnects included, can show what it is checking.
+interface AutoDecision { controller: AbortController; startedAt: string; step: string | null }
+const autoDecisions = new Map<string, AutoDecision>();
 // Keyed by conversation, not session object: a reopened session must not retry a
 // compaction that already ran or failed since the last prompt.
 const autoCompacted = new Set<string>();
@@ -127,8 +129,13 @@ function publishGoal(connection: HarnessChatConnection, goal: ConversationGoal |
   publish(connection, { type: "bobGoal", goal: goal ?? null, message: goalStatusMessage(goal), announce });
 }
 
-function publishAutoRespond(connection: HarnessChatConnection, state: AutoRespondState | undefined, phase: "deciding" | "idle" = "idle"): void {
-  publish(connection, { type: "autoRespond", state: state ?? null, phase, message: autoRespondMessage(state) });
+function autoDecisionView(connection: HarnessChatConnection): { startedAt: string; step: string | null } | null {
+  const decision = autoDecisions.get(queueKey(connection));
+  return decision ? { startedAt: decision.startedAt, step: decision.step } : null;
+}
+
+function publishAutoRespond(connection: HarnessChatConnection, state: AutoRespondState | undefined): void {
+  publish(connection, { type: "autoRespond", state: state ?? null, decision: autoDecisionView(connection), message: autoRespondMessage(state) });
 }
 
 async function stopAutoRespondFor(connection: HarnessChatConnection, kind: AutoRespondStopKind, reason: string): Promise<void> {
@@ -210,7 +217,7 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   if (!message.trim()) throw new Error("Prompt cannot be empty");
   await writable(connection);
   // A person's message goes first: it cancels a pending auto response and restarts the unattended count.
-  autoAborts.get(queueKey(connection))?.abort("person-typed");
+  autoDecisions.get(queueKey(connection))?.controller.abort("person-typed");
   await resetAutoRespondCount(connection.project.id, connection.conversationId);
   await resumeReviewedTask(connection);
   if (settings) await (await getHarnessRuntime(selectedHarness(settings))).validateSettings(runtimeSettings(settings));
@@ -512,15 +519,20 @@ async function runAutoResponse(connection: HarnessChatConnection): Promise<boole
     return false;
   }
   const controller = new AbortController();
-  autoAborts.set(queueKey(connection), controller);
+  const deciding: AutoDecision = { controller, startedAt: new Date().toISOString(), step: null };
+  autoDecisions.set(queueKey(connection), deciding);
   shared.turnInFlight += 1;
   markHarnessInput(shared);
   sendHarnessStatus(shared);
-  publishAutoRespond(connection, state, "deciding");
+  publishAutoRespond(connection, state);
+  const onStep = (step: string) => {
+    deciding.step = step;
+    publishAutoRespond(connection, state);
+  };
   try {
     let decision = null;
     for (let attempt = 0; attempt < 2 && !decision; attempt++) {
-      const output = await runAutoResponder({ projectId, conversationId: connection.conversationId, cwd: connection.cwd, accountIds: connection.accountIds, config: state, prompt: responderPrompt(state, turns, state.responses + 1), signal: controller.signal });
+      const output = await runAutoResponder({ projectId, conversationId: connection.conversationId, cwd: connection.cwd, accountIds: connection.accountIds, config: state, prompt: responderPrompt(state, turns, state.responses + 1), signal: controller.signal, onStep });
       decision = parseAutoRespondDecision(output);
     }
     if (controller.signal.aborted) throw new Error("aborted");
@@ -549,7 +561,7 @@ async function runAutoResponse(connection: HarnessChatConnection): Promise<boole
     else await stopAutoRespondFor(connection, "responder-failed", chatErrorMessage(error));
     return false;
   } finally {
-    if (autoAborts.get(queueKey(connection)) === controller) autoAborts.delete(queueKey(connection));
+    if (autoDecisions.get(queueKey(connection)) === deciding) autoDecisions.delete(queueKey(connection));
     shared.turnInFlight -= 1;
     sendHarnessStatus(shared);
     publishAutoRespond(connection, await getAutoRespond(projectId, connection.conversationId));
@@ -757,9 +769,9 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
   if (message.type === "setEngine") { if (!message.engine) throw new Error("Engine is required"); await switchHarness(connection, message.engine); return true; }
   if (message.type === "abort" || message.type === "stop") {
     // Stop must also end auto respond, or the responder would restart the agent a moment later.
-    const deciding = autoAborts.get(queueKey(connection));
+    const deciding = autoDecisions.get(queueKey(connection));
     await stopAutoRespondFor(connection, "user-stopped", "You stopped the turn");
-    if (deciding) { deciding.abort("user-stop"); return true; }
+    if (deciding) { deciding.controller.abort("user-stop"); return true; }
     await cancelCurrentAndResumeQueue(connection);
     return true;
   }
@@ -877,7 +889,7 @@ async function autoRespondCommand(connection: HarnessChatConnection, request: No
   await writable(connection);
   const key = queueKey(connection);
   if (!request.enabled) {
-    autoAborts.get(key)?.abort("user-stop");
+    autoDecisions.get(key)?.controller.abort("user-stop");
     publishAutoRespond(connection, await disableAutoRespond(connection.project.id, connection.conversationId));
     broadcastToProject(connection.project.id, { type: "sessionsChanged" });
     return;
@@ -887,7 +899,7 @@ async function autoRespondCommand(connection: HarnessChatConnection, request: No
   await runtime.validateSettings({ provider: config.provider, modelId: config.modelId, reasoning: config.thinkingLevel });
   const readiness = await runtime.readiness(connection.cwd);
   if (readiness.length) throw new Error(readiness.join("\n"));
-  autoAborts.get(key)?.abort("settings-changed");
+  autoDecisions.get(key)?.controller.abort("settings-changed");
   publishAutoRespond(connection, await enableAutoRespond(connection.project.id, connection.conversationId, config, connection.author ?? null));
   broadcastToProject(connection.project.id, { type: "sessionsChanged" });
   void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
@@ -988,7 +1000,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     if (options.socket.readyState !== WebSocket.OPEN) return;
     if (inputs !== inputState() || liveTurn !== shared.liveEvents) continue;
     if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
-    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, digest: storedDigest(options.project.id, conversationId) ?? null, summaryPolicy: summaryPolicyView(summaryPolicy), ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+    send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, conversationStartedAt, turnStartedAt: shared.turnStartedAt ?? null, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, autoRespond: autoRespond ?? null, autoRespondDecision: autoDecisionView(connection), autoRespondDefaults: { instructions: DEFAULT_AUTO_RESPOND_INSTRUCTIONS, stopInstructions: DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, maxResponses: 10 }, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, diagnostics, digest: storedDigest(options.project.id, conversationId) ?? null, summaryPolicy: summaryPolicyView(summaryPolicy), ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
     for (const event of shared.liveEvents) send(options.socket, event);
     refreshHarnessPromptQueue(connection);
     // A summary that fell behind while nobody had this open catches up now; one is first written after the next answer.

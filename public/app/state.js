@@ -98,6 +98,10 @@ export const state = {
   syncthingEndpoint: "",
   engine: "pi",
   sessionBusy: false,
+  // The agent's own turn, from its status; the conversation is also busy while auto respond decides.
+  harnessBusy: false,
+  backgroundRunning: false,
+  autoRespondDecision: null,
   harnesses: [],
   sessionNodes: [],
   appMenuLoaded: false,

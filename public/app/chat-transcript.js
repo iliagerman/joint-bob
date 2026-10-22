@@ -49,7 +49,8 @@ function liveActivityRow() {
 
 function renderLiveActivityTime(now = Date.now()) {
   if (!liveActivity) return;
-  liveActivity.querySelector(".live-activity-time").textContent = liveActivity._step?._startedAt ? formatDuration(Math.max(1, now - liveActivity._step._startedAt)) : "";
+  const since = liveActivity._step ? liveActivity._step._startedAt : liveActivity._decidingSince;
+  liveActivity.querySelector(".live-activity-time").textContent = since ? formatDuration(Math.max(1, now - since)) : "";
 }
 
 /** Shows, updates or removes the working row from the running steps and the turn state. */
@@ -68,10 +69,14 @@ export function syncLiveActivity() {
     appendBeforeQueuedMessages(liveActivity);
   }
   const target = step?.querySelector(".tool-target")?.textContent;
+  const deciding = state.autoRespondDecision;
   const label = step
     ? `Running ${step.querySelector(".tool-name")?.textContent || "a tool"}${target ? ` · ${target}` : ""}`
-    : state.thinkingBubble ? "Thinking…" : "Working…";
+    : state.thinkingBubble ? "Thinking…"
+      : deciding ? `Auto respond is checking the work${deciding.step ? ` · ${deciding.step}` : ""}` : "Working…";
   liveActivity._step = step;
+  liveActivity._decidingSince = deciding ? Date.parse(deciding.startedAt) : null;
+  if (deciding) startDurationTicker();
   liveActivity.querySelector(".live-activity-label").textContent = label;
   liveActivity.title = `${label} — show the steps in the activity panel`;
   renderLiveActivityTime();
@@ -200,7 +205,7 @@ function tickDurations() {
   }
   renderLiveActivityTime(now);
   renderConversationTimer(now);
-  if (!state.toolBubbles.size && !state.lastTurnStartedAt) {
+  if (!state.toolBubbles.size && !state.lastTurnStartedAt && !state.autoRespondDecision) {
     clearInterval(state.durationTicker);
     state.durationTicker = 0;
   }

@@ -15,6 +15,8 @@ export interface AutoRespondRunInput {
   config: AutoRespondConfig;
   prompt: string;
   signal: AbortSignal;
+  /** Names each tool the responder starts, so the conversation can show what it is checking. */
+  onStep: (step: string) => void;
 }
 
 /**
@@ -36,6 +38,7 @@ export async function runAutoResponder(input: AutoRespondRunInput): Promise<stri
   const unsubscribeText = session.subscribe((event: HarnessEvent) => {
     if (event.type === "agent_start") events.length = 0;
     if (event.type === "textDelta" && typeof event.text === "string") events.push(event.text);
+    if (event.type === "toolStart") input.onStep(String(event.toolName));
   });
   let timer: NodeJS.Timeout | undefined;
   let onAbort: (() => void) | undefined;
@@ -57,7 +60,13 @@ export async function runAutoResponder(input: AutoRespondRunInput): Promise<stri
         if (event.type === "error") { stop(); reject(new Error(typeof event.error === "string" ? event.error : "The auto responder failed")); }
       });
     });
-    await session.prompt({ text: input.prompt });
+    // A prompt that fails first leaves `done` unawaited; its later outcome is moot.
+    done.catch(() => undefined);
+    // A harness cannot cancel a turn it has not started, so a cancel that lands while the
+    // responder is still opening must keep the turn from starting at all.
+    const cancelled = () => { if (input.signal.aborted) throw new Error("Auto respond was cancelled"); };
+    cancelled();
+    await session.prompt({ text: input.prompt, beforeStart: async () => cancelled() });
     await done;
     // After tool calls the reply spans several messages; the decision is in the last one.
     const last = [...session.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());

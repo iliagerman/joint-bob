@@ -344,6 +344,23 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.evaluate(async () => (await import("/app/socket.js")).handleSocketPayload({ type: "agent_end" }));
   await working.waitFor({ state: "detached" });
 
+  // While auto respond decides what to answer, the thread says so and names what it checks,
+  // and Stop can end it: the agent itself is idle, so nothing else would show the work.
+  const abort = page.getByTestId("chat-abort-button");
+  const autoRespond = (decision: { startedAt: string; step: string | null } | null) => page.evaluate(async (decision) => (await import("/app/socket.js")).handleSocketPayload({
+    type: "autoRespond", state: { status: "active", responses: 1, maxResponses: 10, stopReason: null }, decision, message: "Auto respond is on",
+  }), decision);
+  await autoRespond({ startedAt: new Date(Date.now() - 65_000).toISOString(), step: null });
+  await working.waitFor();
+  assert.match(await working.innerText(), /Auto respond is checking the work\s+1m 0[5-9]s/);
+  assert.equal(await abort.isEnabled(), true, "Stop ends the decision");
+  await autoRespond({ startedAt: new Date(Date.now() - 65_000).toISOString(), step: "Bash" });
+  assert.match(await working.innerText(), /Auto respond is checking the work · Bash/);
+  assert.equal(await lastInThread(), "live-activity");
+  await autoRespond(null);
+  await working.waitFor({ state: "detached" });
+  assert.equal(await abort.isEnabled(), false);
+
   // A real answer: the conversation's node writes the summary after it, with the panel closed.
   await page.locator(".session-card", { hasText: LIVE_TITLE }).first().click();
   await page.locator("#messages").getByText("Migration 42 is running.").waitFor({ timeout: 20_000 });
@@ -368,6 +385,35 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   await page.setViewportSize({ width: 390, height: 844 });
   await waitFrames();
   assert.equal(await panel.evaluate((element) => getComputedStyle(element).position), "absolute");
+  // It covers the whole width, leaving no strip of thread beside it, and scrolls as one page:
+  // two small scrolling boxes on a phone clipped the statistics under the steps header.
+  if (await page.getByTestId("activity-steps-toggle").getAttribute("aria-expanded") !== "true") await page.getByTestId("activity-steps-toggle").click();
+  await page.evaluate(async () => {
+    const transcript = await import("/app/chat-transcript.js");
+    for (let index = 0; index < 40; index += 1) {
+      const bubble = transcript.appendToolMessage("Bash", `phone-${index}`, 0, Date.now(), { target: `step ${index}` });
+      transcript.updateToolMessage(bubble, "ok", "Done", false, 10);
+    }
+  });
+  await waitFrames();
+  const [phonePanel, phoneThread] = await Promise.all([panel.boundingBox(), page.locator(".messages-wrap").boundingBox()]);
+  assert.ok(phonePanel && phoneThread && Math.abs(phonePanel.x - phoneThread.x) <= 0.5 && Math.abs(phonePanel.width - phoneThread.width) <= 1, `the panel covers the thread's width (${JSON.stringify({ phonePanel, phoneThread })})`);
+  const phoneLayout = await panel.evaluate((element) => {
+    const [overview, list] = [element.querySelector("#activityOverview")!, element.querySelector("#activityList")!];
+    const heading = element.querySelector("[data-testid='activity-steps-toggle']")!.getBoundingClientRect();
+    return {
+      panelScrolls: element.scrollHeight > element.clientHeight + 1,
+      overviewClipped: overview.scrollHeight > overview.clientHeight + 1,
+      listClipped: list.scrollHeight > list.clientHeight + 1,
+      headingBelowOverview: heading.top >= overview.getBoundingClientRect().bottom - 0.5,
+    };
+  });
+  assert.deepEqual(phoneLayout, { panelScrolls: true, overviewClipped: false, listClipped: false, headingBelowOverview: true });
+  // The header and its close button stay in reach at the end of a long list.
+  await panel.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await waitFrames();
+  const close = await page.getByTestId("activity-panel-close").boundingBox();
+  assert.ok(close && phonePanel && close.y >= phonePanel.y && close.y + close.height <= phonePanel.y + 60, `close stays at the top (${JSON.stringify(close)})`);
 
   assert.deepEqual(consoleErrors, []);
   assert.deepEqual(failedResponses, []);

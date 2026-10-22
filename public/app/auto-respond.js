@@ -7,7 +7,6 @@ import { toast } from "./shell.js";
 import { state } from "./state.js";
 
 let defaults = null;
-let phase = "idle";
 const picker = { harnesses: [], models: [] };
 
 const PRESETS = {
@@ -40,18 +39,19 @@ const PRESETS = {
   },
 };
 
-/** Shows the conversation's auto respond state in the toolbar pill and the menu button. */
-export function setAutoRespond(autoRespond, nextPhase = "idle", nextDefaults) {
+/** Shows the conversation's auto respond state in the toolbar pill and the menu button.
+ * `decision` is the responder's decision in progress ({ startedAt, step }), or null. */
+export function setAutoRespond(autoRespond, decision = null, nextDefaults) {
   if (nextDefaults) defaults = nextDefaults;
   state.autoRespond = autoRespond && autoRespond.status !== "off" ? autoRespond : null;
-  phase = nextPhase;
+  state.autoRespondDecision = decision;
   const current = state.autoRespond;
   const pill = elements.autoRespondPill;
   pill.hidden = !current;
   if (current) {
     pill.dataset.state = current.status;
     const count = `${current.responses}${current.maxResponses ? `/${current.maxResponses}` : ""}`;
-    pill.textContent = current.status === "active" ? (phase === "deciding" ? `Auto … ${count}` : `Auto ${count}`) : "Auto stopped";
+    pill.textContent = current.status === "active" ? (decision ? `Auto … ${count}` : `Auto ${count}`) : "Auto stopped";
     pill.title = current.status === "stopped" ? current.stopReason || "Stopped" : "Auto respond is answering for you";
   }
   elements.autoRespondButton.classList.toggle("active", current?.status === "active");

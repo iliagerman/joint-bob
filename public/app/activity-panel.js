@@ -13,6 +13,8 @@ import { state } from "./state.js";
 
 // Below this width the panel floats over the transcript instead of sharing the row.
 const OVERLAY_QUERY = window.matchMedia("(max-width: 900px)");
+// On a phone the whole panel scrolls as one page, so it, not the steps list, follows new steps.
+const PHONE_QUERY = window.matchMedia("(max-width: 640px)");
 const FOLLOW_THRESHOLD_PX = 32;
 const NAMES_SHOWN = 3;
 const PROMPT_SHOWN = 90;
@@ -51,8 +53,12 @@ export function setActivityPanelOpen(open, remember = true) {
   if (opening && remember) requestSummary();
 }
 
+function stepsScroller() {
+  return PHONE_QUERY.matches ? elements.activityPanel : elements.activityList;
+}
+
 function listAtBottom() {
-  const list = elements.activityList;
+  const list = stepsScroller();
   return list.scrollHeight - list.scrollTop - list.clientHeight < FOLLOW_THRESHOLD_PX;
 }
 
@@ -60,7 +66,7 @@ function listAtBottom() {
 function appendFollowing(parent, node) {
   const follow = listAtBottom();
   parent.append(node);
-  if (follow) elements.activityList.scrollTop = elements.activityList.scrollHeight;
+  if (follow) stepsScroller().scrollTop = stepsScroller().scrollHeight;
 }
 
 function stepCountLabel(count) {

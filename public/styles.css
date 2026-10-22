@@ -1982,6 +1982,15 @@ select.chat-toolbar-control {
   .messages-wrap.activity-open .jump-to-bottom { right: 18px; }
   .activity-panel { position: absolute; z-index: 4; inset: 0 0 0 auto; width: min(92%, 380px); box-shadow: var(--shadow); }
 }
+/* A phone has no room for a strip of thread beside the panel, nor for two small scrolling
+   boxes inside it: the panel covers the thread and scrolls as one page under its header. */
+@media (max-width: 640px) {
+  .activity-panel { inset: 0; width: auto; border-left: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .activity-panel-header { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+  .activity-overview, .activity-panel.steps-open .activity-overview { flex: none; max-height: none; overflow: visible; }
+  .activity-section > summary { position: static; }
+  .activity-list { flex: none; overflow: visible; }
+}
 
 /* ---- Harness segments: one conversation, visibly split where the agent changed ---- */
 .harness-switch-notice { display: flex; align-items: center; gap: 10px; margin: 14px 0 2px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }

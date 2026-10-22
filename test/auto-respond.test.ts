@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type WebSocket from "ws";
 import { assistantMessageKey, parseAutoRespondDecision, responderPrompt, type AutoRespondConfig } from "../src/conversation-auto-respond.js";
+import { addProject } from "../src/store.js";
+import { runAutoResponder } from "../src/server/auto-respond-run.js";
+import { getSettings, updateSettings } from "../src/settings.js";
 import { projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
 
@@ -212,6 +215,83 @@ test("an active auto respond resumes on its own after the node restarts", async 
     assert.ok(restored.responses >= before, "the count survives the restart");
     await waitFor(reopened.messages, () => autoStates(reopened.messages).some((state) => state?.stopKind === "limit"));
     assert.equal(autoStates(reopened.messages).at(-1)?.responses, 5, "the responder keeps answering after the restart until its limit");
+  } finally {
+    for (const socket of sockets) socket.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a responder cancelled before its turn starts never prompts its harness", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "auto-respond-cancel-"));
+  const previousSettings = getSettings();
+  try {
+    const configPath = path.join(root, "kiro");
+    const sessionPath = path.join(configPath, "sessions");
+    const executable = path.join(root, "kiro-fixture");
+    const wire = path.join(root, "wire.jsonl");
+    await mkdir(sessionPath, { recursive: true });
+    await writeFile(executable, fixtureSource.replace("const request = JSON.parse(line);", `const request = JSON.parse(line); require("node:fs").appendFileSync(${JSON.stringify(wire)}, request.method + "\\n");`));
+    await chmod(executable, 0o700);
+    updateSettings({ runtimes: { ...previousSettings.runtimes, kiro: { ...previousSettings.runtimes.kiro, executable, configPath, sessionPath } }, syncthing: { endpoint: "" } });
+    const project = await addProject("Auto respond cancel", root);
+    // Stop pressed while the responder is still opening: a harness with no turn running
+    // cannot be cancelled, so the run itself must not start the turn.
+    const controller = new AbortController();
+    controller.abort("user-stop");
+    await assert.rejects(runAutoResponder({ projectId: project.id, conversationId: "cancelled-early", cwd: root, config, prompt: "Decide.", signal: controller.signal }), /cancelled/);
+    const methods = (await readFile(wire, "utf8").catch(() => "")).trim().split("\n");
+    assert.equal(methods.includes("session/prompt"), false, `the responder never prompted (${methods.join(", ")})`);
+  } finally {
+    updateSettings({ runtimes: previousSettings.runtimes, syncthing: { endpoint: "" } });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Names what it is checking, then thinks until it is cancelled.
+const slowResponderSource = `export default async function responder(input) {
+  input.onStep("Bash · npm test");
+  await new Promise((resolve) => input.signal.addEventListener("abort", resolve, { once: true }));
+  throw new Error("Auto respond was cancelled");
+}
+`;
+
+test("every client sees the responder deciding and what it checks, a reconnect included, and Stop ends it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "auto-respond-deciding-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  const sockets: WebSocket[] = [];
+  try {
+    const responder = path.join(root, "responder.mjs");
+    const { environment, node } = await prepareKiroNode(root, responder);
+    await writeFile(responder, slowResponderSource);
+    server = await startDevNode(environment, node, { JOINT_BOB_AUTO_RESPONDER: responder });
+    const auth = await signIn(environment, node);
+    const project = projectNamed(node, "Joint Bob");
+    const chat = openChat(node.url, auth.cookie, project.id, "kiro:new");
+    sockets.push(chat.socket);
+    await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "ready"));
+    chat.socket.send(JSON.stringify({ type: "prompt", message: "start the work" }));
+    await waitFor(chat.messages, () => chat.messages.filter((message) => message.type === "agent_end").length === 1);
+    await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "sessionFile"));
+    chat.socket.send(JSON.stringify({ type: "autoRespond", autoRespond: { enabled: true, config: { ...config, maxResponses: null } } }));
+    type Decision = { startedAt: string; step: string | null } | null;
+    const decisions = (messages: Frame[]) => messages.filter((message) => message.type === "autoRespond").map((message) => message.decision as Decision);
+    await waitFor(chat.messages, () => decisions(chat.messages).some((decision) => decision?.step === "Bash · npm test"));
+
+    // A phone that reconnects mid-decision is told at once, not left with a silent running conversation.
+    const file = chat.messages.find((message) => message.type === "sessionFile")!;
+    const reopened = openChat(node.url, auth.cookie, project.id, String(file.sessionFile));
+    sockets.push(reopened.socket);
+    await waitFor(reopened.messages, () => reopened.messages.some((message) => message.type === "ready"));
+    const decision = reopened.messages.find((message) => message.type === "ready")!.autoRespondDecision as Decision;
+    assert.equal(decision?.step, "Bash · npm test");
+    assert.ok(Number.isFinite(Date.parse(decision.startedAt)), "the decision says when it started");
+
+    // Stop from the reconnected client cancels the decision and says so everywhere.
+    reopened.socket.send(JSON.stringify({ type: "abort" }));
+    for (const client of [chat, reopened]) {
+      await waitFor(client.messages, () => autoStates(client.messages).at(-1)?.stopKind === "user-stopped" && decisions(client.messages).at(-1) === null);
+    }
   } finally {
     for (const socket of sockets) socket.close();
     if (server) await stopDevNode(server);

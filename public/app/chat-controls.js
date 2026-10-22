@@ -184,14 +184,23 @@ export function updateRoutingMode(routing) {
   syncModelButton();
 }
 
-export function updateStatus(status) {
-  if (!status) return;
-  if (!status.isStreaming) clearThinkingBubble();
-  const turnBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
+/** The conversation is busy while the agent works and while auto respond decides what to
+ * answer: the agent is idle then, but Stop must still end it and the thread must say so. */
+export function syncTurnBusy() {
+  const deciding = Boolean(state.autoRespondDecision);
+  const turnBusy = state.harnessBusy || deciding;
   state.sessionBusy = turnBusy;
   syncLiveActivity();
   elements.abortButton.disabled = !turnBusy;
-  setStatus(turnBusy ? `${harnessLabel(state.harnesses, state.engine)} is working` : status.backgroundRunning ? "Background tasks running" : "Connected", true, false, turnBusy);
+  setStatus(state.harnessBusy ? `${harnessLabel(state.harnesses, state.engine)} is working` : deciding ? "Auto respond is deciding" : state.backgroundRunning ? "Background tasks running" : "Connected", true, false, turnBusy);
+}
+
+export function updateStatus(status) {
+  if (!status) return;
+  if (!status.isStreaming) clearThinkingBubble();
+  state.harnessBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
+  state.backgroundRunning = Boolean(status.backgroundRunning);
+  syncTurnBusy();
   if (status.sessionName) syncChatTitleFromSessions(status.sessionName);
   state.activeModelKey = status.model ? `${status.model.provider}/${status.model.id}` : "";
   state.activeModelLabel = status.model ? status.model.label : "";

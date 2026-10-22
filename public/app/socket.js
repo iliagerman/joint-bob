@@ -6,7 +6,7 @@ import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { loadHiddenCronTasks } from "./cron.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
-import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
+import { loadHarnesses, renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, syncTurnBusy, updateRoutingMode, updateStatus } from "./chat-controls.js";
 import { activityConversationChanged, activityDigestEvent, activityProgressed, activityReady } from "./activity-panel.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, restoreConversationTimer, showChatEmptyState, startDurationTicker, startHarnessSegment, startTurnTimer, syncLiveActivity, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { refreshBudgetNotice } from "./budget-dialog.js";
@@ -296,7 +296,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const openingDraft = state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath);
     state.conversationLock = payload.ownership ?? null;
     state.conversationReadOnly = payload.readOnly === true;
-    setAutoRespond(payload.autoRespond ?? null, "idle", payload.autoRespondDefaults);
+    setAutoRespond(payload.autoRespond ?? null, payload.autoRespondDecision ?? null, payload.autoRespondDefaults);
     state.conversationCommands = payload.conversationCommands || null;
     if (!payload.engine) throw new Error("Ready payload is missing its harness engine");
     state.engine = payload.engine;
@@ -451,7 +451,8 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "autoRespond") {
     const stopped = payload.state?.status === "stopped" && state.autoRespond?.status !== "stopped";
-    setAutoRespond(payload.state, payload.phase);
+    setAutoRespond(payload.state, payload.decision ?? null);
+    syncTurnBusy();
     renderSessions();
     if (stopped) toast(payload.message, 8000);
     return;
