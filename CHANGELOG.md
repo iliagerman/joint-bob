@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed webhook calls and scheduled runs to stay out of the Needs review count unless you opt in, and added a webhook setting to count its calls.
+
 ## 2.135.1 — 2026-10-22
 
 - Fixed the editor for a queued message spilling out of its bubble when the bubble is narrow; it now wraps inside the bubble.

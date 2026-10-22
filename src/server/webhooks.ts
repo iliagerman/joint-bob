@@ -16,6 +16,7 @@ import {
   MAX_PAYLOAD_CHARS, PAYLOAD_FILE_NAME, recordWebhookDelivery, WebhookError, webhookMessage, type Webhook, type WebhookAttachment, type WebhookCall,
 } from "../webhooks.js";
 import { persistTaskAttachments } from "./chat.js";
+import { markSilentWebhookRequest } from "./scheduled-review.js";
 import { queueConversationPrompt, type PromptAttachment } from "./conversation-prompt.js";
 import { broadcastToProject } from "./realtime.js";
 
@@ -67,6 +68,7 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   const placed = await placeAttachments(project.path, attachments);
   const message = [webhookMessage(webhook, call), placed.listed].filter(Boolean).join("\n\n");
   const prompt = { message, images: placed.images, files: placed.files, requestId: randomUUID(), label: "Webhook", until: "started" as const };
+  if (!webhook.markForReview) markSilentWebhookRequest(prompt.requestId);
   if (webhook.target.kind === "conversation") {
     const { sessionId, engine } = webhook.target;
     if (!isHarnessId(engine)) throw new WebhookError(409, "The conversation's agent is not available");

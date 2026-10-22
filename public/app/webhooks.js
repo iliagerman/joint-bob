@@ -14,7 +14,7 @@ const history = byId("webhooksHistory");
 const field = {
   owner: byId("webhooksOwner"), name: byId("webhooksName"), kind: byId("webhooksTargetKind"), project: byId("webhooksProject"), conversation: byId("webhooksConversation"),
   conversationLabel: byId("webhooksConversationLabel"), context: byId("webhooksContext"), enabled: byId("webhooksEnabled"),
-  attachments: byId("webhooksAttachments"), sendersEnabled: byId("webhooksSendersEnabled"), senders: byId("webhooksSenders"),
+  attachments: byId("webhooksAttachments"), markForReview: byId("webhooksMarkForReview"), sendersEnabled: byId("webhooksSendersEnabled"), senders: byId("webhooksSenders"),
   senderFields: byId("webhooksSenderFields"), allowedSenders: byId("webhooksAllowedSenders"), save: byId("webhooksSave"),
 };
 
@@ -33,7 +33,7 @@ const endpoint = (suffix = "") => `/api/webhooks${suffix}?nodeId=${encodeURIComp
 
 /** The body a PUT or POST sends: everything about the webhook, so saving one setting keeps the others. */
 const hookBody = (hook, changes = {}) => JSON.stringify({
-  name: hook.name, target: hook.target, context: hook.context, enabled: hook.enabled, attachments: hook.attachments, senders: hook.senders, ...changes,
+  name: hook.name, target: hook.target, context: hook.context, enabled: hook.enabled, attachments: hook.attachments, markForReview: hook.markForReview, senders: hook.senders, ...changes,
 });
 
 /** "123 Ilia" lines to `{ value, label }`; the first word is the value, the rest is the name. */
@@ -250,6 +250,7 @@ async function openForm(hook = null) {
   field.context.value = hook?.context ?? "";
   field.enabled.checked = hook?.enabled ?? true;
   field.attachments.checked = hook?.attachments ?? false;
+  field.markForReview.checked = hook?.markForReview ?? false;
   field.sendersEnabled.checked = Boolean(hook?.senders);
   field.senderFields.value = hook?.senders?.fields.join(", ") ?? "";
   field.allowedSenders.value = allowedText(hook?.senders?.allowed ?? []);
@@ -291,7 +292,7 @@ async function submit(event) {
   const senders = field.sendersEnabled.checked
     ? { fields: field.senderFields.value.split(/[\s,]+/).filter(Boolean), allowed: parseAllowed(field.allowedSenders.value) }
     : null;
-  const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, senders });
+  const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders });
   saving = true;
   field.save.disabled = true;
   field.owner.disabled = true;

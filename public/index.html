@@ -1209,6 +1209,8 @@
             <p class="settings-hint">This text goes ahead of the call's content in every message this webhook creates.</p>
             <label class="checkbox-row"><input type="checkbox" id="webhooksEnabled" checked data-testid="webhooks-enabled-toggle" /> Accept calls</label>
             <label class="checkbox-row"><input type="checkbox" id="webhooksAttachments" data-testid="webhooks-attachments-toggle" /> Accept attachments</label>
+            <label class="checkbox-row"><input type="checkbox" id="webhooksMarkForReview" data-testid="webhooks-mark-for-review-toggle" /> Count calls toward Needs review</label>
+            <p class="settings-hint">Off by default: conversations this webhook starts or adds to stay out of the review badge and inbox until you open them and reply.</p>
             <p class="settings-hint">Files in a call reach the conversation as attachments: the file parts of a multipart/form-data body, or a JSON body's <code>attachments</code> list of <code>{"name", "mimeType", "data"}</code> with base64 data.</p>
             <label class="checkbox-row"><input type="checkbox" id="webhooksSendersEnabled" data-testid="webhooks-senders-toggle" /> Only accept calls from listed senders</label>
             <div id="webhooksSenders" data-testid="webhooks-senders" hidden>
@@ -2657,7 +2659,7 @@
           <label id="cronReasoningLabel">Reasoning<select name="reasoning" data-testid="cron-reasoning"></select></label>
           <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
           <label class="checkbox-row"><input name="pauseOnFailure" type="checkbox" data-testid="cron-pause-on-failure">Pause schedule after a failed run</label>
-          <label class="checkbox-row"><input name="markForReview" type="checkbox" checked data-testid="cron-mark-for-review">Mark completed runs for review</label>
+          <label class="checkbox-row"><input name="markForReview" type="checkbox" data-testid="cron-mark-for-review">Count completed runs toward Needs review</label>
           <label class="checkbox-row"><input name="hideFromHistory" type="checkbox" data-testid="cron-hide-from-history">Hide this task's conversations from history, even when Show scheduled is on</label>
           <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Failed runs retry at the next scheduled time unless pause on failure is selected.</p>
         </form>

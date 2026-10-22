@@ -31,8 +31,7 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     f.model.value = "claude|sonnet"; f.model.dispatchEvent(new Event("change", { bubbles: true }));
     f.reasoning.value = "high"; f.timezone.value = "UTC"; f.enabled.checked = false;
     if (f.pauseOnFailure.checked) throw Error("Pause on failure must default off");
-    if (!f.markForReview.checked) throw Error("Review must default on");
-    f.markForReview.checked = false;
+    if (f.markForReview.checked) throw Error("Review must default off");
     f.pauseOnFailure.checked = true;
     if (document.querySelector("#cronWeekdayLabel").hidden || document.querySelector("#cronTimeLabel").hidden || !document.querySelector("#cronIntervalLabel").hidden) throw Error("Weekly controls incorrect");
     if (f.engine.disabled || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Project execution settings unavailable");

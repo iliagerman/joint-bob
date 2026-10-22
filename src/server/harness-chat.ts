@@ -38,7 +38,7 @@ import { persistTaskAttachments, promptTextWithAttachments } from "./chat.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
 import { conversationTranscriptPayload, scheduledReportMessages } from "../conversation-segments.js";
 import { isScheduledPromptText } from "../scheduled-prompt.js";
-import { silentScheduledReview } from "./scheduled-review.js";
+import { isSilentWebhookRequest, silentScheduledReview } from "./scheduled-review.js";
 import { socketMessageSchema } from "./schemas.js";
 import { claimConversationLocally, describeConversationOwner, type ForeignConversationOwner, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { flags } from "./state.js";
@@ -398,7 +398,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt 
         : "";
       const toolPolicy = assistantSettings ? `\n\nPersonal assistant tool policy: Browser access ${assistantSettings.allowBrowser ? "allowed" : "disabled"}; terminal access ${assistantSettings.allowTerminal ? "allowed" : "disabled"}; MCP servers ${assistantSettings.mcpServerNames === null ? "inherit the conversation's installed servers" : `allowlisted to ${assistantSettings.mcpServerNames.join(", ") || "none"}`}. Treat these as access restrictions, not preferences.` : "";
       const text = `${assistantContext ? `${assistantContext}${toolPolicy}\n\n` : ""}${connection.handoffContext ?? ""}${authored}`;
-      const finishSilentReview = queued.requestId && isScheduledPromptText(queued.promptText)
+      const finishSilentReview = queued.requestId && (isScheduledPromptText(queued.promptText) || isSilentWebhookRequest(queued.requestId))
         ? await silentScheduledReview(connection.project, connection.engine, connection.shared.session.id, queued.requestId) : undefined;
       await connection.shared.session.prompt({ text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
         armAutoCompactAfterPrompt(connection.shared.session);

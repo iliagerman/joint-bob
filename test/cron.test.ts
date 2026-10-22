@@ -75,8 +75,8 @@ test("cron validates schedule and required user input", async () => {
   for (const invalid of [{ name: " " }, { prompt: "" }, { ownerNodeId: "bad" }, { schedule: { ...input().schedule, timezone: "Mars" } }, { schedule: { ...input().schedule, hour: 24 } }]) {
     assert.equal(cronInputSchema.safeParse({ ...input(), ...invalid }).success, false);
   }
-  assert.equal(cronInputSchema.parse(input()).markForReview, true, "legacy schedules keep review enabled");
-  assert.equal(cronInputSchema.parse({ ...input(), markForReview: false }).markForReview, false);
+  assert.equal(cronInputSchema.parse(input()).markForReview, false, "scheduled runs stay out of the review count unless chosen");
+  assert.equal(cronInputSchema.parse({ ...input(), markForReview: true }).markForReview, true);
   assert.equal(cronInputSchema.safeParse({ ...input(), markForReview: "false" }).success, false);
   assert.equal(cronInputSchema.parse(input()).pauseOnFailure, false);
   assert.equal(cronInputSchema.parse({ ...input(), pauseOnFailure: true }).pauseOnFailure, true);

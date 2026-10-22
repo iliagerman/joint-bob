@@ -84,6 +84,18 @@ test("accepting attachments is a stored option, off unless chosen, added to an o
   assert.equal(updateWebhook(db, webhook.id, input({ attachments: true })).attachments, true);
 });
 
+test("marking calls for review is a stored option, off unless chosen, added to an older table", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE webhooks(id TEXT PRIMARY KEY, name TEXT NOT NULL, secret_hash TEXT NOT NULL UNIQUE, target_kind TEXT NOT NULL, project_id TEXT NOT NULL,
+    session_id TEXT, engine TEXT, context TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    last_received_at TEXT, received_count INTEGER NOT NULL DEFAULT 0)`);
+  db.prepare("INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,created_at,updated_at) VALUES('old','Old','h','project','p1','t','t')").run();
+  assert.equal(listWebhooks(db)[0].markForReview, false, "a webhook from before the option stays out of the review count");
+  const { webhook } = createWebhook(db, input());
+  assert.equal(webhook.markForReview, false);
+  assert.equal(updateWebhook(db, webhook.id, input({ markForReview: true })).markForReview, true);
+});
+
 test("with attachments on, multipart file parts and a JSON attachments list become files", async () => {
   const form = new FormData();
   form.append("url", "https://example.com/ad/1");
