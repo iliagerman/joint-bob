@@ -1219,6 +1219,10 @@
               <label>Agent / model<select id="webhooksModel" data-testid="webhooks-model-select"></select></label>
               <label>Effort<select id="webhooksEffort" data-testid="webhooks-effort-select"></select></label>
             </div>
+            <label id="webhooksTitleTemplateLabel">Conversation title template
+              <input id="webhooksTitleTemplate" maxlength="200" autocomplete="off" placeholder="pr-[PR_REVIEW]" data-testid="webhooks-title-template-input" />
+              <span class="settings-hint">Optional, for new conversations only. The agent fills [placeholders] from the call. Text outside brackets stays fixed. For example, pr-[PR_REVIEW] becomes pr-Fix login timeout. Blank uses the webhook name.</span>
+            </label>
             <fieldset class="relay-form-section">
               <legend>Secret accounts</legend>
               <p class="settings-hint">Project and workspace secrets are inherited. Selected accounts are also attached to each conversation this webhook reaches. Removing a selection affects future calls, not accounts already attached to conversations.</p>

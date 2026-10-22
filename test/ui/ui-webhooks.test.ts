@@ -14,7 +14,7 @@ import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
 
-interface Hook { id: string; name: string; model: { provider: string; modelId: string } | null; reasoning: string | null; secretAccountIds: string[]; target: { engine?: string }; enabled: boolean; attachments: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
+interface Hook { id: string; name: string; titleTemplate: string; model: { provider: string; modelId: string } | null; reasoning: string | null; secretAccountIds: string[]; target: { engine?: string }; enabled: boolean; attachments: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
 
 let root: string;
 let environment: DevEnvironment;
@@ -93,6 +93,7 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), false, "a new webhook reads calls as text unless asked");
   await page.getByTestId("webhooks-name-input").fill("Deals");
+  await page.getByTestId("webhooks-title-template-input").fill("pr-[PR_REVIEW]");
   await page.getByTestId("webhooks-harness-select").selectOption("pi");
   await page.getByTestId("webhooks-model-select").selectOption("dev-environment|dev-model");
   await page.getByTestId("webhooks-effort-select").selectOption("high");
@@ -111,12 +112,14 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await until(async () => (await hooks())[0].enabled, "the webhook is on again");
 
   assert.equal((await hooks())[0].target.engine, "pi");
+  assert.equal((await hooks())[0].titleTemplate, "pr-[PR_REVIEW]", "turning off and on preserves the template");
   assert.deepEqual((await hooks())[0].model, { provider: "dev-environment", modelId: "dev-model" });
   assert.equal((await hooks())[0].reasoning, "high", "toggle keeps execution settings");
   assert.deepEqual((await hooks())[0].secretAccountIds, [webhookSecretId], "toggle keeps attached secret selections");
   await page.getByTestId("webhooks-edit-button").click();
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("webhooks-harness-select").inputValue(), "pi");
+  assert.equal(await page.getByTestId("webhooks-title-template-input").inputValue(), "pr-[PR_REVIEW]");
   assert.equal(await page.getByTestId("webhooks-model-select").inputValue(), "dev-environment|dev-model");
   assert.equal(await page.getByTestId("webhooks-effort-select").inputValue(), "high");
   assert.equal(await page.getByTestId("webhooks-secret-account-checkbox").first().isChecked(), true);
@@ -244,6 +247,7 @@ test("an existing conversation fixes the harness while allowing model and effort
   await page.waitForFunction(() => Boolean(document.querySelector<HTMLSelectElement>("#webhooksConversation")?.selectedOptions[0]?.dataset.engine));
   const engine = await page.locator("#webhooksConversation option:checked").getAttribute("data-engine");
   assert.equal(await page.getByTestId("webhooks-harness-select").isDisabled(), true);
+  assert.equal(await page.getByTestId("webhooks-title-template-input").isVisible(), false, "templates never rename existing-conversation targets");
   assert.equal(await page.getByTestId("webhooks-harness-select").inputValue(), engine);
   await page.getByTestId("webhooks-save-button").click();
   await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });

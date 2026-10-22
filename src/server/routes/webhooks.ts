@@ -10,6 +10,11 @@ import { getClusterNode } from "../../cluster.js";
 import { signClusterRequest } from "../../cluster-protocol.js";
 import { isTrustedTwin } from "../../cluster-sharing-policy.js";
 import { getConversationOwnership } from "../../conversation-ownership.js";
+import { latestConversationSegment } from "../../conversation-records.js";
+import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
+import { fillWebhookTitle, titlePlaceholders, webhookConversationTitle } from "../../webhook-title.js";
+import { setSessionTitle } from "../../names.js";
+import { broadcastToProject } from "../realtime.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { relayRuntimeInstance, relayServerInstance } from "../../relay/index.js";
 import { phoneAddress } from "../../relay/protocol.js";
@@ -116,6 +121,33 @@ function handle(work: (request: Request, response: Response) => Promise<void>) {
     }
   };
 }
+
+const titleCommandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("status") }).strict(),
+  z.object({ action: z.literal("fill"), replacements: z.record(z.string().max(200)) }).strict(),
+]);
+
+// No caller-supplied conversation ID or template: the capability selects both.
+app.post("/api/webhook-title/agent", handle(async (request, response) => {
+  const identity = response.locals.webhookTitleAgent as AgentCapabilityIdentity | undefined;
+  if (!identity) throw new WebhookError(403, "Webhook title capability required");
+  const command = titleCommandSchema.parse(request.body);
+  const template = webhookConversationTitle(identity.projectId, identity.conversationId);
+  const segment = await latestConversationSegment(identity.conversationId);
+  if (template === undefined || !segment || segment.projectId !== identity.projectId) throw new WebhookError(404, "This conversation has no webhook title template");
+  const ownership = await getConversationOwnership(segment.engine, segment.sessionId);
+  if (ownership && ownership.ownerNodeId !== (await getClusterNode()).id) throw new WebhookError(409, "This conversation now runs on another machine");
+  if (command.action === "status") {
+    response.json({ template, placeholders: titlePlaceholders(template) });
+    return;
+  }
+  let title: string;
+  try { title = fillWebhookTitle(template, command.replacements); }
+  catch (error) { throw new WebhookError(400, (error as Error).message); }
+  await setSessionTitle(identity.conversationId, title);
+  broadcastToProject(identity.projectId, { type: "sessionsChanged" });
+  response.json({ title });
+}));
 
 /** Where a webhook's secret goes to make a URL: each relay this machine is on, and its own address when it has one. */
 async function urlBases(): Promise<Array<{ id: string; label: string; base: string }>> {

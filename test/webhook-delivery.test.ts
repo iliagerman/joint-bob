@@ -12,6 +12,7 @@ import { acceptWebhookCall } from "../src/server/webhooks.js";
 import { addProject } from "../src/store.js";
 import { conversationScopeId, getScopeSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "../src/secrets.js";
 import { listTurnFailures } from "../src/turn-failures.js";
+import { webhookConversationTitle } from "../src/webhook-title.js";
 import { createWebhook, webhookDeliveries, webhookInputSchema } from "../src/webhooks.js";
 
 // A machine whose agent has no model sign-in still accepts the call and lists a new
@@ -94,11 +95,14 @@ test("webhook model and effort travel with the queued turn for new and existing 
   const endpoint = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(endpoint, "listening");
   context.mock.method(server, "address", () => endpoint.address());
-  const prompts: Array<{ queueSettings?: unknown }> = [];
+  const prompts: Array<{ message: string; queueSettings?: unknown }> = [];
+  const templates: Array<string | undefined> = [];
   const attached: string[][] = [];
+  let projectForTitles: string;
   endpoint.on("connection", async (socket, request) => {
     const sessionId = new URL(request.url!, "http://localhost").searchParams.get("sessionId")!;
     attached.push((await getScopeSecretAccounts("conversation", conversationScopeId("pi", sessionId))).accountIds);
+    templates.push(webhookConversationTitle(projectForTitles, sessionId));
     socket.send(JSON.stringify({ type: "ready", status: { model: { provider: "zai", id: "default-model" }, thinkingLevel: "low" } }));
     socket.on("message", (raw) => {
       const prompt = JSON.parse(raw.toString());
@@ -109,6 +113,7 @@ test("webhook model and effort travel with the queued turn for new and existing 
   });
   try {
     const project = await addProject("Webhook models", path.join(root, "project"), { writeInstructions: false });
+    projectForTitles = project.id;
     const db = await clusterV2Database();
     const selected = await saveSecretAccount({ label: "Webhook credential", provider: "custom", variables: [{ name: "WEBHOOK_TEST_KEY", kind: "value", value: "synthetic-webhook-key" }] });
     const existing = await saveSecretAccount({ label: "Existing credential", provider: "custom", variables: [{ name: "EXISTING_TEST_KEY", kind: "value", value: "synthetic-existing-key" }] });
@@ -119,7 +124,7 @@ test("webhook model and effort travel with the queued turn for new and existing 
         { reasoning: "medium" },
         {},
       ]) {
-        const { webhook } = createWebhook(db, webhookInputSchema.parse({ name: "Configured", secretAccountIds: [selected.id], target: { kind, projectId: project.id, engine: "pi", ...(kind === "conversation" ? { sessionId: "existing" } : {}) }, ...settings }));
+        const { webhook } = createWebhook(db, webhookInputSchema.parse({ name: "Configured", titleTemplate: "pr-[PR_REVIEW]", secretAccountIds: [selected.id], target: { kind, projectId: project.id, engine: "pi", ...(kind === "conversation" ? { sessionId: "existing" } : {}) }, ...settings }));
         acceptWebhookCall(webhook, { method: "POST", headers: {}, query: "", body: "{}" });
         for (let attempt = 0; attempt < 200 && !webhookDeliveries(db, webhook.id).length; attempt++) await new Promise(resolve => setTimeout(resolve, 25));
         assert.equal(webhookDeliveries(db, webhook.id)[0]?.status, "delivered");
@@ -129,6 +134,9 @@ test("webhook model and effort travel with the queued turn for new and existing 
       [selected.id], [selected.id], [selected.id],
       [existing.id, selected.id].sort(), [existing.id, selected.id].sort(), [existing.id, selected.id].sort(),
     ], "secrets are attached before the socket opens, preserving existing conversation accounts");
+    assert.deepEqual(templates, ["pr-[PR_REVIEW]", "pr-[PR_REVIEW]", "pr-[PR_REVIEW]", undefined, undefined, undefined]);
+    for (const prompt of prompts.slice(0, 3)) assert.match(prompt.message, /JOINT_BOB_WEBHOOK_TITLE_CLI/);
+    for (const prompt of prompts.slice(3)) assert.doesNotMatch(prompt.message, /JOINT_BOB_WEBHOOK_TITLE_CLI/);
     assert.deepEqual(prompts.map(prompt => prompt.queueSettings), [
       { harnessId: "pi", provider: "anthropic", modelId: "selected-model", reasoning: "high" },
       { harnessId: "pi", provider: "zai", modelId: "default-model", reasoning: "medium" },

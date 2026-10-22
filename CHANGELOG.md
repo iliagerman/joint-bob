@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added title templates for webhooks that start new conversations: the agent fills the bracketed part of the title on each call, and the fixed text stays exactly as you wrote it.
+
+## 2.142.0 — 2026-10-22
+
+- Added conversation title templates to webhooks. Use a title such as `pr-[PR_REVIEW]` and the agent fills the bracketed part from each call while the fixed text stays unchanged. Existing-conversation webhooks keep their titles.
+
 ## 2.141.0 — 2026-10-22
 
 - Added agent, model, effort and secret account choices to webhooks, so each call runs with the settings chosen for that webhook and the selected secrets are available in the conversation it reaches.

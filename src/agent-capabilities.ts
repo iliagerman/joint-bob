@@ -10,6 +10,7 @@ import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-clie
 import { getSettings } from "./settings.js";
 import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-git-policy.js";
 import { multiUserEnabled } from "./account-runtime.js";
+import { revokeWebhookTitleAgentTokens, webhookTitleAgentEnvironment, webhookTitleInstructions } from "./webhook-title.js";
 
 export interface AgentCapabilityIdentity {
   projectId: string;
@@ -137,6 +138,11 @@ Attachments can change during a turn. New shell commands use current attached en
     environment: ({ projectId, engine, conversationId, secretConversation }) => worktreeAgentEnvironment(projectId, engine, conversationId, secretConversation?.sessionId ?? conversationId),
   },
   {
+    id: "webhook-title",
+    instructions: { path: "/virtual/JOINT_BOB_WEBHOOK_TITLE.md", content: webhookTitleInstructions },
+    environment: webhookTitleAgentEnvironment,
+  },
+  {
     id: "git-policy",
     instructions: { path: "/virtual/JOINT_BOB_GIT.md", content: agentGitPolicyInstructions },
     environment: () => agentGitPolicyEnvironment(),
@@ -164,6 +170,7 @@ export function agentCapabilityEnvironment(projectId: string, engine: HarnessId,
 export function revokeAgentCapabilities(projectId: string, conversationId?: string): void {
   revokeBrowserAgentTokens(projectId, conversationId);
   revokeNtfyAgentTokens(projectId, conversationId);
+  revokeWebhookTitleAgentTokens(projectId, conversationId);
 }
 
 export function agentCapabilityInstructionFiles(): Array<{ path: string; content: string }> {

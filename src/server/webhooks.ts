@@ -8,6 +8,7 @@ import { getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord } from "../conversation-records.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
 import { ensureSessionTitle } from "../names.js";
+import { bindWebhookTitle, titlePlaceholders } from "../webhook-title.js";
 import { getProjectLock } from "../project-locks.js";
 import { getProject } from "../store.js";
 import { conversationScopeId, getScopeSecretAccounts, setScopeSecretAccounts, validateProjectSecretAccounts } from "../secrets.js";
@@ -77,7 +78,11 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   const attachments = [...(call.attachments ?? [])];
   if (call.body.trim().length > MAX_PAYLOAD_CHARS) attachments.push({ name: PAYLOAD_FILE_NAME, mimeType: "text/plain", data: Buffer.from(call.body) });
   const placed = await placeAttachments(project.path, attachments);
-  const message = [webhookMessage(webhook, call), placed.listed].filter(Boolean).join("\n\n");
+  const titleTemplate = webhook.target.kind === "project" ? webhook.titleTemplate : "";
+  const titleInstruction = titleTemplate && titlePlaceholders(titleTemplate).length
+    ? `Complete this conversation's title template using the webhook content: ${JSON.stringify(titleTemplate)}. Infer concise text for each bracketed placeholder. Run node "$JOINT_BOB_WEBHOOK_TITLE_CLI" status, then use its fill command with the placeholder replacements. Text outside brackets is fixed and is preserved by the server. Do this before the webhook's main work.`
+    : "";
+  const message = [titleInstruction, webhookMessage(webhook, call), placed.listed].filter(Boolean).join("\n\n");
   const engine = webhook.target.engine ?? defaultEngine();
   const prompt = {
     message, images: placed.images, files: placed.files, requestId: randomUUID(), label: "Webhook", until: "started" as const,
@@ -102,7 +107,8 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   if (!isHarnessId(engine) || !listDiscoveredHarnesses().some((adapter) => adapter.id === engine && adapter.runtime)) throw new WebhookError(409, "The webhook's agent is not available on this machine");
   const sessionId = randomUUID();
   await ensureConversationRecord(project.id, engine, sessionId, local.id);
-  await ensureSessionTitle(sessionId, webhook.name);
+  if (titleTemplate) bindWebhookTitle(project.id, sessionId, titleTemplate);
+  await ensureSessionTitle(sessionId, titleTemplate || webhook.name);
   broadcastToProject(project.id, { type: "sessionsChanged" });
   try {
     await attachSecrets(webhook, engine, sessionId);

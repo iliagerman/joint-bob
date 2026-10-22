@@ -63,6 +63,15 @@ test("webhook secret selections persist without credential values and can be cle
   assert.equal(webhookInputSchema.safeParse({ name: "Bad", target: { kind: "project", projectId: "p1" }, secretAccountIds: [accountId, accountId] }).success, false);
 });
 
+test("title templates survive edits and address regeneration", () => {
+  const db = new DatabaseSync(":memory:");
+  const { webhook, secret } = createWebhook(db, input({ titleTemplate: "pr-[PR_REVIEW]" }));
+  assert.equal(webhookForSecret(db, secret)?.titleTemplate, "pr-[PR_REVIEW]");
+  assert.equal(regenerateWebhookSecret(db, webhook.id).webhook.titleTemplate, "pr-[PR_REVIEW]");
+  assert.equal(updateWebhook(db, webhook.id, input({ titleTemplate: "review-[REPO]-[NUMBER]" })).titleTemplate, "review-[REPO]-[NUMBER]");
+  assert.equal(updateWebhook(db, webhook.id, input()).titleTemplate, "");
+});
+
 test("delivery history is counted and keeps only the latest calls", () => {
   const db = new DatabaseSync(":memory:");
   const { webhook } = createWebhook(db, input());

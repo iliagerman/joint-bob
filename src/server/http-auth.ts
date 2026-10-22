@@ -6,6 +6,7 @@ import { browserAgentIdentity } from "../browser-agent.js";
 import { backgroundTaskAgentIdentity } from "../background-task-agent.js";
 import { ntfyAgentIdentity } from "../ntfy-agent.js";
 import { worktreeAgentIdentity } from "../worktree-agent.js";
+import { webhookTitleAgentIdentity } from "../webhook-title.js";
 import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../cluster-identity.js";
 import { ClusterProtocolError, verifyClusterRequest } from "../cluster-protocol.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
@@ -162,6 +163,10 @@ export async function requireHttpAuth(request: Request, response: Response, next
   if ((request.path === "/background-tasks/agent" || request.path === "/background-tasks/relay") && request.method === "POST" && token) {
     const identity = backgroundTaskAgentIdentity(token);
     if (identity) { response.locals.taskAgent = identity; response.locals.taskAgentToken = token; next(); return; }
+  }
+  if (request.path === "/webhook-title/agent" && request.method === "POST" && token) {
+    const identity = webhookTitleAgentIdentity(token);
+    if (identity) { response.locals.webhookTitleAgent = identity; next(); return; }
   }
   if (request.path === "/ntfy/agent" && request.method === "POST" && token) {
     const identity = ntfyAgentIdentity(token);

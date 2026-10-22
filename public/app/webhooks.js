@@ -13,7 +13,7 @@ const reveal = byId("webhooksReveal");
 const history = byId("webhooksHistory");
 const field = {
   owner: byId("webhooksOwner"), name: byId("webhooksName"), kind: byId("webhooksTargetKind"), project: byId("webhooksProject"), conversation: byId("webhooksConversation"),
-  harness: byId("webhooksHarness"), model: byId("webhooksModel"), effort: byId("webhooksEffort"),
+  harness: byId("webhooksHarness"), model: byId("webhooksModel"), effort: byId("webhooksEffort"), titleTemplate: byId("webhooksTitleTemplate"),
   conversationLabel: byId("webhooksConversationLabel"), context: byId("webhooksContext"), enabled: byId("webhooksEnabled"),
   attachments: byId("webhooksAttachments"), markForReview: byId("webhooksMarkForReview"), sendersEnabled: byId("webhooksSendersEnabled"), senders: byId("webhooksSenders"),
   senderFields: byId("webhooksSenderFields"), allowedSenders: byId("webhooksAllowedSenders"), save: byId("webhooksSave"),
@@ -37,7 +37,7 @@ const endpoint = (suffix = "") => `/api/webhooks${suffix}?nodeId=${encodeURIComp
 
 /** The body a PUT or POST sends: everything about the webhook, so saving one setting keeps the others. */
 const hookBody = (hook, changes = {}) => JSON.stringify({
-  name: hook.name, target: hook.target, context: hook.context, enabled: hook.enabled, attachments: hook.attachments, markForReview: hook.markForReview, senders: hook.senders, model: hook.model, reasoning: hook.reasoning, secretAccountIds: hook.secretAccountIds, ...changes,
+  name: hook.name, target: hook.target, context: hook.context, enabled: hook.enabled, attachments: hook.attachments, markForReview: hook.markForReview, senders: hook.senders, model: hook.model, reasoning: hook.reasoning, secretAccountIds: hook.secretAccountIds, titleTemplate: hook.titleTemplate, ...changes,
 });
 
 /** "123 Ilia" lines to `{ value, label }`; the first word is the value, the rest is the name. */
@@ -303,6 +303,7 @@ function syncSenders() {
 function syncKind() {
   const conversation = field.kind.value === "conversation";
   field.conversationLabel.hidden = !conversation;
+  byId("webhooksTitleTemplateLabel").hidden = conversation;
   field.harness.disabled = conversation;
   if (conversation) void fillConversations(editing?.target.sessionId).catch((error) => showStatus(status, errorText(error), "error"));
 }
@@ -323,6 +324,7 @@ async function openForm(hook = null) {
   fillHarnesses(hook?.target.engine ?? "");
   renderExecution(hook?.model ? `${hook.model.provider}|${hook.model.modelId}` : "", hook?.reasoning ?? "");
   field.context.value = hook?.context ?? "";
+  field.titleTemplate.value = hook?.titleTemplate ?? "";
   field.enabled.checked = hook?.enabled ?? true;
   field.attachments.checked = hook?.attachments ?? false;
   field.markForReview.checked = hook?.markForReview ?? false;
@@ -371,7 +373,7 @@ async function submit(event) {
   const senders = field.sendersEnabled.checked
     ? { fields: field.senderFields.value.split(/[\s,]+/).filter(Boolean), allowed: parseAllowed(field.allowedSenders.value) }
     : null;
-  const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: selectedSecrets() });
+  const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: selectedSecrets(), titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
   saving = true;
   field.save.disabled = true;
   field.owner.disabled = true;
