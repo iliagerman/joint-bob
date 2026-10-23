@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.144.0 — 2026-10-23
 
-- Changed strict resource isolation so Claude, Pi and Kiro all receive a project's skills, commands, agents and instructions through the app, whichever harness folder they came from, and project Pi packages no longer load.
+- Changed strict resource isolation so Claude, Pi and Kiro load nothing from machine or parent folders on their own: each receives the project's skills, commands, agents and instructions only through the app, and project Pi packages no longer load.
+- Fixed Claude never loading the app's managed commands and agents, which were skipped in its generated plugin.
 
 ## 2.143.4 — 2026-10-23
 
