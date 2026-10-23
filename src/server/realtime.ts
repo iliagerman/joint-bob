@@ -33,6 +33,12 @@ export function broadcast(session: SharedHarnessSession, payload: unknown): void
 export function parseSessionPath(value: string | null): string | undefined { return !value || value === "new" || value.endsWith(":new") ? undefined : value; }
 export function sessionKey(cwd: string, sessionPath: string | undefined): string { return `${cwd}\n${sessionPath ?? "new"}`; }
 
+/** Instructions changed: every open session reloads before its next message. Claude and Kiro start
+    a fresh process each turn and read them anyway; Pi holds them between turns. */
+export function markHarnessSessionsStale(): void {
+  for (const shared of harnessSessions.values()) shared.skillsStale = true;
+}
+
 export async function reloadSharedSkills(): Promise<{ reloaded: number; skipped: number; failed: Array<{ sessionId: string; error: string }> }> {
   // A relay that enforces skills publishes their digests; any change to this node's skills makes them stale.
   void import("../relay/enabled-snapshot.js").then(({ republishRelayResources }) => republishRelayResources())
@@ -127,6 +133,8 @@ export function broadcastReplicationInvalidations(events: ReplicationBatch["even
     const projectId = (event.payload as { projectId?: unknown } | null)?.projectId;
     sessionListingChanged(typeof projectId === "string" && projectId ? projectId : undefined);
   }
+  // Another machine saved the global AGENTS.md: open sessions read it before their next message.
+  if (events.some((event) => event.entityType === "instructions.global")) markHarnessSessionsStale();
   for (const type of replicationInvalidations(events)) announceToAllClients({ type });
 }
 

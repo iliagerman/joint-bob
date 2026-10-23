@@ -22,7 +22,7 @@ import { projectFileCopySchema, projectFileDeleteSchema, projectFileUpdateSchema
 import { requireLocalConversationOwner } from "../sessions-helpers.js";
 import { app } from "../state.js";
 
-class ProjectFileError extends Error {
+export class ProjectFileError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
@@ -130,7 +130,7 @@ async function resolveProjectFile(projectId: string, requestedPath: string, task
 
 // A ticket-scoped resolution roots at the ticket workspace so agent paths resolve to
 // the copy the agent actually edited, never to a same-named project file.
-async function resolutionRoot(projectId: string, projectPath: string, taskId?: string): Promise<string> {
+export async function resolutionRoot(projectId: string, projectPath: string, taskId?: string): Promise<string> {
   // In multi-user mode the service serves a folder only while it stays in its owner's home.
   if (multiUserEnabled() && !await projectFolderConfined(await runtimeForProject(projectId), projectPath, projectId)) throw new ProjectFileError(409, "This project's folder is outside its owner's home");
   if (!taskId) return await realpath(projectPath);

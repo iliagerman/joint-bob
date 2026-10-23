@@ -83,6 +83,17 @@ export async function openFileAction(path, taskId) {
   }
 }
 
+// The Activity panel's AGENTS.md files open in this same editor. They come from their own endpoints,
+// which can create the file, and saving one needs no persisted conversation.
+document.addEventListener("open-instructions-editor", (event) => {
+  const { title, contentUrl, readOnly } = event.detail;
+  resetFileEditor();
+  Object.assign(state.fileEditor, { path: title, contentUrl, instructions: true });
+  elements.fileActionPath.textContent = title;
+  elements.fileActionDialog.showModal();
+  void openProjectFile(readOnly);
+});
+
 // Editing always happens on the raw source: every `#`, `*` and backtick stays visible and
 // every line has its own number, because an editor that hides the syntax it is editing
 // makes the cursor land somewhere other than where it looks. Reading is the other half of
@@ -160,16 +171,19 @@ async function attemptCloseFileEditor() {
 
 async function saveProjectFile(closeAfterSave = true) {
   if (state.fileEditor.saving || state.fileEditor.readOnly) return;
-  const { contentUrl, version } = state.fileEditor;
+  const { contentUrl, version, instructions } = state.fileEditor;
   if (!contentUrl || !version) return;
   const session = activeChatSession();
-  if (!session?.id) { toast("Open a persisted conversation before editing files"); return; }
+  if (!instructions && !session?.id) { toast("Open a persisted conversation before editing files"); return; }
   const content = fileEditor.getValue();
   state.fileEditor.saving = true;
   elements.fileEditorSaveButton.disabled = true;
   try {
-    const body = await api(contentUrl, { method: "PUT", body: JSON.stringify({ content, version, sessionId: session.id }) });
+    // A project file is saved for the conversation that owns it; the instruction files belong to no conversation.
+    const payload = instructions ? { content, version } : { content, version, sessionId: session.id };
+    const body = await api(contentUrl, { method: "PUT", body: JSON.stringify(payload) });
     Object.assign(state.fileEditor, { path: body.path, version: body.version, original: content });
+    if (instructions) document.dispatchEvent(new Event("instructions-saved"));
     if (closeAfterSave) {
       elements.fileActionDialog.close();
       resetFileEditor();

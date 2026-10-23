@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added an Instructions section to the Activity panel that shows the AGENTS.md files a conversation's agent reads, and lets you view, create and edit them from there.
+
 ## 2.145.0 — 2026-10-23
 
 - Added one memory folder per project, shared by its worktrees and tickets, that Claude, Pi and Kiro all read and write; it starts from the notes Claude already kept for the project, while background summaries and reviews and runs outside a project never use it.

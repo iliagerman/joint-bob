@@ -57,6 +57,8 @@ test("agents read the global AGENTS.md, the app's instructions, then the project
   assert.match(instructions, /# Global instructions \(AGENTS\.md\)\n\nGLOBAL_WORD/);
   assert.match(instructions, /# Project instructions \(CLAUDE\.md\)\n\nPROJECT_CLAUDE_WORD/);
   assert.doesNotMatch(instructions, /PARENT_WORD|NESTED_WORD|MANUAL_WORD/);
+  await write(globalInstructionsPath(paths), "  \n");
+  assert.equal(agentInstructionFiles(paths, "pi", { cwd: project }).some((file) => file.label.startsWith("Global")), false, "an empty AGENTS.md adds nothing");
   await rm(path.join(project, "CLAUDE.md"));
 });
 

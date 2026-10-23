@@ -474,3 +474,65 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.deepEqual(consoleErrors, []);
   assert.deepEqual(failedResponses, []);
 });
+
+test("the instructions section shows both AGENTS.md files and creates and edits them in the file editor", async () => {
+  // A page of its own: the first test leaves its page mid-conversation on a phone-sized window.
+  const own = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
+  const page = await own.newPage();
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", (error) => consoleErrors.push(error.stack || error.message));
+  page.on("response", (response) => {
+    if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`);
+  });
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator("#loginDialog[open]").waitFor({ timeout: 20_000 });
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card", { hasText: PROJECT_NAME }).first().click();
+  await page.locator(".session-card", { hasText: CONVERSATION_TITLE }).first().click();
+  // The section fills in once the conversation's node says it is ready.
+  await page.getByTestId("activity-instructions-project").waitFor({ timeout: 20_000 });
+  if (await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded") !== "true") await page.getByTestId("chat-activity-toggle").click();
+  const section = page.getByTestId("activity-instructions");
+  await section.waitFor({ state: "visible" });
+  assert.equal(await section.evaluate((details: HTMLDetailsElement) => details.open), true);
+  const global = page.getByTestId("activity-instructions-global");
+  const project = page.getByTestId("activity-instructions-project");
+  await project.waitFor();
+  assert.match(await global.innerText(), /All projects\s+None yet\./);
+  assert.match(await project.innerText(), /This project · AGENTS\.md\s+None yet\./);
+
+  // Creating the project's file: the editor opens empty, and saving writes it into the project folder.
+  const save = async (text: string) => {
+    await page.getByTestId("file-action-dialog").waitFor({ state: "visible" });
+    await page.locator("#fileEditorView .CodeMirror").first().waitFor();
+    await page.evaluate((value) => (document.querySelector("#fileEditorView .CodeMirror") as HTMLElement & { CodeMirror: { setValue(value: string): void } }).CodeMirror.setValue(value), text);
+    await page.getByTestId("file-editor-save-button").click();
+    await page.getByTestId("file-action-dialog").waitFor({ state: "hidden" });
+  };
+  await page.getByTestId("activity-instructions-project-edit").click();
+  await save("# Infra rules\n\nNever rotate production on a Friday.\n");
+  const projectFile = path.join(projectNamed(node, PROJECT_NAME).path, "AGENTS.md");
+  assert.equal(await readFile(projectFile, "utf8"), "# Infra rules\n\nNever rotate production on a Friday.\n");
+  await page.waitForFunction(() => document.querySelector("[data-testid='activity-instructions-project'] .activity-instructions-preview")?.textContent?.includes("Never rotate"));
+  assert.equal(await page.getByTestId("activity-instructions-project-edit").innerText(), "Edit");
+
+  // The file every project shares, through its own endpoint.
+  await page.getByTestId("activity-instructions-global-edit").click();
+  await save("Answer in short sentences.\n");
+  await page.waitForFunction(() => document.querySelector("[data-testid='activity-instructions-global'] .activity-instructions-preview")?.textContent === "Answer in short sentences.");
+  const admin = await signIn(environment, node);
+  assert.equal((await api<{ content: string }>(node, admin, "GET", "/instructions/global/content")).body.content, "Answer in short sentences.\n");
+
+  // Viewing opens the same editor read-only.
+  await page.getByTestId("activity-instructions-project-view").click();
+  await page.getByTestId("file-action-dialog").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("file-editor-save-button").isVisible(), false);
+  await page.keyboard.press("Escape");
+  await rm(projectFile);
+  await own.close();
+
+  assert.deepEqual(consoleErrors, []);
+  assert.deepEqual(failedResponses, []);
+});

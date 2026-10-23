@@ -2,14 +2,16 @@ import { renderMarkdown } from "../markdown.js";
 import { api } from "./api.js";
 import { formatDateTime, formatDuration } from "./chat-time.js";
 import { elements } from "./elements.js";
+import { isNodeAdmin } from "./node-admin.js";
 import { state } from "./state.js";
 
 // The activity sidebar holds a conversation's intermediate work — tool calls and
 // thinking — so the main thread reads as what the agent actually said. Each turn's
 // steps are one group here, headed by the prompt that started the turn, and one
 // line under that prompt in the main thread that opens the panel on the group.
-// Above the steps sit the running summary, statistics counted from the steps the
-// page holds, and the skills the summary writer suggests. The steps start collapsed.
+// Above the steps sit the running summary, the AGENTS.md files the agent reads, statistics
+// counted from the steps the page holds, and the skills the summary writer suggests. The
+// steps start collapsed.
 
 // Below this width the panel floats over the transcript instead of sharing the row.
 const OVERLAY_QUERY = window.matchMedia("(max-width: 900px)");
@@ -400,12 +402,90 @@ function requestSummary() {
   return true;
 }
 
+// The two AGENTS.md files the conversation's agent is given, whatever the harness: the one for
+// every project, and the project's own from the folder the agent runs in. Agents find no other.
+let instructionsRequest = 0;
+const PREVIEW_LINES = 3;
+
+function projectInstructionsUrl() {
+  const projectId = state.activeConversationProjectId || state.activeProjectId;
+  if (!projectId) return null;
+  const session = state.sessions.find((candidate) => state.activeSessionId ? candidate.id === state.activeSessionId : candidate.path === state.activeSessionPath);
+  const query = new URLSearchParams();
+  if (state.activeNodeId) query.set("nodeId", state.activeNodeId);
+  if (state.activeTaskId) query.set("taskId", state.activeTaskId);
+  if (session?.worktree?.id) query.set("worktreeId", session.worktree.id);
+  return `/api/projects/${encodeURIComponent(projectId)}/instructions/content${query.size ? `?${query}` : ""}`;
+}
+
+/** The opening lines as plain text: enough to recognise the file, never a scrolling copy of it. */
+function previewText(content) {
+  return content.split("\n").map((line) => line.replace(/^#+\s*|^[-*]\s+/, "").trim()).filter(Boolean).slice(0, PREVIEW_LINES).join("\n");
+}
+
+function instructionsRow({ label, title, contentUrl, body, editable, testid }) {
+  const row = document.createElement("div");
+  row.className = "activity-instructions-row";
+  row.dataset.testid = testid;
+  const name = document.createElement("div");
+  name.className = "activity-instructions-name";
+  name.textContent = label;
+  const preview = document.createElement("p");
+  preview.className = "activity-instructions-preview";
+  preview.classList.toggle("placeholder", !body.content.trim());
+  preview.textContent = previewText(body.content) || (body.exists === false ? "None yet." : "Empty.");
+  const actions = document.createElement("div");
+  actions.className = "activity-instructions-actions";
+  const open = (readOnly) => document.dispatchEvent(new CustomEvent("open-instructions-editor", { detail: { title, contentUrl, readOnly } }));
+  if (body.content.trim()) {
+    const view = document.createElement("button");
+    Object.assign(view, { type: "button", className: "ghost compact", textContent: "View" });
+    view.dataset.testid = `${testid}-view`;
+    view.addEventListener("click", () => open(true));
+    actions.append(view);
+  }
+  if (editable) {
+    const edit = document.createElement("button");
+    Object.assign(edit, { type: "button", className: "ghost compact", textContent: body.exists === false ? "Create" : "Edit" });
+    edit.dataset.testid = `${testid}-edit`;
+    edit.addEventListener("click", () => open(false));
+    actions.append(edit);
+  }
+  row.append(name, preview, actions);
+  return row;
+}
+
+/** Reads both files again and redraws the section; an older read that finishes late is dropped. */
+async function renderInstructions() {
+  const request = ++instructionsRequest;
+  const projectUrl = projectInstructionsUrl();
+  elements.activityInstructionsStatus.textContent = "";
+  const [global, project] = await Promise.allSettled([
+    api("/api/instructions/global/content"),
+    projectUrl ? api(projectUrl) : Promise.resolve(null),
+  ]);
+  if (request !== instructionsRequest) return;
+  const rows = [];
+  if (global.status === "fulfilled") {
+    const editable = isNodeAdmin();
+    rows.push(instructionsRow({ label: "All projects", title: "AGENTS.md for every project", contentUrl: "/api/instructions/global/content", body: { ...global.value, exists: global.value.version !== "absent" }, editable, testid: "activity-instructions-global" }));
+  }
+  if (project.status === "fulfilled" && project.value) {
+    rows.push(instructionsRow({ label: `This project · ${project.value.path}`, title: `${project.value.path} in this conversation's folder`, contentUrl: projectUrl, body: project.value, editable: true, testid: "activity-instructions-project" }));
+  }
+  const failed = [global, project].find((result) => result.status === "rejected");
+  if (failed) elements.activityInstructionsStatus.textContent = "Could not read all instructions";
+  if (failed) console.warn("Could not read the conversation's instructions", failed.reason);
+  elements.activityInstructionsBody.replaceChildren(...rows);
+}
+
 /** A conversation opened: its node sent the stored summary and the policy with it. */
 export function activityReady(payload) {
   summary.digest = payload.digest ?? null;
   summary.policy = payload.summaryPolicy ?? null;
   summary.writing = false;
   renderSummary();
+  void renderInstructions();
   if (activityPanelOpen() && summary.policy?.updates === "panel") requestSummary();
 }
 
@@ -435,6 +515,8 @@ export function activityConversationChanged() {
   summary.digest = null;
   summary.writing = false;
   renderSummary();
+  instructionsRequest += 1;
+  elements.activityInstructionsBody.replaceChildren();
 }
 
 elements.activityToggleButton.addEventListener("click", () => setActivityPanelOpen(!activityPanelOpen()));
@@ -459,6 +541,9 @@ document.addEventListener("summary-policy-changed", () => {
     renderSummary();
   }).catch((error) => console.warn("Could not reload the summary policy", error));
 });
+// Saved here, or on another of this person's machines for the file every project shares.
+document.addEventListener("instructions-saved", () => void renderInstructions());
+document.addEventListener("instructions-changed", () => void renderInstructions());
 elements.activityPanel.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || !OVERLAY_QUERY.matches) return;
   event.stopPropagation();

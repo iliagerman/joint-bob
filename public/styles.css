@@ -1924,6 +1924,13 @@ select.chat-toolbar-control {
 .activity-suggestion-kind.new { background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--amber); }
 .activity-suggestion-name { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .activity-suggestion-reason { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.activity-instructions-row { display: grid; gap: 3px; min-width: 0; padding: 7px 8px; border-radius: 6px; background: var(--field); }
+.activity-instructions-name { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* A few opening lines to recognise the file; the whole file opens in the editor, never in the panel. */
+.activity-instructions-preview { display: -webkit-box; margin: 0; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: pre-line; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; }
+.activity-instructions-preview.placeholder { font-style: italic; }
+.activity-instructions-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-left: -6px; }
+.activity-instructions-actions:empty { display: none; }
 .activity-summary-text { color: var(--text); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
 .activity-summary-text.placeholder { color: var(--muted); }
 .activity-summary-text > :first-child { margin-top: 0; }

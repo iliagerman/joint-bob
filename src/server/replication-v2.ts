@@ -66,6 +66,8 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
   "user.recent": "account",
   // A person's bindings, not tied to a project: their own machines only.
   "canvas.shortcut": "twins",
+  // The AGENTS.md every project's agents read, kept the same on the owner's machines.
+  "instructions.global": "twins",
   // Routing configurations have their own distribution (routing-configs.ts).
   "cluster.routing": "separate",
 };

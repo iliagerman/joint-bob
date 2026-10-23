@@ -703,6 +703,7 @@ const INVALIDATION_HANDLERS = {
     scheduleRunningRefresh();
   },
   browserSessionsChanged: () => document.dispatchEvent(new Event("browserSessionsChanged")),
+  instructionsChanged: () => document.dispatchEvent(new Event("instructions-changed")),
   projectsChanged: () => refreshProjectsQuietly(),
   pinsChanged: () => loadPins().catch((error) => console.warn(error)),
   recentsChanged: () => loadRecentSessions().catch((error) => console.warn(error)),

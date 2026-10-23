@@ -48,7 +48,8 @@ export function agentInstructionFiles(paths: AgentResourcePaths, harness: "pi" |
   }
   // Claude reads the same folder through its own auto-memory, pointed there by the app.
   if (options.memory && harness !== "claude" && getSettings().strictResourceIsolation) files.push(memoryInstructionFile(options.memory));
-  return files;
+  // A file left empty (an AGENTS.md created and not yet written) adds nothing but its heading.
+  return files.filter((file) => file.content.trim());
 }
 
 /** Claude and Kiro take one document; each part keeps a heading that says where it came from. */

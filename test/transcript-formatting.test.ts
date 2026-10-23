@@ -79,7 +79,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(app, /CodeMirror\.findModeByFileName/);
   assert.match(app, /CodeMirror\.autoLoadMode/);
   assert.match(app, /async function saveProjectFile\(closeAfterSave = true\) \{[\s\S]*const session = activeChatSession\(\);[\s\S]*Open a persisted conversation before editing files/);
-  assert.match(app, /async function saveProjectFile\(closeAfterSave = true\) \{[\s\S]*const content = fileEditor\.getValue\(\);[\s\S]*JSON\.stringify\(\{ content, version, sessionId: session\.id \}\)[\s\S]*original: content/);
+  assert.match(app, /async function saveProjectFile\(closeAfterSave = true\) \{[\s\S]*const content = fileEditor\.getValue\(\);[\s\S]*const payload = instructions \? \{ content, version \} : \{ content, version, sessionId: session\.id \};[\s\S]*JSON\.stringify\(payload\)[\s\S]*original: content/);
   assert.match(app, /CodeMirror\.commands\.save = \(\) => \{ void saveProjectFile\(false\); \}/);
   assert.match(server, /async function assertProjectFileConversationOwner\([\s\S]*listHarnessSessions\(project\)[\s\S]*requireLocalConversationOwner\([\s\S]*session\.id\)/);
   assert.match(server, /await assertProjectEditable\(project\);\s*await assertProjectFileConversationOwner\(project, payload\.sessionId\);[\s\S]*await readFile\(resolved\)/);

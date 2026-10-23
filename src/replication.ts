@@ -6,6 +6,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { applyConversationOwnershipEvent, ensureConversationOwnershipSchema } from "./conversation-ownership.js";
 import { applyCanvasShortcutEvent, ensureCanvasShortcutSchema } from "./canvas-shortcuts.js";
+import { applyGlobalInstructionsEvent, ensureGlobalInstructionsSchema } from "./global-instructions.js";
 import { applyConversationReviewEvent, ensureConversationReviewReplicaSchema } from "./conversation-reviews.js";
 import { applyConversationNotificationDeliveredEvent, applyConversationNotificationEvent, ensureConversationNotificationSchema } from "./conversation-notifications.js";
 import { applyConversationRecordEvent, ensureConversationRecordSchema } from "./conversation-records.js";
@@ -30,7 +31,7 @@ export interface ReplicationEvent {
   createdAt: string;
 }
 export interface ReplicationBatch { events: ReplicationEvent[]; }
-export type ReplicationInvalidation = "projectsChanged" | "sessionsChanged" | "tasksChanged" | "shortcutsChanged" | "pinsChanged" | "recentsChanged";
+export type ReplicationInvalidation = "projectsChanged" | "sessionsChanged" | "tasksChanged" | "shortcutsChanged" | "pinsChanged" | "recentsChanged" | "instructionsChanged";
 interface OutboxRow { event_id: string; origin_node_id: string; entity_type: string; entity_key: string; operation: string; payload: string; created_at: string; }
 interface NamePayload { scope: "projects" | "sessions" | "session_colors" | "session_classifications" | "session_done"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
 interface ProjectLockPayload { projectId: string; lock: { nodeId: string; nodeName: string; lockedAt: string } | null; updatedAt: string; originNodeId: string; }
@@ -81,7 +82,7 @@ function ensureProjectLockSchema(db: DatabaseSync): void {
 
 async function replicationDatabase(): Promise<DatabaseSync> {
   if (databasePromise) return databasePromise;
-  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureConversationNotificationSchema(db); ensureConversationGoalSchema(db); ensureCanvasShortcutSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); ensureRoutingPolicySchema(db); ensureUsageSchema(db); return db; })();
+  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureConversationNotificationSchema(db); ensureConversationGoalSchema(db); ensureCanvasShortcutSchema(db); ensureGlobalInstructionsSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); ensureRoutingPolicySchema(db); ensureUsageSchema(db); return db; })();
   return databasePromise;
 }
 
@@ -212,6 +213,7 @@ export function replicationInvalidations(events: ReplicationEvent[]): Replicatio
   if (entityTypes.has("canvas.shortcut")) invalidations.add("shortcutsChanged");
   if (entityTypes.has("user.pin")) invalidations.add("pinsChanged");
   if (entityTypes.has("user.recent")) invalidations.add("recentsChanged");
+  if (entityTypes.has("instructions.global")) invalidations.add("instructionsChanged");
   return [...invalidations];
 }
 
@@ -342,6 +344,7 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "conversation.goal": applyConversationGoalEvent,
   "conversation.author": applyMessageAuthorEvent,
   "canvas.shortcut": applyCanvasShortcutEvent,
+  "instructions.global": applyGlobalInstructionsEvent,
   "user.pin": applyUserPinEvent,
   "user.recent": applyUserRecentSessionEvent,
   "model.usage": applyUsageEvent,

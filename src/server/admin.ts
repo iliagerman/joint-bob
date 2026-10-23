@@ -39,6 +39,8 @@ export const ADMIN_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "PUT", path: /^\/browser\/config$/ },
   // How this node, and a relay it serves, keeps conversation summaries.
   { method: "PUT", path: /^\/conversation-summary\/(settings|relay-policy|instructions|skill-instructions)$/ },
+  // The AGENTS.md every project's agents read on this node and the owner's other machines.
+  { method: "PUT", path: /^\/instructions\/global\/content$/ },
 ];
 
 /** Express matches routes whatever their letter case and with a trailing slash, so the gate
