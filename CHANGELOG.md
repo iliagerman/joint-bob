@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.143.2 — 2026-10-23
 
-- Fixed strict resource isolation refusing to start Claude in a project when a blocked skill also had a copy in the home folder, so those runs now start normally.
+- Fixed every Claude turn failing with a "Cannot safely suppress blocked native claude skills" error when strict resource isolation was on and a skill was turned off for Claude; those turns now start normally.
 
 ## 2.143.1 — 2026-10-22
 
