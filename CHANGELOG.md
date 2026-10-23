@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.143.3 — 2026-10-23
 
-- Changed new worktrees to start from the default branch as it is on GitHub when created, and pull requests from them to carry only the worktree's own edits, replayed on the branch as it is at that moment, with any conflicting files named instead of overwriting newer work.
+- Changed new worktrees to start from the default branch as it is on GitHub when created, with the folder's git-ignored local files but without other sessions' uncommitted work; repositories without a remote still copy the folder.
+- Changed pull requests from a worktree to carry only its own edits, replayed on the base branch as it is at that moment, so they stop re-adding upstream changes; conflicting files are named instead of overwritten, and an open pull request that was already rebased is left alone.
+- Fixed a machine's project checkout staying days behind the files synced to it once main had moved further; before a turn it now catches up to the newest commit those files hold.
 
 ## 2.143.2 — 2026-10-23
 
