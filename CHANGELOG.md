@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.147.0 — 2026-10-23
 
-- Added an "Also read" line to the Activity panel's Instructions section that names the other instruction files a project's agents read, and made every agent receive the project's CLAUDE.md files, their imports and its path-specific rules.
+- Changed every agent to receive all of a project's instruction files, including its CLAUDE.md files, the files they import and its path-specific rules, so Claude, Pi and Kiro follow the same project rules.
+- Added an "Also read" line to the Activity panel's Instructions section that names the other instruction files a project's agents read.
 
 ## 2.146.1 — 2026-10-23
 
