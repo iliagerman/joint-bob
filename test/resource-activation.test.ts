@@ -96,6 +96,32 @@ test("Claude fails closed when native resource discovery cannot enforce a skill 
   }
 });
 
+test("strict Claude runs ignore skill copies in the home folder, which the CLI never loads as project skills", async () => {
+  const project = path.join(os.homedir(), "strict-home-projects", "project");
+  const copies = [path.join(os.homedir(), ".agents", "skills"), path.join(os.homedir(), ".claude", "skills"), path.join(os.homedir(), "strict-home-projects", ".claude", "skills")]
+    .map((root) => path.join(root, "blocked-home-fixture"));
+  for (const copy of copies) {
+    await mkdir(copy, { recursive: true });
+    await writeFile(path.join(copy, "SKILL.md"), "---\nname: blocked-home-fixture\ndescription: native\n---\n");
+  }
+  await mkdir(project, { recursive: true });
+  const previous = getSettings().strictResourceIsolation;
+  try {
+    setActivationPreference("skill", "blocked-home-fixture", "claude", false);
+    save(settingsDatabase(), "strictResourceIsolation", "true");
+    // A folder between the project and home is still a project ancestor.
+    assert.throws(() => claudeAgentResourceArgs(undefined, undefined, undefined, project), /Cannot safely suppress blocked native claude skills in .*strict-home-projects/);
+    await rm(path.dirname(copies[2]), { recursive: true, force: true });
+    assert.doesNotThrow(() => claudeAgentResourceArgs(undefined, undefined, undefined, project));
+    assert.doesNotThrow(() => assertNoBlockedNativeSkills("claude", os.homedir()));
+  } finally {
+    save(settingsDatabase(), "strictResourceIsolation", String(previous));
+    setActivationPreference("skill", "blocked-home-fixture", "claude", null);
+    for (const copy of copies) await rm(copy, { recursive: true, force: true });
+    await rm(path.join(os.homedir(), "strict-home-projects"), { recursive: true, force: true });
+  }
+});
+
 test("a plugin cannot reintroduce a blocked skill", async () => {
   const paths = agentResourcePaths(path.join(fixture, "plugin-managed"));
   const plugin = path.join(paths.claudePlugins, "kit");

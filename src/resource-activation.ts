@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { agentResourcePaths } from "./agent-resources.js";
 import { parse as parseYaml } from "yaml";
@@ -224,8 +225,11 @@ export function activeSkillRoot(harness: HarnessId, root = agentResourcePaths().
 /** Only the selected harness receives approved servers; source config stays unchanged. */
 export function assertNoBlockedNativeSkills(harness: HarnessId, cwd: string, additionalRoots: string[] = [], context: SkillScopeContext = {}): void {
   const roots = [...additionalRoots];
-  // Claude discovers project skills in ancestor directories too.
+  const home = path.resolve(os.homedir());
+  // Claude discovers project skills in ancestor directories too, stopping before the home folder:
+  // ~/.claude/skills is user scope, which strict isolation turns off and additionalRoots covers otherwise.
   for (let directory = path.resolve(cwd); ; directory = path.dirname(directory)) {
+    if (harness === "claude" && directory === home) break;
     roots.push(path.join(directory, ".agents/skills"), path.join(directory, harness === "claude" ? ".claude/skills" : ".kiro/skills"));
     if (harness !== "claude" || path.dirname(directory) === directory) break;
   }

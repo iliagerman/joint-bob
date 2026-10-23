@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed strict resource isolation refusing to start Claude in a project when a blocked skill also had a copy in the home folder, so those runs now start normally.
+
 ## 2.143.1 — 2026-10-22
 
 - Fixed webhook title templates being refused when the agent filled in the bracketed part of a new conversation's title, so the title now applies on each call.
