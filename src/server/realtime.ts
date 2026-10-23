@@ -39,6 +39,12 @@ export function markHarnessSessionsStale(): void {
   for (const shared of harnessSessions.values()) shared.skillsStale = true;
 }
 
+/** The instructions agents read changed on this node: sessions reload them and open pages redraw them. */
+export function instructionsChanged(): void {
+  markHarnessSessionsStale();
+  announceToAllClients({ type: "instructionsChanged" });
+}
+
 export async function reloadSharedSkills(): Promise<{ reloaded: number; skipped: number; failed: Array<{ sessionId: string; error: string }> }> {
   // A relay that enforces skills publishes their digests; any change to this node's skills makes them stale.
   void import("../relay/enabled-snapshot.js").then(({ republishRelayResources }) => republishRelayResources())

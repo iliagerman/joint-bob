@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed instruction files that only Claude or Pi used to read to move into the shared AGENTS.md, so every agent follows the same rules; the originals are kept in a backup folder.
+
 ## 2.146.0 — 2026-10-23
 
 - Added an Instructions section to the Activity panel that lists the two AGENTS.md files a conversation's agent reads, the shared one for every project and the project's own, and lets you view, create and edit each; only admins can save the shared file, and a save never overwrites a newer edit.

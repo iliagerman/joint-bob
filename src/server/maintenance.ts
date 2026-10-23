@@ -1,5 +1,6 @@
 import { failStaleConversationWork, listUnfinishedConversationWork, refreshConversationWork, takeChangedConversationWork } from "../conversation-work.js";
 import { reconcileAgentResources } from "../agent-resources.js";
+import { consolidateAgentInstructions } from "../instruction-migration.js";
 import { getClusterNode } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { abandonedShellReason, backgroundTaskConversationId, readActiveBackgroundTaskIdentities, readImplicitShellTasks } from "../background-tasks.js";
@@ -22,7 +23,7 @@ import { reconcileSyncthingProjectFolders } from "../syncthing.js";
 import { ensureLegacySkillSyncPaused, refreshSharedSkills } from "./skill-sharing.js";
 import { listTasks, listUnfinishedOutgoingTaskHandoffs, releaseStaleTaskLease } from "../tasks.js";
 import type { HarnessId } from "../types.js";
-import { announceConversationsChanged, broadcastSessionsChangedToAllProjects, broadcastToProject, scheduleReviewNotifications, scheduleReviewNotificationsFor, wakeQueuedConversations } from "./realtime.js";
+import { announceConversationsChanged, broadcastSessionsChangedToAllProjects, broadcastToProject, instructionsChanged, scheduleReviewNotifications, scheduleReviewNotificationsFor, wakeQueuedConversations } from "./realtime.js";
 import { replicationReceiptSchema } from "./schemas.js";
 import { dropZombieHarnessSessions, harnessSessions, harnessTurnBusy, reapInactiveHarnessSessions } from "./harness-sessions.js";
 import { flags } from "./state.js";
@@ -63,6 +64,10 @@ export async function reconcileManagedAgentResources(): Promise<void> {
   // Checked every 30 seconds; conflicts that wait for a person are reported when their number changes.
   if (resources.conflicts.length) warnOnChange("agent-resources", `Agent resource reconciliation found ${resources.conflicts.length} conflict(s)`);
   else settled("agent-resources");
+  // Instructions only one harness read become part of the global AGENTS.md that every agent reads.
+  try {
+    if (consolidateAgentInstructions((await getClusterNode()).id)) instructionsChanged();
+  } catch (error) { warnOnChange("agent-instructions", `Moving agent instructions into AGENTS.md failed: ${error instanceof Error ? error.message : String(error)}`); }
   try { await refreshSharedSkills(); }
   catch (error) { console.warn("Selective skill refresh failed", error); }
 }

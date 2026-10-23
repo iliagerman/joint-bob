@@ -11,7 +11,7 @@ import { getProject } from "../../store.js";
 import { listTasks } from "../../tasks.js";
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable } from "../projects.js";
-import { markHarnessSessionsStale } from "../realtime.js";
+import { instructionsChanged } from "../realtime.js";
 import { getRuntimePeer, runtimeFetch } from "../runtime-peers.js";
 import { app } from "../state.js";
 import { ProjectFileError, resolutionRoot } from "./project-files.js";
@@ -62,7 +62,7 @@ async function saveProjectInstructions(projectId: string, where: Where, update: 
   const target = current ? realpathSync(current) : path.join(root, "AGENTS.md");
   if (!target.startsWith(root + path.sep)) throw new ProjectFileError(403, "The instructions file points outside the project");
   writeTextAtomically(target, update.content);
-  markHarnessSessionsStale();
+  instructionsChanged();
   return { path: path.basename(current ?? target), version: instructionsVersion(update.content) };
 }
 
@@ -81,7 +81,7 @@ app.put("/api/instructions/global/content", async (request, response, next) => {
   try {
     const update = updateSchema.parse(request.body);
     const saved = saveGlobalInstructions(update.content, update.version, (await getClusterNode()).id);
-    markHarnessSessionsStale();
+    instructionsChanged();
     response.json(saved);
   } catch (error) { if (!sendInstructionsError(response, error)) next(error); }
 });
