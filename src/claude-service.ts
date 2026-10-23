@@ -16,6 +16,7 @@ import { claudeProjectDir, claudeProjectDirs } from "./harnesses/claude/paths.js
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { claudeAgentResourceArgs } from "./agent-resources.js";
 import { claudeIsolationEnvironment, claudeResourceIsolationArgs } from "./harnesses/claude/resources.js";
+import { conversationMemoryDirectory, prepareProjectMemory } from "./agent-memory.js";
 import { agentCapabilityEnvironment, agentCapabilityInstructionFiles } from "./agent-capabilities.js";
 import { getConversationRecord } from "./conversation-records.js";
 import type { ChatMessage, ContextUsage, SessionSummary, ToolTarget } from "./types.js";
@@ -581,6 +582,7 @@ export async function runClaudeConversationPrompt(options: ClaudeRunOptions & { 
   const sessionId = options.resumeSessionId ?? options.sessionId;
   if (!sessionId) throw new Error("Claude conversation spawn requires a session identity");
   const record = await getConversationRecord(options.projectId, "claude", sessionId);
+  await prepareProjectMemory(options.projectId, sessionId);
   const defaults = getSettings().conversationDefaults.claude;
   const conversationId = record?.conversationId ?? sessionId;
   return runClaudePrompt({
@@ -643,7 +645,8 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   if (options.effort) args.push("--effort", options.effort);
   if (options.tools) args.push("--tools", options.tools.join(","));
   args.push(...claudeResourceIsolationArgs(options.cwd,
-    claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId, options.conversationId, "claude"), options.systemInstructions, options.cwd)));
+    claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId, options.conversationId, "claude"), options.systemInstructions, options.cwd),
+    conversationMemoryDirectory(options.projectId, options.resumeSessionId ?? options.sessionId)));
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();

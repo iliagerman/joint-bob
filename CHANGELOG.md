@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added one memory folder per project that Claude, Pi and Kiro all read and write, starting from the notes Claude already kept for the project; background summaries and reviews never touch it.
+
 ## 2.144.0 — 2026-10-23
 
 - Changed strict resource isolation so Claude, Pi and Kiro load nothing from machine or parent folders on their own: each receives the project's skills, commands, agents and instructions only through the app, and project Pi packages no longer load.

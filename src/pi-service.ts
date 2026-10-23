@@ -30,6 +30,7 @@ import { forgetTranscriptSummary, storeTranscriptSummary, storedTranscriptSummar
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { agentResourcePaths, piAgentResourcePaths } from "./agent-resources.js";
 import { agentInstructionFiles } from "./agent-instructions.js";
+import { prepareProjectMemory } from "./agent-memory.js";
 import { withProjectFolderResources } from "./project-folder-resources.js";
 import { activeSkillRoot, blockedSkillNames } from "./resource-activation.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary, ToolTarget } from "./types.js";
@@ -628,7 +629,8 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
     resources: async (conversationId) => {
       const strict = getSettings().strictResourceIsolation;
       const configured = withProjectFolderResources(getScopedResourcePaths(options.projectId, conversationId, "pi"), options.cwd);
-      const instructions = agentInstructionFiles(agentResourcePaths(), "pi", { cwd: options.cwd, rules: [...configured.global.rules, ...configured.project.rules] });
+      const memory = strict ? await prepareProjectMemory(options.projectId, conversationId) : undefined;
+      const instructions = agentInstructionFiles(agentResourcePaths(), "pi", { cwd: options.cwd, rules: [...configured.global.rules, ...configured.project.rules], memory });
       const resources = piAgentResourcePaths(undefined, configured);
       const scope = { projectId: options.projectId, conversationId };
       const blocked = blockedSkillNames("pi", scope);

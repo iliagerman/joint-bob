@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { AgentResourcePaths } from "./agent-resources.js";
+import { memoryInstructionFile } from "./agent-memory.js";
 import { projectInstructionFile, projectSteeringFiles } from "./project-folder-resources.js";
 import { getSettings } from "./settings.js";
 
@@ -27,7 +28,7 @@ function isFile(file: string): boolean {
  * isolation the harnesses discover no instruction file themselves, so the project's AGENTS.md
  * (or its CLAUDE.md) and always-on steering arrive only from here.
  */
-export function agentInstructionFiles(paths: AgentResourcePaths, harness: "pi" | "claude" | "kiro", options: { cwd?: string; rules?: string[] } = {}): InstructionFile[] {
+export function agentInstructionFiles(paths: AgentResourcePaths, harness: "pi" | "claude" | "kiro", options: { cwd?: string; rules?: string[]; memory?: string } = {}): InstructionFile[] {
   const read = (file: string, label: string): InstructionFile => ({ path: file, label, content: readFileSync(file, "utf8") });
   const global = globalInstructionsPath(paths);
   const files = isFile(global) ? [read(global, "Global instructions (AGENTS.md)")] : [];
@@ -45,6 +46,8 @@ export function agentInstructionFiles(paths: AgentResourcePaths, harness: "pi" |
     if (project) files.push(read(project, `Project instructions (${path.basename(project)})`));
     for (const steering of projectSteeringFiles(options.cwd)) files.push(read(steering, `Project steering (${path.basename(steering)})`));
   }
+  // Claude reads the same folder through its own auto-memory, pointed there by the app.
+  if (options.memory && harness !== "claude" && getSettings().strictResourceIsolation) files.push(memoryInstructionFile(options.memory));
   return files;
 }
 

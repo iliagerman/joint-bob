@@ -5,6 +5,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } fr
 import path from "node:path";
 import { agentResourcePaths } from "../../agent-resources.js";
 import { agentInstructionFiles, renderInstructions } from "../../agent-instructions.js";
+import { prepareProjectMemory } from "../../agent-memory.js";
 import { projectFolderResources, withProjectFolderResources } from "../../project-folder-resources.js";
 import { activeSkillRoot, activeMcpConfig, activeMcpServers, assertNoBlockedNativeResources } from "../../resource-activation.js";
 import { agentCapabilityInstructionFiles } from "../../agent-capabilities.js";
@@ -189,7 +190,8 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   if (strict) await disableInheritedKiroResources(runtime.configPath);
   const scoped = withProjectFolderResources(getScopedResourcePaths(options.projectId, options.conversationId ?? options.sessionId, "kiro"), options.cwd);
   const resources = agentResourcePaths();
-  const instructions = agentInstructionFiles(resources, "kiro", { cwd: options.cwd, rules: [...scoped.global.rules, ...scoped.project.rules] });
+  const memory = strict ? await prepareProjectMemory(options.projectId, options.sessionId) : undefined;
+  const instructions = agentInstructionFiles(resources, "kiro", { cwd: options.cwd, rules: [...scoped.global.rules, ...scoped.project.rules], memory });
   const skillRoots = [
     resources.sharedSkills,
     ...scoped.global.skills,

@@ -128,9 +128,11 @@ export function claudeProjectSettingsReplica(cwd: string): Record<string, unknow
   return Object.fromEntries(REPLICATED_PROJECT_SETTINGS.filter((key) => Object.keys(object(replica[key])).length).map((key) => [key, replica[key]]));
 }
 
-function isolatedSettings(cwd: string): string {
+function isolatedSettings(cwd: string, memoryDirectory: string | undefined): string {
   // The built-in agents-md plugin would read the project's AGENTS.md itself; the app passes it instead.
-  const content = JSON.stringify({ ...claudeProjectSettingsReplica(cwd), enabledPlugins: { "agents-md@builtin": false, "cc-plugin-agents-md@builtin": false } });
+  // Memory lives in the app's folder for the project, never in ~/.claude; runs without one keep none.
+  const memory = memoryDirectory ? { autoMemoryDirectory: memoryDirectory } : { autoMemoryEnabled: false };
+  const content = JSON.stringify({ ...claudeProjectSettingsReplica(cwd), ...memory, enabledPlugins: { "agents-md@builtin": false, "cc-plugin-agents-md@builtin": false } });
   const directory = path.join(resolveDataDirectory(), "runtime", "claude-settings");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const file = path.join(directory, `${createHash("sha256").update(content).digest("hex")}.json`);
@@ -146,14 +148,14 @@ export function claudeIsolationEnvironment(): NodeJS.ProcessEnv {
   return getSettings().strictResourceIsolation ? { CLAUDE_CODE_DISABLE_ORG_MEMORY: "1" } : {};
 }
 
-export function claudeResourceIsolationArgs(cwd: string, resources: string[]): string[] {
+export function claudeResourceIsolationArgs(cwd: string, resources: string[], memoryDirectory?: string): string[] {
   if (!getSettings().strictResourceIsolation) {
     assertNoBlockedNativeResources("claude", "mcp");
     return resources;
   }
   // No setting source at all: the CLI then discovers no CLAUDE.md, rules, skills, agents, commands or
   // hooks in the project or its parents, and the app passes what the agent should have.
-  const args = ["--setting-sources", "", "--settings", isolatedSettings(cwd)];
+  const args = ["--setting-sources", "", "--settings", isolatedSettings(cwd, memoryDirectory)];
   // The pinned CLI gives this file exclusive MCP control. Never send dynamic servers or the conflicting strict flag.
   const enterprise = fs.existsSync(claudeEnterpriseMcpPath());
   if (enterprise) {

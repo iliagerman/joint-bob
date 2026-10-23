@@ -104,8 +104,9 @@ test("Claude launch restricts settings and MCP sources even without a managed MC
     hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo project-hook" }] }] },
     env: { PROJECT_ENV: "1" },
     permissions: { deny: ["Read(./secrets/**)"] },
+    autoMemoryEnabled: false,
     enabledPlugins: { "agents-md@builtin": false, "cc-plugin-agents-md@builtin": false },
-  }, "only the project's hooks, env and permissions are carried over");
+  }, "only the project's hooks, env and permissions are carried over, and no memory outside the app's");
   await rm(path.join(project, ".claude"), { recursive: true, force: true });
 });
 
