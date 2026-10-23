@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed file sync between your machines to skip build output, Terraform provider binaries, scratch folders and agent worktrees, so heavy generated files no longer slow sync down.
+
 ## 2.143.3 — 2026-10-23
 
 - Changed new worktrees to start from the default branch as it is on GitHub when created, with the folder's git-ignored local files but without other sessions' uncommitted work; repositories without a remote still copy the folder.

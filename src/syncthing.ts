@@ -89,6 +89,17 @@ const projectIgnorePatterns = [
   "(?d)(?i)*.snupkg",
   "(?d)dist/",
   "(?d)build/",
+  // Build output, Terraform provider binaries (hundreds of MB each) and scratch trees.
+  "(?d).build",
+  "(?d)target",
+  "(?d).next",
+  "(?d)DerivedData",
+  "(?d).terraform",
+  "(?d)tmp",
+  "(?d).tmp",
+  // Agents' own worktrees are full copies of the repository.
+  "(?d).claude/worktrees",
+  "(?d).pi/*worktrees",
   "(?d)coverage/",
   "(?d)test-results/",
   "(?d)**/test-results/",
@@ -143,15 +154,14 @@ const projectIgnorePatterns = [
 
 /* Worktrees are disposable copies: every rule is deletable so removing a worktree on one
    node removes it everywhere, and heavy trees and binaries never travel. */
-const worktreeIgnorePatterns = [
+const worktreeIgnorePatterns = [...new Set([
   ...projectIgnorePatterns.map((rule) => rule.startsWith("(?d)") ? rule : `(?d)${rule}`),
   ...worktreeHeavyDirectories.filter((name) => !name.startsWith(".st")).map((name) => `(?d)${name}`),
   // Each node links its own project's dependencies; a link never travels to a peer.
   ...worktreeLinkedDirectories.filter((name) => !(worktreeHeavyDirectories as readonly string[]).includes(name)).map((name) => `(?d)${name}`),
-  "(?d)*.egg-info",
   "(?d).joint-bob-merge",
   ...worktreeBinaryExtensions.map((extension) => `(?d)(?i)*.${extension}`),
-];
+])];
 
 const agentResourceIgnorePatterns = [
   ...projectIgnorePatterns,

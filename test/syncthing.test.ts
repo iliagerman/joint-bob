@@ -40,6 +40,15 @@ const managedIgnorePatterns = [
   "(?d)(?i)*.snupkg",
   "(?d)dist/",
   "(?d)build/",
+  "(?d).build",
+  "(?d)target",
+  "(?d).next",
+  "(?d)DerivedData",
+  "(?d).terraform",
+  "(?d)tmp",
+  "(?d).tmp",
+  "(?d).claude/worktrees",
+  "(?d).pi/*worktrees",
   "(?d)coverage/",
   "(?d)test-results/",
   "(?d)**/test-results/",
@@ -732,6 +741,7 @@ test("worktree folders get deletable ignore rules that keep heavy trees and bina
   assert.ok(ignore, "worktree ignores must be written");
   const managed = ignore.filter((rule) => rule !== "keep-me/");
   assert.ok(managed.every((rule) => rule.startsWith("(?d)")), "every managed worktree rule is deletable so a worktree deletion reaches every node");
+  assert.equal(new Set(managed).size, managed.length, "rules shared with project folders are written once");
   for (const rule of ["(?d).git", "(?d)node_modules/", "(?d).env", "(?d)target", "(?d).next", "(?d)vendor", "(?d)*.egg-info", "(?d)(?i)*.png", "(?d)(?i)*.zip"]) assert.ok(ignore.includes(rule), rule);
   assert.ok(!ignore.includes("(?d).joint-bob-worktree"), "worktree metadata must sync");
   assert.ok(!ignore.some((rule) => rule.includes(".joint-bob-baseline")), "the merge baseline must sync");
