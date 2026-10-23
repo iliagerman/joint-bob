@@ -5,7 +5,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { getClusterNode } from "../../cluster.js";
 import { ABSENT_VERSION, INSTRUCTIONS_LIMIT, InstructionsConflict, instructionsVersion, readGlobalInstructions, readOptionalText, saveGlobalInstructions, writeTextAtomically } from "../../global-instructions.js";
-import { projectInstructionFile } from "../../project-folder-resources.js";
+import { projectInstructionFile, projectInstructionSources } from "../../project-folder-resources.js";
 import { getProjectWorktree } from "../../project-worktrees.js";
 import { getProject } from "../../store.js";
 import { listTasks } from "../../tasks.js";
@@ -46,7 +46,9 @@ async function projectInstructions(projectId: string, where: Where) {
   const file = projectInstructionFile(root);
   const content = file ? readOptionalText(file) : undefined;
   if (content !== undefined && Buffer.byteLength(content) > INSTRUCTIONS_LIMIT) throw new ProjectFileError(413, `${path.basename(file!)} is too large to edit`);
-  return { path: file ? path.basename(file) : "AGENTS.md", content: content ?? "", version: instructionsVersion(content), exists: content !== undefined };
+  // The other files agents read from the project folder, beside the one edited here.
+  const others = projectInstructionSources(root).map((source) => source.relative).filter((relative) => !file || relative !== path.basename(file));
+  return { path: file ? path.basename(file) : "AGENTS.md", content: content ?? "", version: instructionsVersion(content), exists: content !== undefined, others };
 }
 
 /** Writes the file agents read, the project's AGENTS.md, or its CLAUDE.md when that is all it has. */

@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { getSettings, type ScopedResourcePaths } from "./settings.js";
@@ -72,17 +72,66 @@ export function projectInstructionFile(cwd: string): string | undefined {
   return undefined;
 }
 
-/** Kiro steering a project marks for every conversation; files included only on a file match or by hand stay out. */
-export function projectSteeringFiles(cwd: string): string[] {
-  const folder = path.join(cwd, ".kiro/steering");
-  if (!existsSync(folder) || !lstatSync(folder).isDirectory()) return [];
-  return readdirSync(folder).filter((name) => name.endsWith(".md")).sort().map((name) => path.join(folder, name)).filter((file) => {
-    if (!statSync(file).isFile()) return false;
-    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(file, "utf8"));
-    if (!frontmatter) return true;
-    let fields: unknown;
-    try { fields = parseYaml(frontmatter[1]); } catch { return false; }
-    const inclusion = fields && typeof fields === "object" ? (fields as { inclusion?: unknown }).inclusion : undefined;
-    return inclusion === undefined || inclusion === "always";
+/** Root instruction files a harness would read in the folder it runs in: Pi and Kiro take AGENTS.md,
+    Claude its CLAUDE.md files, including the personal, untracked CLAUDE.local.md. */
+const ROOT_INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"];
+
+/** A project instruction file the app passes in; `patterns` marks one meant only for matching files. */
+export interface ProjectInstructionSource { file: string; relative: string; patterns?: string[] }
+
+function frontmatter(file: string): Record<string, unknown> | undefined {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(file, "utf8"));
+  if (!match) return undefined;
+  try {
+    const fields: unknown = parseYaml(match[1]);
+    return fields && typeof fields === "object" && !Array.isArray(fields) ? fields as Record<string, unknown> : {};
+  } catch { return {}; }
+}
+
+function patternList(value: unknown): string[] {
+  const items = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  return items.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+}
+
+function markdownTree(folder: string): string[] {
+  let names: string[];
+  try { if (!statSync(folder).isDirectory()) return []; names = readdirSync(folder).sort(); } catch { return []; }
+  return names.flatMap((name) => {
+    const entry = path.join(folder, name);
+    try {
+      if (statSync(entry).isDirectory()) return markdownTree(entry);
+      return name.endsWith(".md") && statSync(entry).isFile() ? [entry] : [];
+    } catch { return []; }
+  });
+}
+
+/**
+ * Every instruction file the project folder carries, once each, in the order the harnesses read
+ * them natively: root files, then `.claude/rules` and Kiro steering. A rule limited by `paths`
+ * (or steering limited to a file match) keeps its patterns; steering included only by hand stays out.
+ */
+export function projectInstructionSources(cwd: string): ProjectInstructionSource[] {
+  const candidates: ProjectInstructionSource[] = [];
+  for (const relative of ROOT_INSTRUCTION_FILES) {
+    const file = path.join(cwd, relative);
+    try { if (statSync(file).isFile()) candidates.push({ file, relative }); } catch { /* Not in this project. */ }
+  }
+  for (const file of markdownTree(path.join(cwd, ".claude/rules"))) {
+    const patterns = patternList(frontmatter(file)?.paths);
+    candidates.push({ file, relative: path.relative(cwd, file), ...(patterns.length ? { patterns } : {}) });
+  }
+  for (const file of markdownTree(path.join(cwd, ".kiro/steering")).filter((file) => path.dirname(file) === path.join(cwd, ".kiro/steering"))) {
+    const fields = frontmatter(file);
+    const inclusion = fields?.inclusion ?? "always";
+    if (inclusion === "always") candidates.push({ file, relative: path.relative(cwd, file) });
+    else if (inclusion === "fileMatch" && patternList(fields?.fileMatchPattern).length) candidates.push({ file, relative: path.relative(cwd, file), patterns: patternList(fields?.fileMatchPattern) });
+  }
+  // AGENTS.md is often a link to CLAUDE.md, or a copy of it.
+  const seen = new Set<string>();
+  return candidates.filter(({ file }) => {
+    const keys = [`file:${realpathSync(file)}`, `text:${readFileSync(file, "utf8").trim()}`];
+    if (keys.some((key) => seen.has(key))) return false;
+    for (const key of keys) seen.add(key);
+    return true;
   });
 }

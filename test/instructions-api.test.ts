@@ -74,6 +74,11 @@ test("the global and project AGENTS.md are read, created and saved without overw
     const made = await put(projectUrl, "PROJECT RULES", "absent");
     assert.deepEqual([made.status, made.body.path], [200, "AGENTS.md"]);
     assert.equal(await readFile(path.join(projectPath, "AGENTS.md"), "utf8"), "PROJECT RULES");
+    await mkdir(path.join(projectPath, ".claude", "rules"), { recursive: true });
+    await writeFile(path.join(projectPath, ".claude", "rules", "api.md"), "API RULES");
+    const withRules = await fetch(projectUrl, { headers });
+    assert.deepEqual((await withRules.json() as { others: string[] }).others, [".claude/rules/api.md"], "the page names the project's other instruction files");
+    await rm(path.join(projectPath, ".claude"), { recursive: true });
     assert.equal((await put(projectUrl, "STALE", absent.body.version)).status, 409);
     assert.equal((await get(`${projectUrl}?worktreeId=missing`)).status, 404);
 

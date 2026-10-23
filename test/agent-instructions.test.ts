@@ -39,8 +39,8 @@ test("agents read the global AGENTS.md, the app's instructions, then the project
   await write(path.join(project, "nested", "AGENTS.md"), "NESTED_WORD");
 
   const files = agentInstructionFiles(paths, "claude", { cwd: project, rules: [path.join(root, "rules")] });
-  assert.deepEqual(files.map((file) => file.content), ["GLOBAL_WORD", "CLAUDE_ONLY_WORD", "COMMON_WORD", "RULE_WORD", "PROJECT_WORD", "STEERING_WORD"]);
-  assert.deepEqual(files.map((file) => file.label).slice(-2), ["Project instructions (AGENTS.md)", "Project steering (always.md)"]);
+  assert.deepEqual(files.map((file) => file.content), ["GLOBAL_WORD", "CLAUDE_ONLY_WORD", "COMMON_WORD", "RULE_WORD", "PROJECT_WORD", "PROJECT_CLAUDE_WORD", "STEERING_WORD"]);
+  assert.deepEqual(files.map((file) => file.label).slice(-3), ["Project instructions (AGENTS.md)", "Project instructions (CLAUDE.md)", "Project instructions (.kiro/steering/always.md)"]);
   assert.equal(agentInstructionFiles(paths, "kiro", { cwd: project }).some((file) => file.content === "CLAUDE_ONLY_WORD"), false);
 
   await rm(path.join(project, "AGENTS.md"));
@@ -60,6 +60,36 @@ test("agents read the global AGENTS.md, the app's instructions, then the project
   await write(globalInstructionsPath(paths), "  \n");
   assert.equal(agentInstructionFiles(paths, "pi", { cwd: project }).some((file) => file.label.startsWith("Global")), false, "an empty AGENTS.md adds nothing");
   await rm(path.join(project, "CLAUDE.md"));
+});
+
+test("every instruction file the project folder carries reaches the agents, with Claude's imports expanded", async () => {
+  const paths = agentResourcePaths();
+  const folder = path.join(root, "imports-project");
+  await write(path.join(folder, "CLAUDE.md"), "ROOT_CLAUDE");
+  await mkdir(folder, { recursive: true });
+  await symlink("CLAUDE.md", path.join(folder, "AGENTS.md"));
+  await write(path.join(folder, ".claude/CLAUDE.md"), "DOT_CLAUDE\n@.claude/rules/stub.md\n```\n@method/inside-fence.md\n```\n@secrets.env");
+  await write(path.join(folder, "CLAUDE.local.md"), "LOCAL_NOTES");
+  await write(path.join(folder, ".claude/rules/stub.md"), "STUB\n@../../method/org.md");
+  await write(path.join(folder, "method/org.md"), "ORG_METHOD\n@team.md");
+  await write(path.join(folder, "method/team.md"), "TEAM_METHOD\n@org.md");
+  await write(path.join(folder, "method/inside-fence.md"), "FENCED_IMPORT");
+  await write(path.join(folder, "secrets.env"), "NOT_MARKDOWN");
+  await write(path.join(folder, ".claude/rules/frontend.md"), "---\npaths:\n  - \"web/**/*.tsx\"\n---\nFRONTEND_ONLY");
+  await write(path.join(folder, ".kiro/steering/api.md"), "---\ninclusion: fileMatch\nfileMatchPattern: \"api/**/*.ts\"\n---\nAPI_ONLY");
+  await write(path.join(folder, ".kiro/steering/manual.md"), "---\ninclusion: manual\n---\nMANUAL_ONLY");
+
+  const files = agentInstructionFiles(paths, "kiro", { cwd: folder }).filter((file) => file.label.startsWith("Project"));
+  assert.deepEqual(files.map((file) => file.label), [
+    "Project instructions (AGENTS.md)",
+    "Project instructions (.claude/CLAUDE.md)",
+    "Project instructions (CLAUDE.local.md)",
+    "Project rules for specific files",
+  ], "the linked CLAUDE.md counts once, and the rule .claude/CLAUDE.md already imported is not read again");
+  const dotClaude = files[1].content;
+  assert.match(dotClaude, /^DOT_CLAUDE\nSTUB\nORG_METHOD\nTEAM_METHOD\n@org\.md\n```\n@method\/inside-fence\.md\n```\n@secrets\.env$/, "imports resolve from the file, then the project root; a loop, a code block and a non-Markdown file stay as lines");
+  assert.equal(files[3].content, "- `.claude/rules/frontend.md` applies to files matching `web/**/*.tsx`: read it before working on such files.\n- `.kiro/steering/api.md` applies to files matching `api/**/*.ts`: read it before working on such files.");
+  assert.equal(files.some((file) => file.content.includes("MANUAL_ONLY") || file.content.includes("FRONTEND_ONLY")), false);
 });
 
 test("Claude gets the project folder's skills, commands and agents from every harness's folder through the app", async () => {

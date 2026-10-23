@@ -423,6 +423,18 @@ function previewText(content) {
   return content.split("\n").map((line) => line.replace(/^#+\s*|^[-*]\s+/, "").trim()).filter(Boolean).slice(0, PREVIEW_LINES).join("\n");
 }
 
+/** "CLAUDE.md, .claude/CLAUDE.md, 12 files in .claude/rules": the project's other instruction files, folded by folder. */
+function alsoReadText(others) {
+  const folders = new Map();
+  const names = [];
+  for (const relative of others) {
+    const folder = relative.includes("/") && !relative.startsWith(".claude/CLAUDE.md") ? relative.slice(0, relative.lastIndexOf("/")) : null;
+    if (folder) folders.set(folder, (folders.get(folder) ?? 0) + 1);
+    else names.push(relative);
+  }
+  return [...names, ...[...folders].map(([folder, count]) => `${count} file${count === 1 ? "" : "s"} in ${folder}`)].join(", ");
+}
+
 function instructionsRow({ label, title, contentUrl, body, editable, testid }) {
   const row = document.createElement("div");
   row.className = "activity-instructions-row";
@@ -451,7 +463,16 @@ function instructionsRow({ label, title, contentUrl, body, editable, testid }) {
     edit.addEventListener("click", () => open(false));
     actions.append(edit);
   }
-  row.append(name, preview, actions);
+  row.append(name, preview);
+  if (body.others?.length) {
+    const also = document.createElement("p");
+    also.className = "activity-instructions-also";
+    also.dataset.testid = `${testid}-also`;
+    also.textContent = `Also read: ${alsoReadText(body.others)}`;
+    also.title = body.others.join("\n");
+    row.append(also);
+  }
+  row.append(actions);
   return row;
 }
 
