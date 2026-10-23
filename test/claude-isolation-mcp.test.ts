@@ -105,7 +105,8 @@ test("enterprise MCP keeps native exclusive loading without conflicting flags or
   t.mock.method(fs, "readFileSync", (file: fs.PathOrFileDescriptor, ...args: any[]) => file === policy ? '{"mcpServers":{"admin":{"command":"admin"}}}' : (read as any)(file, ...args));
   t.mock.method(fs, "statSync", (file: fs.PathLike, ...args: any[]) => file === policy ? { isFile: () => true, size: 100 } : (stat as any)(file, ...args));
   const args = claudeResourceIsolationArgs(project, ["--plugin-dir", "/managed/plugin", "--mcp-config", "/managed/mcp.json", "--append-system-prompt-file", "/managed/instructions"]);
-  assert.deepEqual(args, ["--setting-sources", "project,local", "--plugin-dir", "/managed/plugin", "--append-system-prompt-file", "/managed/instructions"]);
+  assert.deepEqual(args.slice(0, 3), ["--setting-sources", "", "--settings"]);
+  assert.deepEqual(args.slice(4), ["--plugin-dir", "/managed/plugin", "--append-system-prompt-file", "/managed/instructions"]);
   t.mock.method(fs, "readFileSync", (file: fs.PathOrFileDescriptor, ...args: any[]) => file === policy ? '{}' : (read as any)(file, ...args));
   assert.throws(() => claudeResourceIsolationArgs(project, []), /invalid enterprise MCP/);
 });

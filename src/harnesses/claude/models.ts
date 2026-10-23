@@ -55,8 +55,10 @@ export function claudeModelLabel(id: string): string {
 async function queryClaudeModels(executable: string): Promise<ClaudeModel[]> {
   const configPath = claudeConfigPath();
   const output = await new Promise<string>((resolve, reject) => {
-    // Never in the shared temp folder: the CLI reads settings from where it starts.
-    const launch = runtimeExec(executable, ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"], { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() });
+    // Never in the shared temp folder: the CLI reads settings from where it starts. Under strict
+    // isolation it reads none and starts no MCP server, like a turn.
+    const isolation = getSettings().strictResourceIsolation ? ["--setting-sources", "", "--strict-mcp-config"] : [];
+    const launch = runtimeExec(executable, ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", ...isolation], { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() });
     const child = execFile(
       launch.command,
       launch.args,

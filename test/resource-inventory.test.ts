@@ -233,7 +233,8 @@ test("the inventory merges harnesses per skill and lists MCP servers without arg
     const everywhere = inventory.skills.find((skill) => skill.name === "everywhere");
     assert.equal(everywhere?.origin, "shared");
     assert.deepEqual([...everywhere!.harnesses].sort(), ["claude", "kiro", "pi"]);
-    assert.deepEqual(inventory.skills.find((skill) => skill.name === "claude-only")?.harnesses, ["claude"]);
+    // Under strict isolation a skill in any of the project's harness folders reaches every harness through the app.
+    assert.deepEqual(inventory.skills.find((skill) => skill.name === "claude-only")?.harnesses, ["claude", "kiro", "pi"]);
     assert.equal(inventory.skills.find((skill) => skill.name === "claude-only")?.origin, "project");
 
     const byName = Object.fromEntries(inventory.mcpServers.map((server) => [server.name, server]));

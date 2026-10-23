@@ -9,7 +9,7 @@ import { browserAgentInstructions } from "../src/browser-agent.js";
 test("Claude browser instructions append to configured system instructions without changing user input", async () => {
   const root=await mkdtemp(path.join(os.tmpdir(),"browser-claude-system-"));
   try {
-    await mkdir(path.join(root,"runtime"));await writeFile(path.join(root,"runtime/common-instructions.md"),"Keep existing project instructions.");
+    await mkdir(path.join(root,"shared/instructions/common"),{recursive:true});await writeFile(path.join(root,"shared/instructions/common/project.md"),"Keep existing project instructions.");
     const args=claudeAgentResourceArgs(root,undefined,browserAgentInstructions);
     assert.equal(args.filter(value=>value==="--append-system-prompt-file").length,1);
     const content=await readFile(args[args.indexOf("--append-system-prompt-file")+1],"utf8");
@@ -25,6 +25,6 @@ test("Claude browser instructions append to configured system instructions witho
     assert.ok(content.includes("Existing sessions and profiles remain pinned"), "Changing defaults must not move signed-in accounts");
     assert.ok(!args.includes("--append-system-prompt"),"Use one combined system file, never conflicting CLI flags");
     const plain=claudeAgentResourceArgs(root);
-    assert.equal(await readFile(plain[plain.indexOf("--append-system-prompt-file")+1],"utf8"),"Keep existing project instructions.");
+    assert.equal(await readFile(plain[plain.indexOf("--append-system-prompt-file")+1],"utf8"),"# project.md\n\nKeep existing project instructions.\n");
   } finally { await rm(root,{recursive:true,force:true}); }
 });

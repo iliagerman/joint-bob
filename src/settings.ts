@@ -278,7 +278,7 @@ export function syncthingApiKey(): string | undefined {
   return configured ? decrypt(configured.value) : undefined;
 }
 
-function emptyResourcePaths(): ResourcePaths {
+export function emptyResourcePaths(): ResourcePaths {
   return { skills: [], prompts: [], rules: [], plugins: [] };
 }
 

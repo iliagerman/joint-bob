@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -96,9 +97,9 @@ test("Claude fails closed when native resource discovery cannot enforce a skill 
   }
 });
 
-test("strict Claude runs ignore skill copies in the home folder, which the CLI never loads as project skills", async () => {
+test("strict Claude runs never refuse over native skill copies, which the CLI no longer loads, and keep blocked project copies out", async () => {
   const project = path.join(os.homedir(), "strict-home-projects", "project");
-  const copies = [path.join(os.homedir(), ".agents", "skills"), path.join(os.homedir(), ".claude", "skills"), path.join(os.homedir(), "strict-home-projects", ".claude", "skills")]
+  const copies = [path.join(os.homedir(), ".agents", "skills"), path.join(os.homedir(), ".claude", "skills"), path.join(os.homedir(), "strict-home-projects", ".claude", "skills"), path.join(project, ".claude", "skills")]
     .map((root) => path.join(root, "blocked-home-fixture"));
   for (const copy of copies) {
     await mkdir(copy, { recursive: true });
@@ -109,10 +110,14 @@ test("strict Claude runs ignore skill copies in the home folder, which the CLI n
   try {
     setActivationPreference("skill", "blocked-home-fixture", "claude", false);
     save(settingsDatabase(), "strictResourceIsolation", "true");
-    // A folder between the project and home is still a project ancestor.
-    assert.throws(() => claudeAgentResourceArgs(undefined, undefined, undefined, project), /Cannot safely suppress blocked native claude skills in .*strict-home-projects/);
+    const args = claudeAgentResourceArgs(undefined, undefined, undefined, project);
+    const plugin = args[args.indexOf("--plugin-dir") + 1];
+    assert.equal(existsSync(path.join(plugin ?? "", "skills", "blocked-home-fixture")), false, "the blocked project copy is not passed in");
+    // The non-strict check stops where the CLI stops: a folder between the project and home counts, home does not.
+    assert.throws(() => assertNoBlockedNativeSkills("claude", project), /Cannot safely suppress blocked native claude skills in .*strict-home-projects/);
     await rm(path.dirname(copies[2]), { recursive: true, force: true });
-    assert.doesNotThrow(() => claudeAgentResourceArgs(undefined, undefined, undefined, project));
+    await rm(path.dirname(copies[3]), { recursive: true, force: true });
+    assert.doesNotThrow(() => assertNoBlockedNativeSkills("claude", project));
     assert.doesNotThrow(() => assertNoBlockedNativeSkills("claude", os.homedir()));
   } finally {
     save(settingsDatabase(), "strictResourceIsolation", String(previous));

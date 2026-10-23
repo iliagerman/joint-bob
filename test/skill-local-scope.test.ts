@@ -86,9 +86,10 @@ test("Pi, Claude and Kiro runtime inputs honor conversation scope and reject nat
       const content = JSON.parse(await readFile(path.join(getSettings().runtimes.kiro.configPath, "agents", `${profile}.json`), "utf8"));
       assert.equal(content.resources.some((file: string) => file.startsWith("skill://") && existsSync(path.join(file.slice("skill://".length).replace(/\/\*\*\/SKILL\.md$/, ""), "alias/SKILL.md"))), conversationId === "c");
     }
+    // A renamed copy in a parent folder is no bypass: strict Claude loads no skill on its own.
     await mkdir(path.join(root, ".claude/skills"), { recursive: true });
     await symlink(source, path.join(root, ".claude/skills/renamed"));
-    assert.throws(() => claudeHasSkill("other"), /Cannot safely suppress blocked native/);
+    assert.equal(claudeHasSkill("other"), false);
     assert.equal(claudeHasSkill("c"), true);
   } finally {
     db.prepare("DELETE FROM skill_scope_shares WHERE name=?").run("portable");

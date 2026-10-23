@@ -3,7 +3,7 @@ import { nodeMcpServersApply } from "./account-runtime.js";
 import { adminAccountId } from "./ownership.js";
 import { createHash, randomUUID } from "node:crypto";
 import { activeSkillRoot, activeMcpConfig, activationDecision, assertNoBlockedNativeSkills, assertNoBlockedNativeResources, blockedSkillNames, receivedResource, skillNameFromFile, type ActivationDecision } from "./resource-activation.js";
-import { existsSync, lstatSync, mkdirSync, readlinkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readlinkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,11 +11,15 @@ import { loadSkills, SettingsManager, type PackageSource } from "@earendil-works
 import { resolveDataDirectory } from "./data-directory.js";
 import { allowSkillImport, receivedOwner, skillSuppressed, withSkillMutation } from "./skill-sharing-files.js";
 
-import { getSettings, type ScopedResourcePaths } from "./settings.js";
+import { emptyResourcePaths, getSettings, type ScopedResourcePaths } from "./settings.js";
+import { agentInstructionFiles, renderInstructions } from "./agent-instructions.js";
+import { projectFolderResources, withProjectFolderResources } from "./project-folder-resources.js";
 
 export const AGENT_RESOURCES_FOLDER_ID = "joint-bob-agent-resources";
 export const AGENT_RESOURCES_FOLDER_LABEL = "Joint Bob agent resources";
 export const CLAUDE_RESOURCE_PLUGIN_NAME = "joint-bob-resources";
+/** 2: commands and agents are copied, because Claude skips linked ones. */
+const RESOURCE_PLUGIN_LAYOUT = 2;
 
 export interface AgentResourcePaths {
   root: string;
@@ -747,7 +751,7 @@ function resourceEntries(roots: string[], kind: "skills" | "prompts"): Map<strin
   return new Map([...found].sort(([left], [right]) => left.localeCompare(right)));
 }
 
-function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedResourcePaths): string | undefined {
+function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedResourcePaths, agentPaths: string[] = []): string | undefined {
   let skillPaths = [activeSkillRoot("claude", paths.sharedSkills, skillScopeContext(configured))];
   let promptPaths = [paths.claudeCommands];
   if (configured) {
@@ -756,18 +760,22 @@ function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedR
   }
   const skills = resourceEntries(skillPaths, "skills");
   const prompts = resourceEntries(promptPaths, "prompts");
-  const agents = resourceEntries([paths.claudeAgents], "prompts");
+  const agents = resourceEntries([paths.claudeAgents, ...agentPaths], "prompts");
   const entries = [["skills", skills], ["commands", prompts], ["agents", agents]] as const;
   if (!entries.some(([, files]) => files.size)) return undefined;
   const mappings = entries.flatMap(([kind, files]) => [...files].map(([name, source]) => `${kind}\0${name}\0${source}\0${readFileSync(kind === "skills" ? path.join(source, "SKILL.md") : source)}`)).join("\n");
-  const target = path.join(dataDirectory(), "runtime", "resource-plugins", createHash("sha256").update(mappings).digest("hex"));
+  // The layout version is hashed too, so a folder written with an older layout is never reused.
+  const target = path.join(dataDirectory(), "runtime", "resource-plugins", createHash("sha256").update(`${RESOURCE_PLUGIN_LAYOUT}\n${mappings}`).digest("hex"));
   if (existsSync(target)) return target;
   const temporary = `${target}.${randomUUID()}.tmp`;
   mkdirSync(path.join(temporary, ".claude-plugin"), { recursive: true });
   writeFileSync(path.join(temporary, ".claude-plugin", "plugin.json"), JSON.stringify({ name: CLAUDE_RESOURCE_PLUGIN_NAME }));
   for (const [kind, files] of entries) for (const [name, source] of files) {
     mkdirSync(path.dirname(path.join(temporary, kind, kind === "skills" ? name : `${name}.md`)), { recursive: true });
-    symlinkSync(source, path.join(temporary, kind, kind === "skills" ? name : `${name}.md`), kind === "skills" ? "dir" : "file");
+    // Claude skips a command or agent file that is a symlink, so those are copied; the folder name
+    // hashes their contents, so a changed file gets a new copy. Linked skill folders do load.
+    if (kind === "skills") symlinkSync(source, path.join(temporary, kind, name), "dir");
+    else copyFileSync(source, path.join(temporary, kind, `${name}.md`));
   }
   mkdirSync(path.dirname(target), { recursive: true });
   try {
@@ -780,18 +788,10 @@ function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedR
   return target;
 }
 
-function generatedInstructionFile(paths: AgentResourcePaths, configured?: ScopedResourcePaths, extraInstructions?: string): string {
-  const additional = [...(existsSync(paths.claudeInstructions) ? [paths.claudeInstructions] : []), ...configuredPaths(configured, "rules")];
-  if (!additional.length && !extraInstructions) return paths.commonInstructionsFile;
-  const files: string[] = [];
-  const visit = (source: string): void => {
-    if (!existsSync(source)) return;
-    if (lstatSync(source).isDirectory()) for (const name of readdirSync(source).sort()) visit(path.join(source, name));
-    else if (source.endsWith(".md")) files.push(source);
-  };
-  if (existsSync(paths.commonInstructionsFile)) files.push(paths.commonInstructionsFile);
-  for (const source of additional) visit(source);
-  const content = [...files.sort().map((file) => readFileSync(file, "utf8")), ...(extraInstructions ? [extraInstructions] : [])].join("\n");
+function generatedInstructionFile(paths: AgentResourcePaths, configured?: ScopedResourcePaths, extraInstructions?: string, cwd?: string): string | undefined {
+  const files = agentInstructionFiles(paths, "claude", { cwd, rules: configuredPaths(configured, "rules") });
+  const content = [...(files.length ? [renderInstructions(files)] : []), ...(extraInstructions ? [extraInstructions] : [])].join("\n");
+  if (!content) return undefined;
   const filePath = path.join(dataDirectory(), "runtime", "resource-instructions", `${createHash("sha256").update(content).digest("hex")}.md`);
   if (!existsSync(filePath)) { mkdirSync(path.dirname(filePath), { recursive: true }); writeFileSync(filePath, content); }
   return filePath;
@@ -830,11 +830,14 @@ export function blockedPluginSkill(plugin: string, context: SkillScopeContext = 
   return null;
 }
 
-export function claudeAgentResourceArgs(root?: string, configured?: ScopedResourcePaths, extraInstructions?: string, cwd?: string): string[] {
+export function claudeAgentResourceArgs(root?: string, scoped?: ScopedResourcePaths, extraInstructions?: string, cwd?: string): string[] {
   const strict = getSettings().strictResourceIsolation;
-  if (cwd) assertNoBlockedNativeSkills("claude", cwd, strict ? [] : [path.join(getSettings().claude.configPath, "skills"), path.join(os.homedir(), ".agents/skills")], skillScopeContext(configured));
-  if (!strict && blockedSkillNames("claude", skillScopeContext(configured)).length) throw new Error("Cannot safely enforce blocked Claude skills while native resource discovery is enabled. Turn on strict resource isolation or remove the skill block.");
+  // Strict launches load no setting source, so the CLI discovers no skill by itself and the app's copy is the only one.
+  if (cwd && !strict) assertNoBlockedNativeSkills("claude", cwd, [path.join(getSettings().claude.configPath, "skills"), path.join(os.homedir(), ".agents/skills")], skillScopeContext(scoped));
+  if (!strict && blockedSkillNames("claude", skillScopeContext(scoped)).length) throw new Error("Cannot safely enforce blocked Claude skills while native resource discovery is enabled. Turn on strict resource isolation or remove the skill block.");
   if (!strict) assertNoBlockedNativeResources("claude", "plugin");
+  const configured = scoped || strict && cwd ? withProjectFolderResources(scoped ?? { global: emptyResourcePaths(), project: emptyResourcePaths() }, cwd) : undefined;
+  const projectAgents = strict && cwd ? projectFolderResources(cwd).agents : [];
   const paths = agentResourcePaths(root);
   const configuredPlugins = claudePluginSources(configuredPaths(configured, "plugins"));
   const installed = strict ? new Set<string>() : installedUserPluginNames();
@@ -849,11 +852,11 @@ export function claudeAgentResourceArgs(root?: string, configured?: ScopedResour
     const decisions = pluginActivationDecisions(plugin, paths.claudePlugins, configuredPlugins);
     if (decisions.every(({ decision }) => decision.enabled) && pluginContentsSafe(plugin, skillScopeContext(configured))) args.push("--plugin-dir", plugin);
   }
-  const generated = generatedResourcePlugin(paths, configured);
+  const generated = generatedResourcePlugin(paths, configured, projectAgents);
   if (generated) args.push("--plugin-dir", generated);
   if (nodeMcpServersApply(adminAccountId()) && existsSync(paths.mcpConfig)) args.push("--mcp-config", activeMcpConfig("claude", paths.mcpConfig));
-  const instructions = generatedInstructionFile(paths, configured, extraInstructions);
-  if (existsSync(instructions)) args.push("--append-system-prompt-file", instructions);
+  const instructions = generatedInstructionFile(paths, configured, extraInstructions, cwd);
+  if (instructions) args.push("--append-system-prompt-file", instructions);
   return args;
 }
 

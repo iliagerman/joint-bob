@@ -54,16 +54,21 @@ test("strict Pi catalogs never execute native extensions and retain arbitrary ma
   await write(path.join(project, ".pi/settings.json"), JSON.stringify({ packages: [projectPackage] }));
   const commands = await listHarnessCommands(project, "pi", { piAgentDir: pi, resourceRoot: resources });
   assert.equal(commands.some((item) => item.name.startsWith("native-") || item.name.startsWith("skill:native-")), false);
-  for (const name of ["managed-extension", "project-package", "managed-prompt", "skill:managed-skill", "skill:project-skill"]) {
+  for (const name of ["managed-extension", "managed-prompt", "skill:managed-skill", "skill:project-skill"]) {
     assert.ok(commands.some((item) => item.name === name), `missing ${name}`);
   }
+  // A project's own Pi packages run code; the app does not carry them over from `.pi/settings.json`.
+  assert.equal(commands.some((item) => item.name === "project-package"), false);
   await assert.rejects(readFile(path.join(root, "native-extension.ran")), { code: "ENOENT" });
   await assert.rejects(readFile(path.join(root, "native-package.ran")), { code: "ENOENT" });
+  await assert.rejects(readFile(path.join(root, "project-package.ran")), { code: "ENOENT" });
 });
 
 test("strict Pi sessions use the same isolation on open and reload", async () => {
   await write(path.join(pi, "AGENTS.md"), "NATIVE_INSTRUCTIONS");
   await write(path.join(project, "AGENTS.md"), "PROJECT_INSTRUCTIONS");
+  await write(path.join(root, "AGENTS.md"), "PARENT_INSTRUCTIONS");
+  await write(path.join(root, "CLAUDE.md"), "PARENT_CLAUDE");
   await write(path.join(pi, "SYSTEM.md"), "NATIVE_SYSTEM");
   await write(path.join(pi, "APPEND_SYSTEM.md"), "NATIVE_APPEND");
   await skill(agentResourcePaths().sharedSkills, "session-managed");
@@ -73,7 +78,7 @@ test("strict Pi sessions use the same isolation on open and reload", async () =>
   const handle = await createPiSession({ cwd: project, projectId: record.id, conversationId: "isolation-session" });
   try {
     for (let pass = 0; pass < 2; pass += 1) {
-      assert.doesNotMatch(handle.session.systemPrompt, /native-skill|native-agents-skill|NATIVE_INSTRUCTIONS|NATIVE_SYSTEM|NATIVE_APPEND/);
+      assert.doesNotMatch(handle.session.systemPrompt, /native-skill|native-agents-skill|NATIVE_INSTRUCTIONS|NATIVE_SYSTEM|NATIVE_APPEND|PARENT_INSTRUCTIONS|PARENT_CLAUDE/);
       assert.match(handle.session.systemPrompt, /session-managed/);
       assert.match(handle.session.systemPrompt, /PROJECT_INSTRUCTIONS/);
       await assert.rejects(readFile(path.join(root, "native-extension.ran")), { code: "ENOENT" });
@@ -83,10 +88,25 @@ test("strict Pi sessions use the same isolation on open and reload", async () =>
   } finally { handle.dispose(); }
 });
 
-test("Claude launch restricts settings and MCP sources even without a managed MCP file", () => {
+test("Claude launch restricts settings and MCP sources even without a managed MCP file", async () => {
+  await write(path.join(project, ".claude/settings.json"), JSON.stringify({
+    hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo project-hook" }] }] },
+    env: { PROJECT_ENV: "1" },
+    permissions: { deny: ["Read(./secrets/**)"] },
+    enabledPlugins: { "native@market": true },
+    apiKeyHelper: "/project/key.sh",
+  }));
   const args = claudeResourceIsolationArgs(project, []);
-  assert.equal(args[args.indexOf("--setting-sources") + 1], "project,local");
+  assert.equal(args[args.indexOf("--setting-sources") + 1], "");
   assert.ok(args.includes("--strict-mcp-config"));
+  const settings = JSON.parse(await readFile(args[args.indexOf("--settings") + 1], "utf8"));
+  assert.deepEqual(settings, {
+    hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo project-hook" }] }] },
+    env: { PROJECT_ENV: "1" },
+    permissions: { deny: ["Read(./secrets/**)"] },
+    enabledPlugins: { "agents-md@builtin": false, "cc-plugin-agents-md@builtin": false },
+  }, "only the project's hooks, env and permissions are carried over");
+  await rm(path.join(project, ".claude"), { recursive: true, force: true });
 });
 
 test("Kiro does not expand native prompts and keeps explicit project MCP", async () => {

@@ -18,6 +18,8 @@ function globalResourceSettings(packagesFile?: string): string {
 
 /** Suppress native discovery before extension factories or package installers run.
  * The loader's settings are read-only; session preferences and auth keep their native paths.
+ * The project is untrusted, so Pi reads no `.pi/settings.json`, installs none of its packages and
+ * discovers no `.pi/*` or parent `.agents/skills`; the app passes the project's skills and prompts in.
  */
 export function createPiResourceLoader(options: LoaderOptions, strict: boolean, packagesFile?: string): DefaultResourceLoader {
   if (!strict) return new DefaultResourceLoader(options);
@@ -25,9 +27,9 @@ export function createPiResourceLoader(options: LoaderOptions, strict: boolean, 
   const globalSettings = globalResourceSettings(packagesFile);
   const settingsManager = SettingsManager.fromStorage({
     withLock(scope, read) {
-      read(scope === "global" ? globalSettings : readOptional(path.join(options.cwd, ".pi/settings.json")));
+      read(scope === "global" ? globalSettings : undefined);
     },
-  });
+  }, { projectTrusted: false });
   return new DefaultResourceLoader({
     ...options,
     settingsManager,
@@ -38,9 +40,8 @@ export function createPiResourceLoader(options: LoaderOptions, strict: boolean, 
       const content = readOptional(path.join(options.cwd, ".pi/APPEND_SYSTEM.md"));
       return content === undefined ? [] : [content];
     },
-    agentsFilesOverride: ({ agentsFiles }) => {
-      const projectFiles = { agentsFiles: agentsFiles.filter((file) => path.dirname(file.path) !== path.resolve(options.agentDir)) };
-      return options.agentsFilesOverride ? options.agentsFilesOverride(projectFiles) : projectFiles;
-    },
+    // Pi would read AGENTS.md and CLAUDE.md from the agent folder and every parent of the project.
+    // None of those load: the app's instruction files, the project's own included, are the only ones.
+    agentsFilesOverride: () => options.agentsFilesOverride ? options.agentsFilesOverride({ agentsFiles: [] }) : { agentsFiles: [] },
   });
 }

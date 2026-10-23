@@ -11,6 +11,7 @@ import { getSettings } from "../../settings.js";
 import { resolveDataDirectory } from "../../data-directory.js";
 import { agentResourcePaths, managedMarkdownFiles } from "../../agent-resources.js";
 import { activeMcpServers, assertNoBlockedNativeResources } from "../../resource-activation.js";
+import { projectFolderResources } from "../../project-folder-resources.js";
 import type { HarnessResources } from "../resource-contract.js";
 
 function object(value: unknown): Record<string, unknown> {
@@ -109,12 +110,50 @@ function isolatedMcpConfig(servers: Record<string, unknown>): string {
   return file;
 }
 
+/** The project settings an agent still needs, carried by the app instead of the CLI's own discovery. */
+const REPLICATED_PROJECT_SETTINGS = ["hooks", "env", "permissions"] as const;
+
+/** Hooks, env and permission rules from the project's `.claude/settings.json` and its untracked local file. */
+export function claudeProjectSettingsReplica(cwd: string): Record<string, unknown> {
+  const sources = [json(path.join(cwd, ".claude/settings.json")), ...(untrackedLocalSettings(cwd) ? [json(path.join(cwd, ".claude/settings.local.json"))] : [])];
+  const hooks: Record<string, unknown[]> = {};
+  const env: Record<string, unknown> = {};
+  const permissions: Record<string, unknown[]> = {};
+  for (const source of sources) {
+    for (const [event, matchers] of Object.entries(object(source.hooks))) if (Array.isArray(matchers)) (hooks[event] ??= []).push(...matchers);
+    Object.assign(env, object(source.env));
+    for (const [kind, rules] of Object.entries(object(source.permissions))) if (Array.isArray(rules)) (permissions[kind] ??= []).push(...rules);
+  }
+  const replica: Record<string, unknown> = { hooks, env, permissions };
+  return Object.fromEntries(REPLICATED_PROJECT_SETTINGS.filter((key) => Object.keys(object(replica[key])).length).map((key) => [key, replica[key]]));
+}
+
+function isolatedSettings(cwd: string): string {
+  // The built-in agents-md plugin would read the project's AGENTS.md itself; the app passes it instead.
+  const content = JSON.stringify({ ...claudeProjectSettingsReplica(cwd), enabledPlugins: { "agents-md@builtin": false, "cc-plugin-agents-md@builtin": false } });
+  const directory = path.join(resolveDataDirectory(), "runtime", "claude-settings");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const file = path.join(directory, `${createHash("sha256").update(content).digest("hex")}.json`);
+  if (fs.existsSync(file)) return file;
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, content, { mode: 0o600, flag: "wx" });
+  fs.renameSync(temporary, file);
+  return file;
+}
+
+/** Org memory comes from the claude.ai account, not from the app. */
+export function claudeIsolationEnvironment(): NodeJS.ProcessEnv {
+  return getSettings().strictResourceIsolation ? { CLAUDE_CODE_DISABLE_ORG_MEMORY: "1" } : {};
+}
+
 export function claudeResourceIsolationArgs(cwd: string, resources: string[]): string[] {
   if (!getSettings().strictResourceIsolation) {
     assertNoBlockedNativeResources("claude", "mcp");
     return resources;
   }
-  const args = ["--setting-sources", "project,local"];
+  // No setting source at all: the CLI then discovers no CLAUDE.md, rules, skills, agents, commands or
+  // hooks in the project or its parents, and the app passes what the agent should have.
+  const args = ["--setting-sources", "", "--settings", isolatedSettings(cwd)];
   // The pinned CLI gives this file exclusive MCP control. Never send dynamic servers or the conflicting strict flag.
   const enterprise = fs.existsSync(claudeEnterpriseMcpPath());
   if (enterprise) {
@@ -158,12 +197,15 @@ function pluginInvocation(skill: SkillSummary): SkillSummary { return { ...skill
 async function skills(projectPath: string, roots: SkillRoots): Promise<SkillSummary[]> {
   const strict = getSettings().strictResourceIsolation;
   const userRoot = strict ? undefined : (roots.claudeUser ?? roots.user?.claude);
+  // Under strict isolation the project's own skills reach Claude through the app's plugin, from every
+  // harness's folder; Claude still answers to their bare names.
+  const projectSkills = (strict ? projectFolderResources(projectPath).skills : [path.join(projectPath, ".agents", "skills"), path.join(projectPath, ".claude", "skills")])
+    .map((root) => readSkillDirectory(root, "claude", "project"));
   const sources = await Promise.all([
     ...(userRoot ? [readSkillDirectory(userRoot, "claude", "user")] : []),
     readSkillDirectory(roots.shared, "claude", "user").then((items) => items.map(pluginInvocation)),
     ...(roots.global ?? []).map((root) => readConfiguredSkillPath(root, "claude", "user").then((items) => items.map(pluginInvocation))),
-    readSkillDirectory(path.join(projectPath, ".agents", "skills"), "claude", "project"),
-    readSkillDirectory(path.join(projectPath, ".claude", "skills"), "claude", "project"),
+    ...projectSkills,
     ...(roots.project ?? []).map((root) => readConfiguredSkillPath(root, "claude", "project").then((items) => items.map(pluginInvocation))),
   ]);
   return sources.flat().map((skill) => ({ ...skill, invocation: skill.invocation ?? `/${skill.name} ` }));
@@ -187,7 +229,9 @@ async function commands(projectPath: string, options: CommandDiscoveryOptions): 
   const discoveredSkills = await skills(projectPath, roots);
   const custom = options.resourcePaths ? await Promise.all([...options.resourcePaths.global.prompts.map((root) => markdownCommands(root, "user", "/joint-bob-resources:")), ...options.resourcePaths.project.prompts.map((root) => markdownCommands(root, "project", "/joint-bob-resources:"))]) : [];
   const nativeCommands = strict ? [] : await markdownCommands(path.join(config, "commands"), "user");
-  return [...builtinCommands("claude"), { harness: "claude", name: "goal", description: "Set a completion condition", invocation: "/goal ", kind: "builtin" }, ...nativeCommands, ...await markdownCommands(agentResourcePaths(options.resourceRoot).claudeCommands, "user", "/joint-bob-resources:"), ...discoveredSkills.map((skill): HarnessCommand => ({ harness: "claude", name: skill.name, description: skill.description, invocation: skill.invocation!, kind: "skill", scope: skill.scope })), ...await markdownCommands(path.join(projectPath, ".claude", "commands"), "project"), ...custom.flat()];
+  const projectCommands = (await Promise.all((strict ? projectFolderResources(projectPath).prompts : [path.join(projectPath, ".claude", "commands")])
+    .map((root) => markdownCommands(root, "project")))).flat();
+  return [...builtinCommands("claude"), { harness: "claude", name: "goal", description: "Set a completion condition", invocation: "/goal ", kind: "builtin" }, ...nativeCommands, ...await markdownCommands(agentResourcePaths(options.resourceRoot).claudeCommands, "user", "/joint-bob-resources:"), ...discoveredSkills.map((skill): HarnessCommand => ({ harness: "claude", name: skill.name, description: skill.description, invocation: skill.invocation!, kind: "skill", scope: skill.scope })), ...projectCommands, ...custom.flat()];
 }
 const resources: HarnessResources = { skills, commands };
 export default resources;

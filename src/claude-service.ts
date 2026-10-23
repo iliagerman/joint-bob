@@ -15,7 +15,7 @@ import { isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./har
 import { claudeProjectDir, claudeProjectDirs } from "./harnesses/claude/paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { claudeAgentResourceArgs } from "./agent-resources.js";
-import { claudeResourceIsolationArgs } from "./harnesses/claude/resources.js";
+import { claudeIsolationEnvironment, claudeResourceIsolationArgs } from "./harnesses/claude/resources.js";
 import { agentCapabilityEnvironment, agentCapabilityInstructionFiles } from "./agent-capabilities.js";
 import { getConversationRecord } from "./conversation-records.js";
 import type { ChatMessage, ContextUsage, SessionSummary, ToolTarget } from "./types.js";
@@ -606,7 +606,7 @@ export function spawnClaudeControl(cwd: string, projectId?: string): ChildProces
   return spawnInRuntime(currentRuntime(), getSettings().claude.executable || "claude", args, {
     detached: process.platform !== "win32",
     cwd,
-    env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() },
+    env: { ...process.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment(), ...claudeIsolationEnvironment() },
     stdio: ["pipe", "pipe", "pipe"],
   });
 }
@@ -651,7 +651,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const child = spawnInRuntime(currentRuntime(), settings.executable || "claude", args, {
     detached: process.platform !== "win32",
     cwd: options.cwd,
-    env: { ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment() },
+    env: { ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment(), ...claudeIsolationEnvironment() },
     stdio: ["pipe", "pipe", "pipe"],
   });
   // Claude can exit before reading its prompt (a broken install, an unknown flag). The run then

@@ -3,7 +3,9 @@ import { nodeMcpServersApply, runtimeHome } from "../../account-runtime.js";
 import { adminAccountId } from "../../ownership.js";
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { agentResourcePaths, commonAgentInstructionFiles } from "../../agent-resources.js";
+import { agentResourcePaths } from "../../agent-resources.js";
+import { agentInstructionFiles, renderInstructions } from "../../agent-instructions.js";
+import { projectFolderResources, withProjectFolderResources } from "../../project-folder-resources.js";
 import { activeSkillRoot, activeMcpConfig, activeMcpServers, assertNoBlockedNativeResources } from "../../resource-activation.js";
 import { agentCapabilityInstructionFiles } from "../../agent-capabilities.js";
 import { agentCredentialContext } from "../../secrets.js";
@@ -71,12 +73,12 @@ async function readMcpConfig(file: string): Promise<Record<string, unknown>> {
 async function listKiroSkills(projectPath: string, roots: SkillRoots): Promise<SkillSummary[]> {
   const strict = getSettings().strictResourceIsolation;
   const userRoot = strict ? undefined : roots.user?.kiro;
+  const projectRoots = strict ? projectFolderResources(projectPath).skills : [path.join(projectPath, ".agents", "skills"), path.join(projectPath, ".kiro", "skills")];
   const sources = await Promise.all([
     ...(userRoot ? [readSkillDirectory(userRoot, "kiro", "user")] : []),
     readSkillDirectory(roots.shared, "kiro", "user"),
     ...(roots.global ?? []).map((root) => readConfiguredSkillPath(root, "kiro", "user")),
-    readSkillDirectory(path.join(projectPath, ".agents", "skills"), "kiro", "project"),
-    readSkillDirectory(path.join(projectPath, ".kiro", "skills"), "kiro", "project"),
+    ...projectRoots.map((root) => readSkillDirectory(root, "kiro", "project")),
     ...(roots.project ?? []).map((root) => readConfiguredSkillPath(root, "kiro", "project")),
   ]);
   return sources.flat().map((skill) => ({ ...skill, invocation: `Use the ${skill.name} skill. ` }));
@@ -110,7 +112,7 @@ async function listKiroCommands(projectPath: string, options: CommandDiscoveryOp
   const prompts = await Promise.all([
     ...(strict ? [] : [promptCommands(path.join(config, "prompts"), "user")]),
     ...(options.resourcePaths?.global.prompts ?? []).map((root) => promptCommands(root, "user")),
-    promptCommands(path.join(projectPath, ".kiro", "prompts"), "project"),
+    ...(strict ? projectFolderResources(projectPath).prompts : [path.join(projectPath, ".kiro", "prompts")]).map((root) => promptCommands(root, "project")),
     ...(options.resourcePaths?.project.prompts ?? []).map((root) => promptCommands(root, "project")),
   ]);
   return [...builtinCommands("kiro"), ...(await listKiroSkills(projectPath, roots)).map((skill): HarnessCommand => ({ harness: "kiro", name: skill.name, description: skill.description, invocation: skill.invocation!, kind: "skill", scope: skill.scope })), ...prompts.flat()];
@@ -120,10 +122,11 @@ export async function expandKiroPrompt(text: string, cwd: string, projectId?: st
   const match = /^\/([A-Za-z0-9_-]+)(?:\s+([\s\S]*))?$/.exec(text);
   if (!match || match[1] === "compact") return text;
   const scoped = getScopedResourcePaths(projectId);
+  const strict = getSettings().strictResourceIsolation;
   const roots = [
-    ...(getSettings().strictResourceIsolation ? [] : [path.join(getSettings().runtimes.kiro.configPath, "prompts")]),
+    ...(strict ? [] : [path.join(getSettings().runtimes.kiro.configPath, "prompts")]),
     ...scoped.global.prompts,
-    path.join(cwd, ".kiro", "prompts"),
+    ...(strict ? projectFolderResources(cwd).prompts : [path.join(cwd, ".kiro", "prompts")]),
     ...scoped.project.prompts,
   ];
   for (const root of roots.reverse()) {
@@ -148,6 +151,27 @@ export default harnessResources;
 
 export const kiroToolCategories = ["read", "write", "shell", "web", "subagent"];
 
+const INHERIT_SETTING = "chat.disableInheritingDefaultResources";
+
+/** Kiro gives every custom agent its default resources too: global and workspace steering, skills,
+    and marker files such as the project's AGENTS.md. This setting stops that for custom agents only. */
+export async function disableInheritedKiroResources(configPath: string): Promise<void> {
+  const file = path.join(configPath, "settings", "cli.json");
+  let settings: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`Kiro settings at ${file} must be a JSON object`);
+    settings = parsed as Record<string, unknown>;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (settings[INHERIT_SETTING] === true) return;
+  await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify({ ...settings, [INHERIT_SETTING]: true }, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, file);
+}
+
 export async function kiroAgentProfile(options: HarnessOpenOptions, credentialContext?: string, enabledTools?: string[]): Promise<string> {
   if (!/^[a-zA-Z0-9_-]+$/.test(options.sessionId)) throw new Error("Kiro profile session ID must be safe");
   if (enabledTools !== undefined && (!Array.isArray(enabledTools) || enabledTools.some((name) => typeof name !== "string" || !kiroToolCategories.includes(name)))) {
@@ -161,29 +185,30 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   if (agentsInfo.isSymbolicLink() || !agentsInfo.isDirectory()) throw new Error("Kiro agents path must be a real directory");
   const relativeAgents = path.relative(path.resolve(runtime.configPath), path.resolve(agents));
   if (relativeAgents.startsWith("..") || path.isAbsolute(relativeAgents)) throw new Error("Kiro agents path is outside KIRO_HOME");
-  const scoped = getScopedResourcePaths(options.projectId, options.conversationId ?? options.sessionId, "kiro");
-  const instructions = await commonAgentInstructionFiles(undefined, [...scoped.global.rules, ...scoped.project.rules]);
+  const strict = getSettings().strictResourceIsolation;
+  if (strict) await disableInheritedKiroResources(runtime.configPath);
+  const scoped = withProjectFolderResources(getScopedResourcePaths(options.projectId, options.conversationId ?? options.sessionId, "kiro"), options.cwd);
   const resources = agentResourcePaths();
+  const instructions = agentInstructionFiles(resources, "kiro", { cwd: options.cwd, rules: [...scoped.global.rules, ...scoped.project.rules] });
   const skillRoots = [
     resources.sharedSkills,
     ...scoped.global.skills,
     ...scoped.project.skills,
-    path.join(options.cwd, ".agents/skills"),
-    path.join(options.cwd, ".kiro/skills"),
+    // Under strict isolation the project folder's skills are already among the project's.
+    ...(strict ? [] : [path.join(options.cwd, ".agents/skills"), path.join(options.cwd, ".kiro/skills")]),
   ];
   const skills = [...new Set((await Promise.all(skillRoots.map((root) => skillResource(activeSkillRoot("kiro", root, { projectId: options.projectId, conversationId: options.conversationId ?? options.sessionId }))))).flat())];
   const agentsFile = path.join(options.cwd, "AGENTS.md");
-  try {
+  if (!strict) try {
     if ((await lstat(agentsFile)).isFile()) skills.push(`file://${agentsFile}`);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const prompt = [
-    ...instructions.map((item) => item.content),
+    ...(instructions.length ? [renderInstructions(instructions)] : []),
     ...agentCapabilityInstructionFiles().map((file) => file.content),
     credentialContext ?? agentCredentialContext(options.projectId, { engine: "kiro", sessionId: options.sessionId }),
   ].filter(Boolean).join("\n\n");
-  const strict = getSettings().strictResourceIsolation;
   if (!strict) assertNoBlockedNativeResources("kiro", "mcp");
   const profile = {
     name,

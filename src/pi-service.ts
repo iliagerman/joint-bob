@@ -28,7 +28,9 @@ import { sessionCwds, type SessionProjectPaths } from "./harnesses/shared-paths.
 import { canonicalPiTranscriptName, piSessionIdFromFileName } from "./harnesses/pi/paths.js";
 import { forgetTranscriptSummary, storeTranscriptSummary, storedTranscriptSummary } from "./transcript-summary-store.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
-import { agentResourcePaths, commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
+import { agentResourcePaths, piAgentResourcePaths } from "./agent-resources.js";
+import { agentInstructionFiles } from "./agent-instructions.js";
+import { withProjectFolderResources } from "./project-folder-resources.js";
 import { activeSkillRoot, blockedSkillNames } from "./resource-activation.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary, ToolTarget } from "./types.js";
 import { toolTarget } from "./tool-target.js";
@@ -624,19 +626,21 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
     credentials: async (sessionId, conversationId) => credentials(sessionId, conversationId),
     credentialsNow: credentials,
     resources: async (conversationId) => {
-      const configured = getScopedResourcePaths(options.projectId, conversationId, "pi");
-      const commonInstructions = await commonAgentInstructionFiles(undefined, [agentResourcePaths().piInstructions, ...configured.global.rules, ...configured.project.rules]);
+      const strict = getSettings().strictResourceIsolation;
+      const configured = withProjectFolderResources(getScopedResourcePaths(options.projectId, conversationId, "pi"), options.cwd);
+      const instructions = agentInstructionFiles(agentResourcePaths(), "pi", { cwd: options.cwd, rules: [...configured.global.rules, ...configured.project.rules] });
       const resources = piAgentResourcePaths(undefined, configured);
       const scope = { projectId: options.projectId, conversationId };
       const blocked = blockedSkillNames("pi", scope);
       return {
-        strictResourceIsolation: getSettings().strictResourceIsolation,
+        strictResourceIsolation: strict,
         packagesFile: agentResourcePaths().piPackages,
         extensions: resources.extensions,
         prompts: resources.prompts,
         themes: resources.themes,
-        agentsFiles: [...commonInstructions, ...agentCapabilityInstructionFiles()],
-        skillRoots: [activeSkillRoot("pi", undefined, scope), ...configured.global.skills.map((root) => activeSkillRoot("pi", root, scope)), activeSkillRoot("pi", path.join(options.cwd, ".pi", "skills"), scope), ...configured.project.skills.map((root) => activeSkillRoot("pi", root, scope))],
+        agentsFiles: [...instructions.map((file) => ({ path: file.path, content: file.content })), ...agentCapabilityInstructionFiles()],
+        // Strict isolation already brings `.pi/skills` in with the rest of the project folder.
+        skillRoots: [activeSkillRoot("pi", undefined, scope), ...configured.global.skills.map((root) => activeSkillRoot("pi", root, scope)), ...(strict ? [] : [activeSkillRoot("pi", path.join(options.cwd, ".pi", "skills"), scope)]), ...configured.project.skills.map((root) => activeSkillRoot("pi", root, scope))],
         managedSkillRoot: agentResourcePaths().sharedSkills,
         blockedSkillNames: blocked,
       };

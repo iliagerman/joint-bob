@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -40,7 +40,8 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
     await mkdir(path.join(resources, "runtime"), { recursive: true });
     await writeFile(path.join(resources, "mcp", "config.json"), "{}\n");
     await writeFile(path.join(root, ".mcp.json"), '{"mcpServers":{}}');
-    await writeFile(path.join(resources, "runtime", "common-instructions.md"), "Canonical instructions\nCanonical rule\n");
+    await mkdir(path.join(resources, "shared", "instructions", "common"), { recursive: true });
+    await writeFile(path.join(resources, "shared", "instructions", "common", "canonical.md"), "Canonical instructions\nCanonical rule\n");
 
     const globalSkill = path.join(root, "global-skill");
     const projectSkills = path.join(root, "project-skills");
@@ -89,7 +90,8 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
     assert.equal(lost?.summary.status, "failed");
     assert.match(lost?.summary.tasks[0].error ?? "", /ended before reporting task completion/);
     const args = (await readFile(argsFile, "utf8")).split("\n");
-    assert.equal(args[args.indexOf("--setting-sources") + 1], "project,local");
+    assert.equal(args[args.indexOf("--setting-sources") + 1], "", "no native setting source: the app passes what Claude needs");
+    assert.ok(args.includes("--settings"));
     assert.ok(args.includes("--strict-mcp-config"));
     const toolsIndex = args.indexOf("--tools");
     assert.ok(toolsIndex >= 0, `expected --tools in claude args: ${JSON.stringify(args)}`);
@@ -106,8 +108,10 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
     assert.deepEqual(JSON.parse(await readFile(path.join(generatedPlugin, ".claude-plugin", "plugin.json"), "utf8")), { name: "joint-bob-resources" });
     assert.equal(await realpath(path.join(generatedPlugin, "skills", "global-skill")), await realpath(globalSkill));
     assert.equal(await realpath(path.join(generatedPlugin, "skills", "project-skill")), await realpath(path.join(projectSkills, "project-skill")));
-    assert.equal(await realpath(path.join(generatedPlugin, "commands", "global-prompt.md")), await realpath(globalPrompt));
-    assert.equal(await realpath(path.join(generatedPlugin, "commands", "project-prompt.md")), await realpath(path.join(projectPrompts, "project-prompt.md")));
+    // Copies, not links: Claude skips a linked command file.
+    assert.equal((await lstat(path.join(generatedPlugin, "commands", "global-prompt.md"))).isSymbolicLink(), false);
+    assert.equal(await readFile(path.join(generatedPlugin, "commands", "global-prompt.md"), "utf8"), await readFile(globalPrompt, "utf8"));
+    assert.equal(await readFile(path.join(generatedPlugin, "commands", "project-prompt.md"), "utf8"), await readFile(path.join(projectPrompts, "project-prompt.md"), "utf8"));
     assert.equal(args.includes("--mcp-config"), false, "empty managed and project configs do not supply any MCP servers");
     const instructionIndex = args.indexOf("--append-system-prompt-file");
     const instructions = await readFile(args[instructionIndex + 1], "utf8");

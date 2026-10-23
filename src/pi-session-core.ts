@@ -157,14 +157,18 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     shellPath: credentials.capabilityEnvironment.JOINT_BOB_TASK_SHELL,
     spawnHook: (context) => ({ ...context, env: { ...context.env, ...credentials.environment, ...credentials.capabilityEnvironment } }),
   });
-  const settingsManager = SettingsManager.create(inputs.cwd, inputs.agentDir);
+  // The loader keeps this array, and refreshing the resources refills it, so a project prompt
+  // folder created after opening (the project is untrusted, so Pi no longer finds it) loads on reload.
+  const promptPaths = [...resources.prompts];
+  // An untrusted project contributes no settings: under strict isolation `.pi/settings.json` stays out of the session too.
+  const settingsManager = SettingsManager.create(inputs.cwd, inputs.agentDir, { projectTrusted: !resources.strictResourceIsolation });
   const resourceLoader = createPiResourceLoader({
     cwd: inputs.cwd,
     agentDir: inputs.agentDir,
     settingsManager,
     additionalExtensionPaths: resources.extensions,
     skillsOverride: skillsOverride(inputs.cwd, inputs.agentDir, () => resources),
-    additionalPromptTemplatePaths: resources.prompts,
+    additionalPromptTemplatePaths: promptPaths,
     additionalThemePaths: resources.themes,
     agentsFilesOverride: (current) => ({ agentsFiles: [...current.agentsFiles, ...resources.agentsFiles] }),
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
@@ -207,7 +211,10 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     session,
     safeguardsEnabled,
     dispose: () => { unsubscribeCredentials(); session.dispose(); },
-    refreshResources: async () => { resources = await hooks.resources(conversationId); },
+    refreshResources: async () => {
+      resources = await hooks.resources(conversationId);
+      promptPaths.splice(0, promptPaths.length, ...resources.prompts);
+    },
     setCredentials: (next) => { credentials = next; },
   };
 }

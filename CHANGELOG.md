@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed strict resource isolation so Claude, Pi and Kiro all receive a project's skills, commands, agents and instructions through the app, whichever harness folder they came from, and project Pi packages no longer load.
+
 ## 2.143.4 — 2026-10-23
 
 - Changed file sync between your machines to skip build output, Terraform provider binaries, scratch folders and agent worktrees, so heavy generated files no longer slow sync down; copies already on each machine stay where they are.
