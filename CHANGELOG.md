@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.146.1 — 2026-10-23
 
-- Changed instruction files that only Claude or Pi used to read to move into the shared AGENTS.md, so every agent follows the same rules; the originals are kept in a backup folder.
+- Changed instruction files that only Claude or Pi used to read, such as CLAUDE.md, rules and AGENTS.md, to move into the shared AGENTS.md so every agent follows the same rules; text already there is not added twice and the originals are kept in a backup folder.
+- Changed open pages to show saved or received instructions straight away, without a reload.
 
 ## 2.146.0 — 2026-10-23
 
