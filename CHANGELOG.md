@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.146.0 — 2026-10-23
 
-- Added an Instructions section to the Activity panel that shows the AGENTS.md files a conversation's agent reads, and lets you view, create and edit them from there.
+- Added an Instructions section to the Activity panel that lists the two AGENTS.md files a conversation's agent reads, the shared one for every project and the project's own, and lets you view, create and edit each; only admins can save the shared file, and a save never overwrites a newer edit.
+- Changed the shared AGENTS.md to sync to your other machines, where the newest edit wins and an open page refreshes when one arrives.
+- Changed open conversations to reload their instructions before each new message, and empty instruction files to add nothing to an agent's instructions.
 
 ## 2.145.0 — 2026-10-23
 
