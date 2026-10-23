@@ -86,6 +86,60 @@ test("HEAD stays put when the pushed files have not arrived on this node", async
   assert.equal(git(server, "status", "--porcelain"), "");
 });
 
+/** Laptop commits and pushes one more change on top of whatever it has. */
+function pushThird(laptop: string): string {
+  writeFileSync(path.join(laptop, "app.txt"), "v3\n");
+  writeFileSync(path.join(laptop, "third.txt"), "third\n");
+  git(laptop, "add", "app.txt", "third.txt");
+  git(laptop, "commit", "-q", "-m", "third");
+  git(laptop, "push", "-q", "origin", "main");
+  return git(laptop, "rev-parse", "HEAD");
+}
+
+test("HEAD moves partway to the newest pushed commit the files hold when upstream is further ahead", async (t) => {
+  const { laptop, server } = cluster(t);
+  const second = pushChange(laptop);
+  syncFiles(laptop, server);
+  pushThird(laptop);
+
+  assert.equal(await catchUpGitHead(server, {}), "moved-partway");
+  assert.equal(git(server, "rev-parse", "HEAD"), second);
+  assert.equal(git(server, "status", "--porcelain"), "");
+  assert.equal(readFileSync(path.join(server, "app.txt"), "utf8"), "v2\n");
+});
+
+test("a local edit on top of the pushed version does not hold HEAD back", async (t) => {
+  const { laptop, server } = cluster(t);
+  writeFileSync(path.join(laptop, "notes.txt"), "1\n2\n3\n");
+  git(laptop, "add", "-A");
+  git(laptop, "commit", "-q", "-m", "notes");
+  git(laptop, "push", "-q", "origin", "main");
+  git(server, "pull", "-q");
+  writeFileSync(path.join(laptop, "notes.txt"), "1\n2\n3\nfour\n");
+  const second = pushChange(laptop);
+  // Uncommitted on the laptop, synced like every other file: one more line on the pushed notes.
+  writeFileSync(path.join(laptop, "notes.txt"), "1\n2\n3\nfour\nfive\n");
+  syncFiles(laptop, server);
+  pushThird(laptop);
+
+  assert.equal(await catchUpGitHead(server, {}), "moved-partway");
+  assert.equal(git(server, "rev-parse", "HEAD"), second);
+  assert.equal(git(server, "status", "--porcelain"), "M notes.txt");
+});
+
+test("HEAD stays put when a file is still at a version upstream passed through", async (t) => {
+  const { laptop, server } = cluster(t);
+  const before = git(server, "rev-parse", "HEAD");
+  pushChange(laptop);
+  syncFiles(laptop, server);
+  // The server's app.txt goes back to HEAD's version: the second commit has not fully arrived.
+  writeFileSync(path.join(server, "app.txt"), "v1\n");
+  pushThird(laptop);
+
+  assert.equal(await catchUpGitHead(server, {}), "files-not-synced");
+  assert.equal(git(server, "rev-parse", "HEAD"), before);
+});
+
 test("HEAD stays put when this node has commits that are not on the remote and files differ", async (t) => {
   const { laptop, server } = cluster(t);
   pushChange(laptop);

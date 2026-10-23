@@ -13,6 +13,7 @@ import { conversationScopeId, genericSecretEnvironment, getScopeSecretAccounts, 
 import { getProject } from "../store.js";
 import { isHarnessId, PROJECT_COLORS, type ProjectRecord } from "../types.js";
 import type { WorktreeAgentIdentity } from "../worktree-agent.js";
+import { rebaseWorktreeChanges } from "../worktree-git.js";
 import { queueConversationPrompt } from "./conversation-prompt.js";
 import { openWorktreePullRequest } from "./github-pull-request.js";
 import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
@@ -83,10 +84,12 @@ async function startConversation(identity: WorktreeAgentIdentity, project: Proje
 async function openPullRequest(identity: WorktreeAgentIdentity, project: ProjectRecord, worktree: ProjectWorktree, input: { title: string; body: string; base?: string }) {
   const conversation = { engine: identity.engine, sessionId: identity.sessionId };
   const accounts = githubAccountsForProject(project.id, conversation);
-  const fallback = genericSecretEnvironment(project.id, conversation).GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+  const gitEnvironment = genericSecretEnvironment(project.id, conversation);
+  const fallback = gitEnvironment.GH_TOKEN ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+  const changes = await withoutGitIgnored(project.path, await worktreeChanges(project.id, worktree.id));
   const result = await openWorktreePullRequest({
     projectPath: project.path, branchName: pullRequestBranch(worktree), title: input.title, body: input.body, base: input.base,
-    changes: await withoutGitIgnored(project.path, await worktreeChanges(project.id, worktree.id)), previous: worktree.pullRequest,
+    changes, previous: worktree.pullRequest, rebase: (base) => rebaseWorktreeChanges(project.path, gitEnvironment, changes, base),
   }, {
     tokenFor: (repository) => githubAccountFor(accounts, repository)?.token ?? fallback,
     sshHosts: accounts.filter((account) => account.sshKey).map((account) => account.sshHost),
@@ -112,7 +115,10 @@ export async function worktreeAgentRequest(identity: WorktreeAgentIdentity, requ
     }
     case "create": {
       await assertProjectEditable(project);
-      const worktree = await createProjectWorktree(project, { name: request.name, color: request.color, createdBy: { engine: identity.engine, conversationId: identity.conversationId } });
+      const worktree = await createProjectWorktree(project, {
+        name: request.name, color: request.color, createdBy: { engine: identity.engine, conversationId: identity.conversationId },
+        gitEnvironment: genericSecretEnvironment(project.id, { engine: identity.engine, sessionId: identity.sessionId }),
+      });
       broadcastToProject(project.id, { type: "worktreesChanged" });
       return { worktree: { id: worktree.id, name: worktree.name, path: worktree.path, color: worktree.color } };
     }

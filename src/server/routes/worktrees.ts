@@ -4,6 +4,7 @@ import { GitReviewError } from "../../git-review.js";
 import { createProjectWorktree, deleteProjectWorktree, listProjectWorktrees, mergeProjectWorktree, ProjectWorktreeError, updateProjectWorktree } from "../../project-worktrees.js";
 import type { WorktreeAgentIdentity } from "../../worktree-agent.js";
 import { cleanupDoneWorktrees } from "../worktree-cleanup.js";
+import { genericSecretEnvironment } from "../../secrets.js";
 import { getProject } from "../../store.js";
 import { PROJECT_COLORS } from "../../types.js";
 import { sendError } from "../http-auth.js";
@@ -46,7 +47,7 @@ app.post("/api/projects/:projectId/worktrees", async (request, response, next) =
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     await assertProjectEditable(project);
-    const worktree = await createProjectWorktree(project, createSchema.parse(request.body));
+    const worktree = await createProjectWorktree(project, { ...createSchema.parse(request.body), gitEnvironment: genericSecretEnvironment(project.id) });
     broadcastToProject(project.id, { type: "worktreesChanged" });
     response.status(201).json({ worktree });
   } catch (error) { fail(response, next, error); }

@@ -12,6 +12,7 @@ import { execFile, spawn } from "./subprocess.js";
 import { captureBaseline, copyAllowed, listTreeEntries, TICKET_BASELINE_DIR, TICKET_MERGE_DIR } from "./task-workspaces.js";
 import { prepareTicketMerge, readBaseline } from "./ticket-merge-ops.js";
 import { PROJECT_COLORS, type ProjectColor, type ProjectRecord } from "./types.js";
+import { exportWorktreeBase, ignoredPaths, type WorktreeChanges, type WorktreeFileChange } from "./worktree-git.js";
 import { WORKTREE_FOLDER_PREFIX, WORKTREE_META_DIR, worktreeBinaryExtensions, worktreeHeavyDirectories, worktreeHeavyFiles, worktreeLinkedDirectories } from "./worktree-filters.js";
 
 export { WORKTREE_META_DIR } from "./worktree-filters.js";
@@ -54,8 +55,10 @@ interface WorktreeMetadata {
   createdByNodeId: string;
   baselineDigest: string;
   lastMergedAt: string | null;
-  /** Project HEAD when the worktree was copied; a pull request starts from it. */
+  /** The commit the worktree's files started as; a pull request replays its changes from it. */
   gitBase?: string | null;
+  /** The remote branch gitBase came from, e.g. origin/main; absent when the project folder was copied as it was. */
+  gitBaseRef?: string | null;
   createdBy?: WorktreeCreator | null;
   pullRequest?: WorktreePullRequest | null;
 }
@@ -215,9 +218,13 @@ async function gitHead(projectPath: string): Promise<string | null> {
 /** Captures uncommitted changes (staged and unstaged) as a unified diff, for syncing to other machines. */
 async function gitDiff(projectPath: string): Promise<string | null> {
   try {
-    const diff = (await exec("git", ["-C", projectPath, "diff", "HEAD"], { timeout: 30_000 })).stdout;
+    // A node whose HEAD fell behind its synced files has a diff of megabytes; the default 1 MiB buffer dropped it.
+    const diff = (await exec("git", ["-C", projectPath, "diff", "HEAD"], { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 })).stdout;
     return diff.trim() || null;
-  } catch { return null; }
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== 128) console.warn("Worktree base.patch not recorded", error instanceof Error ? error.message.slice(0, 200) : error);
+    return null;
+  }
 }
 
 /** Extracts file paths from a unified diff. Returns paths like "src/file.ts". */
@@ -274,7 +281,29 @@ export async function ensureWorktreeLocalFiles(projectPath: string, worktree: st
   return { envFiles, links };
 }
 
-export async function createProjectWorktree(project: ProjectRecord, input: { name: unknown; color?: unknown; createdBy?: WorktreeCreator }, root = worktreeRoot()): Promise<ProjectWorktree> {
+/** Starts the worktree as the remote default branch is now, plus the folder's git-ignored local files.
+    Returns null, having written nothing, when the project has no such branch. */
+async function copyRemoteBase(source: string, staging: string, gitEnvironment: NodeJS.ProcessEnv): Promise<{ gitBase: string; gitBaseRef: string } | null> {
+  let base;
+  try {
+    base = await exportWorktreeBase(source, gitEnvironment, staging, (relative, size) => size <= MAX_FILE_BYTES && worktreePathAllowed(staging, path.join(staging, ...relative.split("/"))));
+  } catch (error) {
+    console.warn("Worktree could not start from the remote branch; copying the project folder", error instanceof Error ? error.message.slice(0, 200) : error);
+    await fs.rm(staging, { recursive: true, force: true });
+    return null;
+  }
+  if (!base) return null;
+  if (!base.fetched) console.warn(`Worktree starts from ${base.ref} as last fetched (${base.commit.slice(0, 8)}); fetching it failed`);
+  // Uncommitted and untracked work in the folder stays there: it belongs to whoever is editing it.
+  for (const entry of await ignoredPaths(source, gitEnvironment)) {
+    const target = path.join(staging, entry);
+    if (await lstatOrNull(target)) continue;
+    await fs.cp(path.join(source, entry), target, { recursive: true, force: false, errorOnExist: false, filter: (file) => copyCandidate(source, file) });
+  }
+  return { gitBase: base.commit, gitBaseRef: base.ref };
+}
+
+export async function createProjectWorktree(project: ProjectRecord, input: { name: unknown; color?: unknown; createdBy?: WorktreeCreator; gitEnvironment?: NodeJS.ProcessEnv }, root = worktreeRoot()): Promise<ProjectWorktree> {
   const name = normalizeName(input.name);
   const existing = await listProjectWorktrees(project.id, root);
   if (existing.some((worktree) => worktree.name.toLowerCase() === name.toLowerCase())) throw new ProjectWorktreeError(409, "A worktree with this name already exists");
@@ -289,12 +318,18 @@ export async function createProjectWorktree(project: ProjectRecord, input: { nam
   // Copied privately, then renamed in: the synced folder never sees a half-made worktree.
   const staging = path.join(path.dirname(worktree), `.creating-${id}`);
   try {
-    const gitBase = await gitHead(source);
-    const uncommittedDiff = await gitDiff(source);
-    await fs.cp(source, staging, { recursive: true, force: false, errorOnExist: true, filter: (entry) => copyCandidate(source, entry) });
+    const remote = await copyRemoteBase(source, staging, input.gitEnvironment ?? {});
+    let gitBase = remote?.gitBase ?? null;
+    let uncommittedDiff: string | null = null;
+    if (!remote) {
+      // No remote branch (a local-only repository, or none): the folder as it is, uncommitted work included.
+      gitBase = await gitHead(source);
+      uncommittedDiff = await gitDiff(source);
+      await fs.cp(source, staging, { recursive: true, force: false, errorOnExist: true, filter: (entry) => copyCandidate(source, entry) });
+    }
     await ensureWorktreeLocalFiles(source, staging);
     const baselineDigest = await captureBaseline(staging, worktreePathAllowed, [WORKTREE_META_DIR]);
-    const metadata: WorktreeMetadata = { version: 1, id, name, color, createdAt: new Date().toISOString(), createdByNodeId: node.id, baselineDigest, lastMergedAt: null, gitBase, createdBy: input.createdBy ?? null, pullRequest: null };
+    const metadata: WorktreeMetadata = { version: 1, id, name, color, createdAt: new Date().toISOString(), createdByNodeId: node.id, baselineDigest, lastMergedAt: null, gitBase, gitBaseRef: remote?.gitBaseRef ?? null, createdBy: input.createdBy ?? null, pullRequest: null };
     await writeAtomic(metadataFile(staging), `${JSON.stringify(metadata, null, 2)}\n`);
     // Write base.patch if there were uncommitted changes - this syncs to other machines
     if (uncommittedDiff) await writeAtomic(path.join(staging, WORKTREE_META_DIR, "base.patch"), uncommittedDiff);
@@ -470,8 +505,7 @@ async function mergeLocked(project: ProjectRecord, worktreeId: string, root: str
 }
 
 
-export interface WorktreeFileChange { path: string; content: Buffer; executable: boolean }
-export interface WorktreeChanges { gitBase: string | null; writes: WorktreeFileChange[]; deletes: string[]; uncommittedPaths: string[] }
+export type { WorktreeChanges, WorktreeFileChange };
 
 /** Reads the base.patch file if it exists and returns the paths that had uncommitted changes. */
 async function readUncommittedPaths(worktree: string): Promise<Set<string>> {

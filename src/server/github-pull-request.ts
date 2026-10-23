@@ -4,6 +4,7 @@ import { GitReviewError } from "../git-review.js";
 import { nodeSettings } from "../settings.js";
 import type { WorktreeChanges, WorktreePullRequest } from "../project-worktrees.js";
 import { execFile } from "../subprocess.js";
+import type { RebasedWorktreeChanges } from "../worktree-git.js";
 import { githubRepository, githubRequest, type GithubCredentials } from "./github-review.js";
 
 type GithubCall = (route: string, method?: string, body?: object) => Promise<unknown>;
@@ -20,6 +21,8 @@ export interface WorktreePullRequestInput {
   base?: string;
   changes: WorktreeChanges;
   previous: WorktreePullRequest | null;
+  /** Replays the changes on the base branch as it is now; without it they are committed on the worktree's own base. */
+  rebase?: (base: string) => Promise<RebasedWorktreeChanges | null>;
 }
 
 export interface WorktreePullRequestResult {
@@ -106,8 +109,7 @@ export async function worktreePullRequestMerged(projectPath: string, pullRequest
 /** Commits the worktree's changes on a new branch through the GitHub API and opens (or updates) its pull
     request. Nothing touches the project's checkout: no local branch, index or working tree changes. */
 export async function openWorktreePullRequest(input: WorktreePullRequestInput, credentials: GithubCredentials, request: typeof fetch = fetch): Promise<WorktreePullRequestResult> {
-  const { writes } = input.changes;
-  let deletes = input.changes.deletes;
+  let { writes, deletes } = input.changes;
   if (!writes.length && !deletes.length) throw new GitReviewError(409, "The worktree has no changes to put in a pull request");
   const maxFiles = nodeSettings().gitPullFileLimit;
   if (writes.length + deletes.length > maxFiles) throw new GitReviewError(413, `A worktree pull request carries at most ${maxFiles} files`);
@@ -134,6 +136,30 @@ export async function openWorktreePullRequest(input: WorktreePullRequestInput, c
   }
 
   let baseCommit = previous?.baseCommit;
+  let rebased = false;
+  let conflicts: string[] = [];
+  if (input.rebase) {
+    try {
+      const result = await input.rebase(base);
+      if (result && "conflicts" in result) {
+        conflicts = result.conflicts;
+        warnings.push(`These files conflict with ${base} as it is now, so the pull request starts from the commit the worktree was created from: ${conflicts.join(", ")}. Resolve them before merging.`);
+      } else if (result) {
+        if (!result.writes.length && !result.deletes.length) throw new GitReviewError(409, `The worktree's changes are already on ${base}`);
+        ({ writes, deletes, baseCommit } = result);
+        rebased = true;
+      }
+    } catch (error) {
+      if (error instanceof GitReviewError) throw error;
+      console.warn("Worktree pull request could not start from the current base branch", error instanceof Error ? error.message.slice(0, 200) : error);
+    }
+  }
+  // The files are whole copies relative to the worktree's base. Written on any other commit, they would undo what the branch gained since.
+  if (!rebased && previous && input.changes.gitBase && previous.baseCommit !== input.changes.gitBase) {
+    throw new GitReviewError(409, conflicts.length
+      ? `The worktree's changes conflict with ${base} as it is now in ${conflicts.join(", ")}; pull request #${previous.number} was left as it is`
+      : `The worktree's changes could not be replayed on ${base} as it is now; pull request #${previous.number} was left as it is. Try again.`);
+  }
   if (!baseCommit && input.changes.gitBase) {
     for (const candidate of [input.changes.gitBase, await remoteMergeBase(input.projectPath, input.changes.gitBase, base)]) {
       if (!candidate) continue;
@@ -165,11 +191,18 @@ export async function openWorktreePullRequest(input: WorktreePullRequestInput, c
   // A branch that already exists was left by an earlier attempt that did not finish. Its tree is replaced
   // by this one, so the new commit goes on top of it and the update is a fast-forward.
   const existingHead = await branchHead(call, branch);
-  const commit = await call("/git/commits", "POST", { message: input.body ? `${input.title}\n\n${input.body}` : input.title, tree: tree.sha, parents: [existingHead ?? baseCommit] }) as { sha: string };
+  const parents = [existingHead ?? baseCommit];
+  // A branch made before the base branch moved also takes the new base as a parent: the pull request's
+  // diff is measured from there, so it stays the worktree's own changes.
+  if (rebased && existingHead && existingHead !== baseCommit) {
+    const comparison = await call(`/compare/${baseCommit}...${existingHead}`) as { status?: string };
+    if (comparison.status !== "ahead" && comparison.status !== "identical") parents.push(baseCommit);
+  }
+  const commit = await call("/git/commits", "POST", { message: input.body ? `${input.title}\n\n${input.body}` : input.title, tree: tree.sha, parents }) as { sha: string };
 
   if (previous) {
     await call(`/git/refs/heads/${refRoute(branch)}`, "PATCH", { sha: commit.sha, force: false });
-    return { pullRequest: previous, updated: true, files: writes.length, deleted: deletes.length, ...(warning ? { warning } : {}) };
+    return { pullRequest: rebased ? { ...previous, baseCommit } : previous, updated: true, files: writes.length, deleted: deletes.length, ...(warning ? { warning } : {}) };
   }
   if (existingHead) {
     await call(`/git/refs/heads/${refRoute(branch)}`, "PATCH", { sha: commit.sha, force: false });

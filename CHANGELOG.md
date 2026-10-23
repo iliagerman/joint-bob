@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed new worktrees to start from the default branch as it is on GitHub when created, and pull requests from them to carry only the worktree's own edits, replayed on the branch as it is at that moment, with any conflicting files named instead of overwriting newer work.
+
 ## 2.143.2 — 2026-10-23
 
 - Fixed every Claude turn failing with a "Cannot safely suppress blocked native claude skills" error when strict resource isolation was on and a skill was turned off for Claude; those turns now start normally.
