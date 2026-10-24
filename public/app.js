@@ -28,6 +28,7 @@ import "./app/state.js";
 import "./app/error-reporting.js";
 import "./app/elements.js";
 import "./app/project-files.js";
+import "./app/dashboards.js";
 import "./app/project-explorer.js";
 import "./app/git-review.js";
 import "./app/api.js";

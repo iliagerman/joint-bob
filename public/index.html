@@ -261,6 +261,7 @@
               <div class="chat-actions">
                 <div class="status-pill" id="connectionStatus" role="status" title="Idle">Idle</div>
                 <div class="context-usage" id="contextUsage" role="status" data-testid="chat-context-usage" hidden><span class="context-usage-bar" aria-hidden="true"><i id="contextUsageFill"></i></span><span class="context-usage-text" id="contextUsageText"></span></div>
+                <button class="ghost icon-button" id="chatDashboardButton" type="button" aria-label="Conversation dashboard" title="Conversation dashboard" data-testid="chat-dashboard-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h7v7H4z"/><path d="M13 4h7v4h-7z"/><path d="M13 10h7v10h-7z"/><path d="M4 13h7v7H4z"/></svg></button>
                 <button class="ghost icon-button danger" id="abortButton" type="button" disabled aria-label="Stop" title="Stop" data-testid="chat-abort-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></button>
               </div>
             </div>
@@ -621,6 +622,19 @@
           <button class="primary" id="mfaSubmitButton" type="submit" data-testid="mfa-submit-button">Start setup</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="dashboardDialog" data-testid="dashboard-dialog" aria-labelledby="dashboardTitle">
+      <div class="dialog-card dashboard-card">
+        <header class="dashboard-heading">
+          <div class="dashboard-heading-text"><span class="eyebrow" id="dashboardEyebrow" data-testid="dashboard-eyebrow">Dashboard</span><h2 id="dashboardTitle" data-testid="dashboard-title">Dashboard</h2></div>
+          <select id="dashboardPicker" class="dashboard-picker" aria-label="Dashboards" data-testid="dashboard-picker" hidden></select>
+          <div id="dashboardStatus" class="dashboard-status" role="status" aria-live="polite" data-testid="dashboard-status"></div>
+          <div id="dashboardActions" class="dashboard-actions"></div>
+          <button type="button" class="usage-icon-button" id="dashboardClose" data-testid="dashboard-close" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+        </header>
+        <div id="dashboardBody" class="dashboard-body" data-testid="dashboard-body"></div>
+      </div>
     </dialog>
 
     <dialog id="usageDialog" data-testid="usage-dialog" aria-labelledby="usageTitle">

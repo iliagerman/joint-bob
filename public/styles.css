@@ -5092,3 +5092,41 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 #autoRespondDialog textarea { width: 100%; resize: vertical; }
 .session-auto-badge { display: inline-block; padding: 0 6px; border-radius: 999px; border: 1px solid var(--accent, #2563eb); color: var(--accent, #2563eb); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .session-auto-badge.stopped { border-color: #b9770e; color: #b9770e; }
+
+/* Dashboards: dashboard mode, the creator chat beside its draft preview, review and share panels. */
+#dashboardDialog .dashboard-card { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(1240px, calc(100vw - 24px)); height: calc(100dvh - 24px); max-width: none; max-height: none; margin: auto; gap: 10px; padding: 14px 18px 16px; overflow: hidden; background: var(--panel); }
+.dashboard-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.dashboard-heading-text { display: grid; min-width: 0; margin-right: auto; }
+.dashboard-heading-text h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-picker { max-width: 280px; }
+.dashboard-status { min-width: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.dashboard-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.dashboard-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.dashboard-actions svg { width: 15px; height: 15px; }
+.dashboard-body { display: grid; min-height: 0; overflow: auto; }
+.dashboard-frame { width: 100%; height: 100%; min-height: 420px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.dashboard-empty { display: grid; align-content: start; gap: 10px; max-width: 720px; margin: 24px auto; }
+.dashboard-empty h3, .dashboard-review h3, .dashboard-share h3 { margin: 0; }
+.dashboard-request, .dashboard-composer textarea { width: 100%; resize: vertical; }
+.dashboard-note { margin: 0; color: var(--muted); font-size: 12.5px; }
+.dashboard-error { margin: 0; color: var(--danger); font-size: 12.5px; }
+.dashboard-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--amber) 8%, var(--surface)); }
+.dashboard-creator { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); gap: 14px; min-height: 0; }
+.dashboard-chat { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 8px; min-height: 0; }
+.dashboard-messages { display: grid; align-content: start; gap: 8px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.dashboard-message { padding: 8px 10px; border-radius: var(--radius-ctl); background: var(--field); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.dashboard-message.user { justify-self: end; max-width: 90%; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.dashboard-composer { display: grid; gap: 6px; }
+.dashboard-composer button { justify-self: end; }
+.dashboard-preview { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: 8px; min-height: 0; }
+.dashboard-preview-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.dashboard-review, .dashboard-share { display: grid; align-content: start; gap: 8px; max-width: 900px; }
+.dashboard-file { max-height: 320px; margin: 0; padding: 10px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); font-size: 12px; }
+.project-group-dashboard { width: 26px; height: 26px; margin-left: auto; padding: 4px; }
+.project-group-dashboard svg { width: 15px; height: 15px; }
+@media (max-width: 760px) {
+  .dashboard-creator { grid-template-columns: 1fr; grid-template-rows: minmax(240px, 45%) minmax(0, 1fr); }
+}
+.dashboard-preview-actions button, .dashboard-banner button { display: inline-flex; align-items: center; gap: 6px; }
+.dashboard-preview-actions svg { width: 15px; height: 15px; }
+.dashboard-empty > button { justify-self: start; padding-inline: 18px; }

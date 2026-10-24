@@ -9,6 +9,8 @@ import { openResources } from "./resources.js";
 import { openProjectGit } from "./project-git.js";
 import { openProjectIssues } from "./project-issues.js";
 import { openBudgetDialog, projectBudgetTarget } from "./budget-dialog.js";
+import { openDashboardMode } from "./dashboards.js";
+import { menuIcon } from "./icons.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { mobileProjectFilterActions } from "./focus-project-controls.js";
 import { openSecretScope } from "./secrets.js";
@@ -96,6 +98,23 @@ function groupedProjects(projects) {
   }));
 }
 
+/** Dashboard mode for a workspace; it runs in one of the workspace's projects, chosen on creation. */
+function workspaceDashboardButton(group) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost icon-button project-group-dashboard";
+  button.dataset.testid = "workspace-dashboard-button";
+  button.title = `${group.label} dashboard`;
+  button.setAttribute("aria-label", `${group.label} dashboard`);
+  button.append(menuIcon("dashboard"));
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openDashboardMode({ kind: "workspace", id: group.id, projectId: group.projects[0].id }).catch((error) => toast(error.message));
+  });
+  return button;
+}
+
 /** A native <details> so collapsing, keyboard support, and accessibility come for free. */
 function projectGroupElement(group) {
   const details = document.createElement("details");
@@ -135,6 +154,7 @@ function projectGroupElement(group) {
     reviewBadge.setAttribute("aria-label", `${groupReviewCount} conversations need review in ${group.label}`);
     summary.append(reviewBadge);
   }
+  if (group.projects.length) summary.append(workspaceDashboardButton(group));
   details.append(summary);
 
   for (const project of group.projects) details.append(projectRow(project));
@@ -273,6 +293,7 @@ function projectPinToggle(project) {
 function projectMenuItems(project) {
   return [
     ...mobileProjectFilterActions(project),
+    { label: "Dashboard", icon: "dashboard", testid: "project-dashboard-button", onSelect: () => openDashboardMode({ kind: "project", id: project.id, projectId: project.id }).catch((error) => toast(error.message)) },
     { label: "Git repositories", icon: "folder", testid: "project-git-button", onSelect: () => { void openProjectGit(project); } },
     { label: "GitHub issues", icon: "github", testid: "project-issues-button", onSelect: () => openProjectIssues(project.id) },
     { label: "Scheduled tasks", icon: "refresh", testid: "project-cron-button", onSelect: () => openScheduledTasks(project.id).catch(error => toast(error.message)) },
