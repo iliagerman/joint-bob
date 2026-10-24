@@ -5,24 +5,14 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
-- Changed the dashboard picker to list every dashboard, including ones shared with you and unsaved drafts, so none of them can become unreachable.
-- Added a dashboard button to conversations, projects and workspaces, where you describe what to show, watch the agent build a preview, and save it.
-- Added dashboard sharing, where you choose which machines and clusters receive a saved dashboard, twins get your dashboards by default, and a received dashboard stays off until you approve its current version, following its owner's changes and deletions while your copy stays put.
-- Added the dashboard creator, where you chat with the dashboard agent to build a dashboard, test its draft refresh, save or discard the draft, and read a refresh script's files before you approve it.
-- Added the view that shows a dashboard only to people who can see its project, conversation or workspace, where it runs in a sandbox that cannot send any requests.
-- Changed a dashboard's test refresh in the creator to fill only the draft, so the live dashboard keeps its current data until you save.
-- Added the instructions the dashboard agent builds and edits from, which list every chart and table it can use, require a refresh script to be tested before it finishes, and keep each dashboard offline and read-only toward your project's data.
-- Added the shared charts, headline numbers, sortable paged tables and status badges every dashboard is built from, so dashboards look alike and never load anything from the internet.
+- Added dashboards for conversations, projects and workspaces. Open one from the conversation header, a project's menu or the workspace header, describe what you want to see, and the dashboard agent builds it with a preview you can test before you save. An entity can hold several dashboards and shows one at a time.
+- Added manual dashboard refreshes: a script refreshes the data without AI where it can, or one AI turn where it cannot. A failed refresh keeps the last good data and shows what the script printed.
+- Added the bundled charts, headline numbers, paged tables and status badges every dashboard is built from. Dashboard pages run sandboxed, with no access to Joint Bob, and load nothing from the internet.
+- Added dashboard sharing with chosen machines and clusters, and with your twins by default. Only the definition travels, each machine runs it for itself, and a received dashboard runs only after you read and approve its current files.
+- Added a Dashboards section to Settings for the harness, model and effort of the dashboard agent on this machine.
+- Dashboards cannot be built or refreshed on a multi-user machine yet.
 - Changed the side Chat to show your question straight away and clear the box when you send it, so a new draft you start typing while the answer loads is kept.
-- Added the rules for dashboards: each one now has a title and exactly one refresh method, and it always belongs to a single conversation, project or workspace that its own files cannot change.
-- Added dashboard storage where each conversation, project or workspace keeps several dashboards with one active at a time, and a dashboard received from another machine stays off until you approve its current version.
-- Added saving for dashboard definitions, where each save lands whole so a refresh never reads a half-written one, and a save with no manifest or index page, a link inside it, or more than 4 MiB is refused.
-- Added running a dashboard's refresh script on its own without AI, where a run that fails, times out or prints more than 4 MiB keeps the last good dashboard and saves its output to a run log.
 - Added a queue to the side Chat so you can send follow-up questions while an answer is still running, where they wait in order, survive a reload, and each answer appears by itself when it is ready.
-- Added AI refreshes for dashboards, where an agent gathers the data within your project's budget and secrets and keeps its answer in a run log, and a refresh that fails or does not return the dashboard's JSON keeps the last good one.
-- Added a Dashboards section to Settings where you choose the harness and model that build, edit and AI-refresh dashboards, saved for this machine only.
-- Removed the unused way to delete every dashboard of a workspace in one step, so workspace dashboards are no longer cleared that way.
-- Changed deleting a dashboard to ask first in an in-app dialog that says it is removed from every machine it is shared with, while copies other machines made stay.
 - Fixed conversations started in a project's worktree losing their earlier messages when the conversation's history was loaded, so the full history now comes back.
 
 ## 2.148.0 — 2026-10-24
