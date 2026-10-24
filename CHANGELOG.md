@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.152.0 — 2026-10-24
 
 - Added a Generate skill button to activity suggestions, which drafts a reusable skill from the conversation for you to review and edit; nothing is saved until you choose a destination and click Save skill.
 
