@@ -26,6 +26,7 @@ test("a saved draft becomes the live definition with a new digest; discard keeps
   assert.equal(files.readLiveDefinition(id), undefined, "nothing is live before the first save");
   const draft = files.prepareDraft(id);
   await writeDraftFiles(draft, { "manifest.json": manifest("One"), "index.html": "<p>one</p>", "lib/refresh.mjs": "console.log('{}')" });
+  assert.deepEqual(files.checkDraft(id), { ok: true, manifest: JSON.parse(manifest("One")) });
   const first = files.promoteDraft(id);
   const live = files.readLiveDefinition(id)!;
   assert.equal(live.digest, first.digest);
@@ -54,6 +55,7 @@ test("a draft without a valid manifest, with a symlink, or over the size limit i
   const id = randomUUID();
   const draft = files.prepareDraft(id);
   await writeDraftFiles(draft, { "index.html": "<p>x</p>" });
+  assert.deepEqual(files.checkDraft(id), { ok: false, error: "The dashboard needs a manifest.json" });
   assert.throws(() => files.promoteDraft(id), /manifest\.json/);
   await writeDraftFiles(draft, { "manifest.json": "{\"title\":\"x\"}" });
   assert.throws(() => files.promoteDraft(id), /manifest/);
@@ -88,7 +90,14 @@ test("payloads, run logs and state stay per dashboard", async () => {
   files.writeRunLog(id, "second");
   assert.equal(files.readRunLog(id), "second", "only the last run is kept");
   assert.match(files.stateDirectory(id), new RegExp(`${id}/state$`));
+  files.writePayload(id, { generatedAt: "2026-10-24T10:00:00Z", n: 2 }, "draft");
+  assert.deepEqual(files.readPayload(id), { generatedAt: "2026-10-24T09:00:00Z", n: 1 }, "a draft's test refresh never replaces the live data");
+  assert.deepEqual(files.readPayload(id, "draft"), { generatedAt: "2026-10-24T10:00:00Z", n: 2 });
   files.removeDashboardFiles(id);
   assert.equal(files.readPayload(id), undefined);
   assert.throws(() => files.prepareDraft("../../etc"), /id/);
+  assert.deepEqual(files.readCreatorMessages(id), []);
+  files.appendCreatorMessage(id, { role: "user", text: "Show bugs per day" });
+  files.appendCreatorMessage(id, { role: "assistant", text: "Done" });
+  assert.deepEqual(files.readCreatorMessages(id).map((message) => [message.role, message.text]), [["user", "Show bugs per day"], ["assistant", "Done"]]);
 });

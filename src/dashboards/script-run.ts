@@ -1,8 +1,7 @@
-import path from "node:path";
 import { serviceRuntime, signalRuntimeGroup, spawnInRuntime, type RuntimeAccount } from "../account-runtime.js";
 import { trackSubprocess } from "../subprocess.js";
 import { parsePayload, type DashboardPayload } from "./contract.js";
-import { dashboardRoot, readPayload, stateDirectory, writePayload, writeRunLog } from "./files.js";
+import { payloadPath, readPayload, stateDirectory, writePayload, writeRunLog, type PayloadTarget } from "./files.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024;
@@ -21,10 +20,12 @@ export interface ScriptRefreshInput {
   env: NodeJS.ProcessEnv;
   runtime?: RuntimeAccount;
   timeoutMs?: number;
+  /** "draft" for the creator's test refresh; its data never replaces the live payload. */
+  target?: PayloadTarget;
 }
 
 function environment(input: ScriptRefreshInput): NodeJS.ProcessEnv {
-  const previous = readPayload(input.id) ? path.join(dashboardRoot(input.id), "payload.json") : "";
+  const previous = readPayload(input.id, input.target) ? payloadPath(input.id, input.target) : "";
   return {
     ...input.env,
     JOINT_BOB_DASHBOARD_DIR: input.definitionDirectory,
@@ -69,7 +70,7 @@ export function runScriptRefresh(input: ScriptRefreshInput): Promise<RefreshResu
       if (failure) { resolve({ ok: false, error: failure }); return; }
       try {
         const payload = parsePayload(Buffer.concat(stdout).toString("utf8"));
-        writePayload(input.id, payload);
+        writePayload(input.id, payload, input.target);
         resolve({ ok: true, payload });
       } catch (error) {
         resolve({ ok: false, error: (error as Error).message });

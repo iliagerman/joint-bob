@@ -1,8 +1,7 @@
-import path from "node:path";
 import type { DashboardAgentSettings } from "../settings.js";
 import { runDashboardAgentTurn } from "./agent-turn.js";
 import { parsePayload } from "./contract.js";
-import { dashboardRoot, readPayload, stateDirectory, writePayload, writeRunLog } from "./files.js";
+import { payloadPath, readPayload, stateDirectory, writePayload, writeRunLog, type PayloadTarget } from "./files.js";
 import type { RefreshResult } from "./script-run.js";
 
 // Tools are on: the agent may have to query the dashboard's sources to answer.
@@ -17,10 +16,11 @@ export interface AiRefreshInput {
   accountIds?: string[];
   settings: DashboardAgentSettings;
   signal?: AbortSignal;
+  target?: PayloadTarget;
 }
 
 function refreshPrompt(input: AiRefreshInput): string {
-  const previous = readPayload(input.id) ? path.join(dashboardRoot(input.id), "payload.json") : "none yet";
+  const previous = readPayload(input.id, input.target) ? payloadPath(input.id, input.target) : "none yet";
   return [
     "You are refreshing the data of a Joint Bob dashboard. Read-only: never change files, data or remote state, except files in the state folder below.",
     `State folder you may use to keep history between refreshes: ${stateDirectory(input.id)}`,
@@ -54,7 +54,7 @@ export async function runAiRefresh(input: AiRefreshInput): Promise<RefreshResult
   writeRunLog(input.id, answer);
   try {
     const payload = parsePayload(unfenced(answer));
-    writePayload(input.id, payload);
+    writePayload(input.id, payload, input.target);
     return { ok: true, payload };
   } catch (error) {
     return { ok: false, error: (error as Error).message };

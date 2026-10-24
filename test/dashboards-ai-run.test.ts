@@ -60,3 +60,12 @@ test("an AI refresh that answers with prose fails and keeps the last payload", a
   assert.deepEqual(files.readPayload(id), { generatedAt: "2026-10-23T09:00:00Z", bugs: 3 });
   assert.match(files.readRunLog(id), /could not reach the database/, "the agent's answer is the run log");
 });
+
+test("an AI test refresh of a draft writes the draft payload", async () => {
+  const { root, files, run, agent } = await freshModules();
+  const id = randomUUID();
+  await agent.reply('{"generatedAt":"2026-10-24T09:00:00Z","bugs":1}');
+  assert.equal((await run.runAiRefresh({ id, prompt: "Count", projectId: "p1", cwd: root, settings, target: "draft" })).ok, true);
+  assert.equal(files.readPayload(id), undefined);
+  assert.deepEqual(files.readPayload(id, "draft"), { generatedAt: "2026-10-24T09:00:00Z", bugs: 1 });
+});

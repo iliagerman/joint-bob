@@ -53,3 +53,12 @@ test("a failing exit, a hang and an oversized output each fail the run", async (
   const big = await run.runScriptRefresh(input(root, `head -c ${5 * 1024 * 1024} /dev/zero`));
   assert.deepEqual(big, { ok: false, error: "The refresh script printed more than 4 MiB" });
 });
+
+test("a draft's test refresh writes the draft payload and leaves the live data alone", async () => {
+  const { root, files, run } = await freshModules();
+  const job = input(root, `printf '{"generatedAt":"2026-10-24T09:00:00Z","n":1}'`);
+  assert.equal((await run.runScriptRefresh(job)).ok, true);
+  assert.equal((await run.runScriptRefresh({ ...job, command: `printf '{"generatedAt":"2026-10-24T10:00:00Z","n":2}'`, target: "draft" })).ok, true);
+  assert.equal((files.readPayload(job.id) as { n: number }).n, 1);
+  assert.equal((files.readPayload(job.id, "draft") as { n: number }).n, 2);
+});

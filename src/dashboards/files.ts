@@ -136,6 +136,33 @@ export function readDraftFiles(id: string): DefinitionFile[] {
 
 export function discardDraft(id: string): void {
   rmSync(draftPath(id), { recursive: true, force: true });
+  rmSync(payloadPath(id, "draft"), { force: true });
+}
+
+/** Whether the draft would save, without saving it. */
+export function checkDraft(id: string): { ok: true; manifest: DashboardManifest } | { ok: false; error: string } {
+  try { return { ok: true, manifest: checkDefinition(readFolder(draftPath(id))) }; }
+  catch (error) { return { ok: false, error: (error as Error).message }; }
+}
+
+export function draftDirectory(id: string): string {
+  return draftPath(id);
+}
+
+/** The creator chat for this dashboard on this node, oldest first. */
+export interface CreatorMessage { role: "user" | "assistant"; text: string; at: string }
+export function readCreatorMessages(id: string): CreatorMessage[] {
+  const file = path.join(dashboardRoot(id), "creator.json");
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) as CreatorMessage[] : [];
+}
+
+export function appendCreatorMessage(id: string, message: { role: CreatorMessage["role"]; text: string }): void {
+  const root = dashboardRoot(id);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const messages = [...readCreatorMessages(id), { ...message, at: new Date().toISOString() }];
+  const temporary = path.join(root, `.creator-${process.pid}-${Date.now()}`);
+  writeFileSync(temporary, JSON.stringify(messages));
+  renameSync(temporary, path.join(root, "creator.json"));
 }
 
 export function promoteDraft(id: string): { digest: string; manifest: DashboardManifest } {
@@ -148,17 +175,23 @@ export function writeReceivedDefinition(id: string, files: DefinitionFile[]): { 
   return installVersion(id, files);
 }
 
-export function readPayload(id: string): DashboardPayload | undefined {
-  const file = path.join(dashboardRoot(id), "payload.json");
+/** The live definition's data, or a draft's test refresh, which never replaces the live data. */
+export type PayloadTarget = "live" | "draft";
+export function payloadPath(id: string, target: PayloadTarget = "live"): string {
+  return path.join(dashboardRoot(id), target === "live" ? "payload.json" : "draft-payload.json");
+}
+
+export function readPayload(id: string, target: PayloadTarget = "live"): DashboardPayload | undefined {
+  const file = payloadPath(id, target);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) as DashboardPayload : undefined;
 }
 
-export function writePayload(id: string, payload: DashboardPayload): void {
+export function writePayload(id: string, payload: DashboardPayload, target: PayloadTarget = "live"): void {
   const root = dashboardRoot(id);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const temporary = path.join(root, `.payload-${process.pid}-${Date.now()}`);
   writeFileSync(temporary, JSON.stringify(payload));
-  renameSync(temporary, path.join(root, "payload.json"));
+  renameSync(temporary, payloadPath(id, target));
 }
 
 export function writeRunLog(id: string, text: string): void {
