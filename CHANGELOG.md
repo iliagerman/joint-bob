@@ -3,17 +3,18 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.149.0 — 2026-10-24
 
-- Added dashboards for conversations, projects and workspaces. Open one from the conversation header, a project's menu or the workspace header, describe what you want to see, and the dashboard agent builds it with a preview you can test before you save. An entity can hold several dashboards and shows one at a time.
-- Added manual dashboard refreshes: a script refreshes the data without AI where it can, or one AI turn where it cannot. A failed refresh keeps the last good data and shows what the script printed.
-- Added the bundled charts, headline numbers, paged tables and status badges every dashboard is built from. Dashboard pages run sandboxed, with no access to Joint Bob, and load nothing from the internet.
-- Added dashboard sharing with chosen machines and clusters, and with your twins by default. Only the definition travels, each machine runs it for itself, and a received dashboard runs only after you read and approve its current files.
+- Added dashboards for conversations, projects and workspaces, opened from the conversation header, a project's menu or the workspace header; describe what you want to see and the dashboard agent builds it with a preview you can test before you save. An entity can hold several dashboards and shows one at a time.
+- Added a confirmation dialog in the app before a dashboard is deleted.
+- Added manual dashboard refreshes that run a script without AI where it can, or one AI turn where it cannot. A failed refresh keeps the last good data and shows what the script printed.
+- Added bundled charts, headline numbers, paged tables and status badges for building dashboards; dashboard pages run sandboxed, with no access to Joint Bob and no loads from the internet.
+- Added dashboard sharing with chosen machines and clusters, and with your twins by default. Only the definition travels, each machine runs it for itself, and a received dashboard runs only after you approve its current files.
 - Added a Dashboards section to Settings for the harness, model and effort of the dashboard agent on this machine.
-- Dashboards cannot be built or refreshed on a multi-user machine yet.
+- Changed dashboards so they cannot yet be built or refreshed on a multi-user machine.
 - Changed the side Chat to show your question straight away and clear the box when you send it, so a new draft you start typing while the answer loads is kept.
-- Added a queue to the side Chat so you can send follow-up questions while an answer is still running, where they wait in order, survive a reload, and each answer appears by itself when it is ready.
-- Fixed conversations started in a project's worktree losing their earlier messages when the conversation's history was loaded, so the full history now comes back.
+- Added a queue to the side Chat for follow-up questions sent while an answer is still running; they wait in order, survive a reload, and each answer appears by itself when it is ready.
+- Fixed conversations started in a project's worktree losing their earlier messages when their history loaded; the full history now comes back.
 
 ## 2.148.0 — 2026-10-24
 
