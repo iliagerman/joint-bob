@@ -1,7 +1,7 @@
 import type { AuthSession } from "../auth.js";
 import { NotFoundError } from "../not-found.js";
 import { listConversationSegments } from "../conversation-records.js";
-import { getProject, listWorkspaces, projectVisible } from "../store.js";
+import { getProject, listProjects, listWorkspaces, projectVisible } from "../store.js";
 import { listReviewScopeSessions } from "../server/sessions-helpers.js";
 import type { ProjectRecord } from "../types.js";
 import type { DashboardEntity } from "./contract.js";
@@ -12,7 +12,7 @@ export interface EntityContext {
   project: ProjectRecord;
   label: string;
   /** The conversation's latest harness session, whose secret accounts its dashboard also gets. */
-  conversation?: { engine: string; sessionId: string; title: string };
+  conversation?: { engine: string; sessionId: string; title: string; transcriptPath: string };
   workspace?: { id: string; label: string; projects: ProjectRecord[] };
 }
 
@@ -27,13 +27,12 @@ async function conversationContext(project: ProjectRecord, conversationId: strin
   const session = sessions.find((candidate) => (candidate.conversationId ?? candidate.id) === conversationId);
   if (!session) throw new NotFoundError("Conversation not found");
   const latest = (await listConversationSegments(project.id, conversationId)).at(-1);
-  return { engine: latest?.engine ?? session.harnessId, sessionId: latest?.sessionId ?? session.id, title: session.title };
+  return { engine: latest?.engine ?? session.harnessId, sessionId: latest?.sessionId ?? session.id, title: session.title, transcriptPath: session.path };
 }
 
 async function workspaceContext(workspaceId: string, host: ProjectRecord): Promise<EntityContext["workspace"]> {
   const workspace = (await listWorkspaces()).find((candidate) => candidate.id === workspaceId);
   if (!workspace || host.type !== workspace.id) throw new NotFoundError("Workspace not found");
-  const { listProjects } = await import("../store.js");
   return { id: workspace.id, label: workspace.label, projects: (await listProjects()).filter((project) => project.type === workspace.id) };
 }
 

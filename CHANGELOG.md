@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Added the dashboard creator, where you chat with the dashboard agent to build a dashboard, test its draft refresh, save or discard the draft, and read a refresh script's files before you approve it.
 - Added the view that shows a dashboard only to people who can see its project, conversation or workspace, where it runs in a sandbox that cannot send any requests.
 - Changed a dashboard's test refresh in the creator to fill only the draft, so the live dashboard keeps its current data until you save.
 - Added the instructions the dashboard agent builds and edits from, which list every chart and table it can use, require a refresh script to be tested before it finishes, and keep each dashboard offline and read-only toward your project's data.
