@@ -105,6 +105,12 @@ test("a twin receives a dashboard inactive, runs it only after approval, and fol
     assert.equal(updated.active, false);
     assert.equal((await api(b, authB, "POST", `/dashboards/${id}/refresh`, { target: "live", projectId })).status, 403);
     assert.equal((await api(b, authB, "POST", `/dashboards/${id}/approve`, { digest: definition.body.digest, projectId })).status, 409, "the old approval does not cover the new code");
+    const unapprovedFrame = await (await fetch(`${b.url}/api/dashboards/${id}/frame?projectId=${projectId}`, { headers: { cookie: authB.cookie } })).text();
+    assert.match(unapprovedFrame, /<p>v2<\/p>/, "the new layout can be previewed");
+    assert.match(unapprovedFrame, /id="payload">\{\}<\/script>/, "unapproved code never sees this node's data");
+    assert.equal((await api(b, authB, "POST", `/dashboards/${id}/copy`, { projectId })).status, 409, "a copy cannot skip approval");
+    const second = await api<View>(b, authB, "GET", `/dashboards/${id}/definition?projectId=${projectId}`);
+    assert.equal((await api(b, authB, "POST", `/dashboards/${id}/approve`, { digest: second.body.digest, projectId })).status, 200);
 
     const copied = await api<View>(b, authB, "POST", `/dashboards/${id}/copy`, { projectId });
     assert.equal(copied.status, 200, JSON.stringify(copied.body));

@@ -106,6 +106,8 @@ test("a project dashboard is created by the agent, saved, and refreshed by its s
     assert.equal(payload.bugs, 7);
     assert.equal((await import("node:fs")).realpathSync(payload.cwd), (await import("node:fs")).realpathSync(project.path), "scripts run in the project folder");
 
+    assert.equal(view.runLog, "", "a clean run leaves an empty log");
+
     const definition = await api<View>(node, auth, "GET", `/dashboards/${id}/definition?projectId=${project.id}`);
     assert.deepEqual(definition.body.files.map((file: View) => file.path), ["index.html", "manifest.json", "refresh.mjs"]);
     assert.match(definition.body.files[2].text, /console\.log/, "the script can be read before it is approved");

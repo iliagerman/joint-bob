@@ -1,3 +1,4 @@
+import { multiUserTurnedOn } from "../account-runtime.js";
 import { reviewAccountIds } from "../server/git-review-run.js";
 import { runtimeForProject } from "../project-runtime.js";
 import { agentEnvironment, genericSecretEnvironment, type SecretConversation } from "../secrets.js";
@@ -26,6 +27,14 @@ interface Run { kind: "creator" | "refresh"; target?: PayloadTarget; startedAt: 
 const running = new Map<string, Run>();
 /** The last test refresh of a draft; the live refresh is kept on the record. */
 const draftRefreshes = new Map<string, { at: string; ok: boolean; error: string | null }>();
+
+/**
+ * On a multi-user node a person's agents and scripts must run as their own OS account, and the
+ * dashboard's files would have to be reachable from it. Until that exists, nothing runs here.
+ */
+function assertSingleUserNode(): void {
+  if (multiUserTurnedOn()) throw Object.assign(new Error("Dashboards cannot run agents or scripts on a multi-user node yet"), { expose: true, status: 409 });
+}
 
 export function runningState(id: string): Omit<Run, "controller"> | null {
   const run = running.get(id);
@@ -110,6 +119,7 @@ async function creatorTurn(record: DashboardRecord, context: EntityContext, text
 
 /** Sends the person's request to the dashboard agent, who edits the draft. */
 export function startCreatorTurn(record: DashboardRecord, context: EntityContext, text: string): void {
+  assertSingleUserNode();
   if (running.has(record.id)) throw new DashboardBusyError("The dashboard is already working; wait for it to finish");
   prepareDraft(record.id);
   appendCreatorMessage(record.id, { role: "user", text });
@@ -146,6 +156,7 @@ async function refreshOnce(record: DashboardRecord, context: EntityContext, targ
 
 /** Refreshes once, now. A received dashboard runs only when its current definition is approved. */
 export function startRefresh(record: DashboardRecord, context: EntityContext, target: PayloadTarget): void {
+  assertSingleUserNode();
   if (target === "live" && record.approvedDigest !== record.definitionDigest) {
     throw Object.assign(new Error("Approve this dashboard before it runs on this node"), { expose: true, status: 403 });
   }

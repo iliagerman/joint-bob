@@ -24,6 +24,7 @@ test("the frame policy forbids every network request", () => {
   assert.doesNotMatch(FRAME_CONTENT_SECURITY_POLICY, /connect-src/);
   assert.doesNotMatch(FRAME_CONTENT_SECURITY_POLICY, /https?:|\*/);
   assert.match(FRAME_CONTENT_SECURITY_POLICY, /form-action 'none'/);
+  assert.match(FRAME_CONTENT_SECURITY_POLICY, /(^|; )sandbox allow-scripts(;|$)/, "opened on its own, the page still gets no app origin");
 });
 
 test("only the dashboard frame route may be framed by the app", async () => {

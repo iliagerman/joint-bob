@@ -18,6 +18,8 @@ export const FRAME_CONTENT_SECURITY_POLICY = [
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'self'",
+  // Opened as a page of its own, it still gets an opaque origin: never the app's cookies or API.
+  "sandbox allow-scripts",
 ].join("; ");
 
 /** `<` is escaped so no value can close the JSON element and become markup. */

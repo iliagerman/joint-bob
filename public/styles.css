@@ -5118,7 +5118,8 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .dashboard-message.user { justify-self: end; max-width: 90%; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
 .dashboard-composer { display: grid; gap: 6px; }
 .dashboard-composer button { justify-self: end; }
-.dashboard-preview { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: 8px; min-height: 0; }
+.dashboard-preview { display: grid; grid-template-rows: minmax(0, 1fr) auto auto auto; gap: 8px; min-height: 0; }
+.dashboard-run-log summary { color: var(--muted); font-size: 12.5px; cursor: pointer; }
 .dashboard-preview-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .dashboard-review, .dashboard-share { display: grid; align-content: start; gap: 8px; max-width: 900px; }
 .dashboard-file { max-height: 320px; margin: 0; padding: 10px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); font-size: 12px; }

@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Changed the dashboard picker to list every dashboard, including ones shared with you and unsaved drafts, so none of them can become unreachable.
 - Added a dashboard button to conversations, projects and workspaces, where you describe what to show, watch the agent build a preview, and save it.
 - Added dashboard sharing, where you choose which machines and clusters receive a saved dashboard, twins get your dashboards by default, and a received dashboard stays off until you approve its current version, following its owner's changes and deletions while your copy stays put.
 - Added the dashboard creator, where you chat with the dashboard agent to build a dashboard, test its draft refresh, save or discard the draft, and read a refresh script's files before you approve it.

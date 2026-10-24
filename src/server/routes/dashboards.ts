@@ -7,7 +7,7 @@ import { dashboardEntitySchema, type DashboardEntity } from "../../dashboards/co
 import { resolveEntity } from "../../dashboards/entity.js";
 import { composeFrame, FRAME_CONTENT_SECURITY_POLICY } from "../../dashboards/frame.js";
 import {
-  checkDraft, discardDraft, draftExists, promoteDraft, readCreatorMessages, readDraftFiles, readLiveDefinition, readPayload, removeDashboardFiles,
+  checkDraft, discardDraft, draftExists, promoteDraft, readCreatorMessages, readDraftFiles, readLiveDefinition, readPayload, readRunLog, removeDashboardFiles,
   writeReceivedDefinition,
 } from "../../dashboards/files.js";
 import { forgetDraftRefresh, lastDraftRefresh, runningState, startCreatorTurn, startRefresh, stopJob } from "../../dashboards/service.js";
@@ -53,25 +53,22 @@ export async function visibleDashboard(id: string, auth: AuthSession): Promise<{
   return { record, context };
 }
 
-function frameHtml(id: string, draft: boolean): string {
+/** The page and the data it may see: code that is not approved here is shown with no data at all. */
+function framePage(record: DashboardRecord, draft: boolean): { html: string; payload: unknown } {
   if (draft) {
-    const page = readDraftFiles(id).find((file) => file.path === "index.html");
+    const page = readDraftFiles(record.id).find((file) => file.path === "index.html");
     if (!page) throw new NotFoundError("The draft has no index.html yet");
-    return page.content.toString("utf8");
+    return { html: page.content.toString("utf8"), payload: readPayload(record.id, "draft") };
   }
-  const live = readLiveDefinition(id);
+  const live = readLiveDefinition(record.id);
   if (!live) throw new NotFoundError("Dashboard has not been saved yet");
-  return live.html;
+  return { html: live.html, payload: live.digest === record.approvedDigest ? readPayload(record.id, "live") : undefined };
 }
 
 app.get("/api/dashboards/:id/frame", dashboardRoute(async (request, response, auth) => {
-  await visibleDashboard(String(request.params.id), auth);
-  const draft = request.query.draft === "1";
-  const html = composeFrame({
-    html: frameHtml(String(request.params.id), draft),
-    payload: readPayload(String(request.params.id), draft ? "draft" : "live"),
-    theme: request.query.theme === "light" ? "light" : "dark",
-  });
+  const { record } = await visibleDashboard(String(request.params.id), auth);
+  const page = framePage(record, request.query.draft === "1");
+  const html = composeFrame({ ...page, theme: request.query.theme === "light" ? "light" : "dark" });
   response.setHeader("Content-Security-Policy", FRAME_CONTENT_SECURITY_POLICY);
   response.type("html").send(html);
 }));
@@ -150,7 +147,8 @@ app.post("/api/dashboards", dashboardRoute(async (request, _response, auth) => {
 
 app.get("/api/dashboards/:id", dashboardRoute(async (request, _response, auth) => {
   const { record } = await visibleDashboard(String(request.params.id), auth);
-  return { dashboard: dashboardView(record), messages: readCreatorMessages(record.id) };
+  // The end of the last run's output: why a refresh failed, not only that it did.
+  return { dashboard: dashboardView(record), messages: readCreatorMessages(record.id), runLog: readRunLog(record.id).slice(-4000) };
 }));
 
 function ownDashboard(record: DashboardRecord): void {
@@ -281,6 +279,7 @@ app.post("/api/dashboards/:id/copy", dashboardRoute(async (request, _response, a
   const { record } = await visibleDashboard(String(request.params.id), auth);
   const live = readLiveDefinition(record.id);
   if (!live) throw new DashboardError(409, "Dashboard has not been saved yet");
+  if (live.digest !== record.approvedDigest) throw new DashboardError(409, "Approve this dashboard before you copy it");
   const copy = createDashboard({ entity: record.entity, hostProjectId: record.hostProjectId, ownerNodeId: (await getClusterNode()).id, accountId: auth.accountId });
   const saved = writeReceivedDefinition(copy.id, live.files);
   recordSavedDefinition(copy.id, { title: saved.manifest.title, refreshMethod: saved.manifest.refresh.method, digest: saved.digest });

@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { pickerEntries } from "./dashboard-picker.js";
 import { menuIcon } from "./icons.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -89,20 +90,20 @@ function render() {
 }
 
 function renderPicker() {
-  const dashboards = view.listing.dashboards.filter((dashboard) => dashboard.saved);
-  picker.hidden = dashboards.length < 2;
-  picker.replaceChildren(...dashboards.map((dashboard) => {
-    const from = dashboard.origin === "received" ? " · shared with you" : "";
-    const option = new Option(`${dashboard.title || "Untitled"}${dashboard.active ? " · in use" : ""}${from}`, dashboard.id);
-    option.selected = dashboard.id === view.currentId;
+  const entries = pickerEntries(view.listing.dashboards, view.currentId);
+  picker.hidden = entries.length === 0;
+  const prompt = view.currentId ? [] : [new Option("Choose a dashboard…", "")];
+  picker.replaceChildren(...prompt, ...entries.map((entry) => {
+    const option = new Option(entry.label, entry.id);
+    option.selected = entry.id === view.currentId;
     return option;
   }));
-  picker.onchange = () => { void selectDashboard(picker.value).catch((error) => toast(error.message)); };
+  picker.onchange = () => { if (picker.value) void selectDashboard(picker.value).catch((error) => toast(error.message)); };
 }
 
 async function selectDashboard(id) {
   view.currentId = id;
-  view.mode = "view";
+  view.mode = current().saved ? "view" : "creator";
   await loadDetail();
   render();
 }
@@ -200,9 +201,19 @@ function renderView() {
       button("Review and approve", "dashboard-review", () => { view.mode = "review"; render(); }, { primary: true }));
     parts.push(banner);
   }
-  if (dashboard.lastRefresh && !dashboard.lastRefresh.ok) parts.push(el("p", "dashboard-error", `The last refresh failed: ${dashboard.lastRefresh.error}. The data shown is from the last good refresh.`));
+  if (dashboard.lastRefresh && !dashboard.lastRefresh.ok) {
+    parts.push(el("p", "dashboard-error", `The last refresh failed: ${dashboard.lastRefresh.error}. The data shown is from the last good refresh.`));
+    if (view.detail.runLog) parts.push(runLogDetails(view.detail.runLog));
+  }
   parts.push(frame(dashboard.id, "dashboard-frame", false));
   body.replaceChildren(...parts);
+}
+
+function runLogDetails(text) {
+  const details = el("details", "dashboard-run-log");
+  details.dataset.testid = "dashboard-run-log";
+  details.append(el("summary", "", "What the refresh printed"), el("pre", "dashboard-file", text));
+  return details;
 }
 
 function renderMessages() {
@@ -230,6 +241,7 @@ function renderPreview(dashboard, running) {
   else preview.append(el("p", "dashboard-note", dashboard.draftCheck?.error ? `The draft cannot be shown yet: ${dashboard.draftCheck.error}` : "The draft appears here once the agent has written it."));
   const draftRefresh = describeRefresh(dashboard.draftRefresh, "Test refresh");
   if (draftRefresh) preview.append(el("p", dashboard.draftRefresh.ok ? "dashboard-note" : "dashboard-error", draftRefresh));
+  if (dashboard.draftRefresh && !dashboard.draftRefresh.ok && view.detail.runLog) preview.append(runLogDetails(view.detail.runLog));
   const ready = dashboard.hasDraft && dashboard.draftCheck?.ok && !running;
   const tools = el("div", "dashboard-preview-actions");
   tools.append(
