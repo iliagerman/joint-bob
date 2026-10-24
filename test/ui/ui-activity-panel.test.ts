@@ -58,7 +58,9 @@ for (const line of input.split("\\n")) {
   } catch {}
 }
 console.log(JSON.stringify({ type: "system", subtype: "init", session_id: sessionId }));
-const answer = "Row counts match on every table.";
+const answer = prompt.includes("Create a reusable skill draft")
+  ? JSON.stringify({ name: "cert-renewal", description: "Use when rotating staging certificates.", instructions: "Check expiration. Renew staging first. Verify the new certificate before deploying." })
+  : "Row counts match on every table.";
 for (const chunk of answer.match(/.{1,8}/g)) {
   console.log(JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: chunk } } }));
   await new Promise((resolve) => setTimeout(resolve, 150));
@@ -266,6 +268,43 @@ test("tool calls live in the activity panel, the thread keeps a marker, and the 
   assert.equal(await suggestion.count(), 1);
   assert.match(await suggestion.innerText(), /new\s*cert-renewal\s*the renewal steps are repeated by hand/i);
   assert.equal(await page.getByTestId("activity-suggestions-status").innerText(), "1");
+  // Generation first previews its source; only an explicitly reviewed save writes a skill.
+  const skillPath = path.join(projectNamed(node, PROJECT_NAME).path, ".agents/skills/cert-renewal-reviewed/SKILL.md");
+  const absent = async () => assert.rejects(readFile(skillPath), { code: "ENOENT" });
+  await suggestion.getByTestId("activity-skill-generate").click();
+  const draft = page.getByTestId("activity-skill-draft");
+  await draft.getByTestId("skill-draft-context").getByText("Rotate the staging certificates", { exact: false }).waitFor();
+  assert.match(await draft.innerText(), /Nothing is saved/);
+  await absent();
+  await draft.getByTestId("skill-draft-cancel").click();
+  await suggestion.getByTestId("activity-skill-generate").click();
+  await draft.getByTestId("skill-draft-start").click();
+  await draft.getByTestId("skill-draft-status").getByText("Generating", { exact: false }).waitFor();
+  await draft.getByTestId("skill-draft-save").waitFor({ timeout: 30_000 });
+  assert.equal(await draft.getByTestId("skill-draft-description").inputValue(), "Use when rotating staging certificates.");
+  await absent();
+  // Regeneration also stays in the editor and does not install anything.
+  await draft.getByTestId("skill-draft-regenerate").click();
+  await draft.getByTestId("skill-draft-save").waitFor({ timeout: 30_000 });
+  await absent();
+  await draft.getByTestId("skill-draft-name").fill("cert-renewal-reviewed");
+  await draft.getByTestId("skill-draft-description").fill("Use for reviewed certificate rotation.");
+  await draft.getByTestId("skill-draft-instructions").fill("User edited: verify staging expiration, renew, and check the resulting certificate.");
+  await draft.getByTestId("skill-draft-save").click();
+  await draft.getByTestId("skill-draft-status").getByText("Saved", { exact: false }).waitFor();
+  const savedSkill = await readFile(skillPath, "utf8");
+  assert.match(savedSkill, /Use for reviewed certificate rotation/);
+  assert.match(savedSkill, /User edited: verify staging/);
+  assert.match(savedSkill, /name: cert-renewal-reviewed/);
+  await assert.rejects(readFile(path.join(projectNamed(node, PROJECT_NAME).path, ".agents/skills/cert-renewal/SKILL.md")), { code: "ENOENT" });
+  const admin = await signIn(environment, node);
+  const saveEndpoint = `/projects/${projectNamed(node, PROJECT_NAME).id}/conversations/${CONVERSATION_ID}/skill-draft/save`;
+  const approvedSkill = { approved: true, scope: "project", name: "cert-renewal-reviewed", description: "Replacement", instructions: "These instructions must never replace the reviewed skill." };
+  assert.equal((await api(node, admin, "POST", saveEndpoint, approvedSkill)).status, 409, "save cannot overwrite an existing skill");
+  assert.equal((await api(node, admin, "POST", saveEndpoint, { ...approvedSkill, approved: false })).status, 400, "save requires approval");
+  assert.equal((await api(node, admin, "POST", saveEndpoint, { ...approvedSkill, name: "../escape" })).status, 400, "save rejects path traversal");
+  assert.equal(await readFile(skillPath, "utf8"), savedSkill);
+  await draft.getByTestId("skill-draft-cancel").click();
   // Statistics and suggestions collapse to their headers like the summary.
   await page.getByTestId("activity-stats-toggle").click();
   assert.equal(await stats.isVisible(), false);

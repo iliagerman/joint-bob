@@ -1,4 +1,5 @@
 import { renderMarkdown } from "../markdown.js";
+import { openActivitySkillDraft } from "./activity-skill-draft.js";
 import { api } from "./api.js";
 import { formatDateTime, formatDuration } from "./chat-time.js";
 import { elements } from "./elements.js";
@@ -294,7 +295,15 @@ function renderSuggestions() {
     const reason = document.createElement("p");
     reason.className = "activity-suggestion-reason";
     reason.textContent = item.reason;
-    card.append(head, reason);
+    const generate = document.createElement("button");
+    generate.type = "button";
+    generate.className = "ghost";
+    generate.dataset.testid = "activity-skill-generate";
+    generate.textContent = "Generate skill";
+    generate.addEventListener("click", () => void openActivitySkillDraft({
+      projectId: state.activeProjectId, conversationId: state.activeConversationId, suggestion: item,
+    }));
+    card.append(head, reason, generate);
     return card;
   }));
 }

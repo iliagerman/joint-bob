@@ -1952,6 +1952,13 @@ body.activity-resizing, body.activity-resizing * { cursor: col-resize !important
 .activity-suggestion-kind.new { background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--amber); }
 .activity-suggestion-name { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .activity-suggestion-reason { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.activity-suggestion > button { justify-self: start; }
+.activity-skill-draft .dialog-card { width: min(760px, calc(100vw - 24px)); }
+.activity-skill-draft section, .activity-skill-draft label { display: grid; gap: 8px; min-width: 0; }
+.activity-skill-draft [hidden] { display: none; }
+.activity-skill-draft pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.activity-skill-draft textarea { width: 100%; resize: vertical; }
+.activity-skill-draft .dialog-actions { flex-wrap: wrap; }
 .activity-instructions-row { display: grid; gap: 3px; min-width: 0; padding: 7px 8px; border-radius: 6px; background: var(--field); }
 .activity-instructions-name { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 /* A few opening lines to recognise the file; the whole file opens in the editor, never in the panel. */
