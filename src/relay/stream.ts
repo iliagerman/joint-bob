@@ -35,6 +35,8 @@ type PendingWrite = { chunk: Buffer; callback: (error?: Error | null) => void };
 
 export class RelayStream extends Duplex {
   channel: number | undefined;
+  /** The outbound connection actually used, retained on pooled channels for failure diagnostics. */
+  relayRoute: { membershipId: string; transport: "local" | "poll" | "websocket" } | undefined;
   readonly relayTransport: ChannelKind;
   /** The machine proven at the other end of a secure channel. */
   relayPeer: RemoteRelayIdentity | undefined;

@@ -15,6 +15,7 @@ import { afterPeerRequest, beforePeerRequest } from "../peer-presence.js";
 import { virtualRelayNodeId, virtualRelayUrl } from "./protocol.js";
 import type { RelayRuntime } from "./runtime.js";
 import type { RelayStream } from "./stream.js";
+import { observeRelayRequest } from "./request-diagnostics.js";
 
 /** After a direct connection fails, prefer the relay for this long before trying direct again. */
 const DIRECT_RETRY_MS = 5 * 60_000;
@@ -212,6 +213,7 @@ async function relayFetch(nodeId: string, url: URL, init: RequestInit, hops: num
 
   const response = await new Promise<IncomingMessage>((resolve, reject) => {
     const request = http.request({ agent: agentFor(nodeId), host: url.hostname, port: url.port || (url.protocol === "https:" ? 443 : 80), method, path: `${url.pathname}${url.search}`, headers });
+    observeRelayRequest(request, nodeId, signal);
     const abort = (): void => { request.destroy(signal?.reason); reject(signal?.reason); };
     signal?.addEventListener("abort", abort, { once: true });
     request.on("response", (answer) => {

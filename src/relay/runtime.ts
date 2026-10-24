@@ -604,6 +604,10 @@ export class RelayRuntime extends EventEmitter {
       if (!route) return false;
       tried.add(route.membershipId);
       current = route.membershipId;
+      stream.relayRoute = {
+        membershipId: current,
+        transport: current === LOCAL_RELAY_ID ? "local" : this.connections.get(current)!.ws instanceof PollClient ? "poll" : "websocket",
+      };
       route.hub.openWith(stream, nodeId, kind);
       return true;
     };

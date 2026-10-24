@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a log entry each time a request between your machines fails, recording where it stopped and how long each step took, without paths, request bodies, headers or secrets.
+
 ## 2.147.0 — 2026-10-23
 
 - Changed every agent to receive all of a project's instruction files, including its CLAUDE.md files, the files they import and its path-specific rules, so Claude, Pi and Kiro follow the same project rules.

@@ -2,13 +2,14 @@
 // database and identity, talking over real WebSockets on loopback (RELAY-PLAN.md §9).
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { getEventListeners } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import http, { type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../src/cluster-identity.js";
 import { FRAME_DATA, decodeFrame, encodeControl, pairingCode, virtualRelayUrl } from "../src/relay/protocol.js";
 import { RelayServer } from "../src/relay/relay-server.js";
@@ -85,7 +86,14 @@ async function machine(name: string, known: () => string[], overrides: Partial<C
       request.socket.end();
       return;
     }
+    if (request.url === "/truncated") {
+      response.writeHead(200, { "Content-Length": "100" });
+      response.write("partial");
+      setImmediate(() => response.destroy());
+      return;
+    }
     if (request.url === "/endless") {
+      request.resume();
       // Streams until the reader goes away; the test checks this side notices.
       const chunk = Buffer.alloc(64 * 1024, 0x62);
       response.writeHead(200, { "Content-Type": "application/octet-stream" });
@@ -94,7 +102,7 @@ async function machine(name: string, known: () => string[], overrides: Partial<C
       write();
       return;
     }
-    if (request.url === "/held") {
+    if (request.url?.startsWith("/held")) {
       held.now += 1;
       held.peak = Math.max(held.peak, held.now);
       const answer = (): void => { held.now -= 1; response.writeHead(200).end("held"); };
@@ -214,6 +222,177 @@ test("a large response flows through the channel's flow control intact", async (
   const bytes = Buffer.from(await response.arrayBuffer());
   assert.equal(bytes.length, 40 * 64 * 1024);
   assert.ok(bytes.every((value) => value === 0x61));
+});
+
+function peerFailureLogs(context: TestContext): () => Array<Record<string, any>> {
+  const messages: string[] = [];
+  context.mock.method(console, "warn", (message: string) => { if (message.startsWith("{")) messages.push(message); });
+  return () => messages.map((message) => JSON.parse(message)).filter((entry) => entry.event === "relay_peer_request_failed");
+}
+
+test("peer response timeouts log one private timing record and preserve the caller's error", async (context) => {
+  const failures = peerFailureLogs(context);
+  setRelayTransport(a.runtime);
+  Object.assign(held, { now: 0, peak: 0, open: false });
+  const controller = new AbortController();
+  const reason = new DOMException("SECRET_ABORT_REASON", "TimeoutError");
+  const rejected = assert.rejects(peerFetch(`${virtualRelayUrl(b.nodeId)}/held/SECRET_PATH?token=SECRET_QUERY`, {
+    method: "POST", body: "SECRET_BODY", headers: { Authorization: "SECRET_AUTH", Cookie: "SECRET_COOKIE" }, signal: controller.signal,
+  }), (error) => error === reason);
+  try {
+    await eventually(() => assert.equal(held.waiting.length, 1));
+    controller.abort(reason);
+    await rejected;
+    await eventually(() => assert.equal(failures().length, 1));
+    const entry = failures()[0];
+    assert.equal(entry.peerId, b.nodeId);
+    assert.equal(entry.phase, "response");
+    assert.equal(entry.code, "TIMEOUT");
+    assert.equal(entry.transport, "websocket");
+    assert.equal(entry.membershipId, listMemberships(a.db)[0].id);
+    for (const key of ["durationMs", "queueMs", "channelMs", "sendMs", "responseMs"]) assert.ok(entry[key] >= 0, key);
+    assert.equal(entry.bodyMs, null);
+    assert.equal(entry.reusedSocket, false);
+    assert.match(entry.at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(JSON.stringify(entry).includes("SECRET_"), false, "no paths, queries, bodies, headers or error messages are logged");
+  } finally { controller.abort(reason); letHeldThrough(); await rejected; }
+});
+
+test("an aborted request waiting for an HTTP pool slot reports queue time without inventing a channel", async (context) => {
+  const failures = peerFailureLogs(context);
+  setRelayTransport(a.runtime);
+  Object.assign(held, { now: 0, peak: 0, open: false });
+  const occupied = Array.from({ length: 16 }, () => peerFetch(`${virtualRelayUrl(b.nodeId)}/held`).then((answer) => answer.text()));
+  const controller = new AbortController();
+  try {
+    await eventually(() => assert.equal(held.waiting.length, 16));
+    const rejected = assert.rejects(peerFetch(`${virtualRelayUrl(b.nodeId)}/queued`, { signal: controller.signal }), /SECRET_CANCEL/);
+    controller.abort(new Error("SECRET_CANCEL"));
+    await rejected;
+    assert.equal(failures().length, 1);
+    const entry = failures()[0];
+    assert.equal(entry.phase, "queue");
+    assert.equal(entry.code, "ABORTED");
+    assert.ok(entry.queueMs >= 0);
+    for (const key of ["channelMs", "sendMs", "responseMs", "bodyMs", "transport", "membershipId"]) assert.equal(entry[key], null, key);
+    assert.equal(JSON.stringify(entry).includes("SECRET_CANCEL"), false);
+  } finally { controller.abort(); letHeldThrough(); await Promise.all(occupied); }
+});
+
+test("a failed peer identity handshake reports channel setup and the actual polling route", async (context) => {
+  const failures = peerFailureLogs(context);
+  const client = await machine("diagnostic-unpinned", () => [b.nodeId], { preferPoll: true });
+  try {
+    client.runtime.addWithToken(token("diagnostic-unpinned"));
+    await eventually(() => assert.ok(client.runtime.hasRoute(b.nodeId)));
+    setRelayTransport(client.runtime);
+    await assert.rejects(peerFetch(`${virtualRelayUrl(b.nodeId)}/private-path`), /fetch failed/);
+    assert.equal(failures().length, 1);
+    const entry = failures()[0];
+    assert.equal(entry.phase, "channel");
+    assert.equal(entry.code, "UNKNOWN", "the existing identity check throws an uncoded Error, whose message stays private");
+    assert.equal(entry.transport, "poll");
+    assert.equal(entry.membershipId, listMemberships(client.db)[0].id);
+    assert.ok(entry.channelMs >= 0);
+    assert.equal(entry.sendMs, null);
+    assert.equal(entry.responseMs, null);
+  } finally { setRelayTransport(undefined); client.runtime.stop(); }
+});
+
+test("a peer with no available relay reports channel failure with no invented route", async (context) => {
+  const failures = peerFailureLogs(context);
+  setRelayTransport(a.runtime);
+  await assert.rejects(peerFetch(`${virtualRelayUrl(randomUUID())}/absent`, { signal: AbortSignal.timeout(10_000) }), /fetch failed/);
+  assert.equal(failures().length, 1);
+  const entry = failures()[0];
+  assert.equal(entry.phase, "channel");
+  assert.equal(entry.code, "ERELAYCHANNEL");
+  assert.equal(entry.membershipId, null);
+  assert.equal(entry.transport, null);
+  assert.equal(entry.responseMs, null);
+});
+
+test("successful peer requests stay quiet, clean up abort listeners and measure reused channels separately", async (context) => {
+  const failures = peerFailureLogs(context);
+  setRelayTransport(a.runtime);
+  const controller = new AbortController();
+  for (let index = 0; index < 12; index++) {
+    const answer = await peerFetch(`${virtualRelayUrl(b.nodeId)}/hello`, { signal: controller.signal });
+    assert.equal(answer.status, 200);
+    await answer.text();
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  assert.deepEqual(failures(), []);
+  Object.assign(held, { now: 0, peak: 0, open: false });
+  const rejected = assert.rejects(peerFetch(`${virtualRelayUrl(b.nodeId)}/held`, { signal: controller.signal }), /aborted/);
+  try {
+    await eventually(() => assert.equal(held.waiting.length, 1));
+    controller.abort();
+    await rejected;
+    assert.equal(failures().length, 1);
+    assert.equal(failures()[0].phase, "response");
+    assert.equal(failures()[0].reusedSocket, true);
+    assert.equal(failures()[0].channelMs, 0);
+  } finally { controller.abort(); letHeldThrough(); await rejected; }
+});
+
+test("an abort after response headers reports body transfer once, without the abort reason", async (context) => {
+  const failures = peerFailureLogs(context);
+  setRelayTransport(a.runtime);
+  const controller = new AbortController();
+  try {
+    const answer = await peerFetch(`${virtualRelayUrl(b.nodeId)}/endless`, { signal: controller.signal });
+    const rejected = assert.rejects(answer.arrayBuffer());
+    controller.abort(new Error("SECRET_BODY_ABORT"));
+    await rejected;
+    assert.equal(failures().length, 1);
+    assert.equal(failures()[0].phase, "body");
+    assert.ok(failures()[0].bodyMs >= 0);
+    assert.equal(JSON.stringify(failures()).includes("SECRET_BODY_ABORT"), false);
+  } finally { controller.abort(); setRelayTransport(undefined); }
+});
+
+for (const finishUpload of [false, true]) {
+  test(`an early response keeps body timing correct when upload ${finishUpload ? "finishes later" : "is unfinished"}`, async (context) => {
+    const failures = peerFailureLogs(context);
+    setRelayTransport(a.runtime);
+    const controller = new AbortController();
+    let upload!: ReadableStreamDefaultController;
+    let uploadClosed = false;
+    const body = new ReadableStream({ start(stream) { upload = stream; stream.enqueue(new Uint8Array([1, 2, 3])); } });
+    const incoming = new Promise<IncomingMessage>((resolve) => b.server.once("request", resolve));
+    try {
+      const answer = await peerFetch(`${virtualRelayUrl(b.nodeId)}/endless`, { method: "POST", body, signal: controller.signal });
+      const rejected = assert.rejects(answer.arrayBuffer());
+      if (finishUpload) {
+        const request = await incoming;
+        const received = new Promise((resolve) => request.once("end", resolve));
+        upload.close(); uploadClosed = true;
+        await received;
+      }
+      controller.abort();
+      await rejected;
+      assert.equal(failures().length, 1);
+      assert.equal(failures()[0].phase, "body");
+      assert.ok(failures()[0].bodyMs >= 0);
+      assert.equal(failures()[0].responseMs, finishUpload ? 0 : null, "an early answer never creates a negative response wait");
+    } finally { if (!uploadClosed) upload.close(); controller.abort(); setRelayTransport(undefined); }
+  });
+}
+
+test("a truncated peer response logs its body failure without a caller abort", async (context) => {
+  const failures = peerFailureLogs(context);
+  setRelayTransport(a.runtime);
+  // A fast close can arrive before the HTTP response has been wrapped as a fetch Response.
+  await assert.rejects(async () => {
+    const answer = await peerFetch(`${virtualRelayUrl(b.nodeId)}/truncated`);
+    await answer.arrayBuffer();
+  });
+  assert.equal(failures().length, 1);
+  assert.equal(failures()[0].phase, "body");
+  assert.equal(failures()[0].code, "ECONNRESET");
+  assert.ok(failures()[0].bodyMs >= 0);
 });
 
 test("a machine refuses to talk to a peer whose key it has not pinned", async () => {
