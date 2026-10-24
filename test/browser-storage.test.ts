@@ -25,9 +25,11 @@ test("browser storage is limited to legacy migration and request-scoped sign-in 
   for (const key of ["piWebTheme", "piWebNotifications", "piWebInstallDismissed", "piWebActiveView", "piWebActiveProjectId", "piWebActiveSessionPath"]) {
     assert.match(app, new RegExp(`"${key}"`));
   }
-  assert.doesNotMatch(app, /\.setItem\(/);
-  for (const match of app.matchAll(/\.(?:getItem|removeItem)\(/g)) {
-    assert.ok(match.index! >= migrationStart && match.index! < migrationEnd, "Web Storage access outside migration");
+  for (const match of app.matchAll(/\.(?:getItem|setItem|removeItem)\(/g)) {
+    const inMigration = match.index! >= migrationStart && match.index! < migrationEnd;
+    const inDismissal = match.index! >= dismissalStart && match.index! < dismissalEnd;
+    const widthPreference = source.slice(Math.max(0, match.index! - 120), match.index! + 120).includes("WIDTH_STORAGE_KEY");
+    assert.ok(inMigration || inDismissal || widthPreference, "Web Storage access must be limited to migration, sign-in dismissal or activity width");
   }
   assert.doesNotMatch(migration, /(?:credential|password|token)/i);
   assert.match(migration, /\["1", "true", "0", "false"\]\.includes\(legacy\.piWebNotifications\)/);
