@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { createCreatorView } from "./dashboard-creator.js";
 import { pickerEntries } from "./dashboard-picker.js";
 import { menuIcon } from "./icons.js";
 import { confirmAction, toast } from "./shell.js";
@@ -7,7 +8,8 @@ import { state } from "./state.js";
 /*
  * Dashboard mode for a conversation, a project or a workspace. Agent-written pages only ever
  * load inside an iframe sandboxed to scripts alone: no app origin, no network (the server's
- * frame policy). Refreshes are manual; while a job runs this view polls its status.
+ * frame policy). Refreshes are manual. While a job runs this view polls its status; closing the
+ * view never stops the job, and a job left running is watched until it ends.
  */
 
 const dialog = document.querySelector("#dashboardDialog");
@@ -19,13 +21,25 @@ const actionsNode = document.querySelector("#dashboardActions");
 const body = document.querySelector("#dashboardBody");
 
 const KIND_LABELS = { conversation: "Conversation dashboard", project: "Project dashboard", workspace: "Workspace dashboard" };
-const view = { target: null, listing: null, currentId: null, detail: null, mode: "view", creatorPane: "chat", pollTimer: null };
+const EXAMPLES = [
+  "Errors per day for the last 7 days, and the error types that came back after a fix",
+  "Conversations and messages per day, filterable by tenant and project",
+  "Open bugs by severity, and how long they have been open",
+];
+const view = { target: null, listing: null, currentId: null, detail: null, mode: "view", pollTimer: null, creator: null, live: null };
+/** Jobs left running when dashboard mode closed, watched until they end. */
+const watching = new Map();
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+}
+
+/** Every action reports its own failure; none fails silently. */
+function guarded(work) {
+  return (...args) => Promise.resolve().then(() => work(...args)).catch((error) => toast(error.message, 6000));
 }
 
 function button(label, testid, onClick, { primary = false, disabled = false, icon } = {}) {
@@ -35,7 +49,7 @@ function button(label, testid, onClick, { primary = false, disabled = false, ico
   if (icon) node.append(menuIcon(icon));
   node.append(document.createTextNode(label));
   node.disabled = disabled;
-  node.addEventListener("click", () => { Promise.resolve(onClick()).catch((error) => toast(error.message, 6000)); });
+  node.addEventListener("click", guarded(onClick));
   return node;
 }
 
@@ -51,6 +65,14 @@ function current() {
   return view.listing?.dashboards.find((dashboard) => dashboard.id === view.currentId) ?? null;
 }
 
+function dashboardPath(id, suffix = "") {
+  return `/api/dashboards/${encodeURIComponent(id)}${suffix}`;
+}
+
+function post(suffix, payload = {}) {
+  return api(dashboardPath(view.currentId, suffix), { method: "POST", body: JSON.stringify({ ...payload, projectId: hostProjectId() }) });
+}
+
 async function loadListing() {
   const { kind, id, projectId } = view.target;
   view.listing = await api(`/api/dashboards?${query({ kind, id, projectId })}`);
@@ -58,7 +80,7 @@ async function loadListing() {
 
 async function loadDetail() {
   if (!view.currentId) { view.detail = null; return; }
-  view.detail = await api(`/api/dashboards/${encodeURIComponent(view.currentId)}?${query({ projectId: hostProjectId() })}`);
+  view.detail = await api(`${dashboardPath(view.currentId)}?${query({ projectId: hostProjectId() })}`);
   const index = view.listing.dashboards.findIndex((dashboard) => dashboard.id === view.currentId);
   if (index >= 0) view.listing.dashboards[index] = view.detail.dashboard;
 }
@@ -66,21 +88,24 @@ async function loadDetail() {
 /** Opens the dashboard an entity shows; with none, the description form. */
 export async function openDashboardMode(target) {
   view.target = target;
-  view.creatorPane = "chat";
   view.currentId = null;
   view.detail = null;
+  view.creator = null;
+  view.live = null;
   // Never show the previous entity's dashboard while this one loads.
   eyebrowNode.textContent = KIND_LABELS[target.kind];
   titleNode.textContent = "Loading…";
   picker.hidden = true;
-  statusNode.textContent = "";
+  statusNode.replaceChildren();
   actionsNode.replaceChildren();
-  body.replaceChildren(el("p", "dashboard-note", "Loading…"));
+  body.replaceChildren(el("p", "dashboard-note dashboard-loading", "Loading…"));
   if (!dialog.open) dialog.showModal();
   await loadListing();
   const unsaved = view.listing.dashboards.find((dashboard) => dashboard.origin === "own" && !dashboard.saved);
-  view.currentId = view.listing.displayedId ?? unsaved?.id ?? null;
-  view.mode = !view.currentId ? "empty" : current().saved ? "view" : "creator";
+  const running = view.listing.dashboards.find((dashboard) => dashboard.running?.kind === "creator");
+  view.currentId = running?.id ?? view.listing.displayedId ?? unsaved?.id ?? null;
+  view.mode = !view.currentId ? "empty" : current().saved && !current().hasDraft ? "view" : "creator";
+  watching.delete(view.currentId);
   await loadDetail();
   render();
   schedulePoll();
@@ -110,34 +135,45 @@ function renderPicker() {
 
 async function selectDashboard(id) {
   view.currentId = id;
-  view.mode = current().saved ? "view" : "creator";
+  view.mode = current().saved && !current().hasDraft ? "view" : "creator";
+  view.creator = null;
+  view.live = null;
   await loadDetail();
   render();
+  schedulePoll();
 }
 
 function describeRefresh(refresh, label) {
   if (!refresh) return "";
   const when = new Date(refresh.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  return refresh.ok ? `${label} ${when}` : `${label} failed ${when}: ${refresh.error}`;
+  return refresh.ok ? `${label} ${when}` : `${label} failed ${when}`;
 }
 
+/** A small pill in the header: what the dashboard is doing, or how fresh its data is. */
 function renderStatus() {
   const dashboard = view.detail?.dashboard;
-  if (!dashboard) { statusNode.textContent = ""; return; }
+  if (!dashboard) { statusNode.replaceChildren(); return; }
   const running = dashboard.running;
+  const pill = el("span", "dashboard-pill");
   if (running) {
-    statusNode.textContent = running.kind === "creator" ? `The dashboard agent is working${running.step ? ` (${running.step})` : ""}…` : "Refreshing…";
-    return;
+    pill.classList.add("busy");
+    pill.append(el("span", "dashboard-spinner"), document.createTextNode(running.kind === "creator" ? "Agent working" : running.target === "draft" ? "Testing the refresh" : "Refreshing"));
+  } else if (dashboard.lastRefresh && !dashboard.lastRefresh.ok) {
+    pill.classList.add("bad");
+    pill.append(el("span", "dashboard-dot"), document.createTextNode(describeRefresh(dashboard.lastRefresh, "Refresh")));
+  } else {
+    pill.classList.add(dashboard.lastRefresh ? "good" : "idle");
+    pill.append(el("span", "dashboard-dot"), document.createTextNode(describeRefresh(dashboard.lastRefresh, "Refreshed") || (dashboard.saved ? "Not refreshed yet" : "Draft")));
   }
-  const method = dashboard.refreshMethod === "ai" ? " · refreshed with AI" : dashboard.refreshMethod === "script" ? " · script, no AI" : "";
-  statusNode.textContent = `${describeRefresh(dashboard.lastRefresh, "Refreshed") || (dashboard.saved ? "Not refreshed yet" : "Not saved yet")}${method}`;
+  const method = dashboard.refreshMethod === "ai" ? "AI refresh" : dashboard.refreshMethod === "script" ? "Script, no AI" : "";
+  statusNode.replaceChildren(pill, ...(method ? [el("span", "dashboard-method", method)] : []));
 }
 
 function renderActions() {
   const dashboard = view.detail?.dashboard;
   const actions = [];
   if (dashboard?.saved && view.mode === "view") {
-    actions.push(button("Refresh", "dashboard-refresh", () => startRefresh("live"), { icon: "refresh", disabled: Boolean(dashboard.running) || !dashboard.approved }));
+    actions.push(button("Refresh", "dashboard-refresh", () => startRefresh("live"), { icon: "refresh", primary: true, disabled: Boolean(dashboard.running) || !dashboard.approved }));
     if (dashboard.origin === "own") {
       actions.push(button("Edit", "dashboard-edit", () => { view.mode = "creator"; render(); }, { icon: "pencil" }));
       actions.push(button("Share", "dashboard-share", () => { view.mode = "share"; render(); }, { icon: "share" }));
@@ -145,45 +181,56 @@ function renderActions() {
       actions.push(button("Make a copy", "dashboard-copy", copyDashboard, { icon: "copy" }));
     }
     if (!dashboard.active && dashboard.approved) actions.push(button("Use this one", "dashboard-activate", activate, { icon: "check" }));
-    actions.push(button("New dashboard", "dashboard-new", () => { view.currentId = null; view.detail = null; view.mode = "empty"; render(); }));
+    actions.push(button("New", "dashboard-new", () => { view.currentId = null; view.detail = null; view.mode = "empty"; render(); }, { icon: "dashboard" }));
     if (dashboard.origin === "own") actions.push(button("Delete", "dashboard-delete", removeDashboard, { icon: "trash" }));
+  }
+  if (dashboard && view.mode === "creator" && dashboard.saved) {
+    actions.push(button("Back to the dashboard", "dashboard-back", () => { view.mode = "view"; render(); }, { icon: "back" }));
   }
   actionsNode.replaceChildren(...actions);
 }
 
-function frame(id, testid, draft) {
-  const iframe = el("iframe", "dashboard-frame");
-  iframe.dataset.testid = testid;
+function setFrameSource(iframe, draft) {
+  iframe.dataset.testid = draft ? "dashboard-draft-frame" : "dashboard-frame";
   iframe.setAttribute("sandbox", "allow-scripts");
   iframe.setAttribute("referrerpolicy", "no-referrer");
   iframe.title = draft ? "Draft dashboard preview" : "Dashboard";
   const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
-  iframe.src = `/api/dashboards/${encodeURIComponent(id)}/frame?${query({ projectId: hostProjectId(), theme, draft: draft ? "1" : undefined, v: Date.now() })}`;
-  return iframe;
+  iframe.src = `${dashboardPath(view.currentId, "/frame")}?${query({ projectId: hostProjectId(), theme, draft: draft ? "1" : undefined, v: Date.now() })}`;
 }
 
 function renderEmpty() {
   const form = el("div", "dashboard-empty");
   form.dataset.testid = "dashboard-empty";
-  form.append(el("h3", "", "Describe the dashboard you want"),
-    el("p", "dashboard-note", "Say what you want to see and where the data comes from. The dashboard agent builds it and writes a script that refreshes it without AI when it can."));
+  const icon = el("span", "dashboard-empty-icon");
+  icon.append(menuIcon("dashboard"));
+  form.append(icon, el("h3", "", "Describe the dashboard you want"),
+    el("p", "dashboard-note", "Say what you want to see and where the data comes from. The dashboard agent explores the sources, builds the page, and writes a script that refreshes it without AI when it can."));
   const request = el("textarea", "dashboard-request");
   request.dataset.testid = "dashboard-request";
-  request.rows = 5;
-  request.placeholder = "For example: bugs per day for the last two weeks, errors per day, and bugs by type, from the production logs and the database.";
-  form.append(request);
+  request.rows = 6;
+  request.placeholder = "What should it show?";
+  const examples = el("div", "dashboard-examples");
+  for (const example of EXAMPLES) {
+    const chip = el("button", "dashboard-example", example);
+    chip.type = "button";
+    chip.addEventListener("click", () => { request.value = example; request.focus(); });
+    examples.append(chip);
+  }
+  form.append(request, examples);
   let host;
   if (view.target.kind === "workspace") {
     host = el("select");
     host.dataset.testid = "dashboard-host-project";
     host.replaceChildren(...(view.listing.workspaceProjects ?? []).map((project) => new Option(project.name, project.id)));
     host.value = view.listing.hostProjectId;
-    const label = el("label", "dashboard-host", "Runs in project ");
+    const label = el("label", "dashboard-host", "Runs in project");
     label.append(host);
     form.append(label);
   }
-  form.append(button("Create dashboard", "dashboard-create", () => createDashboard(request.value.trim(), host?.value), { primary: true }));
+  form.append(button("Create dashboard", "dashboard-create", () => createDashboard(request.value.trim(), host?.value), { primary: true, icon: "assistant" }));
   body.replaceChildren(form);
+  request.focus();
 }
 
 async function createDashboard(text, hostProject) {
@@ -198,22 +245,12 @@ async function createDashboard(text, hostProject) {
   await sendMessage(text);
 }
 
-function renderView() {
-  const dashboard = view.detail.dashboard;
-  const parts = [];
-  if (dashboard.origin === "received" && !dashboard.approved) {
-    const banner = el("div", "dashboard-banner");
-    banner.dataset.testid = "dashboard-approval-banner";
-    banner.append(el("span", "", "This dashboard was shared from another node. It runs on this node only after you read its files and approve them."),
-      button("Review and approve", "dashboard-review", () => { view.mode = "review"; render(); }, { primary: true }));
-    parts.push(banner);
-  }
-  if (dashboard.lastRefresh && !dashboard.lastRefresh.ok) {
-    parts.push(el("p", "dashboard-error", `The last refresh failed: ${dashboard.lastRefresh.error}. The data shown is from the last good refresh.`));
-    if (view.detail.runLog) parts.push(runLogDetails(view.detail.runLog));
-  }
-  parts.push(frame(dashboard.id, "dashboard-frame", false));
-  body.replaceChildren(...parts);
+function approvalBanner() {
+  const banner = el("div", "dashboard-banner");
+  banner.dataset.testid = "dashboard-approval-banner";
+  banner.append(el("span", "", "This dashboard was shared from another node. It runs on this node only after you read its files and approve them."),
+    button("Review and approve", "dashboard-review", () => { view.mode = "review"; render(); }, { primary: true }));
+  return banner;
 }
 
 function runLogDetails(text) {
@@ -223,106 +260,89 @@ function runLogDetails(text) {
   return details;
 }
 
-function renderMessages() {
-  const list = el("ol", "dashboard-messages");
-  list.dataset.testid = "dashboard-messages";
-  for (const message of view.detail?.messages ?? []) list.append(el("li", `dashboard-message ${message.role}`, message.text));
-  if (!view.detail?.messages?.length) list.append(el("li", "dashboard-note", "Ask for a change: what to add, remove or count differently."));
-  return list;
-}
-
-function renderComposer(running) {
-  const composer = el("div", "dashboard-composer");
-  const input = el("textarea");
-  input.dataset.testid = "dashboard-message-input";
-  input.rows = 3;
-  input.placeholder = "Ask the dashboard agent for a change";
-  input.disabled = running;
-  composer.append(input, button("Send", "dashboard-send", () => sendMessage(input.value.trim()), { primary: true, disabled: running }));
-  return composer;
-}
-
-function renderPreview(dashboard, running) {
-  const preview = el("section", "dashboard-preview");
-  if (dashboard.hasDraft && dashboard.draftCheck?.ok) preview.append(frame(dashboard.id, "dashboard-draft-frame", true));
-  else preview.append(el("p", "dashboard-note", dashboard.draftCheck?.error ? `The draft cannot be shown yet: ${dashboard.draftCheck.error}` : "The draft appears here once the agent has written it."));
-  const draftRefresh = describeRefresh(dashboard.draftRefresh, "Test refresh");
-  if (draftRefresh) preview.append(el("p", dashboard.draftRefresh.ok ? "dashboard-note" : "dashboard-error", draftRefresh));
-  if (dashboard.draftRefresh && !dashboard.draftRefresh.ok && view.detail.runLog) preview.append(runLogDetails(view.detail.runLog));
-  const ready = dashboard.hasDraft && dashboard.draftCheck?.ok && !running;
-  const tools = el("div", "dashboard-preview-actions");
-  tools.append(
-    button("Test refresh", "dashboard-test-refresh", () => startRefresh("draft"), { icon: "refresh", disabled: !ready }),
-    button("Discard draft", "dashboard-discard", discardDraft, { disabled: !dashboard.hasDraft || running }),
-    button("Save", "dashboard-save", saveDraft, { primary: true, disabled: !ready }),
-  );
-  preview.append(tools);
-  return preview;
-}
-
-/** On a narrow screen the chat and the preview are tabs; on a wide one they sit side by side. */
-function creatorTabs(creator) {
-  const tabs = el("div", "dashboard-tabs");
-  tabs.setAttribute("role", "tablist");
-  for (const [pane, label] of [["chat", "Chat"], ["preview", "Preview"]]) {
-    const tab = el("button", "", label);
-    tab.type = "button";
-    tab.dataset.testid = `dashboard-tab-${pane}`;
-    tab.setAttribute("role", "tab");
-    tab.setAttribute("aria-selected", String(view.creatorPane === pane));
-    tab.addEventListener("click", () => { view.creatorPane = pane; render(); });
-    tabs.append(tab);
+/** The saved dashboard. Its frame is kept between polls and reloads only when new data arrives. */
+function renderView() {
+  const dashboard = view.detail.dashboard;
+  if (!view.live || view.live.id !== dashboard.id || !body.contains(view.live.root)) {
+    const root = el("div", "dashboard-view");
+    const notices = el("div", "dashboard-notices");
+    const stage = el("div", "dashboard-view-stage");
+    const frame = el("iframe", "dashboard-frame");
+    stage.append(frame);
+    root.append(notices, stage);
+    view.live = { id: dashboard.id, root, notices, stage, frame, key: "" };
+    body.replaceChildren(root);
   }
-  creator.dataset.pane = view.creatorPane;
-  return tabs;
+  const { notices, stage, frame } = view.live;
+  const parts = [];
+  if (dashboard.origin === "received" && !dashboard.approved) parts.push(approvalBanner());
+  if (dashboard.lastRefresh && !dashboard.lastRefresh.ok) {
+    parts.push(el("p", "dashboard-error", `The last refresh failed: ${dashboard.lastRefresh.error}. The data shown is from the last good refresh.`));
+    if (view.detail.runLog) parts.push(runLogDetails(view.detail.runLog));
+  }
+  notices.replaceChildren(...parts);
+  const key = `${dashboard.definitionDigest}:${dashboard.lastRefresh?.at ?? ""}:${dashboard.approved}`;
+  if (key !== view.live.key) { view.live.key = key; setFrameSource(frame, false); }
+  stage.querySelector(".dashboard-activity-strip")?.remove();
+  if (dashboard.running) {
+    const strip = el("div", "dashboard-activity-strip");
+    strip.dataset.testid = "dashboard-activity-strip";
+    strip.append(el("span", "dashboard-spinner"), el("span", "dashboard-strip-text", "Refreshing the data…"));
+    stage.append(strip);
+  }
 }
 
 function renderCreator() {
-  const dashboard = view.detail.dashboard;
-  const running = Boolean(dashboard.running);
-  const creator = el("div", "dashboard-creator");
-  creator.dataset.testid = "dashboard-creator";
-  const chat = el("section", "dashboard-chat");
-  chat.append(renderMessages(), renderComposer(running));
-  creator.append(creatorTabs(creator), chat, renderPreview(dashboard, running));
-  body.replaceChildren(creator);
-  const messages = creator.querySelector(".dashboard-messages");
-  messages.scrollTop = messages.scrollHeight;
+  if (!view.creator || view.creator.id !== view.currentId || !body.contains(view.creator.view.root)) {
+    const creatorView = createCreatorView({
+      // The message box empties only once the message is sent.
+      onSend: (text) => sendMessage(text).catch((error) => { toast(error.message, 6000); throw error; }),
+      onTestRefresh: guarded(() => startRefresh("draft")),
+      onDiscard: guarded(discardDraft),
+      onSave: guarded(saveDraft),
+      frameUrl: (iframe) => setFrameSource(iframe, true),
+    });
+    view.creator = { id: view.currentId, view: creatorView };
+    body.replaceChildren(creatorView.root);
+    // A phone starts on the chat until there is a page to look at.
+    if (matchMedia("(max-width: 760px)").matches) creatorView.setChat(!view.detail.dashboard.draftHasPage);
+  }
+  view.creator.view.update(view.detail);
 }
 
 async function sendMessage(text) {
   if (!text) throw new Error("Write what you want the agent to do");
-  await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/messages`, { method: "POST", body: JSON.stringify({ text, projectId: hostProjectId() }) });
+  await post("/messages", { text });
   await refreshCurrent();
 }
 
 async function startRefresh(target) {
-  await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/refresh`, { method: "POST", body: JSON.stringify({ target, projectId: hostProjectId() }) });
+  await post("/refresh", { target });
   await refreshCurrent();
 }
 
 async function saveDraft() {
-  await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/draft/save`, { method: "POST", body: JSON.stringify({ projectId: hostProjectId() }) });
+  await post("/draft/save");
   view.mode = "view";
   await loadListing();
   await refreshCurrent();
 }
 
 async function discardDraft() {
-  const result = await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/draft/discard`, { method: "POST", body: JSON.stringify({ projectId: hostProjectId() }) });
+  const result = await post("/draft/discard");
   if (!result.dashboard) { await openDashboardMode(view.target); return; }
   view.mode = "view";
   await refreshCurrent();
 }
 
 async function activate() {
-  await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/activate`, { method: "POST", body: JSON.stringify({ projectId: hostProjectId() }) });
+  await post("/activate");
   await loadListing();
   await refreshCurrent();
 }
 
 async function copyDashboard() {
-  const copy = await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/copy`, { method: "POST", body: JSON.stringify({ projectId: hostProjectId() }) });
+  const copy = await post("/copy");
   await loadListing();
   view.currentId = copy.dashboard.id;
   view.mode = "creator";
@@ -336,7 +356,7 @@ async function removeDashboard() {
     confirmLabel: "Delete dashboard", destructive: true,
   });
   if (!confirmed) return;
-  await api(`/api/dashboards/${encodeURIComponent(view.currentId)}?${query({ projectId: hostProjectId() })}`, { method: "DELETE" });
+  await api(`${dashboardPath(view.currentId)}?${query({ projectId: hostProjectId() })}`, { method: "DELETE" });
   await openDashboardMode(view.target);
 }
 
@@ -345,15 +365,16 @@ async function renderReview() {
   review.dataset.testid = "dashboard-review-panel";
   review.append(el("h3", "", "Read before it runs here"), el("p", "dashboard-note", "These files run on this node with this project's secret accounts when you refresh. Approve only if you trust them."));
   body.replaceChildren(review);
-  const definition = await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/definition?${query({ projectId: hostProjectId() })}`);
+  view.live = null;
+  const definition = await api(`${dashboardPath(view.currentId, "/definition")}?${query({ projectId: hostProjectId() })}`);
   for (const file of definition.files) review.append(el("h4", "", file.path), el("pre", "dashboard-file", file.text));
   const approve = async () => {
-    await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/approve`, { method: "POST", body: JSON.stringify({ digest: definition.digest, projectId: hostProjectId() }) });
+    await post("/approve", { digest: definition.digest });
     view.mode = "view";
     await loadListing();
     await refreshCurrent();
   };
-  review.append(el("div", "dashboard-preview-actions"));
+  review.append(el("div", "dashboard-panel-actions"));
   review.lastChild.append(button("Back", "dashboard-review-back", () => { view.mode = "view"; render(); }), button("Approve", "dashboard-approve", approve, { primary: true }));
 }
 
@@ -362,7 +383,8 @@ async function renderShare() {
   panel.dataset.testid = "dashboard-share-panel";
   panel.append(el("h3", "", "Share this dashboard"), el("p", "dashboard-note", "Other nodes get its definition, never its data. Each node runs it for itself after approving it, and keeps using its own dashboard unless someone chooses this one there."));
   body.replaceChildren(panel);
-  const sharing = await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/sharing?${query({ projectId: hostProjectId() })}`);
+  view.live = null;
+  const sharing = await api(`${dashboardPath(view.currentId, "/sharing")}?${query({ projectId: hostProjectId() })}`);
   const boxes = [];
   const option = (kind, id, label, checked, note) => {
     const row = el("label", "checkbox-row");
@@ -380,12 +402,12 @@ async function renderShare() {
   if (!boxes.length) panel.append(el("p", "dashboard-note", "This node has no other nodes to share with."));
   const save = async () => {
     const chosen = (kind) => boxes.filter((box) => box.checked && box.dataset.kind === kind).map((box) => box.dataset.id);
-    await api(`/api/dashboards/${encodeURIComponent(view.currentId)}/sharing`, { method: "PUT", body: JSON.stringify({ nodeIds: chosen("node"), clusterIds: chosen("cluster"), projectId: hostProjectId() }) });
+    await api(dashboardPath(view.currentId, "/sharing"), { method: "PUT", body: JSON.stringify({ nodeIds: chosen("node"), clusterIds: chosen("cluster"), projectId: hostProjectId() }) });
     toast("Sharing saved");
     view.mode = "view";
     render();
   };
-  panel.append(el("div", "dashboard-preview-actions"));
+  panel.append(el("div", "dashboard-panel-actions"));
   panel.lastChild.append(button("Back", "dashboard-share-back", () => { view.mode = "view"; render(); }), button("Save sharing", "dashboard-share-save", save, { primary: true }));
 }
 
@@ -395,11 +417,12 @@ async function refreshCurrent() {
   schedulePoll();
 }
 
-/** While a job runs, the view is redrawn only when something changed, so a preview is not reloaded every second. */
+/** While a job runs, the view is redrawn only when something changed. */
 async function pollCurrent() {
   const before = JSON.stringify(view.detail);
   await loadDetail();
   if (JSON.stringify(view.detail) !== before) render();
+  else renderStatus();
   schedulePoll();
 }
 
@@ -410,8 +433,35 @@ function schedulePoll() {
   view.pollTimer = setTimeout(() => { pollCurrent().catch((error) => toast(error.message)); }, 1000);
 }
 
+/** A job left running keeps going on the node; this page says when it ends and offers to open it. */
+function watchAfterClose(target, id, label) {
+  if (watching.has(id)) return;
+  const check = async () => {
+    if (!watching.has(id)) return;
+    if (dialog.open && view.currentId === id) { watching.delete(id); return; }
+    const detail = await api(`${dashboardPath(id)}?${query({ projectId: target.projectId })}`).catch(() => null);
+    if (detail?.dashboard.running) { watching.set(id, setTimeout(check, 3000)); return; }
+    watching.delete(id);
+    const failed = detail?.dashboard.draftRefresh && !detail.dashboard.draftRefresh.ok;
+    const note = toast(`${label}: the dashboard agent finished${failed ? ", but the test refresh failed" : ""}.`, 15_000);
+    const open = el("button", "toast-action", "Open");
+    open.type = "button";
+    open.dataset.testid = "dashboard-ready-open";
+    open.addEventListener("click", () => { note.remove(); openDashboardMode(target).catch((error) => toast(error.message)); });
+    note.insertBefore(open, note.querySelector(".toast-close"));
+  };
+  watching.set(id, setTimeout(check, 3000));
+}
+
 document.querySelector("#dashboardClose").addEventListener("click", () => dialog.close());
-dialog.addEventListener("close", () => clearTimeout(view.pollTimer));
+dialog.addEventListener("close", () => {
+  clearTimeout(view.pollTimer);
+  const running = view.detail?.dashboard.running;
+  if (!running) return;
+  const label = view.listing?.label ?? "Dashboard";
+  toast(`${label}: the dashboard agent keeps working. You will be told when it is done.`, 5000);
+  watchAfterClose({ ...view.target, projectId: hostProjectId() }, view.currentId, label);
+});
 
 /** The open conversation's dashboard: from the chat header, and from the chat's more menu (Tools on a phone). */
 function openConversationDashboard() {

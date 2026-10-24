@@ -1,0 +1,152 @@
+/* Dashboard mode: the saved dashboard, the creator (chat on the left, stage in the middle), review and share panels. */
+
+#dashboardDialog .dashboard-card {
+  display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px;
+  width: min(1440px, calc(100vw - 24px)); height: calc(100dvh - 24px); max-width: none; max-height: none;
+  margin: auto; padding: 14px 18px 16px; overflow: hidden; background: var(--panel);
+}
+
+/* ---- header ---- */
+.dashboard-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.dashboard-heading-text { display: grid; min-width: 0; margin-right: auto; }
+.dashboard-heading-text h2 { margin: 0; overflow: hidden; font-size: 19px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-picker { max-width: 300px; min-height: 32px; padding: 4px 28px 4px 10px; border-radius: var(--radius-ctl); font-size: 12.5px; }
+.dashboard-status { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dashboard-method { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.dashboard-pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dashboard-pill.busy { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); color: var(--text); }
+.dashboard-pill.good .dashboard-dot { background: var(--accent); }
+.dashboard-pill.bad { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--text); }
+.dashboard-pill.bad .dashboard-dot { background: var(--danger); }
+.dashboard-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.dashboard-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.dashboard-actions button, .dashboard-stage-tools button, .dashboard-panel-actions button, .dashboard-banner button, .dashboard-empty > button {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 12px; border-radius: var(--radius-ctl); font-size: 13px; white-space: nowrap;
+}
+.dashboard-actions svg, .dashboard-stage-tools svg, .dashboard-empty > button svg { width: 15px; height: 15px; }
+
+/* ---- shared pieces ---- */
+.dashboard-body { display: grid; min-height: 0; overflow: auto; }
+.dashboard-note { margin: 0; color: var(--muted); font-size: 12.5px; }
+.dashboard-error { margin: 0; color: var(--danger); font-size: 12.5px; }
+.dashboard-loading { place-self: center; }
+.dashboard-file { max-height: 320px; margin: 0; padding: 10px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); font-size: 12px; }
+.dashboard-run-log summary { color: var(--muted); font-size: 12.5px; cursor: pointer; }
+.dashboard-frame { display: block; width: 100%; height: 100%; min-height: 360px; border: 0; border-radius: var(--radius-card); background: var(--surface); }
+.dashboard-spinner { flex: none; width: 14px; height: 14px; border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent); border-radius: 50%; animation: dashboard-spin 0.9s linear infinite; }
+@keyframes dashboard-spin { to { transform: rotate(360deg); } }
+@keyframes dashboard-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); } 50% { box-shadow: 0 0 0 9px transparent; } }
+@keyframes dashboard-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .dashboard-spinner, .dashboard-pulse, .dashboard-message.live .dashboard-message-text::after { animation: none; } }
+
+/* ---- empty state ---- */
+.dashboard-empty { display: grid; align-content: start; align-self: start; gap: 12px; width: min(720px, 100%); margin: 6vh auto 24px; padding: 26px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.dashboard-empty h3 { margin: 0; font-size: 18px; }
+.dashboard-empty-icon { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--accent); }
+.dashboard-empty-icon svg { width: 22px; height: 22px; }
+.dashboard-request, .dashboard-composer textarea { width: 100%; resize: vertical; }
+.dashboard-examples { display: flex; flex-wrap: wrap; gap: 6px; }
+.dashboard-example { padding: 5px 11px; border: 1px dashed var(--line-strong); border-radius: 999px; background: none; color: var(--muted); font-size: 12px; text-align: left; box-shadow: none; }
+.dashboard-example:hover { border-style: solid; color: var(--text); }
+.dashboard-host { display: grid; gap: 4px; color: var(--muted); font-size: 12.5px; }
+.dashboard-empty > button { justify-self: start; padding-inline: 18px; }
+
+/* ---- saved dashboard ---- */
+.dashboard-view { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-height: 0; }
+.dashboard-notices { display: grid; gap: 8px; }
+.dashboard-notices:empty { display: none; }
+.dashboard-view-stage { position: relative; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.dashboard-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--amber) 8%, var(--surface)); }
+
+/* ---- creator: chat panel on the left, stage in the middle ---- */
+.dashboard-creator { position: relative; display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 14px; min-height: 0; }
+.dashboard-creator[data-chat="closed"] { grid-template-columns: 44px minmax(0, 1fr); }
+.dashboard-chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); overflow: hidden; }
+.dashboard-creator[data-chat="closed"] .dashboard-chat { display: none; }
+.dashboard-chat-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; }
+.dashboard-chat-head > svg { width: 16px; height: 16px; color: var(--accent); }
+.dashboard-chat-toggle { width: 28px; height: 28px; margin-left: auto; padding: 0; }
+.dashboard-chat-toggle svg { width: 16px; height: 16px; }
+.dashboard-chat-rail { display: none; position: relative; align-self: start; width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); color: var(--muted); place-items: center; box-shadow: none; }
+.dashboard-chat-rail svg { width: 18px; height: 18px; }
+.dashboard-creator[data-chat="closed"] .dashboard-chat-rail { display: grid; }
+.dashboard-rail-dot { display: none; position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: dashboard-pulse 1.6s ease-in-out infinite; }
+.dashboard-creator[data-running="true"] .dashboard-rail-dot { display: block; }
+
+.dashboard-messages { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 14px; overflow: auto; list-style: none; }
+.dashboard-message { display: grid; gap: 4px; max-width: 100%; }
+.dashboard-message-who { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
+.dashboard-message-text { padding: 9px 12px; border-radius: 12px; background: var(--field); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.dashboard-message.user { justify-items: end; }
+.dashboard-message.user .dashboard-message-text { max-width: 92%; background: color-mix(in srgb, var(--accent) 15%, var(--surface)); white-space: pre-wrap; }
+.dashboard-message-text > :first-child { margin-top: 0; }
+.dashboard-message-text > :last-child { margin-bottom: 0; }
+.dashboard-message-text pre { max-width: 100%; overflow: auto; }
+.dashboard-message.live .dashboard-message-text { border: 1px dashed color-mix(in srgb, var(--accent) 40%, transparent); background: none; }
+.dashboard-message.live .dashboard-message-text::after { content: "▍"; color: var(--accent); animation: dashboard-caret 1s steps(1) infinite; }
+.dashboard-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
+.dashboard-composer textarea { min-height: 44px; max-height: 160px; font-size: 13px; }
+.dashboard-composer button { min-height: 38px; padding-inline: 16px; }
+
+.dashboard-stage { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); overflow: hidden; }
+.dashboard-stage-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); }
+.dashboard-stage-chat { display: none; align-items: center; gap: 6px; min-height: 30px; padding: 4px 10px; border-radius: var(--radius-ctl); font-size: 13px; }
+.dashboard-stage-chat svg { width: 15px; height: 15px; }
+.dashboard-stage-title { font-size: 13px; font-weight: 600; }
+.dashboard-stage-status { min-width: 0; margin-right: auto; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-stage-status.bad { color: var(--danger); }
+.dashboard-stage-tools { display: flex; gap: 6px; }
+.dashboard-stage-body { position: relative; display: grid; min-height: 0; overflow: hidden; background: color-mix(in srgb, var(--field) 40%, var(--surface)); }
+.dashboard-stage-empty { display: grid; place-items: center; align-content: center; gap: 10px; padding: 24px; color: var(--muted); text-align: center; }
+.dashboard-stage-empty svg { width: 34px; height: 34px; opacity: 0.6; }
+.dashboard-stage-empty p { max-width: 380px; margin: 0; font-size: 13px; }
+
+/* ---- what the agent is doing ---- */
+.dashboard-activity { display: grid; gap: 14px; place-self: center; width: min(560px, calc(100% - 32px)); padding: 22px 24px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18); }
+.dashboard-activity-head { display: flex; align-items: center; gap: 12px; }
+.dashboard-activity-head h3 { margin: 0; font-size: 16px; }
+.dashboard-pulse { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); animation: dashboard-pulse 1.6s ease-in-out infinite; }
+.dashboard-elapsed { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.dashboard-activity-now { margin: 0; overflow: hidden; color: var(--text); font-family: var(--mono, ui-monospace, monospace); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-steps { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.dashboard-step { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; color: var(--muted); font-size: 12.5px; }
+.dashboard-step.current { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--text); }
+.dashboard-step-mark { display: grid; place-items: center; color: var(--accent); }
+.dashboard-step-mark svg { width: 14px; height: 14px; }
+.dashboard-step-label { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.dashboard-step-label svg { flex: none; width: 14px; height: 14px; }
+.dashboard-step-label b { flex: none; font-weight: 600; }
+.dashboard-step-target { min-width: 0; overflow: hidden; font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-activity-strip { position: absolute; top: 12px; left: 50%; display: flex; align-items: center; gap: 9px; max-width: min(560px, calc(100% - 24px)); padding: 7px 14px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); font-size: 12.5px; transform: translateX(-50%); backdrop-filter: blur(6px); }
+.dashboard-strip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- review and share ---- */
+.dashboard-review, .dashboard-share { display: grid; align-content: start; gap: 8px; width: min(900px, 100%); margin: 0 auto; }
+.dashboard-review h3, .dashboard-share h3 { margin: 0; }
+.dashboard-panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.toast .toast-action { margin-left: 8px; padding: 3px 10px; border-radius: 8px; font-size: 12.5px; }
+
+/* ---- the workspace header button ---- */
+.project-group-dashboard { width: 26px; height: 26px; margin-left: auto; padding: 4px; }
+.project-group-dashboard svg { width: 15px; height: 15px; }
+
+/* ---- phones: the chat slides over the stage ---- */
+@media (max-width: 760px) {
+  #dashboardDialog .dashboard-card { width: calc(100vw - 16px); height: calc(100dvh - 16px); padding: 12px; }
+  .dashboard-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; }
+  .dashboard-heading-text { grid-column: 1; grid-row: 1; margin-right: 0; }
+  #dashboardClose { grid-column: 2; grid-row: 1; align-self: start; }
+  .dashboard-picker, .dashboard-status, .dashboard-actions { grid-column: 1 / -1; max-width: none; }
+  .dashboard-actions button { padding: 4px 9px; }
+  .dashboard-creator, .dashboard-creator[data-chat="closed"] { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-chat { position: absolute; inset: 0 auto 0 0; z-index: 3; width: min(92%, 380px); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35); }
+  .dashboard-creator[data-chat="closed"] .dashboard-chat-rail { display: none; }
+  .dashboard-stage-bar { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; padding: 8px 10px; }
+  .dashboard-stage-chat { display: inline-flex; grid-column: 1; grid-row: 1; }
+  .dashboard-stage-title { grid-column: 2; grid-row: 1; }
+  .dashboard-stage-tools { grid-column: 1 / -1; grid-row: 2; justify-content: flex-end; }
+  .dashboard-stage-status { grid-column: 1 / -1; grid-row: 3; margin-right: 0; }
+  .dashboard-stage-status:empty { display: none; }
+  .dashboard-stage-tools button { padding: 4px 10px; }
+  .dashboard-empty { margin-top: 8px; padding: 18px; }
+}

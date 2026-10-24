@@ -18,10 +18,29 @@ export default async (input) => {
 };
 `;
 
-async function signedIn(t: test.TestContext) {
+/** Reports a step and its text, shows a page early, then finishes the draft: time to watch it work. */
+const slowAgent = `import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+export default async (input) => {
+  const draft = /Draft folder \\(edit here\\): (.+)/.exec(input.prompt)[1].trim();
+  await mkdir(draft, { recursive: true });
+  input.onActivity({ tool: "bash", target: "psql -c 'select count(*) from errors'" });
+  input.onText("Looking at the errors table");
+  await wait(2500);
+  await writeFile(path.join(draft, "index.html"), "<script>JointBobKit.mount(JointBobKit.kpi({ label: 'Errors today', value: JointBobKit.payload().errors ?? 0 }));</script>");
+  input.onActivity({ tool: "write", target: "index.html" });
+  await wait(2500);
+  await writeFile(path.join(draft, "manifest.json"), JSON.stringify({ title: "Errors", refresh: { method: "script", command: 'node "$JOINT_BOB_DASHBOARD_DIR/refresh.mjs"' } }));
+  await writeFile(path.join(draft, "refresh.mjs"), "console.log(JSON.stringify({ generatedAt: new Date().toISOString(), errors: 12 }))");
+  return "The errors dashboard is ready.";
+};
+`;
+
+async function signedIn(t: test.TestContext, agent = fakeAgent) {
   const fixture = await nativeUiFixture(t, (root) => {
     const module = path.join(root, "dashboard-agent.mjs");
-    writeFileSync(module, fakeAgent);
+    writeFileSync(module, agent);
     return { JOINT_BOB_DASHBOARD_AGENT: module };
   });
   const { page, environment, node } = fixture;
@@ -50,9 +69,21 @@ test("a project dashboard is described, previewed, saved and refreshed from dash
   const preview = page.getByTestId("dashboard-draft-frame");
   await preview.waitFor();
   assert.equal(await preview.getAttribute("sandbox"), "allow-scripts", "agent-written pages never get the app's origin");
-  await page.getByTestId("dashboard-test-refresh").click();
+  // A finished script draft is test-refreshed without being asked, so the preview has real data.
   await page.frameLocator('[data-testid="dashboard-draft-frame"]').getByText("Bugs today").waitFor();
   await page.frameLocator('[data-testid="dashboard-draft-frame"]').getByText("7", { exact: true }).waitFor();
+  await page.getByTestId("dashboard-stage-status").filter({ hasText: "Test refresh worked" }).waitFor();
+
+  // The chat is a panel on the left that folds away and comes back.
+  const chat = await page.getByTestId("dashboard-chat").boundingBox();
+  const stage = await preview.boundingBox();
+  assert.ok(chat && stage && chat.x + chat.width <= stage.x, `the chat sits left of the preview: ${JSON.stringify({ chat, stage })}`);
+  await page.getByTestId("dashboard-chat-toggle").click();
+  await page.getByTestId("dashboard-chat").waitFor({ state: "hidden" });
+  const wider = await preview.boundingBox();
+  assert.ok(wider && stage && wider.width > stage.width + 200, "the preview takes the room the chat gave up");
+  await page.getByTestId("dashboard-chat-open").click();
+  await page.getByTestId("dashboard-chat").waitFor();
 
   await page.getByTestId("dashboard-save").click();
   const live = page.getByTestId("dashboard-frame");
@@ -111,9 +142,11 @@ test("on a phone, the project sheet and the conversation tools open dashboard mo
   await page.getByTestId("dashboard-create").click();
   await page.getByText("I built a dashboard that shows today's bugs.").waitFor();
   for (const control of ["dashboard-send", "dashboard-close"]) await within(page, control, 844);
-  assert.equal(await page.getByTestId("dashboard-draft-frame").isVisible(), false, "a phone shows the chat or the preview, not both squeezed");
-  await page.getByTestId("dashboard-tab-preview").click();
+  // On a phone the chat slides over the preview and folds away to show it.
+  await page.getByTestId("dashboard-chat-toggle").click();
+  await page.getByTestId("dashboard-chat").waitFor({ state: "hidden" });
   await page.getByTestId("dashboard-draft-frame").waitFor();
+  await within(page, "dashboard-stage-chat", 844);
   for (const control of ["dashboard-test-refresh", "dashboard-save", "dashboard-close"]) await within(page, control, 844);
   await page.getByTestId("dashboard-save").click();
   await page.getByTestId("dashboard-frame").waitFor();
@@ -133,3 +166,40 @@ test("on a phone, the project sheet and the conversation tools open dashboard mo
   await page.locator("#dashboardDialog[open]").waitFor();
   assert.match(await page.getByTestId("dashboard-eyebrow").textContent() ?? "", /Conversation dashboard/);
 });
+
+test("while the agent works, its steps show in the middle, its page appears early, and closing does not stop it", { timeout: 180_000 }, async (t) => {
+  const { page } = await signedIn(t, slowAgent);
+  await page.locator('[aria-label="Actions for Internal Assistant"]').click();
+  await page.getByTestId("project-dashboard-button").click();
+  await page.getByTestId("dashboard-request").fill("Show today's errors");
+  await page.getByTestId("dashboard-create").click();
+
+  const activity = page.getByTestId("dashboard-activity");
+  await activity.waitFor();
+  await activity.getByText("psql -c 'select count(*) from errors'").first().waitFor();
+  const card = await activity.boundingBox();
+  const body = await page.getByTestId("dashboard-body").boundingBox();
+  assert.ok(card && body && Math.abs((card.x + card.width / 2) - (body.x + body.width / 2)) < body.width * 0.2, "the progress sits in the middle of the screen");
+  await page.getByTestId("dashboard-live-message").getByText("Looking at the errors table").waitFor();
+  await page.getByTestId("dashboard-status").getByText("Agent working").waitFor();
+
+  // The page shows while the agent is still working, with the progress over it.
+  await page.getByTestId("dashboard-draft-frame").waitFor();
+  await page.getByTestId("dashboard-activity-strip").waitFor();
+  await page.frameLocator('[data-testid="dashboard-draft-frame"]').getByText("Errors today").waitFor();
+  await page.frameLocator('[data-testid="dashboard-draft-frame"]').getByText("12", { exact: true }).waitFor();
+  await page.getByText("The errors dashboard is ready.").waitFor();
+
+  // Closing while it works: the work goes on, and the page says when it is done.
+  await page.getByTestId("dashboard-message-input").fill("Add errors per day");
+  await page.getByTestId("dashboard-send").click();
+  await page.getByTestId("dashboard-activity-strip").waitFor();
+  await page.getByTestId("dashboard-close").click();
+  await page.locator("#dashboardDialog[open]").waitFor({ state: "hidden" });
+  await page.getByText("the dashboard agent keeps working").waitFor();
+  await page.getByTestId("dashboard-ready-open").click({ timeout: 30_000 });
+  await page.locator("#dashboardDialog[open]").waitFor();
+  await page.getByTestId("dashboard-creator").waitFor();
+  assert.equal(await page.getByTestId("dashboard-live-message").count(), 0, "the finished turn is no longer shown as live");
+});
+

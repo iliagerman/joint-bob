@@ -111,6 +111,7 @@ export function toast(message, duration = 3200) {
   // Into the dialog on top: the first open one in the document is often Settings, under
   // a secret account dialog's blurred backdrop, which hid that dialog's save errors.
   (topmostOpenDialog() || document.body).append(node);
+  return node;
 }
 
 export function setTheme(theme) {

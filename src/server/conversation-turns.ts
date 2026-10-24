@@ -62,7 +62,7 @@ export function buildTurns(messages: ChatMessage[]): ConversationTurn[] {
 }
 
 /** Every recorded message of a conversation, across harness switches, oldest first. */
-export async function loadConversationMessages(project: ProjectRecord, conversationId: string): Promise<{ messages: ChatMessage[]; lastHarness: string }> {
+export async function loadConversationMessages(project: ProjectRecord, conversationId: string, options?: { contextOnly?: boolean }): Promise<{ messages: ChatMessage[]; lastHarness: string }> {
   const transcriptProject = { ...project, additionalPaths: await projectAdditionalPaths(project.id) };
   const sessions = await listHarnessSessions(transcriptProject);
   const session = sessions.find((item) => (item.conversationId ?? item.id) === conversationId);
@@ -75,7 +75,7 @@ export async function loadConversationMessages(project: ProjectRecord, conversat
   let lastHarness: string = session.harnessId;
   for (const entry of entries) {
     if (!entry.path) continue;
-    for (const message of await getHarness(entry.engine).sessions.loadMessages(transcriptProject, entry.path)) {
+    for (const message of await getHarness(entry.engine).sessions.loadMessages(transcriptProject, entry.path, options)) {
       messages.push(message);
       if (message.role === "assistant") lastHarness = message.attribution?.harnessId ?? entry.engine;
     }

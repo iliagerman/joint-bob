@@ -68,6 +68,6 @@ export default defineHarness({
     files: async (project) => (await import("../claude-service.js")).claudeSessionFiles(project),
     list: async (project) => (await import("../claude-service.js")).listClaudeSessions(project),
     refresh: async (project, previous, changedFiles) => (await import("../claude-service.js")).refreshClaudeSessions(project, previous, changedFiles),
-    loadMessages: async (_project, sessionPath) => (await import("../claude-service.js")).loadClaudeMessages(sessionPath),
+    loadMessages: async (_project, sessionPath, options) => (await import("../claude-service.js")).loadClaudeMessages(sessionPath, options),
   },
 });

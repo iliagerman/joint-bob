@@ -520,7 +520,7 @@ export async function claudeSessionContextUsage(sessionPath: string): Promise<Co
   return (await claudeSessionFacts(filePath, await stat(filePath))).contextUsage;
 }
 
-export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessage[]> {
+export async function loadClaudeMessages(sessionPath: string, options?: { contextOnly?: boolean }): Promise<ChatMessage[]> {
   const filePath = resolveClaudeSessionPath(sessionPath);
   const lines = (await readFile(filePath, "utf8")).split("\n").filter(Boolean);
   const tools = new Map<string, { name: string; target?: ToolTarget; startedAt?: number }>();
@@ -534,6 +534,16 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
     const message = asRecord(record.message);
     const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
     const stamp = timestamp ? { timestamp } : {};
+    if (record.isCompactSummary === true) {
+      if (options?.contextOnly) {
+        // Claude has already folded the earlier turns into this summary. Keep it for model
+        // context, but leave the normal transcript view and its original messages unchanged.
+        messages.length = 0;
+        tools.clear();
+        messages.push({ id: String(index), role: "summary", text: claudeMessageText(record), source: "runtime", ...stamp });
+      }
+      continue;
+    }
     // A tool result arrives as its own record, so replaying it here keeps the
     // prose around a tool call reading in the order the turn streamed it.
     for (const part of Array.isArray(message.content) ? message.content : []) {
@@ -562,8 +572,7 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
     }
     const text = claudeMessageText(record);
     const role = message.role === "user" ? "user" : "assistant";
-    // Compaction stores its summary as a user record; nobody typed it, so it stays out of the chat.
-    if (!text.trim() || record.isCompactSummary === true || (role === "user" && isClaudeLocalCommandMessage(text))) continue;
+    if (!text.trim() || (role === "user" && isClaudeLocalCommandMessage(text))) continue;
     const modelId = typeof message.model === "string" ? message.model : "";
     const reasoning = typeof record.perTurnEffort === "string" ? record.perTurnEffort : typeof record.effort === "string" ? record.effort : "";
     messages.push({

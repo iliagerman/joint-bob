@@ -82,9 +82,9 @@ function inProjectRuntime(adapter: HarnessAdapter): HarnessAdapter {
       files: (project) => run(project.id, async () => (await sessions.files(project)).filter(confinedFile)),
       list: (project) => run(project.id, async () => (await sessions.list(project)).filter(confinedSummary)),
       refresh: (project, previous, changedFiles) => run(project.id, async () => (await sessions.refresh(project, previous, changedFiles.filter(confinedFile))).filter(confinedSummary)),
-      loadMessages: (project, sessionPath) => run(project.id, () => {
+      loadMessages: (project, sessionPath, options) => run(project.id, () => {
         if (!confinedSession(sessionPath)) throw new Error("Conversation transcript is outside its owner's home");
-        return sessions.loadMessages(project, sessionPath);
+        return sessions.loadMessages(project, sessionPath, options);
       }),
     },
   };

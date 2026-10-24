@@ -86,6 +86,7 @@ test("a reloaded Claude transcript keeps the tool bubbles between the spoken blo
     const transcript = path.join(sessions, "project", "session.jsonl");
     await mkdir(path.dirname(transcript), { recursive: true });
     await writeFile(transcript, [
+      JSON.stringify({ type: "user", isCompactSummary: true, message: { role: "user", content: "Old compaction summary, superseded below." } }),
       JSON.stringify({ type: "user", message: { role: "user", content: "check the plan" } }),
       // Compaction writes its summary as a user record; nobody typed it, so the chat never shows it.
       JSON.stringify({ type: "system", subtype: "compact_boundary", content: "Conversation compacted" }),
@@ -124,6 +125,10 @@ test("a reloaded Claude transcript keeps the tool bubbles between the spoken blo
     assert.deepEqual(messages.map(({ isError }) => isError), [undefined, undefined, undefined, undefined, true, undefined, undefined, undefined]);
     assert.equal(messages.find(({ text }) => text === "plan body")?.durationMs, 3000, "tool runtime is restored from tool-use and result timestamps");
     assert.equal(new Set(messages.map(({ id }) => id)).size, messages.length, "every reloaded message keeps its own id");
+    const context = await loadClaudeMessages(`claude:${transcript}`, { contextOnly: true });
+    assert.match(context[0].text, /Summary:/, "model context starts with the native compaction summary");
+    assert.equal(context.some((message) => message.text === "check the plan"), false, "old turns already summarized must not fill the model window again");
+    assert.deepEqual(context.slice(1), messages.slice(1), "keep every message and tool result after compaction");
   } finally {
     updateSettings({ runtimes: previous.runtimes, syncthing: { endpoint: previous.syncthing.endpoint } });
     await rm(root, { recursive: true, force: true });

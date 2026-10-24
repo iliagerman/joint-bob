@@ -115,11 +115,18 @@ function renderMessages(messages) {
     const header = document.createElement("header");
     header.className = "conversation-chat-message-header";
     header.append(label, messageActions(message));
+    entry.append(header);
+    if (message.contextCompacted) {
+      const note = document.createElement("p");
+      note.className = "settings-hint";
+      note.textContent = "Older context summarized to fit the model.";
+      entry.append(note);
+    }
     const text = document.createElement("div");
     text.className = "md";
     if (message.role === "assistant") renderMarkdown(text, message.text);
     else { text.textContent = message.text; text.style.whiteSpace = "pre-wrap"; }
-    entry.append(header, text);
+    entry.append(text);
     if (message.error) {
       const error = document.createElement("p");
       error.className = "settings-hint";
@@ -148,7 +155,7 @@ function renderChat() {
   renderMessages([...snapshot.messages, ...active, ...live, ...waitingMessages]);
   setBusy(snapshot.busy || snapshot.queue.length > 0 || submitting.size > 0);
   const waiting = queued.length + pending.filter((item) => item.queued).length;
-  status.textContent = busy ? `${snapshot.busy ? "Answering…" : "Sending…"}${waiting ? ` · ${waiting} queued` : ""}` : "";
+  status.textContent = busy ? `${snapshot.preparing ? "Condensing long conversation…" : snapshot.busy ? "Answering…" : "Sending…"}${waiting ? ` · ${waiting} queued` : ""}` : "";
 }
 
 async function refreshChat() {
@@ -281,6 +288,7 @@ document.addEventListener("conversation-chat-stream", (event) => {
   streaming = payload.stream;
   if (payload.messages) snapshot.messages = payload.messages;
   snapshot.busy = true;
+  snapshot.preparing = false;
   if (!streamFrame) streamFrame = requestAnimationFrame(() => { streamFrame = 0; renderChat(); });
 });
 document.addEventListener("conversation-chat-changed", (event) => {

@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Added live streaming to the side Chat, so answers appear as they are written, with Copy and Quote buttons on each message that copy its text or quote it into your next question.
 - Changed the selected tab in the Activity panel to show only its underline, without a raised background.
 - Added live progress while a dashboard agent works: its steps and answer appear as it writes, the preview shows as soon as the first page exists, and a finished script draft is test-refreshed at once.
+- Fixed the side Chat failing with "Prompt is too long" on long conversations; older context is now condensed to fit the model, and answers that used it are marked as such.
 
 ## 2.149.1 — 2026-10-24
 

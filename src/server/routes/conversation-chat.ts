@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { chatDefaults, chatDefaultsSchema, chatModelSchema, chatState, clearChatHistory, saveChatDefaults, saveChatState, type ChatScope } from "../../conversation-chat.js";
 import { getProject, projectVisible } from "../../store.js";
-import { chatChanged, chatRunning, chatStream, startChatQueue } from "../conversation-chat-runner.js";
+import { chatChanged, chatPreparing, chatRunning, chatStream, startChatQueue } from "../conversation-chat-runner.js";
 import { GitReviewRunError } from "../git-review-run.js";
 import { sendError } from "../http-auth.js";
 import { registeredHarnessIdSchema } from "../schemas.js";
@@ -46,7 +46,7 @@ for (const method of ["get", "post", "delete"] as const) {
       const project = await authorizedConversation(projectId, conversationId, auth);
       if (method === "get") {
         startChatQueue(project, scope, auth.accountId);
-        response.json({ ...chatState(scope), defaults: chatDefaults(auth.userId), busy: chatRunning(scope), stream: chatStream(scope) });
+        response.json({ ...chatState(scope), defaults: chatDefaults(auth.userId), busy: chatRunning(scope), preparing: chatPreparing(scope), stream: chatStream(scope) });
         return;
       }
       if (method === "delete") {

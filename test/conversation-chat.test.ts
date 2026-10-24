@@ -13,7 +13,8 @@ test("side chat preserves full context, pending prompts and tool output", async 
 });
 
 test("history is durable, isolated by user/project/conversation, and only explicitly cleared", async () => {
-  const { chatState, saveChatState, clearChatHistory } = await import("../src/conversation-chat.js");
+  const { chatScopeKey, chatState, saveChatState, clearChatHistory } = await import("../src/conversation-chat.js");
+  const { storeTranscriptSummary, storedTranscriptSummary } = await import("../src/transcript-summary-store.js");
   const scope = { userId: "alice", projectId: "p", conversationId: "c" };
   const state = chatState(scope);
   state.messages.push({ role: "user", text: "question" }, { role: "assistant", text: "answer" });
@@ -24,7 +25,9 @@ test("history is durable, isolated by user/project/conversation, and only explic
   assert.equal(chatState({ ...scope, userId: "bob" }).messages.length, 0);
   assert.equal(chatState({ ...scope, projectId: "other" }).messages.length, 0);
   assert.equal(chatState({ ...scope, conversationId: "other" }).messages.length, 0);
+  storeTranscriptSummary("side-chat-context", chatScopeKey(scope), { chunk: "older private side-chat context" });
   clearChatHistory(scope);
+  assert.equal(storedTranscriptSummary("side-chat-context", chatScopeKey(scope)), undefined);
   assert.deepEqual(chatState(scope).messages, []);
   assert.deepEqual(chatState(scope).queue, []);
   assert.deepEqual(chatState(scope).model, state.model);

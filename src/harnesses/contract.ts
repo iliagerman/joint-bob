@@ -54,7 +54,8 @@ export interface HarnessAdapter<TId extends HarnessId = HarnessId> {
     files: (project: HarnessProject) => Promise<string[]>;
     list: (project: HarnessProject) => Promise<SessionSummary[]>;
     refresh: (project: HarnessProject, previous: SessionSummary[], changedFiles: string[]) => Promise<SessionSummary[]>;
-    loadMessages: (project: ProjectRecord, sessionPath: string) => Promise<ChatMessage[]>;
+    /** Model-only reads may use native compaction summaries; normal history is never condensed. */
+    loadMessages: (project: ProjectRecord, sessionPath: string, options?: { contextOnly?: boolean }) => Promise<ChatMessage[]>;
     recover?: (sessionPath: string, cwd: string) => Promise<void>;
   };
 }

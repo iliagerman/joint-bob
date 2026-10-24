@@ -11,7 +11,7 @@
 ## Constraints
 - Stay on main; preserve unrelated working-tree changes.
 - No tools, source prompts, source transcript writes or source runtime changes.
-- Never silently truncate source context. Report model context errors.
+- Never silently truncate source context. Reuse native compaction summaries for model-only reads, summarize remaining overflow, and visibly disclose condensed context.
 - History and defaults are per user and persist on the serving node. They do not replicate between nodes.
 
 ## Task 1: Read-only backend
@@ -29,7 +29,15 @@
 - [x] Load side-chat defaults from `public/app/summary-model-settings.js`.
 - [x] Run focused browser regressions, typecheck and build; inspect diff.
 
-## Verification
+## Long-conversation fix
+
+The reported `Prompt is too long` failure came from a 62 MB Claude transcript with nine native compaction summaries. Side Chat loaded the full historical UI transcript, including turns Claude had already summarized, and put it in one model prompt.
+
+Model-only context reads now start at the latest native Claude compaction summary and retain subsequent messages/tool results. Normal transcript reads are unchanged. For every harness, remaining overflow and side-chat history are summarized in bounded UTF-8 chunks, with recent material kept verbatim. Summaries are cached by user/conversation/model/content. No source transcript or side-chat history is replaced. The UI reports preparation and marks answers that used condensed context. Explicit context-limit rejections retry at smaller bounds, including during preparation; unrelated errors and failures after streamed output do not retry.
+
+Verified with sixteen tests across `claude-transcript`, `conversation-chat-context`, `conversation-chat`, `conversation-chat-api`, `conversation-turns`, and `ui-by-the-way`, plus typecheck/build. API fixtures enforce 70,000-byte and 20,000-byte model limits, verify successful automatic compaction/retry, reuse cached chunks on follow-up, and check source transcript bytes remain unchanged. These use synthetic models, not a live model run on the user's transcript.
+
+## Earlier verification
 
 Passed: `npm run typecheck`, `npm run build`, and nine tests from:
 - `test/conversation-chat.test.ts`

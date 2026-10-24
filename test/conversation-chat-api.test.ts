@@ -90,6 +90,50 @@ test("side-chat accepts follow-ups during an answer and drains them in FIFO orde
   }
 });
 
+for (const maxPromptBytes of [70_000, 20_000]) test(`long Claude context compacts and caches within a ${maxPromptBytes}-byte model limit`, { timeout: 60_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-chat-context-"));
+  const environment = await seedDevEnvironment(root, 1);
+  const node = environment.nodes[0];
+  const log = path.join(root, "engine.log");
+  const server = await startDevNode(environment, node, {
+    JOINT_BOB_TEST_ENGINE_LOG: log, JOINT_BOB_TEST_ENGINE_MAX_PROMPT_BYTES: String(maxPromptBytes),
+  });
+  try {
+    const auth = await signIn(environment, node);
+    const project = node.projects[0];
+    const sessions = await api<{ sessions: SessionSummary[] }>(node, auth, "GET", `/projects/${project.id}/sessions`);
+    const source = sessions.body.sessions.find((item) => item.harnessId === "claude")!;
+    const file = source.path.replace(/^claude:/, "");
+    const original = await readFile(file, "utf8");
+    const records = [
+      { type: "user", message: { role: "user", content: "obsolete ".repeat(50_000) } },
+      { type: "user", isCompactSummary: true, message: { role: "user", content: "Native summary: phase two complete, phase three pending." } },
+      { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "large", content: "current ".repeat(11_000) }] } },
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Phase three still needs its deployment check." }] } },
+    ];
+    const transcript = original + records.map((record) => JSON.stringify(record)).join("\n") + "\n";
+    await writeFile(file, transcript);
+    const url = `/projects/${project.id}/conversations/${source.conversationId ?? source.id}/chat`;
+    const model = { harnessId: "claude", provider: "claude", modelId: "sonnet" };
+    assert.equal((await api(node, auth, "POST", url, { question: "What remains?", model })).status, 202);
+    const first = await completedChat(node, auth, url);
+    assert.equal(first.messages.at(-1)?.role, "assistant", JSON.stringify(first.messages.at(-1)));
+    assert.equal((first.messages.at(-1) as { contextCompacted?: boolean }).contextCompacted, true);
+    const firstCalls = (await readFile(log, "utf8")).trim().split("\n").length;
+    assert.ok(firstCalls > 1, "a smaller model requires compaction although initial context is below 120k");
+    assert.ok(firstCalls < 10, "native compaction removes obsolete history before preparing chunks");
+    assert.equal((await api(node, auth, "POST", url, { question: "And now?", model })).status, 202);
+    const second = await completedChat(node, auth, url);
+    assert.equal(second.messages.at(-1)?.role, "assistant");
+    const newCalls = (await readFile(log, "utf8")).trim().split("\n").length - firstCalls;
+    assert.ok(newCalls < firstCalls, "unchanged chunks reuse summaries, not fresh model calls");
+    assert.equal(await readFile(file, "utf8"), transcript, "side-chat compaction never changes the source transcript");
+  } finally {
+    await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function completedChat(node: Parameters<typeof api>[0], auth: Parameters<typeof api>[1], url: string) {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const result = await api<{ busy: boolean; messages: Array<{ role: string; text: string }>; queue: unknown[] }>(node, auth, "GET", url);
@@ -102,8 +146,9 @@ async function completedChat(node: Parameters<typeof api>[0], auth: Parameters<t
 test("side chat always invokes the tool-disabled runner without a source runtime or truncation", async () => {
   const source = await readFile(new URL("../src/server/conversation-chat-runner.ts", import.meta.url), "utf8");
   assert.match(source, /useTools: false/);
-  assert.match(source, /conversationChatPrompt\(messages, history, payload.question\)/);
-  assert.match(source, /diff: "", instructions/);
+  assert.match(source, /conversationChatMaterial\(messages, history\)/);
+  assert.match(source, /prepareChatContext\(material, question, summarize, limit\)/);
+  assert.match(source, /diff: "", useTools: false/);
   assert.doesNotMatch(source, /useTools: true|forkLocalConversation|findHarnessSession|\.slice\(/);
   const runner = await readFile(new URL("../src/server/git-review-run.ts", import.meta.url), "utf8");
   assert.match(runner, /await session.setTools\(\[\]\)/);
