@@ -34,11 +34,25 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
     assert.equal(await page.getByTestId("activity-chat-tab").getAttribute("aria-selected"), "true");
     await page.getByTestId("conversation-chat-harness").selectOption("claude");
     await page.getByTestId("conversation-chat-input").fill("side-only question");
+    let releaseQuestion!: () => void;
+    const heldQuestion = new Promise<void>((resolve) => { releaseQuestion = resolve; });
+    await page.route("**/api/projects/*/conversations/*/chat", async (route) => {
+      if (route.request().method() === "POST") await heldQuestion;
+      await route.continue();
+    });
     const answering = page.waitForResponse((response) => response.url().endsWith("/chat") && response.request().method() === "POST");
+    void answering.catch(() => undefined);
     await page.getByTestId("conversation-chat-send").click();
+    try {
+      assert.equal(await page.getByTestId("conversation-chat-input").inputValue(), "", "sending clears the composer before the server answers");
+      assert.equal(await page.getByTestId("conversation-chat-messages").getByText("side-only question", { exact: true }).count(), 1, "sent question appears immediately");
+      await page.getByTestId("conversation-chat-input").fill("next question draft");
+    } finally { releaseQuestion(); }
     const answered = await answering;
     assert.equal(answered.status(), 200, await answered.text());
     await page.getByTestId("conversation-chat-messages").getByText("stubbed response", { exact: true }).waitFor();
+    assert.equal(await page.getByTestId("conversation-chat-input").inputValue(), "next question draft", "answers never erase a new draft");
+    assert.equal(await page.getByTestId("conversation-chat-messages").getByText("side-only question", { exact: true }).count(), 1, "server history replaces rather than duplicates the optimistic question");
     assert.equal(await page.locator("#messages").getByText("side-only question", { exact: true }).count(), 0);
     await page.getByTestId("activity-activity-tab").click();
     assert.equal(await page.getByTestId("activity-body").isVisible(), true);

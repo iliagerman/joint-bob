@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed the side Chat to show your question straight away and clear the box when you send it, so a new draft you start typing while the answer loads is kept.
+
 ## 2.148.0 — 2026-10-24
 
 - Added a log entry each time a request between your machines fails, showing where it stopped and how long each step took, without paths, request bodies, headers or secrets.

@@ -22,6 +22,7 @@ let choices;
 let loadedUrl = null;
 let generation = 0;
 let busy = false;
+let displayedMessages = [];
 let defaults = { showSelectors: true, model: null };
 
 function conversationUrl() {
@@ -61,6 +62,7 @@ function setBusy(value) {
 }
 
 function renderMessages(messages) {
+  displayedMessages = messages;
   const list = byId("conversationChatMessages");
   list.replaceChildren();
   if (!messages.length) {
@@ -141,13 +143,14 @@ byId("conversationChatForm").addEventListener("submit", async (event) => {
   const url = loadedUrl;
   if (!question || busy || !url || url !== conversationUrl()) return;
   const current = generation;
+  renderMessages([...displayedMessages, { role: "user", text: question }]);
+  input.value = "";
   setBusy(true);
   status.textContent = "Answering…";
   try {
     const body = await api(url, { method: "POST", body: JSON.stringify({ question, model: modelChoice(harnessSelect, modelSelect) }) });
     if (current !== generation || url !== conversationUrl()) return;
     renderMessages(body.messages);
-    input.value = "";
     status.textContent = "";
   } catch (error) {
     if (current === generation) status.textContent = error.message;
