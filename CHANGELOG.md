@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Added the instructions the dashboard agent builds and edits from, which list every chart and table it can use, require a refresh script to be tested before it finishes, and keep each dashboard offline and read-only toward your project's data.
 - Added the shared charts, headline numbers, sortable paged tables and status badges every dashboard is built from, so dashboards look alike and never load anything from the internet.
 - Changed the side Chat to show your question straight away and clear the box when you send it, so a new draft you start typing while the answer loads is kept.
 - Added the rules for dashboards: each one now has a title and exactly one refresh method, and it always belongs to a single conversation, project or workspace that its own files cannot change.
