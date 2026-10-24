@@ -237,9 +237,3 @@ export function hasOwnSavedDashboard(entity: DashboardEntity): boolean {
   return Boolean(db().prepare(`SELECT 1 FROM dashboards WHERE ${entityClause} AND origin = 'own' AND definition_digest IS NOT NULL`).get(...entityParams(entity)));
 }
 
-/** Returns the removed ids so the caller can delete their files. */
-export function removeEntityDashboards(entity: DashboardEntity): string[] {
-  const ids = listDashboards(entity).map((record) => record.id);
-  db().prepare(`DELETE FROM dashboards WHERE ${entityClause}`).run(...entityParams(entity));
-  return ids;
-}

@@ -75,7 +75,7 @@ test("deleting the active dashboard activates the node's own remaining one", asy
   assert.equal(store.getDashboard(a.id)?.active, true);
 });
 
-test("refresh results and entity removal", async () => {
+test("refresh results and workspace host projects", async () => {
   const store = await freshStore();
   assert.throws(() => store.createDashboard({ entity: { kind: "workspace", id: "w1" }, ownerNodeId: "n", accountId: "acct" }), /workspace's projects/);
   const a = store.createDashboard({ entity: { kind: "workspace", id: "w1" }, hostProjectId: "p9", ownerNodeId: "n", accountId: "acct" });
@@ -83,11 +83,7 @@ test("refresh results and entity removal", async () => {
   assert.equal(store.createDashboard({ entity: conversation, ownerNodeId: "n", accountId: "acct" }).hostProjectId, "p1");
   store.recordRefresh(a.id, { at: "2026-10-24T09:00:00.000Z", ok: false, error: "boom" });
   assert.deepEqual(store.getDashboard(a.id)?.lastRefresh, { at: "2026-10-24T09:00:00.000Z", ok: false, error: "boom" });
-  const other = store.createDashboard({ entity: { kind: "workspace", id: "w2" }, hostProjectId: "p9", ownerNodeId: "n", accountId: "acct" });
-  assert.deepEqual(store.removeEntityDashboards({ kind: "workspace", id: "w1" }), [a.id]);
-  assert.equal(store.getDashboard(a.id), undefined);
-  assert.ok(store.getDashboard(other.id));
-  assert.deepEqual(store.listAllDashboards().filter((d) => d.entity.kind === "workspace").map((d) => d.id), [other.id]);
+  assert.deepEqual(store.listAllDashboards().filter((d) => d.entity.kind === "workspace").map((d) => d.id), [a.id]);
 });
 
 test("sharing choices and received lookups", async () => {

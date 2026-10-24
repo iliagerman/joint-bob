@@ -20,6 +20,7 @@ Every deployment is a version. The newest section must always match the
 - Added a queue to the side Chat so you can send follow-up questions while an answer is still running, where they wait in order, survive a reload, and each answer appears by itself when it is ready.
 - Added AI refreshes for dashboards, where an agent gathers the data within your project's budget and secrets and keeps its answer in a run log, and a refresh that fails or does not return the dashboard's JSON keeps the last good one.
 - Added a Dashboards section to Settings where you choose the harness and model that build, edit and AI-refresh dashboards, saved for this machine only.
+- Removed the unused way to delete every dashboard of a workspace in one step, so workspace dashboards are no longer cleared that way.
 
 ## 2.148.0 — 2026-10-24
 
