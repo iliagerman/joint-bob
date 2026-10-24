@@ -64,7 +64,12 @@ function db(): DatabaseSync {
       updated_at TEXT NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS dashboards_one_active
-      ON dashboards(entity_kind, entity_id, COALESCE(project_id, '')) WHERE active = 1;`);
+      ON dashboards(entity_kind, entity_id, COALESCE(project_id, '')) WHERE active = 1;
+    CREATE TABLE IF NOT EXISTS dashboard_shares (
+      dashboard_id TEXT PRIMARY KEY,
+      node_ids TEXT NOT NULL,
+      cluster_ids TEXT NOT NULL
+    );`);
   return database;
 }
 
@@ -206,8 +211,30 @@ export function deleteDashboard(id: string): void {
   if (!record) return;
   transaction(() => {
     db().prepare("DELETE FROM dashboards WHERE id = ?").run(id);
+    db().prepare("DELETE FROM dashboard_shares WHERE dashboard_id = ?").run(id);
     activateFallback(record.entity);
   });
+}
+
+/** Which other nodes and clusters a dashboard is shared with; twins need no entry. */
+export interface DashboardSharing { nodeIds: string[]; clusterIds: string[] }
+export function dashboardSharing(id: string): DashboardSharing {
+  const row = db().prepare("SELECT node_ids, cluster_ids FROM dashboard_shares WHERE dashboard_id = ?").get(id) as { node_ids: string; cluster_ids: string } | undefined;
+  return row ? { nodeIds: JSON.parse(row.node_ids) as string[], clusterIds: JSON.parse(row.cluster_ids) as string[] } : { nodeIds: [], clusterIds: [] };
+}
+
+export function setDashboardSharing(id: string, sharing: DashboardSharing): void {
+  db().prepare(`INSERT INTO dashboard_shares (dashboard_id, node_ids, cluster_ids) VALUES (?, ?, ?)
+    ON CONFLICT(dashboard_id) DO UPDATE SET node_ids = excluded.node_ids, cluster_ids = excluded.cluster_ids`)
+    .run(id, JSON.stringify(sharing.nodeIds), JSON.stringify(sharing.clusterIds));
+}
+
+export function receivedDashboardsFrom(ownerNodeId: string): DashboardRecord[] {
+  return (db().prepare("SELECT * FROM dashboards WHERE origin = 'received' AND owner_node_id = ?").all(ownerNodeId) as unknown as Row[]).map(toRecord);
+}
+
+export function hasOwnSavedDashboard(entity: DashboardEntity): boolean {
+  return Boolean(db().prepare(`SELECT 1 FROM dashboards WHERE ${entityClause} AND origin = 'own' AND definition_digest IS NOT NULL`).get(...entityParams(entity)));
 }
 
 /** Returns the removed ids so the caller can delete their files. */

@@ -24,7 +24,7 @@ import { app } from "./state.js";
 const contextSchema = z.object({ projectId: z.string().min(1).max(300), conversationId: z.string().min(1).max(300).optional() }).strict();
 function failure(message: string, status = 400): Error { return Object.assign(new Error(message), { status }); }
 
-async function peers() {
+export async function peers() {
   const db = await clusterV2Database(), local = (await getClusterNode()).id;
   const clusters = listSharingMemberships(db, local).map((m) => getSharingCluster(db, m.clusterId)).filter((c) => !c.closed);
   const nodes = new Map<string, { nodeId: string; name: string; url: string; clusterIds: string[]; incarnations: string[]; twinRelationshipId?: string }>();

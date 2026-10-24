@@ -124,6 +124,8 @@ function definitionFor(record: DashboardRecord, target: PayloadTarget): { manife
   }
   const live = readLiveDefinition(record.id);
   if (!live) throw Object.assign(new Error("Save the dashboard before refreshing it"), { expose: true, status: 409 });
+  // Only the exact files that were approved may run here.
+  if (live.digest !== record.approvedDigest) throw Object.assign(new Error("Approve this dashboard before it runs on this node"), { expose: true, status: 403 });
   return { manifest: live.manifest, directory: live.directory };
 }
 

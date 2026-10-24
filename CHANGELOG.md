@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Added dashboard sharing, where you choose which machines and clusters receive a saved dashboard, twins get your dashboards by default, and a received dashboard stays off until you approve its current version, following its owner's changes and deletions while your copy stays put.
 - Added the dashboard creator, where you chat with the dashboard agent to build a dashboard, test its draft refresh, save or discard the draft, and read a refresh script's files before you approve it.
 - Added the view that shows a dashboard only to people who can see its project, conversation or workspace, where it runs in a sandbox that cannot send any requests.
 - Changed a dashboard's test refresh in the creator to fill only the draft, so the live dashboard keeps its current data until you save.

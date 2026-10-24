@@ -89,3 +89,19 @@ test("refresh results and entity removal", async () => {
   assert.ok(store.getDashboard(other.id));
   assert.deepEqual(store.listAllDashboards().filter((d) => d.entity.kind === "workspace").map((d) => d.id), [other.id]);
 });
+
+test("sharing choices and received lookups", async () => {
+  const store = await freshStore();
+  const own = store.createDashboard({ entity: conversation, ownerNodeId: "node-a", accountId: "acct" });
+  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [] });
+  store.setDashboardSharing(own.id, { nodeIds: ["n2"], clusterIds: ["c1"] });
+  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: ["n2"], clusterIds: ["c1"] });
+  assert.equal(store.hasOwnSavedDashboard(conversation), false, "an unsaved dashboard does not count");
+  store.recordSavedDefinition(own.id, { title: "Mine", refreshMethod: "script", digest: "o1" });
+  assert.equal(store.hasOwnSavedDashboard(conversation), true);
+  const received = randomUUID();
+  store.upsertReceivedDashboard({ id: received, entity: conversation, ownerNodeId: "node-b", accountId: null, title: "Shared", refreshMethod: "script", digest: "r1" });
+  assert.deepEqual(store.receivedDashboardsFrom("node-b").map((d) => d.id), [received]);
+  store.deleteDashboard(own.id);
+  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [] }, "deleting forgets its sharing");
+});

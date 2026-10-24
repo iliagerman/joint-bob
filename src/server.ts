@@ -84,6 +84,7 @@ import "./server/routes/agent-instructions.js";
 import "./server/routes/search.js";
 import "./server/routes/usage.js";
 import "./server/routes/dashboards.js";
+import { refreshSharedDashboards } from "./server/dashboard-sharing.js";
 import "./server/routes/relay.js";
 import "./server/routes/webhooks.js";
 import "./server/routes/updates.js";
@@ -194,6 +195,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     initializeStartupReadiness()
       .then(() => inBackground(runClusterWork))
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTaskConversationRecords(); })
+      // A returning node pulls the dashboards it missed while away; afterwards change notices keep it current.
+      .then(() => inBackground(refreshSharedDashboards))
       .catch((error) => console.warn("Startup recovery failed", error));
     setInterval(() => { if (clusterWorkAllowed()) inBackground(() => pullFromHubs()).catch((error) => console.warn("Hub pull failed", error)); }, 60_000).unref();
     setInterval(() => reapInactiveConversations().catch((error) => console.warn("Inactive conversation reap failed", error)), 60_000).unref();
