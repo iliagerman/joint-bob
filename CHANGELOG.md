@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Changed the side Chat to show your question straight away and clear the box when you send it, so a new draft you start typing while the answer loads is kept.
+- Added the rules for dashboards: each one now has a title and exactly one refresh method, and it always belongs to a single conversation, project or workspace that its own files cannot change.
 
 ## 2.148.0 — 2026-10-24
 
