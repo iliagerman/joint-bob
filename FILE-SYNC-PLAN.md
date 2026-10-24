@@ -1,6 +1,6 @@
 # Built-in file sync (replacing Syncthing) — plan for review
 
-Status: **draft**. Proposed decisions are in section 9 and still need review. This plan supersedes the file-transport decision in `CLUSTER-SHARING-DESIGN.md` §6 ("Do not build a replacement bidirectional file-sync engine"), which must be amended when this is accepted.
+Status: **draft**. Section 9 lists the decisions; D1, D5, D11, D15 and D16 were decided on 2026-10-24. This plan supersedes the file-transport decision in `CLUSTER-SHARING-DESIGN.md` §6 ("Do not build a replacement bidirectional file-sync engine"), which must be amended when this is accepted.
 
 ## 1. Goal
 
@@ -127,6 +127,10 @@ Ignore rules come in three explicit classes instead of Syncthing's first-match `
 | user rules | never | kept, unless the rule is marked regenerable (`(?d)` today) | per project, stored in replicated project settings (D11); for example guitar_player's `(?i)/local_bucket/**.mp3` |
 
 - **The outermost matching directory rule decides.** Everything under `.dev-env/` is regenerable even when it matches `*.key`, which fixes the 2026-10-12 case by construction.
+- **Editable in the UI** (section 6), at two levels: all projects, and one project. A project's rules also apply to its ticket and worktree shares. Rules are stored in replicated project settings, so every machine uses the same list (D11). Patterns use `.gitignore` syntax.
+  - Built-in rules can be switched off per project. An example is a project that keeps real source in `target/`.
+  - The `local` (secrets) class is on by default (D15). An admin can switch one secret rule off for one project, but only after a confirmation that names the files that would start syncing.
+  - A per-project option also skips everything that project's `.gitignore` skips. It is off by default (D16), because gitignored folders sometimes hold data that must sync, such as the json files in guitar_player's `local_bucket/`.
 - Worktree shares treat every rule as regenerable and add the existing heavy-directory and binary lists (`worktree-filters.ts`), as today.
 - The server applies the same rules when serving. A file that matches an ignore rule is not in the index, so it is never served, whatever a peer asks for.
 - Media and other binaries stay synced in project shares, with no size limit (decided 2026-10-23). Game art, public images and screenshots are real project content. A bulk data set is excluded with a user rule instead.
@@ -142,7 +146,9 @@ Ignore rules come in three explicit classes instead of Syncthing's first-match `
 - **Full scan** happens when a share is added, at startup, after a watcher error or overflow, before a handoff, and from the "Rescan files" action. It walks the tree with the ignore rules, compares (size, `mtime_ns`, inode, `ctime_ns`) with the index, and hashes only what changed. A file modified in the last 2 s is checked again once it settles. A file that changes while it is being hashed is retried.
 - **Watcher**: `@parcel/watcher` (D4), which uses FSEvents on macOS and inotify on Linux. Ignored directories are passed as exclusions. P1 must confirm on Linux that they cost no inotify watches. It replaces Syncthing's watches rather than adding to them. Events are debounced for 1 s and then rescan only the affected directories.
 - **Turn end**: when an agent turn ends, the engine rescans that project's shares. This catches anything the Linux watcher missed (`shared-transcripts.ts:113` documents such misses) without a timer.
-- **No periodic rescans** (D5), in line with the push-on-change rule.
+- **Opening a project** in the UI, or viewing its sync status, rescans that project's shares.
+- **No periodic rescans** (D5, decided 2026-10-24), in line with the push-on-change rule. Syncthing today rescans every folder hourly and waits 10 s after a change before scanning. Both behaviors go away.
+- **Live consistency check.** Each share keeps a digest of its index: an order-independent hash of every path, its sha256 and its deleted flag. Peers compare digests when they exchange changes and at handoff. If both sides report `synced` and the digests differ, the share shows an error with the paths that differ. This check runs in production, not only in tests, and it costs nothing when nothing changes.
 - **First index**: hashing about 117 GB happens once, throttled to one file at a time with yields, and is measured in `performance.jsonl` as `fileSync.scan`. Syncthing keeps moving files during this time (section 7).
 
 ### 5.5 Conflicts and deletes
@@ -242,7 +248,15 @@ A crash between the temp write and the rename leaves only a temp file, which is 
 - **Settings → File sync** (admin): each share's state, with a page of per-peer cursors and the `need` queue, errors with reasons, shadow-mode differences during migration, and bytes sent over relays. Lists are paged, not scrolled.
 - **Project card**: same badge; "Rescan with Syncthing" becomes "Rescan files".
 - **Handoff dialog**: "Waiting for Syncthing" becomes "Copying files to <node>: 312 files, 4.1 MB left".
-- **Project settings**: user ignore rules (D11).
+- **Settings → File sync → Ignore rules**, a tab with an "All projects" level and a project picker:
+  - Built-in rules appear grouped by class, each with a switch for the selected project. Secret rules ask for confirmation first (5.3).
+  - Your own rules are listed below them, with an add field.
+  - A per-project switch to also skip `.gitignore` entries.
+- **Preview before saving.** The tab shows how many files and how many bytes the change would stop or start syncing, with the largest folders on a paged list. Removing a rule can create conflict copies where the machines hold different versions, and the preview shows how many.
+- **After saving**, the tab says what happens:
+  - Files a new rule covers stop syncing, and every machine keeps the copy it has.
+  - Files a removed rule covered start syncing.
+- The editor ships in P0 with Syncthing as its backend. Each node writes the replicated rules into its own Syncthing ignore list. P1 reads the same settings. guitar_player's rules move in at that point.
 - The Syncthing fieldset is removed in P6.
 
 ## 7. Migration
@@ -283,35 +297,53 @@ Each phase ships on its own. P0 fixes known incidents even if the rest is never 
 
 | Phase | Content | Behavior change |
 |---|---|---|
-| **P0 Decouple** | `src/file-sync/` facade with the operations callers need, with Syncthing behind it as the only backend. Take `startup.syncthing` out of readiness. Ticket and project creation stop depending on Syncthing. `.creating-*` ignore rule. `settings.syncthing` optional. | Small; fixes the 2026-10-06 class of outage |
-| **P1 Local engine** | Ignore classes, `file-sync.db`, worker-thread scanner and hasher, `@parcel/watcher`, turn-end rescans, `fileSync.scan` measurements | None (index only) |
-| **P2 Protocol + shadow** | `shares`, `index`, `changed`, `status` endpoints; cursors; return hooks; the shadow-difference page | None (no writes) |
+| **P0 Decouple** | `src/file-sync/` facade with the operations callers need, with Syncthing behind it as the only backend. Take `startup.syncthing` out of readiness. Ticket and project creation stop depending on Syncthing. `.creating-*` ignore rule. `settings.syncthing` optional. Ignore-rule editor with replicated rules applied through Syncthing (section 6). Benchmark script and the Syncthing baseline (10.2). | Fixes the 2026-10-06 class of outage; rules editable in the UI |
+| **P1 Local engine** | Ignore classes, `file-sync.db`, worker-thread scanner and hasher, `@parcel/watcher`, turn-end and project-open rescans, `fileSync.scan` measurements | None (index only) |
+| **P2 Protocol + shadow** | `shares`, `index`, `changed`, `status` endpoints; cursors; return hooks; index digests and the live consistency check; the shadow-difference page | None (no writes) |
 | **P3 Transfer + apply** | `fetch`/`file`, priority queue, local clone reuse, partials, apply procedure, conflicts, tombstones, trash | Enabled for test projects only |
 | **P4 Integration** | Handoff gate, twin status, takeover wait, merge guard, badges and texts, `sync-check` on the new status, revocation tests, relay parallelism and byte accounting, agent prompt text | Built-in projects behave fully |
 | **P5 Migration** | Capability, per-project switch, bootstrap, rollback. Dogfood order: one small project → several → `joint_bob` itself (its checkout is edited from both machines at once) → all. Then relay-only peers. | Per project |
 | **P6 Removal** | Delete `src/syncthing.ts`, the tunnels, `install-syncthing.sh`, prerequisite checks, `versions.sh` entries, the CI apt step, the settings field, UI and native Syncthing tests. Run the cleanup in 7.4. Update `README.md`, `agents_readme.md`, `CLUSTER-SHARING-DESIGN.md` §6, `RELAY-PLAN.md` §4.9, `TESTING.md` and `docs/features/clusters.*`. | Syncthing gone |
 
-## 9. Decisions (proposed)
+Each phase passes a gate before the next one starts (10.3).
+
+## 9. Decisions
+
+D1, D5, D11, D15 and D16 were decided on 2026-10-24. The others are proposals that have not been objected to.
 
 | # | Topic | Proposal | Alternative |
 |---|---|---|---|
-| D1 | Write model | Several writers with conflict copies, as today: both machines edit the same checkout | One writer per project via project locks; simpler, but changes how people work |
+| D1 | Write model | **Decided:** several writers with conflict copies, as today; both machines edit the same checkout | One writer per project via project locks; simpler, but changes how people work |
 | D2 | Transfer unit | Whole files with whole-file SHA-256, local clone reuse; block deltas later if measured | 128 KiB–1 MiB blocks from the start (partial updates of big files, more code) |
 | D3 | No path | No public Syncthing-style relays or discovery; files go where the cluster API goes | Keep a public fallback (needs our own discovery service) |
 | D4 | Watcher | `@parcel/watcher` (native, prebuilt for darwin/linux x64/arm64; `node-pty` is already native) | Node `fs.watch` (misses on Linux, one watch per file there) |
-| D5 | Rescans | Event-driven only: start, wake, watcher error, turn end, handoff, manual | An hourly safety rescan (a timer, against the no-polling rule) |
+| D5 | Rescans | **Decided:** event-driven only: start, wake, watcher error, turn end, handoff, project opened, status viewed, manual; drift is caught by the live consistency check | A daily or hourly safety rescan (a timer, against the no-polling rule) |
 | D6 | Conflict names | Keep Syncthing's format so existing code keeps working | A Joint Bob format (touches 8+ places) |
 | D7 | Trash | 7 days / 5 GB per share for remote overwrites and deletes; not for worktrees | None (Syncthing's default) |
 | D8 | Index storage | Separate `file-sync.db` | Tables in `node.db` (simpler backups, but contention and size) |
 | D9 | Threads | Disk work in a worker thread | Main thread with yields |
 | D10 | `.git` | Stays node-local; `git-catch-up` unchanged | Sync `.git` (unsafe with two writers) |
-| D11 | User ignore rules | Stored in replicated project settings; migration imports each project's existing `.stignore` user rules (on 2026-10-23: guitar_player's `/chords_generator/models` and `local_bucket` mp3s) | Keep a file in the root |
+| D11 | User ignore rules | **Decided:** edited in Settings → File sync and stored in replicated project settings, at all-projects and per-project level; migration imports each project's existing `.stignore` user rules (on 2026-10-23: guitar_player's `/chords_generator/models` and `local_bucket` mp3s) | Keep a file in the root |
 | D12 | Cutover | Per project, all its peers at once, after shadow mode; rollback until P6 | Per peer pair (two engines in one directory) or one big switch |
 | D13 | `syncFolderId` | Kept as the share ID in schema and wire format | Rename (breaks signed metadata with older peers) |
 | D14 | Syncthing daemon | Leave it running if it holds other folders; remove only our own unit otherwise | Always uninstall |
+| D15 | Secret rules | **Decided:** on by default; an admin can switch one off for one project after a confirmation naming the files that would start syncing | Locked |
+| D16 | `.gitignore` | **Decided:** a per-project option to also skip gitignored paths, off by default | On by default; not offered |
 
 ## 10. Testing
 
+### 10.1 Correctness
+
+- **Randomized convergence test.** This is the main proof. Each run is a seeded random sequence of operations across 2–3 engines:
+  - creates, edits, deletes and renames;
+  - simultaneous edits to the same file and simultaneous edit-against-delete;
+  - dropped connections, and processes killed between the temp write and the rename.
+
+  After each run, two properties must hold:
+  - every machine has an identical tree;
+  - no content is lost: every version ever written is the final file, a conflict copy, or in the trash.
+
+  It runs thousands of seeds in CI, and a failing seed reproduces exactly.
 - **Unit**: vector comparison; ignore classes (port the scenarios in `test/syncthing-dependency-filters.test.ts` and the 2026-10-12 `.dev-env` case); conflict names against the regexes in `sync-check.ts` and `shared-paths.ts`; path checks (`..`, absolute, NUL, symlinked parents, case collisions, NFD names); the frame parser with truncated and oversized frames.
 - **Engine, in one process**: three engines on temp directories over a fake transport, in the style of `test/relay-transport.test.ts`. Covers:
   - create, modify, delete, rename;
@@ -330,8 +362,36 @@ Each phase ships on its own. P0 fixes known incidents even if the rest is never 
   - a relay-only peer through the relay harness;
   - shadow mode reporting zero differences on an idle project;
   - cutover and rollback with Syncthing present.
+- **Mac against Linux**: a Mac dev node paired with a Linux node in Docker. It covers names that differ only by case, NFD against NFC, and symlinks. The mi_fit cleanup on 2026-10-23 found Linux folders that differ only by case merged into one on the Mac.
 - **Replace** the native Syncthing tests (`worktree-native-sync`, `twin-native-files`, `twin-legacy-folders`, `twin-idle-enrollment`, `selected-sharing-runtime`) with built-in equivalents before P6, then drop `test/native-syncthing.ts` and the CI install.
-- **Performance**: `fileSync.*` operations in `performance.jsonl`. On the homeserver, event-loop busy time must not rise above its level with Syncthing, measured with `scripts/perf-report.mjs` before and after.
+- **In production**: the live consistency check (5.4) reports any share whose digests differ while both sides say `synced`.
+
+### 10.2 Benchmark against Syncthing
+
+`scripts/sync-bench.mjs` runs the same scenarios against either engine between the Mac and the homeserver. It uses a dedicated benchmark project with synthetic files, so no real project is touched. Results are written as JSON and compared side by side. **The Syncthing baseline is recorded in P0, before the engine exists.**
+
+| Scenario | Measured |
+|---|---|
+| Edit one small file | time until it is on the other machine. Syncthing waits at least 10 s by its settings; target ≤2 s |
+| One agent turn touching 50 files | time until all have arrived |
+| New worktree of `joint_bob` | time until it is listed on the other machine; time until all files have arrived (the 2026-10-11 case took 35 min) |
+| 10,000 small files | wall time, request count |
+| One 500 MB file, then 1 MB of it changed | wall time, bytes. Syncthing sends changed blocks only, so it is expected to win the second step; the result decides whether D2 needs block transfer |
+| Delete a directory of 5,000 files | time until it is gone on the other machine |
+| The above through a Joint Bob relay | the same, plus bytes counted against the relay cap |
+
+For every scenario: bytes on the wire, CPU time and RSS of the sync process (the Syncthing daemon, or the Joint Bob worker), event-loop busy time on the homeserver (`scripts/perf-report.mjs`), and inotify watches. Two more numbers are taken once each: CPU over an idle hour, and the time from a restart until every share is indexed. `fileSync.*` operations are also logged in `performance.jsonl`.
+
+**Pass bar**: equal or better than Syncthing on every scenario except the in-place edit of a large file. The homeserver must not be busier than with Syncthing.
+
+### 10.3 Phase gates
+
+| Before | Gate |
+|---|---|
+| P3 (first writes) | shadow mode runs 7 days on every shared project with 0 unexplained differences; the randomized test is green on 10,000 seeds |
+| P5 (migration) | test projects run 7 days on the built-in engine with 0 lost files, 0 unexplained conflict copies and 0 consistency-check errors; the benchmark meets the pass bar |
+| Migrating `joint_bob` | several projects on the built-in engine for 7 days with the same results |
+| P6 (removal) | every shared project on the built-in engine for 14 days; rollback no longer used |
 
 ## 11. Risks
 
