@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added live streaming to the side Chat, so answers appear as they are written, with Copy and Quote buttons on each message that copy its text or quote it into your next question.
+
 ## 2.149.1 — 2026-10-24
 
 - Fixed dashboards on a phone so they fit the screen, switch between Chat and Preview tabs, open from the project and conversation menus, and no longer show the previous dashboard while another loads.

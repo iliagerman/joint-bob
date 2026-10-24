@@ -86,7 +86,8 @@ export function broadcastToAllClients(payload: unknown, accountId?: string): voi
   sessionListingChanged();
   announceToAllClients(payload, accountId);
 }
-function announceToAllClients(payload: unknown, accountId?: string): void {
+/** Push transient updates without invalidating the conversation listings. */
+export function announceToAllClients(payload: unknown, accountId?: string): void {
   const sockets = new Set<WebSocket>();
   for (const clients of watchClients.values()) for (const client of clients) sockets.add(client);
   for (const session of harnessSessions.values()) for (const client of session.clients) sockets.add(client);

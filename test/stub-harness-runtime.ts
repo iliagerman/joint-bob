@@ -126,11 +126,13 @@ function wrapClaudeSession(session: HarnessSession, options: HarnessOpenOptions)
   claude.runPrompt = async (input, state, env, context, resumeSessionId) => {
     if (!enabled()) return nativeRunPrompt(input, state, env, context, resumeSessionId);
     claude.markStarted(input, state);
+    const streaming = process.env.JOINT_BOB_TEST_ENGINE_STREAMING === "1";
+    if (streaming) claude.emit({ type: "textDelta", text: "stubbed" });
     await recordStubRun("claude");
     await appendClaudeTranscript(session, options, input);
     claude.transcript.push({ id: `${session.id}:assistant:${claude.transcript.length}`, role: "assistant", text: "stubbed response" });
     claude.emit({ type: "sessionFile", sessionId: session.id, sessionFile: session.file });
-    claude.emit({ type: "textDelta", text: "stubbed response" });
+    claude.emit({ type: "textDelta", text: streaming ? " response" : "stubbed response" });
   };
   return session;
 }

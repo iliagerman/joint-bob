@@ -10,7 +10,12 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-btw-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
-  const server = await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log") });
+  const hold = path.join(root, "stream-hold");
+  await mkdir(hold);
+  const server = await startDevNode(environment, node, {
+    JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log"),
+    JOINT_BOB_TEST_ENGINE_HOLD_DIR: hold, JOINT_BOB_TEST_ENGINE_STREAMING: "1",
+  });
   let browser;
   try {
     browser = await launchChrome({ headless: true });
@@ -50,10 +55,33 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
     } finally { releaseQuestion(); }
     const answered = await answering;
     assert.equal(answered.status(), 202, await answered.text());
+    await page.locator("#conversationChatMessages article.assistant .md").getByText("stubbed", { exact: true }).waitFor({ timeout: 5000 });
+    assert.match(await page.getByTestId("conversation-chat-status").textContent() ?? "", /Answering/);
+    assert.equal(await page.getByTestId("conversation-chat-input").inputValue(), "next question draft");
+    await page.reload();
+    await page.getByTestId("activity-chat-tab").click();
+    await page.locator("#conversationChatMessages article.assistant .md").getByText("stubbed", { exact: true }).waitFor({ timeout: 5000 });
+    await page.getByTestId("conversation-chat-input").fill("next question draft");
+    await writeFile(path.join(hold, "claude.release"), "release");
     await page.getByTestId("conversation-chat-messages").getByText("stubbed response", { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelector("#conversationChatStatus")!.textContent === "");
     assert.equal(await page.getByTestId("conversation-chat-input").inputValue(), "next question draft", "answers never erase a new draft");
     assert.equal(await page.getByTestId("conversation-chat-messages").getByText("side-only question", { exact: true }).count(), 1, "server history replaces rather than duplicates the optimistic question");
     assert.equal(await page.locator("#messages").getByText("side-only question", { exact: true }).count(), 0);
+    const assistant = page.locator("#conversationChatMessages article.assistant");
+    const user = page.locator("#conversationChatMessages article.user");
+    assert.notEqual(await assistant.evaluate((element) => getComputedStyle(element).backgroundColor), await user.evaluate((element) => getComputedStyle(element).backgroundColor));
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await assistant.getByRole("button", { name: "Copy message", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#conversationChatMessages article.assistant button")?.textContent === "Copied");
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "stubbed response");
+    await assistant.getByRole("button", { name: "Quote message", exact: true }).click();
+    assert.equal(await page.getByTestId("conversation-chat-input").inputValue(), "next question draft\n\n> Assistant:\n> stubbed response\n\n");
+    await user.getByRole("button", { name: "Copy message", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#conversationChatMessages article.user button")?.textContent === "Copied");
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "side-only question");
+    await user.getByRole("button", { name: "Quote message", exact: true }).click();
+    assert.match(await page.getByTestId("conversation-chat-input").inputValue(), /> You:\n> side-only question/);
     await page.getByTestId("activity-activity-tab").click();
     assert.equal(await page.getByTestId("activity-body").isVisible(), true);
     await page.getByTestId("activity-chat-tab").click();
@@ -78,6 +106,7 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
     assert.ok(box && box.x >= 0 && box.x + box.width <= 391);
     assert.deepEqual(errors, []);
   } finally {
+    await writeFile(path.join(hold, "claude.release"), "release");
     await browser?.close();
     await stopDevNode(server);
     await rm(root, { recursive: true, force: true });
@@ -92,7 +121,7 @@ test("side-chat queues follow-ups, keeps them across reload, and updates automat
   await mkdir(hold);
   const engineLog = path.join(root, "engine.log");
   const server = await startDevNode(environment, node, {
-    JOINT_BOB_TEST_ENGINE_LOG: engineLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: hold,
+    JOINT_BOB_TEST_ENGINE_LOG: engineLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: hold, JOINT_BOB_TEST_ENGINE_STREAMING: "1",
   });
   let browser;
   try {

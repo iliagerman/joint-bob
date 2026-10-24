@@ -25,6 +25,8 @@ let loadedUrl = null;
 let generation = 0;
 let refreshRequest = 0;
 let busy = false;
+let streaming = null;
+let streamFrame = 0;
 let defaults = { showSelectors: true, model: null };
 
 function conversationUrl() {
@@ -64,8 +66,40 @@ function setBusy(value) {
   modelSelect.disabled = value || !harnessSelect.value;
 }
 
+function messageActions(message) {
+  const actions = document.createElement("div");
+  actions.className = "conversation-chat-message-actions";
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "ghost compact";
+  copy.textContent = "Copy";
+  copy.setAttribute("aria-label", "Copy message");
+  copy.dataset.testid = "conversation-chat-copy";
+  copy.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(message.text); copy.textContent = "Copied"; }
+    catch (error) { toast(`Could not copy message: ${error.message}`); }
+  });
+  const quote = document.createElement("button");
+  quote.type = "button";
+  quote.className = "ghost compact";
+  quote.textContent = "Quote";
+  quote.setAttribute("aria-label", "Quote message");
+  quote.dataset.testid = "conversation-chat-quote";
+  quote.addEventListener("click", () => {
+    const author = message.role === "user" ? "You" : "Assistant";
+    const quoted = [`> ${author}:`, ...message.text.split("\n").map((line) => `> ${line}`)].join("\n");
+    input.value += `${input.value ? "\n\n" : ""}${quoted}\n\n`;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+  actions.append(copy, quote);
+  return actions;
+}
+
 function renderMessages(messages) {
   const list = byId("conversationChatMessages");
+  const scrollTop = list.scrollTop;
+  const follow = list.scrollHeight - scrollTop - list.clientHeight < 32;
   list.replaceChildren();
   if (!messages.length) {
     const empty = document.createElement("p");
@@ -77,12 +111,15 @@ function renderMessages(messages) {
     const entry = document.createElement("article");
     entry.className = `conversation-chat-message ${message.role}`;
     const label = document.createElement("strong");
-    label.textContent = message.role === "user" ? (message.queued ? "You · Queued" : "You") : "Assistant";
+    label.textContent = message.role === "user" ? (message.queued ? "You · Queued" : "You") : message.streaming ? "Assistant · Writing…" : "Assistant";
+    const header = document.createElement("header");
+    header.className = "conversation-chat-message-header";
+    header.append(label, messageActions(message));
     const text = document.createElement("div");
     text.className = "md";
     if (message.role === "assistant") renderMarkdown(text, message.text);
     else { text.textContent = message.text; text.style.whiteSpace = "pre-wrap"; }
-    entry.append(label, text);
+    entry.append(header, text);
     if (message.error) {
       const error = document.createElement("p");
       error.className = "settings-hint";
@@ -91,14 +128,24 @@ function renderMessages(messages) {
     }
     list.append(entry);
   }
-  list.scrollTop = list.scrollHeight;
+  list.scrollTop = follow ? list.scrollHeight : scrollTop;
+}
+
+function acceptSnapshot(body) {
+  snapshot = body;
+  if (body.stream && (!streaming || streaming.id !== body.stream.id || body.stream.text.length >= streaming.text.length)) streaming = body.stream;
+  if (streaming && (body.messages.some((message) => message.id === streaming.id || (message.id === streaming.questionId && message.error)) || (!body.busy && !body.stream))) streaming = null;
 }
 
 function renderChat() {
-  const queued = snapshot.queue.map((item) => ({ id: item.id, role: "user", text: item.question, queued: true }));
+  const historyIds = new Set(snapshot.messages.map((item) => item.id));
+  const queued = snapshot.queue.filter((item) => !historyIds.has(item.id)).map((item) => ({ id: item.id, role: "user", text: item.question, queued: item.id !== streaming?.questionId }));
   const known = new Set([...snapshot.messages, ...queued].map((item) => item.id));
   const pending = [...submitting.values()].filter((item) => !known.has(item.id));
-  renderMessages([...snapshot.messages, ...queued, ...pending]);
+  const active = [...queued, ...pending].filter((item) => item.id === streaming?.questionId);
+  const waitingMessages = [...queued, ...pending].filter((item) => item.id !== streaming?.questionId);
+  const live = streaming ? [{ ...streaming, role: "assistant", streaming: true }] : [];
+  renderMessages([...snapshot.messages, ...active, ...live, ...waitingMessages]);
   setBusy(snapshot.busy || snapshot.queue.length > 0 || submitting.size > 0);
   const waiting = queued.length + pending.filter((item) => item.queued).length;
   status.textContent = busy ? `${snapshot.busy ? "Answering…" : "Sending…"}${waiting ? ` · ${waiting} queued` : ""}` : "";
@@ -112,7 +159,7 @@ async function refreshChat() {
   try {
     const body = await api(url);
     if (current !== generation || request !== refreshRequest || url !== conversationUrl() || url !== loadedUrl) return;
-    snapshot = body;
+    acceptSnapshot(body);
     renderChat();
   } catch (error) {
     if (current === generation && request === refreshRequest) status.textContent = error.message;
@@ -145,7 +192,7 @@ async function loadChat() {
     harnessSelect.value = model?.harnessId ?? "";
     fillModels(harnessSelect, modelSelect, model ?? {});
     byId("conversationChatSelectors").hidden = !defaults.showSelectors;
-    snapshot = body;
+    acceptSnapshot(body);
     renderChat();
     // A pushed completion may have arrived while the initial GET or model catalog was loading.
     await refreshChat();
@@ -213,7 +260,7 @@ clear.addEventListener("click", async () => {
   try {
     const body = await api(url, { method: "DELETE" });
     if (current === generation && url === conversationUrl()) {
-      snapshot = { ...body, busy: false };
+      acceptSnapshot({ ...body, busy: false });
       status.textContent = "";
     }
   } catch (error) {
@@ -226,6 +273,16 @@ clear.addEventListener("click", async () => {
     }
   }
 });
+document.addEventListener("conversation-chat-stream", (event) => {
+  const payload = event.detail;
+  if (payload.projectId !== state.activeProjectId || payload.conversationId !== state.activeConversationId || loadedUrl !== conversationUrl()) return;
+  if (snapshot.messages.some((message) => message.id === payload.stream.id)) return;
+  refreshRequest += 1;
+  streaming = payload.stream;
+  if (payload.messages) snapshot.messages = payload.messages;
+  snapshot.busy = true;
+  if (!streamFrame) streamFrame = requestAnimationFrame(() => { streamFrame = 0; renderChat(); });
+});
 document.addEventListener("conversation-chat-changed", (event) => {
   if (event.detail.projectId !== state.activeProjectId || event.detail.conversationId !== state.activeConversationId) return;
   void refreshChat().then(() => { if (event.detail.error && loadedUrl === conversationUrl()) status.textContent = event.detail.error; });
@@ -236,6 +293,7 @@ document.addEventListener("activity-conversation-changed", () => {
   generation += 1;
   loadedUrl = null;
   submitting.clear();
+  streaming = null;
   snapshot = { messages: [], queue: [], busy: false };
   input.value = "";
   renderMessages([]);

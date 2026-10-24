@@ -282,6 +282,10 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
 }
 
 export function handleSocketPayload(payload, scrollOnReady = false) {
+  if (payload.type === "conversationChatStream") {
+    document.dispatchEvent(new CustomEvent("conversation-chat-stream", { detail: payload }));
+    return;
+  }
   if (payload.type === "conversationChatChanged") {
     document.dispatchEvent(new CustomEvent("conversation-chat-changed", { detail: payload }));
     return;
