@@ -1882,9 +1882,12 @@ select.chat-toolbar-control {
 .messages-wrap.activity-open { flex-direction: row; }
 .messages-wrap.activity-open > .messages { min-width: 0; }
 .messages-wrap.activity-open .jump-to-bottom { right: calc(var(--activity-width) + 18px); }
-.messages-wrap { --activity-width: clamp(300px, 28vw, 420px); }
-.activity-panel { display: flex; flex: 0 0 var(--activity-width); flex-direction: column; width: var(--activity-width); min-height: 0; border-left: 1px solid var(--line); background: var(--surface); }
+.messages-wrap { --activity-width: clamp(280px, var(--activity-preferred-width, clamp(300px, 28vw, 420px)), 65%); }
+.activity-panel { position: relative; display: flex; flex: 0 0 var(--activity-width); flex-direction: column; width: var(--activity-width); min-height: 0; border-left: 1px solid var(--line); background: var(--surface); }
 .activity-panel[hidden] { display: none; }
+.activity-panel-resize { position: absolute; z-index: 5; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
+.activity-panel-resize:hover, .activity-panel-resize:focus-visible { background: var(--accent); outline: none; }
+body.activity-resizing, body.activity-resizing * { cursor: col-resize !important; user-select: none !important; }
 .activity-panel-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 6px 14px; }
 .activity-panel-header h2 { margin: 0; color: var(--text); font-size: 13px; font-weight: 650; letter-spacing: 0.01em; }
 .activity-tabs { display: flex; gap: 6px; }
@@ -2017,11 +2020,12 @@ select.chat-toolbar-control {
 @media (max-width: 900px) {
   .messages-wrap.activity-open { flex-direction: column; }
   .messages-wrap.activity-open .jump-to-bottom { right: 18px; }
-  .activity-panel { position: absolute; z-index: 4; inset: 0 0 0 auto; width: min(92%, 380px); box-shadow: var(--shadow); }
+  .activity-panel { position: absolute; z-index: 4; inset: 0 0 0 auto; width: min(92%, var(--activity-preferred-width, 380px)); box-shadow: var(--shadow); }
 }
 /* A phone has no room for a strip of thread beside the panel, nor for two small scrolling
    boxes inside it: the panel covers the thread and scrolls as one page under its header. */
 @media (max-width: 640px) {
+  .activity-panel-resize { display: none; }
   .activity-panel { inset: 0; width: auto; border-left: 0; overflow-y: auto; overscroll-behavior: contain; }
   .activity-panel-header { position: sticky; top: 0; z-index: 2; background: var(--surface); }
   .activity-body { flex: none; overflow: visible; }

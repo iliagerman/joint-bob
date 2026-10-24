@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a draggable left edge to the activity panel, so you can widen or narrow it; the width is remembered in this browser and the arrow keys adjust it too.
+
 ## 2.150.0 — 2026-10-24
 
 - Changed dashboard mode to keep the dashboard agent's chat in a collapsible panel on the left, with its steps and answer shown live in the middle of the screen as it builds.

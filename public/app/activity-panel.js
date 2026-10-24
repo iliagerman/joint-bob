@@ -34,6 +34,56 @@ let chosenOpen = null;
 let stepsOpen = false;
 let statsFrame = 0;
 
+const resizeHandle = document.getElementById("activityPanelResize");
+const WIDTH_STORAGE_KEY = "joint-bob-activity-width";
+function applyPanelWidth(width) {
+  const maximum = elements.messagesWrap.clientWidth * (OVERLAY_QUERY.matches ? 0.92 : 0.65);
+  const bounded = Math.round(Math.max(280, Math.min(width, maximum)));
+  elements.messagesWrap.style.setProperty("--activity-preferred-width", `${bounded}px`);
+  resizeHandle.setAttribute("aria-valuenow", String(bounded));
+  resizeHandle.setAttribute("aria-valuemin", "280");
+  resizeHandle.setAttribute("aria-valuemax", String(Math.round(maximum)));
+  return bounded;
+}
+
+// Browser-local preference shared by Activity and Chat, not conversation data.
+try {
+  const saved = Number(localStorage.getItem(WIDTH_STORAGE_KEY));
+  if (Number.isFinite(saved) && saved >= 280) {
+    elements.messagesWrap.style.setProperty("--activity-preferred-width", `${saved}px`);
+  }
+} catch (error) { console.warn("Could not restore activity panel width", error); }
+
+function savePanelWidth() {
+  try {
+    localStorage.setItem(WIDTH_STORAGE_KEY, String(Math.round(elements.activityPanel.getBoundingClientRect().width)));
+  } catch (error) { console.warn("Could not save activity panel width", error); }
+}
+
+let drag = null;
+resizeHandle.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  drag = { x: event.clientX, width: elements.activityPanel.getBoundingClientRect().width };
+  resizeHandle.setPointerCapture(event.pointerId);
+  resizeHandle.focus();
+  document.body.classList.add("activity-resizing");
+});
+resizeHandle.addEventListener("pointermove", (event) => {
+  if (drag) applyPanelWidth(drag.width + drag.x - event.clientX);
+});
+resizeHandle.addEventListener("lostpointercapture", () => {
+  drag = null;
+  document.body.classList.remove("activity-resizing");
+  savePanelWidth();
+});
+resizeHandle.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  event.preventDefault();
+  applyPanelWidth(elements.activityPanel.getBoundingClientRect().width + (event.key === "ArrowLeft" ? 20 : -20));
+  savePanelWidth();
+});
+
 function storedOpen() {
   if (chosenOpen !== null) return chosenOpen;
   return window.innerWidth >= 1280 && !document.body.classList.contains("canvas-pane-mode");

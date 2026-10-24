@@ -146,6 +146,48 @@ async function waitFrames(): Promise<void> {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
+test("activity panel width is draggable and survives browser reopen", async () => {
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator("#loginDialog[open]").waitFor({ timeout: 20_000 });
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card", { hasText: PROJECT_NAME }).first().click();
+  await page.locator(".session-card", { hasText: CONVERSATION_TITLE }).first().click();
+  const panel = page.getByTestId("activity-panel");
+  await panel.waitFor({ state: "visible" });
+  const handle = page.getByTestId("activity-panel-resize");
+  await handle.waitFor({ state: "visible", timeout: 3000 });
+  const original = (await panel.boundingBox())!;
+  const grip = (await handle.boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(grip.x - 100, grip.y + 100, { steps: 8 });
+  await page.mouse.up();
+  const wider = (await panel.boundingBox())!.width;
+  assert.ok(wider > original.width + 90);
+  await handle.focus();
+  await page.keyboard.press("ArrowRight");
+  const savedWidth = (await panel.boundingBox())!.width;
+  assert.ok(savedWidth < wider, "right arrow narrows the right-hand panel");
+  const storage = await context.storageState();
+  const reopened = await browser.newContext({ storageState: storage, viewport: page.viewportSize()! });
+  try {
+    const fresh = await reopened.newPage();
+    await fresh.goto(node.url, { waitUntil: "domcontentloaded" });
+    await fresh.locator(".project-card", { hasText: PROJECT_NAME }).first().click();
+    await fresh.locator(".session-card", { hasText: CONVERSATION_TITLE }).first().click();
+    await fresh.getByTestId("activity-panel").waitFor({ state: "visible" });
+    assert.ok(Math.abs((await fresh.getByTestId("activity-panel").boundingBox())!.width - savedWidth) < 2);
+    await fresh.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await fresh.getByTestId("activity-panel-resize").isVisible(), false);
+  } finally {
+    await reopened.close();
+    await page.evaluate(() => localStorage.removeItem("joint-bob-activity-width"));
+    await context.clearCookies();
+  }
+});
+
 test("tool calls live in the activity panel, the thread keeps a marker, and the summary shows", async () => {
   await page.goto(node.url, { waitUntil: "domcontentloaded" });
   await page.locator("#loginDialog[open]").waitFor({ timeout: 20_000 });
