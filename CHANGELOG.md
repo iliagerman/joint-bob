@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.149.1 — 2026-10-24
 
-- Changed dashboards on a phone to switch between Chat and Preview tabs, and opened them from the project and conversation menus; a dashboard no longer shows the previous one while another loads.
+- Fixed dashboards on a phone so they fit the screen, switch between Chat and Preview tabs, open from the project and conversation menus, and no longer show the previous dashboard while another loads.
 
 ## 2.149.0 — 2026-10-24
 
