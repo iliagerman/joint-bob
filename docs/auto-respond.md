@@ -10,6 +10,15 @@ running in the background, a second model reads the conversation, checks the sto
 instructions first, and either writes the next user message or stops. The reply is
 queued like any message you type and appears with an **Auto** badge.
 
+Runtime notifications are evidence for the responder, not messages or approvals from you.
+An idle conversation can be reviewed again when a runtime event follows the agent's
+answer, even if that answer was already reviewed. For recoverable interruptions or
+routine confirmations, the responder should give the agent a safe next step within your
+instructions: inspect current state and partial results, continue unfinished work, then
+verify it. It must not assume success, blindly repeat an uncertain action, bypass your
+constraints, or resume work you deliberately stopped. Unanswered messages you wrote
+still take priority.
+
 It stops when:
 
 - a stop instruction holds (the responder gives the reason),

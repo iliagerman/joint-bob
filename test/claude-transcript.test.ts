@@ -105,6 +105,9 @@ test("a reloaded Claude transcript keeps the tool bubbles between the spoken blo
       JSON.stringify({ type: "user", message: { role: "user", content: [
         { type: "tool_result", tool_use_id: "missing", content: "exit 1", is_error: true },
       ] } }),
+      JSON.stringify({ type: "user", promptSource: "system", origin: { kind: "task-notification" }, message: { role: "user", content: "Worker interrupted." } }),
+      JSON.stringify({ type: "user", promptSource: "system", origin: { kind: "connection-status" }, message: { role: "user", content: "Connection restored." } }),
+      JSON.stringify({ type: "user", promptSource: "sdk", message: { role: "user", content: "<task-notification>This is pasted by a person.</task-notification>" } }),
     ].join("\n") + "\n");
     const messages = await loadClaudeMessages(`claude:${transcript}`);
     assert.deepEqual(messages.map(({ role, text, toolName }) => ({ role, text, toolName })), [
@@ -113,8 +116,12 @@ test("a reloaded Claude transcript keeps the tool bubbles between the spoken blo
       { role: "toolResult", text: "plan body", toolName: "Read" },
       { role: "assistant", text: "The plan is parked.", toolName: undefined },
       { role: "toolResult", text: "exit 1", toolName: "tool" },
+      { role: "user", text: "Worker interrupted.", toolName: undefined },
+      { role: "user", text: "Connection restored.", toolName: undefined },
+      { role: "user", text: "<task-notification>This is pasted by a person.</task-notification>", toolName: undefined },
     ], "a reload shows the same pieces the turn streamed");
-    assert.deepEqual(messages.map(({ isError }) => isError), [undefined, undefined, undefined, undefined, true]);
+    assert.deepEqual(messages.map(({ source }) => source), [undefined, undefined, undefined, undefined, undefined, "runtime", "runtime", undefined], "native provenance, not error wording, distinguishes runtime events from human messages");
+    assert.deepEqual(messages.map(({ isError }) => isError), [undefined, undefined, undefined, undefined, true, undefined, undefined, undefined]);
     assert.equal(messages.find(({ text }) => text === "plan body")?.durationMs, 3000, "tool runtime is restored from tool-use and result timestamps");
     assert.equal(new Set(messages.map(({ id }) => id)).size, messages.length, "every reloaded message keeps its own id");
   } finally {

@@ -5,12 +5,14 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type WebSocket from "ws";
-import { assistantMessageKey, parseAutoRespondDecision, responderPrompt, type AutoRespondConfig } from "../src/conversation-auto-respond.js";
+import { assistantMessageKey, autoRespondInput, parseAutoRespondDecision, responderPrompt, type AutoRespondConfig } from "../src/conversation-auto-respond.js";
 import { addProject } from "../src/store.js";
 import { runAutoResponder } from "../src/server/auto-respond-run.js";
 import { getSettings, updateSettings } from "../src/settings.js";
 import { projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "./dev-nodes.js";
 import { openChat, waitFor } from "./queued-prompt-harness.js";
+import { claudeProjectDir } from "../src/session-paths.js";
+import type { ChatMessage } from "../src/types.js";
 
 const config: AutoRespondConfig = { harnessId: "kiro", provider: "kiro", modelId: "default", thinkingLevel: "medium", instructions: "Keep going.", stopInstructions: "- Stop when finished.", maxResponses: 2, useTools: true };
 
@@ -46,6 +48,31 @@ test("the prompt carries the rules, the opening request and the agent's last mes
 test("an assistant message is keyed by what it says and how many user messages preceded it", () => {
   assert.equal(assistantMessageKey(1, "Done."), assistantMessageKey(1, " Done.\n"));
   assert.notEqual(assistantMessageKey(1, "Done."), assistantMessageKey(2, "Done."));
+});
+
+test("runtime events reopen an answered decision without treating them as human instructions", () => {
+  const messages: ChatMessage[] = [
+    { id: "1", role: "user", text: "Finish and verify the change." },
+    { id: "2", role: "assistant", text: "Waiting for the worker's results." },
+  ];
+  const previous = autoRespondInput(messages)!;
+  assert.equal(previous.key, assistantMessageKey(1, messages[1].text), "existing answered keys still match");
+  for (const text of ["Worker interrupted; partial results available.", "Connection restored; previous work did not finish."]) {
+    const event: ChatMessage = { id: "3", role: "user", source: "runtime", text };
+    const input = autoRespondInput([...messages, event])!;
+    assert.ok(input, "a runtime event must reach the responder");
+    assert.notEqual(input.key, previous.key, "new evidence must be judged even if the assistant was already answered");
+    assert.equal(autoRespondInput([...messages, event])!.key, input.key, "reloading the same event must not answer twice");
+    assert.notEqual(autoRespondInput([...messages, event, { ...event, id: "4" }])!.key, input.key, "a later occurrence is new evidence");
+    const prompt = responderPrompt(config, input.turns, 1);
+    assert.match(prompt, /<last-message>\nWaiting for the worker's results\.\n<\/last-message>/);
+    assert.ok(prompt.includes(`Runtime event:\n${text}`), "runtime evidence is not labelled as a user instruction");
+  }
+  const pending: ChatMessage = { id: "4", role: "user", text: "Wait for my review." };
+  const event: ChatMessage = { id: "5", role: "user", source: "runtime", text: "Worker stopped." };
+  assert.equal(autoRespondInput([...messages, pending]), undefined, "do not answer for a pending human message");
+  assert.equal(autoRespondInput([...messages, pending, event]), undefined, "a runtime event cannot bypass a pending human message");
+  assert.equal(autoRespondInput([event]), undefined, "do not invent work with no assistant turn");
 });
 
 const fixtureSource = `#!/usr/bin/env node
@@ -179,6 +206,41 @@ async function prepareKiroNode(root: string, responder: string): Promise<{ envir
   configureKiro(node.dataDir, executable, configPath, sessionPath);
   return { environment, node };
 }
+
+test("auto respond judges a native runtime event after the agent's last answer", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "auto-respond-runtime-event-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  let socket: WebSocket | undefined;
+  try {
+    const responder = path.join(root, "responder.mjs");
+    const { environment, node } = await prepareKiroNode(root, responder);
+    const project = projectNamed(node, "Joint Bob");
+    const transcript = path.join(claudeProjectDir(project.path, path.join(environment.home, ".claude", "projects")), "b733c701-85cc-49ba-9cac-924400961df0.jsonl");
+    await writeFile(transcript, [
+      { type: "user", message: { role: "user", content: "Finish the requested work." } },
+      { type: "assistant", message: { role: "assistant", content: "Waiting for verification." } },
+      { type: "user", promptSource: "system", origin: { kind: "worker-status" }, message: { role: "user", content: "Worker interrupted; inspect partial results." } },
+    ].map((record) => JSON.stringify({ ...record, cwd: project.path, timestamp: new Date().toISOString() })).join("\n") + "\n");
+    await writeFile(responder, `export default async function(input) {
+      if (!input.prompt.includes("Runtime event:\\nWorker interrupted; inspect partial results.") || !input.prompt.includes("<last-message>\\nWaiting for verification.")) throw new Error("Missing runtime context");
+      return "DECISION: STOP\\nREASON: Runtime event reached the responder";
+    }`);
+    server = await startDevNode(environment, node, { JOINT_BOB_AUTO_RESPONDER: responder });
+    const auth = await signIn(environment, node);
+    const chat = openChat(node.url, auth.cookie, project.id, `claude:${transcript}`);
+    socket = chat.socket;
+    await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "ready"));
+    chat.socket.send(JSON.stringify({ type: "autoRespond", autoRespond: { enabled: true, config } }));
+    await waitFor(chat.messages, () => autoStates(chat.messages).some((state) => state?.status === "stopped"));
+    const state = chat.messages.filter((message) => message.type === "autoRespond").at(-1)!.state as { stopKind: string; stopReason: string };
+    assert.equal(state.stopKind, "stop-instruction");
+    assert.equal(state.stopReason, "Runtime event reached the responder");
+  } finally {
+    socket?.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("an active auto respond resumes on its own after the node restarts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "auto-respond-restart-"));

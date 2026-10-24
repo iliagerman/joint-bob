@@ -218,6 +218,8 @@ export interface ChatMessage {
   id: string;
   role: string;
   text: string;
+  /** Harness-generated context, not a message or authorization from the user. */
+  source?: "runtime";
   /** Exact execution settings for the assistant answer, when the transcript records them. */
   attribution?: {
     harnessId: HarnessId;

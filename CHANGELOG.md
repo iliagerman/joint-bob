@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Added a log entry each time a request between your machines fails, recording where it stopped and how long each step took, without paths, request bodies, headers or secrets.
 - Added a Chat tab beside Activity for asking read-only questions about a conversation without changing it; `/bob-btw` now opens this tab instead of copying the conversation, and its history stays until you clear it.
+- Changed auto-respond to look at an idle agent again after a runtime event such as an interruption or a restored connection, and to resume unfinished work within your instructions, while still answering your own unanswered messages first.
 
 ## 2.147.0 — 2026-10-23
 

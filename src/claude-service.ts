@@ -570,6 +570,7 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
       id: `${index}`,
       role,
       text: role === "user" ? stripHandoffEnvelope(text) : text,
+      ...(role === "user" && record.promptSource === "system" ? { source: "runtime" as const } : {}),
       ...stamp,
       ...(role === "assistant" && modelId && reasoning ? { attribution: { harnessId: "claude", provider: "claude", modelId, reasoning } } : {}),
     });

@@ -16,7 +16,7 @@ import { getDifficultyClassifier } from "../classifiers/registry.js";
 import { automaticRoutingModelAllowed, routingEvalDue } from "../routing-policy.js";
 import { activeRoutingConfig, routingConfigDatabase, routingConfigWarning, type StoredRoutingConfig } from "../routing-configs.js";
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
-import { attachAutoReplies, recordAutoReply, DEFAULT_AUTO_RESPOND_INSTRUCTIONS, DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, assistantMessageKey, autoRespondConfigSchema, autoRespondMessage, disableAutoRespond, enableAutoRespond, getAutoRespond, parseAutoRespondDecision, recordAutoResponse, resetAutoRespondCount, responderPrompt, stopAutoRespond, type AutoRespondState, type AutoRespondStopKind } from "../conversation-auto-respond.js";
+import { attachAutoReplies, recordAutoReply, DEFAULT_AUTO_RESPOND_INSTRUCTIONS, DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS, autoRespondInput, autoRespondConfigSchema, autoRespondMessage, disableAutoRespond, enableAutoRespond, getAutoRespond, parseAutoRespondDecision, recordAutoResponse, resetAutoRespondCount, responderPrompt, stopAutoRespond, type AutoRespondState, type AutoRespondStopKind } from "../conversation-auto-respond.js";
 import { BudgetExceededError } from "../budgets.js";
 import { runAutoResponder } from "./auto-respond-run.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
@@ -507,12 +507,9 @@ async function runAutoResponse(connection: HarnessChatConnection): Promise<boole
   const shared = connection.shared;
   if (harnessSessionBusy(shared) || listQueuedPrompts(queueKey(connection)).length) return false;
   try { await writable(connection); } catch { return false; }
-  const turns = shared.session.messages
-    .filter((message): message is typeof message & { role: "user" | "assistant" } => (message.role === "user" || message.role === "assistant") && Boolean(message.text.trim()))
-    .map((message) => ({ role: message.role, text: message.text }));
-  const last = turns.at(-1);
-  if (last?.role !== "assistant") return false;
-  const key = assistantMessageKey(turns.filter((turn) => turn.role === "user").length, last.text);
+  const input = autoRespondInput(shared.session.messages);
+  if (!input) return false;
+  const { turns, key } = input;
   if (key === state.answeredKey) return false;
   if (state.maxResponses !== null && state.responses >= state.maxResponses) {
     await stopAutoRespondFor(connection, "limit", `Reached the limit of ${state.maxResponses} responses`);
