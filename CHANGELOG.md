@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.151.0 — 2026-10-24
 
 - Added a draggable left edge to the activity panel, so you can widen or narrow it; the width is remembered in this browser and the arrow keys adjust it too.
 
