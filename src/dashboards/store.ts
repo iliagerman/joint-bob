@@ -13,6 +13,8 @@ export interface DashboardRefresh { at: string; ok: boolean; error: string | nul
 export interface DashboardRecord {
   id: string;
   entity: DashboardEntity;
+  /** The project its agent and scripts run in: the entity's own, or a workspace's chosen project. */
+  hostProjectId: string;
   title: string;
   refreshMethod: "script" | "ai" | null;
   origin: "own" | "received";
@@ -29,7 +31,7 @@ export interface DashboardRecord {
 }
 
 interface Row {
-  id: string; entity_kind: DashboardEntity["kind"]; entity_id: string; project_id: string | null; title: string;
+  id: string; entity_kind: DashboardEntity["kind"]; entity_id: string; project_id: string | null; host_project_id: string; title: string;
   refresh_method: "script" | "ai" | null; origin: "own" | "received"; owner_node_id: string; account_id: string | null;
   definition_digest: string | null; approved_digest: string | null; active: number; last_refresh: string | null;
   created_at: string; updated_at: string;
@@ -48,6 +50,7 @@ function db(): DatabaseSync {
       entity_kind TEXT NOT NULL,
       entity_id TEXT NOT NULL,
       project_id TEXT,
+      host_project_id TEXT NOT NULL,
       title TEXT NOT NULL,
       refresh_method TEXT,
       origin TEXT NOT NULL,
@@ -72,7 +75,7 @@ function entityOf(row: Row): DashboardEntity {
 
 function toRecord(row: Row): DashboardRecord {
   return {
-    id: row.id, entity: entityOf(row), title: row.title, refreshMethod: row.refresh_method, origin: row.origin,
+    id: row.id, entity: entityOf(row), hostProjectId: row.host_project_id, title: row.title, refreshMethod: row.refresh_method, origin: row.origin,
     ownerNodeId: row.owner_node_id, accountId: row.account_id, definitionDigest: row.definition_digest,
     approvedDigest: row.approved_digest, active: row.active === 1,
     lastRefresh: row.last_refresh ? JSON.parse(row.last_refresh) as DashboardRefresh : null,
@@ -111,12 +114,20 @@ export function listAllDashboards(): DashboardRecord[] {
   return (db().prepare("SELECT * FROM dashboards ORDER BY created_at, id").all() as unknown as Row[]).map(toRecord);
 }
 
-export function createDashboard(input: { entity: DashboardEntity; ownerNodeId: string; accountId: string | null }): DashboardRecord {
+/** A conversation's or project's dashboard runs in that project; a workspace names one of its own. */
+export function hostProjectFor(entity: DashboardEntity, workspaceHost?: string): string {
+  if (entity.kind === "conversation") return entity.projectId;
+  if (entity.kind === "project") return entity.id;
+  if (!workspaceHost) throw new Error("A workspace dashboard needs one of the workspace's projects to run in");
+  return workspaceHost;
+}
+
+export function createDashboard(input: { entity: DashboardEntity; hostProjectId?: string; ownerNodeId: string; accountId: string | null }): DashboardRecord {
   const now = new Date().toISOString();
   const id = randomUUID();
-  db().prepare(`INSERT INTO dashboards (id, entity_kind, entity_id, project_id, title, origin, owner_node_id, account_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, '', 'own', ?, ?, ?, ?)`).run(id, input.entity.kind, input.entity.id,
-    input.entity.kind === "conversation" ? input.entity.projectId : null, input.ownerNodeId, input.accountId, now, now);
+  db().prepare(`INSERT INTO dashboards (id, entity_kind, entity_id, project_id, host_project_id, title, origin, owner_node_id, account_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, '', 'own', ?, ?, ?, ?)`).run(id, input.entity.kind, input.entity.id,
+    input.entity.kind === "conversation" ? input.entity.projectId : null, hostProjectFor(input.entity, input.hostProjectId), input.ownerNodeId, input.accountId, now, now);
   return getDashboard(id)!;
 }
 
@@ -164,15 +175,15 @@ export function approveDashboard(id: string, digest: string): void {
   db().prepare("UPDATE dashboards SET approved_digest = ?, updated_at = ? WHERE id = ?").run(digest, new Date().toISOString(), id);
 }
 
-export function upsertReceivedDashboard(input: { id: string; entity: DashboardEntity; ownerNodeId: string; accountId: string | null; title: string; refreshMethod: "script" | "ai"; digest: string }): void {
+export function upsertReceivedDashboard(input: { id: string; entity: DashboardEntity; hostProjectId?: string; ownerNodeId: string; accountId: string | null; title: string; refreshMethod: "script" | "ai"; digest: string }): void {
   const existing = getDashboard(input.id);
   if (existing && (existing.origin !== "received" || existing.ownerNodeId !== input.ownerNodeId)) throw new Error("Dashboard belongs to another owner");
   const now = new Date().toISOString();
   transaction(() => {
     if (!existing) {
-      db().prepare(`INSERT INTO dashboards (id, entity_kind, entity_id, project_id, title, refresh_method, origin, owner_node_id, account_id, definition_digest, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)`).run(input.id, input.entity.kind, input.entity.id,
-        input.entity.kind === "conversation" ? input.entity.projectId : null, input.title, input.refreshMethod, input.ownerNodeId, input.accountId, input.digest, now, now);
+      db().prepare(`INSERT INTO dashboards (id, entity_kind, entity_id, project_id, host_project_id, title, refresh_method, origin, owner_node_id, account_id, definition_digest, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)`).run(input.id, input.entity.kind, input.entity.id,
+        input.entity.kind === "conversation" ? input.entity.projectId : null, hostProjectFor(input.entity, input.hostProjectId), input.title, input.refreshMethod, input.ownerNodeId, input.accountId, input.digest, now, now);
       return;
     }
     if (existing.definitionDigest === input.digest) {
