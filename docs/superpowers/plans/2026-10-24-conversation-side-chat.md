@@ -31,7 +31,7 @@
 
 ## Verification
 
-Passed: `npm run typecheck`, `npm run build`, and seven tests from:
+Passed: `npm run typecheck`, `npm run build`, and nine tests from:
 - `test/conversation-chat.test.ts`
 - `test/conversation-chat-api.test.ts`
 - `test/ui/ui-by-the-way.test.ts`
@@ -52,4 +52,6 @@ The API test verifies source transcript bytes are unchanged after asking and cle
 - aborts a conflicting merge and leaves main clean
 - rejects merge when ticket worktree has uncommitted changes
 
-Manual review: per-user scope precedes history reads; concurrent sends/clear return 409; no source runtime is opened; `useTools: false` invokes the existing `setTools([])` boundary. Conversation switches invalidate pending UI results. Live multi-window busy state requires reopening Chat to refresh. Concurrent-switch and multi-window cases are not covered by browser tests.
+Follow-up queue added after user confirmation: POST accepts questions immediately with 202, stores a per-user/per-conversation FIFO, and one worker answers them serially. Waiting questions survive page reload. Push invalidations update the sidebar without polling, including after reconnect. Question IDs prevent duplicate acceptance; errors are shown on the failed question and do not discard follow-ups. Clear remains unavailable until the queue is idle.
+
+API coverage verifies FIFO order, duplicate IDs, clearing while busy, and unchanged source transcript bytes. Browser coverage sends three questions while the first answer is held, checks queued labels, reloads, then verifies three answers appear automatically in order. No source runtime is opened; `useTools: false` invokes the existing `setTools([])` boundary. Conversation switches invalidate pending UI results. Cross-window and interrupted active-answer recovery are not covered by browser tests. Remaining waiting questions resume when an authorized user reopens Chat after a server restart; an interrupted active question is not automatically replayed.

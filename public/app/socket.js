@@ -282,6 +282,10 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
 }
 
 export function handleSocketPayload(payload, scrollOnReady = false) {
+  if (payload.type === "conversationChatChanged") {
+    document.dispatchEvent(new CustomEvent("conversation-chat-changed", { detail: payload }));
+    return;
+  }
   if (payload.type === "updatePreparing") {
     const message = payload.message || "Joint Bob is restarting. Work will resume automatically.";
     setConnecting(true, message);
@@ -313,6 +317,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     state.activeConversationProjectId = payload.project?.id || state.activeProjectId;
     refreshBudgetNotice();
     activityReady(payload);
+    document.dispatchEvent(new CustomEvent("conversation-chat-reconnected"));
     state.conversationSegments = payload.segments || null;
     state.scheduledTurn = payload.scheduledTurn === true;
     state.scheduledAssistantText = "";

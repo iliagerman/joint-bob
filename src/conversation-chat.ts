@@ -6,16 +6,18 @@ export const chatModelSchema = z.object({
 }).strict();
 export const chatDefaultsSchema = z.object({ showSelectors: z.boolean(), model: chatModelSchema.nullable() }).strict();
 export type ChatModel = z.infer<typeof chatModelSchema>;
-export interface ChatMessage { role: "user" | "assistant"; text: string }
+export interface ChatMessage { role: "user" | "assistant"; text: string; id?: string; error?: string }
+export interface ChatQuestion { id: string; question: string; model: ChatModel | null }
 export interface ChatScope { userId: string; projectId: string; conversationId: string }
-export interface ChatState { messages: ChatMessage[]; model: ChatModel | null }
+export interface ChatState { messages: ChatMessage[]; model: ChatModel | null; queue: ChatQuestion[] }
 
 function key(scope: ChatScope): string {
   return JSON.stringify([scope.userId, scope.projectId, scope.conversationId]);
 }
 
 export function chatState(scope: ChatScope): ChatState {
-  return storedTranscriptSummary<ChatState>("conversation-chat", key(scope)) ?? { messages: [], model: null };
+  const stored = storedTranscriptSummary<ChatState>("conversation-chat", key(scope));
+  return stored ? { ...stored, queue: stored.queue ?? [] } : { messages: [], model: null, queue: [] };
 }
 
 export function saveChatState(scope: ChatScope, state: ChatState): void {
@@ -23,7 +25,7 @@ export function saveChatState(scope: ChatScope, state: ChatState): void {
 }
 
 export function clearChatHistory(scope: ChatScope): void {
-  saveChatState(scope, { ...chatState(scope), messages: [] });
+  saveChatState(scope, { ...chatState(scope), messages: [], queue: [] });
 }
 
 export function chatDefaults(userId: string): z.infer<typeof chatDefaultsSchema> {

@@ -18,11 +18,13 @@ const clear = byId("conversationChatClear");
 const status = byId("conversationChatStatus");
 // Reuse the model option builder; effort is the selected harness's default, not another control.
 const unusedThinking = document.createElement("select");
+const submitting = new Map();
+let snapshot = { messages: [], queue: [], busy: false };
 let choices;
 let loadedUrl = null;
 let generation = 0;
+let refreshRequest = 0;
 let busy = false;
-let displayedMessages = [];
 let defaults = { showSelectors: true, model: null };
 
 function conversationUrl() {
@@ -55,14 +57,14 @@ function modelChoice(harness, model) {
 
 function setBusy(value) {
   busy = value;
-  send.disabled = value || !loadedUrl;
+  send.disabled = !loadedUrl;
+  send.textContent = value ? "Queue" : "Send";
   clear.disabled = value || !loadedUrl;
   harnessSelect.disabled = value;
   modelSelect.disabled = value || !harnessSelect.value;
 }
 
 function renderMessages(messages) {
-  displayedMessages = messages;
   const list = byId("conversationChatMessages");
   list.replaceChildren();
   if (!messages.length) {
@@ -75,15 +77,46 @@ function renderMessages(messages) {
     const entry = document.createElement("article");
     entry.className = `conversation-chat-message ${message.role}`;
     const label = document.createElement("strong");
-    label.textContent = message.role === "user" ? "You" : "Assistant";
+    label.textContent = message.role === "user" ? (message.queued ? "You · Queued" : "You") : "Assistant";
     const text = document.createElement("div");
     text.className = "md";
     if (message.role === "assistant") renderMarkdown(text, message.text);
     else { text.textContent = message.text; text.style.whiteSpace = "pre-wrap"; }
     entry.append(label, text);
+    if (message.error) {
+      const error = document.createElement("p");
+      error.className = "settings-hint";
+      error.textContent = `Answer failed: ${message.error}`;
+      entry.append(error);
+    }
     list.append(entry);
   }
   list.scrollTop = list.scrollHeight;
+}
+
+function renderChat() {
+  const queued = snapshot.queue.map((item) => ({ id: item.id, role: "user", text: item.question, queued: true }));
+  const known = new Set([...snapshot.messages, ...queued].map((item) => item.id));
+  const pending = [...submitting.values()].filter((item) => !known.has(item.id));
+  renderMessages([...snapshot.messages, ...queued, ...pending]);
+  setBusy(snapshot.busy || snapshot.queue.length > 0 || submitting.size > 0);
+  const waiting = queued.length + pending.filter((item) => item.queued).length;
+  status.textContent = busy ? `${snapshot.busy ? "Answering…" : "Sending…"}${waiting ? ` · ${waiting} queued` : ""}` : "";
+}
+
+async function refreshChat() {
+  const url = loadedUrl;
+  if (!url || url !== conversationUrl()) return;
+  const current = generation;
+  const request = ++refreshRequest;
+  try {
+    const body = await api(url);
+    if (current !== generation || request !== refreshRequest || url !== conversationUrl() || url !== loadedUrl) return;
+    snapshot = body;
+    renderChat();
+  } catch (error) {
+    if (current === generation && request === refreshRequest) status.textContent = error.message;
+  }
 }
 
 function showTab(chat) {
@@ -96,6 +129,7 @@ function showTab(chat) {
 async function loadChat() {
   const url = conversationUrl();
   const current = ++generation;
+  refreshRequest += 1;
   loadedUrl = null;
   setBusy(true);
   renderMessages([]);
@@ -111,9 +145,10 @@ async function loadChat() {
     harnessSelect.value = model?.harnessId ?? "";
     fillModels(harnessSelect, modelSelect, model ?? {});
     byId("conversationChatSelectors").hidden = !defaults.showSelectors;
-    renderMessages(body.messages);
-    status.textContent = body.busy ? "An answer is running. Reopen Chat to refresh." : "";
-    setBusy(body.busy);
+    snapshot = body;
+    renderChat();
+    // A pushed completion may have arrived while the initial GET or model catalog was loading.
+    await refreshChat();
   } catch (error) {
     if (current === generation) { status.textContent = error.message; setBusy(false); }
   }
@@ -141,22 +176,23 @@ byId("conversationChatForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const question = input.value.trim();
   const url = loadedUrl;
-  if (!question || busy || !url || url !== conversationUrl()) return;
-  const current = generation;
-  renderMessages([...displayedMessages, { role: "user", text: question }]);
+  if (!question || !url || url !== conversationUrl()) return;
+  const id = crypto.randomUUID();
+  const model = modelChoice(harnessSelect, modelSelect);
+  submitting.set(id, { id, role: "user", text: question, queued: busy });
   input.value = "";
-  setBusy(true);
-  status.textContent = "Answering…";
+  renderChat();
   try {
-    const body = await api(url, { method: "POST", body: JSON.stringify({ question, model: modelChoice(harnessSelect, modelSelect) }) });
-    if (current !== generation || url !== conversationUrl()) return;
-    renderMessages(body.messages);
-    status.textContent = "";
+    await api(url, { method: "POST", body: JSON.stringify({ id, question, model }) });
+    submitting.delete(id);
+    if (url === conversationUrl() && url === loadedUrl) await refreshChat();
   } catch (error) {
-    if (current === generation) status.textContent = error.message;
-  } finally {
-    if (current === generation) setBusy(false);
-    else if (url === conversationUrl() && !panel.hidden) void loadChat();
+    submitting.delete(id);
+    if (url === conversationUrl() && url === loadedUrl) {
+      await refreshChat();
+      if (!input.value) input.value = question;
+      status.textContent = error.message;
+    }
   }
 });
 input.addEventListener("keydown", (event) => {
@@ -169,21 +205,38 @@ clear.addEventListener("click", async () => {
   const url = loadedUrl;
   if (busy || !url || url !== conversationUrl()) return;
   const current = generation;
+  let failure = "";
+  // Do not allow a new question or an older history read to race the clear request.
+  refreshRequest += 1;
+  loadedUrl = null;
   setBusy(true);
   try {
     const body = await api(url, { method: "DELETE" });
     if (current === generation && url === conversationUrl()) {
-      renderMessages(body.messages);
+      snapshot = { ...body, busy: false };
       status.textContent = "";
     }
   } catch (error) {
-    if (current === generation) status.textContent = error.message;
-  } finally { if (current === generation) setBusy(false); }
+    failure = error.message;
+  } finally {
+    if (current === generation) {
+      loadedUrl = url;
+      renderChat();
+      if (failure) status.textContent = failure;
+    }
+  }
 });
+document.addEventListener("conversation-chat-changed", (event) => {
+  if (event.detail.projectId !== state.activeProjectId || event.detail.conversationId !== state.activeConversationId) return;
+  void refreshChat().then(() => { if (event.detail.error && loadedUrl === conversationUrl()) status.textContent = event.detail.error; });
+});
+document.addEventListener("conversation-chat-reconnected", () => { if (!panel.hidden) void refreshChat(); });
 document.addEventListener("activity-show-steps", () => showTab(false));
 document.addEventListener("activity-conversation-changed", () => {
   generation += 1;
   loadedUrl = null;
+  submitting.clear();
+  snapshot = { messages: [], queue: [], busy: false };
   input.value = "";
   renderMessages([]);
   setBusy(false);

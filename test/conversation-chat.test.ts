@@ -18,6 +18,7 @@ test("history is durable, isolated by user/project/conversation, and only explic
   const state = chatState(scope);
   state.messages.push({ role: "user", text: "question" }, { role: "assistant", text: "answer" });
   state.model = { harnessId: "pi", provider: "openai", modelId: "test" };
+  state.queue.push({ id: "waiting-question", question: "follow-up", model: state.model });
   saveChatState(scope, state);
   assert.deepEqual(chatState(scope), state);
   assert.equal(chatState({ ...scope, userId: "bob" }).messages.length, 0);
@@ -25,5 +26,6 @@ test("history is durable, isolated by user/project/conversation, and only explic
   assert.equal(chatState({ ...scope, conversationId: "other" }).messages.length, 0);
   clearChatHistory(scope);
   assert.deepEqual(chatState(scope).messages, []);
+  assert.deepEqual(chatState(scope).queue, []);
   assert.deepEqual(chatState(scope).model, state.model);
 });

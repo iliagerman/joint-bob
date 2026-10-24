@@ -1,21 +1,19 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
-import { chatDefaults, chatDefaultsSchema, chatModelSchema, chatState, clearChatHistory, conversationChatPrompt, saveChatDefaults, saveChatState, type ChatScope } from "../../conversation-chat.js";
-import { getSettings } from "../../settings.js";
+import { chatDefaults, chatDefaultsSchema, chatModelSchema, chatState, clearChatHistory, saveChatDefaults, saveChatState, type ChatScope } from "../../conversation-chat.js";
 import { getProject, projectVisible } from "../../store.js";
-import type { HarnessId } from "../../types.js";
-import { loadConversationMessages } from "../conversation-turns.js";
-import { GitReviewRunError, runGitReview } from "../git-review-run.js";
+import { chatChanged, chatRunning, startChatQueue } from "../conversation-chat-runner.js";
+import { GitReviewRunError } from "../git-review-run.js";
 import { sendError } from "../http-auth.js";
 import { registeredHarnessIdSchema } from "../schemas.js";
 import { listReviewScopeSessions } from "../sessions-helpers.js";
 import { app } from "../state.js";
 
 const modelSchema = chatModelSchema.extend({ harnessId: registeredHarnessIdSchema });
-const questionSchema = z.object({ question: z.string().trim().min(1).max(40_000), model: modelSchema.nullable() }).strict();
+const questionSchema = z.object({ id: z.string().uuid().optional(), question: z.string().trim().min(1).max(40_000), model: modelSchema.nullable() }).strict();
 const defaultsSchema = chatDefaultsSchema.extend({ model: modelSchema.nullable() });
 const endpoint = "/api/projects/:projectId/conversations/:conversationId/chat";
-const running = new Set<string>();
 
 app.get("/api/conversation-chat/settings", (_request, response) => {
   response.json(chatDefaults((response.locals.authSession as AuthSession).userId));
@@ -44,48 +42,34 @@ for (const method of ["get", "post", "delete"] as const) {
     const auth = response.locals.authSession as AuthSession;
     const { projectId, conversationId } = request.params;
     const scope: ChatScope = { userId: auth.userId, projectId, conversationId };
-    const key = JSON.stringify(scope);
-    let locked = false;
     try {
       const project = await authorizedConversation(projectId, conversationId, auth);
       if (method === "get") {
-        response.json({ ...chatState(scope), defaults: chatDefaults(auth.userId), busy: running.has(key) });
+        startChatQueue(project, scope, auth.accountId);
+        response.json({ ...chatState(scope), defaults: chatDefaults(auth.userId), busy: chatRunning(scope) });
         return;
       }
-      if (running.has(key)) throw new GitReviewRunError(409, "A side-chat answer is still running");
       if (method === "delete") {
+        if (chatRunning(scope) || chatState(scope).queue.length) throw new GitReviewRunError(409, "A side-chat answer is still running");
         clearChatHistory(scope);
+        chatChanged(scope, auth.accountId);
         response.json(chatState(scope));
         return;
       }
       const payload = questionSchema.parse(request.body);
-      running.add(key);
-      locked = true;
-      const { messages, lastHarness } = await loadConversationMessages(project, conversationId);
+      const id = payload.id ?? randomUUID();
       const state = chatState(scope);
-      const attribution = [...messages].reverse().find((message) => message.role === "assistant" && message.attribution)?.attribution;
-      const model = payload.model ?? {
-        harnessId: attribution?.harnessId ?? lastHarness, provider: attribution?.provider ?? "", modelId: attribution?.modelId ?? "",
-      };
-      const instructions = conversationChatPrompt(messages, state.messages, payload.question);
-      state.messages.push({ role: "user", text: payload.question });
-      state.model = model;
-      saveChatState(scope, state);
-      const result = await runGitReview({
-        projectId, cwd: getSettings().projects.homePath, harnessId: model.harnessId as HarnessId,
-        provider: model.provider, modelId: model.modelId, thinkingLevel: "",
-        selection: { scope: "context", label: "conversation" }, question: "", diff: "", instructions,
-        useTools: false,
-      });
-      state.messages.push({ role: "assistant", text: result.answer });
-      state.model = { harnessId: model.harnessId, provider: result.provider, modelId: result.modelId };
-      saveChatState(scope, state);
-      response.json(state);
+      if (!state.queue.some((question) => question.id === id) && !state.messages.some((message) => message.id === id)) {
+        state.queue.push({ id, question: payload.question, model: payload.model });
+        state.model = payload.model;
+        saveChatState(scope, state);
+      }
+      startChatQueue(project, scope, auth.accountId);
+      chatChanged(scope, auth.accountId);
+      response.status(202).json({ ...chatState(scope), busy: chatRunning(scope) });
     } catch (error) {
       if (error instanceof GitReviewRunError) sendError(response, error.status, error.message);
       else next(error);
-    } finally {
-      if (locked) running.delete(key);
     }
   });
 }
