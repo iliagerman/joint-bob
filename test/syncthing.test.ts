@@ -45,6 +45,7 @@ const managedIgnorePatterns = [
   "(?d).next",
   "(?d)DerivedData",
   "(?d).terraform",
+  "(?d).nx/cache",
   "(?d)tmp",
   "(?d).tmp",
   "(?d).claude/worktrees",
@@ -96,6 +97,15 @@ const managedIgnorePatterns = [
   "service-account*.json",
   "(?d)test_database_*.db",
   "(?d)**/test_database_*.db",
+  "(?d)*.db-wal",
+  "(?d)*.db-shm",
+  "(?d)*.db-journal",
+  "(?d)*.sqlite-wal",
+  "(?d)*.sqlite-shm",
+  "(?d)*.sqlite-journal",
+  "(?d)*.sqlite3-wal",
+  "(?d)*.sqlite3-shm",
+  "(?d)*.sqlite3-journal",
 ];
 
 async function listen(server: ReturnType<typeof createServer>): Promise<number> {

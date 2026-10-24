@@ -95,6 +95,7 @@ const projectIgnorePatterns = [
   "(?d).next",
   "(?d)DerivedData",
   "(?d).terraform",
+  "(?d).nx/cache",
   "(?d)tmp",
   "(?d).tmp",
   // Agents' own worktrees are full copies of the repository.
@@ -150,6 +151,16 @@ const projectIgnorePatterns = [
   "service-account*.json",
   "(?d)test_database_*.db",
   "(?d)**/test_database_*.db",
+  // SQLite side files are only valid next to their open database; test runs left hundreds behind.
+  "(?d)*.db-wal",
+  "(?d)*.db-shm",
+  "(?d)*.db-journal",
+  "(?d)*.sqlite-wal",
+  "(?d)*.sqlite-shm",
+  "(?d)*.sqlite-journal",
+  "(?d)*.sqlite3-wal",
+  "(?d)*.sqlite3-shm",
+  "(?d)*.sqlite3-journal",
 ];
 
 /* Worktrees are disposable copies: every rule is deletable so removing a worktree on one
