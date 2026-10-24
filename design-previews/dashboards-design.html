@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Joint Bob · Dashboards design · for approval</title>
+<style>
+:root{--bg:#08090b;--panel:#101215;--surface:#191c20;--field:#212529;--line:rgba(255,255,255,.075);--line2:rgba(255,255,255,.17);--text:#ebeced;--muted:#94999e;--accent:#37cfab;--danger:#e0564e;--amber:#d0a63c;--r:12px;--sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Inter",sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:#050607;color:var(--text);font:15px/1.55 var(--sans)}
+main{max-width:980px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:28px;margin:0 0 6px}
+h2{font-size:18px;margin:44px 0 12px;padding-top:18px;border-top:1px solid var(--line)}
+h3{font-size:15px;margin:22px 0 8px;color:var(--text)}
+p,li{color:var(--text)}
+.lead{color:var(--muted);margin:0 0 18px}
+.muted{color:var(--muted)}
+code{font:13px var(--mono);background:var(--field);padding:1px 6px;border-radius:5px}
+.card{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);padding:16px 18px;margin:10px 0}
+.tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid var(--line2);color:var(--muted);margin-right:6px}
+.tag.rec{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 55%,transparent)}
+.tag.user{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 55%,transparent)}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+ul{padding-left:20px;margin:6px 0}
+li{margin:4px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:12px 0}
+/* mockup */
+.mock{background:var(--panel);border:1px solid var(--line2);border-radius:16px;overflow:hidden;box-shadow:0 30px 80px #000a;margin:12px 0}
+.mock-top{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);background:#0b0c0e;flex-wrap:wrap}
+.mock-top .name{font-weight:600}
+.pill{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line2);color:var(--muted)}
+.pill.on{background:var(--text);color:#101215;border-color:var(--text)}
+.btn{font-size:13px;padding:6px 12px;border-radius:9px;border:1px solid var(--line2);background:transparent;color:var(--text)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#06130f}
+.mock-body{padding:16px;display:grid;gap:12px}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.kpi{background:var(--surface);border-radius:10px;padding:12px}
+.kpi .v{font-size:26px;font-weight:700}
+.kpi .d{font-size:12px;color:var(--muted)}
+.kpi .d.bad{color:var(--danger)}
+.kpi .d.good{color:var(--accent)}
+.chart{background:var(--surface);border-radius:10px;padding:12px}
+.bars{display:flex;align-items:flex-end;gap:8px;height:120px;margin-top:8px}
+.bars div{flex:1;background:var(--accent);opacity:.75;border-radius:4px 4px 0 0}
+.bars div.hot{background:var(--danger);opacity:.85}
+.rows{background:var(--surface);border-radius:10px;padding:6px 12px;font-size:13px}
+.rows div{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)}
+.rows div:last-child{border-bottom:0}
+.sample{font-size:12px;color:var(--muted);margin:4px 0 0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:700px){.two,.kpis{grid-template-columns:1fr}}
+.chat{background:var(--surface);border-radius:10px;padding:10px 12px;font-size:13px;margin:6px 0}
+.chat.me{background:#1d3a33}
+.dec{border:1px solid var(--line2);border-radius:var(--r);padding:14px 16px;margin:12px 0;background:var(--panel)}
+.dec .q{font-weight:600;margin:4px 0 6px}
+.dec .why{color:var(--muted);font-size:14px}
+.dec .opt{font-size:14px;margin-top:8px}
+</style></head>
+<body><main>
+
+<h1>Dashboards</h1>
+<p class="lead">Design for approval. Nothing is built until you approve this. Full text: <code>docs/superpowers/specs/2026-10-24-dashboards-design.md</code></p>
+
+<h2>What it is</h2>
+<p>Live dashboards inside Joint Bob. You describe a dashboard to a creator agent, and it builds one: a data script (or an AI refresh), plus a displayable HTML page. Dashboards exist at three levels: <b>conversation</b>, <b>project</b> and <b>workspace</b>, and each entity can hold several, with one visible at a time.</p>
+<p>First use case, for Contigos: bugs per day, errors per day, and bugs by type, so a fix can be checked. Joint Bob provides the infrastructure and the creator agent. Each dashboard carries its own data logic.</p>
+
+<h2>Decisions already made by you</h2>
+<table>
+<tr><th>Area</th><th>Decision</th></tr>
+<tr><td>Levels</td><td>Conversation, project, workspace. One dashboard per entity, several allowed, one visible.</td></tr>
+<tr><td>Creation</td><td>Dedicated view, chat with a dashboard-creator agent. Its system prompt carries general dashboard rules, UI/UX rules and the widget style guide, so all dashboards look alike.</td></tr>
+<tr><td>Output</td><td>Displayable HTML from the agent.</td></tr>
+<tr><td>Controls</td><td>Bundled into Joint Bob. No live downloads. The set must cover what dashboards need.</td></tr>
+<tr><td>Refresh</td><td>Manual only in this release. Script refresh with no AI where possible; AI refresh where a script can't do it.</td></tr>
+<tr><td>Settings</td><td>Settings → Dashboards, per node: harness, model, effort for the creator agent.</td></tr>
+<tr><td>Nodes</td><td>Each node runs its own dashboards. Sharing sends the definition only. A received dashboard arrives inactive and never replaces the node's own.</td></tr>
+<tr><td>Sharing</td><td>Nodes and clusters. Twins receive by default.</td></tr>
+</table>
+
+<h2>Screens</h2>
+<h3>Dashboard mode (sample, not real data)</h3>
+<p class="muted">Entered from the workspace header, a project's menu, or the conversation header. Shows the active dashboard. Refresh is manual.</p>
+<div class="mock">
+  <div class="mock-top">
+    <span class="name">Contigos · Bugs</span>
+    <span class="pill on">Own · active</span>
+    <span class="pill">Received from homeserver</span>
+    <span style="flex:1"></span>
+    <span class="muted" style="font-size:12px">Refreshed 09:14 · script</span>
+    <button class="btn">Edit</button>
+    <button class="btn">Share</button>
+    <button class="btn primary">Refresh</button>
+  </div>
+  <div class="mock-body">
+    <div class="kpis">
+      <div class="kpi"><div class="muted" style="font-size:12px">Bugs today</div><div class="v">7</div><div class="d good">▼ 41% vs last week</div></div>
+      <div class="kpi"><div class="muted" style="font-size:12px">Errors today</div><div class="v">126</div><div class="d bad">▲ 12% vs yesterday</div></div>
+      <div class="kpi"><div class="muted" style="font-size:12px">Repeat after fix</div><div class="v">2</div><div class="d bad">needs a look</div></div>
+    </div>
+    <div class="two">
+      <div class="chart">
+        <div class="muted" style="font-size:12px">Bugs per day · 14 days</div>
+        <div class="bars">
+          <div style="height:40%"></div><div style="height:55%"></div><div style="height:48%"></div><div style="height:70%"></div><div style="height:62%"></div><div style="height:58%"></div><div style="height:66%"></div><div style="height:45%"></div><div style="height:38%"></div><div style="height:52%"></div><div style="height:30%"></div><div class="hot" style="height:82%"></div><div style="height:20%"></div><div style="height:16%"></div>
+        </div>
+        <div class="sample">Sample values. Spike marked red = fix deployed, then the same type came back.</div>
+      </div>
+      <div class="chart">
+        <div class="muted" style="font-size:12px">Bugs by type · today</div>
+        <div class="rows" style="margin-top:8px">
+          <div><span>Webhook timeout</span><b>3</b></div>
+          <div><span>Duplicate lead</span><b>2</b></div>
+          <div><span>Missing price</span><b>1</b></div>
+          <div><span>Auth refresh</span><b>1</b></div>
+        </div>
+        <div class="sample">Sample values.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Creator view (sample)</h3>
+<p class="muted">Chat with the creator agent on the left, a live preview of the draft on the right. Save makes the draft live; Discard leaves the live dashboard untouched. On narrow screens the two are tabs.</p>
+<div class="mock">
+  <div class="mock-top"><span class="name">New dashboard · Contigos project</span><span style="flex:1"></span><button class="btn">Discard</button><button class="btn primary">Save</button></div>
+  <div class="two" style="padding:14px;gap:14px">
+    <div>
+      <div class="chat me">Bugs per day for 14 days, errors per day, and bugs grouped by type. I want to see if a fix held.</div>
+      <div class="chat">Built a draft: 3 tiles, a 14-day bar chart, a type table. Refresh is a script that reads prod errors (deduplicated by correlation id). Want a spike marker for deploys?</div>
+      <div class="chat me">Yes, mark deploys.</div>
+    </div>
+    <div class="chart"><div class="muted" style="font-size:12px">Draft preview</div><div class="sample" style="margin-top:20px">The live draft renders here.</div></div>
+  </div>
+</div>
+
+<h2>Architecture (summary)</h2>
+<div class="two">
+  <div class="card"><b>Storage</b><ul>
+    <li>Records in the node's SQLite.</li>
+    <li>Files in the node's app folder, one per dashboard: definition, <code>state/</code> for script history, last payload, run log.</li>
+    <li>Not in the project folder: sync excludes <code>.joint-bob/</code>, and dashboards are node-local.</li>
+  </ul></div>
+  <div class="card"><b>Display</b><ul>
+    <li>Sandboxed iframe, no same-origin access, no network.</li>
+    <li>Data passed in as JSON; refresh reloads the frame.</li>
+    <li>One narrow frame allowance in the app's CSP, for this route only.</li>
+  </ul></div>
+  <div class="card"><b>Controls</b><ul>
+    <li>One vendored, permissive chart library, pinned in the repo.</li>
+    <li>Joint Bob components: KPI tile, time series with event markers, bar, stacked bar, donut, heatmap, paged table, badges, text, grid, states.</li>
+    <li>The creator prompt forbids other libraries and outside URLs.</li>
+  </ul></div>
+  <div class="card"><b>Sharing</b><ul>
+    <li>Definition only: never payloads, state, logs or creator transcripts.</li>
+    <li>Modelled on saved commands (per-receiver manifest) and skill sharing (validated bundles).</li>
+    <li>Owner updates replace the received copy; local edits fork a local copy.</li>
+  </ul></div>
+</div>
+
+<h2>Calls I made (you can change them)</h2>
+<ul>
+<li>Previewing a received dashboard shows layout and empty states only. It never runs the received script or AI refresh.</li>
+<li>Multi-user access: anyone who can open the entity can view its active dashboard. Creating, editing, refreshing, sharing and deleting need the right to run agents there. A workspace dashboard's script runs as the workspace owner.</li>
+<li>Timeouts, output size and run-log limits are left to the builder, with defaults around 2 minutes and a few MB.</li>
+</ul>
+
+<h2>Three decisions for you</h2>
+<p class="muted">A reviewer read the design and found these three open. My recommendation is in each. Approve the recommendation, or tell me what to change.</p>
+
+<div class="dec">
+  <span class="tag user">Your call</span><span class="tag rec">Recommended</span>
+  <div class="q">1. Which node runs a dashboard when the page and the project are on different machines?</div>
+  <div class="why">Example: you browse on the Mac, and the Contigos project runs on the homeserver. The answer decides which secrets and project copy the script uses, and where its history is kept.</div>
+  <div class="opt"><b>Recommended:</b> the node that owns the entity runs it. The Mac displays the result, the same way conversations already run on their owner.</div>
+</div>
+
+<div class="dec">
+  <span class="tag user">Your call</span><span class="tag rec">Recommended</span>
+  <div class="q">2. Must you approve a received script before it runs, and again on every change?</div>
+  <div class="why">A received script runs on your node with that project's secrets. Without approval, a sender's update could run new code on your next Refresh.</div>
+  <div class="opt"><b>Recommended:</b> yes. Approval is asked when you first activate a received dashboard, and again after any change to its script. Until approved it shows its layout only.</div>
+</div>
+
+<div class="dec">
+  <span class="tag user">Your call</span><span class="tag rec">Recommended</span>
+  <div class="q">3. Should a twin show a received dashboard automatically when it has none of its own?</div>
+  <div class="why">Example: you build a dashboard on the homeserver, then open the same project on the Mac. As written, the Mac shows "describe your dashboard" until you activate the received one.</div>
+  <div class="opt"><b>Recommended:</b> yes for twins. It becomes active when the twin has no dashboard of its own, and stays inactive when it does. Non-twin nodes keep the inactive default.</div>
+</div>
+
+<h2>Approval</h2>
+<p>Reply with <b>approve</b> to accept the design with the three recommendations, or tell me which ones to change. After approval, the next step is an implementation plan.</p>
+
+</main></body></html>
