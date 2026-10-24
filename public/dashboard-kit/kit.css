@@ -1,0 +1,117 @@
+/* Joint Bob dashboard kit. Every dashboard uses these tokens so they all look alike and match the app.
+   The categorical slots are the validated reference palette, checked against the app's own surfaces. */
+:root {
+  color-scheme: light;
+  --kit-page: #f3f3f1;
+  --kit-surface: #ffffff;
+  --kit-field: #eeeeec;
+  --kit-text: #17191b;
+  --kit-text-2: #52514e;
+  --kit-muted: #71767b;
+  --kit-grid: #e1e0d9;
+  --kit-axis: #c3c2b7;
+  --kit-border: rgba(11, 11, 11, 0.10);
+  --kit-accent: #0e8a74;
+  --kit-good-text: #006300;
+  --kit-bad-text: #c03b33;
+  --kit-series-1: #2a78d6; --kit-series-2: #eb6834; --kit-series-3: #1baf7a; --kit-series-4: #eda100;
+  --kit-series-5: #e87ba4; --kit-series-6: #008300; --kit-series-7: #6250d6; --kit-series-8: #e34948;
+  --kit-seq-1: #cde2fb; --kit-seq-2: #9ec5f4; --kit-seq-3: #6da7ec; --kit-seq-4: #3987e5; --kit-seq-5: #256abf; --kit-seq-6: #184f95; --kit-seq-7: #0d366b;
+  --kit-status-good: #0ca30c; --kit-status-warning: #fab219; --kit-status-serious: #ec835a; --kit-status-critical: #d03b3b; --kit-status-info: #2a78d6;
+  --kit-radius: 12px;
+  --kit-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --kit-page: #101215;
+  --kit-surface: #191c20;
+  --kit-field: #212529;
+  --kit-text: #ebeced;
+  --kit-text-2: #c3c2b7;
+  --kit-muted: #94999e;
+  --kit-grid: #2c2f33;
+  --kit-axis: #3a3e43;
+  --kit-border: rgba(255, 255, 255, 0.10);
+  --kit-accent: #37cfab;
+  --kit-good-text: #0ca30c;
+  --kit-bad-text: #e66767;
+  --kit-series-1: #3987e5; --kit-series-2: #d95926; --kit-series-3: #199e70; --kit-series-4: #c98500;
+  --kit-series-5: #d55181; --kit-series-6: #008300; --kit-series-7: #9085e9; --kit-series-8: #e66767;
+  --kit-seq-1: #184f95; --kit-seq-2: #1c5cab; --kit-seq-3: #256abf; --kit-seq-4: #2a78d6; --kit-seq-5: #3987e5; --kit-seq-6: #6da7ec; --kit-seq-7: #9ec5f4;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--kit-page); color: var(--kit-text); font: 14px/1.45 var(--kit-sans); }
+body { padding: 16px; }
+button { font: inherit; color: inherit; }
+
+.kit-grid { display: grid; align-items: start; gap: 12px; grid-template-columns: repeat(var(--kit-columns, auto-fit), minmax(min(100%, 260px), 1fr)); }
+.kit-span-2 { grid-column: span 2; }
+.kit-span-full { grid-column: 1 / -1; }
+@media (max-width: 640px) { .kit-span-2 { grid-column: auto; } }
+
+.kit-section { display: grid; gap: 10px; margin: 0 0 18px; }
+.kit-section > header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.kit-section > header p { margin: 2px 0 0; color: var(--kit-muted); font-size: 12.5px; }
+
+.kit-card { position: relative; display: grid; gap: 8px; align-content: start; min-width: 0; padding: 14px 16px; border: 1px solid var(--kit-border); border-radius: var(--kit-radius); background: var(--kit-surface); }
+.kit-card-title { margin: 0; color: var(--kit-text); font-size: 13px; font-weight: 600; }
+.kit-card-subtitle { margin: -4px 0 0; color: var(--kit-muted); font-size: 12px; }
+
+.kit-kpi-label { color: var(--kit-text-2); font-size: 12.5px; }
+.kit-kpi-value { font-size: 30px; font-weight: 650; line-height: 1.1; }
+.kit-kpi-delta { font-size: 12.5px; color: var(--kit-muted); }
+.kit-kpi-delta.good { color: var(--kit-good-text); }
+.kit-kpi-delta.bad { color: var(--kit-bad-text); }
+.kit-sparkline { width: 100%; height: 28px; }
+
+.kit-chart { position: relative; width: 100%; }
+.kit-chart svg { display: block; width: 100%; overflow: visible; }
+.kit-chart text { fill: var(--kit-muted); font: 11px var(--kit-sans); font-variant-numeric: tabular-nums; }
+.kit-chart .kit-value-label { fill: var(--kit-text-2); }
+.kit-chart .kit-donut-total { fill: var(--kit-text); font-size: 22px; font-weight: 650; }
+.kit-gridline { stroke: var(--kit-grid); stroke-width: 1; }
+.kit-baseline { stroke: var(--kit-axis); stroke-width: 1; }
+.kit-crosshair { stroke: var(--kit-muted); stroke-width: 1; }
+.kit-marker-line { stroke: var(--kit-text-2); stroke-width: 1; }
+.kit-chart .kit-marker-label { fill: var(--kit-text-2); }
+.kit-mark { transition: opacity 120ms; }
+.kit-mark:hover, .kit-mark:focus { opacity: 0.8; outline: none; }
+
+.kit-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; color: var(--kit-text-2); font-size: 12px; }
+.kit-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.kit-key { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 3px; }
+.kit-key.line { width: 14px; height: 2px; border-radius: 1px; }
+
+.kit-tooltip { position: absolute; z-index: 5; min-width: 120px; padding: 7px 9px; border: 1px solid var(--kit-border); border-radius: 8px; background: var(--kit-surface); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); pointer-events: none; font-size: 12px; }
+.kit-tooltip[hidden] { display: none; }
+.kit-tooltip-title { color: var(--kit-muted); margin-bottom: 3px; }
+.kit-tooltip-row { display: flex; align-items: center; gap: 6px; }
+.kit-tooltip-row b { font-variant-numeric: tabular-nums; }
+.kit-tooltip-row span { color: var(--kit-text-2); }
+
+.kit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.kit-table th, .kit-table td { padding: 7px 8px; border-bottom: 1px solid var(--kit-grid); text-align: left; vertical-align: top; }
+.kit-table th { color: var(--kit-muted); font-weight: 500; font-size: 12px; }
+.kit-table th button { padding: 0; border: 0; background: none; color: inherit; cursor: pointer; font-weight: 500; }
+.kit-table th button[aria-sort]::after { content: " ↑"; }
+.kit-table th button[aria-sort="descending"]::after { content: " ↓"; }
+.kit-table .right { text-align: right; font-variant-numeric: tabular-nums; }
+.kit-pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: var(--kit-muted); font-size: 12px; }
+.kit-pager button { padding: 3px 10px; border: 1px solid var(--kit-border); border-radius: 8px; background: var(--kit-field); cursor: pointer; }
+.kit-pager[hidden] { display: none; }
+.kit-pager button:disabled { opacity: 0.45; cursor: default; }
+
+.kit-badges { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.kit-badge { display: flex; align-items: baseline; gap: 8px; }
+.kit-badge-icon { display: inline-grid; flex: none; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: #ffffff; font-size: 11px; font-weight: 700; }
+.kit-badge-icon.warning { color: #0b0b0b; }
+.kit-badge-detail { color: var(--kit-muted); font-size: 12px; }
+
+.kit-text p { margin: 0 0 8px; color: var(--kit-text-2); }
+.kit-text p:last-child { margin-bottom: 0; }
+.kit-refreshed { color: var(--kit-muted); font-size: 12px; }
+.kit-state { padding: 28px 16px; color: var(--kit-muted); text-align: center; }
+.kit-state.error { color: var(--kit-bad-text); }
+.kit-heat-legend { display: flex; align-items: center; gap: 6px; color: var(--kit-muted); font-size: 11px; }
+.kit-heat-legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; }

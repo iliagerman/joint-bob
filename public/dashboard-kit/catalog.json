@@ -1,0 +1,70 @@
+{
+  "usage": "Every component is a function on window.JointBobKit that takes one options object and returns an element. Layout children may be elements or { \"component\": name, \"props\": {...}, \"span\": 2 | \"full\" }. Read the data with JointBobKit.payload() and draw with JointBobKit.mount(...). Formats: number (compact, the default), integer, percent (a fraction: 0.12 is 12%), usd, raw.",
+  "components": [
+    {
+      "name": "grid",
+      "summary": "Responsive grid of cards; columns optional (1–4). Children wrap on narrow screens.",
+      "example": { "columns": 3, "children": [{ "component": "kpi", "props": { "label": "Bugs today", "value": 7 } }, { "component": "kpi", "props": { "label": "Errors today", "value": 126 } }] }
+    },
+    {
+      "name": "section",
+      "summary": "A titled group of components with an optional one-line description.",
+      "example": { "title": "Quality", "description": "Last 14 days", "children": [{ "component": "text", "props": { "body": "Bugs per day after the last fix." } }] }
+    },
+    {
+      "name": "kpi",
+      "summary": "One headline number with an optional signed change against a named period and a small trend line. goodDirection says whether up is good.",
+      "example": { "label": "Bugs today", "value": 7, "delta": -5, "deltaLabel": "vs last week", "goodDirection": "down", "trend": [12, 9, 11, 8, 7] }
+    },
+    {
+      "name": "timeSeries",
+      "summary": "Change over time: one line per series (at most 8), optional area wash, and markers for events such as a deployed fix. Points are { t: ISO date, v: number }.",
+      "example": { "title": "Bugs per day", "series": [{ "name": "Bugs", "points": [{ "t": "2026-10-20", "v": 12 }, { "t": "2026-10-21", "v": 9 }, { "t": "2026-10-22", "v": 4 }] }], "markers": [{ "t": "2026-10-21", "label": "Fix deployed" }] }
+    },
+    {
+      "name": "bar",
+      "summary": "Magnitude per category as columns; horizontal: true for rankings and long labels.",
+      "example": { "title": "Bugs by type", "horizontal": true, "items": [{ "label": "Webhook timeout", "value": 3 }, { "label": "Duplicate lead", "value": 2 }] }
+    },
+    {
+      "name": "stackedBar",
+      "summary": "Parts of a whole per category; series values line up with categories (at most 8 series).",
+      "example": { "title": "Errors by source", "categories": ["Mon", "Tue", "Wed"], "series": [{ "name": "API", "values": [4, 6, 3] }, { "name": "Agent", "values": [2, 1, 5] }] }
+    },
+    {
+      "name": "donut",
+      "summary": "Share of a whole for a few parts (at most 8); the total is in the middle.",
+      "example": { "title": "Open bugs by severity", "items": [{ "label": "High", "value": 2 }, { "label": "Medium", "value": 5 }, { "label": "Low", "value": 9 }] }
+    },
+    {
+      "name": "heatmap",
+      "summary": "Magnitude over two dimensions such as day × type or day × hour; values[row][column].",
+      "example": { "title": "Bugs by day and type", "rows": ["Webhook timeout", "Duplicate lead"], "columns": ["Mon", "Tue", "Wed"], "values": [[3, 1, 0], [0, 2, 4]] }
+    },
+    {
+      "name": "table",
+      "summary": "Rows with sortable columns, paged (pageSize, default 10) instead of scrolling. A column may set align: \"right\" and a format.",
+      "example": { "title": "Recurring errors", "columns": [{ "key": "type", "label": "Type" }, { "key": "count", "label": "Count", "align": "right", "format": "integer" }], "rows": [{ "type": "Webhook timeout", "count": 31 }, { "type": "Duplicate lead", "count": 12 }] }
+    },
+    {
+      "name": "badges",
+      "summary": "States with an icon and a label: good, warning, serious, critical or info, with optional detail.",
+      "example": { "title": "Fix status", "items": [{ "label": "Webhook timeout", "status": "critical", "detail": "came back after the fix" }, { "label": "Duplicate lead", "status": "good", "detail": "none in 3 days" }] }
+    },
+    {
+      "name": "text",
+      "summary": "Plain paragraphs, split on blank lines. No markup.",
+      "example": { "title": "Notes", "body": "Counts are deduplicated by correlation id.\n\nA day starts at midnight UTC." }
+    },
+    {
+      "name": "lastRefreshed",
+      "summary": "When the shown data was produced, from the payload's generatedAt.",
+      "example": { "generatedAt": "2026-10-24T09:00:00Z" }
+    },
+    {
+      "name": "state",
+      "summary": "An empty, loading or error state with an optional message.",
+      "example": { "kind": "empty", "message": "No bugs reported yet" }
+    }
+  ]
+}
