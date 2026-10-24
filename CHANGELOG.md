@@ -3,9 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.153.0 — 2026-10-25
 
-- Fixed nodes without Syncthing, or with it stopped, being held from starting and refusing to create synced projects and tickets; they now work, and sync once Syncthing is running.
+- Fixed nodes whose Syncthing is stopped or missing being held back from starting; they now start straight away, can create projects and tickets, and sync again once Syncthing is running.
+- Changed startup so it no longer waits for Syncthing's ignore-rule check, which now runs in the background.
+- Fixed a failed Syncthing folder setup blocking project creation; the project is still created.
+- Changed the legacy skill-sync pause check: a stopped or missing Syncthing no longer fails startup or blocks skill sharing; only a running Syncthing that cannot confirm the pause still blocks skill changes.
+- Changed ticket creation to no longer use the old global ticket folder.
+- Fixed half-written files and node-local worktree folders being synced between your machines.
+- Fixed a startup race where setting a worktree folder's download order could remove a machine that had just been added to it.
 
 ## 2.152.0 — 2026-10-24
 
