@@ -25,6 +25,7 @@ test("every destructive action asks through confirmAction before it calls the ap
     "async function deleteTaskFromCard(task)",
     "async function deleteSecretAccount(account)",
     "async function attemptCloseFileEditor()",
+    "async function removeDashboard()",
   ]) {
     const start = app.indexOf(owner);
     assert.ok(start >= 0, `Missing ${owner}`);

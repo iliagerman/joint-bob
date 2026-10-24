@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { menuIcon } from "./icons.js";
-import { toast } from "./shell.js";
+import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 
 /*
@@ -294,7 +294,12 @@ async function copyDashboard() {
 }
 
 async function removeDashboard() {
-  if (!confirm("Delete this dashboard on this node and wherever it is shared?")) return;
+  const confirmed = await confirmAction({
+    title: "Delete this dashboard?",
+    message: "It is removed from this node and from every node it is shared with. Copies other nodes made of it stay.",
+    confirmLabel: "Delete dashboard", destructive: true,
+  });
+  if (!confirmed) return;
   await api(`/api/dashboards/${encodeURIComponent(view.currentId)}?${query({ projectId: hostProjectId() })}`, { method: "DELETE" });
   await openDashboardMode(view.target);
 }

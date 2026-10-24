@@ -21,6 +21,7 @@ Every deployment is a version. The newest section must always match the
 - Added AI refreshes for dashboards, where an agent gathers the data within your project's budget and secrets and keeps its answer in a run log, and a refresh that fails or does not return the dashboard's JSON keeps the last good one.
 - Added a Dashboards section to Settings where you choose the harness and model that build, edit and AI-refresh dashboards, saved for this machine only.
 - Removed the unused way to delete every dashboard of a workspace in one step, so workspace dashboards are no longer cleared that way.
+- Changed deleting a dashboard to ask first in an in-app dialog that says it is removed from every machine it is shared with, while copies other machines made stay.
 
 ## 2.148.0 — 2026-10-24
 
