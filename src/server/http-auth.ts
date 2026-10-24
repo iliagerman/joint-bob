@@ -79,10 +79,12 @@ export function securityHeaders(request: Request, response: Response, next: Next
   const inlineStyle = "'self' 'unsafe-inline'";
   response.setHeader("Content-Security-Policy", `default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src-elem ${inlineStyle}; style-src-attr ${inlineStyle}; script-src 'self'`);
   response.setHeader("X-Content-Type-Options", "nosniff");
-  // The canvas and the file dialog embed same-origin views. All other documents
-  // stay unframeable (including the separate sandboxed HTML browser mode).
+  // The canvas, the file dialog and dashboards embed same-origin views. All other documents
+  // stay unframeable (including the separate sandboxed HTML browser mode). A dashboard frame
+  // sets its own sandbox policy, which allows no requests at all.
   const filePreview = /^\/api\/projects\/[^/]+\/file$/.test(request.path) && request.query.browser !== "1" && request.query.download !== "1";
-  response.setHeader("X-Frame-Options", (request.path === "/" && request.query.canvasPane === "1") || filePreview ? "SAMEORIGIN" : "DENY");
+  const dashboardFrame = /^\/api\/dashboards\/[^/]+\/frame$/.test(request.path);
+  response.setHeader("X-Frame-Options", (request.path === "/" && request.query.canvasPane === "1") || filePreview || dashboardFrame ? "SAMEORIGIN" : "DENY");
   response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   if (request.path.startsWith("/api/")) response.setHeader("Cache-Control", "no-store");

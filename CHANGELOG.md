@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Added the view that shows a dashboard only to people who can see its project, conversation or workspace, where it runs in a sandbox that cannot send any requests.
 - Changed a dashboard's test refresh in the creator to fill only the draft, so the live dashboard keeps its current data until you save.
 - Added the instructions the dashboard agent builds and edits from, which list every chart and table it can use, require a refresh script to be tested before it finishes, and keep each dashboard offline and read-only toward your project's data.
 - Added the shared charts, headline numbers, sortable paged tables and status badges every dashboard is built from, so dashboards look alike and never load anything from the internet.

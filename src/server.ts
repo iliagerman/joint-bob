@@ -83,6 +83,7 @@ import "./server/routes/conversation-chat.js";
 import "./server/routes/agent-instructions.js";
 import "./server/routes/search.js";
 import "./server/routes/usage.js";
+import "./server/routes/dashboards.js";
 import "./server/routes/relay.js";
 import "./server/routes/webhooks.js";
 import "./server/routes/updates.js";
