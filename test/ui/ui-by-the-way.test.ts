@@ -37,6 +37,11 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
     };
     await open();
     assert.equal(await page.getByTestId("activity-chat-tab").getAttribute("aria-selected"), "true");
+    const tabStyle = await page.getByTestId("activity-chat-tab").evaluate((tab) => {
+      const style = getComputedStyle(tab);
+      return { background: style.backgroundColor, underline: style.borderBottomWidth };
+    });
+    assert.deepEqual(tabStyle, { background: "rgba(0, 0, 0, 0)", underline: "2px" });
     await page.getByTestId("conversation-chat-harness").selectOption("claude");
     await page.getByTestId("conversation-chat-input").fill("side-only question");
     let releaseQuestion!: () => void;

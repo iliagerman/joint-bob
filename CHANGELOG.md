@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added live streaming to the side Chat, so answers appear as they are written, with Copy and Quote buttons on each message that copy its text or quote it into your next question.
+- Changed the selected tab in the Activity panel to show only its underline, without a raised background.
 
 ## 2.149.1 — 2026-10-24
 
