@@ -85,3 +85,51 @@ test("workspaces and conversations open their own dashboard mode", { timeout: 18
   await page.getByTestId("dashboard-empty").waitFor();
   assert.match(await page.getByTestId("dashboard-eyebrow").textContent() ?? "", /Conversation dashboard/);
 });
+
+async function within(page: import("playwright-core").Page, testid: string, height: number): Promise<void> {
+  const box = await page.getByTestId(testid).boundingBox();
+  assert.ok(box && box.x >= 0 && box.x + box.width <= 390 && box.y >= 0 && box.y + box.height <= height, `${testid} must be on screen: ${JSON.stringify(box)}`);
+}
+
+test("on a phone, the project sheet and the conversation tools open dashboard mode", { timeout: 180_000 }, async (t) => {
+  const { page } = await signedIn(t);
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-focus-ui-toggle").check();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
+  await page.getByTestId("settings-cancel-button").click();
+
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("body.view-sessions").waitFor();
+  await page.getByTestId("focus-controls-button").click();
+  await page.getByTestId("focus-dashboard").click();
+  await page.locator("#dashboardDialog[open]").waitFor();
+  await page.getByTestId("dashboard-empty").waitFor();
+  assert.match(await page.getByTestId("dashboard-eyebrow").textContent() ?? "", /Project dashboard/);
+  await page.getByTestId("dashboard-request").fill("Show how many bugs we got today");
+  await within(page, "dashboard-create", 844);
+  await page.getByTestId("dashboard-create").click();
+  await page.getByText("I built a dashboard that shows today's bugs.").waitFor();
+  for (const control of ["dashboard-send", "dashboard-close"]) await within(page, control, 844);
+  assert.equal(await page.getByTestId("dashboard-draft-frame").isVisible(), false, "a phone shows the chat or the preview, not both squeezed");
+  await page.getByTestId("dashboard-tab-preview").click();
+  await page.getByTestId("dashboard-draft-frame").waitFor();
+  for (const control of ["dashboard-test-refresh", "dashboard-save", "dashboard-close"]) await within(page, control, 844);
+  await page.getByTestId("dashboard-save").click();
+  await page.getByTestId("dashboard-frame").waitFor();
+  for (const control of ["dashboard-refresh", "dashboard-edit", "dashboard-close"]) await within(page, control, 844);
+  const header = await page.evaluate(() => ({
+    close: document.querySelector("#dashboardClose")!.getBoundingClientRect().top,
+    title: document.querySelector("#dashboardTitle")!.getBoundingClientRect().top,
+  }));
+  assert.ok(Math.abs(header.close - header.title) < 24, `the close button stays beside the title: ${JSON.stringify(header)}`);
+  await page.getByTestId("dashboard-close").click();
+
+  await page.locator("#sessionList .session-card").first().click();
+  await page.locator("body.view-chat").waitFor();
+  await page.getByTestId("focus-controls-button").click();
+  await page.getByTestId("focus-tools").click();
+  await page.getByTestId("chat-more-dashboard-button").click();
+  await page.locator("#dashboardDialog[open]").waitFor();
+  assert.match(await page.getByTestId("dashboard-eyebrow").textContent() ?? "", /Conversation dashboard/);
+});

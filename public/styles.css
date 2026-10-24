@@ -5125,8 +5125,21 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 .dashboard-file { max-height: 320px; margin: 0; padding: 10px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); font-size: 12px; }
 .project-group-dashboard { width: 26px; height: 26px; margin-left: auto; padding: 4px; }
 .project-group-dashboard svg { width: 15px; height: 15px; }
+.dashboard-tabs { display: none; }
 @media (max-width: 760px) {
-  .dashboard-creator { grid-template-columns: 1fr; grid-template-rows: minmax(240px, 45%) minmax(0, 1fr); }
+  #dashboardDialog .dashboard-card { width: calc(100vw - 16px); height: calc(100dvh - 16px); padding: 12px; }
+  .dashboard-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; }
+  .dashboard-heading-text { grid-column: 1; grid-row: 1; margin-right: 0; }
+  #dashboardClose { grid-column: 2; grid-row: 1; align-self: start; }
+  .dashboard-picker, .dashboard-status, .dashboard-actions { grid-column: 1 / -1; max-width: none; }
+  .dashboard-actions button { padding: 5px 9px; font-size: 13px; }
+  .dashboard-creator { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .dashboard-tabs { display: flex; gap: 4px; padding: 3px; border-radius: var(--radius-ctl); background: var(--field); }
+  .dashboard-tabs button { flex: 1; padding: 6px; border: 0; border-radius: 8px; background: none; color: var(--muted); box-shadow: none; }
+  .dashboard-tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); font-weight: 600; }
+  .dashboard-creator[data-pane="chat"] .dashboard-preview, .dashboard-creator[data-pane="preview"] .dashboard-chat { display: none; }
+  .dashboard-preview-actions { flex-wrap: nowrap; }
+  .dashboard-preview-actions button { padding: 6px 10px; font-size: 13px; white-space: nowrap; }
 }
 .dashboard-preview-actions button, .dashboard-banner button { display: inline-flex; align-items: center; gap: 6px; }
 .dashboard-preview-actions svg { width: 15px; height: 15px; }

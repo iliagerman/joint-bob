@@ -1,4 +1,5 @@
 import { savePreferences } from "./api.js";
+import { openDashboardMode } from "./dashboards.js";
 import { elements } from "./elements.js";
 import { menuIcon } from "./icons.js";
 import { openRecentSessions } from "./recents.js";
@@ -69,6 +70,19 @@ function proxyAction(label, target, icon) {
   });
   context.append(button);
 }
+/** Dashboard mode for the open project; a conversation's is under Tools, with its other actions. */
+function dashboardAction(target) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.append(menuIcon("dashboard"), document.createTextNode("Dashboard"));
+  button.dataset.testid = "focus-dashboard";
+  button.addEventListener("click", () => {
+    showMenu(false);
+    openDashboardMode(target()).catch((error) => toast(error.message));
+  });
+  context.append(button);
+}
+
 function syncView() {
   if (!enabled) return;
   const view = currentView();
@@ -80,6 +94,7 @@ function syncView() {
   if (view === "sessions") {
     const rowMenu = document.querySelector(`[data-project-id="${CSS.escape(state.activeProjectId || "")}"] [data-testid="project-menu-button"]`);
     if (rowMenu) proxyAction("Project actions", rowMenu, "sliders");
+    if (state.activeProjectId) dashboardAction(() => ({ kind: "project", id: state.activeProjectId, projectId: state.activeProjectId }));
     proxyAction("Project board", elements.openBoardButton, "canvas");
     proxyAction("Canvas", elements.openCanvasButton, "canvas");
   }

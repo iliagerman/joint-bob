@@ -19,7 +19,7 @@ const actionsNode = document.querySelector("#dashboardActions");
 const body = document.querySelector("#dashboardBody");
 
 const KIND_LABELS = { conversation: "Conversation dashboard", project: "Project dashboard", workspace: "Workspace dashboard" };
-const view = { target: null, listing: null, currentId: null, detail: null, mode: "view", pollTimer: null };
+const view = { target: null, listing: null, currentId: null, detail: null, mode: "view", creatorPane: "chat", pollTimer: null };
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -66,10 +66,17 @@ async function loadDetail() {
 /** Opens the dashboard an entity shows; with none, the description form. */
 export async function openDashboardMode(target) {
   view.target = target;
+  view.creatorPane = "chat";
   view.currentId = null;
   view.detail = null;
-  if (!dialog.open) dialog.showModal();
+  // Never show the previous entity's dashboard while this one loads.
+  eyebrowNode.textContent = KIND_LABELS[target.kind];
+  titleNode.textContent = "Loading…";
+  picker.hidden = true;
+  statusNode.textContent = "";
+  actionsNode.replaceChildren();
   body.replaceChildren(el("p", "dashboard-note", "Loading…"));
+  if (!dialog.open) dialog.showModal();
   await loadListing();
   const unsaved = view.listing.dashboards.find((dashboard) => dashboard.origin === "own" && !dashboard.saved);
   view.currentId = view.listing.displayedId ?? unsaved?.id ?? null;
@@ -253,6 +260,23 @@ function renderPreview(dashboard, running) {
   return preview;
 }
 
+/** On a narrow screen the chat and the preview are tabs; on a wide one they sit side by side. */
+function creatorTabs(creator) {
+  const tabs = el("div", "dashboard-tabs");
+  tabs.setAttribute("role", "tablist");
+  for (const [pane, label] of [["chat", "Chat"], ["preview", "Preview"]]) {
+    const tab = el("button", "", label);
+    tab.type = "button";
+    tab.dataset.testid = `dashboard-tab-${pane}`;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(view.creatorPane === pane));
+    tab.addEventListener("click", () => { view.creatorPane = pane; render(); });
+    tabs.append(tab);
+  }
+  creator.dataset.pane = view.creatorPane;
+  return tabs;
+}
+
 function renderCreator() {
   const dashboard = view.detail.dashboard;
   const running = Boolean(dashboard.running);
@@ -260,7 +284,7 @@ function renderCreator() {
   creator.dataset.testid = "dashboard-creator";
   const chat = el("section", "dashboard-chat");
   chat.append(renderMessages(), renderComposer(running));
-  creator.append(chat, renderPreview(dashboard, running));
+  creator.append(creatorTabs(creator), chat, renderPreview(dashboard, running));
   body.replaceChildren(creator);
   const messages = creator.querySelector(".dashboard-messages");
   messages.scrollTop = messages.scrollHeight;
@@ -389,8 +413,14 @@ function schedulePoll() {
 document.querySelector("#dashboardClose").addEventListener("click", () => dialog.close());
 dialog.addEventListener("close", () => clearTimeout(view.pollTimer));
 
-document.querySelector("#chatDashboardButton").addEventListener("click", () => {
+/** The open conversation's dashboard: from the chat header, and from the chat's more menu (Tools on a phone). */
+function openConversationDashboard() {
   const conversationId = state.activeConversationId || state.activeSessionId;
   if (!conversationId || !state.activeProjectId) { toast("Open a conversation first"); return; }
   openDashboardMode({ kind: "conversation", id: conversationId, projectId: state.activeProjectId }).catch((error) => toast(error.message));
+}
+document.querySelector("#chatDashboardButton").addEventListener("click", openConversationDashboard);
+document.querySelector("#chatMoreDashboardButton").addEventListener("click", () => {
+  document.querySelector("#chatMoreMenu").open = false;
+  openConversationDashboard();
 });
