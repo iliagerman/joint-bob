@@ -188,7 +188,8 @@ export interface SettingsInput {
   pi?: RuntimeSettings;
   claude?: RuntimeSettings;
   runtimes?: Record<string, RuntimeSettings>;
-  syncthing: SyncthingSettings;
+  /** Absent keeps the configured endpoint and key. */
+  syncthing?: SyncthingSettings;
   projects?: { homePath?: string; rootPath?: string; personalRootPath?: string; workRootPath?: string };
   resources?: ResourcePaths;
   conversationLabels?: string[];
@@ -598,7 +599,7 @@ export function checkRuntimeSettings(input: Record<string, RuntimeSettings>): Re
 }
 
 export function updateSettings(input: SettingsInput, actorId?: string): SettingsResponse {
-  if (!loopbackEndpoint(input.syncthing.endpoint)) throw new Error("Syncthing endpoint must use a loopback host");
+  if (input.syncthing && !loopbackEndpoint(input.syncthing.endpoint)) throw new Error("Syncthing endpoint must use a loopback host");
   const previous = getSettings();
   const suppliedRuntimes = runtimeRecord((adapter) => resolveRuntimeInput(
     adapter.id,
@@ -652,7 +653,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
       save(db, `${id}.configPath`, runtimeSettings.configPath);
       save(db, `${id}.sessionPath`, runtimeSettings.sessionPath);
     }
-    save(db, "syncthing.endpoint", input.syncthing.endpoint);
+    if (input.syncthing) save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.homePath", path.resolve(homePath));
     save(db, "conversationLabels", JSON.stringify(conversationLabels));
     save(db, "conversationLabelIcons", JSON.stringify({ ...clearedIcons, ...conversationLabelIcons }));
@@ -677,7 +678,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "conversationCommands", JSON.stringify(conversationCommands));
     save(db, "conversationDefaults", JSON.stringify(conversationDefaults));
     for (const type of RESOURCE_TYPES) save(db, `resources.${type}`, JSON.stringify(resources[type]));
-    if (input.syncthing.apiKey !== undefined) {
+    if (input.syncthing?.apiKey !== undefined) {
       if (input.syncthing.apiKey) save(db, "syncthing.apiKey", input.syncthing.apiKey, true);
       else db.prepare("DELETE FROM node_settings WHERE key = 'syncthing.apiKey'").run();
     }

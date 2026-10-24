@@ -6,8 +6,9 @@ import { getSettings } from "./settings.js";
 
 export const TICKET_WORKSPACE_FOLDER_ID = "joint-bob-ticket-workspaces";
 export const TICKET_WORKSPACE_FOLDER_LABEL = "Joint Bob ticket workspaces";
+export const TICKET_FOLDER_PREFIX = "joint-bob-tickets-";
 export function projectTicketSyncFolderId(projectId: string): string {
-  return `joint-bob-tickets-${createHash('sha256').update(projectId).digest('hex')}`;
+  return `${TICKET_FOLDER_PREFIX}${createHash('sha256').update(projectId).digest('hex')}`;
 }
 
 /** Sync-visible (Syncthing ignores exactly `.joint-bob/`) baseline snapshot inside a ticket workspace. */

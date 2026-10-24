@@ -8,18 +8,15 @@ import { ProjectDirectoryImportError, relocateProjectDirectory } from "../projec
 import { getProjectLock, projectLocks } from "../project-locks.js";
 import { getSettings } from "../settings.js";
 import { listProjects, updateProjectWorkspaceAndPath } from "../store.js";
-import { ensureSyncthingFolder, syncthingFolderStatuses } from "../syncthing.js";
+import { ensureSyncthingFolder } from "../syncthing.js";
+import { projectSyncStatuses, unavailableProjectStatus } from "../file-sync/facade.js";
 import { listTasks } from "../tasks.js";
-import type { ProjectRecord, ProjectSyncStatus, ProjectView } from "../types.js";
+import type { ProjectRecord, ProjectView } from "../types.js";
 import { sessionWatcher } from "./chat.js";
 import { harnessSessionBusy, harnessSessions } from "./harness-sessions.js";
 import { harnessTaskRuns, projectHasMergeReservation } from "./task-runs.js";
 import { projectUsage } from "../usage-ledger.js";
 import { workspaceSharingSchema } from "../workspace-sharing.js";
-
-function unavailableProjectStatus(message = "No Syncthing folder is configured"): ProjectSyncStatus {
-  return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
-}
 
 interface ProjectListOptions {
   includeSyncStatus?: boolean;
@@ -36,9 +33,7 @@ export async function projectsWithSharedNames(includeSyncStatusOrOptions?: boole
     : includeSyncStatusOrOptions ?? {};
   const { includeSyncStatus = true, includeUsage = true, filterForHomeNodeId } = options;
   const [projects, overrides, locks, local] = await Promise.all([listProjects(), projectNameOverrides(), projectLocks(), getClusterNode()]);
-  const statuses = includeSyncStatus
-    ? await syncthingFolderStatuses(projects.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []))
-    : {};
+  const statuses = includeSyncStatus ? await projectSyncStatuses(projects) : {};
 
   let visibleProjects = projects;
   if (filterForHomeNodeId) {
@@ -65,9 +60,7 @@ export async function projectsWithSharedNames(includeSyncStatusOrOptions?: boole
       ...project,
       ...(hidden.has(project.id) ? { hiddenFromOtherNodes: true } : {}),
       name: overrides[project.id] ?? project.name,
-      syncStatus: project.syncFolderId
-        ? statuses[project.syncFolderId] ?? unavailableProjectStatus("Loading sync status")
-        : unavailableProjectStatus(),
+      syncStatus: statuses[project.id] ?? unavailableProjectStatus(project.syncFolderId ? "Loading sync status" : undefined),
       ...(includeUsage ? { usage: usage.get(project.id) } : {}),
       ...(lock ? { lock, lockedElsewhere: lock.nodeId !== local.id } : {}),
     };

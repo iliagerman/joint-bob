@@ -58,3 +58,58 @@ test("native Syncthing excludes installed packages at every depth but keeps sour
     await rm(root, { recursive: true, force: true });
   }
 });
+
+const uuid = "0b9c6f1e-2d3a-4c5b-8e7f-a1b2c3d4e5f6";
+const halfWritten = [
+  `.creating-${uuid}/README.md`, `worktree.json.${uuid}.tmp`, `.settings.json.${uuid}.tmp`, `.${uuid}.tmp`,
+  `.notes.md.jb-merge-${uuid}.tmp`, `notes.md.jb-rollback-${uuid}.tmp`, ".joint-bob-sync.README.md.0123456789abcdef.tmp",
+  `.joint-bob-worktree/worktree.json.${uuid}.tmp`, ".joint-bob-worktrees/feature/README.md",
+];
+const shared = [
+  ".joint-bob-worktree/worktree.json", ".joint-bob-attachments/notes.txt", ".joint-bob-baseline/manifest.json",
+  "notes.sync-conflict-20261006-173252-5CHB2CY.md", "plain.tmp", "foo.12345678.tmp", `abc-${uuid}.tmp`, `abc.${uuid}.tmpl`,
+  `${uuid}.json`, "creating-notes.md", ".joint-bob-worktrees-old/README.md", "joint-bob-worktrees/README.md",
+];
+
+test("native Syncthing keeps half-written files and local branch worktrees out but syncs conflict copies and shared metadata", { timeout: 60_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sync-half-written-"));
+  const previousUrl = process.env.JOINT_BOB_SYNCTHING_URL;
+  const previousKey = process.env.JOINT_BOB_SYNCTHING_API_KEY;
+  const sync = await startNativeSyncthing(path.join(root, "syncthing"));
+  try {
+    process.env.JOINT_BOB_SYNCTHING_URL = sync.url;
+    process.env.JOINT_BOB_SYNCTHING_API_KEY = sync.key;
+    const { ensureSyncthingFolder, reconcileSyncthingProjectFolders, rescanSyncthingFolder, resetSyncthingConnection } = await import("../src/syncthing.ts");
+    resetSyncthingConnection();
+    for (const folder of ["project", "joint-bob-worktrees-fixture"]) {
+      const directory = path.join(root, folder);
+      for (const prefix of ["", "nested/deep/"]) for (const file of [...halfWritten, ...shared]) {
+        const target = path.join(directory, prefix, file);
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, "synthetic fixture\n");
+      }
+      await ensureSyncthingFolder(folder, folder, directory);
+      await rescanSyncthingFolder(folder);
+      const indexed = indexedPaths(await sync.request<IndexedEntry[]>(`db/browse?folder=${folder}&levels=10`));
+      for (const prefix of ["", "nested/deep/"]) {
+        for (const file of shared) assert.ok(indexed.includes(prefix + file), `${folder}: ${prefix + file} must sync`);
+        for (const file of halfWritten) assert.ok(!indexed.includes(prefix + file), `${folder}: ${prefix + file} must stay local`);
+      }
+    }
+
+    // Reconciliation sets a worktree folder's pull order with a PATCH that leaves the rest of its configuration alone.
+    const endpoint = "config/folders/joint-bob-worktrees-fixture";
+    const before = await sync.request<{ order: string; path: string; devices: unknown[] }>(endpoint);
+    await sync.request(endpoint, { ...before, order: "random" });
+    await reconcileSyncthingProjectFolders([{ syncFolderId: "project" }]);
+    const after = await sync.request<{ order: string; path: string; devices: unknown[] }>(endpoint);
+    assert.deepEqual(after, { ...before, order: "smallestFirst" });
+  } finally {
+    if (previousUrl === undefined) delete process.env.JOINT_BOB_SYNCTHING_URL;
+    else process.env.JOINT_BOB_SYNCTHING_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.JOINT_BOB_SYNCTHING_API_KEY;
+    else process.env.JOINT_BOB_SYNCTHING_API_KEY = previousKey;
+    await stopNativeSyncthing(sync.child);
+    await rm(root, { recursive: true, force: true });
+  }
+});

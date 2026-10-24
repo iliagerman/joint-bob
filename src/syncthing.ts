@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { getSettings, syncthingApiKey } from "./settings.js";
 import { AGENT_RESOURCES_FOLDER_ID, AGENT_RESOURCES_FOLDER_LABEL } from "./agent-resources.js";
-import { TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
+import { TICKET_FOLDER_PREFIX, TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
 import type { ProjectSyncStatus } from "./types.js";
 import { WORKTREE_FOLDER_PREFIX, worktreeBinaryExtensions, worktreeHeavyDirectories, worktreeLinkedDirectories } from "./worktree-filters.js";
 
@@ -120,6 +120,13 @@ const projectIgnorePatterns = [
   "(?d)**/.dev-env/",
   // Test runs build into .test-build-<hash> in the checkout; two machines running tests left conflict copies of it.
   "(?d).test-build-*",
+  // Half-written files: worktree staging copies, atomic writes (<name>.<uuid>.tmp), merge journal
+  // writes and rollbacks, and file-sync downloads.
+  "(?d).creating-*",
+  "(?d)*.????????-????-????-????-????????????.tmp",
+  "(?d)*.jb-merge-*.tmp",
+  "(?d)*.jb-rollback-*.tmp",
+  "(?d).joint-bob-sync.*.tmp",
   ".env",
   ".env.*",
   "**/.env",
@@ -133,6 +140,8 @@ const projectIgnorePatterns = [
   "id_ecdsa*",
   ".joint-bob/",
   "**/.joint-bob/",
+  // Legacy branch-ticket worktrees beside a project: node-local checkouts, never shared.
+  ".joint-bob-worktrees",
   ".pi-mobile-web/",
   "**/.pi-mobile-web/",
   "(?d)aidlc/.aidlc-*",
@@ -265,6 +274,16 @@ async function request<T>(pathname: string, init: RequestInit = {}): Promise<T> 
   return body ? JSON.parse(body) as T : undefined as T;
 }
 
+const unreachableCodes = new Set(["ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT"]);
+/** No answer at all: the daemon is not configured, down, still binding its port, or hung. Every transport
+    failure says "fetch failed", and a TLS error or a reset comes from a daemon that may be running, so only the cause decides. */
+export function syncthingUnreachable(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message === "Syncthing is not configured on this node") return true;
+  if (error.name === "TimeoutError" || error.name === "AbortError") return true;
+  return unreachableCodes.has((error.cause as NodeJS.ErrnoException | undefined)?.code ?? "");
+}
+
 let connectionGeneration = 0;
 export function resetSyncthingConnection(): void {
   connectionPromise = undefined;
@@ -281,6 +300,11 @@ export async function syncthingDeviceId(): Promise<string | undefined> {
 
 export async function listSyncthingFolders(): Promise<SyncthingFolder[]> {
   if (!await connection()) return [];
+  return request<SyncthingFolder[]>("/rest/config/folders");
+}
+
+/** The folder list from a daemon that answered; a node without Syncthing throws instead of listing nothing. */
+export async function requireSyncthingFolders(): Promise<SyncthingFolder[]> {
   return request<SyncthingFolder[]>("/rest/config/folders");
 }
 
@@ -322,10 +346,13 @@ export async function reconcileSyncthingProjectFolders(projects: Array<{ syncFol
   const folders = await request<SyncthingFolder[]>("/rest/config/folders");
   const configured = new Set(folders.map((folder) => folder.id));
   const worktreeFolders = folders.filter((folder) => folder.id.startsWith(WORKTREE_FOLDER_PREFIX));
-  const managedIds = new Set([...folderIds.filter((id) => configured.has(id)), ...worktreeFolders.map((folder) => folder.id)]);
+  // Ticket folders take project rules too; readiness checks no longer refresh them, so this does.
+  const ticketFolders = folders.filter((folder) => folder.id.startsWith(TICKET_FOLDER_PREFIX));
+  const managedIds = new Set([...folderIds.filter((id) => configured.has(id)), ...[...worktreeFolders, ...ticketFolders].map((folder) => folder.id)]);
   await Promise.all([...managedIds].map(setProjectIgnores));
+  // Only the order changes: a PUT of this snapshot would drop a device enrollment added meanwhile.
   await Promise.all(worktreeFolders.filter((folder) => folder.order !== "smallestFirst").map((folder) =>
-    request<void>(`/rest/config/folders/${encodeURIComponent(folder.id)}`, { method: "PUT", body: JSON.stringify({ ...folder, order: "smallestFirst" }) })));
+    request<void>(`/rest/config/folders/${encodeURIComponent(folder.id)}`, { method: "PATCH", body: JSON.stringify({ order: "smallestFirst" }) })));
 }
 
 function remaining(value: unknown): number {
@@ -464,8 +491,8 @@ export async function removeSyncthingDevices(deviceIds: string[], folderIds: str
   }
 }
 
-export async function pauseSyncthingFolders(folderIds:string[]):Promise<void> {
-  for(const folder of await listSyncthingFolders()){
+export async function pauseSyncthingFolders(folderIds:string[], folders?:SyncthingFolder[]):Promise<void> {
+  for(const folder of folders ?? await listSyncthingFolders()){
     if(!folderIds.includes(folder.id)||folder.paused)continue;
     await request<void>(`/rest/config/folders/${encodeURIComponent(folder.id)}`,{
       method:'PUT',body:JSON.stringify({...folder,paused:true}),

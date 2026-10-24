@@ -5,7 +5,6 @@ import { z } from "zod";
 import { getClusterNode } from "../../cluster.js";
 import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { getProject } from "../../store.js";
-import { ensureTicketWorkspaceFolder } from "../../syncthing.js";
 import { createTaskWorkspace, removeTaskWorkspace, TaskWorkspaceError, taskWorkspaceKey, TICKET_MERGE_DIR } from "../../task-workspaces.js";
 import { createTask, deleteTask, listTasks, updateTask } from "../../tasks.js";
 import { beginTicketMerge, discardTicketChanges, finalizeTicketMerge, resolveTicketChoiceConflict, restartTicketMerge, ticketMergeConflicts, TicketMergeError } from "../../ticket-merge-service.js";
@@ -71,7 +70,6 @@ app.post("/api/projects/:projectId/tasks", async (request, response, next) => {
     }
     await assertProjectEditable(project);
     const payload = taskCreateSchema.parse(request.body);
-    await ensureTicketWorkspaceFolder();
     const engine = payload.engine ?? "pi";
     const planMode = payload.planMode === true;
     if (payload.status === "planning" && !planMode) {

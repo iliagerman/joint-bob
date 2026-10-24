@@ -12,8 +12,8 @@ import { getHarness, getHarnessRuntime, harnessForSessionPath } from "../harness
 import { resolveLocalSessionPath } from "../session-paths.js";
 import { getSettings, remoteTerminalAllowed, remoteTerminalSettings } from "../settings.js";
 import { canonicalProjectId, getProject, listProjects, listWorkspaces } from "../store.js";
-import { assertSyncthingFolderReady, syncthingFolderStatuses } from "../syncthing.js";
-import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, projectTicketSyncFolderId, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
+import { assertProjectFilesReady, taskShareStatuses } from "../file-sync/facade.js";
+import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, ProjectSyncStatus, TaskRecord } from "../types.js";
 import { validateTaskRepository } from "../worktrees.js";
@@ -86,9 +86,9 @@ async function assertTaskSessionReadyNow(projectId:string, task:TaskRecord, sync
 
 export async function assertTaskFilesReady(project: ProjectRecord, task: TaskRecord, syncStatusChecked = false): Promise<void> {
   if (task.worktreePath && !task.worktreeBranch) {
-    if (!syncStatusChecked) await assertSyncthingFolderReady(projectTicketSyncFolderId(project.id));
+    if (!syncStatusChecked) await assertProjectFilesReady(project, "tickets");
     await assertTaskWorkspaceReady(taskWorkspaceKey(task.worktreePath, task.id), task.id);
-  } else if (project.syncFolderId && !syncStatusChecked) await assertSyncthingFolderReady(project.syncFolderId);
+  } else if (!syncStatusChecked) await assertProjectFilesReady(project, "project");
   if (task.worktreeBranch) await validateTaskRepository(project.path);
   if (task.sessionPath) await assertTaskSessionReady(project.id,task, syncStatusChecked);
 }
@@ -130,12 +130,9 @@ export const peerTaskEligibilitySchema = z.object({
 });
 
 async function taskSyncStatuses(project: ProjectRecord, task: TaskRecord): Promise<TaskSyncStatus[]> {
-  const targets: Array<{ id: string; label: string }> = [];
-  if (task.worktreePath && !task.worktreeBranch) targets.push({ id: projectTicketSyncFolderId(project.id), label: TICKET_WORKSPACE_FOLDER_LABEL });
-  else if (project.syncFolderId) targets.push({ id: project.syncFolderId, label: project.name });
-  const unique = targets.filter((target, index) => targets.findIndex(({ id }) => id === target.id) === index);
-  const statuses = await syncthingFolderStatuses(unique.map((target) => target.id));
-  const result=unique.map((target) => ({ label: target.label, ...statuses[target.id] }));
+  const result: TaskSyncStatus[] = await taskShareStatuses(project, [task.worktreePath && !task.worktreeBranch
+    ? { kind: "tickets", label: TICKET_WORKSPACE_FOLDER_LABEL }
+    : { kind: "project", label: project.name }]);
   if(task.sessionPath){
     try{await assertSharedTranscriptReady(project.id,task.sessionPath,task.currentNodeId);result.push({label:'Conversation transcript',state:'synced',remainingFiles:0,remainingBytes:0});}
     catch(error){result.push({label:'Conversation transcript',state:'error',remainingFiles:1,remainingBytes:0,message:error instanceof Error?error.message:'Transcript unavailable'});}

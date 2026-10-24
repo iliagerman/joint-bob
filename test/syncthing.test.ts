@@ -66,6 +66,11 @@ const managedIgnorePatterns = [
   "(?d).dev-env/",
   "(?d)**/.dev-env/",
   "(?d).test-build-*",
+  "(?d).creating-*",
+  "(?d)*.????????-????-????-????-????????????.tmp",
+  "(?d)*.jb-merge-*.tmp",
+  "(?d)*.jb-rollback-*.tmp",
+  "(?d).joint-bob-sync.*.tmp",
   ".env",
   ".env.*",
   "**/.env",
@@ -79,6 +84,7 @@ const managedIgnorePatterns = [
   "id_ecdsa*",
   ".joint-bob/",
   "**/.joint-bob/",
+  ".joint-bob-worktrees",
   ".pi-mobile-web/",
   "**/.pi-mobile-web/",
   "(?d)aidlc/.aidlc-*",
@@ -303,6 +309,33 @@ test("Syncthing treats a null ignore list as empty", async () => {
   assert.deepEqual(postedIgnore, managedIgnorePatterns);
 });
 
+/** Whether a name at the folder root meets a rule, the way Syncthing globs match (first rule wins, no negations here). */
+function ignoredAtRoot(rules: string[], name: string): string | undefined {
+  return rules.find((rule) => {
+    let pattern = rule.replace(/^\(\?d\)/, "");
+    const caseless = pattern.startsWith("(?i)");
+    pattern = pattern.replace(/^\(\?i\)/, "").replace(/^\*\*\//, "").replace(/\/(\*\*)?$/, "");
+    const source = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, ".*");
+    return new RegExp(`^${source}$`, caseless ? "i" : "").test(name);
+  });
+}
+
+test("project folders keep half-written files local and still sync conflict copies and Joint Bob's shared metadata", () => {
+  for (const name of [".creating-0123", "worktree.json.0b9c6f1e-2d3a-4c5b-8e7f-a1b2c3d4e5f6.tmp", ".settings.json.0b9c6f1e-2d3a-4c5b-8e7f-a1b2c3d4e5f6.tmp",
+    ".notes.md.jb-merge-0b9c6f1e-2d3a-4c5b-8e7f-a1b2c3d4e5f6.tmp", "notes.md.jb-rollback-0b9c6f1e-2d3a-4c5b-8e7f-a1b2c3d4e5f6.tmp", ".joint-bob-sync.README.md.0123456789abcdef.tmp", ".joint-bob-worktrees"]) {
+    assert.ok(ignoredAtRoot(managedIgnorePatterns, name), name);
+  }
+  assert.ok(ignoredAtRoot(managedIgnorePatterns, ".joint-bob-worktrees")?.startsWith("(?d)") === false, "other machines' deletions never remove local branch worktrees");
+  assert.ok(!managedIgnorePatterns.includes("*.sync-conflict-*"));
+  for (const name of ["CHANGELOG.sync-conflict-20261006-173252-5CHB2CY.md", "notes.sync-conflict-20261006-173252-5CHB2CY.tmp", ".joint-bob-attachments", ".joint-bob-worktree", ".joint-bob-baseline", "plain.tmp"]) {
+    assert.equal(ignoredAtRoot(managedIgnorePatterns, name), undefined, name);
+  }
+  const secrets = managedIgnorePatterns.findIndex((rule) => !rule.startsWith("(?d)") && !rule.includes(".git"));
+  for (const rule of ["(?d).creating-*", "(?d)*.????????-????-????-????-????????????.tmp", "(?d)*.jb-merge-*.tmp", "(?d)*.jb-rollback-*.tmp", "(?d).joint-bob-sync.*.tmp"]) {
+    assert.ok(managedIgnorePatterns.indexOf(rule) < secrets, `${rule} comes before the rules that keep secrets`);
+  }
+});
+
 test("Syncthing reconciliation puts managed ignores before user negations", async () => {
   let ignore = ["!.env", "!**", ...managedIgnorePatterns.slice().reverse()];
   const posts: string[][] = [];
@@ -368,6 +401,26 @@ test("Syncthing folder rescan posts the encoded folder ID", async () => {
     response.end();
   }, async (syncthing) => syncthing.rescanSyncthingFolder("project folder"));
   assert.deepEqual(scanRequest, { method: "POST", url: "/rest/db/scan?folder=project%20folder" });
+});
+
+test("a Syncthing that does not answer is told apart from one that answers with an error", async () => {
+  await withSyncthingApi((_request, response) => { response.statusCode = 500; response.end("failed"); }, async (syncthing) => {
+    assert.equal(syncthing.syncthingUnreachable(await syncthing.listSyncthingFolders().catch((error: unknown) => error)), false, "an HTTP error is an answer");
+    assert.equal(syncthing.syncthingUnreachable(new Error("Syncthing is not configured on this node")), true);
+    // undici says "fetch failed" for every transport error; a TLS failure or a reset still came from something listening.
+    const transport = (code: string) => Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error(code), { code }) });
+    assert.equal(syncthing.syncthingUnreachable(transport("DEPTH_ZERO_SELF_SIGNED_CERT")), false, "a self-signed GUI certificate is a running daemon");
+    assert.equal(syncthing.syncthingUnreachable(transport("ECONNRESET")), false);
+    assert.equal(syncthing.syncthingUnreachable(transport("UND_ERR_CONNECT_TIMEOUT")), true);
+  });
+  const probe = createServer();
+  const port = await listen(probe);
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  await withSyncthingApi((_request, response) => response.end("[]"), async () => {
+    process.env.PI_MOBILE_WEB_SYNCTHING_URL = `http://127.0.0.1:${port}`;
+    const syncthing = await import(new URL(`../src/syncthing.ts?refused=${Date.now()}-${Math.random()}`, import.meta.url).href) as typeof import("../src/syncthing.js");
+    assert.equal(syncthing.syncthingUnreachable(await syncthing.listSyncthingFolders().catch((error: unknown) => error)), true, "a refused connection never reached a daemon");
+  });
 });
 
 test("leaving a cluster removes peer devices only from Joint Bob folders", async () => {
@@ -698,9 +751,9 @@ test("a new worktree folder pulls smallest files first; a project folder keeps S
   assert.deepEqual(folders.map((folder) => [folder.id, folder.order]), [["joint-bob-worktrees-abc", "smallestFirst"], ["demo", undefined]]);
 });
 
-test("project reconciliation refreshes existing worktree ignores without re-enrollment", async () => {
+test("project reconciliation refreshes existing worktree and ticket ignores without re-enrollment", async () => {
   const updated: string[] = [];
-  await withSyncthingApi(withConfiguredFolders(["project", "joint-bob-worktrees-existing", "unrelated"], (request, response) => {
+  await withSyncthingApi(withConfiguredFolders(["project", "joint-bob-worktrees-existing", "joint-bob-tickets-existing", "joint-bob-ticket-workspaces", "unrelated"], (request, response) => {
     request.resume();
     request.on("end", () => {
       response.setHeader("Content-Type", "application/json");
@@ -714,12 +767,12 @@ test("project reconciliation refreshes existing worktree ignores without re-enro
   }), async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "project" }]);
   });
-  assert.deepEqual(updated.sort(), ["/rest/db/ignores?folder=joint-bob-worktrees-existing", "/rest/db/ignores?folder=project"]);
+  assert.deepEqual(updated.sort(), ["/rest/db/ignores?folder=joint-bob-tickets-existing", "/rest/db/ignores?folder=joint-bob-worktrees-existing", "/rest/db/ignores?folder=project"]);
 });
 
 test("worktree folders get deletable ignore rules that keep heavy trees and binaries out", async () => {
   const posted: string[][] = [];
-  const updated: Array<{ id: string; order?: string; devices: unknown[] }> = [];
+  const updated: Array<{ method?: string; body: Record<string, unknown> }> = [];
   const folder = "joint-bob-worktrees-0123";
   await withSyncthingApi(withConfiguredFolders([folder], (request, response) => {
     let body = "";
@@ -735,8 +788,8 @@ test("worktree folders get deletable ignore rules that keep heavy trees and bina
         response.end("{}");
         return;
       }
-      if (request.method === "PUT" && request.url === `/rest/config/folders/${folder}`) {
-        updated.push(JSON.parse(body));
+      if (request.url === `/rest/config/folders/${folder}`) {
+        updated.push({ method: request.method, body: JSON.parse(body) });
         response.end("{}");
         return;
       }
@@ -746,7 +799,8 @@ test("worktree folders get deletable ignore rules that keep heavy trees and bina
   }), async (syncthing) => {
     await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: folder }]);
   });
-  assert.deepEqual(updated.map((entry) => [entry.id, entry.order]), [[folder, "smallestFirst"]], "metadata and conversation markers arrive before the bulk copy");
+  // Only the order is sent: a whole-folder PUT of the listing would undo a device a concurrent enrollment added.
+  assert.deepEqual(updated, [{ method: "PATCH", body: { order: "smallestFirst" } }], "metadata and conversation markers arrive before the bulk copy");
   const ignore = posted[0];
   assert.ok(ignore, "worktree ignores must be written");
   const managed = ignore.filter((rule) => rule !== "keep-me/");

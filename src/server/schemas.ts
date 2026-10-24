@@ -378,7 +378,7 @@ const conversationCommandsSchema = z.object({ start: conversationCommandSchema, 
 export const settingsSchema = z.object({
   conversationDefaults: conversationDefaultsSchema.optional(),
   runtimes: z.record(z.string(), runtimeSettingsSchema).optional().refine((runtimes) => !runtimes || Object.keys(runtimes).every((id) => configuredRuntimeIds.has(id)), "Runtime is not configured"),
-  syncthing: z.object({ endpoint: z.string().max(500), apiKey: z.string().max(500).nullable().optional() }),
+  syncthing: z.object({ endpoint: z.string().max(500), apiKey: z.string().max(500).nullable().optional() }).optional(),
   projects: z.object({
     homePath: z.string().max(1000).optional(),
     rootPath: z.string().max(1000).optional(),

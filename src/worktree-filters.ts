@@ -1,7 +1,13 @@
+import { createHash } from "node:crypto";
+
 /** Synced metadata inside a worktree. Every file in it has exactly one writer, so
     Syncthing never has to resolve a conflict between nodes. */
 export const WORKTREE_META_DIR = ".joint-bob-worktree";
 export const WORKTREE_FOLDER_PREFIX = "joint-bob-worktrees-";
+
+export function projectWorktreeSyncFolderId(projectId: string): string {
+  return `${WORKTREE_FOLDER_PREFIX}${createHash("sha256").update(projectId).digest("hex")}`;
+}
 
 /** Dependency, build and cache trees that never belong in a lightweight worktree. */
 export const worktreeHeavyDirectories = [

@@ -12,7 +12,7 @@ import { resolveDataDirectory } from "../data-directory.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { getOrCreateClusterIdentity } from "../cluster-identity.js";
 import { getSettings } from "../settings.js";
-import { pauseSyncthingFolders } from "../syncthing.js";
+import { pauseSyncthingFolders, requireSyncthingFolders, syncthingConnectionGeneration, syncthingUnreachable, type SyncthingFolder } from "../syncthing.js";
 import { authorizedSkillClusters, buildSkillBundle, ensureSkillSharingSchema, installSkillBundle, listReceivedScopedSkills, listReceivedSkills, setSkillShares, skillBundleDigest, skillClusterIds, skillNodeIds, skillScopeGrants, validateSkillName, type ReceivedScopedSkill, type ReceivedSkill, type SkillConversationGrant, type SkillScopeGrants } from "../skill-sharing.js";
 import { allowSkillImport, backupRemovedSkill, markReceived, receivedOwner, skillSuppressed, suppressSkill, unlinkSkillAliases, unmarkReceived, withSkillMutation } from "../skill-sharing-files.js";
 import { ensureResourceSharingSchema } from "../cluster-sharing.js";
@@ -50,14 +50,29 @@ let legacyStatus: { verified: boolean; error: string | null } = { verified: fals
 let refresh: Promise<void> | undefined;
 
 function failure(message: string, status = 409): Error { return Object.assign(new Error(message), { status }); }
+/** The Syncthing connection whose daemon last answered with the folder paused; another daemon is checked afresh. */
+let legacyPauseGeneration: number | undefined;
 export async function ensureLegacySkillSyncPaused(): Promise<void> {
-  try {
-    await pauseSyncthingFolders([AGENT_RESOURCES_FOLDER_ID]);
-    legacyStatus = { verified: true, error: null };
-  } catch (error) {
-    legacyStatus = { verified: false, error: (error as Error).message };
-    throw failure(`Cannot verify legacy skill sync is paused: ${legacyStatus.error}`, 503);
+  const generation = syncthingConnectionGeneration();
+  const refuse = (message: string): never => {
+    legacyStatus = { verified: false, error: message };
+    throw failure(`Cannot verify legacy skill sync is paused: ${message}`, 503);
+  };
+  let folders: SyncthingFolder[];
+  try { folders = await requireSyncthingFolders(); }
+  catch (error) {
+    const message = (error as Error).message;
+    // A daemon that is down cannot sync the folder, and a pause this daemon confirmed stays in its
+    // own configuration; only a reachable Syncthing that never confirmed it keeps refusing.
+    if (syncthingUnreachable(error)) { legacyStatus = { verified: true, error: `Syncthing is unreachable (${message}); a stopped daemon cannot sync the legacy folder` }; return; }
+    if (legacyPauseGeneration === generation) { legacyStatus = { verified: true, error: `Re-checking the pause failed (${message}); it was confirmed earlier` }; return; }
+    return refuse(message);
   }
+  // The daemon answered: a folder it lists as active stays unverified until the pause itself succeeds.
+  try { await pauseSyncthingFolders([AGENT_RESOURCES_FOLDER_ID], folders); }
+  catch (error) { return refuse((error as Error).message); }
+  legacyPauseGeneration = generation;
+  legacyStatus = { verified: true, error: null };
 }
 
 /** Skills a relay enforces are received from the relay, not from a cluster peer; its owner id says so. */
