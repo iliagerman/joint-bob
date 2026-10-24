@@ -3,12 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.150.0 — 2026-10-24
 
-- Changed dashboard mode to keep the chat with the dashboard agent in a collapsible panel on the left and show what the agent is doing in the middle of the screen; closing the window no longer stops it, and a notice with an Open button says when the draft is ready.
+- Changed dashboard mode to keep the dashboard agent's chat in a collapsible panel on the left, with its steps and answer shown live in the middle of the screen as it builds.
+- Added a preview as soon as the first page of a dashboard exists, and a finished draft is test-refreshed at once.
+- Changed closing the window to leave a dashboard agent running, and a notice with an Open button says when the draft is ready.
 - Added live streaming to the side Chat, so answers appear as they are written, with Copy and Quote buttons on each message that copy its text or quote it into your next question.
-- Changed the selected tab in the Activity panel to show only its underline, without a raised background.
-- Added live progress while a dashboard agent works: its steps and answer appear as it writes, the preview shows as soon as the first page exists, and a finished script draft is test-refreshed at once.
+- Changed the selected side-panel tab to show only its underline, without a raised background.
 - Fixed the side Chat failing with "Prompt is too long" on long conversations; older context is now condensed to fit the model, and answers that used it are marked as such.
 
 ## 2.149.1 — 2026-10-24
