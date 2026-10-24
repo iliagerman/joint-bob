@@ -79,6 +79,7 @@ import "./server/routes/worktrees.js";
 import "./server/routes/project-files.js";
 import "./server/routes/git-review.js";
 import "./server/routes/conversation-digest.js";
+import "./server/routes/conversation-chat.js";
 import "./server/routes/agent-instructions.js";
 import "./server/routes/search.js";
 import "./server/routes/usage.js";

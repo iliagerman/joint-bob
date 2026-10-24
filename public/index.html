@@ -327,12 +327,30 @@
                what the agent said, this panel keeps how it got there. -->
           <aside class="activity-panel" id="activityPanel" aria-label="Conversation activity" data-testid="activity-panel" hidden>
             <header class="activity-panel-header">
-              <h2>Activity</h2>
+              <div class="activity-tabs" role="tablist" aria-label="Conversation panel">
+                <button type="button" role="tab" id="activityActivityTab" aria-selected="true" aria-controls="activityBody" data-testid="activity-activity-tab">Activity</button>
+                <button type="button" role="tab" id="activityChatTab" aria-selected="false" aria-controls="conversationChat" data-testid="activity-chat-tab">Chat</button>
+              </div>
               <button class="ghost icon-button activity-panel-close" id="activityPanelCloseButton" type="button" aria-label="Collapse activity" title="Collapse activity" data-testid="activity-panel-close"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"/></svg></button>
             </header>
             <!-- One scrolling column: the overview (summary, statistics, skill suggestions), then the
                  steps, which open on demand and scroll inside their own list. -->
-            <div class="activity-body" id="activityBody" data-testid="activity-body">
+            <section id="conversationChat" class="conversation-chat" role="tabpanel" aria-labelledby="activityChatTab" data-testid="conversation-chat" hidden>
+              <p class="settings-hint">Read-only. Questions and answers stay here, not in the conversation.</p>
+              <div id="conversationChatSelectors" class="conversation-chat-selectors">
+                <label>Harness<select id="conversationChatHarness" data-testid="conversation-chat-harness"></select></label>
+                <label>Model<select id="conversationChatModel" data-testid="conversation-chat-model"></select></label>
+              </div>
+              <button type="button" class="ghost compact" id="conversationChatClear" data-testid="conversation-chat-clear">Clear history</button>
+              <div id="conversationChatMessages" class="conversation-chat-messages" aria-live="polite" data-testid="conversation-chat-messages"></div>
+              <p id="conversationChatStatus" role="status" data-testid="conversation-chat-status"></p>
+              <form id="conversationChatForm" class="conversation-chat-form">
+                <label class="sr-only" for="conversationChatInput">Ask about this conversation</label>
+                <textarea id="conversationChatInput" rows="3" placeholder="Ask about this conversation…" data-testid="conversation-chat-input"></textarea>
+                <button type="submit" id="conversationChatSend" class="primary compact" data-testid="conversation-chat-send">Send</button>
+              </form>
+            </section>
+            <div class="activity-body" id="activityBody" role="tabpanel" aria-labelledby="activityActivityTab" data-testid="activity-body">
             <div class="activity-overview" id="activityOverview" data-testid="activity-overview">
               <details class="activity-section activity-summary" id="activitySummary" open data-testid="activity-summary">
                 <summary data-testid="activity-summary-toggle" title="Show or collapse the summary"><span class="activity-section-chevron" aria-hidden="true">›</span><span>Summary</span><span class="activity-section-status" id="activitySummaryStatus" data-testid="activity-summary-status"></span></summary>
@@ -1039,6 +1057,13 @@
             <legend>New conversations</legend>
             <label class="checkbox-row"><input id="settingsNewConversationWorktree" type="checkbox" data-testid="settings-new-conversation-worktree" /> Start each new conversation in its own worktree</label>
             <p class="settings-hint">The new-conversation dialog then picks New worktree: a Joint Bob worktree named after the conversation is created and the conversation runs in it. You can still choose the project folder or an existing worktree. A conversation that runs on another node starts in the project folder, because a new worktree reaches other nodes only after it syncs.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Side chat</legend>
+            <p class="settings-hint">Read-only chat beside Activity. /bob-btw opens it. History stays until you clear it. Defaults apply when a conversation has no saved side-chat model.</p>
+            <label class="checkbox-row"><input type="checkbox" id="settingsSideChatSelectors" data-testid="settings-side-chat-selectors" checked /> Show harness and model selectors</label>
+            <label>Default harness<select id="settingsSideChatHarness" data-testid="settings-side-chat-harness"></select></label>
+            <label id="settingsSideChatModelLabel">Default model<select id="settingsSideChatModel" data-testid="settings-side-chat-model"></select></label>
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Activity summary</legend>

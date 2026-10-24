@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added a log entry each time a request between your machines fails, recording where it stopped and how long each step took, without paths, request bodies, headers or secrets.
+- Added a Chat tab beside Activity for asking read-only questions about a conversation without changing it; `/bob-btw` now opens this tab instead of copying the conversation, and its history stays until you clear it.
 
 ## 2.147.0 — 2026-10-23
 

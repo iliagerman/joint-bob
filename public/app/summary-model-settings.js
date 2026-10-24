@@ -1,4 +1,5 @@
 import { harnessOption } from "../harness-metadata.js";
+import { loadConversationChatSettings } from "./conversation-chat.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
@@ -100,6 +101,7 @@ async function saveInstructions(text) {
 }
 
 export async function loadSummaryModelSettings() {
+  await loadConversationChatSettings();
   const [harnessBody, modelBody, settings] = await Promise.all([api("/api/harnesses"), api("/api/models"), api("/api/conversation-summary/settings")]);
   choices.harnesses = harnessBody.harnesses.filter((harness) => harness.runtimeConfigured);
   choices.models = modelBody.models;

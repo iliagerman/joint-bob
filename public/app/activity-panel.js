@@ -341,6 +341,7 @@ export function syncActivityGroup(group) {
 
 /** Opens the panel and its steps on a group and briefly highlights it. */
 export function revealActivityGroup(section) {
+  document.dispatchEvent(new CustomEvent("activity-show-steps"));
   setActivityPanelOpen(true);
   setActivityStepsOpen(true);
   requestAnimationFrame(() => {
@@ -533,6 +534,7 @@ export function activityProgressed() {
 
 /** Leaving a conversation: nothing is known about the next one until it is ready. */
 export function activityConversationChanged() {
+  document.dispatchEvent(new CustomEvent("activity-conversation-changed"));
   summary.digest = null;
   summary.writing = false;
   renderSummary();
