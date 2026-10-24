@@ -910,6 +910,14 @@
             <output id="settingsSyncCheckStatus" class="engine-readiness" data-testid="settings-sync-check-status"></output>
             <p class="settings-hint">Every few minutes this node looks for Syncthing conflict copies in the projects it owns and for folders stuck in an error state. It removes duplicate copies, restores copies whose original is gone, rescans broken folders, and asks the chosen harness and model to merge real two-sided edits. Binary and very large files are left for you.</p>
           </fieldset>
+          <fieldset class="phase-settings" data-testid="settings-dashboards" data-admin-only>
+            <legend>Dashboards</legend>
+            <label>Dashboard agent harness
+              <select id="settingsDashboardsHarness" data-testid="settings-dashboards-harness"></select>
+            </label>
+            <div id="settingsDashboardsModel"></div>
+            <p class="settings-hint">The agent that builds and edits dashboards when you describe them, and that refreshes dashboards whose data needs AI. Script dashboards refresh without it. This choice is for this node only.</p>
+          </fieldset>
           <fieldset class="phase-settings" data-admin-only>
             <legend>Shell commands</legend>
             <label class="checkbox-row">

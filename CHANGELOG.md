@@ -11,6 +11,7 @@ Every deployment is a version. The newest section must always match the
 - Added saving for dashboard definitions, where each save lands whole so a refresh never reads a half-written one, and a save with no manifest or index page, a link inside it, or more than 4 MiB is refused.
 - Added running a dashboard's refresh script on its own without AI, where a run that fails, times out or prints more than 4 MiB keeps the last good dashboard and saves its output to a run log.
 - Added a queue to the side Chat so you can send follow-up questions while an answer is still running, where they wait in order, survive a reload, and each answer appears by itself when it is ready.
+- Added a Dashboards section to Settings where you choose the harness and model that build, edit and AI-refresh dashboards, saved for this machine only.
 
 ## 2.148.0 — 2026-10-24
 

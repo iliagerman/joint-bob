@@ -247,6 +247,8 @@ export const elements = {
   settingsSyncCheckHarness: document.querySelector("#settingsSyncCheckHarness"),
   settingsSyncCheckModel: document.querySelector("#settingsSyncCheckModel"),
   settingsSyncCheckStatus: document.querySelector("#settingsSyncCheckStatus"),
+  settingsDashboardsHarness: document.querySelector("#settingsDashboardsHarness"),
+  settingsDashboardsModel: document.querySelector("#settingsDashboardsModel"),
   settingsRemoteTerminalTwins: document.querySelector("#settingsRemoteTerminalTwins"),
   settingsRemoteTerminalOtherNodes: document.querySelector("#settingsRemoteTerminalOtherNodes"),
   settingsStartConversationEnabled: document.querySelector("#settingsStartConversationEnabled"),

@@ -414,7 +414,8 @@ app.put("/api/settings", async (request, response, next) => {
       error.message === "Pi and Claude session paths must not overlap" ||
       /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message) ||
       error.message.includes("Resource paths") || error.message.includes("resource paths") ||
-      error.message.startsWith("Sync check ")
+      error.message.startsWith("Sync check ") ||
+      error.message.startsWith("Dashboard agent ")
     )) {
       sendError(response, 400, error.message);
       return;

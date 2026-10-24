@@ -497,3 +497,22 @@ test("node settings run the sync check by default and let the user pick its harn
   assert.equal(saved.syncCheck.harnessId, "claude");
   assert.equal(saved.syncCheck.modelId, saved.conversationDefaults.claude.modelId, "a new harness starts from its conversation default model");
 });
+
+test("node settings let the user pick the dashboard agent's harness and model", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.getByTestId("settings-open-button").click();
+  await page.locator("#settingsDialog[open]").waitFor();
+
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
+  const harness = page.getByTestId("settings-dashboards-harness");
+  assert.equal(await harness.inputValue(), "pi", "the dashboard agent starts on Pi");
+  await page.getByTestId("settings-dashboards-model").waitFor({ state: "attached" });
+
+  await harness.selectOption("claude");
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  const saved = await page.evaluate(async () => (await (await fetch("/api/settings")).json()) as { dashboards: Record<string, unknown>; conversationDefaults: Record<string, Record<string, unknown>> });
+  assert.equal(saved.dashboards.harnessId, "claude");
+  assert.equal(saved.dashboards.modelId, saved.conversationDefaults.claude.modelId, "a new harness starts from its conversation default model");
+});

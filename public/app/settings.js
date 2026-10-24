@@ -319,6 +319,33 @@ function syncCheckValue() {
   return { enabled: elements.settingsSyncCheckEnabled.checked, harnessId: descriptor.id, provider: provider ? provider.value : descriptor.configuration.fixedProvider, modelId: model.value, thinkingLevel: thinking.value };
 }
 
+let dashboardAgentFields = null;
+
+/** Like the sync check, the dashboard agent picks its own harness and model on this node. */
+function renderDashboardAgentModel(settings, harnessId, current) {
+  const descriptor = harnessDescriptors.find(({ id }) => id === harnessId);
+  if (!descriptor) { elements.settingsDashboardsModel.replaceChildren(); dashboardAgentFields = null; return; }
+  const controls = createConversationControls(descriptor, settings, "", { current: current ?? settings.conversationDefaults[descriptor.id], idPrefix: "settingsDashboards", testPrefix: "settings-dashboards", label: "Dashboard agent" });
+  dashboardAgentFields = { descriptor, ...controls.fields };
+  elements.settingsDashboardsModel.replaceChildren(...controls.controls);
+}
+
+function renderDashboardAgentSettings(settings) {
+  const agent = settings.dashboards;
+  const runnable = harnessDescriptors.filter(({ runtimeConfigured }) => runtimeConfigured);
+  const choices = runnable.some(({ id }) => id === agent.harnessId) ? runnable : [...runnable, harnessDescriptors.find(({ id }) => id === agent.harnessId)].filter(Boolean);
+  elements.settingsDashboardsHarness.replaceChildren(...choices.map(({ id, label }) => new Option(label, id)));
+  elements.settingsDashboardsHarness.value = agent.harnessId;
+  elements.settingsDashboardsHarness.onchange = () => renderDashboardAgentModel(settings, elements.settingsDashboardsHarness.value);
+  renderDashboardAgentModel(settings, agent.harnessId, agent);
+}
+
+function dashboardAgentValue() {
+  if (!dashboardAgentFields) return undefined;
+  const { descriptor, provider, model, thinking } = dashboardAgentFields;
+  return { harnessId: descriptor.id, provider: provider ? provider.value : descriptor.configuration.fixedProvider, modelId: model.value, thinkingLevel: thinking.value };
+}
+
 function renderRuntimeReadiness(readiness) { elements.settingsRuntimeStatus.textContent = Object.entries(readiness).flatMap(([id, fields]) => Object.entries(fields).map(([field, result]) => `${runtimeLabels[id][field]}: ${result.message}`)).join(". "); }
 async function checkRuntimePaths() { const readiness = await api("/api/settings/runtime-check", { method: "POST", body: JSON.stringify(runtimeFieldsValue()) }); renderRuntimeReadiness(readiness); return readiness; }
 function useHarnessDefaults(id) { clearedHarnessesOnSave.add(id); for (const input of Object.values(runtimeFields[id])) input.value = ""; checkRuntimePaths().catch((error) => toast(error.message)); }
@@ -414,6 +441,7 @@ async function loadSettings() {
   elements.settingsConversationMemoryLimitGb.value = settings.conversationMemoryLimitGb ?? 8;
   elements.settingsConversationMemoryLimitGb.disabled = !elements.settingsConversationMemoryLimitEnabled.checked;
   renderSyncCheckSettings(settings);
+  renderDashboardAgentSettings(settings);
   elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
   elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
   elements.settingsRuntimeStatus.textContent = "";
@@ -527,6 +555,8 @@ async function saveSettings(event) {
   if (!isNodeAdmin()) { await savePersonalSettings(); return; }
   const syncCheck = syncCheckValue();
   if (syncCheck && (!syncCheck.provider || !syncCheck.modelId)) throw new Error("Choose a model for the sync check");
+  const dashboards = dashboardAgentValue();
+  if (dashboards && (!dashboards.provider || !dashboards.modelId)) throw new Error("Choose a model for the dashboard agent");
   const runtime = runtimeFieldsValue();
   for (const harness of clearedHarnessesOnSave) runtime[harness] = blankHarnessPayload();
   const invalid = invalidRuntimeOverrides(await checkRuntimePaths(), runtime);
@@ -555,6 +585,7 @@ async function saveSettings(event) {
       gitPullFileLimit: Number(elements.settingsGitPullFileLimit.value),
       gitPullTimeoutSeconds: Number(elements.settingsGitPullTimeoutSeconds.value),
       ...(syncCheck ? { syncCheck } : {}),
+      ...(dashboards ? { dashboards } : {}),
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
       conversationCommands: personalSettingsValue().conversationCommands,
     }),

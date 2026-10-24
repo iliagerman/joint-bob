@@ -11,7 +11,7 @@ import { CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal 
 import { isHarnessId, PROJECT_COLORS } from "../types.js";
 import { canonicalClusterUrl, isClusterOriginUrl } from "./http-auth.js";
 import type { RuntimeSettings, SettingsInput } from "../settings.js";
-import { syncCheckSchema } from "../settings.js";
+import { dashboardAgentSchema, syncCheckSchema } from "../settings.js";
 import { normalizeWebsiteOrigin } from "../secrets.js";
 
 export const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbsolute, "Path must be absolute");
@@ -402,6 +402,7 @@ export const settingsSchema = z.object({
   gitPullFileLimit: z.number().int().min(1).max(3000).optional(),
   gitPullTimeoutSeconds: z.number().int().min(60).max(3600).optional(),
   syncCheck: syncCheckSchema.optional(),
+  dashboards: dashboardAgentSchema.optional(),
   remoteTerminal: z.object({ twins: z.boolean(), otherNodes: z.boolean() }).strict().optional(),
   conversationCommands: conversationCommandsSchema.optional(),
 }).extend(runtimeSchemaShape) as unknown as z.ZodType<SettingsInput>;

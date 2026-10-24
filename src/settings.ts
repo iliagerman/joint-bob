@@ -85,11 +85,33 @@ function labelIcons(): Record<string, string> {
   return iconsForLabels(Object.keys(icons), icons);
 }
 
+function assertRunnableHarness(label: string, input: { harnessId: string; provider: string }): void {
+  const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === input.harnessId);
+  if (!adapter?.runtime) throw new Error(`${label} harness ${input.harnessId} cannot run agents on this node`);
+  if (adapter.configuration?.fixedProvider && input.provider !== adapter.configuration.fixedProvider) throw new Error(`${label} provider must be ${adapter.configuration.fixedProvider}`);
+}
+
 function validateSyncCheck(input: SyncCheckSettings): SyncCheckSettings {
   const parsed = syncCheckSchema.parse(input);
-  const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === parsed.harnessId);
-  if (!adapter?.runtime) throw new Error(`Sync check harness ${parsed.harnessId} cannot run agents on this node`);
-  if (adapter.configuration?.fixedProvider && parsed.provider !== adapter.configuration.fixedProvider) throw new Error(`Sync check provider must be ${adapter.configuration.fixedProvider}`);
+  assertRunnableHarness("Sync check", parsed);
+  return parsed;
+}
+
+/** The harness, model and effort the dashboard agent uses here: creating, editing and AI refreshes. */
+export type DashboardAgentSettings = Omit<SyncCheckSettings, "enabled">;
+export const dashboardAgentSchema = syncCheckSchema.omit({ enabled: true });
+
+function dashboardAgent(defaults: Record<string, ConversationDefault>): DashboardAgentSettings {
+  const stored = setting("dashboards");
+  const parsed = stored ? dashboardAgentSchema.safeParse(JSON.parse(stored.value)) : undefined;
+  if (parsed?.success) return parsed.data;
+  const { enabled: _enabled, ...fallback } = defaultSyncCheck(defaults);
+  return fallback;
+}
+
+function validateDashboardAgent(input: DashboardAgentSettings): DashboardAgentSettings {
+  const parsed = dashboardAgentSchema.parse(input);
+  assertRunnableHarness("Dashboard agent", parsed);
   return parsed;
 }
 
@@ -195,6 +217,7 @@ export interface SettingsInput {
   /** How long a worktree command waits for the node before reporting that its outcome is unknown. */
   gitPullTimeoutSeconds?: number;
   syncCheck?: SyncCheckSettings;
+  dashboards?: DashboardAgentSettings;
   /** Which other nodes may open a terminal on this node through a signed peer socket. */
   remoteTerminal?: RemoteTerminalSettings;
   conversationCommands?: ConversationCommandsSettings;
@@ -226,6 +249,7 @@ export interface SettingsResponse {
   gitPullFileLimit: number;
   gitPullTimeoutSeconds: number;
   syncCheck: SyncCheckSettings;
+  dashboards: DashboardAgentSettings;
   remoteTerminal: RemoteTerminalSettings;
   conversationCommands: ConversationCommandsSettings;
   conversationDefaults: ReturnType<typeof conversationDefaultsSchema.parse>;
@@ -496,6 +520,7 @@ export function nodeSettings(): SettingsResponse {
     gitPullFileLimit: Number(value("gitPullFileLimit", "1000")),
     gitPullTimeoutSeconds: Number(value("gitPullTimeoutSeconds", "360")),
     syncCheck: syncCheck(conversationDefaults),
+    dashboards: dashboardAgent(conversationDefaults),
     remoteTerminal: remoteTerminalSettings(),
     conversationCommands: conversationCommands(),
     restartRequired: Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, false])),
@@ -614,6 +639,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const gitPullTimeoutSeconds = input.gitPullTimeoutSeconds ?? previous.gitPullTimeoutSeconds;
   if (!Number.isInteger(gitPullTimeoutSeconds) || gitPullTimeoutSeconds < 60 || gitPullTimeoutSeconds > 3600) throw new Error("Git PR timeout must be between 60 and 3600 seconds");
   const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
+  const dashboardAgentSettings = input.dashboards ? validateDashboardAgent(input.dashboards) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
   const commandInput = input.conversationCommands ?? previous.conversationCommands;
   const conversationCommands = { ...commandInput, presets: identifyCommandPresets(commandInput.presets ?? [], previous.conversationCommands.presets) };
@@ -645,6 +671,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "gitPullFileLimit", String(gitPullFileLimit));
     save(db, "gitPullTimeoutSeconds", String(gitPullTimeoutSeconds));
     if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
+    if (dashboardAgentSettings) save(db, "dashboards", JSON.stringify(dashboardAgentSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
     save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));
     save(db, "conversationCommands", JSON.stringify(conversationCommands));
