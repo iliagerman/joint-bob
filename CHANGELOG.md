@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Changed the side Chat to show your question straight away and clear the box when you send it, so a new draft you start typing while the answer loads is kept.
 - Added the rules for dashboards: each one now has a title and exactly one refresh method, and it always belongs to a single conversation, project or workspace that its own files cannot change.
+- Added dashboard storage where each conversation, project or workspace keeps several dashboards with one active at a time, and a dashboard received from another machine stays off until you approve its current version.
 
 ## 2.148.0 — 2026-10-24
 
