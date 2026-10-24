@@ -1,6 +1,7 @@
 import { getHarness, listHarnessSessions } from "../harnesses.js";
 import { listConversationSegments } from "../conversation-records.js";
 import type { ChatMessage, ProjectRecord } from "../types.js";
+import { projectAdditionalPaths } from "./session-scope.js";
 
 export interface ConversationTurn {
   /** 1-based position of the user message that opened the turn. */
@@ -62,7 +63,8 @@ export function buildTurns(messages: ChatMessage[]): ConversationTurn[] {
 
 /** Every recorded message of a conversation, across harness switches, oldest first. */
 export async function loadConversationMessages(project: ProjectRecord, conversationId: string): Promise<{ messages: ChatMessage[]; lastHarness: string }> {
-  const sessions = await listHarnessSessions(project);
+  const transcriptProject = { ...project, additionalPaths: await projectAdditionalPaths(project.id) };
+  const sessions = await listHarnessSessions(transcriptProject);
   const session = sessions.find((item) => (item.conversationId ?? item.id) === conversationId);
   if (!session) throw new Error("Conversation not found in this project");
   const records = await listConversationSegments(project.id, conversationId);
@@ -73,7 +75,7 @@ export async function loadConversationMessages(project: ProjectRecord, conversat
   let lastHarness: string = session.harnessId;
   for (const entry of entries) {
     if (!entry.path) continue;
-    for (const message of await getHarness(entry.engine).sessions.loadMessages(project, entry.path)) {
+    for (const message of await getHarness(entry.engine).sessions.loadMessages(transcriptProject, entry.path)) {
       messages.push(message);
       if (message.role === "assistant") lastHarness = message.attribution?.harnessId ?? entry.engine;
     }

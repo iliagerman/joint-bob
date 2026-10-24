@@ -22,6 +22,7 @@ Every deployment is a version. The newest section must always match the
 - Added a Dashboards section to Settings where you choose the harness and model that build, edit and AI-refresh dashboards, saved for this machine only.
 - Removed the unused way to delete every dashboard of a workspace in one step, so workspace dashboards are no longer cleared that way.
 - Changed deleting a dashboard to ask first in an in-app dialog that says it is removed from every machine it is shared with, while copies other machines made stay.
+- Fixed conversations started in a project's worktree losing their earlier messages when the conversation's history was loaded, so the full history now comes back.
 
 ## 2.148.0 — 2026-10-24
 
