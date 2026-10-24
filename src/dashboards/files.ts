@@ -145,6 +145,25 @@ export function checkDraft(id: string): { ok: true; manifest: DashboardManifest 
   catch (error) { return { ok: false, error: (error as Error).message }; }
 }
 
+/**
+ * What the creator view needs while the agent writes: whether there is a page to show yet, and a
+ * version that changes whenever a draft file does, so the preview reloads only then.
+ */
+export function draftState(id: string): { hasPage: boolean; version: number } {
+  const draft = draftPath(id);
+  if (!existsSync(draft)) return { hasPage: false, version: 0 };
+  let version = 0;
+  const walk = (directory: string): void => {
+    for (const name of readdirSync(directory)) {
+      const stat = lstatSync(path.join(directory, name));
+      version = Math.max(version, stat.mtimeMs);
+      if (stat.isDirectory()) walk(path.join(directory, name));
+    }
+  };
+  walk(draft);
+  return { hasPage: existsSync(path.join(draft, "index.html")), version };
+}
+
 export function draftDirectory(id: string): string {
   return draftPath(id);
 }

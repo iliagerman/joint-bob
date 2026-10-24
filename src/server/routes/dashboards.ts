@@ -7,7 +7,7 @@ import { dashboardEntitySchema, type DashboardEntity } from "../../dashboards/co
 import { resolveEntity } from "../../dashboards/entity.js";
 import { composeFrame, FRAME_CONTENT_SECURITY_POLICY } from "../../dashboards/frame.js";
 import {
-  checkDraft, discardDraft, draftExists, promoteDraft, readCreatorMessages, readDraftFiles, readLiveDefinition, readPayload, readRunLog, removeDashboardFiles,
+  checkDraft, discardDraft, draftExists, draftState, promoteDraft, readCreatorMessages, readDraftFiles, readLiveDefinition, readPayload, readRunLog, removeDashboardFiles,
   writeReceivedDefinition,
 } from "../../dashboards/files.js";
 import { forgetDraftRefresh, lastDraftRefresh, runningState, startCreatorTurn, startRefresh, stopJob } from "../../dashboards/service.js";
@@ -86,8 +86,10 @@ const listSchema = z.object({ kind: z.enum(["conversation", "project", "workspac
 function dashboardView(record: DashboardRecord) {
   const hasDraft = draftExists(record.id);
   const check = hasDraft ? checkDraft(record.id) : null;
+  const draft = draftState(record.id);
   const saved = record.definitionDigest !== null;
   return {
+    draftHasPage: draft.hasPage, draftVersion: draft.version,
     id: record.id, title: record.title, entity: record.entity, hostProjectId: record.hostProjectId, origin: record.origin,
     ownerNodeId: record.ownerNodeId, refreshMethod: record.refreshMethod, active: record.active, saved,
     approved: saved && record.approvedDigest === record.definitionDigest, definitionDigest: record.definitionDigest,

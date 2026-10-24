@@ -2,6 +2,10 @@ import { internalSessionId } from "../internal-sessions.js";
 import { getHarness, getHarnessRuntime } from "../harnesses.js";
 import type { HarnessEvent, HarnessModelSettings } from "../harnesses/runtime.js";
 import type { DashboardAgentSettings } from "../settings.js";
+import { toolTarget } from "../tool-target.js";
+
+/** One tool the agent started, with what it acted on (a file, a command) when the harness says. */
+export interface DashboardAgentActivity { tool: string; target?: string }
 
 export interface DashboardAgentTurnInput {
   /** The dashboard's host project: its secrets and budget apply to the turn. */
@@ -13,8 +17,10 @@ export interface DashboardAgentTurnInput {
   prompt: string;
   timeoutMs: number;
   signal?: AbortSignal;
-  /** Called with each tool the agent starts, so the view can say what it is doing. */
-  onStep?: (step: string) => void;
+  /** Each tool the agent starts, so the view can show what it is doing. */
+  onActivity?: (activity: DashboardAgentActivity) => void;
+  /** The agent's answer so far, as it writes it. */
+  onText?: (soFar: string) => void;
 }
 
 /**
@@ -36,8 +42,12 @@ export async function runDashboardAgentTurn(input: DashboardAgentTurnInput): Pro
   let text = "";
   const unsubscribe = session.subscribe((event: HarnessEvent) => {
     if (event.type === "agent_start") text = "";
-    if (event.type === "textDelta" && typeof event.text === "string") text += event.text;
-    if (event.type === "toolStart") input.onStep?.(String(event.toolName));
+    if (event.type === "textDelta" && typeof event.text === "string") { text += event.text; input.onText?.(text); }
+    if (event.type === "toolStart") {
+      const found = toolTarget(String(event.toolName), event.args);
+      const target = found?.target ?? found?.skill;
+      input.onActivity?.({ tool: String(event.toolName), ...(target ? { target } : {}) });
+    }
   });
   let timer: NodeJS.Timeout | undefined;
   let onAbort: (() => void) | undefined;

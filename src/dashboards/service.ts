@@ -23,7 +23,12 @@ export class DashboardBusyError extends Error {
   readonly status = 409;
 }
 
-interface Run { kind: "creator" | "refresh"; target?: PayloadTarget; startedAt: string; step?: string; controller: AbortController }
+interface RunActivity { tool: string; target?: string; at: string }
+/** A job and what it has done so far: the agent's tool steps and its answer as it writes it. */
+interface Run { kind: "creator" | "refresh"; target?: PayloadTarget; startedAt: string; step?: string; activity: RunActivity[]; text: string; controller: AbortController }
+// What the view shows of a long turn: the latest steps and the end of the answer so far.
+const ACTIVITY_SHOWN = 40;
+const TEXT_SHOWN = 6000;
 const running = new Map<string, Run>();
 /** The last test refresh of a draft; the live refresh is kept on the record. */
 const draftRefreshes = new Map<string, { at: string; ok: boolean; error: string | null }>();
@@ -38,7 +43,17 @@ function assertSingleUserNode(): void {
 
 export function runningState(id: string): Omit<Run, "controller"> | null {
   const run = running.get(id);
-  return run ? { kind: run.kind, startedAt: run.startedAt, ...(run.target ? { target: run.target } : {}), ...(run.step ? { step: run.step } : {}) } : null;
+  if (!run) return null;
+  return {
+    kind: run.kind, startedAt: run.startedAt, ...(run.target ? { target: run.target } : {}), ...(run.step ? { step: run.step } : {}),
+    activity: run.activity.slice(-ACTIVITY_SHOWN), text: run.text.slice(-TEXT_SHOWN),
+  };
+}
+
+function recordActivity(run: Run, tool: string, target?: string): void {
+  run.activity.push({ tool, ...(target ? { target } : {}), at: new Date().toISOString() });
+  if (run.activity.length > ACTIVITY_SHOWN) run.activity.splice(0, run.activity.length - ACTIVITY_SHOWN);
+  run.step = target ? `${tool}: ${target}` : tool;
 }
 
 export function lastDraftRefresh(id: string) {
@@ -50,9 +65,9 @@ export function forgetDraftRefresh(id: string): void {
 }
 
 /** One job per dashboard at a time; the job runs after the request has been answered. */
-function startJob(id: string, run: Omit<Run, "controller" | "startedAt">, work: (run: Run) => Promise<void>): void {
+function startJob(id: string, run: Pick<Run, "kind" | "target">, work: (run: Run) => Promise<void>): void {
   if (running.has(id)) throw new DashboardBusyError("The dashboard is already working; wait for it to finish");
-  const job: Run = { ...run, startedAt: new Date().toISOString(), controller: new AbortController() };
+  const job: Run = { ...run, startedAt: new Date().toISOString(), activity: [], text: "", controller: new AbortController() };
   running.set(id, job);
   void work(job).catch((error: unknown) => console.warn(`Dashboard ${id} job failed`, error)).finally(() => running.delete(id));
 }
@@ -107,14 +122,24 @@ async function creatorTurn(record: DashboardRecord, context: EntityContext, text
     const answer = await runDashboardAgentTurn({
       projectId: context.project.id, cwd: context.project.path, settings: getSettings().dashboards,
       prompt: creatorPrompt(record, context, text), timeoutMs: CREATOR_TURN_TIMEOUT_MS, signal: run.controller.signal,
-      onStep: (step) => { run.step = step; },
+      onActivity: ({ tool, target }) => recordActivity(run, tool, target),
+      onText: (soFar) => { run.text = soFar; },
       ...(context.conversation ? { conversationId: context.entity.id, accountIds: await reviewAccountIds(context.project.id, context.entity.id) } : {}),
     });
     const check = checkDraft(record.id);
     appendCreatorMessage(record.id, { role: "assistant", text: check.ok ? answer : `${answer}\n\nThe draft cannot be saved yet: ${check.error}` });
+    // A finished script draft shows real data at once; an AI refresh costs money, so it waits for the person.
+    if (check.ok && check.manifest.refresh.method === "script") await testDraft(record, context, run);
   } catch (error) {
     appendCreatorMessage(record.id, { role: "assistant", text: `The dashboard agent stopped: ${(error as Error).message}` });
   }
+}
+
+async function testDraft(record: DashboardRecord, context: EntityContext, run: Run): Promise<void> {
+  recordActivity(run, "Test refresh", "the draft's script");
+  const result = await refreshOnce(record, context, "draft", definitionFor(record, "draft"), run)
+    .catch((error: unknown) => ({ ok: false as const, error: (error as Error).message }));
+  draftRefreshes.set(record.id, { at: new Date().toISOString(), ok: result.ok, error: result.ok ? null : result.error });
 }
 
 /** Sends the person's request to the dashboard agent, who edits the draft. */
