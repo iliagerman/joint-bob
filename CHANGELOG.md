@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.157.0 — 2026-10-25
 
-- Added the built-in file sync engine's writing of other machines' changes into projects, keeping replaced versions in the trash and saving conflicting edits as copies beside the originals.
+- Added writing of other machines' changes into projects switched to the built-in file sync engine, keeping replaced versions in the trash and saving conflicting edits as copies; no project is switched yet, so files are unchanged for now.
 
 ## 2.156.1 — 2026-10-25
 
