@@ -67,7 +67,6 @@ export interface ScanResult {
   /** Rows written (new versions, tombstones, merges). */
   changed: number;
   tombstones: number;
-  held: number;
   /** The root identity changed or the share was new: nothing was deleted. */
   newGeneration: boolean;
   files: number;
@@ -107,7 +106,6 @@ export interface ShareStatus {
   need: { files: number; bytes: number };
   blocked: number;
   errors: number;
-  held: number;
   scanning: boolean;
   watch: string;
   message?: string;
@@ -126,7 +124,6 @@ export const opSchemas = {
   scan: z.object({ share: z.string(), scope: scanScopeSchema, reason: z.string() }),
   flush: z.object({ share: z.string(), subtree: z.string().optional() }),
   prioritize: z.object({ share: z.string(), prefix: z.string().optional(), untilMs: z.number() }),
-  expectDeletes: z.object({ share: z.string(), prefix: z.string(), ttlMs: z.number().int().positive() }),
   peerPresence: z.object({ peer: z.string(), present: z.boolean(), origins: z.array(z.string()).optional() }),
   announce: z.object({ slept: z.boolean() }),
   notice: z.object({ peer: z.string(), body: z.unknown() }),
@@ -134,7 +131,6 @@ export const opSchemas = {
   status: z.object({ shares: z.array(z.string()).optional() }),
   differences: z.object({ share: z.string(), peer: z.string(), offset: z.number().int().min(0), limit: z.number().int().positive().max(200) }),
   errors: z.object({ share: z.string(), offset: z.number().int().min(0), limit: z.number().int().positive().max(200) }),
-  releaseHeld: z.object({ share: z.string() }),
   confirmReplacedRoot: z.object({ share: z.string() }),
   bootstrap: z.object({ share: z.string(), builtinSinceByPeer: z.record(z.number().int()) }),
   repair: z.object({ share: z.string(), peer: z.string() }),
@@ -153,7 +149,6 @@ export interface OpResults {
   scan: ScanResult;
   flush: ScanResult;
   prioritize: Record<string, never>;
-  expectDeletes: Record<string, never>;
   peerPresence: Record<string, never>;
   announce: Record<string, never>;
   notice: Record<string, never>;
@@ -161,7 +156,6 @@ export interface OpResults {
   status: ShareStatus[];
   differences: ListPage<DifferenceItem>;
   errors: ListPage<ErrorItem>;
-  releaseHeld: ScanResult;
   confirmReplacedRoot: ScanResult;
   bootstrap: { merged: number; need: number };
   repair: Record<string, never>;

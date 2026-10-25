@@ -11,7 +11,7 @@ import { bump, raiseClock } from "./vectors.js";
    schema from a newer release is dropped and rebuilt rather than migrated down. The node clock in
    meta is the one value kept across such a rebuild: counters must never go back. */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Index entry plus what only this node needs: the on-disk spelling and the stat fingerprint. */
 export interface LocalEntry extends IndexEntry {
@@ -121,6 +121,11 @@ const MIGRATIONS: ReadonlyArray<string> = [
   ALTER TABLE cursors ADD COLUMN peer_pruned_below INTEGER NOT NULL DEFAULT 0;
   CREATE INDEX IF NOT EXISTS diffs_since ON diffs(share, since);
   `,
+  // 3: deletions are no longer held for confirmation, nor announced to skip that.
+  `
+  DROP TABLE IF EXISTS held;
+  DROP TABLE IF EXISTS expected;
+  `,
 ];
 
 /**
@@ -130,8 +135,8 @@ const MIGRATIONS: ReadonlyArray<string> = [
  */
 export const HIDDEN_DIFF = "ignored";
 
-const INDEX_TABLES = ["shares", "entries", "remote", "cursors", "acks", "need", "held", "expected", "diffs", "shadow_clean", "errors", "nonces"];
-const SHARE_TABLES = ["entries", "remote", "cursors", "acks", "need", "held", "expected", "diffs", "shadow_clean", "errors"];
+const INDEX_TABLES = ["shares", "entries", "remote", "cursors", "acks", "need", "diffs", "shadow_clean", "errors", "nonces"];
+const SHARE_TABLES = ["entries", "remote", "cursors", "acks", "need", "diffs", "shadow_clean", "errors"];
 
 type Row = Record<string, unknown>;
 
@@ -198,9 +203,6 @@ export const HOT_QUERIES = {
   descendants: `SELECT ${ENTRY_COLUMNS} FROM entries WHERE share = ? AND path >= ? AND path < ?`,
   entriesSince: `SELECT ${ENTRY_COLUMNS} FROM entries INDEXED BY entries_seq WHERE share = ? AND seq > ? ORDER BY seq LIMIT ?`,
   liveBelow: "SELECT 1 FROM entries WHERE share = ? AND path >= ? AND path < ? AND deleted = 0 LIMIT 1",
-  liveInUnit: "SELECT (SELECT COUNT(*) FROM entries WHERE share = ? AND path = ? AND deleted = 0) + (SELECT COUNT(*) FROM entries WHERE share = ? AND path >= ? AND path < ? AND deleted = 0) AS n",
-  heldInUnit: "SELECT (SELECT COUNT(*) FROM held WHERE share = ? AND path = ?) + (SELECT COUNT(*) FROM held WHERE share = ? AND path >= ? AND path < ?) AS n",
-  anyHeldInUnit: "SELECT EXISTS(SELECT 1 FROM held WHERE share = ? AND path = ?) OR EXISTS(SELECT 1 FROM held WHERE share = ? AND path >= ? AND path < ?) AS held",
 } as const;
 
 export class FileSyncDb {
@@ -369,7 +371,7 @@ export class FileSyncDb {
    */
   resetGeneration(key: string, indexId: string, identity: { dev: number; ino: number } | null, builtinSince: number | null = null): void {
     this.requireTx();
-    for (const table of ["entries", "held", "diffs", "shadow_clean", "errors", "need", "acks"]) this.statement(`DELETE FROM ${table} WHERE share = ?`).run(key);
+    for (const table of ["entries", "diffs", "shadow_clean", "errors", "need", "acks"]) this.statement(`DELETE FROM ${table} WHERE share = ?`).run(key);
     this.updateShare(key, {
       indexId, maxSeq: 0, digest: EMPTY_DIGEST, liveFiles: 0, liveBytes: 0, prunedBelow: 0, fullScanAt: null, scanError: null,
       rootDev: identity?.dev ?? null, rootIno: identity?.ino ?? null, pendingDev: null, pendingIno: null, builtinSince,
@@ -424,11 +426,8 @@ export class FileSyncDb {
     this.statement("DELETE FROM entries WHERE share = ? AND path = ?").run(share, relative);
   }
 
-  /** Live entries of a guard unit ("" = the whole share). */
-  liveCount(share: string, unit = ""): number {
-    if (unit === "") return (this.statement("SELECT COUNT(*) AS n FROM entries WHERE share = ? AND deleted = 0").get(share) as Row).n as number;
-    const [low, high] = below(unit);
-    return (this.statement(HOT_QUERIES.liveInUnit).get(share, unit, share, low, high) as Row).n as number;
+  liveCount(share: string): number {
+    return (this.statement("SELECT COUNT(*) AS n FROM entries WHERE share = ? AND deleted = 0").get(share) as Row).n as number;
   }
 
   /** Tombstones that may be pruned: acknowledged by every eligible peer and old enough (§5.2.8). */
@@ -570,48 +569,6 @@ export class FileSyncDb {
     this.requireTx();
     this.statement("DELETE FROM diffs WHERE share = ? AND peer = ?").run(share, peer);
     this.statement("DELETE FROM shadow_clean WHERE share = ? AND peer = ?").run(share, peer);
-  }
-
-  held(share: string): string[] {
-    return (this.statement("SELECT path FROM held WHERE share = ? ORDER BY path").all(share) as Row[]).map((row) => row.path as string);
-  }
-
-  isHeld(share: string, relative: string): boolean {
-    return this.statement("SELECT 1 FROM held WHERE share = ? AND path = ?").get(share, relative) !== undefined;
-  }
-
-  heldCount(share: string, unit?: string): number {
-    if (unit === undefined || unit === "") return (this.statement("SELECT COUNT(*) AS n FROM held WHERE share = ?").get(share) as Row).n as number;
-    const [low, high] = below(unit);
-    return (this.statement(HOT_QUERIES.heldInUnit).get(share, unit, share, low, high) as Row).n as number;
-  }
-
-  /** Whether a guard unit ("" = the whole share) holds any row. */
-  hasHeld(share: string, unit = ""): boolean {
-    if (unit === "") return this.statement("SELECT 1 FROM held WHERE share = ? LIMIT 1").get(share) !== undefined;
-    const [low, high] = below(unit);
-    return (this.statement(HOT_QUERIES.anyHeldInUnit).get(share, unit, share, low, high) as Row).held === 1;
-  }
-
-  hold(share: string, relative: string, now: number): void {
-    this.requireTx();
-    this.statement("INSERT INTO held(share, path, held_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").run(share, relative, now);
-  }
-
-  unhold(share: string, relative: string): void {
-    this.requireTx();
-    this.statement("DELETE FROM held WHERE share = ? AND path = ?").run(share, relative);
-  }
-
-  expect(share: string, prefix: string, until: number): void {
-    this.requireTx();
-    this.statement("INSERT INTO expected(share, prefix, until) VALUES (?, ?, ?) ON CONFLICT(share, prefix) DO UPDATE SET until = MAX(until, excluded.until)").run(share, prefix, until);
-  }
-
-  /** Unexpired announced prefixes; expired ones are removed on the way. */
-  expectedPrefixes(share: string, now: number): string[] {
-    if (this.db.isTransaction) this.statement("DELETE FROM expected WHERE share = ? AND until <= ?").run(share, now);
-    return (this.statement("SELECT prefix FROM expected WHERE share = ? AND until > ?").all(share, now) as Row[]).map((row) => row.prefix as string);
   }
 
   setError(share: string, relative: string, kind: ErrorRow["kind"], reason: string, at: number): void {

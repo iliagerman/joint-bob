@@ -545,13 +545,6 @@ export async function fileSyncRepair(share: string, peer: string): Promise<void>
   await adminCall(() => current.bridge.call("repair", { share, peer }, { timeoutMs: FLUSH_TIMEOUT_MS }));
 }
 
-/** "Confirm deletions": the held deletes go ahead for paths still missing. */
-export async function fileSyncReleaseHeld(share: string): Promise<ScanResult> {
-  const current = runningEngine();
-  derivedShare(current, share);
-  return adminCall(() => current.bridge.call("releaseHeld", { share }, { timeoutMs: FLUSH_TIMEOUT_MS }));
-}
-
 /** The admin confirms that a folder which looks replaced is the one to sync. */
 export async function fileSyncConfirmReplaced(share: string): Promise<ScanResult> {
   const current = runningEngine();

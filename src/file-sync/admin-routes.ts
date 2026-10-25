@@ -58,12 +58,6 @@ app.post("/api/file-sync/repair", (request, response, next) => answer(response, 
   return { ok: true };
 }));
 
-app.post("/api/file-sync/held/release", (request, response, next) => answer(response, next, async () => {
-  const body = shareBody.parse(request.body ?? {});
-  const { fileSyncReleaseHeld } = await import("./index.js");
-  return fileSyncReleaseHeld(body.share);
-}));
-
 app.post("/api/file-sync/replaced/confirm", (request, response, next) => answer(response, next, async () => {
   const body = shareBody.parse(request.body ?? {});
   const { fileSyncConfirmReplaced } = await import("./index.js");

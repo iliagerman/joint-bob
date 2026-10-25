@@ -15,8 +15,7 @@ import { DIRECTORY, FILE, SYMLINK, type Clock, type Phase, type ShareKind } from
 
 /* The scanner turns what is on disk into index rows (FILE-SYNC design §5.2). It is the only source of
    local versions and tombstones, so invariant 1 lives here: a tombstone needs a readable root whose
-   identity a complete scan confirmed, a synced path that is really gone, and the mass-delete guard's
-   consent. Everything else (missing roots, replaced roots, unreadable folders, newly ignored paths)
+   identity a complete scan confirmed and a synced path that is really gone. Everything else (missing roots, replaced roots, unreadable folders, newly ignored paths)
    leaves rows alone or drops them without telling peers. */
 
 const MiB = 1024 * 1024;
@@ -30,9 +29,6 @@ export interface ScannerOptions {
   maxSettleMs: number;
   /** Changes per writeTx. */
   batchSize: number;
-  guardMinimum: number;
-  guardRatio: number;
-  guardWindowMs: number;
   replacedMinimum: number;
   replacedRatio: number;
   tombstoneRetentionMs: number;
@@ -45,7 +41,7 @@ export interface ScannerOptions {
 
 export const SCANNER_DEFAULTS: ScannerOptions = {
   smallFileBytes: 8 * MiB, settleMs: 2000, maxSettleMs: 60_000, batchSize: 1000,
-  guardMinimum: 500, guardRatio: 0.5, guardWindowMs: 10 * 60_000, replacedMinimum: 500, replacedRatio: 0.5,
+  replacedMinimum: 500, replacedRatio: 0.5,
   tombstoneRetentionMs: 30 * DAY, staleTempMs: HOUR, fsNames: process.platform !== "darwin", hashChunkBytes: MiB, hashCheckBytes: 64 * MiB,
 };
 
@@ -164,15 +160,12 @@ interface Run {
   hashedBytes: number;
   changed: number;
   tombstones: number;
-  held: number;
   pending: Change[];
-  /** Tombstone candidates, decided by the guard once the walk is complete. */
+  /** Tombstone candidates, settled once the walk is complete. */
   gone: Map<string, LocalEntry>;
   /** Directories marked gone with their subtree: seeing one again re-walks it. */
   goneDirs: Set<string>;
   visited: Set<string>;
-  /** Held paths seen on disk again. */
-  reappeared: Set<string>;
   errorKeys: Set<string>;
   errorOps: Map<string, { kind: "error" | "notice"; reason: string } | null>;
   /** Rows another writer changed between read and commit; scanned again. */
@@ -220,10 +213,6 @@ export class ShareScanner {
   private excludeChecked = false;
   /** Bumped when the root or the rules change: a scan started before stops writing. */
   private epoch = 0;
-  /** Held paths (the guard's sticky set), loaded once; only this scanner writes them. */
-  private heldPaths: Set<string> | undefined;
-  /** Undeclared tombstones per guard unit in the sliding window. */
-  private window: Array<{ at: number; unit: string; count: number }> = [];
   /** Large files waiting for two agreeing lstats. */
   private readonly settling = new Map<string, { fingerprint: string; at: number; delay: number }>();
   private rootCheck: RootCheck | undefined;
@@ -281,26 +270,14 @@ export class ShareScanner {
     return this.ctx.matcher.classify(key, isDirectory, this.gitIgnored) !== null;
   }
 
-  private unitOf(key: string): string {
-    if (this.ctx.kind === "project") return "";
-    const slash = key.indexOf("/");
-    return slash < 0 ? key : key.slice(0, slash);
-  }
-
   private lstat(fsRelative: string): Stats | null {
     try { return lstatSync(this.abs(fsRelative)); } catch (error) { if (isMissing(error)) return null; throw error; }
   }
 
-  private heldSet(): Set<string> {
-    return this.heldPaths ??= new Set(this.deps.db.held(this.ctx.key));
-  }
-
   private newRun(): Run {
-    // Loaded once per scanner, not per scan: a visit must see that a held path came back.
-    this.heldSet();
     return {
-      files: 0, hashedBytes: 0, changed: 0, tombstones: 0, held: 0, pending: [], gone: new Map(), goneDirs: new Set(), visited: new Set(),
-      reappeared: new Set(), errorKeys: new Set(this.deps.db.errorPaths(this.ctx.key)), errorOps: new Map(), conflicts: new Set(), gitignoreDirs: new Set(),
+      files: 0, hashedBytes: 0, changed: 0, tombstones: 0, pending: [], gone: new Map(), goneDirs: new Set(), visited: new Set(),
+      errorKeys: new Set(this.deps.db.errorPaths(this.ctx.key)), errorOps: new Map(), conflicts: new Set(), gitignoreDirs: new Set(),
       identity: null, epoch: this.epoch, complete: false, ancestors: new Map(),
     };
   }
@@ -312,9 +289,7 @@ export class ShareScanner {
   private newGeneration(identity: { dev: number; ino: number }): void {
     const { db } = this.deps;
     db.writeTx(() => db.resetGeneration(this.ctx.key, this.deps.newIndexId(), identity, this.ctx.phase === "builtin" ? 0 : null));
-    this.window = [];
     this.settling.clear();
-    this.heldPaths = undefined;
     this.gitIgnored?.clear();
   }
 
@@ -355,7 +330,7 @@ export class ShareScanner {
     let newGeneration = false;
     let full = scope === "full";
     const result = (error?: string): ScanResult => ({
-      share: key, changed: run.changed, tombstones: run.tombstones, held: run.held, newGeneration, files: run.files,
+      share: key, changed: run.changed, tombstones: run.tombstones, newGeneration, files: run.files,
       hashedBytes: run.hashedBytes, durationMs: Math.round(performance.now() - started), ...(error ? { error } : {}),
     });
     if (this.deps.slicer.aborted) return result(new ScanAborted().message);
@@ -753,7 +728,6 @@ export class ShareScanner {
     run.visited.add(key);
     run.files += 1;
     run.gone.delete(key);
-    if (this.heldPaths?.has(key)) run.reappeared.add(key);
     if (run.errorKeys.has(key)) run.errorOps.set(key, null);
     const fsName = this.options.fsNames && fs !== key ? fs : null;
     if (st.isDirectory()) return this.visitDirectory(run, key, fsName, st, row);
@@ -908,16 +882,10 @@ export class ShareScanner {
     }
   }
 
-  // ---- gone, ignored and the guard (§5.2.5–6) ----
+  // ---- gone and ignored (§5.2.5) ----
 
   private markGone(run: Run, key: string): void {
     const row = this.deps.db.entry(this.ctx.key, key);
-    if (row && !row.deleted && this.heldPaths?.has(key) && !this.classify(key, row.type === DIRECTORY)) {
-      // Held already, with everything that was below it then; nothing can have been indexed below a missing folder since.
-      run.goneDirs.add(key);
-      this.settling.delete(key);
-      return;
-    }
     if (row) {
       if (this.classify(key, row.type === DIRECTORY)) this.queueDrop(run, row);
       else if (!row.deleted) run.gone.set(key, row);
@@ -956,7 +924,7 @@ export class ShareScanner {
 
   /** One writeTx per ≤ batchSize changes, compare-and-set on each row's seq (§5.2.5). */
   private commit(run: Run): void {
-    if (!run.pending.length && !run.errorOps.size && !run.reappeared.size) return;
+    if (!run.pending.length && !run.errorOps.size) return;
     this.assertCurrent(run);
     const changes = run.pending.splice(0);
     this.deps.hooks?.beforeCommit?.();
@@ -965,9 +933,6 @@ export class ShareScanner {
     const now = this.now();
     const written: string[] = [];
     const moved: Array<{ path: string; before: LocalEntry | undefined; after: LocalEntry | undefined }> = [];
-    const held = this.heldPaths;
-    const unheld: string[] = [];
-    const unhold = (relative: string) => { if (held?.has(relative)) { db.unhold(key, relative); unheld.push(relative); } };
     let dropped = 0;
     db.writeTx(() => {
       const share = db.share(key)!;
@@ -983,7 +948,6 @@ export class ShareScanner {
         if ((row?.seq ?? null) !== change.expect) { run.conflicts.add(row?.fsName ?? change.path); continue; }
         if (change.kind === "drop") {
           if (row) { digest.change(row, undefined); count(row, -1); db.deleteEntry(key, change.path); moved.push({ path: change.path, before: row, after: undefined }); dropped += 1; }
-          unhold(change.path);
           continue;
         }
         if (change.kind === "touch") {
@@ -997,14 +961,12 @@ export class ShareScanner {
         count(row, -1);
         count(next, 1);
         db.putEntry(key, next);
-        unhold(change.path);
         run.changed += 1;
         if (change.kind === "tombstone") run.tombstones += 1;
         written.push(change.path);
         moved.push({ path: change.path, before: row, after: next });
       }
       if (moved.length) this.deps.inTransaction?.(moved);
-      for (const back of run.reappeared) unhold(back);
       for (const [errorPath, problem] of run.errorOps) {
         if (problem) db.setError(key, errorPath, problem.kind, problem.reason, now);
         else db.clearError(key, errorPath);
@@ -1015,118 +977,22 @@ export class ShareScanner {
       const prunedBelow = dropped ? ++maxSeq : share.prunedBelow;
       db.updateShare(key, { maxSeq, digest: digest.toString(), liveFiles, liveBytes, prunedBelow });
     });
-    run.reappeared.clear();
     run.errorOps.clear();
-    for (const relative of unheld) held!.delete(relative);
     if (written.length || dropped) this.deps.committed?.(written);
   }
 
-  /**
-   * Tombstones for the candidates of a complete scan, through the mass-delete guard: per unit (the
-   * share, or each top-level worktree / ticket directory), undeclared deletes in the sliding window
-   * that reach the minimum and the ratio of the unit's live entries are held instead, and while a unit
-   * holds rows, every new delete there is held too. Announced prefixes bypass the guard.
-   */
+  /** Tombstones for the candidates of a complete scan: a synced path that is really gone is deleted on every peer, however many go at once. */
   private settleDeletes(run: Run): void {
     if (!run.gone.size) return;
     this.assertCurrent(run);
     // Candidates collected before a .gitignore change in the same run: what the rules ignore now leaves silently.
     for (const row of [...run.gone.values()]) if (this.classify(row.path, row.type === DIRECTORY)) this.queueDrop(run, row);
-    if (!run.complete) {
-      // No complete scan of this generation yet: rows an interrupted first scan indexed leave without telling peers.
-      const rows = [...run.gone.values()];
-      run.gone.clear();
-      for (const row of rows) this.queue(run, { kind: "drop", path: row.path, expect: row.seq });
-      this.commit(run);
-      return;
-    }
-    const { db } = this.deps;
-    const key = this.ctx.key;
-    const now = this.now();
-    const expected = db.writeTx(() => db.expectedPrefixes(key, now));
-    this.window = this.window.filter((entry) => now - entry.at < this.options.guardWindowMs);
-    const held = this.heldSet();
-    const byUnit = new Map<string, LocalEntry[]>();
-    const tombstones: LocalEntry[] = [];
-    for (const [candidate, row] of run.gone) {
-      if (held.has(candidate)) continue;
-      if (expected.some((prefix) => isSameOrInside(candidate, prefix))) { tombstones.push(row); continue; }
-      const unit = this.unitOf(candidate);
-      const rows = byUnit.get(unit);
-      if (rows) rows.push(row); else byUnit.set(unit, [row]);
-    }
+    const rows = [...run.gone.values()];
     run.gone.clear();
-    const holds: string[] = [];
-    for (const [unit, rows] of byUnit) {
-      const sticky = held.size > 0 && db.hasHeld(key, unit);
-      if (!sticky) {
-        const recent = this.window.reduce((sum, entry) => entry.unit === unit ? sum + entry.count : sum, 0);
-        const total = recent + rows.length;
-        // The unit's live count only matters at the minimum: a few deletes never count the share.
-        if (total < this.options.guardMinimum || total < this.options.guardRatio * (db.liveCount(key, unit) + recent)) {
-          tombstones.push(...rows);
-          this.window.push({ at: now, unit, count: rows.length });
-          continue;
-        }
-        this.deps.emit({ event: "log", level: "warn", key: `fileSync:${key}:guard`, message: `File sync held ${rows.length} deletions in ${key}${unit ? ` (${unit})` : ""}: confirm them in Settings → File sync` });
-      }
-      holds.push(...rows.map((row) => row.path));
-    }
-    for (const row of tombstones) this.queue(run, { kind: "tombstone", path: row.path, expect: row.seq });
+    // No complete scan of this generation yet: rows an interrupted first scan indexed leave without telling peers.
+    const kind = run.complete ? "tombstone" : "drop";
+    for (const row of rows) this.queue(run, { kind, path: row.path, expect: row.seq });
     this.commit(run);
-    if (holds.length) {
-      this.assertCurrent(run);
-      db.writeTx(() => { for (const path of holds) db.hold(key, path, now); });
-      for (const path of holds) held.add(path);
-      run.held += holds.length;
-    }
-  }
-
-  /** Paths still missing are deleted now; those that came back leave the held set (§5.2.6). */
-  releaseHeld(): Promise<ScanResult> {
-    return this.exclusive(async () => {
-      const started = performance.now();
-      const { db } = this.deps;
-      const key = this.ctx.key;
-      const run = this.newRun();
-      const outcome = (error?: string, rescan?: ScanResult): ScanResult => ({
-        share: key, changed: run.changed + (rescan?.changed ?? 0), tombstones: run.tombstones + (rescan?.tombstones ?? 0),
-        held: error ? this.heldSet().size : rescan?.held ?? 0, newGeneration: false, files: run.files + (rescan?.files ?? 0),
-        hashedBytes: rescan?.hashedBytes ?? 0, durationMs: Math.round(performance.now() - started), ...(error ? { error } : {}),
-      });
-      const share = db.share(key);
-      const root = this.checkRoot(false);
-      // A folder that is missing, moved or replaced says nothing about the held paths: they stay held.
-      if (root.state !== "ok") return outcome(root.message);
-      if (!share || share.rootDev !== root.dev || share.rootIno !== root.ino) return outcome("The folder was moved or replaced; it is scanned again before deletions can be confirmed");
-      run.identity = { dev: root.dev, ino: root.ino };
-      run.complete = true;
-      const held = [...this.heldSet()];
-      const back: string[] = [];
-      try {
-        for (const path of held) {
-          await this.deps.slicer.maybeYield();
-          const row = db.entry(key, path);
-          if (!row || row.deleted) { run.reappeared.add(path); continue; }
-          // Ignored meanwhile: it leaves the index without a tombstone, as any newly ignored path does.
-          if (this.classify(path, row.type === DIRECTORY)) { this.queueDrop(run, row); continue; }
-          const fs = row.fsName ?? path;
-          let present: boolean;
-          // Below a link or a file now counts as gone; an unreadable path stays held.
-          try { present = this.linkedAncestor(run, path, fs) === null && this.lstat(fs) !== null; } catch { continue; }
-          if (present) { run.reappeared.add(path); back.push(fs); continue; }
-          this.queue(run, { kind: "tombstone", path, expect: row.seq });
-        }
-        this.commit(run);
-      } catch (error) {
-        run.pending.length = 0;
-        if (error instanceof ScanAborted || error instanceof RunStale) return outcome(error.message);
-        throw error;
-      }
-      const released = new Set(held.map((path) => this.unitOf(path)));
-      this.window = this.window.filter((entry) => !released.has(entry.unit));
-      return outcome(undefined, back.length ? await this.scanNow({ paths: back }, "release") : undefined);
-    });
   }
 
   /** The person confirmed that the replaced-looking folder is the share now: a new generation, then a full scan. */
@@ -1140,12 +1006,6 @@ export class ShareScanner {
       }
       return this.scanNow("full", "confirm");
     });
-  }
-
-  /** App-initiated deletes under `prefix` bypass the guard until the time-to-live ends. */
-  expectDeletes(prefix: string, ttlMs: number): void {
-    const key = prefix === "" ? "" : normalizeRelativePath(prefix.replace(/\/+$/, ""));
-    this.deps.db.writeTx(() => this.deps.db.expect(this.ctx.key, key, this.now() + ttlMs));
   }
 
   /** Tombstones every eligible peer acknowledged and older than the retention go; pruned_below records it (§5.2.8). */

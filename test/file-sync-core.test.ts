@@ -147,36 +147,16 @@ test("a rules change in configure drops what the new rules ignore at the next sc
   assert.deepEqual(s.worker.core.db.entries("project:p1").map((row) => row.path), ["keep.txt"]);
 });
 
-test("held deletes make the share an error until releaseHeld", async (t) => {
+test("a mass delete goes through at once and leaves the share idle", async (t) => {
   const s = setup(t);
   for (let index = 0; index < 520; index++) writeFileSync(path.join(s.root, `f${index}.txt`), String(index));
   await s.configure();
   await s.worker.call("scan", { share: "project:p1", scope: "full", reason: "test" });
   for (let index = 0; index < 520; index++) unlinkSync(path.join(s.root, `f${index}.txt`));
-  const held = await s.worker.call("scan", { share: "project:p1", scope: "full", reason: "test" });
-  assert.equal(held.held, 520);
+  const result = await s.worker.call("scan", { share: "project:p1", scope: "full", reason: "test" });
+  assert.equal(result.tombstones, 520);
   const [status] = await s.worker.call("status", {});
-  assert.equal(status.state, "error");
-  assert.equal(status.held, 520);
-  assert.match(status.message ?? "", /520 deletions are held/);
-  const released = await s.worker.call("releaseHeld", { share: "project:p1" });
-  assert.equal(released.tombstones, 520);
-  const [after] = await s.worker.call("status", {});
-  assert.equal(after.state, "idle");
-  assert.equal(after.held, 0);
-});
-
-test("expectDeletes through the op lets an announced worktree delete pass the guard", async (t) => {
-  const s = setup(t, "worktrees");
-  mkdirSync(path.join(s.root, "w1"));
-  for (let index = 0; index < 520; index++) writeFileSync(path.join(s.root, "w1", `f${index}.txt`), String(index));
-  await s.configure();
-  await s.worker.call("scan", { share: "worktrees:p1", scope: "full", reason: "test" });
-  assert.deepEqual(await s.worker.call("expectDeletes", { share: "worktrees:p1", prefix: "w1", ttlMs: 60_000 }), {});
-  rmSync(path.join(s.root, "w1"), { recursive: true });
-  const result = await s.worker.call("scan", { share: "worktrees:p1", scope: { paths: ["w1"] }, reason: "test" });
-  assert.equal(result.tombstones, 521);
-  assert.equal(result.held, 0);
+  assert.equal(status.state, "idle");
 });
 
 test("errors are paged with ISO times", async (t) => {
@@ -287,6 +267,24 @@ test("the node clock is persisted and never goes back, even across a rebuilt ind
   assert.equal(next[NODE], 5_000_001, "above every counter this node issued before");
 });
 
+test("an index from before schema 3 loses its held deletions and keeps its rows", (t) => {
+  const file = dbFile(t);
+  const first = new FileSyncDb(file, NODE);
+  first.writeTx(() => first.insertShare({ share: "project:x", projectId: "x", kind: "project", root: "/x", indexId: "i" }));
+  first.close();
+  const raw = new DatabaseSync(file);
+  raw.exec("CREATE TABLE held(share TEXT NOT NULL, path TEXT NOT NULL, held_at INTEGER NOT NULL, PRIMARY KEY(share, path)) WITHOUT ROWID");
+  raw.exec("INSERT INTO held VALUES ('project:x', 'a.txt', 1)");
+  raw.exec("UPDATE meta SET value = '2' WHERE key = 'schema_version'");
+  raw.close();
+  const second = new FileSyncDb(file, NODE);
+  second.close();
+  const after = new DatabaseSync(file);
+  t.after(() => after.close());
+  assert.equal(after.prepare("SELECT name FROM sqlite_master WHERE name IN ('held', 'expected')").all().length, 0);
+  assert.equal((after.prepare("SELECT COUNT(*) AS n FROM shares").get() as { n: number }).n, 1);
+});
+
 test("a data directory moved to another node starts a fresh index", (t) => {
   const file = dbFile(t);
   const first = new FileSyncDb(file, "node-a");
@@ -310,14 +308,11 @@ test("the per-directory and per-path queries seek instead of reading the whole s
     descendants: /^SEARCH entries USING PRIMARY KEY \(share=\? AND path>\? AND path<\?\)$/,
     entriesSince: /^SEARCH entries USING INDEX entries_seq \(share=\? AND seq>\?\)$/,
     liveBelow: /^SEARCH entries USING PRIMARY KEY \(share=\? AND path>\? AND path<\?\)$/,
-    liveInUnit: /PRIMARY KEY \(share=\? AND path=\?\).*PRIMARY KEY \(share=\? AND path>\? AND path<\?\)/,
-    heldInUnit: /PRIMARY KEY \(share=\? AND path=\?\).*PRIMARY KEY \(share=\? AND path>\? AND path<\?\)/,
-    anyHeldInUnit: /PRIMARY KEY \(share=\? AND path=\?\).*PRIMARY KEY \(share=\? AND path>\? AND path<\?\)/,
   };
   for (const [name, sql] of Object.entries(HOT_QUERIES) as Array<[keyof typeof HOT_QUERIES, string]>) {
     const detail = plan(sql);
     assert.match(detail, expected[name], `${name}: ${detail}`);
-    assert.doesNotMatch(detail, /PRIMARY KEY \(share=\?\)(?! AND)|SCAN entries|SCAN held/, `${name} reads the whole share: ${detail}`);
+    assert.doesNotMatch(detail, /PRIMARY KEY \(share=\?\)(?! AND)|SCAN entries/, `${name} reads the whole share: ${detail}`);
   }
 });
 

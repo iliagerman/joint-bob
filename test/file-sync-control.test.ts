@@ -288,14 +288,14 @@ test("the host id is created once per machine and kept", async (t) => {
 function share(overrides: Partial<ShareStatus>): ShareStatus {
   return {
     share: "project:alpha", projectId: "alpha", kind: "project", state: "idle", phase: "builtin", maxSeq: 1, indexId: "i", digest: "d", rulesHash: "r",
-    liveFiles: 1, liveBytes: 1, need: { files: 0, bytes: 0 }, blocked: 0, errors: 0, held: 0, scanning: false, watch: "watching", peers: [], ...overrides,
+    liveFiles: 1, liveBytes: 1, need: { files: 0, bytes: 0 }, blocked: 0, errors: 0, scanning: false, watch: "watching", peers: [], ...overrides,
   };
 }
 
 test("a project's status says error before unavailable before syncing before synced", () => {
   const engine = { enabled: true, running: true };
   assert.equal(projectSyncStatus([share({})], { enabled: false, running: false }).state, "unavailable");
-  assert.deepEqual(projectSyncStatus([share({ need: { files: 2, bytes: 10 } }), share({ held: 600 })], engine), { state: "error", remainingFiles: 2, remainingBytes: 10, message: "600 deletions on hold: confirm in Settings → File sync" });
+  assert.deepEqual(projectSyncStatus([share({ need: { files: 2, bytes: 10 } }), share({ blocked: 3 })], engine), { state: "error", remainingFiles: 2, remainingBytes: 10, message: "3 files could not be synchronized" });
   assert.equal(projectSyncStatus([share({ state: "unavailable" }), share({ need: { files: 1, bytes: 1 } })], engine).state, "unavailable");
   assert.deepEqual(projectSyncStatus([share({ need: { files: 1, bytes: 5 } })], engine), { state: "syncing", remainingFiles: 1, remainingBytes: 5, message: "1 file to receive" });
   assert.equal(projectSyncStatus([share({})], { enabled: true, running: false }).message, "Starting file sync");
@@ -391,7 +391,7 @@ async function stubOps(log: string): Promise<Array<{ op: string; args: Record<st
 }
 
 function scanResult(share: string): Record<string, unknown> {
-  return { share, changed: 2, tombstones: 2, held: 0, newGeneration: false, files: 10, hashedBytes: 0, durationMs: 3 };
+  return { share, changed: 2, tombstones: 2, newGeneration: false, files: 10, hashedBytes: 0, durationMs: 3 };
 }
 
 test("the engine's configure, its records and capability events, and the admin routes, against a stand-in worker", { timeout: 60_000 }, async (t) => {
@@ -440,7 +440,7 @@ test("the engine's configure, its records and capability events, and the admin r
           { event: "records", fromPeer: PEER, engines: [betaEngine, { ...betaEngine, projectId: "alpha" }], settings: [peerGlobal, { ...peerGlobal, key: "project:alpha", origin: SECOND }] },
         ],
       },
-      answers: { errors: errorsPage, differences: differencesPage, releaseHeld: scanResult("project:alpha"), confirmReplacedRoot: scanResult("tickets:alpha") },
+      answers: { errors: errorsPage, differences: differencesPage, confirmReplacedRoot: scanResult("tickets:alpha") },
       failures: [{ op: "repair", peer: SECOND, message: "File sync cannot repair yet: this phase of the engine has no network part", code: "unavailable" }],
     },
   });
@@ -491,14 +491,12 @@ test("the engine's configure, its records and capability events, and the admin r
   assert.deepEqual(await call("GET", "/errors?share=project:alpha&page=2&pageSize=5"), { status: 200, body: errorsPage });
   assert.deepEqual(await call("GET", `/differences?share=project:alpha&peer=${PEER}`), { status: 200, body: differencesPage });
   assert.deepEqual(await call("POST", "/repair", { share: "project:alpha", peer: PEER }), { status: 200, body: { ok: true } });
-  assert.deepEqual(await call("POST", "/held/release", { share: "project:alpha" }), { status: 200, body: scanResult("project:alpha") });
   assert.deepEqual(await call("POST", "/replaced/confirm", { share: "tickets:alpha" }), { status: 200, body: scanResult("tickets:alpha") });
-  const asked = (await stubOps(log)).filter((entry) => ["errors", "differences", "repair", "releaseHeld", "confirmReplacedRoot"].includes(entry.op));
+  const asked = (await stubOps(log)).filter((entry) => ["errors", "differences", "repair", "confirmReplacedRoot"].includes(entry.op));
   assert.deepEqual(asked, [
     { op: "errors", args: { share: "project:alpha", offset: 5, limit: 5 } },
     { op: "differences", args: { share: "project:alpha", peer: PEER, offset: 0, limit: 10 } },
     { op: "repair", args: { share: "project:alpha", peer: PEER } },
-    { op: "releaseHeld", args: { share: "project:alpha" } },
     { op: "confirmReplacedRoot", args: { share: "tickets:alpha" } },
   ], "pages become offsets; nothing else reaches the worker");
 
@@ -508,7 +506,7 @@ test("the engine's configure, its records and capability events, and the admin r
   assert.equal((await call("GET", "/differences?share=project:alpha")).status, 400, "differences are per peer");
   assert.deepEqual(await call("GET", `/differences?share=project:alpha&peer=${OUTSIDER}`), { status: 404, body: { error: "That machine does not sync this folder with this node" } });
   assert.deepEqual(await call("POST", "/repair", { share: "project:alpha", peer: SECOND }), { status: 503, body: { error: "File sync cannot repair yet: this phase of the engine has no network part" } });
-  assert.equal((await call("POST", "/held/release", { share: "project:alpha", extra: 1 })).status, 400);
+  assert.equal((await call("POST", "/replaced/confirm", { share: "project:alpha", extra: 1 })).status, 400);
   assert.deepEqual(await call("PUT", "/config", { shadowProjects: ["alpha", "beta"] }), { status: 409, body: { error: "JOINT_BOB_FILE_SYNC_PROJECTS sets which projects file sync checks on this node; change it in the service's environment" } });
   assert.equal((await call("PUT", "/config", { shadowProjects: ["alpha"] })).status, 200, "saving what the environment says is not a conflict");
 

@@ -392,88 +392,19 @@ test("a folder that becomes a file tombstones what was below it", async (t) => {
   assert.equal(s.row("a/one.txt")!.deleted, true);
 });
 
-test("the guard holds a large undeclared delete instead of tombstoning it", async (t) => {
+test("a large delete is tombstoned at once, with nothing held for confirmation", async (t) => {
   const s = setup(t);
   manyFiles(s, "src", 600);
   s.write("keep.txt");
   await s.scanner.scan("full");
   for (let index = 0; index < 550; index++) unlinkSync(path.join(s.root, "src", `f${index}.txt`));
   const result = await s.scanner.scan("full");
-  assert.equal(result.tombstones, 0);
-  assert.equal(result.held, 550);
-  assert.equal(s.db.heldCount(s.key), 550);
-  assert.equal(s.live().size, 602, "held rows stay live");
-  assert.ok(s.events.some((event) => event.event === "log" && event.key === `fileSync:${s.key}:guard`), "the hold is logged");
+  assert.equal(result.tombstones, 550);
+  assert.equal(s.row("src/f0.txt")!.deleted, true);
+  assert.equal(s.row("keep.txt")!.deleted, false);
 });
 
-test("while deletes are held, every new delete in that unit is held too", async (t) => {
-  const s = setup(t);
-  manyFiles(s, "src", 600);
-  s.write("keep.txt");
-  await s.scanner.scan("full");
-  for (let index = 0; index < 550; index++) unlinkSync(path.join(s.root, "src", `f${index}.txt`));
-  await s.scanner.scan("full");
-  unlinkSync(path.join(s.root, "keep.txt"));
-  const result = await s.scanner.scan({ paths: ["keep.txt"] });
-  assert.equal(result.tombstones, 0);
-  assert.equal(result.held, 1);
-  assert.ok(s.db.isHeld(s.key, "keep.txt"));
-});
-
-test("a held path that comes back leaves the held set", async (t) => {
-  const s = setup(t);
-  manyFiles(s, "src", 600);
-  await s.scanner.scan("full");
-  for (let index = 0; index < 550; index++) unlinkSync(path.join(s.root, "src", `f${index}.txt`));
-  await s.scanner.scan("full");
-  writeFileSync(path.join(s.root, "src", "f3.txt"), "src/3");
-  await s.scanner.scan({ paths: ["src/f3.txt"] });
-  assert.equal(s.db.isHeld(s.key, "src/f3.txt"), false);
-  assert.equal(s.db.heldCount(s.key), 549);
-});
-
-test("releaseHeld tombstones the held paths that are still missing", async (t) => {
-  const s = setup(t);
-  manyFiles(s, "src", 600);
-  await s.scanner.scan("full");
-  for (let index = 0; index < 550; index++) unlinkSync(path.join(s.root, "src", `f${index}.txt`));
-  await s.scanner.scan("full");
-  writeFileSync(path.join(s.root, "src", "f0.txt"), "back");
-  const result = await s.scanner.releaseHeld();
-  assert.equal(result.tombstones, 549);
-  assert.equal(s.db.heldCount(s.key), 0);
-  assert.equal(s.row("src/f1.txt")!.deleted, true);
-  assert.equal(s.row("src/f0.txt")!.deleted, false);
-  assert.equal(s.row("src/f0.txt")!.sha256, createHash("sha256").update("back").digest("hex"), "the returned file is indexed with its new content");
-});
-
-test("deletes add up in the sliding window", async (t) => {
-  const s = setup(t);
-  manyFiles(s, "src", 700);
-  await s.scanner.scan("full");
-  for (let index = 0; index < 300; index++) unlinkSync(path.join(s.root, "src", `f${index}.txt`));
-  const first = await s.scanner.scan("full");
-  assert.equal(first.tombstones, 300, "below the minimum on its own");
-  for (let index = 300; index < 600; index++) unlinkSync(path.join(s.root, "src", `f${index}.txt`));
-  s.clock.advance(5 * 60_000);
-  const second = await s.scanner.scan("full");
-  assert.equal(second.tombstones, 0);
-  assert.equal(second.held, 300, "600 within ten minutes reach the guard");
-});
-
-test("announced prefixes bypass the guard", async (t) => {
-  const s = setup(t, { kind: "worktrees" });
-  manyFiles(s, "w1", 600);
-  manyFiles(s, "w2", 600);
-  await s.scanner.scan("full");
-  s.scanner.expectDeletes("w1", 60_000);
-  rmSync(path.join(s.root, "w1"), { recursive: true });
-  const result = await s.scanner.scan({ paths: ["w1"] });
-  assert.equal(result.held, 0);
-  assert.equal(result.tombstones, 601);
-});
-
-test("the guard counts each worktree on its own", async (t) => {
+test("a removed worktree is tombstoned whole, beside another worktree's few deletes", async (t) => {
   const s = setup(t, { kind: "worktrees" });
   manyFiles(s, "w1", 600);
   manyFiles(s, "w2", 600);
@@ -481,22 +412,9 @@ test("the guard counts each worktree on its own", async (t) => {
   rmSync(path.join(s.root, "w1"), { recursive: true });
   for (let index = 0; index < 10; index++) unlinkSync(path.join(s.root, "w2", `f${index}.txt`));
   const result = await s.scanner.scan("full");
-  assert.equal(result.held, 601, "the whole first worktree is held");
-  assert.equal(result.tombstones, 10, "the second worktree's few deletes go through");
-  assert.equal(s.db.heldCount(s.key, "w1"), 601);
-  assert.equal(s.db.heldCount(s.key, "w2"), 0);
-});
-
-test("an expired announcement no longer bypasses the guard", async (t) => {
-  const s = setup(t, { kind: "tickets" });
-  manyFiles(s, "task-1", 600);
-  await s.scanner.scan("full");
-  s.scanner.expectDeletes("task-1", 1000);
-  s.clock.advance(2000);
-  rmSync(path.join(s.root, "task-1"), { recursive: true });
-  const result = await s.scanner.scan("full");
-  assert.equal(result.tombstones, 0);
-  assert.equal(result.held, 601);
+  assert.equal(result.tombstones, 611);
+  assert.equal(s.row("w1")!.deleted, true);
+  assert.equal(s.row("w2/f10.txt")!.deleted, false);
 });
 
 test("a path the rules now ignore leaves the index without a tombstone", async (t) => {
@@ -892,27 +810,6 @@ test("a new root from configure during a scan ends that scan's writes", async (t
   assert.deepEqual([...s.live().keys()], ["x.txt"]);
 });
 
-test("confirming held deletions while the folder is missing or replaced deletes nothing", async (t) => {
-  const s = setup(t);
-  manyFiles(s, "src", 600);
-  await s.scanner.scan("full");
-  for (let index = 0; index < 550; index++) unlinkSync(path.join(s.root, "src", `f${index}.txt`));
-  await s.scanner.scan("full");
-  const moved = path.join(s.dir, "moved");
-  renameSync(s.root, moved);
-  const missing = await s.scanner.releaseHeld();
-  assert.deepEqual([missing.tombstones, missing.error, s.db.heldCount(s.key)], [0, "The folder is missing", 550]);
-  mkdirSync(s.root);
-  const replaced = await s.scanner.releaseHeld();
-  assert.equal(replaced.tombstones, 0);
-  assert.match(replaced.error ?? "", /moved or replaced/);
-  assert.equal(s.db.heldCount(s.key), 550);
-  rmSync(s.root, { recursive: true });
-  renameSync(moved, s.root);
-  const released = await s.scanner.releaseHeld();
-  assert.deepEqual([released.tombstones, released.error, s.db.heldCount(s.key)], [550, undefined, 0]);
-});
-
 test("the first complete scan drops rows an interrupted first scan wrote, instead of deleting them", async (t) => {
   const slicer = new Slicer();
   let commits = 0;
@@ -999,7 +896,6 @@ test("a deleted folder's per-file events read its subtree once, not once per fil
   for (let index = 0; index < 20; index++) manyFiles(s, `w1/sub${index}`, 50);
   await s.scanner.scan("full");
   const events = s.rows().map((row) => row.path).reverse();
-  s.scanner.expectDeletes("w1", 60_000);
   rmSync(path.join(s.root, "w1"), { recursive: true });
   let reads = 0;
   const descendants = s.db.descendants.bind(s.db);
@@ -1007,34 +903,6 @@ test("a deleted folder's per-file events read its subtree once, not once per fil
   const result = await s.scanner.scan({ paths: events });
   assert.equal(result.tombstones, 1021);
   assert.ok(reads <= 2, `the subtree was read ${reads} times for ${events.length} events`);
-});
-
-test("listing the parent of a held folder does not read its held subtree again", async (t) => {
-  const s = setup(t, { kind: "worktrees" });
-  manyFiles(s, "w1", 600);
-  s.write("w2/a.txt");
-  await s.scanner.scan("full");
-  rmSync(path.join(s.root, "w1"), { recursive: true });
-  assert.equal((await s.scanner.scan({ paths: ["w1"] })).held, 601);
-  let reads = 0;
-  const descendants = s.db.descendants.bind(s.db);
-  s.db.descendants = (share, prefix) => { reads++; return descendants(share, prefix); };
-  s.write("new-worktree/a.txt");
-  const result = await s.scanner.scan({ paths: ["new-worktree/a.txt"] });
-  assert.deepEqual([result.changed, result.held, reads], [2, 0, 0], "the root listing found w1 missing and held already");
-  assert.equal(s.db.heldCount(s.key, "w1"), 601);
-});
-
-test("confirming a held path that the rules ignore by now drops it without a tombstone", async (t) => {
-  const s = setup(t);
-  manyFiles(s, "src", 600);
-  await s.scanner.scan("full");
-  for (let index = 0; index < 550; index++) unlinkSync(path.join(s.root, "src", `f${index}.txt`));
-  await s.scanner.scan("full");
-  s.scanner.update(s.context({ rules: { userRules: ["f1*.txt"] } }));
-  const released = await s.scanner.releaseHeld();
-  // f1, f10–f19 and f100–f199 match; they leave the index, the other 439 are tombstoned.
-  assert.deepEqual([released.tombstones, s.row("src/f1.txt"), s.row("src/f150.txt"), s.row("src/f2.txt")?.deleted], [439, undefined, undefined, true]);
 });
 
 test("scans of many shares share one slice budget, so a timer waits about one slice, not one per share", async () => {

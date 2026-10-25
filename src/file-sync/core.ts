@@ -17,7 +17,7 @@ import { BurstMonitor, inotifyBurstLimit, ShareWatcher, SuppressionRegistry, wat
 
 /* The worker's data plane as one object built from injected dependencies (FILE-SYNC design §5.1), so
    tests run it in-thread with a fake clock and explicit scans, and worker.ts only adapts messages.
-   P1 is the local engine: configure, scans, the watcher, the guard and status. P2 adds shadow mode:
+   P1 is the local engine: configure, scans, the watcher and status. P2 adds shadow mode:
    FilesService answers peers, the sync layer pulls their indexes and sends notices, and the need
    engine merges identical versions and tracks differences. Applying peers' changes is P3. */
 
@@ -241,10 +241,8 @@ class Core implements WorkerCore {
       case "configure": return this.configure(args as ConfigureArgs);
       case "scan": return this.scan(args.share, args.scope, args.reason);
       case "flush": return this.flush(args.share, args.subtree);
-      case "expectDeletes": this.runtime(args.share).scanner.expectDeletes(args.prefix, args.ttlMs); return {};
       case "status": return this.status(args.shares);
       case "errors": return this.errors(args.share, args.offset, args.limit);
-      case "releaseHeld": return this.afterScan(this.runtime(args.share), await this.runtime(args.share).scanner.releaseHeld());
       case "confirmReplacedRoot": return this.afterScan(this.runtime(args.share), await this.runtime(args.share).scanner.confirmReplacedRoot());
       case "announce": this.sync!.announce(args.slept); return {};
       case "peerPresence": this.sync!.presence(args.peer, args.present, args.origins); return {};
@@ -516,7 +514,6 @@ class Core implements WorkerCore {
     const share = this.db.share(runtime.key);
     const scanner = runtime.scanner;
     const root = scanner.root;
-    const held = this.db.heldCount(runtime.key);
     const need = this.db.needSummary(runtime.key);
     const errors = this.db.errorCount(runtime.key);
     let state: ShareState;
@@ -525,7 +522,6 @@ class Core implements WorkerCore {
     else if (root?.state === "unavailable") { state = "unavailable"; message = root.message; }
     else if (root?.state === "error") { state = "error"; message = root.message; }
     else if (share.pendingDev !== null || share.scanError) { state = "error"; message = share.scanError ?? undefined; }
-    else if (held > 0) { state = "error"; message = `${held} deletion${held === 1 ? " is" : "s are"} held; confirm in Settings → File sync`; }
     else if (this.sync?.mismatch(runtime.key).length) { state = "error"; message = `The index from ${this.sync.mismatch(runtime.key).join(", ")} does not match its files`; }
     else if (scanner.running || runtime.draining || scanner.settlingCount > 0) { state = "scanning"; message = "Checking files"; }
     else if (!root) { state = "starting"; message = "Starting file sync"; }
@@ -548,7 +544,7 @@ class Core implements WorkerCore {
       share: runtime.key, projectId: runtime.spec.projectId, kind: runtime.spec.kind, state, phase: runtime.spec.phase,
       maxSeq: share?.maxSeq ?? 0, indexId: share?.indexId ?? "", digest: share?.digest ?? "", rulesHash: scanner.context.matcher.hash,
       liveFiles: share?.liveFiles ?? 0, liveBytes: share?.liveBytes ?? 0, need: { files: need.files, bytes: need.bytes }, blocked: need.blocked,
-      errors, held, scanning: scanner.running || Boolean(runtime.draining) || scanner.settlingCount > 0, watch: runtime.watcher?.state ?? "off",
+      errors, scanning: scanner.running || Boolean(runtime.draining) || scanner.settlingCount > 0, watch: runtime.watcher?.state ?? "off",
       ...(message ? { message } : {}), peers,
     };
   }

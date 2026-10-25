@@ -36,14 +36,13 @@ export function startingStatus(spec: ShareSpec): ShareStatus {
   return {
     share: spec.key, projectId: spec.projectId, kind: spec.kind, state: "starting", phase: spec.phase,
     maxSeq: 0, indexId: "", digest: "", rulesHash: "", liveFiles: 0, liveBytes: 0, need: { files: 0, bytes: 0 },
-    blocked: 0, errors: 0, held: 0, scanning: false, watch: "off", message: "Starting file sync", peers: [],
+    blocked: 0, errors: 0, scanning: false, watch: "off", message: "Starting file sync", peers: [],
   };
 }
 
 function plural(count: number, one: string, many = `${one}s`): string { return `${count} ${count === 1 ? one : many}`; }
 
 function errorMessage(share: ShareStatus): string {
-  if (share.held) return `${plural(share.held, "deletion")} on hold: confirm in Settings → File sync`;
   if (share.blocked) return `${plural(share.blocked, "file")} could not be synchronized`;
   if (share.errors) return `${plural(share.errors, "file")} could not be read or written`;
   return share.message ?? "File sync stopped on an error";
@@ -60,7 +59,7 @@ export function projectSyncStatus(shares: readonly ShareStatus[], engine: { enab
   const remainingBytes = shares.reduce((sum, share) => sum + share.need.bytes, 0);
   const status = (state: ProjectSyncStatus["state"], message: string): ProjectSyncStatus => ({ state, remainingFiles, remainingBytes, message });
   if (!engine.enabled) return status("unavailable", "File sync is off on this node");
-  const failed = shares.find((share) => share.state === "error" || share.held > 0 || share.blocked > 0 || share.errors > 0);
+  const failed = shares.find((share) => share.state === "error" || share.blocked > 0 || share.errors > 0);
   if (failed) return status("error", errorMessage(failed));
   if (peerProblem) return status("error", peerProblem);
   const missing = shares.find((share) => share.state === "unavailable");
