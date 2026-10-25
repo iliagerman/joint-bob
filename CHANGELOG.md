@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.156.1 — 2026-10-25
 
 - Fixed forcing a queued message that was already being sent showing "incomplete" errors; it now stops that send and starts the message once, without sending it twice.
 
