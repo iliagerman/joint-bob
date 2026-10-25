@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
-import { FileSyncDb, HOT_QUERIES, SCHEMA_VERSION } from "../src/file-sync/db.js";
+import { FileSyncDb, HOT_QUERIES, MIGRATIONS, SCHEMA_VERSION } from "../src/file-sync/db.js";
 import type { ConfigureArgs, ShareStatus } from "../src/file-sync/protocol.js";
 import { systemClock, type Clock, type ShareKind } from "../src/file-sync/types.js";
 import { createWorkerCore } from "../src/file-sync/core.js";
@@ -269,16 +269,14 @@ test("the node clock is persisted and never goes back, even across a rebuilt ind
 
 test("an index from before schema 3 loses its held deletions and keeps its rows", (t) => {
   const file = dbFile(t);
-  const first = new FileSyncDb(file, NODE);
-  first.writeTx(() => first.insertShare({ share: "project:x", projectId: "x", kind: "project", root: "/x", indexId: "i" }));
-  first.close();
   const raw = new DatabaseSync(file);
-  raw.exec("CREATE TABLE held(share TEXT NOT NULL, path TEXT NOT NULL, held_at INTEGER NOT NULL, PRIMARY KEY(share, path)) WITHOUT ROWID");
+  raw.exec("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)");
+  for (const script of MIGRATIONS.slice(0, 2)) raw.exec(script);
+  raw.exec(`INSERT INTO meta VALUES ('schema_version', '2'), ('node_id', '${NODE}')`);
+  raw.exec("INSERT INTO shares(share, project_id, kind, root, index_id, digest) VALUES ('project:x', 'x', 'project', '/x', 'i', 'd')");
   raw.exec("INSERT INTO held VALUES ('project:x', 'a.txt', 1)");
-  raw.exec("UPDATE meta SET value = '2' WHERE key = 'schema_version'");
   raw.close();
-  const second = new FileSyncDb(file, NODE);
-  second.close();
+  new FileSyncDb(file, NODE).close();
   const after = new DatabaseSync(file);
   t.after(() => after.close());
   assert.equal(after.prepare("SELECT name FROM sqlite_master WHERE name IN ('held', 'expected')").all().length, 0);

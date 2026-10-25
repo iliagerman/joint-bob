@@ -72,7 +72,7 @@ export type CursorFields = Partial<Omit<CursorRow, "peer" | "updatedAt">>;
 export interface DiffRow { path: string; since: number; kind: string }
 export interface ShadowCleanRow { peer: string; cleanSince: number | null; differences: number; checkedAt: number }
 
-const MIGRATIONS: ReadonlyArray<string> = [
+export const MIGRATIONS: ReadonlyArray<string> = [
   // 1: the full §4 schema, plus fs_mtime_ms (touch detection), rules_hash and the pending root identity.
   `
   CREATE TABLE IF NOT EXISTS shares(

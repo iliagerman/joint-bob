@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Removed the deletion hold from the built-in file sync engine: a large delete now goes through at once, so there is no longer a "confirm deletions" step in Settings.
+- Checked that the built-in file sync engine keeps its held deletions and files when an older index is upgraded to the current format.
 
 ## 2.155.1 — 2026-10-25
 
