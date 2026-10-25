@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.159.0 — 2026-10-26
 
-- Added a File sync tab in Settings for admins, showing which machines and projects are moved by Joint Bob's built-in file sync or by Syncthing, what is left to copy, any problems, and the differences between machines, with checked switches to move each project between the two.
+- Added a File sync tab in Settings for admins that shows each machine and project, whether Joint Bob's built-in sync or Syncthing moves it, what is left to copy, any problems, and the differences between machines.
+- Added switches in that tab to move a project to built-in file sync and back; files stay on disk, and only that project's Joint Bob folders are removed from Syncthing on every machine sharing it.
+- Changed projects on built-in sync to get their status, rescans, handoff readiness, merge waits and worktree sweeps from the built-in engine.
+- Added checks that block a move while a peer runs an older release, the project is nested in another project, or a folder Joint Bob does not own is in the way.
 
 ## 2.158.0 — 2026-10-25
 
