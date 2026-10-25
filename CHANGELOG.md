@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.156.0 — 2026-10-25
 
 - Added GitLab as a secret provider, so its instance URL and access token can be stored, attached to projects and shared with agents like the other credentials.
 
