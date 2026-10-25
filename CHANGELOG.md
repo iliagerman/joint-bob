@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.154.0 — 2026-10-25
 
-- Added a built-in file sync engine, off by default and switched on per node in Settings → File sync; while it is off, file syncing is unchanged.
+- Added a built-in file sync engine, off by default; when an administrator switches it on for chosen projects, it only watches and indexes their files without changing them, and file syncing is unchanged.
 
 ## 2.153.0 — 2026-10-25
 
