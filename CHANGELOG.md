@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.158.0 — 2026-10-25
+
+- Activity Chat now searches conversation history and project files as needed instead of summarizing the whole history before answering, and keeps its own agent context for follow-ups.
+- Added an effort selector and a read-only toggle to Activity Chat. Read-only is on by default; switching it off enables normal project tools, commands and actions.
+
 ## 2.157.0 — 2026-10-25
 
 - Added writing of other machines' changes into projects switched to the built-in file sync engine, keeping replaced versions in the trash and saving conflicting edits as copies; no project is switched yet, so files are unchanged for now.
