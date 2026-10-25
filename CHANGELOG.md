@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.155.2 — 2026-10-25
 
-- Removed the deletion hold from the built-in file sync engine: a large delete now goes through at once, so there is no longer a "confirm deletions" step in Settings.
+- Large deletions in the built-in file sync engine now go through at once, so the "confirm deletions" step in Settings is gone.
+- Removed worktrees with many files now disappear on every machine instead of staying listed as live.
 
 ## 2.155.1 — 2026-10-25
 
