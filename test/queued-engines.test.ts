@@ -229,6 +229,65 @@ test("force starting a queued Pi prompt hides the canceled turn error", async (c
   }
 });
 
+for (const outcome of ["cancelled", "started", "cancel-failed"] as const) {
+  test(`force starting an in-flight Pi queue entry handles ${outcome} without duplicate dispatch`, async (context) => {
+    const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+    sockets.push(opened.socket);
+    await waitForChatSession(opened);
+    const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+    const { harnessSessions } = await import("../src/server/harness-sessions.js");
+    const { listQueuedPrompts } = await import("../src/prompt-queue.js");
+    const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId)!;
+    const release = Promise.withResolvers<void>();
+    let attempts = 0;
+    let cancellations = 0;
+    context.mock.method(shared.session, "prompt", async (input) => {
+      attempts += 1;
+      if (attempts === 1) {
+        await release.promise;
+        if (outcome === "cancelled") throw new Error("Start aborted");
+      }
+      input.onStarted?.();
+    });
+    context.mock.method(shared.session, "cancel", async () => {
+      cancellations += 1;
+      if (outcome === "cancel-failed") throw new Error("Could not stop harness");
+      // Returning from cancel does not mean the in-flight dispatch has settled.
+    });
+    const engineLog = process.env.JOINT_BOB_TEST_ENGINE_LOG;
+    delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
+    try {
+      opened.socket.send(JSON.stringify({ type: "prompt", message: "continue until done" }));
+      await waitFor(opened.messages, () => attempts === 1);
+      const queued = listQueuedPrompts(`${fixture.projectId}:${sessionId}`)[0];
+      assert.equal(queued.dispatchState, "starting");
+      assert.equal(opened.messages.some((frame) => frame.type === "promptStarted"), false);
+      const acknowledgement = opened.messages.find((frame) => frame.type === "userMessage" && frame.queued)!;
+      // An attached page has the pre-start revision; a reconnect has the stored revision.
+      const queueRevision = outcome === "cancelled" ? acknowledgement.revision : queued.revision;
+      opened.socket.send(JSON.stringify({ type: "forceStartQueuedPrompt", queueId: queued.id, queueRevision }));
+      await waitFor(opened.messages, () => cancellations > 0 || opened.messages.some((frame) => frame.type === "error"));
+      assert.equal(cancellations, 1, "Force start must cancel an in-flight start instead of rejecting it as incomplete");
+      assert.equal(attempts, 1, "no retry before the original dispatch settles");
+      assert.equal(listQueuedPrompts(`${fixture.projectId}:${sessionId}`)[0].dispatchState, "starting", "do not reset a live start");
+      if (outcome === "cancel-failed") {
+        await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "error"));
+        assert.match(String(opened.messages.find((frame) => frame.type === "error")!.error), /Could not stop harness/);
+      }
+      release.resolve();
+      await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptCompleted"));
+      assert.equal(attempts, outcome === "cancelled" ? 2 : 1);
+      assert.equal(opened.messages.filter((frame) => frame.type === "promptStarted").length, 1, "a started prompt must never replay");
+      assert.deepEqual(listQueuedPrompts(`${fixture.projectId}:${sessionId}`), []);
+      if (outcome !== "cancel-failed") assert.deepEqual(opened.messages.filter((frame) => ["error", "promptFailed"].includes(String(frame.type))), []);
+    } finally {
+      release.resolve();
+      await waitFor(opened.messages, () => shared.turnInFlight === 0);
+      process.env.JOINT_BOB_TEST_ENGINE_LOG = engineLog;
+    }
+  });
+}
+
 test("stopping a Claude turn starts the next queued message", async () => {
   const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "claude:new");
   sockets.push(opened.socket);

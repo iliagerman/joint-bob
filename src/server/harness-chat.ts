@@ -816,9 +816,14 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
 async function queueCommand(connection: HarnessChatConnection, message: ReturnType<typeof socketMessageSchema.parse>): Promise<void> {
   await writable(connection);
   if (message.type === "forceStartQueuedPrompt") {
-    if (!message.queueId || !message.queueRevision || startingIds.has(message.queueId)) throw new Error("Queued prompt force start is incomplete");
+    if (!message.queueId || !message.queueRevision) throw new Error("Queued prompt force start is incomplete");
     const key = queueKey(connection);
-    if (!prioritizeQueuedPrompt(key, message.queueId, message.queueRevision)) throw new Error("Queued prompt changed; refresh and try again");
+    const starting = startingIds.has(message.queueId) ? listQueuedPrompts(key).find(({ id }) => id === message.queueId) : undefined;
+    if (starting) {
+      // beginQueuedPrompt increments the revision before onStarted claims it.
+      // Accept either the attached page's pending revision or a reconnect's starting revision.
+      if (message.queueRevision !== starting.revision && message.queueRevision !== starting.revision - 1) throw new Error("Queued prompt changed; refresh and try again");
+    } else if (!prioritizeQueuedPrompt(key, message.queueId, message.queueRevision)) throw new Error("Queued prompt changed; refresh and try again");
     const draining = drains.get(key);
     pausedDrains.add(key);
     refreshHarnessPromptQueue(connection);

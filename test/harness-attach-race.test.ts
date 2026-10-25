@@ -165,7 +165,7 @@ test("visible starting prompt remains fenced against mutation and duplicate disp
   try {
     await f.exports.attachHarnessChat(f.options);
     assert.equal(visiblePromptCount(f.frames), 1);
-    for (const type of ["editQueuedPrompt", "cancelQueuedPrompt", "forceStartQueuedPrompt", "swapQueuedPrompts", "mergeQueuedPrompts"]) {
+    for (const type of ["editQueuedPrompt", "cancelQueuedPrompt", "swapQueuedPrompts", "mergeQueuedPrompts"]) {
       await assert.rejects(f.exports.handleHarnessChatMessage(f.connection, Buffer.from(JSON.stringify({
         type, queueId: f.queued.id, queueRevision: 1, message: "changed", queueItems: [{ id: f.queued.id, revision: 1 }],
       }))), /Queued prompt.*(changed|incomplete)/, `${type} must not mutate an in-flight start`);
