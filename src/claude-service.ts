@@ -664,7 +664,13 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const child = spawnInRuntime(currentRuntime(), settings.executable || "claude", args, {
     detached: process.platform !== "win32",
     cwd: options.cwd,
-    env: { ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment(), ...claudeIsolationEnvironment() },
+    env: {
+      ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment(), ...claudeIsolationEnvironment(),
+      // `claude -p` otherwise stops background agents 10 minutes after the turn's answer, and the
+      // next turn finds them "stopped". Their task_progress events keep the turn active, so Joint
+      // Bob's inactivity watchdog decides when one is stale instead.
+      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0",
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   // Claude can exit before reading its prompt (a broken install, an unknown flag). The run then

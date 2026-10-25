@@ -120,7 +120,20 @@ const SCAN_BUDGET_MS = 40;
 // delivery row" read the whole outbox in a single query for a peer that already has them all.
 const SCAN_WINDOW = 2_000;
 
+/** One transaction per pass: each delivery row committed on its own costs a disk sync, and a pass has a time budget. */
 function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const selected = allocateEventsForPeer(db, peerId, at, filter);
+    db.exec("COMMIT");
+    return selected;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function allocateEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
   const selected: ReplicationEvent[] = [];
   const now = Date.parse(at), started = Date.now();
   const newest = (db.prepare("SELECT max(rowid) id FROM replication_outbox").get() as { id: number | null }).id ?? 0;

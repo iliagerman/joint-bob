@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.155.3 — 2026-10-25
+
+- Fixed Claude background agents being stopped 10 minutes after the agent answered, which left them "didn't finish before the previous session ended" and restarted them over and over.
+- A turn waiting on a background agent is now stopped only after 24 hours without any activity, and any other turn after 30 minutes instead of 5, so long-running work is no longer cut off.
+- Machines now send replication updates to each other much faster on slow disks.
+
 ## 2.155.2 — 2026-10-25
 
 - Large deletions in the built-in file sync engine now go through at once, so the "confirm deletions" step in Settings is gone.

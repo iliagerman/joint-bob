@@ -296,7 +296,8 @@ async function runSeed(seed: number): Promise<void> {
       const replaced = random() < 0.04;
       if (replaced) {
         // The root itself replaced: a new generation on both sides, nothing deleted.
-        rmSync(root, { recursive: true });
+        // Moved aside, not deleted: a freed inode can be handed straight back to the new folder.
+        renameSync(root, `${root}-replaced-${round}`);
         mkdirSync(root);
       }
       const steps = 1 + Math.floor(random() * 10);

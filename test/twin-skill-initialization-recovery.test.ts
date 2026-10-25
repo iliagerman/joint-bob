@@ -17,6 +17,8 @@ test("changed pending initialization can be cancelled and previewed again withou
   const sa=await signIn(ae,a),sb=await signIn(be,b);
   const preview=await api<{token:string;relationshipId:string}>(a,sa,"POST","/resources/skills/twin-sync/preview",{peerNodeId:b.nodeId});assert.equal(preview.status,200);
   // Simulate a process interruption after both durable session writes, before the first application.
+  // The interruption: both nodes are down while their databases are written.
+  for(const s of servers)await stopDevNode(s);
   const ad=new DatabaseSync(path.join(a.dataDir,"node.db"),{timeout:10_000}),bd=new DatabaseSync(path.join(b.dataDir,"node.db"),{timeout:10_000});
   let payload:unknown;
   try{
@@ -26,6 +28,7 @@ test("changed pending initialization can be cancelled and previewed again withou
    const session:TwinSkillSession={relationshipId:preview.body.relationshipId,peerNodeId:b.nodeId,sourceNodeId:a.nodeId,state:"initializing",paused:false,lastSuccess:null,error:null,initialization:JSON.stringify(payload)};
    beginTwinSkillInitialization(ad,session,versions);beginTwinSkillInitialization(bd,{...session,peerNodeId:a.nodeId},[]);
   }finally{ad.close();bd.close();}
+  servers.splice(0,servers.length,await startDevNode(ae,a),await startDevNode(be,b));
   await put(br,"unconfirmed-addition");
   const resumed=await api(a,sa,"POST","/resources/skills/twin-sync/refresh",{});assert.notEqual(resumed.status,200,"new destination-only skills invalidate pending baseline");
   assert.match(await readFile(path.join(br,"unconfirmed-addition/SKILL.md"),"utf8"),/unconfirmed-addition/);

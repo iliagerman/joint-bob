@@ -167,3 +167,38 @@ test("runClaudePrompt keeps the result subtype when the error has no text", asyn
   ]);
   assert.equal(result.error, "Claude run failed (error_max_turns)");
 });
+
+/** Background agents outlive the answer; Joint Bob's watchdog, not the CLI's ceiling, ends stale ones. */
+test("runClaudePrompt lets background agents run past the CLI's wait ceiling", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-claude-bg-ceiling-"));
+  const previousDataDir = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  try {
+    const fakeClaude = path.join(root, "claude-fake");
+    await writeFile(fakeClaude, [
+      "#!/bin/sh",
+      "cat >/dev/null",
+      `echo '{"type":"system","subtype":"init","session_id":"44444444-4444-4444-8444-444444444444","tools":["Bash"]}'`,
+      `echo "{\\"type\\":\\"assistant\\",\\"message\\":{\\"role\\":\\"assistant\\",\\"content\\":[{\\"type\\":\\"text\\",\\"text\\":\\"ceiling=$CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS\\"}]}}"`,
+      `echo '{"type":"result","subtype":"success","is_error":false,"result":"done"}'`,
+      "",
+    ].join("\n"), "utf8");
+    await chmod(fakeClaude, 0o755);
+
+    const settings = await import(`../src/settings.ts?claude-bg-ceiling=${Date.now()}-${Math.random()}`);
+    settings.updateSettings({
+      projects: { homePath: path.join(root, "home") },
+      claude: { executable: fakeClaude, configPath: path.join(root, "claude-config"), sessionPath: path.join(root, "claude-projects") },
+      syncthing: { endpoint: "" },
+    });
+    const { runClaudePrompt } = await import(`../src/claude-service.ts?claude-bg-ceiling=${Date.now()}-${Math.random()}`);
+
+    const result = await runClaudePrompt({ cwd: root, projectId: "bg-ceiling-project", prompt: "hello", onEvent: () => {} }).done;
+
+    assert.equal(result.ok, true);
+    assert.equal(result.assistantText, "ceiling=0");
+  } finally {
+    if (previousDataDir === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previousDataDir;
+  }
+});

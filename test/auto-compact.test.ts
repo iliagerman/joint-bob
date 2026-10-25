@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { armAutoCompactAfterPrompt, autoCompactBetweenTurns } from "../src/server/harness-chat.js";
-import { COMPACTION_INACTIVITY_TIMEOUT_MS, CONVERSATION_INACTIVITY_TIMEOUT_MS } from "../src/conversation-watchdog.js";
+import { COMPACTION_INACTIVITY_TIMEOUT_MS } from "../src/conversation-watchdog.js";
 import { harnessSessionKey, harnessSessions, reapInactiveHarnessSessions, type SharedHarnessSession } from "../src/server/harness-sessions.js";
 
 let sessions = 0;
@@ -82,8 +82,8 @@ test("the watchdog lets a silent compaction run past the turn timeout and releas
     const startedAt = shared.lastActivityAt;
     assert.ok(startedAt > 0, "compaction counts as input for the watchdog");
 
-    await reapInactiveHarnessSessions(startedAt + CONVERSATION_INACTIVITY_TIMEOUT_MS + 1);
-    assert.deepEqual(cancelled, [], "a compaction is not stopped at the ordinary turn timeout");
+    await reapInactiveHarnessSessions(startedAt + COMPACTION_INACTIVITY_TIMEOUT_MS);
+    assert.deepEqual(cancelled, [], "a compaction is not stopped at the timeout boundary");
     assert.equal(shared.turnInFlight, 1);
 
     await reapInactiveHarnessSessions(startedAt + COMPACTION_INACTIVITY_TIMEOUT_MS + 1);

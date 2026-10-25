@@ -1,7 +1,7 @@
 import WebSocket from "ws";
 import { runInRuntime } from "../account-runtime.js";
 import { bindToRuntime, runtimeForProject } from "../project-runtime.js";
-import { COMPACTION_INACTIVITY_TIMEOUT_MS, CONVERSATION_INACTIVITY_TIMEOUT_MS, conversationInactive } from "../conversation-watchdog.js";
+import { BACKGROUND_WORK_INACTIVITY_TIMEOUT_MS, COMPACTION_INACTIVITY_TIMEOUT_MS, TURN_INACTIVITY_TIMEOUT_MS, conversationInactive } from "../conversation-watchdog.js";
 import { conversationWorkActive } from "../conversation-work.js";
 import { getHarness, getHarnessRuntime, refreshHarnessSessions } from "../harnesses.js";
 import type { HarnessEvent, HarnessOpenOptions, HarnessSession } from "../harnesses/runtime.js";
@@ -160,7 +160,9 @@ export async function compactHarnessSession(shared: SharedHarnessSession, compac
 export async function reapInactiveHarnessSessions(now = Date.now(), liveShellCallers: ReadonlySet<string> = new Set()): Promise<void> {
   await Promise.all([...harnessSessions.values()].map(async (shared) => {
     if (liveShellCallers.has(JSON.stringify([shared.projectId, shared.conversationId]))) return;
-    const timeout = shared.compaction ? COMPACTION_INACTIVITY_TIMEOUT_MS : CONVERSATION_INACTIVITY_TIMEOUT_MS;
+    const timeout = shared.compaction ? COMPACTION_INACTIVITY_TIMEOUT_MS
+      : conversationWorkActive(shared.engine, shared.session.id) ? BACKGROUND_WORK_INACTIVITY_TIMEOUT_MS
+      : TURN_INACTIVITY_TIMEOUT_MS;
     if (shared.watchdogStopping || !harnessTurnBusy(shared) || !conversationInactive(shared.lastActivityAt, now, timeout)) return;
     shared.watchdogStopping = true;
     try {

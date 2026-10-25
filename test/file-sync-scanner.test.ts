@@ -200,7 +200,8 @@ test("another directory at the root path starts a new generation without tombsto
   const s = setup(t);
   for (const name of ["a.txt", "b.txt", "c.txt"]) s.write(name);
   await s.scanner.scan("full");
-  rmSync(s.root, { recursive: true });
+  // Moved aside, not deleted: a freed inode can be handed straight back to the new folder.
+  renameSync(s.root, `${s.root}-replaced`);
   mkdirSync(s.root);
   s.write("only.txt");
   const result = await s.scanner.scan({ paths: ["a.txt"] });
@@ -215,7 +216,8 @@ test("a replaced-looking root publishes nothing until it is confirmed", async (t
   manyFiles(s, "src", 520);
   await s.scanner.scan("full");
   const before = s.db.share(s.key)!;
-  rmSync(s.root, { recursive: true });
+  // Moved aside, not deleted: a freed inode can be handed straight back to the new folder.
+  renameSync(s.root, `${s.root}-replaced`);
   mkdirSync(s.root);
   manyFiles(s, "src", 100);
   const result = await s.scanner.scan("full");
