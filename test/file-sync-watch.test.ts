@@ -151,21 +151,38 @@ test("more than 100 events in one folder become one listing of it", () => {
   assert.deepEqual(h.batches[0].paths, ["other.txt"]);
 });
 
-test("too many events degrade the share; it comes back after a backoff with a full scan", () => {
+test("too many events degrade the share; the full scan follows 10 s later, every time", () => {
   const h = harness();
   h.watcher.start();
-  for (let index = 0; index < 5001; index++) h.watcher.handle("change", `d${index % 50}/f${index}.txt`);
+  for (let round = 0; round < 3; round++) {
+    for (let index = 0; index < 5001; index++) h.watcher.handle("change", `d${index % 50}/f${round}-${index}.txt`);
+    assert.equal(h.watcher.state, "degraded");
+    assert.equal(h.opened[round].fake.closed, true, "a degraded share stops watching");
+    assert.equal(h.batches.length, round, "the pending paths are dropped: the full scan covers them");
+    h.clock.advance(9_999);
+    assert.equal(h.watcher.state, "degraded");
+    h.clock.advance(1);
+    assert.equal(h.watcher.state, "watching", `a burst is no failure: no longer wait after burst ${round + 1}`);
+    assert.deepEqual(h.batches.at(-1), { paths: [], shallow: [], full: true });
+  }
+});
+
+test("a failing watcher comes back after a backoff that grows while failures repeat", () => {
+  const h = harness();
+  h.watcher.start();
+  h.opened[0].fake.emit("error", errno("EIO"));
   assert.equal(h.watcher.state, "degraded");
-  assert.equal(h.opened[0].fake.closed, true, "a degraded share stops watching");
-  assert.equal(h.batches.length, 0, "the pending paths are dropped: the full scan covers them");
   h.clock.advance(14_999);
   assert.equal(h.watcher.state, "degraded");
   h.clock.advance(1);
   assert.equal(h.watcher.state, "watching");
-  assert.deepEqual(h.batches, [{ paths: [], shallow: [], full: true }]);
-  for (let index = 0; index < 5001; index++) h.watcher.handle("change", `again/f${index}.txt`);
+  // A burst in between neither waits for the failure backoff nor resets it.
+  for (let index = 0; index < 5001; index++) h.watcher.handle("change", `f${index}.txt`);
+  h.clock.advance(10_000);
+  assert.equal(h.watcher.state, "watching");
+  h.opened.at(-1)!.fake.emit("error", errno("EIO"));
   h.clock.advance(15_000);
-  assert.equal(h.watcher.state, "degraded", "the second backoff is longer");
+  assert.equal(h.watcher.state, "degraded", "the second failure waits longer");
   h.clock.advance(15_000);
   assert.equal(h.watcher.state, "watching");
 });
@@ -398,16 +415,22 @@ test("the worker thread answers ops, sends events and ends after stop", { timeou
   const invalid = await ask(3, "scan", { share: "project:p1", scope: "everything", reason: "test" });
   assert.equal(invalid.ok, false);
   assert.match(invalid.error!.message, /Invalid request/);
-  // The thread brings its network layer: announce answers (no peers to ask); a later phase's op does not.
+  // The thread brings its network layer: announce answers (no peers to ask), and so does P3's prioritize.
   const network = await ask(4, "announce", { slept: false });
   assert.equal(network.ok, true, JSON.stringify(network));
-  const later = await ask(6, "prioritize", { share: "project:p1", untilMs: 1000 });
-  assert.equal(later.ok, false);
-  assert.match(later.error!.message, /cannot prioritize yet/);
+  const prioritized = await ask(6, "prioritize", { share: "project:p1", untilMs: Date.now() + 60_000 });
+  assert.equal(prioritized.ok, true, JSON.stringify(prioritized));
+  const unknown = await ask(7, "prioritize", { share: "project:gone", untilMs: Date.now() + 60_000 });
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error!.message, /share not found/);
   assert.ok(events.some((event) => event.event === "ready"), "ready is sent after the first configure");
   assert.ok(events.some((event) => event.event === "shareState" && event.status.liveFiles === 1));
   const stopped = await ask(5, "stop", {});
   assert.equal(stopped.ok, true);
-  const code = await Promise.race([exited, new Promise<string>((resolve) => setTimeout(() => resolve("still running"), 10_000).unref())]);
+  // A ref'd timer: the thread is unref'd, so with an unref'd one nothing keeps this process waiting for the exit, and the test
+  // was cancelled whenever the thread took a moment to end.
+  let timer: NodeJS.Timeout | undefined;
+  const code = await Promise.race([exited, new Promise<string>((resolve) => { timer = setTimeout(() => resolve("still running"), 10_000); })]);
+  clearTimeout(timer);
   assert.equal(code, 0, "the thread ends by itself once stopped (watchers closed, database closed)");
 });

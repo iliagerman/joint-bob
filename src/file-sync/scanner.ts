@@ -1,14 +1,14 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, readSync,
-  renameSync, unlinkSync, type Dirent, type Stats,
+  appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, readSync,
+  renameSync, statSync, unlinkSync, type Dirent, type Stats,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { FileSyncDb, LocalEntry } from "./db.js";
 import { Digest } from "./digest.js";
-import { GitignoreTree, type GitignoreSource, type IgnoreMatcher } from "./ignore.js";
+import { GitignoreTree, type GitignoreSource, type IgnoreClass, type IgnoreMatcher } from "./ignore.js";
 import { isSameOrInside, MAX_PATH_BYTES, MAX_SEGMENT_BYTES, normalizeRelativePath, parentKey } from "./paths.js";
 import type { CoreEvent, ScanResult, ScanScope } from "./protocol.js";
 import { DIRECTORY, FILE, SYMLINK, type Clock, type Phase, type ShareKind } from "./types.js";
@@ -191,17 +191,32 @@ function typeName(st: Stats): number { return st.isDirectory() ? DIRECTORY : st.
 function fingerprint(st: Stats): string { return `${st.size}:${st.mtimeMs}:${st.ino}:${st.ctimeMs}`; }
 function isGitignore(key: string): boolean { return key === ".gitignore" || key.endsWith("/.gitignore"); }
 
-async function runGit(cwd: string, args: string[]): Promise<string> {
-  const env: NodeJS.ProcessEnv = { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(cwd), GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" };
-  for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_PREFIX", "GIT_NAMESPACE"]) delete env[key];
-  return await new Promise<string>((resolve, reject) => {
-    const child = spawn("git", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "", stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => { if (stdout.length < 65_536) stdout += chunk.toString("utf8"); });
-    child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 4096) stderr += chunk.toString("utf8"); });
-    child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(`git ${args[0]} failed (${code ?? "signal"}): ${stderr.trim()}`)));
-  });
+/**
+ * The info/exclude git reads for `root`: of the repository at the root or the nearest one around it (a project folder
+ * inside a repository shows engine temps in that repository's status). A linked worktree or submodule (.git is a file)
+ * reads its common directory's. Never a repository at the home folder (a dotfiles repository) or at /. Read without
+ * running git, so configure can write it before any temp exists.
+ */
+export function gitExcludeFile(root: string, home = os.homedir()): string | undefined {
+  const top = path.resolve(home);
+  for (let directory = path.resolve(root); ; directory = path.dirname(directory)) {
+    const dotGit = path.join(directory, ".git");
+    let st: Stats | undefined;
+    try { st = statSync(dotGit); } catch { /* none here */ }
+    if (st) {
+      if (directory === top || directory === path.dirname(directory)) return undefined;
+      let gitDir = dotGit;
+      if (st.isFile()) {
+        const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"));
+        if (!pointer) return undefined;
+        gitDir = path.resolve(directory, pointer[1].trim());
+      } else if (!st.isDirectory()) return undefined;
+      let common = gitDir;
+      try { common = path.resolve(gitDir, readFileSync(path.join(gitDir, "commondir"), "utf8").trim()); } catch { /* not a linked worktree */ }
+      return path.join(common, "info", "exclude");
+    }
+    if (directory === path.dirname(directory)) return undefined;
+  }
 }
 
 export class ShareScanner {
@@ -238,8 +253,10 @@ export class ShareScanner {
       this.epoch++;
       this.gitIgnored = undefined;
     }
-    if (context.phase !== this.ctx.phase) this.excludeChecked = false;
+    if (context.phase !== this.ctx.phase || context.root !== this.ctx.root) this.excludeChecked = false;
     this.ctx = context;
+    // Into builtin without a scan (the shadow-to-builtin switch): the transfers configure starts write temps at once.
+    this.ensureGitExclude();
   }
 
   /** After the watcher was degraded or a worker restart: the next scan walks the whole share. */
@@ -269,6 +286,14 @@ export class ShareScanner {
   classify(key: string, isDirectory: boolean): boolean {
     return this.ctx.matcher.classify(key, isDirectory, this.gitIgnored) !== null;
   }
+
+  /** The class the rules give a path (null = synced), .gitignore option included: apply decides by it what a folder delete may remove (§5.5.8). */
+  ignoreClass(key: string, isDirectory: boolean): IgnoreClass | null {
+    return this.ctx.matcher.classify(key, isDirectory, this.gitIgnored);
+  }
+
+  /** Whether rows keep on-disk spellings that differ from the NFC key (fs_name, Linux): apply writes under the same spellings. */
+  get fsNames(): boolean { return this.options.fsNames; }
 
   private lstat(fsRelative: string): Stats | null {
     try { return lstatSync(this.abs(fsRelative)); } catch (error) { if (isMissing(error)) return null; throw error; }
@@ -374,7 +399,7 @@ export class ShareScanner {
       run.complete = share.fullScanAt !== null;
       if (!run.complete || share.rulesHash !== this.ctx.matcher.hash || this.fullRequired) full = true;
       this.loadGitignore();
-      void this.ensureGitExclude();
+      this.ensureGitExclude();
       if (full) {
         await this.walk(run, "", "", root.ino, true);
       } else {
@@ -1117,20 +1142,21 @@ export class ShareScanner {
 
   /** Builtin mode only (invariant 7): this engine's abandoned download temps go after an hour idle. */
   private housekeepIgnored(dirent: Dirent, fs: string): void {
-    if (this.ctx.phase !== "builtin" || !dirent.isFile() || !ENGINE_TEMP.test(dirent.name)) return;
+    // Apply's link temps too (a crash between making one and renaming it), never followed.
+    if (this.ctx.phase !== "builtin" || !(dirent.isFile() || dirent.isSymbolicLink()) || !ENGINE_TEMP.test(dirent.name)) return;
     try {
       if (this.now() - lstatSync(this.abs(fs)).mtimeMs > this.options.staleTempMs) unlinkSync(this.abs(fs));
     } catch { /* gone already, or the next scan tries again */ }
   }
 
   /** Builtin mode only: keep this engine's temps out of `git status` through the repository's info/exclude. */
-  private async ensureGitExclude(): Promise<void> {
+  ensureGitExclude(): void {
     if (this.excludeChecked || this.ctx.phase !== "builtin") return;
     this.excludeChecked = true;
     const root = this.ctx.root;
-    if (!existsSync(path.join(root, ".git"))) return;
     try {
-      const file = path.resolve(root, (await runGit(root, ["rev-parse", "--git-path", "info/exclude"])).trim());
+      const file = gitExcludeFile(root);
+      if (!file) return;
       let text = "";
       try { text = readFileSync(file, "utf8"); } catch (error) { if (!isMissing(error)) throw error; }
       if (text.split(/\r?\n/).includes(ENGINE_TEMP_EXCLUDE)) return;

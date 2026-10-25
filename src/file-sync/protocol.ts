@@ -56,6 +56,8 @@ export const configureSchema = z.object({
   records: z.object({ engines: z.array(engineRecord), settings: z.array(settingsRecord) }),
   /** Shares whose index state goes for good (project removed, policy deleted, §4). A share merely absent from `shares` keeps its rows. */
   dropShares: z.array(z.string()).optional(),
+  /** Multi-user mode on Linux: apply never lowers a file's group bits (shared group access, §1 Permissions). */
+  multiUser: z.boolean().optional(),
 });
 export type ConfigureArgs = z.infer<typeof configureSchema>;
 
@@ -89,6 +91,8 @@ export interface PeerShareStatus {
   differences: number;
   cleanSince: string | null;
   route: "direct" | "relay" | "none";
+  /** Received from this peer for the share since the worker started (builtin transfers): bytes by route, files applied. */
+  transfer?: { directBytes: number; relayBytes: number; files: number };
 }
 
 export interface ShareStatus {
@@ -116,6 +120,58 @@ export interface ListPage<T> { total: number; items: T[] }
 export interface DifferenceItem { path: string; kind: "only-here" | "only-there" | "content" | "mode"; local?: Pick<IndexEntry, "size" | "mtimeMs" | "sha256" | "deleted">; remote?: Pick<IndexEntry, "size" | "mtimeMs" | "sha256" | "deleted">; since: string }
 export interface ErrorItem { path: string; kind: "error" | "notice" | "blocked"; reason: string; at: string }
 
+/** Where apply can take content without the network: a live local file (any share) or a trash file. */
+export type LocalSource = { share: string; path: string } | { trash: string };
+export type NeedItemAction = "fetch" | "delete" | "mkdir" | "symlink" | "meta" | "move";
+
+/** One path this node should bring to `target` next (builtin phase, §5.4). */
+export interface NeedItem {
+  share: string;
+  path: string;
+  action: NeedItemAction;
+  /** move: the local path (same share) renamed into place; its delete is applied with it. */
+  fromPath?: string;
+  target: IndexEntry;
+  /** Eligible peers whose row has the target's content. */
+  sources: string[];
+  localSources: LocalSource[];
+  conflict: boolean;
+  priority: number;
+  size: number;
+  attempts: number;
+}
+
+/** What a transfer hands to apply for one path: a downloaded temp, a local copy to reuse, the row's move, or nothing (delete, folder, link, mode). */
+export interface ApplyItemInput {
+  path: string;
+  /** Absolute path of the downloaded bytes: the deterministic temp beside the target. */
+  tempPath?: string;
+  /** Take the content from the need row's from_path (a rename). */
+  move?: boolean;
+  localSource?: LocalSource;
+  /** The peer the bytes came from: it must still be in the share's peer set at the final rename (invariant 8). */
+  source?: string;
+  /** The temp as the transfer loop wrote it whole, every byte hash-checked as it streamed: apply skips hashing it again while it is still that file. */
+  verified?: TempFingerprint;
+}
+
+export interface TempFingerprint { ino: number; size: number; mtimeMs: number; ctimeMs: number }
+
+/** applied; stale (the target moved or the source left the share: the temp is gone, the path decided again); retry (later);
+    changed (the path changed on disk under it: scanned now, retry soon); blocked (permanent until the cause changes). Apply
+    records each in the need row (backoff, blocked) against the target it was about, and says so with `recorded`: a caller
+    recording again could undo what the batch's own commit did (a block lifted by the folder it just made). */
+export type ApplyOutcome = "applied" | "stale" | "retry" | "changed" | "blocked";
+export interface ApplyItemResult { path: string; outcome: ApplyOutcome; reason?: string; /** blocked by disk space: offered again after this */ retryAfterMs?: number }
+export interface ApplyBatchResult { applied: number; items: ApplyItemResult[]; recorded: true }
+
+const localSourceSchema = z.union([z.object({ share: z.string(), path: z.string() }), z.object({ trash: z.string() })]);
+const fingerprintSchema = z.object({ ino: z.number(), size: z.number().int().min(0), mtimeMs: z.number(), ctimeMs: z.number() });
+const applyItemSchema = z.object({
+  path: z.string(), tempPath: z.string().optional(), move: z.boolean().optional(), localSource: localSourceSchema.optional(), source: z.string().optional(),
+  verified: fingerprintSchema.optional(),
+});
+
 /** Endpoints a peer can call; served by the worker's direct listener and, through `serve`, by main's routes. */
 export type FilesEndpoint = "shares" | "index" | "changed" | "fetch" | "file" | "status";
 
@@ -133,9 +189,20 @@ export const opSchemas = {
   errors: z.object({ share: z.string(), offset: z.number().int().min(0), limit: z.number().int().positive().max(200) }),
   confirmReplacedRoot: z.object({ share: z.string() }),
   bootstrap: z.object({ share: z.string(), builtinSinceByPeer: z.record(z.number().int()) }),
+  /** The transfer queue: what to fetch, move or apply next (§5.4, §6.2). `inFlight` items are left out. */
+  nextNeeds: z.object({
+    limit: z.number().int().min(0).max(10_000),
+    availablePeers: z.array(z.string()).optional(),
+    inFlight: z.array(z.union([z.string(), z.object({ share: z.string(), path: z.string() })])).optional(),
+    shares: z.array(z.string()).optional(),
+  }),
+  /** Writes what a transfer brought (or a move, a local copy) into the tree (§5.5); builtin phase only. */
+  applyBatch: z.object({ share: z.string(), items: z.array(applyItemSchema).max(1000) }),
   repair: z.object({ share: z.string(), peer: z.string() }),
   /** Answered by the worker's adapter (its network layer), not the core. */
   stats: z.object({}),
+  /** Main's event loop is busy (ELU > 70 % for 10 s) or calm again: new relay-fallback transfers wait meanwhile (§6.2). */
+  pace: z.object({ relayPaused: z.boolean() }),
   stop: z.object({}),
 } as const;
 
@@ -158,8 +225,11 @@ export interface OpResults {
   errors: ListPage<ErrorItem>;
   confirmReplacedRoot: ScanResult;
   bootstrap: { merged: number; need: number };
+  nextNeeds: { items: NeedItem[]; nextRetryAt?: number };
+  applyBatch: ApplyBatchResult;
   repair: Record<string, never>;
   stats: { requests: RequestStats };
+  pace: Record<string, never>;
   stop: Record<string, never>;
 }
 

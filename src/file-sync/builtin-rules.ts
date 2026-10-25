@@ -172,11 +172,15 @@ export const SYNCTHING_WORKTREE_PATTERNS: readonly string[] = [...new Set([
 
 /* Names that always sync, whatever matches them: worktree metadata and baselines, attachments, conflict
    copies (so a conflict is visible on every node), and the ticket merge journal outside worktrees.
-   Only the name itself is protected; content below it is classified normally. */
+   Only the name itself is protected; content below it is classified normally. A sync engine's download
+   temp is never protected: one for a conflict copy carries ".sync-conflict-" in its name, and indexing
+   it would send half a download to every peer and leave it there. */
+const SYNC_TEMP = /^(?:\.joint-bob-sync\..*\.tmp|\.syncthing\..*\.tmp|~syncthing~.*\.tmp)$/s;
+
 export function isNeverIgnored(name: string, kind: ShareKind): boolean {
   if (name.startsWith(".joint-bob-")) {
     if (name === ".joint-bob-worktree" || name === ".joint-bob-attachments" || name.startsWith(".joint-bob-baseline")) return true;
     if (name === ".joint-bob-merge") return kind !== "worktrees";
   }
-  return name.includes(".sync-conflict-");
+  return name.includes(".sync-conflict-") && !SYNC_TEMP.test(name);
 }

@@ -21,8 +21,13 @@ export const MAX_BODY_BYTES = 1024 * 1024;
 const DRAIN_BYTES = 8 * 1024 * 1024;
 /** A transfer with no byte for this long is given up; there is no cap on its total time. */
 export const STALL_MS = 30_000;
-/** An origin that failed is skipped this long (relay/transport.ts uses the same 5 min). */
+/** An origin that failed again is skipped this long (relay/transport.ts uses the same 5 min). */
 export const ORIGIN_RETRY_MS = 5 * 60_000;
+/**
+ * After its first failure an origin is tried again this soon: a peer's main answers before its worker has bound the
+ * listener (after every deploy or worker restart), and five minutes of relay for every pull and download is the price.
+ */
+export const ORIGIN_FIRST_RETRY_MS = 30_000;
 /** A reader (a peer, or the worker on the relay path) that takes no byte for this long is dropped. */
 export const DRAIN_STALL_MS = 120_000;
 /** The configured port, then the next ones, when another process holds it (design §1: 22700..22709). */
@@ -352,6 +357,8 @@ export class DirectTransport implements PeerTransport {
   private signingKey: KeyObject | undefined;
   private readonly peers = new Map<string, PeerRoute>();
   private readonly failedUntil = new Map<string, number>();
+  /** Failures in a row per origin: the first is retried soon, the next ones rest for ORIGIN_RETRY_MS. */
+  private readonly failures = new Map<string, number>();
 
   constructor(private readonly options: DirectTransportOptions) {}
 
@@ -378,12 +385,13 @@ export class DirectTransport implements PeerTransport {
   resetBackoff(peer?: string): void {
     if (peer === undefined) {
       this.failedUntil.clear();
+      this.failures.clear();
       for (const state of this.peers.values()) state.away = false;
       return;
     }
     const state = this.peers.get(peer);
     if (state) state.away = false;
-    for (const origin of state?.origins ?? []) this.failedUntil.delete(origin);
+    for (const origin of state?.origins ?? []) { this.failedUntil.delete(origin); this.failures.delete(origin); }
   }
 
   /** The peer reached this node after looking away. */
@@ -400,7 +408,9 @@ export class DirectTransport implements PeerTransport {
   }
 
   private skip(state: PeerRoute, origin: string): void {
-    this.failedUntil.set(origin, this.now() + (this.options.retryMs ?? ORIGIN_RETRY_MS));
+    const failures = (this.failures.get(origin) ?? 0) + 1;
+    this.failures.set(origin, failures);
+    this.failedUntil.set(origin, this.now() + (this.options.retryMs ?? (failures === 1 ? ORIGIN_FIRST_RETRY_MS : ORIGIN_RETRY_MS)));
     if (state.working === origin) state.working = undefined;
   }
 
@@ -425,6 +435,7 @@ export class DirectTransport implements PeerTransport {
       }
       state.working = origin;
       state.route = "direct";
+      this.failures.delete(origin);
       this.sent.direct++;
       return { ...response, route: "direct" };
     }

@@ -289,6 +289,29 @@ test("an origin answering 401 or 404 is not the peer: the request goes through t
   assert.deepEqual(tried, [], "both origins rest for five minutes");
 });
 
+test("an origin that failed once is tried again after 30 s; failing again, it rests for five minutes", async () => {
+  let now = Date.now();
+  const closed = await freeOrigin();
+  const tried: string[] = [];
+  const transport = new DirectTransport({
+    nodeId: PEER, now: () => now,
+    relay: async () => ({ status: 200, headers: {}, body: (async function* () { yield new TextEncoder().encode("{}"); })() }),
+    fetch: (input, init) => { tried.push(new URL(String(input)).origin); return fetch(input, init); },
+  });
+  transport.setSigningKey(peerKeys.privateKey);
+  transport.setOrigins(SELF, [closed]);
+  const ask = async () => { tried.length = 0; await drain(await transport.request(SELF, { method: "GET", target: "/api/cluster/v2/files/shares", purpose: "shares" })); return [...tried]; };
+  assert.deepEqual(await ask(), [closed]);
+  now += 29_000;
+  assert.deepEqual(await ask(), [], "resting after the first failure");
+  now += 1_001;
+  assert.deepEqual(await ask(), [closed], "a listener that was still starting gets a second chance soon");
+  now += 60_000;
+  assert.deepEqual(await ask(), [], "the second failure in a row rests five minutes");
+  now += 4 * 60_000;
+  assert.deepEqual(await ask(), [closed]);
+});
+
 test("a relay failure main marks as away stops direct attempts until the peer is reported back; via relay never tries an origin", async (t) => {
   const { origin, calls } = await listener(t);
   let away = true;

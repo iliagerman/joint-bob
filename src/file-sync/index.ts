@@ -5,11 +5,11 @@ import { peerAway } from "../peer-presence.js";
 import { onRelayPeersChanged } from "../relay/events.js";
 import { settled, warnOnChange } from "../server/quiet-log.js";
 import type { BridgeOptions, BridgeState, WorkerBridge } from "./bridge.js";
-import { controlDatabase, ensureRevisionTriggers, fileSyncListenAddresses, holdsEngineProjects, listEngineRecords, listPhases, listSettingsRecords, readFileSyncConfig, readRevision, writeFileSyncConfig, type FileSyncConfig, type FileSyncConfigPatch } from "./control.js";
+import { controlDatabase, ensureRevisionTriggers, fileSyncListenAddresses, holdsEngineProjects, listEngineRecords, listPhases, listSettingsRecords, readFileSyncConfig, readRevision, setPhase, writeFileSyncConfig, type FileSyncConfig, type FileSyncConfigPatch } from "./control.js";
 import { acceptablePeerOrigin, helloFileSync, notePeerFileSync, onPeerFileSyncChanged, onPeerPresent, parseFileSyncPart, peerFileSync, peerOrigins, peerSpecs, type HelloFileSync } from "./peers.js";
 import type { ConfigureArgs, CoreEvent, DifferenceItem, ErrorItem, ListPage, RequestStats, ScanResult, ShareSpec, ShareStatus } from "./protocol.js";
 import { ShareStatusStore } from "./status.js";
-import { parseShareKey } from "./types.js";
+import { parseShareKey, type Phase } from "./types.js";
 
 /* Starts and stops the file sync worker and keeps it configured with the shares derived from
    node.db. Callers (server.ts, turn ends, project opens, /hello, Settings) never get an exception
@@ -30,6 +30,7 @@ interface Modules {
   identity: typeof import("../cluster-identity.js");
   cluster: typeof import("../cluster.js");
   performance: typeof import("../server/performance-diagnostics.js");
+  account: typeof import("../account-runtime.js");
 }
 
 interface Engine {
@@ -71,8 +72,8 @@ const projectOpenedAt = new Map<string, number>();
 let workerOverride: Pick<BridgeOptions, "launch" | "workerData" | "dataDir"> | undefined;
 
 function load(): Promise<Modules> {
-  modules ??= Promise.all([import("./bridge.js"), import("./shares.js"), import("./records.js"), import("../cluster-identity.js"), import("../cluster.js"), import("../server/performance-diagnostics.js")])
-    .then(([bridge, shares, records, identity, cluster, performance]) => ({ bridge, shares, records, identity, cluster, performance }));
+  modules ??= Promise.all([import("./bridge.js"), import("./shares.js"), import("./records.js"), import("../cluster-identity.js"), import("../cluster.js"), import("../server/performance-diagnostics.js"), import("../account-runtime.js")])
+    .then(([bridge, shares, records, identity, cluster, performance, account]) => ({ bridge, shares, records, identity, cluster, performance, account }));
   return modules;
 }
 
@@ -191,6 +192,8 @@ async function derive(current: Engine): Promise<void> {
       enabled: true, hostId: current.hostId, ...(current.signingKey ? { signingKey: current.signingKey } : {}),
       listen: { addresses: fileSyncListenAddresses(), port: config.port },
       shares, peers, records: { engines: listEngineRecords(current.db), settings: records }, ...(dropShares.length ? { dropShares } : {}),
+      // Apply never lowers group bits on Linux in multi-user mode (§1 Permissions); "turned on" holds even while its helper is missing.
+      multiUser: loaded.account.multiUserTurnedOn(),
     };
     // Only now: a failed derivation is retried by the next pass.
     current.revision = revision;
@@ -573,5 +576,23 @@ export async function applyFileSyncConfig(patch: FileSyncConfigPatch): Promise<F
     if (engine?.bridge.state === "failed") neutral(() => engine?.bridge.start());
     if (engine && patch.shadowProjects !== undefined) { await importStignoreRules(engine); await derive(engine); }
   }
+  return fileSyncStatus();
+}
+
+/* Tests only: a project's node-local phase set directly, without the switch (P5) and its bootstrap, so
+   two real nodes can run the engine in builtin mode. Present only under NODE_ENV=test with
+   JOINT_BOB_FILE_SYNC_TEST_PHASES=1; admin-routes.ts registers its route under the same condition. */
+
+export function fileSyncTestPhasesEnabled(): boolean {
+  return process.env.NODE_ENV === "test" && process.env.JOINT_BOB_FILE_SYNC_TEST_PHASES === "1";
+}
+
+export async function fileSyncTestPhase(projectId: string, phase: Phase): Promise<FileSyncStatusAnswer> {
+  if (!fileSyncTestPhasesEnabled()) throw new FileSyncRequestError(404, "Not found");
+  const current = runningEngine();
+  setPhase(current.db, projectId, phase);
+  // At once rather than on the next 2 s pass: the answer's statuses then belong to the new phase's configure.
+  await derive(current);
+  await push(current);
   return fileSyncStatus();
 }

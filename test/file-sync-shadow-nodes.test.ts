@@ -134,6 +134,9 @@ async function runPair(t: TestContext, mode: "direct" | "relay"): Promise<void> 
     await writeTree(b.root);
     const before = [listing(a.root), listing(b.root)];
 
+    // The test-only phase route exists only with JOINT_BOB_FILE_SYNC_TEST_PHASES=1 (file-sync-builtin-nodes.test.ts).
+    const testPhase = await api(a.node, a.session, "POST", "/file-sync/test-phase", { projectId, phase: "builtin" });
+    assert.equal(testPhase.status, 404, `no test-phase route on a node without the test switch: ${JSON.stringify(testPhase.body)}`);
     for (const side of [a, b]) {
       const configured = await api<FileSyncStatusAnswer>(side.node, side.session, "PUT", "/file-sync/config", { shadowProjects: [projectId] });
       assert.equal(configured.status, 200, JSON.stringify(configured.body));

@@ -209,7 +209,8 @@ export function holdsEngineProjects(db: DatabaseSync): boolean {
    the main thread's 2 s pass compares one integer instead of re-deriving. A table rebuilt by a
    migration loses its triggers; a change of schema_version makes that pass create them again. */
 
-interface Watched { table: string; update?: string }
+/** `key`: a key-value table (node_settings) where only that row counts. */
+interface Watched { table: string; update?: string; key?: string }
 const WATCHED: readonly Watched[] = [
   // touchProject rewrites updated_at on every sessions request; only the identity and root matter.
   { table: "projects", update: "UPDATE OF id, path" },
@@ -231,6 +232,8 @@ const WATCHED: readonly Watched[] = [
   { table: "file_sync_engines" },
   { table: "file_sync_settings" },
   { table: "file_sync_phases" },
+  // Multi-user mode decides apply's group bits (configure's multiUser): turning it on must reach the worker at once.
+  { table: "node_settings", key: "multiUser.enabled" },
 ];
 const TRIGGER_PREFIX = "file_sync_rev1_";
 
@@ -238,7 +241,9 @@ function triggerName(table: string, operation: string): string { return `${TRIGG
 
 function triggerSql(watched: Watched, operation: "insert" | "update" | "delete"): string {
   const event = operation === "update" ? watched.update ?? "UPDATE" : operation.toUpperCase();
-  const when = watched.table === "relay_sharing_live" && operation === "update" ? " WHEN OLD.epoch IS NOT NEW.epoch" : "";
+  const row = operation === "delete" ? "OLD" : "NEW";
+  const when = watched.key !== undefined ? ` WHEN ${row}.key = '${watched.key.replace(/'/g, "''")}'`
+    : watched.table === "relay_sharing_live" && operation === "update" ? " WHEN OLD.epoch IS NOT NEW.epoch" : "";
   return `CREATE TRIGGER IF NOT EXISTS ${triggerName(watched.table, operation)} AFTER ${event} ON ${watched.table}${when}
     BEGIN UPDATE file_sync_revision SET value = value + 1 WHERE id = 1; END`;
 }

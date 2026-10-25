@@ -110,12 +110,19 @@ export interface BridgeOptions {
   relayReaderIdleMs?: number;
   /** False: main's routes do not forward to this bridge (a second bridge in tests). */
   serveRoutes?: boolean;
+  /** Tests: the window over which main's event loop is judged busy for relayed transfers (10 s). */
+  paceWindowMs?: number;
+  /** Tests: main's event-loop utilization over a window (performance.eventLoopUtilization by default). */
+  loopUtilization?(): () => number;
 }
 
 interface Pending { op: string; resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout; /** Runs as the answer is read, before the next message: serve registers its stream here. */ onResult?(result: unknown): void }
 interface Relay { controller: AbortController; window: StreamWindow }
 
 const LOG_KEY = "fileSync:worker";
+/** §6.2: relayed transfers pause while main's event loop is busier than this over a whole window. */
+const PACE_BUSY = 0.7;
+const PACE_WINDOW_MS = 10_000;
 const OPERATION = /^fileSync\.[A-Za-z0-9_.]{1,64}$/;
 const FIELD = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
 // No "/" or spaces: a field can carry a mode or a count, never a path.
@@ -153,6 +160,9 @@ export class WorkerBridge {
   relayPeak = 0;
   /** Peer requests main's routes forwarded to the worker (the relay-fallback path), for status. */
   served = 0;
+  /** Whether the worker was told to hold relayed transfers back (main is busy), and the window being measured. */
+  relayPaused = false;
+  private paceWindow: { timer: NodeJS.Timeout; utilization: () => number; relayed: boolean } | undefined;
 
   constructor(private readonly options: BridgeOptions) {
     this.restart = { ...DEFAULT_RESTART, ...options.restart };
@@ -211,6 +221,7 @@ export class WorkerBridge {
   /** A `stop` op lets the worker finish its transaction and close file-sync.db; whatever is left of the budget, `terminate` ends it. */
   stop(budgetMs = 2_000): Promise<void> {
     if (serving === this) serving = undefined;
+    this.endPaceWindow();
     clearTimeout(this.restartTimer);
     this.restartTimer = undefined;
     const worker = this.worker;
@@ -280,6 +291,9 @@ export class WorkerBridge {
     this.startedAt = Date.now();
     this.lastError = undefined;
     this.sampleBase = undefined;
+    // A new worker starts unpaused; the next relayed transfer measures again.
+    this.relayPaused = false;
+    this.endPaceWindow();
     // Without an 'error' listener an uncaught exception in the worker is rethrown here and ends the node.
     worker.on("error", (error) => { if (this.worker === worker) this.lastError = messageOf(error); });
     worker.on("messageerror", (error) => warnOnChange(LOG_KEY, `File sync worker sent a message that could not be read: ${messageOf(error)}`));
@@ -383,6 +397,7 @@ export class WorkerBridge {
   private async relay(worker: Worker, event: Extract<CoreEvent, { event: "relayRequest" }>): Promise<void> {
     const id = event.id;
     if (typeof id !== "number" || this.relays.has(id)) return;
+    if (event.request?.purpose === "transfer") this.relayedTransfer();
     const post = (message: RelayMessage, transfer?: ArrayBuffer[]) => { if (this.worker === worker) worker.postMessage(message, transfer ?? []); };
     const controller = new AbortController();
     const window = new StreamWindow();
@@ -438,6 +453,41 @@ export class WorkerBridge {
     }
   }
 
+  /**
+   * Relayed file bytes cross main's event loop (direct transfers never do). While they flow, main's utilization is
+   * judged over one window at a time (a one-shot timer armed by the transfer, never a poll): above 70 % for a whole
+   * window the worker holds new relayed transfers back (the pace op), and lets them go once a window is calm again.
+   */
+  private relayedTransfer(): void {
+    if (this.paceWindow) { this.paceWindow.relayed = true; return; }
+    this.startPaceWindow();
+  }
+
+  private startPaceWindow(): void {
+    const utilization = this.options.loopUtilization?.() ?? loopUtilization();
+    const timer = setTimeout(() => this.paceWindowEnded(), this.options.paceWindowMs ?? PACE_WINDOW_MS);
+    timer.unref();
+    this.paceWindow = { timer, utilization, relayed: false };
+  }
+
+  private paceWindowEnded(): void {
+    const window = this.paceWindow;
+    this.paceWindow = undefined;
+    if (!window || this.state !== "running") return;
+    const busy = window.utilization() > PACE_BUSY;
+    if (busy !== this.relayPaused) {
+      this.relayPaused = busy;
+      this.call("pace", { relayPaused: busy }).catch((error) => warnOnChange("fileSync:pace", `File sync could not pace relayed transfers: ${messageOf(error)}`));
+    }
+    // Paused, nothing is relayed, so only another window can tell it to resume; otherwise one while transfers still flow.
+    if (busy || window.relayed) this.startPaceWindow();
+  }
+
+  private endPaceWindow(): void {
+    if (this.paceWindow) clearTimeout(this.paceWindow.timer);
+    this.paceWindow = undefined;
+  }
+
   private dispatch(event: CoreEvent): void {
     if (event.event === "log") {
       const text = String(event.message).slice(0, 2_000);
@@ -478,4 +528,10 @@ export class WorkerBridge {
     }
     return fields;
   };
+}
+
+/** Main's event-loop utilization from now until the returned function is called. */
+function loopUtilization(): () => number {
+  const start = performance.eventLoopUtilization();
+  return () => performance.eventLoopUtilization(performance.eventLoopUtilization(), start).utilization;
 }

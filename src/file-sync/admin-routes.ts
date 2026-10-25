@@ -63,3 +63,15 @@ app.post("/api/file-sync/replaced/confirm", (request, response, next) => answer(
   const { fileSyncConfirmReplaced } = await import("./index.js");
   return fileSyncConfirmReplaced(body.share);
 }));
+
+/* Tests only (test/file-sync-builtin-nodes.test.ts): sets a project's node-local phase without the
+   switch's checks and bootstrap. Never registered outside NODE_ENV=test with
+   JOINT_BOB_FILE_SYNC_TEST_PHASES=1, so a production server has no such route at all. */
+if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_FILE_SYNC_TEST_PHASES === "1") {
+  const testPhaseBody = z.object({ projectId: z.string().min(1).max(200), phase: z.enum(["syncthing", "releasing", "bootstrapping", "builtin", "restoring"]) }).strict();
+  app.post("/api/file-sync/test-phase", (request, response, next) => answer(response, next, async () => {
+    const body = testPhaseBody.parse(request.body ?? {});
+    const { fileSyncTestPhase } = await import("./index.js");
+    return fileSyncTestPhase(body.projectId, body.phase);
+  }));
+}

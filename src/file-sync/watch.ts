@@ -29,11 +29,14 @@ export interface WatchTuning {
   directoryLimit: number;
   /** Events per share per window before the share is degraded. */
   shareLimit: number;
+  /** After a watcher failure (an error, no watches or files left): doubled for each failure within maxBackoffMs. */
   backoffMs: number;
   maxBackoffMs: number;
+  /** After a burst (more changes than are worth following one by one): the full scan follows this soon, every time. */
+  burstResumeMs: number;
 }
 
-export const WATCH_DEFAULTS: WatchTuning = { debounceMs: 1000, maxDelayMs: 5000, directoryLimit: 100, shareLimit: 5000, backoffMs: 15_000, maxBackoffMs: 10 * 60_000 };
+export const WATCH_DEFAULTS: WatchTuning = { debounceMs: 1000, maxDelayMs: 5000, directoryLimit: 100, shareLimit: 5000, backoffMs: 15_000, maxBackoffMs: 10 * 60_000, burstResumeMs: 10_000 };
 
 /** Linux: half of the kernel's inotify queue, read once; the queue is per worker (one inotify instance). */
 export function inotifyBurstLimit(platform: NodeJS.Platform = process.platform, read: () => string = () => readFileSync("/proc/sys/fs/inotify/max_queued_events", "utf8")): number | null {
@@ -89,7 +92,7 @@ export class BurstMonitor {
     const affected = [...this.members];
     this.events = 0;
     this.members.clear();
-    for (const member of affected) member.degrade("The inotify event queue was close to overflowing");
+    for (const member of affected) member.degrade("The inotify event queue was close to overflowing", { burst: true });
   }
 }
 
@@ -236,7 +239,7 @@ export class ShareWatcher {
     this.perDirectory.set(directory, (this.perDirectory.get(directory) ?? 0) + 1);
     if (eventType === "rename") this.dirty.set(spelled, "rename");
     else if (!this.dirty.has(spelled)) this.dirty.set(spelled, "change");
-    if (this.events > this.tuning.shareLimit) this.degrade("Too many changes at once");
+    if (this.events > this.tuning.shareLimit) this.degrade("Too many changes at once", { burst: true });
   }
 
   private handleDirectory(fsRelative: string): void {
@@ -301,19 +304,27 @@ export class ShareWatcher {
     this.directories.clear();
   }
 
-  /** Stop watching, drop what is pending, and come back after a backoff with a full scan. */
-  degrade(message: string): void {
+  /**
+   * Stop watching, drop what is pending, and come back with a full scan: after a burst at the fixed burstResumeMs (a
+   * bulk change is no failure, and an escalating wait left 10,000 new files unscanned for minutes; Syncthing waits
+   * 10 s), after a watcher failure with a backoff that grows while failures repeat.
+   */
+  degrade(message: string, options: { burst?: boolean } = {}): void {
     if (this.closed || this.stateValue === "degraded") return;
     this.closeWatchers();
     this.timer?.cancel();
     this.timer = undefined;
     this.resetWindow();
-    const now = this.options.clock.now();
-    // A share that stayed healthy for the longest backoff starts again from the shortest.
-    this.backoff = now - this.degradedAt > this.tuning.maxBackoffMs || !this.backoff ? this.tuning.backoffMs : Math.min(this.backoff * 2, this.tuning.maxBackoffMs);
-    this.degradedAt = now;
+    let wait = this.tuning.burstResumeMs;
+    if (!options.burst) {
+      const now = this.options.clock.now();
+      // A share that stayed healthy for the longest backoff starts again from the shortest.
+      this.backoff = now - this.degradedAt > this.tuning.maxBackoffMs || !this.backoff ? this.tuning.backoffMs : Math.min(this.backoff * 2, this.tuning.maxBackoffMs);
+      this.degradedAt = now;
+      wait = this.backoff;
+    }
     this.setState("degraded", message);
-    this.resumeTimer = this.options.clock.setTimeout(() => this.resume(), this.backoff);
+    this.resumeTimer = this.options.clock.setTimeout(() => this.resume(), wait);
   }
 
   private resume(): void {

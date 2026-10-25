@@ -112,9 +112,10 @@ test("the main thread's bridge drives the real worker thread: configure, scan, s
   // Two files of 20 and 6 bytes hashed, three rows written (src/ too).
   assert.deepEqual([scanMetric?.fields.scope, scanMetric?.fields.changed, scanMetric?.fields.hashedBytes, scanMetric?.fields.thread], ["full", 3, 26, "worker"], JSON.stringify(metrics));
 
-  // The worker has its network layer; with no peers there is nobody to ask. Later phases' ops are not there yet.
+  // The worker has its network layer; with no peers there is nobody to ask. P3's ops answer through the thread too.
   assert.deepEqual(await bridge.call("announce", { slept: false }), {});
-  await assert.rejects(bridge.call("prioritize", { share: "project:p1", untilMs: 1000 }), (error: Error & { code?: string }) => error.code === "unavailable", "later phases' ops are not there yet");
+  assert.deepEqual(await bridge.call("prioritize", { share: "project:p1", untilMs: Date.now() + 60_000 }), {});
+  await assert.rejects(bridge.call("prioritize", { share: "project:gone", untilMs: Date.now() + 60_000 }), /share not found/);
   await assert.rejects(bridge.call("scan", { share: "project:p1", scope: "everything" as "full", reason: "test" }), (error: Error & { code?: string }) => error.code === "invalid" && /scope/.test(error.message));
   await assert.rejects(bridge.call("flush", { share: "project:gone" }), /share not found/);
 

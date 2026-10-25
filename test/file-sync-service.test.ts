@@ -171,8 +171,15 @@ test("a peer outside the share is refused everywhere except the shares probe", a
   const unknown = await serve(a, "node-b", "index", { projectId: "p2", kind: "project" });
   assert.equal(unknown.status, 403, "a share missing from configure is refused like an unshared one");
   assert.deepEqual(unknown.json, { error: NOT_SHARED_ERROR });
-  assert.equal((await serve(a, "node-b", "fetch", {}, { projectId: "p1", kind: "project", items: [] })).status, 501);
-  assert.deepEqual((await serve(a, "node-b", "file", {}, {})).json, { error: "Not available in this phase" });
+  // P3 serves bytes: an outsider is refused like everywhere else, a member's malformed body is a 400.
+  const sha = "0".repeat(64);
+  for (const [endpoint, body] of [["fetch", { projectId: "p1", kind: "project", items: [{ path: "a.txt", sha256: sha }] }], ["file", { projectId: "p1", kind: "project", path: "a.txt", sha256: sha }]] as const) {
+    const outsider = await serve(a, "node-x", endpoint, {}, body);
+    assert.equal(outsider.status, 403, endpoint);
+    assert.deepEqual(outsider.json, { error: NOT_SHARED_ERROR }, endpoint);
+  }
+  assert.equal((await serve(a, "node-b", "fetch", {}, { projectId: "p1", kind: "project", items: [] })).status, 400, "a fetch asks for at least one file");
+  assert.deepEqual((await serve(a, "node-b", "file", {}, {})).json, { error: "Invalid request" });
   const invalid = await serve(a, "node-b", "index", { projectId: "p1", kind: "bogus" });
   assert.equal(invalid.status, 400);
   assert.deepEqual(invalid.json, { error: "Invalid request" });
@@ -529,6 +536,30 @@ test("a notice answered 503 (an engine still starting) is not retried; the peer'
   await b.scan();
   await s.quiesce();
   assert.equal(b.core.db.cursor(SHARE, "node-a")?.seq, a.core.db.share(SHARE)!.maxSeq, "probed again on its notice, told everything, and pulled");
+});
+
+test("a peer whose engine answered that it is starting gets its direct addresses tried again once it runs", async (t) => {
+  const s = setup(t);
+  const reached: string[] = [];
+  const a = s.node("node-a", ["node-b"], { transport: { ...s.net.transport("node-a"), reachable: (peer: string) => { reached.push(peer); } } });
+  const b = s.node("node-b", ["node-a"]);
+  let starting = true;
+  s.net.responders.set("node-b", (_from, request) => starting && request.purpose === "shares" ? { status: 503, headers: {}, json: { error: "File sync is starting" } } : undefined);
+  await a.configure();
+  await a.scan();
+  await s.quiesce();
+  assert.deepEqual(reached, [], "not running yet");
+  starting = false;
+  await b.configure();
+  await b.scan();
+  files(b.root, { "b.txt": "b" });
+  await b.scan();
+  await s.quiesce();
+  assert.deepEqual(reached, ["node-b"], "its notice showed the engine running: the skipped addresses are cleared once");
+  files(b.root, { "c.txt": "c" });
+  await b.scan();
+  await s.quiesce();
+  assert.deepEqual(reached, ["node-b"], "later notices from a running engine change nothing");
 });
 
 test("a share the peer does not serve is not noticed until the peer names it", async (t) => {

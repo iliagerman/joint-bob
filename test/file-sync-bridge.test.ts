@@ -134,3 +134,27 @@ test("a running worker that was never called never keeps the process alive", asy
   const result = await runExitProbe(t, "leave");
   assert.equal(result.state, "running");
 });
+
+test("relayed transfers pause while main's loop stays busy for a whole window and resume once one is calm", async (t) => {
+  // Main's utilization per window, as the bridge measures it: busy, busy, calm.
+  const readings = [0.9, 0.85, 0.2];
+  let windows = 0;
+  const bridge = new WorkerBridge({
+    nodeId: "node-a", dataDir: await temporaryDirectory(t), launch: stub, serveRoutes: false, paceWindowMs: 20,
+    loopUtilization: () => { const reading = readings[Math.min(windows++, readings.length - 1)]; return () => reading; },
+  });
+  t.after(() => bridge.stop());
+  bridge.start();
+  const paced: boolean[] = [];
+  t.mock.method(bridge, "call", async (op: string, args: { relayPaused: boolean }) => { if (op === "pace") paced.push(args.relayPaused); return {}; });
+  const relayed = () => (bridge as unknown as { relayedTransfer(): void }).relayedTransfer();
+  relayed();
+  relayed();
+  await until(() => paced.length === 2);
+  assert.deepEqual(paced, [true, false], "paused after the first busy window, resumed after the calm one (no repeat while still busy)");
+  assert.equal(bridge.relayPaused, false);
+  // Nothing relayed in the calm window and not paused: no timer is left measuring.
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(windows, 3, "a window runs only while relayed transfers flow or they are paused");
+  assert.equal((bridge as unknown as { paceWindow?: unknown }).paceWindow, undefined);
+});

@@ -1,5 +1,7 @@
+import { lstatSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { Applier, type ApplyShare } from "./apply.js";
 import { FileSyncDb, fileSyncDbPath } from "./db.js";
 import { compileRules, effectiveRules } from "./ignore.js";
 import { DEFAULT_SETTLE_MS, NeedEngine, type NeedShare } from "./need.js";
@@ -9,8 +11,9 @@ import {
   type ScanResult, type ShareSpec, type ShareStatus,
 } from "./protocol.js";
 import { ShareScanner, SliceScheduler, Slicer, type EventScope, type InternalScope, type ScannerOptions, type ShareContext } from "./scanner.js";
+import type { FrameLimits } from "./frames.js";
 import { createFilesService, type FilesService, type ServedShare, type ServiceDeps } from "./service.js";
-import { SyncLayer, type PeerTransport } from "./sync.js";
+import { SyncLayer, type PeerTransport, type TransferApplyResult, type TransferDeps, type TransferQueue } from "./sync.js";
 import { statfsDisk, Trash } from "./trash.js";
 import { shareKey, type Clock, type ShareState } from "./types.js";
 import { BurstMonitor, inotifyBurstLimit, ShareWatcher, SuppressionRegistry, watchMode, type WatchTuning } from "./watch.js";
@@ -50,6 +53,20 @@ export interface CoreDeps {
   pageLimit?: number;
   /** Tests: seams inside the service. */
   serviceHooks?: ServiceDeps["hooks"];
+  /** Tests: fetch answer limits, served and accepted by this core. */
+  frameLimits?: FrameLimits;
+  /** Tests: parts of the transfer loop (a stand-in queue or applier, the stall guard, the fetch/file boundary). */
+  transfers?: Partial<TransferDeps>;
+  /** Tests: multi-user mode without configure saying so (configure's `multiUser` wins). */
+  multiUser?: boolean;
+  /** Tests: apply's platform rules (Linux's multi-user group bits, darwin's case checks) on another platform. */
+  platform?: NodeJS.Platform;
+}
+
+/** The need engine as the transfer loop's queue, once it hands out need rows (need.ts, builtin phase). */
+function isTransferQueue(value: object): value is TransferQueue {
+  const queue = value as Partial<Record<keyof TransferQueue, unknown>>;
+  return typeof queue.nextNeeds === "function" && typeof queue.retryLater === "function" && typeof queue.block === "function";
 }
 
 export interface WorkerCore {
@@ -67,8 +84,8 @@ const FULL_SCAN_MAX_AGE_MS = 60 * 60_000;
 /** Full walks at once: at start every share needs one, and dozens together only compete for the disk and the heap. */
 const WALK_SLOTS = 2;
 const STATE_EMIT_MS = 1000;
-/** Later phases (need queue priorities, the switch to builtin). */
-const LATER_OPS = new Set<OpName>(["prioritize", "bootstrap"]);
+/** Ops of later phases (none left since P3). */
+const LATER_OPS = new Set<OpName>([]);
 /** Ops that only mean something with peers to talk to. */
 const NETWORK_OPS = new Set<OpName>(["peerPresence", "announce", "notice", "differences", "repair"]);
 
@@ -78,6 +95,10 @@ function settleWindow(value: number | undefined): number {
   const fromEnv = raw ? Number(raw) : Number.NaN;
   return Number.isFinite(fromEnv) && fromEnv >= 0 ? fromEnv : DEFAULT_SETTLE_MS;
 }
+function rootIsDirectory(root: string): boolean {
+  try { return lstatSync(root).isDirectory(); } catch { return false; }
+}
+
 const ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 interface Pending { paths: Set<string>; shallow: Set<string>; full: boolean; reason: string }
@@ -112,6 +133,8 @@ interface ShareRuntime {
   subtreeScans: Map<string, number>;
   lastEmit: number;
   closed: boolean;
+  /** The root check after the last scan (need rows wait while the folder is missing). */
+  rootState?: string;
 }
 
 class Core implements WorkerCore {
@@ -124,6 +147,10 @@ class Core implements WorkerCore {
   private readonly walkSlots = new Slots(WALK_SLOTS);
   private readonly shares = new Map<string, ShareRuntime>();
   readonly need: NeedEngine;
+  /** Writes peers' versions into builtin shares (§5.5); the applyBatch op and the transfer loop use it. */
+  readonly applier: Applier;
+  /** Apply's hashing and copying share the scans' slice budget. */
+  private readonly applySlicer = new Slicer(this.slices);
   readonly sync: SyncLayer | undefined;
   readonly service: FilesService;
   private config: ConfigureArgs | undefined;
@@ -148,7 +175,22 @@ class Core implements WorkerCore {
       // Index exchange shares the scans' budget: 10 ms slices while requests wait, else 50.
       sliceMs: () => this.sliceBudget(),
       warn: (key, message) => this.emit({ event: "log", level: "warn", key, message }),
+      shareKeys: () => [...this.shares.keys()],
+      // Need counts are part of the status.
+      needChanged: (key) => this.stateChanged(key),
     });
+    this.applier = new Applier({
+      db: this.db, nodeId: deps.nodeId, clock: deps.clock, need: this.need, trash: this.trash, suppression: this.suppression,
+      share: (key) => this.applyShare(key),
+      scanPaths: (key, fsPaths) => { const runtime = this.shares.get(key); if (runtime) this.enqueue(runtime, { paths: fsPaths, reason: "apply" }); },
+      committed: (key) => this.localChanged(key),
+      faults: deps.faults,
+      multiUser: () => this.config?.multiUser ?? deps.multiUser ?? false,
+      maybeYield: () => this.applySlicer.maybeYield(),
+      ...(deps.platform ? { platform: deps.platform } : {}),
+    });
+    // Folders made for a download that is no longer wanted go again (an empty, unindexed folder would come back as new).
+    this.need.onNeedChanged((key) => this.applier.sweepMadeDirs(key));
     this.sync = deps.transport ? new SyncLayer({
       db: this.db, nodeId: deps.nodeId, clock: deps.clock, transport: deps.transport, need: this.need, emit: (event) => this.emit(event),
       shares: () => this.served(),
@@ -156,6 +198,7 @@ class Core implements WorkerCore {
       stateChanged: (key) => this.stateChanged(key),
       noticeDelayMs: deps.noticeDelayMs,
       pageLimit: deps.pageLimit,
+      transfers: this.transferDeps(),
     }) : undefined;
     this.service = createFilesService({
       db: this.db, nodeId: deps.nodeId, clock: deps.clock,
@@ -164,8 +207,33 @@ class Core implements WorkerCore {
       shares: () => this.served(),
       changed: (peer, shares, records) => this.sync?.noticeReceived(peer, shares, records),
       status: (peer, shares) => this.sync?.statusReceived(peer, shares),
+      // Serving bytes shares the scans' slice budget: a long answer waits its turn between files.
+      yieldSlice: async () => { if (this.slices.due) await this.slices.wait(); },
       hooks: deps.serviceHooks,
+      frameLimits: deps.frameLimits,
     });
+  }
+
+  /**
+   * The transfer loop's parts: the need queue (need.ts), apply (the applyBatch op), the disk rules (trash.ts).
+   * Without a queue and an applier the sync layer only pulls and notices.
+   */
+  private transferDeps(): TransferDeps | undefined {
+    const given = this.deps.transfers ?? {};
+    const queue = given.queue ?? (isTransferQueue(this.need) ? this.need : undefined);
+    const apply = given.apply ?? ("applyBatch" in opSchemas
+      ? {
+        applyBatch: (args: { share: string; items: unknown[] }) => this.dispatch("applyBatch" as OpName, args) as Promise<TransferApplyResult>,
+        // apply.ts's symlink- and case-safe parents for temps (§5.5.3).
+        ensureParents: (share: string, relative: string) => this.applier.ensureParents(share, relative),
+        sweep: (share: string) => this.applier.sweepMadeDirs(share),
+      }
+      : undefined);
+    if (!queue || !apply) return undefined;
+    return {
+      queue, apply, disk: given.disk ?? this.trash, faults: given.faults ?? this.deps.faults,
+      stallMs: given.stallMs, smallFileBytes: given.smallFileBytes, frameLimits: given.frameLimits ?? this.deps.frameLimits,
+    };
   }
 
   // ---- what the sync layer and the service see of the shares ----
@@ -174,7 +242,12 @@ class Core implements WorkerCore {
   private served(): ReadonlyMap<string, ServedShare> {
     const served = new Map<string, ServedShare>();
     if (this.stopped) return served;
-    for (const [key, runtime] of this.shares) served.set(key, { spec: runtime.spec, rulesHash: runtime.scanner.context.matcher.hash, state: () => this.statusOf(runtime).state });
+    for (const [key, runtime] of this.shares) {
+      served.set(key, {
+        spec: runtime.spec, rulesHash: runtime.scanner.context.matcher.hash, state: () => this.statusOf(runtime).state,
+        ignored: (relative) => runtime.scanner.classify(relative, false),
+      });
+    }
     return served;
   }
 
@@ -183,10 +256,26 @@ class Core implements WorkerCore {
     if (!runtime || runtime.closed) return undefined;
     const scanner = runtime.scanner;
     return {
-      key, phase: runtime.spec.phase, rulesHash: scanner.context.matcher.hash,
+      key, phase: runtime.spec.phase, rulesHash: scanner.context.matcher.hash, kind: runtime.spec.kind,
+      // A missing or unreadable folder gets nothing written or downloaded for it: the last root check, and one lstat now
+      // (it may have gone since the last scan).
+      available: () => scanner.root?.state !== "unavailable" && scanner.root?.state !== "error" && rootIsDirectory(scanner.context.root),
       peers: () => runtime.spec.peers.filter((peer) => !this.sync?.isExcluded(key, peer)),
       // The scanner's classification, .gitignore option included: one implementation for both.
       ignored: (relative, isDirectory) => scanner.classify(relative, isDirectory),
+    };
+  }
+
+  /** A running share as apply sees it; the phase is read at each look (configure may change it mid-batch). */
+  private applyShare(key: string): ApplyShare | undefined {
+    const runtime = this.shares.get(key);
+    if (!runtime || runtime.closed || this.stopped) return undefined;
+    const scanner = runtime.scanner;
+    return {
+      key, kind: runtime.spec.kind, root: scanner.context.root, fsNames: scanner.fsNames,
+      get phase() { return runtime.closed ? "syncthing" : runtime.spec.phase; },
+      peers: () => runtime.spec.peers.filter((peer) => !this.sync?.isExcluded(key, peer)),
+      ignoreClass: (relative, isDirectory) => scanner.ignoreClass(relative, isDirectory),
     };
   }
 
@@ -250,6 +339,20 @@ class Core implements WorkerCore {
       case "serve": return this.service.serve(args.peer, args.endpoint, args.query, args.body, args.range);
       case "differences": return this.differences(args.share, args.peer, args.offset, args.limit);
       case "repair": this.runtime(args.share); this.sync!.repair(args.share, args.peer); return {};
+      case "prioritize":
+        this.runtime(args.share);
+        if (this.sync) this.sync.prioritize(args.share, args.prefix, args.untilMs);
+        else if (isTransferQueue(this.need)) this.need.prioritize?.(args.share, args.prefix, args.untilMs);
+        return {};
+      case "pace": this.sync?.pace(args.relayPaused); return {};
+      case "nextNeeds": return this.need.nextNeeds(args);
+      case "applyBatch": this.runtime(args.share); return this.applier.applyBatch(args);
+      case "bootstrap": {
+        const runtime = this.runtime(args.share);
+        const result = await this.need.bootstrap(args.share, args.builtinSinceByPeer);
+        this.emitState(runtime);
+        return result;
+      }
       case "stop": await this.stop(); return {};
       default: throw new UnavailableOpError(op);
     }
@@ -268,6 +371,7 @@ class Core implements WorkerCore {
     for (const key of args.dropShares ?? []) {
       const runtime = this.shares.get(key);
       if (runtime) { this.closeRuntime(runtime); this.shares.delete(key); }
+      this.need.forgetNeed(key);
       this.db.writeTx(() => this.db.deleteShare(key));
       this.emit({ event: "shareRemoved", share: key });
     }
@@ -284,6 +388,7 @@ class Core implements WorkerCore {
       // Not wanted right now (ineligible, engine off): its rows stay, a later configure resumes them.
       this.closeRuntime(runtime);
       this.shares.delete(key);
+      this.need.forgetNeed(key);
       this.emit({ event: "shareRemoved", share: key });
     }
     for (const spec of desired.values()) {
@@ -297,6 +402,10 @@ class Core implements WorkerCore {
         const rootChanged = existing.scanner.context.root !== context.root;
         const rulesChanged = existing.scanner.context.matcher.hash !== context.matcher.hash;
         const peersChanged = existing.spec.peers.join("\n") !== spec.peers.join("\n");
+        // Into builtin with a folder that was missing: builtin creates a root it never saw (§5.2.1), and nothing else would look again.
+        const rootWaits = spec.phase === "builtin" && existing.spec.phase !== "builtin" && existing.scanner.root?.state !== "ok";
+        // Out of builtin: folders apply made for items in flight go while it still may remove them (empty and unindexed only).
+        if (existing.spec.phase === "builtin" && spec.phase !== "builtin") this.applier.sweepMadeDirs(spec.key, { leaving: true });
         existing.spec = spec;
         existing.scanner.update(context);
         // Differences under other rules (or with peers no longer in the share) stop counting until compared again.
@@ -313,10 +422,13 @@ class Core implements WorkerCore {
           existing.watcher = this.createWatcher(existing);
           existing.watcher.start();
         }
-        if ((rootChanged || rulesChanged) && this.deps.watch) {
+        if ((rootChanged || rulesChanged || rootWaits) && this.deps.watch) {
           existing.scanner.requireFullScan();
           this.enqueue(existing, { full: true, reason: "configure" });
         }
+        // Builtin or not (need rows go when it leaves), and complete under these rules; other peers recompute from the stored rows.
+        this.syncNeed(spec.key);
+        if (peersChanged && !rulesChanged) this.need.recomputeNeed(spec.key);
         this.emitState(existing);
         continue;
       }
@@ -328,6 +440,7 @@ class Core implements WorkerCore {
         runtime.scanner.requireFullScan();
         this.enqueue(runtime, { full: true, reason: "start" });
       }
+      this.syncNeed(spec.key);
       this.emitState(runtime);
     }
     this.sync?.configure(args);
@@ -443,6 +556,13 @@ class Core implements WorkerCore {
     // A new generation must reach peers even when the folder is empty (no commit told them); a finished
     // full scan may make the share comparable (complete under the current rules) or a reset one not.
     if (result.newGeneration) this.sync?.localCommitted(runtime.key);
+    // A first full scan (or one under new rules) completes the index: a builtin share's need is computed then.
+    this.syncNeed(runtime.key);
+    // The folder is back: the need rows that waited for it are handed out again.
+    const rootState = runtime.scanner.root?.state;
+    if (rootState === "ok" && runtime.rootState !== undefined && runtime.rootState !== "ok") this.need.wake(runtime.key);
+    else if (rootState === "ok") this.need.rootAvailable(runtime.key);
+    runtime.rootState = rootState;
     try { this.need.syncComparison(runtime.key); } catch (error) {
       this.emit({ event: "log", level: "warn", key: `fileSync:${runtime.key}:diffs`, message: `File sync could not compare ${runtime.key}: ${(error as Error).message}` });
     }
@@ -458,7 +578,17 @@ class Core implements WorkerCore {
 
   private async scan(key: string, scope: InternalScope, reason: string): Promise<ScanResult> {
     const runtime = this.runtime(key);
-    return this.afterScan(runtime, await runtime.scanner.scan(scope, reason));
+    const result = this.afterScan(runtime, await runtime.scanner.scan(scope, reason));
+    // "Rescan files" (reason "manual"): blocked items get another try (local-only content cleared away changes no row).
+    // Other full scans leave them blocked: a block that flips back to pending at every walk would never read as settled.
+    if (scope === "full" && reason === "manual" && !result.error) this.need.retryBlocked(key);
+    return result;
+  }
+
+  private syncNeed(key: string): void {
+    try { this.need.syncNeed(key); } catch (error) {
+      this.emit({ event: "log", level: "warn", key: `fileSync:${key}:need`, message: `File sync could not update what ${key} needs: ${(error as Error).message}` });
+    }
   }
 
   /** Turn end, project open, handoff: what the watcher holds is scanned now; a stale or degraded share is walked. */
@@ -538,6 +668,7 @@ class Core implements WorkerCore {
         caughtUp: indexId !== null && (cursor!.peerIndexId ?? indexId) === indexId && cursor!.seq >= cursor!.peerMaxSeq,
         differences: comparison?.differences ?? 0, cleanSince: comparison?.cleanSince ? new Date(comparison.cleanSince).toISOString() : null,
         route: this.sync?.route(peer) ?? "none",
+        ...(this.sync?.transferCounters(runtime.key, peer) ? { transfer: { ...this.sync.transferCounters(runtime.key, peer)! } } : {}),
       };
     });
     return {
@@ -561,7 +692,8 @@ class Core implements WorkerCore {
 
   private errors(key: string, offset: number, limit: number): OpResults["errors"] {
     this.runtime(key);
-    const page = this.db.errorsPage(key, offset, limit);
+    // Blocked need rows are listed with the errors (§5.4): both are what someone has to look at.
+    const page = this.db.problemsPage(key, offset, limit);
     return { total: page.total, items: page.items.map((item): ErrorItem => ({ path: item.path, kind: item.kind, reason: item.reason, at: new Date(item.at).toISOString() })) };
   }
 
@@ -572,6 +704,9 @@ class Core implements WorkerCore {
     this.stopped = true;
     const running = [...this.shares.values()];
     for (const runtime of running) this.closeRuntime(runtime);
+    // An apply between its hashing slices stops there (its temps stay for the next start); its synchronous section always finishes.
+    this.applier.close();
+    this.applySlicer.aborted = true;
     // Requests in flight are aborted; nothing new starts. Then scans stop at their next slice; a writeTx in progress always finishes (it cannot span an await).
     await this.sync?.close();
     this.need.close();
@@ -594,7 +729,7 @@ class Core implements WorkerCore {
 
 export type FileSyncCore = WorkerCore & {
   readonly db: FileSyncDb; readonly trash: Trash; readonly suppression: SuppressionRegistry;
-  readonly need: NeedEngine; readonly sync: SyncLayer | undefined;
+  readonly need: NeedEngine; readonly sync: SyncLayer | undefined; readonly applier: Applier;
 };
 
 export function createWorkerCore(deps: CoreDeps): FileSyncCore {

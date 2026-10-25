@@ -274,6 +274,17 @@ test("a conflict copy syncs even when its extension is ignored", () => {
   expectClasses(matcher("project"), [["app.sync-conflict-20261006-173252-5CHB2CY.log", false, null], ["web/app.sync-conflict-20261006-173252-5CHB2CY.log", false, null]]);
 });
 
+test("a sync engine's download temp of a conflict copy is never protected by the conflict-copy name", () => {
+  const copy = "notes.sync-conflict-20261006-173252-5CHB2CY.md";
+  for (const kind of ["project", "tickets", "worktrees"] as const) {
+    expectClasses(matcher(kind), [
+      [`.joint-bob-sync.${copy}.0123456789abcdef.tmp`, false, "regenerable"], [`web/.joint-bob-sync.${copy}.0123456789abcdef.tmp`, false, "regenerable"],
+      [`.syncthing.${copy}.tmp`, false, "regenerable"], [`~syncthing~${copy}.tmp`, false, "regenerable"],
+      [copy, false, null],
+    ]);
+  }
+});
+
 test("a never-ignored name protects only itself, not what is inside it or above it", () => {
   expectClasses(matcher("project"), [
     [`.joint-bob-attachments/notes.md.${uuid}.tmp`, false, "regenerable"], [".joint-bob-baseline/node_modules/x.js", false, "regenerable"],

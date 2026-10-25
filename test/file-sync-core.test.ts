@@ -81,16 +81,14 @@ test("invalid arguments are refused before the core sees them", async (t) => {
   });
 });
 
-test("ops of later phases answer unavailable; network ops need a transport", async (t) => {
+test("P3's ops answer; network ops need a transport", async (t) => {
   const s = setup(t);
   await s.configure();
-  for (const [op, args] of [["prioritize", { share: "project:p1", untilMs: 1000 }], ["bootstrap", { share: "project:p1", builtinSinceByPeer: {} }]] as const) {
-    await assert.rejects(s.worker.call(op, args as never), (error: Error & { code?: string }) => {
-      assert.equal(error.code, "unavailable", `${op}: ${error.message}`);
-      assert.match(error.message, /later phase/);
-      return true;
-    });
-  }
+  assert.deepEqual(await s.worker.call("prioritize", { share: "project:p1", untilMs: s.clock.now() + 1000 }), {});
+  // Bootstrap decides against a complete index only: before the first full scan it refuses.
+  await assert.rejects(s.worker.call("bootstrap", { share: "project:p1", builtinSinceByPeer: {} }), /has not finished indexing project:p1/);
+  await s.worker.call("scan", { share: "project:p1", scope: "full", reason: "test" });
+  assert.deepEqual(await s.worker.call("bootstrap", { share: "project:p1", builtinSinceByPeer: {} }), { merged: 0, need: 0 });
   // The adapter always brings its network layer, so these answer even with no peers.
   assert.deepEqual(await s.worker.call("announce", { slept: false }), {});
   assert.deepEqual(await s.worker.call("peerPresence", { peer: "x", present: true }), {});
@@ -294,7 +292,7 @@ test("a data directory moved to another node starts a fresh index", (t) => {
   assert.equal(second.meta("node_id"), "node-b");
 });
 
-test("the per-directory and per-path queries seek instead of reading the whole share", (t) => {
+test("the per-directory, per-path and per-need queries seek instead of reading the whole share", (t) => {
   const file = dbFile(t);
   new FileSyncDb(file, NODE).close();
   const raw = new DatabaseSync(file);
@@ -306,11 +304,15 @@ test("the per-directory and per-path queries seek instead of reading the whole s
     descendants: /^SEARCH entries USING PRIMARY KEY \(share=\? AND path>\? AND path<\?\)$/,
     entriesSince: /^SEARCH entries USING INDEX entries_seq \(share=\? AND seq>\?\)$/,
     liveBelow: /^SEARCH entries USING PRIMARY KEY \(share=\? AND path>\? AND path<\?\)$/,
+    childPaths: /^SEARCH entries USING INDEX entries_parent \(share=\? AND parent=\?\)$/,
+    movesFrom: /^SEARCH need USING INDEX need_from \(share=\? AND from_path=\?\)$/,
+    unpairedFetch: /^SEARCH need USING INDEX need_sha \(t_sha256=\?\)$/,
+    needsUnder: /^SEARCH need USING INDEX sqlite_autoindex_need_1 \(share=\? AND path>\? AND path<\?\)$/,
   };
   for (const [name, sql] of Object.entries(HOT_QUERIES) as Array<[keyof typeof HOT_QUERIES, string]>) {
     const detail = plan(sql);
     assert.match(detail, expected[name], `${name}: ${detail}`);
-    assert.doesNotMatch(detail, /PRIMARY KEY \(share=\?\)(?! AND)|SCAN entries/, `${name} reads the whole share: ${detail}`);
+    assert.doesNotMatch(detail, /PRIMARY KEY \(share=\?\)(?! AND)|SCAN (entries|need)|TEMP B-TREE/, `${name} reads the whole share: ${detail}`);
   }
 });
 

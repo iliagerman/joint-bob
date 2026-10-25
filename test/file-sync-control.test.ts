@@ -118,6 +118,24 @@ test("a change to a project's root or sharing bumps the revision; touching the p
   assert.ok(revision(db) > before, "a new project");
 });
 
+test("turning multi-user mode on or off bumps the revision; other node settings do not", () => {
+  const db = sharedFixture();
+  db.exec("CREATE TABLE IF NOT EXISTS node_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, is_secret INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)");
+  ensureRevisionTriggers(db);
+  const put = (key: string, value: string) => db.prepare("INSERT INTO node_settings (key, value, is_secret, updated_at) VALUES (?, ?, 0, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(key, value, new Date().toISOString());
+  let before = revision(db);
+  put("theme", "dark");
+  assert.equal(revision(db), before, "an unrelated setting");
+  put("multiUser.enabled", "true");
+  assert.equal(revision(db), before + 1, "turned on");
+  before = revision(db);
+  put("multiUser.enabled", "false");
+  assert.equal(revision(db), before + 1, "turned off");
+  before = revision(db);
+  db.prepare("DELETE FROM node_settings WHERE key = 'multiUser.enabled'").run();
+  assert.equal(revision(db), before + 1, "removed");
+});
+
 test("a relay lease bumps the revision when it starts or ends, not when it is renewed", () => {
   const db = sharedFixture();
   ensureRevisionTriggers(db);

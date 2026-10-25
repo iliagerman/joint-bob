@@ -117,18 +117,62 @@ test("prune removes days older than the retention", (t) => {
   assert.equal(existsSync(path.dirname(path.dirname(old))), false, "emptied day folders go too");
 });
 
-test("a write that takes the trash over its budget prunes the oldest first", (t) => {
+test("over its budget the trash is pruned oldest first, down to 90 % of it", (t) => {
   const s = setup(t, { budgetBytes: 100 });
-  const first = s.trash.preserve("project:p1", "1.bin", s.put("1.bin", "a".repeat(60)));
+  const first = s.trash.preserve("project:p1", "1.bin", s.put("1.bin", "a".repeat(40)));
   s.clock.advance(DAY);
   const second = s.trash.preserve("project:p1", "2.bin", s.put("2.bin", "b".repeat(30)));
-  assert.equal(s.trash.sizeBytes(), 90);
   s.clock.advance(DAY);
-  const third = s.trash.preserve("project:p1", "3.bin", s.put("3.bin", "c".repeat(30)));
+  const third = s.trash.preserve("project:p1", "3.bin", s.put("3.bin", "c".repeat(25)));
+  assert.equal(s.trash.sizeBytes(), 95, "keeping never prunes by itself");
+  assert.deepEqual(s.trash.prune(), { removed: 0, freedBytes: 0 }, "within the budget");
+  const fourth = s.trash.preserve("project:p1", "4.bin", s.put("4.bin", "d".repeat(10)));
+  assert.deepEqual(s.trash.prune(), { removed: 1, freedBytes: 40 });
   assert.equal(existsSync(first), false, "the oldest item went");
-  assert.equal(existsSync(second), true);
-  assert.equal(existsSync(third), true);
-  assert.equal(s.trash.sizeBytes(), 60);
+  assert.deepEqual([second, third, fourth].map(existsSync), [true, true, true]);
+  assert.equal(s.trash.sizeBytes(), 65);
+});
+
+test("what an apply kept since its mark is never pruned, even far over the budget (a soft cap)", (t) => {
+  const s = setup(t, { budgetBytes: 100 });
+  const old = s.trash.preserve("project:p1", "old.bin", s.put("old.bin", "o".repeat(50)));
+  s.clock.advance(DAY);
+  const mark = s.trash.mark();
+  // One version bigger than the whole budget, and a batch whose items together are.
+  const big = s.trash.preserve("project:p1", "big.bin", s.put("big.bin", "B".repeat(150)));
+  const batch = Array.from({ length: 5 }, (_, index) => s.trash.preserve("project:p1", `d/f${index}`, s.put(`d/f${index}`, String(index).repeat(30))));
+  assert.deepEqual(s.trash.prune(undefined, { keep: mark }), { removed: 1, freedBytes: 50 });
+  assert.equal(existsSync(old), false);
+  assert.deepEqual([big, ...batch].map((file) => readFileSync(file, "utf8").length), [150, 30, 30, 30, 30, 30], "every version the batch kept is still there");
+  // A later batch's prune treats them as old: down to 90 % of the budget, oldest first.
+  s.clock.advance(1000);
+  assert.equal(s.trash.prune(undefined, { keep: s.trash.mark() }).removed, 3);
+  assert.equal(s.trash.sizeBytes(), 90);
+  assert.deepEqual([big, ...batch].map(existsSync), [false, false, false, true, true, true]);
+});
+
+test("a delete moves the file into the trash; a taken file goes back while its name is free", (t) => {
+  const s = setup(t);
+  const file = s.put("gone.txt", "deleted by a peer");
+  const ino = lstatSync(file).ino;
+  const taken = s.trash.take("project:p1", "gone.txt", file);
+  assert.equal(taken.moved, true);
+  assert.equal(existsSync(file), false);
+  assert.equal(lstatSync(taken.file).ino, ino, "a rename, not a copy");
+  assert.equal(taken.stat.ino, ino);
+  assert.equal(s.trash.sizeBytes(), 17);
+  assert.equal(s.trash.restore(taken.file, file), true);
+  assert.equal(readFileSync(file, "utf8"), "deleted by a peer");
+  assert.equal(existsSync(taken.file), false);
+  assert.equal(s.trash.sizeBytes(), 0);
+  const again = s.trash.take("project:p1", "gone.txt", file);
+  writeFileSync(file, "a new file took the name");
+  assert.equal(s.trash.restore(again.file, file), false, "never over something");
+  assert.equal(readFileSync(again.file, "utf8"), "deleted by a peer");
+  s.trash.discard(again.file);
+  assert.equal(existsSync(again.file), false);
+  assert.equal(existsSync(path.dirname(again.file)), false, "its emptied folders go too");
+  assert.equal(s.trash.sizeBytes(), 0);
 });
 
 test("the budget never exceeds a quarter of free space plus the trash", (t) => {
@@ -174,12 +218,28 @@ test("ensureSpace prunes this filesystem's trash, oldest first, before refusing"
   assert.equal(existsSync(second), true, "only as much as needed is pruned");
 });
 
-test("ensureSpace refuses when even an empty trash leaves too little", (t) => {
+test("ensureSpace refuses when even an empty trash leaves too little, and then prunes nothing", (t) => {
   const s = setup(t, { disk: () => ({ freeBytes: 2 * GiB + 10, totalBytes: 100 * GiB }) });
-  s.trash.preserve("project:p1", "small.bin", s.put("small.bin", "x".repeat(5)));
+  const kept = s.trash.preserve("project:p1", "small.bin", s.put("small.bin", "x".repeat(5)));
   const check = s.trash.ensureSpace(s.share, GiB);
   assert.equal(check.ok, false);
   assert.equal(check.floorBytes, 2 * GiB);
+  assert.equal(existsSync(kept), true, "a refusal that pruning cannot avoid leaves the trash as it was");
+  assert.equal(s.trash.sizeBytes(), 5);
+});
+
+test("ensureSpace never prunes what the running apply kept", (t) => {
+  let trash: Trash | undefined;
+  const s = setup(t, { disk: () => ({ freeBytes: 2 * GiB + 50 - (trash ? trash.sizeBytes() : 0) + 100, totalBytes: 100 * GiB }) });
+  trash = s.trash;
+  const old = s.trash.preserve("project:p1", "old.bin", s.put("old.bin", "o".repeat(40)));
+  const mark = s.trash.mark();
+  const mine = s.trash.preserve("project:p1", "mine.bin", s.put("mine.bin", "m".repeat(60)));
+  // 2 GiB + 50 free, floor 2 GiB: 100 bytes need 50 more; only the 40-byte item may go, which is not enough.
+  assert.equal(s.trash.ensureSpace(s.share, 100, { keep: mark }).ok, false);
+  assert.deepEqual([old, mine].map(existsSync), [true, true]);
+  assert.equal(s.trash.ensureSpace(s.share, 80, { keep: mark }).ok, true);
+  assert.deepEqual([old, mine].map(existsSync), [false, true]);
 });
 
 test("trash size is reported per filesystem and survives a restart", (t) => {
