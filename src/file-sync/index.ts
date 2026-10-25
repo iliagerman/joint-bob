@@ -1,5 +1,5 @@
 import { AsyncResource } from "node:async_hooks";
-import type { KeyObject } from "node:crypto";
+import { createHash, type KeyObject } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { peerAway } from "../peer-presence.js";
 import { onRelayPeersChanged } from "../relay/events.js";
@@ -156,6 +156,8 @@ async function launch(generation: number): Promise<void> {
     onEvent: (event) => handleEvent(current, event),
   });
   engine = current;
+  // Before the first scan, so a path Syncthing skips on this node is never indexed here.
+  await importStignoreRules(current);
   // The worker starts even so: its revision stays unknown, so the next 2 s pass derives again.
   await derive(current).catch((error) => warnOnChange("fileSync:derive", `File sync could not work out which folders to sync: ${messageOf(error)}`));
   if (engine !== current) return;
@@ -231,6 +233,33 @@ async function runPush(current: Engine): Promise<void> {
     for (const resolve of current.pushWaiters.splice(0)) resolve();
   }
   if (current.announceWanted && current.sent !== undefined) void runAnnounce(current);
+}
+
+/** This node's own Syncthing ignore lines join the rules of every project it checks (stignore-import.ts). */
+async function importStignoreRules(current: Engine): Promise<void> {
+  try {
+    const config = readFileSyncConfig(current.db);
+    const phases = listPhases(current.db);
+    const rows = current.db.prepare("SELECT id, sync_folder_id FROM projects").all() as Array<{ id: string; sync_folder_id: string | null }>;
+    const checked = rows.filter((row) => config.shadowProjects === "all" || config.shadowProjects.includes(row.id) || (phases.get(row.id)?.phase ?? "syncthing") !== "syncthing");
+    if (!checked.length) return;
+    const [{ importSyncthingUserRules }, syncthing, { projectTicketSyncFolderId }, { projectWorktreeSyncFolderId }] = await Promise.all([
+      import("./stignore-import.js"), import("../syncthing.js"), import("../task-workspaces.js"), import("../worktree-filters.js")]);
+    const projectFolder = new Map(checked.map((row) => [row.id, row.sync_folder_id ?? `joint-bob-project-${createHash("sha256").update(row.id).digest("hex")}`]));
+    const result = await importSyncthingUserRules(current.db, current.nodeId, checked.map((row) => row.id),
+      (id) => [projectFolder.get(id)!, projectTicketSyncFolderId(id), projectWorktreeSyncFolderId(id)], {
+        // A node without Syncthing has no lines of its own: that counts as read, not as unreachable.
+        folders: async () => {
+          try { return new Set((await syncthing.requireSyncthingFolders()).map((folder) => folder.id)); }
+          catch (error) { if (messageOf(error) === "Syncthing is not configured on this node") return new Set<string>(); throw error; }
+        },
+        lines: syncthing.syncthingIgnoreLines,
+      });
+    if (result.unreachable) warnOnChange("fileSync:stignore", "Syncthing did not answer, so this node's own ignore lines are not part of the projects' rules yet; they are read at the next start");
+    else settled("fileSync:stignore");
+  } catch (error) {
+    warnOnChange("fileSync:stignore", `Reading this node's Syncthing ignore lines failed: ${messageOf(error)}`);
+  }
 }
 
 /** Coalesces bursts (a membership install rewrites several tables) into one derivation. */
@@ -549,7 +578,7 @@ export async function applyFileSyncConfig(patch: FileSyncConfigPatch): Promise<F
     await neutral(ensureRunning);
     // Saving the switch again is how an admin retries a worker that kept crashing.
     if (engine?.bridge.state === "failed") neutral(() => engine?.bridge.start());
-    if (engine && patch.shadowProjects !== undefined) await derive(engine);
+    if (engine && patch.shadowProjects !== undefined) { await importStignoreRules(engine); await derive(engine); }
   }
   return fileSyncStatus();
 }

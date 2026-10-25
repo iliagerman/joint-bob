@@ -308,6 +308,11 @@ export async function requireSyncthingFolders(): Promise<SyncthingFolder[]> {
   return request<SyncthingFolder[]>("/rest/config/folders");
 }
 
+/** A folder's .stignore lines as Syncthing reports them, managed and user rules alike. */
+export async function syncthingIgnoreLines(folderId: string): Promise<string[]> {
+  return (await request<SyncthingIgnores>(`/rest/db/ignores?folder=${encodeURIComponent(folderId)}`)).ignore ?? [];
+}
+
 export async function rescanSyncthingFolder(folderId: string): Promise<void> {
   await request<void>(`/rest/db/scan?folder=${encodeURIComponent(folderId)}`, { method: "POST" });
 }

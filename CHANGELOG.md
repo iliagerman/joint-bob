@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed the built-in file sync engine to skip the files that any of your machines' Syncthing ignores, so secrets and temporary files no longer show up as differences between machines.
+
 ## 2.155.0 — 2026-10-25
 
 - Added peer comparison to the built-in file sync engine: while it is on for a project, machines compare their file indexes with each other and report the differences, without changing any files yet.
