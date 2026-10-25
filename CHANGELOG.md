@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added GitLab as a secret provider, so its instance URL and access token can be stored, attached to projects and shared with agents like the other credentials.
+
 ## 2.155.3 — 2026-10-25
 
 - Fixed Claude background agents being stopped 10 minutes after the agent answered, which left them "didn't finish before the previous session ended" and restarted them over and over.

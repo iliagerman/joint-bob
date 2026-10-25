@@ -90,6 +90,32 @@ test("Azure service principal credentials stay encrypted, scoped and redacted", 
   });
 });
 
+test("GitLab credentials stay redacted, retain edits and export only when attached", async () => {
+  await withSecrets("gitlab", async (secrets) => {
+    const variables = [
+      { name: "GITLAB_URL", kind: "value" as const, value: "https://gitlab.example.test" },
+      { name: "GITLAB_TOKEN", kind: "value" as const, value: "synthetic-gitlab-token" },
+    ];
+    const account = await secrets.saveSecretAccount({ label: "GitLab test", provider: "gitlab", variables });
+    assert.equal(account.provider, "gitlab");
+    assert.deepEqual(secrets.genericSecretEnvironment("project-a"), {});
+    await secrets.saveSecretAccount({ id: account.id, label: "GitLab test", provider: "gitlab", variables: variables.map(({ name, kind }) => ({ name, kind })) });
+    await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+    assert.deepEqual(secrets.genericSecretEnvironment("project-a"), Object.fromEntries(variables.map(({ name, value }) => [name, value])));
+    const context = secrets.agentCredentialContext("project-a");
+    assert.match(context, /gitlab.*GITLAB_URL.*GITLAB_TOKEN.*GitLab REST API/);
+    for (const { value } of variables) {
+      assert.ok(!JSON.stringify(await secrets.listSecretAccounts()).includes(value));
+      assert.ok(!context.includes(value));
+    }
+    const database = new DatabaseSync(path.join(secrets.dataDir, "node.db"));
+    try {
+      const row = database.prepare("SELECT variables_encrypted FROM secret_accounts WHERE id = ?").get(account.id) as { variables_encrypted: string };
+      for (const { value } of variables) assert.ok(!row.variables_encrypted.includes(value));
+    } finally { database.close(); }
+  });
+});
+
 test("Jira credentials stay redacted, retain edits and export only when attached", async () => {
   await withSecrets("jira", async (secrets) => {
     const variables = [

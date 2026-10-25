@@ -70,6 +70,30 @@ test("new provider accounts can be replicated without losing their type", async 
   });
 });
 
+test("GitLab accounts replicate and incoming credentials retain their provider", async () => {
+  await withNode("gitlab", async ({ secrets, replication }) => {
+    const variables = [
+      { name: "GITLAB_URL", kind: "value" as const, value: "https://gitlab.example.test" },
+      { name: "GITLAB_TOKEN", kind: "value" as const, value: "synthetic-gitlab-token" },
+    ];
+    const account = await secrets.saveSecretAccount({ label: "GitLab", provider: "gitlab", variables });
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+    assert.equal(events.find((event: { entityKey: string }) => event.entityKey === account.id)?.value.provider, "gitlab");
+    const remoteId = randomUUID();
+    const timestamp = new Date().toISOString();
+    await replication.receiveSecretCredentialEvents([{
+      id: randomUUID(), entityKey: remoteId, operation: "upsert",
+      value: { label: "Remote GitLab", provider: "gitlab", variables },
+      originNodeId: peerId, updatedAt: timestamp, createdAt: timestamp,
+    }]);
+    const remote = (await secrets.listSecretAccounts()).find((item: { id: string }) => item.id === remoteId);
+    assert.equal(remote?.provider, "gitlab");
+    assert.deepEqual(remote?.variables, variables.map(({ name, kind }) => ({ name, kind, configured: true })));
+  });
+});
+
 test("Jira accounts replicate and incoming credentials retain their provider", async () => {
   await withNode("jira", async ({ secrets, replication }) => {
     const variables = [
@@ -389,7 +413,7 @@ test("malformed peer input is rejected rather than half-applied", async () => {
       createdAt: "2026-01-01T00:00:00.000Z",
     };
     await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, entityKey: "not-a-uuid" }]), /secret account UUID/);
-    await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, provider: "gitlab" } }]), /provider is invalid/);
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, provider: "unsupported-provider" } }]), /provider is invalid/);
     await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, variables: [] } }]), /between 1 and 20 variables/);
     await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, workspaceIds: [""] } }]), /workspace IDs are invalid/);
     // A rejected batch writes nothing at all.
