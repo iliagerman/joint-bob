@@ -9,7 +9,7 @@ import test from "node:test";
 import { FileSyncDb, type LocalEntry } from "../src/file-sync/db.js";
 import { compileRules, effectiveRules, GitignoreTree, type GitIgnoredPaths, type IgnoreMatcher } from "../src/file-sync/ignore.js";
 import { ShareScanner, Slicer, type ShareContext } from "../src/file-sync/scanner.js";
-import type { Clock } from "../src/file-sync/types.js";
+import type { Clock, Phase } from "../src/file-sync/types.js";
 
 /* Random filesystem operations against two scanners on one tree: A walks the whole share after every
    round, B only scans the paths a watcher would have reported. After each round both indexes must
@@ -59,8 +59,8 @@ function freshGitignores(root: string): GitIgnoredPaths {
   });
 }
 
-/** The independent oracle: what a correct index holds for this tree. */
-function expectedIndex(root: string, matcher: IgnoreMatcher, previous: Map<string, LocalEntry>): Map<string, Expected> {
+/** The independent oracle: what a correct index holds for this tree (in shadow mode unless `phase` says builtin). */
+function expectedIndex(root: string, matcher: IgnoreMatcher, previous: Map<string, LocalEntry>, phase: Phase = "syncthing"): Map<string, Expected> {
   const expected = new Map<string, Expected>();
   const tree = freshGitignores(root);
   const resurrects = (dir: string, key: string): boolean => {
@@ -83,8 +83,8 @@ function expectedIndex(root: string, matcher: IgnoreMatcher, previous: Map<strin
       if (matcher.classify(childKey, st.isDirectory(), tree) !== null) continue;
       if (st.isDirectory()) {
         const row = previous.get(childKey);
-        // A deleted folder that came back holding only ignored content stays deleted.
-        if (row && row.deleted && row.type === 1 && !resurrects(full, childKey)) continue;
+        // In builtin mode a deleted folder that came back holding only ignored content stays deleted; in shadow mode a folder on disk is live.
+        if (phase === "builtin" && row && row.deleted && row.type === 1 && !resurrects(full, childKey)) continue;
         expected.set(childKey, { type: 1, mode: st.mode & 0o777, sha256: null, target: null });
         walk(full, childKey);
       } else if (st.isSymbolicLink()) {

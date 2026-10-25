@@ -138,8 +138,13 @@ export const opSchemas = {
   confirmReplacedRoot: z.object({ share: z.string() }),
   bootstrap: z.object({ share: z.string(), builtinSinceByPeer: z.record(z.number().int()) }),
   repair: z.object({ share: z.string(), peer: z.string() }),
+  /** Answered by the worker's adapter (its network layer), not the core. */
+  stats: z.object({}),
   stop: z.object({}),
 } as const;
+
+/** /files/* requests since the worker started: sent by the route that carried them, served by the direct listener. */
+export interface RequestStats { sent: { direct: number; relay: number; failed: number }; served: { direct: number } }
 
 export interface ServeAnswer { status: number; headers: Record<string, string>; /** JSON answers */ json?: unknown; /** binary answers stream as chunk events on a MessagePort in the thread adapter, or as an iterable in-thread */ body?: AsyncIterable<Uint8Array> }
 
@@ -160,6 +165,7 @@ export interface OpResults {
   confirmReplacedRoot: ScanResult;
   bootstrap: { merged: number; need: number };
   repair: Record<string, never>;
+  stats: { requests: RequestStats };
   stop: Record<string, never>;
 }
 
@@ -174,8 +180,49 @@ export type CoreEvent =
   | { event: "capability"; peer: string; protocol: number; enabled: boolean; origins: string[]; hostId?: string }
   | { event: "log"; level: "info" | "warn" | "error"; key: string; message: string }
   | { event: "settled"; key: string }
+  /** A peer's settled difference count or clean-since moved (shadow mode, §5.4); shareState carries the same numbers. */
+  | { event: "diffChanged"; share: string; peer: string; differences: number; cleanSince: string | null }
   | { event: "metric"; operation: string; durationMs: number; fields?: Record<string, number | string | boolean> }
-  | { event: "relayRequest"; id: number; peer: string; request: { method: "GET" | "POST"; target: string; json?: unknown; headers?: Record<string, string> } };
+  | { event: "relayRequest"; id: number; peer: string; request: RelayedRequest };
+
+/* Byte streams between the threads. Main answers a relayRequest with RelayMessages; a streamed serve
+   answer (ServeHead.stream) follows its `{id, ok, result}` as ServeMessages under the same id. Bytes
+   travel as transferred ArrayBuffers; the receiver acknowledges what its reader took, and the sender
+   waits while more than STREAM_WINDOW_BYTES are unacknowledged. */
+
+/** A request the worker asks main to send for it: the peer's direct origins failed or are unknown. */
+export interface RelayedRequest {
+  method: "GET" | "POST";
+  /** Path and query under /api/cluster/v2/files/, exactly as it is signed. */
+  target: string;
+  json?: unknown;
+  headers?: Record<string, string>;
+  purpose?: "notice" | "index" | "transfer" | "status" | "shares";
+  /** Someone is waiting for it: sent even to a peer that looks away (outside whilePeerOptional). */
+  foreground?: boolean;
+}
+
+export const STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
+
+/** Main → worker, for one relayRequest id: the answer's head, its body, then its end or failure. */
+export type RelayMessage =
+  | { relayResponse: number; status: number; headers: Record<string, string> }
+  | { relayChunk: number; chunk: ArrayBuffer }
+  | { relayEnd: number }
+  /** `away`: main has the peer as away now; it reports the return (peerPresence), so nothing need be retried before. */
+  | { relayError: number; message: string; code?: string; away?: boolean };
+
+/** Worker → main: bytes of a relay answer its reader took, or the reader gave up. */
+export type RelayControl = { relayAck: number; bytes: number } | { relayCancel: number };
+
+/** The serve op's result as it crosses the threads: a JSON answer whole, a byte answer as ServeMessages after it. */
+export interface ServeHead { status: number; headers: Record<string, string>; json?: unknown; stream: boolean }
+
+/** Worker → main, for one serve request id: the body of a streamed answer. */
+export type ServeMessage = { serveChunk: number; chunk: ArrayBuffer } | { serveEnd: number } | { serveError: number; message: string };
+
+/** Main → worker: serve bytes main took, or its HTTP client went away. */
+export type ServeControl = { serveAck: number; bytes: number } | { serveCancel: number };
 
 /** Version of the wire protocol between engines. Additive changes keep it; a required new behavior bumps it. */
 export const FILE_SYNC_PROTOCOL = 1;

@@ -137,19 +137,33 @@ app.post(["/api/cluster/sessions/runtime-snapshot", "/api/cluster/v2/runtime/ses
 });
 
 /** A peer saying it is back after being off or asleep. Checking its signature already noted
-    it as heard from; here what is queued for it becomes due, so it goes out on the next pass. */
-app.post("/api/cluster/v2/hello", async (_request, response, next) => {
+    it as heard from; here what is queued for it becomes due, so it goes out on the next pass.
+    The body may say what its file sync engine can do ({fileSync}; older nodes send {}), and the
+    answer says the same about this node (older senders ignore it). */
+app.post("/api/cluster/v2/hello", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const sender = response.locals.machineNodeId as string;
     await resumeDeliveriesTo(sender);
     // Its drafts are fetched when it says they changed; one it sent while unreachable is made up for here.
     void syncSharedQuickNotes(undefined, sender).catch((error) => console.warn(`Fetching quick notes from ${sender} failed`, error));
-    response.json({ ok: true });
+    response.json({ ok: true, ...await fileSyncHello(sender, request.body) });
   } catch (error) {
     next(error);
   }
 });
+
+/** Never fails the hello: without its file sync part the answer is what an older node gives. */
+async function fileSyncHello(sender: string, body: unknown): Promise<{ fileSync?: unknown }> {
+  try {
+    // Loaded lazily: the engine's module graph stays out of this route's import chain.
+    const { fileSyncHelloReceived } = await import("../../file-sync/index.js");
+    return { fileSync: await fileSyncHelloReceived(sender, body) };
+  } catch (error) {
+    console.warn(`File sync could not read ${sender}'s hello`, error);
+    return {};
+  }
+}
 
 app.post("/api/cluster/v2/relay", async (request, response, next) => {
   try {

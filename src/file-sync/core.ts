@@ -2,36 +2,27 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { FileSyncDb, fileSyncDbPath } from "./db.js";
 import { compileRules, effectiveRules } from "./ignore.js";
+import { DEFAULT_SETTLE_MS, NeedEngine, type NeedShare } from "./need.js";
 import { normalizeRelativePath } from "./paths.js";
 import {
-  opSchemas, type ConfigureArgs, type CoreEvent, type ErrorItem, type FilesEndpoint, type OpArgs, type OpName, type OpResults, type PeerShareStatus,
-  type ScanResult, type ServeAnswer, type ShareSpec, type ShareStatus,
+  opSchemas, type ConfigureArgs, type CoreEvent, type DifferenceItem, type ErrorItem, type ListPage, type OpArgs, type OpName, type OpResults, type PeerShareStatus,
+  type ScanResult, type ShareSpec, type ShareStatus,
 } from "./protocol.js";
 import { ShareScanner, SliceScheduler, Slicer, type EventScope, type InternalScope, type ScannerOptions, type ShareContext } from "./scanner.js";
+import { createFilesService, type FilesService, type ServedShare, type ServiceDeps } from "./service.js";
+import { SyncLayer, type PeerTransport } from "./sync.js";
 import { statfsDisk, Trash } from "./trash.js";
 import { shareKey, type Clock, type ShareState } from "./types.js";
 import { BurstMonitor, inotifyBurstLimit, ShareWatcher, SuppressionRegistry, watchMode, type WatchTuning } from "./watch.js";
 
 /* The worker's data plane as one object built from injected dependencies (FILE-SYNC design §5.1), so
    tests run it in-thread with a fake clock and explicit scans, and worker.ts only adapts messages.
-   P1 is the local engine: configure, scans, the watcher, the guard and status. The network ops answer
-   that they are not available yet; their seams (transport, FilesService, faults, diskFree) are here. */
+   P1 is the local engine: configure, scans, the watcher, the guard and status. P2 adds shadow mode:
+   FilesService answers peers, the sync layer pulls their indexes and sends notices, and the need
+   engine merges identical versions and tracks differences. Applying peers' changes is P3. */
 
-export interface PeerRequest {
-  method: "GET" | "POST";
-  target: string;
-  json?: unknown;
-  headers?: Record<string, string>;
-  signal?: AbortSignal;
-  purpose: "notice" | "index" | "transfer" | "status" | "shares";
-}
-export interface PeerResponse { status: number; headers: Record<string, string>; body: AsyncIterable<Uint8Array> }
-export interface PeerTransport { request(peer: string, request: PeerRequest): Promise<PeerResponse> }
-
-/** Server logic of /api/cluster/v2/files/* (service.ts, P2+). */
-export interface FilesService {
-  serve(peer: string, endpoint: FilesEndpoint, query: Record<string, string>, body: unknown, range?: string): Promise<ServeAnswer>;
-}
+export type { PeerRequest, PeerResponse, PeerTransport } from "./sync.js";
+export type { FilesService } from "./service.js";
 
 export interface CoreDeps {
   nodeId: string;
@@ -40,7 +31,10 @@ export interface CoreDeps {
   random: () => number;
   /** false in randomized tests: no watchers, scans only when asked. */
   watch: boolean;
+  /** How this core reaches peers; without one it has no network part (P1 tests, a node without peers). */
   transport?: PeerTransport;
+  /** The direct origins this node's listener serves (the adapter owns the listener). */
+  origins?(): string[];
   emit(event: CoreEvent): void;
   faults?: { beforeRename?(path: string): void; afterRename?(path: string): void; midStream?(path: string, bytes: number): void };
   diskFree?(dir: string): number;
@@ -49,6 +43,13 @@ export interface CoreDeps {
   watcher?: Partial<WatchTuning>;
   watchMode?: "recursive" | "directories";
   burstLimit?: number | null;
+  /** How long a difference may last before it counts (default JOINT_BOB_FILE_SYNC_SETTLE_MS, else 2 min). */
+  settleMs?: number;
+  /** Tests: the notice coalescing window (250 ms) and the index page size the sync layer asks for. */
+  noticeDelayMs?: number;
+  pageLimit?: number;
+  /** Tests: seams inside the service. */
+  serviceHooks?: ServiceDeps["hooks"];
 }
 
 export interface WorkerCore {
@@ -59,14 +60,24 @@ export interface WorkerCore {
 
 export class UnavailableOpError extends Error {
   readonly code = "unavailable";
-  constructor(op: string) { super(`File sync cannot ${op} yet: this phase of the engine has no network part`); }
+  constructor(op: string, reason = "this phase of the engine has no network part") { super(`File sync cannot ${op} yet: ${reason}`); }
 }
 
 const FULL_SCAN_MAX_AGE_MS = 60 * 60_000;
 /** Full walks at once: at start every share needs one, and dozens together only compete for the disk and the heap. */
 const WALK_SLOTS = 2;
 const STATE_EMIT_MS = 1000;
-const NETWORK_OPS = new Set<OpName>(["prioritize", "peerPresence", "announce", "notice", "serve", "differences", "bootstrap", "repair"]);
+/** Later phases (need queue priorities, the switch to builtin). */
+const LATER_OPS = new Set<OpName>(["prioritize", "bootstrap"]);
+/** Ops that only mean something with peers to talk to. */
+const NETWORK_OPS = new Set<OpName>(["peerPresence", "announce", "notice", "differences", "repair"]);
+
+function settleWindow(value: number | undefined): number {
+  if (value !== undefined) return value;
+  const raw = process.env.JOINT_BOB_FILE_SYNC_SETTLE_MS;
+  const fromEnv = raw ? Number(raw) : Number.NaN;
+  return Number.isFinite(fromEnv) && fromEnv >= 0 ? fromEnv : DEFAULT_SETTLE_MS;
+}
 const ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 interface Pending { paths: Set<string>; shallow: Set<string>; full: boolean; reason: string }
@@ -112,15 +123,14 @@ class Core implements WorkerCore {
   private readonly slices = new SliceScheduler(() => this.sliceBudget());
   private readonly walkSlots = new Slots(WALK_SLOTS);
   private readonly shares = new Map<string, ShareRuntime>();
+  readonly need: NeedEngine;
+  readonly sync: SyncLayer | undefined;
+  readonly service: FilesService;
   private config: ConfigureArgs | undefined;
   private lastCallAt = Number.NEGATIVE_INFINITY;
   private readySent = false;
   private stopped = false;
   private closed = false;
-
-  readonly service: FilesService = {
-    serve: async () => { throw new UnavailableOpError("serve peers"); },
-  };
 
   constructor(private readonly deps: CoreDeps) {
     this.db = new FileSyncDb(fileSyncDbPath(deps.dataDir), deps.nodeId);
@@ -129,6 +139,73 @@ class Core implements WorkerCore {
     const diskFree = deps.diskFree;
     this.trash = new Trash({ dataDir: deps.dataDir, clock: deps.clock, ...(diskFree ? { disk: (dir: string) => ({ freeBytes: diskFree(dir), totalBytes: statfsDisk(dir).totalBytes }) } : {}) });
     try { this.trash.prune(); } catch (error) { this.emit({ event: "log", level: "warn", key: "fileSync:trash", message: `File sync could not prune its trash: ${(error as Error).message}` }); }
+    this.need = new NeedEngine({
+      db: this.db, nodeId: deps.nodeId, clock: deps.clock, settleMs: settleWindow(deps.settleMs),
+      share: (key) => this.needShare(key),
+      localChanged: (key) => this.localChanged(key),
+      comparisonChanged: (key, peer, differences, cleanSince) => this.comparisonChanged(key, peer, differences, cleanSince),
+      compared: (key, peer) => this.sync?.liveCheck(key, peer),
+      // Index exchange shares the scans' budget: 10 ms slices while requests wait, else 50.
+      sliceMs: () => this.sliceBudget(),
+      warn: (key, message) => this.emit({ event: "log", level: "warn", key, message }),
+    });
+    this.sync = deps.transport ? new SyncLayer({
+      db: this.db, nodeId: deps.nodeId, clock: deps.clock, transport: deps.transport, need: this.need, emit: (event) => this.emit(event),
+      shares: () => this.served(),
+      hostId: () => this.config?.hostId ?? "",
+      stateChanged: (key) => this.stateChanged(key),
+      noticeDelayMs: deps.noticeDelayMs,
+      pageLimit: deps.pageLimit,
+    }) : undefined;
+    this.service = createFilesService({
+      db: this.db, nodeId: deps.nodeId, clock: deps.clock,
+      config: () => this.config,
+      origins: () => deps.origins?.() ?? [],
+      shares: () => this.served(),
+      changed: (peer, shares, records) => this.sync?.noticeReceived(peer, shares, records),
+      status: (peer, shares) => this.sync?.statusReceived(peer, shares),
+      hooks: deps.serviceHooks,
+    });
+  }
+
+  // ---- what the sync layer and the service see of the shares ----
+
+  /** Running shares, as the service authorizes and announces them. Closed (stopping) shares are not served. */
+  private served(): ReadonlyMap<string, ServedShare> {
+    const served = new Map<string, ServedShare>();
+    if (this.stopped) return served;
+    for (const [key, runtime] of this.shares) served.set(key, { spec: runtime.spec, rulesHash: runtime.scanner.context.matcher.hash, state: () => this.statusOf(runtime).state });
+    return served;
+  }
+
+  private needShare(key: string): NeedShare | undefined {
+    const runtime = this.shares.get(key);
+    if (!runtime || runtime.closed) return undefined;
+    const scanner = runtime.scanner;
+    return {
+      key, phase: runtime.spec.phase, rulesHash: scanner.context.matcher.hash,
+      peers: () => runtime.spec.peers.filter((peer) => !this.sync?.isExcluded(key, peer)),
+      // The scanner's classification, .gitignore option included: one implementation for both.
+      ignored: (relative, isDirectory) => scanner.classify(relative, isDirectory),
+    };
+  }
+
+  /** Merges wrote local rows outside a scan: peers are told, and the status goes out. */
+  private localChanged(key: string): void {
+    this.sync?.localCommitted(key);
+    this.stateChanged(key);
+  }
+
+  private comparisonChanged(key: string, peer: string, differences: number, cleanSince: number | null): void {
+    this.emit({ event: "diffChanged", share: key, peer, differences, cleanSince: cleanSince === null ? null : new Date(cleanSince).toISOString() });
+    // Back to nothing differing while the share reports a mismatch: the check looks again instead of waiting for the next pull.
+    if (differences === 0 && this.sync && (this.sync.mismatch(key).includes(peer) || this.db.hasError(key, ""))) this.sync.liveCheck(key, peer);
+    this.stateChanged(key);
+  }
+
+  private stateChanged(key: string): void {
+    const runtime = this.shares.get(key);
+    if (runtime) this.emitState(runtime);
   }
 
   private emit(event: CoreEvent): void {
@@ -158,7 +235,8 @@ class Core implements WorkerCore {
 
   // `args` was parsed with the op's schema in call().
   private async dispatch(op: OpName, args: any): Promise<unknown> {
-    if (NETWORK_OPS.has(op)) throw new UnavailableOpError(op);
+    if (LATER_OPS.has(op)) throw new UnavailableOpError(op, "a later phase of the engine adds it");
+    if (NETWORK_OPS.has(op) && !this.sync) throw new UnavailableOpError(op);
     switch (op) {
       case "configure": return this.configure(args as ConfigureArgs);
       case "scan": return this.scan(args.share, args.scope, args.reason);
@@ -168,6 +246,12 @@ class Core implements WorkerCore {
       case "errors": return this.errors(args.share, args.offset, args.limit);
       case "releaseHeld": return this.afterScan(this.runtime(args.share), await this.runtime(args.share).scanner.releaseHeld());
       case "confirmReplacedRoot": return this.afterScan(this.runtime(args.share), await this.runtime(args.share).scanner.confirmReplacedRoot());
+      case "announce": this.sync!.announce(args.slept); return {};
+      case "peerPresence": this.sync!.presence(args.peer, args.present, args.origins); return {};
+      case "notice": await this.service.serve(args.peer, "changed", {}, args.body); return {};
+      case "serve": return this.service.serve(args.peer, args.endpoint, args.query, args.body, args.range);
+      case "differences": return this.differences(args.share, args.peer, args.offset, args.limit);
+      case "repair": this.runtime(args.share); this.sync!.repair(args.share, args.peer); return {};
       case "stop": await this.stop(); return {};
       default: throw new UnavailableOpError(op);
     }
@@ -214,8 +298,18 @@ class Core implements WorkerCore {
       if (existing) {
         const rootChanged = existing.scanner.context.root !== context.root;
         const rulesChanged = existing.scanner.context.matcher.hash !== context.matcher.hash;
+        const peersChanged = existing.spec.peers.join("\n") !== spec.peers.join("\n");
         existing.spec = spec;
         existing.scanner.update(context);
+        // Differences under other rules (or with peers no longer in the share) stop counting until compared again.
+        if (rulesChanged || peersChanged) this.need.syncComparison(spec.key);
+        if (rulesChanged) {
+          // A seq without a row orders the new rules hash after everything announced under the old one: a page or an
+          // answer built before the change (still on its way) can then never override what the notice below says.
+          this.db.writeTx(() => { const row = this.db.share(spec.key); if (row) this.db.updateShare(spec.key, { maxSeq: row.maxSeq + 1 }); });
+          // Peers compare only under equal rules; a rules change may write no row, so only a notice tells them.
+          this.sync?.localCommitted(spec.key);
+        }
         if (rootChanged && existing.watcher) {
           existing.watcher.close();
           existing.watcher = this.createWatcher(existing);
@@ -238,8 +332,10 @@ class Core implements WorkerCore {
       }
       this.emitState(runtime);
     }
-    if (!this.readySent) { this.readySent = true; this.emit({ event: "ready", origins: [] }); }
-    return { origins: [] };
+    this.sync?.configure(args);
+    const origins = this.deps.origins?.() ?? [];
+    if (!this.readySent) { this.readySent = true; this.emit({ event: "ready", origins }); }
+    return { origins };
   }
 
   private ensureShareRow(spec: ShareSpec, root: string): void {
@@ -260,7 +356,9 @@ class Core implements WorkerCore {
       recheck: (paths, delayMs) => this.recheck(runtime, paths, delayMs),
       watchDirectory: (key, fsRelative, ino) => runtime.watcher?.watchDirectory(key, fsRelative, ino),
       unwatchDirectory: (key) => runtime.watcher?.unwatchDirectory(key),
-      committed: () => this.committed(runtime),
+      // Differences move in the scan's own transaction (§5.4); notices go out once it committed.
+      inTransaction: (changes) => this.need.localChangesInTx(runtime.key, changes),
+      committed: () => { this.committed(runtime); this.sync?.localCommitted(runtime.key); },
       newIndexId: () => this.newIndexId(),
       options: this.deps.scanner,
     }, context);
@@ -344,6 +442,12 @@ class Core implements WorkerCore {
 
   private afterScan(runtime: ShareRuntime, result: ScanResult): ScanResult {
     if (runtime.closed) return result;
+    // A new generation must reach peers even when the folder is empty (no commit told them); a finished
+    // full scan may make the share comparable (complete under the current rules) or a reset one not.
+    if (result.newGeneration) this.sync?.localCommitted(runtime.key);
+    try { this.need.syncComparison(runtime.key); } catch (error) {
+      this.emit({ event: "log", level: "warn", key: `fileSync:${runtime.key}:diffs`, message: `File sync could not compare ${runtime.key}: ${(error as Error).message}` });
+    }
     // The watcher could not open a missing root; once the root is there, start over with a walk.
     const watcher = runtime.watcher;
     if (watcher?.state === "off" && runtime.scanner.root?.state === "ok") {
@@ -422,16 +526,22 @@ class Core implements WorkerCore {
     else if (root?.state === "error") { state = "error"; message = root.message; }
     else if (share.pendingDev !== null || share.scanError) { state = "error"; message = share.scanError ?? undefined; }
     else if (held > 0) { state = "error"; message = `${held} deletion${held === 1 ? " is" : "s are"} held; confirm in Settings → File sync`; }
+    else if (this.sync?.mismatch(runtime.key).length) { state = "error"; message = `The index from ${this.sync.mismatch(runtime.key).join(", ")} does not match its files`; }
     else if (scanner.running || runtime.draining || scanner.settlingCount > 0) { state = "scanning"; message = "Checking files"; }
     else if (!root) { state = "starting"; message = "Starting file sync"; }
     else state = "idle";
     const cursors = new Map(this.db.cursors(runtime.key).map((cursor) => [cursor.peer, cursor]));
-    const peers: PeerShareStatus[] = runtime.spec.peers.map((peer) => {
+    const peers: PeerShareStatus[] = runtime.spec.peers.filter((peer) => !this.sync?.isExcluded(runtime.key, peer)).map((peer) => {
       const cursor = cursors.get(peer);
+      const indexId = cursor?.indexId ?? null;
+      const comparison = this.need.comparison(runtime.key, peer);
       return {
-        peer, cursor: cursor?.seq ?? 0, peerMaxSeq: cursor?.peerMaxSeq ?? 0, peerIndexId: cursor?.indexId ?? null, peerDigest: cursor?.peerDigest ?? null,
-        rulesMatch: cursor?.peerRulesHash === scanner.context.matcher.hash, caughtUp: Boolean(cursor?.indexId) && (cursor?.seq ?? 0) >= (cursor?.peerMaxSeq ?? 0),
-        differences: 0, cleanSince: null, route: "none",
+        peer, cursor: indexId ? cursor!.seq : 0, peerMaxSeq: cursor?.peerMaxSeq ?? 0, peerIndexId: cursor?.peerIndexId ?? indexId, peerDigest: cursor?.peerDigest ?? null,
+        rulesMatch: cursor?.peerRulesHash === scanner.context.matcher.hash,
+        // Within one generation only: a cursor of the old index says nothing about a new one.
+        caughtUp: indexId !== null && (cursor!.peerIndexId ?? indexId) === indexId && cursor!.seq >= cursor!.peerMaxSeq,
+        differences: comparison?.differences ?? 0, cleanSince: comparison?.cleanSince ? new Date(comparison.cleanSince).toISOString() : null,
+        route: this.sync?.route(peer) ?? "none",
       };
     });
     return {
@@ -448,6 +558,11 @@ class Core implements WorkerCore {
     return runtimes.map((runtime) => this.statusOf(runtime));
   }
 
+  private differences(key: string, peer: string, offset: number, limit: number): ListPage<DifferenceItem> {
+    this.runtime(key);
+    return this.need.differences(key, peer, offset, limit);
+  }
+
   private errors(key: string, offset: number, limit: number): OpResults["errors"] {
     this.runtime(key);
     const page = this.db.errorsPage(key, offset, limit);
@@ -461,7 +576,10 @@ class Core implements WorkerCore {
     this.stopped = true;
     const running = [...this.shares.values()];
     for (const runtime of running) this.closeRuntime(runtime);
-    // Scans stop at their next slice; a writeTx in progress always finishes (it cannot span an await).
+    // Requests in flight are aborted; nothing new starts. Then scans stop at their next slice; a writeTx in progress always finishes (it cannot span an await).
+    await this.sync?.close();
+    this.need.close();
+    await this.need.idle();
     await Promise.allSettled(running.map((runtime) => runtime.draining));
     await Promise.allSettled(running.map((runtime) => runtime.scanner.idle()));
   }
@@ -478,7 +596,10 @@ class Core implements WorkerCore {
   get configured(): ConfigureArgs | undefined { return this.config; }
 }
 
-export type FileSyncCore = WorkerCore & { readonly db: FileSyncDb; readonly trash: Trash; readonly suppression: SuppressionRegistry };
+export type FileSyncCore = WorkerCore & {
+  readonly db: FileSyncDb; readonly trash: Trash; readonly suppression: SuppressionRegistry;
+  readonly need: NeedEngine; readonly sync: SyncLayer | undefined;
+};
 
 export function createWorkerCore(deps: CoreDeps): FileSyncCore {
   return new Core(deps);

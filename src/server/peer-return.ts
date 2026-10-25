@@ -56,8 +56,14 @@ export function announceReturn(slept: boolean): Promise<void> {
   announcing ??= (async () => {
     if (slept) { resetPeerAvailability(); resetDirectFailures(); }
     const db = await clusterV2Database(), local = await getClusterNode();
+    const fileSync = await import("../file-sync/index.js").catch((error) => { console.warn("Loading file sync failed", error); return undefined; });
+    // Older receivers ignore the body and answer {ok: true}, which says they have no file sync engine.
+    const hello = await fileSync?.fileSyncHelloBody().catch(() => undefined) ?? {};
     // A real attempt at every peer: one that answers is known to be there, one that does not is left alone from here on.
-    await Promise.all(replicationPeers(db, local.id).map((peer) => signedPeerPost(peer, "/api/cluster/v2/hello", {}).catch(() => undefined)));
+    await Promise.all(replicationPeers(db, local.id).map((peer) => signedPeerPost(peer, "/api/cluster/v2/hello", hello)
+      .then((answer) => fileSync?.fileSyncHelloAnswered(peer.nodeId, answer), () => undefined)));
+    // With what the peers just said about their engines, it asks them what changed while it was away.
+    fileSync?.fileSyncAnnounce(slept);
     resetSharedTranscriptPulls();
     // Drafts are no longer fetched on a timer: what peers offer is fetched now.
     await syncSharedQuickNotes().catch((error) => console.warn("Fetching peers' quick notes failed", error));

@@ -370,6 +370,8 @@ test("the worker thread answers ops, sends events and ends after stop", { timeou
     workerData: { nodeId: "node-a", dataDir: path.join(dir, "data"), watch: true },
   });
   worker.unref();
+  // A failed assertion must not leave the thread (and its watchers) keeping this process alive.
+  t.after(() => worker.terminate());
   const answers = new Map<number, { ok: boolean; result?: unknown; error?: { message: string } }>();
   const events: CoreEvent[] = [];
   worker.on("message", (message) => {
@@ -396,9 +398,12 @@ test("the worker thread answers ops, sends events and ends after stop", { timeou
   const invalid = await ask(3, "scan", { share: "project:p1", scope: "everything", reason: "test" });
   assert.equal(invalid.ok, false);
   assert.match(invalid.error!.message, /Invalid request/);
+  // The thread brings its network layer: announce answers (no peers to ask); a later phase's op does not.
   const network = await ask(4, "announce", { slept: false });
-  assert.equal(network.ok, false);
-  assert.match(network.error!.message, /cannot announce yet/);
+  assert.equal(network.ok, true, JSON.stringify(network));
+  const later = await ask(6, "prioritize", { share: "project:p1", untilMs: 1000 });
+  assert.equal(later.ok, false);
+  assert.match(later.error!.message, /cannot prioritize yet/);
   assert.ok(events.some((event) => event.event === "ready"), "ready is sent after the first configure");
   assert.ok(events.some((event) => event.event === "shareState" && event.status.liveFiles === 1));
   const stopped = await ask(5, "stop", {});

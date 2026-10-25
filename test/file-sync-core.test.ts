@@ -7,6 +7,7 @@ import test, { type TestContext } from "node:test";
 import { FileSyncDb, HOT_QUERIES, SCHEMA_VERSION } from "../src/file-sync/db.js";
 import type { ConfigureArgs, ShareStatus } from "../src/file-sync/protocol.js";
 import { systemClock, type Clock, type ShareKind } from "../src/file-sync/types.js";
+import { createWorkerCore } from "../src/file-sync/core.js";
 import { createInThreadWorker, type InThreadWorker } from "../src/file-sync/worker.js";
 
 const NODE = "node-a";
@@ -80,11 +81,25 @@ test("invalid arguments are refused before the core sees them", async (t) => {
   });
 });
 
-test("network ops answer that this phase does not have them", async (t) => {
+test("ops of later phases answer unavailable; network ops need a transport", async (t) => {
   const s = setup(t);
   await s.configure();
-  for (const [op, args] of [["announce", { slept: false }], ["peerPresence", { peer: "x", present: true }], ["differences", { share: "project:p1", peer: "x", offset: 0, limit: 10 }]] as const) {
+  for (const [op, args] of [["prioritize", { share: "project:p1", untilMs: 1000 }], ["bootstrap", { share: "project:p1", builtinSinceByPeer: {} }]] as const) {
     await assert.rejects(s.worker.call(op, args as never), (error: Error & { code?: string }) => {
+      assert.equal(error.code, "unavailable", `${op}: ${error.message}`);
+      assert.match(error.message, /later phase/);
+      return true;
+    });
+  }
+  // The adapter always brings its network layer, so these answer even with no peers.
+  assert.deepEqual(await s.worker.call("announce", { slept: false }), {});
+  assert.deepEqual(await s.worker.call("peerPresence", { peer: "x", present: true }), {});
+  assert.deepEqual(await s.worker.call("differences", { share: "project:p1", peer: "x", offset: 0, limit: 10 }), { total: 0, items: [] });
+  // A core built without a transport has no network part.
+  const bare = createWorkerCore({ nodeId: NODE, dataDir: path.join(s.dir, "bare"), clock: s.clock, random: Math.random, watch: false, emit: () => undefined });
+  t.after(() => bare.close());
+  for (const [op, args] of [["announce", { slept: false }], ["peerPresence", { peer: "x", present: true }], ["differences", { share: "project:p1", peer: "x", offset: 0, limit: 10 }]] as const) {
+    await assert.rejects(bare.call(op, args as never), (error: Error & { code?: string }) => {
       assert.equal(error.code, "unavailable", `${op}: ${error.message}`);
       assert.match(error.message, /no network part/);
       return true;

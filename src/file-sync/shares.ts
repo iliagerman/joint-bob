@@ -37,6 +37,17 @@ function tableExists(db: DatabaseSync, table: string): boolean {
 }
 
 /**
+ * Replication peers whose key is pinned (a peer without one could never authenticate a request).
+ * The direct listener accepts all of them, as main's cluster routes do; the service then refuses a
+ * share the caller is not in with a 403, which the caller does not retry.
+ */
+export function verifiablePeers(db: DatabaseSync, local: string): string[] {
+  let peers: string[];
+  try { peers = replicationPeers(db, local).map((peer) => peer.nodeId); } catch { return []; }
+  return peers.filter((peer) => safely(() => pinnedClusterPublicKey(db, peer) !== undefined)).sort();
+}
+
+/**
  * Projects with a live policy whose metadata this node may see, that have at least one eligible
  * peer and are in the shadow allowlist (or past it: any phase but "syncthing"). A peer is eligible
  * while mayShareProject holds; it turns false for a while after a restart or a relay disconnect,

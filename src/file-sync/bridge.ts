@@ -1,14 +1,64 @@
 import { performance, type EventLoopUtilization } from "node:perf_hooks";
 import { Worker, type ResourceLimits } from "node:worker_threads";
 import { resolveDataDirectory } from "../data-directory.js";
+import { isPeerUnreachable, peerAway } from "../peer-presence.js";
 import { performanceDiagnostics } from "../server/performance-diagnostics.js";
 import { settled, warnOnChange } from "../server/quiet-log.js";
-import type { CoreEvent, OpArgs, OpName, OpResults } from "./protocol.js";
+import { DRAIN_STALL_MS, FILES_PREFIX, ownedChunk, STALL_MS, stallGuard, StreamReceiver, StreamWindow } from "./direct.js";
+import { validRequestTarget } from "./signing.js";
+import type { CoreEvent, OpArgs, OpName, OpResults, RelayedRequest, RelayMessage, ServeAnswer, ServeControl, ServeHead } from "./protocol.js";
 
 /* The main thread's client of the file sync worker. Requests are `{id, op, args}`; the worker
    answers `{id, ok, result | error}` and sends CoreEvents (as is, or wrapped as `{event: CoreEvent}`)
    at any time. A worker failure never reaches the node: errors are caught, the worker is restarted
-   with a growing delay, and after repeated crashes the engine stays off until it is started again. */
+   with a growing delay, and after repeated crashes the engine stays off until it is started again.
+   Two byte streams cross here: relay answers the bridge fetches for the worker's transport
+   (relayRequest events), and serve answers it receives for main's /api/cluster/v2/files/* routes. */
+
+/** The relay fallback's request to a peer: signed by main, sent with peerFetch to the peer's replication URL. */
+export type RelayFetch = (peer: string, request: RelayedRequest, signal: AbortSignal) => Promise<Response>;
+
+/** Headers the worker may set on a relayed request; main sets authorization, host and the body headers. */
+function forwardable(headers: Record<string, string> | undefined): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (!["authorization", "host", "content-length", "content-type", "connection", "transfer-encoding", "cookie"].includes(name.toLowerCase())) kept[name] = String(value);
+  }
+  return kept;
+}
+
+/**
+ * Production RelayFetch. Background requests run inside whilePeerOptional, so a peer that is away
+ * fails at once instead of being waited for; `foreground` ones are always attempted.
+ */
+export async function peerRelayFetch(peer: string, request: RelayedRequest, signal: AbortSignal): Promise<Response> {
+  // A worker can only ask for file sync endpoints: main signs with the node's key, which opens every cluster route.
+  if (!request.target.startsWith(FILES_PREFIX) || !validRequestTarget(request.target) || (request.method !== "GET" && request.method !== "POST")) {
+    throw new Error("File sync relays only /api/cluster/v2/files/ requests");
+  }
+  const [{ clusterV2Database }, { getClusterNode }, { signClusterRequest }, { replicationPeers }, { fetchPeer, whilePeerOptional }] = await Promise.all([
+    import("../cluster-v2-store.js"), import("../cluster.js"), import("../cluster-protocol.js"), import("../server/replication-v2.js"), import("../server/peer-availability.js"),
+  ]);
+  const db = await clusterV2Database();
+  const local = (await getClusterNode()).id;
+  const endpoint = replicationPeers(db, local).find((candidate) => candidate.nodeId === peer);
+  if (!endpoint) throw Object.assign(new Error("This node has no address for that peer"), { code: "unreachable" });
+  const post = request.method === "POST";
+  const body = post ? Buffer.from(JSON.stringify(request.json ?? {})) : Buffer.alloc(0);
+  const send = () => fetchPeer(db, peer, new URL(request.target, endpoint.url), {
+    method: request.method, redirect: "error", signal, ...(post ? { body } : {}),
+    // Signed right before sending: the receiver allows ±60 s.
+    headers: { ...forwardable(request.headers), ...(post ? { "content-type": "application/json" } : {}), authorization: signClusterRequest(db, local, peer, request.method, request.target, body) },
+  });
+  return request.foreground ? send() : whilePeerOptional(send);
+}
+
+let serving: WorkerBridge | undefined;
+
+/** The running engine's bridge, which main's /api/cluster/v2/files/* routes forward to; undefined while file sync is off. */
+export function servingBridge(): WorkerBridge | undefined {
+  return serving?.state === "running" ? serving : undefined;
+}
 
 /** `tsx`: the URL of tsx's ESM API, when the worker's source is TypeScript (a checkout). */
 export interface WorkerLaunch { url: URL; tsx?: string }
@@ -52,9 +102,18 @@ export interface BridgeOptions {
   onEvent?(event: CoreEvent): void;
   onCrash?(info: CrashInfo): void;
   metrics?(operation: string, durationMs: number, fields: MetricFields): void;
+  /** How relayRequest events reach peers (tests); peerRelayFetch by default. */
+  relay?: RelayFetch;
+  /** A relayed answer with no byte for this long is given up (tests shorten it). */
+  relayStallMs?: number;
+  /** A worker that takes no relayed byte for this long has its request dropped. */
+  relayReaderIdleMs?: number;
+  /** False: main's routes do not forward to this bridge (a second bridge in tests). */
+  serveRoutes?: boolean;
 }
 
-interface Pending { op: string; resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }
+interface Pending { op: string; resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout; /** Runs as the answer is read, before the next message: serve registers its stream here. */ onResult?(result: unknown): void }
+interface Relay { controller: AbortController; window: StreamWindow }
 
 const LOG_KEY = "fileSync:worker";
 const OPERATION = /^fileSync\.[A-Za-z0-9_.]{1,64}$/;
@@ -86,6 +145,14 @@ export class WorkerBridge {
   private stopping: Promise<void> | undefined;
   private sampleBase: { at: number; elu: EventLoopUtilization; cpu?: NodeJS.CpuUsage } | undefined;
   private readonly restart: RestartPolicy;
+  /** Relay answers being fetched for the current worker, by its relayRequest id. */
+  private readonly relays = new Map<number, Relay>();
+  /** Serve answers being received from the current worker, by request id. */
+  private readonly serveStreams = new Map<number, StreamReceiver>();
+  /** The most relay bytes the worker ever had unacknowledged (tests check the window holds). */
+  relayPeak = 0;
+  /** Peer requests main's routes forwarded to the worker (the relay-fallback path), for status. */
+  served = 0;
 
   constructor(private readonly options: BridgeOptions) {
     this.restart = { ...DEFAULT_RESTART, ...options.restart };
@@ -94,19 +161,56 @@ export class WorkerBridge {
   /** Starts the worker; after a give-up it starts afresh with a clean crash history. */
   start(): void {
     if (this.state !== "stopped" && this.state !== "failed") return;
+    if (this.options.serveRoutes !== false) serving = this;
     this.crashTimes = [];
     this.consecutive = 0;
     this.spawn();
   }
 
   call<K extends OpName>(op: K, args: OpArgs[K], options: { timeoutMs?: number } = {}): Promise<OpResults[K]> {
+    if (op === "serve") return this.serve(args as OpArgs["serve"], options) as Promise<OpResults[K]>;
     const worker = this.worker;
     if (!worker || this.state !== "running") return Promise.reject(new Error("File sync worker is not running"));
     return this.send(worker, op, args, options.timeoutMs ?? this.options.timeoutMs ?? 60_000) as Promise<OpResults[K]>;
   }
 
+  /**
+   * One FilesService answer for main's routes. A byte body arrives as serveChunk messages; main
+   * acknowledges what its reader took, so at most STREAM_WINDOW_BYTES wait in this thread. Aborting
+   * the signal (the HTTP client went away) stops the worker's side.
+   */
+  async serve(args: OpArgs["serve"], options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<ServeAnswer> {
+    const worker = this.worker;
+    if (!worker || this.state !== "running") throw Object.assign(new Error("File sync worker is not running"), { code: "not-running" });
+    if (options.signal?.aborted) throw options.signal.reason;
+    this.served++;
+    const post = (message: ServeControl) => { if (this.worker === worker) worker.postMessage(message); };
+    let id = 0;
+    const head = await this.send(worker, "serve", args, options.timeoutMs ?? this.options.timeoutMs ?? 60_000, (result, answerId) => {
+      id = answerId;
+      if (!(result as ServeHead).stream) return;
+      this.serveStreams.set(id, new StreamReceiver({
+        consumed: (bytes) => post({ serveAck: id, bytes }),
+        cancel: () => { if (this.serveStreams.delete(id)) post({ serveCancel: id }); },
+      }));
+    }, (requestId) => {
+      // Gone before the answer: the worker drops the answer's body instead of streaming it.
+      const onAbort = () => post({ serveCancel: requestId });
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      return () => options.signal?.removeEventListener("abort", onAbort);
+    }) as ServeHead;
+    const body = head.stream ? this.serveStreams.get(id) : undefined;
+    if (body && options.signal) {
+      const signal = options.signal;
+      const onAbort = () => { if (!this.serveStreams.delete(id)) return; post({ serveCancel: id }); body.fail(signal.reason); };
+      if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
+    }
+    return { status: head.status, headers: head.headers, ...(head.json !== undefined ? { json: head.json } : {}), ...(body ? { body } : {}) };
+  }
+
   /** A `stop` op lets the worker finish its transaction and close file-sync.db; whatever is left of the budget, `terminate` ends it. */
   stop(budgetMs = 2_000): Promise<void> {
+    if (serving === this) serving = undefined;
     clearTimeout(this.restartTimer);
     this.restartTimer = undefined;
     const worker = this.worker;
@@ -131,17 +235,19 @@ export class WorkerBridge {
   }
 
   /** Someone awaiting an answer keeps the process alive until it comes or times out; an idle worker never does. */
-  private send(worker: Worker, op: string, args: unknown, timeoutMs: number): Promise<unknown> {
+  private send(worker: Worker, op: string, args: unknown, timeoutMs: number, onResult?: (result: unknown, id: number) => void, onSent?: (id: number) => () => void): Promise<unknown> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
+      const detach = onSent?.(id);
+      const settle = <T>(finish: (value: T) => void) => (value: T) => { detach?.(); finish(value); };
       const timer = setTimeout(() => {
-        if (this.release(id)) reject(new Error(`File sync worker did not answer ${op} within ${Math.round(timeoutMs / 100) / 10} s`));
+        if (this.release(id)) settle(reject)(new Error(`File sync worker did not answer ${op} within ${Math.round(timeoutMs / 100) / 10} s`));
       }, timeoutMs);
       timer.unref();
       if (!this.pending.size) worker.ref();
-      this.pending.set(id, { op, resolve, reject, timer });
+      this.pending.set(id, { op, resolve: settle(resolve), reject: settle(reject), timer, ...(onResult ? { onResult: (result: unknown) => onResult(result, id) } : {}) });
       try { worker.postMessage({ id, op, args }); }
-      catch (error) { this.release(id); reject(error instanceof Error ? error : new Error(String(error))); }
+      catch (error) { this.release(id); settle(reject)(error instanceof Error ? error : new Error(String(error))); }
     });
   }
 
@@ -198,6 +304,11 @@ export class WorkerBridge {
     this.worker = undefined;
     performanceDiagnostics.sampleWorker(undefined);
     for (const [id, call] of this.pending) { clearTimeout(call.timer); this.pending.delete(id); call.reject(error); }
+    // Relay ids and serve streams belong to that worker; a restarted one starts its own.
+    for (const relay of this.relays.values()) { relay.controller.abort(error); relay.window.close(); }
+    this.relays.clear();
+    for (const stream of this.serveStreams.values()) stream.fail(error);
+    this.serveStreams.clear();
   }
 
   private crashed(reason: string): void {
@@ -226,15 +337,105 @@ export class WorkerBridge {
     const data = message as Record<string, unknown>;
     if (typeof data.id === "number" && typeof data.ok === "boolean") {
       const call = this.release(data.id);
-      if (!call) return;
-      if (data.ok) { settled(LOG_KEY); call.resolve(data.result); return; }
+      if (!call) {
+        // A serve answer nobody waits for any more (timed out): its body is not wanted either.
+        if (data.ok && (data.result as ServeHead | undefined)?.stream) this.worker?.postMessage({ serveCancel: data.id } satisfies ServeControl);
+        return;
+      }
+      if (data.ok) {
+        settled(LOG_KEY);
+        try { call.onResult?.(data.result); } catch (error) { call.reject(error instanceof Error ? error : new Error(String(error))); return; }
+        call.resolve(data.result);
+        return;
+      }
       // The worker's error code ("invalid", "unavailable") survives, as with the in-thread worker.
       const code = (data.error as { code?: unknown } | undefined)?.code;
       call.reject(Object.assign(new Error(data.error === undefined ? `File sync worker could not ${call.op}` : messageOf(data.error)), typeof code === "string" ? { code } : {}));
       return;
     }
+    if (typeof data.serveChunk === "number") { if (data.chunk instanceof ArrayBuffer) this.serveStreams.get(data.serveChunk)?.push(new Uint8Array(data.chunk)); return; }
+    if (typeof data.serveEnd === "number") { this.serveStreams.get(data.serveEnd)?.end(); this.serveStreams.delete(data.serveEnd); return; }
+    if (typeof data.serveError === "number") {
+      this.serveStreams.get(data.serveError)?.fail(new Error(typeof data.message === "string" ? data.message : "File sync worker could not finish its answer"));
+      this.serveStreams.delete(data.serveError);
+      return;
+    }
+    if (typeof data.relayAck === "number") { this.relays.get(data.relayAck)?.window.acked(Number(data.bytes) || 0); return; }
+    if (typeof data.relayCancel === "number") {
+      const relay = this.relays.get(data.relayCancel);
+      this.relays.delete(data.relayCancel);
+      relay?.controller.abort(new DOMException("File sync relay request cancelled", "AbortError"));
+      relay?.window.close();
+      return;
+    }
     const event = typeof data.event === "string" ? data : data.event && typeof data.event === "object" ? data.event as Record<string, unknown> : undefined;
-    if (event && typeof event.event === "string") this.dispatch(event as unknown as CoreEvent);
+    if (!event || typeof event.event !== "string") return;
+    // Main's own business: the worker's transport asks main to carry a request through the relay.
+    if (event.event === "relayRequest") { if (this.worker) void this.relay(this.worker, event as Extract<CoreEvent, { event: "relayRequest" }>); return; }
+    this.dispatch(event as unknown as CoreEvent);
+  }
+
+  /**
+   * Sends one relayRequest with RelayFetch and streams the answer back as transferred chunks. The
+   * body is read only while the worker has at most STREAM_WINDOW_BYTES unacknowledged; the stall
+   * guard counts time waiting on the peer, never time waiting on the worker's reader.
+   */
+  private async relay(worker: Worker, event: Extract<CoreEvent, { event: "relayRequest" }>): Promise<void> {
+    const id = event.id;
+    if (typeof id !== "number" || this.relays.has(id)) return;
+    const post = (message: RelayMessage, transfer?: ArrayBuffer[]) => { if (this.worker === worker) worker.postMessage(message, transfer ?? []); };
+    const controller = new AbortController();
+    const window = new StreamWindow();
+    this.relays.set(id, { controller, window });
+    const guard = stallGuard(this.options.relayStallMs ?? STALL_MS, controller.signal);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let complete = false;
+    try {
+      const response = await (this.options.relay ?? peerRelayFetch)(String(event.peer), event.request, guard.signal);
+      if (!this.relays.has(id)) { await response.body?.cancel().catch(() => undefined); return; }
+      guard.touch();
+      const headers: Record<string, string> = {};
+      response.headers.forEach((value, name) => { if (name !== "set-cookie") headers[name] = value; });
+      post({ relayResponse: id, status: response.status, headers });
+      if (response.body) {
+        reader = response.body.getReader();
+        for (;;) {
+          if (window.blocked) {
+            guard.pause();
+            // A worker reader that never takes its bytes must not hold a relay socket for good.
+            const idle = setTimeout(() => window.close(), this.options.relayReaderIdleMs ?? DRAIN_STALL_MS);
+            idle.unref();
+            await window.ready();
+            clearTimeout(idle);
+            guard.resume();
+          }
+          if (window.isClosed || !this.relays.has(id)) break;
+          const { value, done } = await reader.read();
+          if (done) { complete = true; break; }
+          guard.touch();
+          const chunk = ownedChunk(value);
+          window.sent(chunk.byteLength);
+          this.relayPeak = Math.max(this.relayPeak, window.peak);
+          post({ relayChunk: id, chunk }, [chunk]);
+        }
+      } else complete = true;
+      if (complete && this.relays.has(id)) post({ relayEnd: id });
+      else if (this.relays.has(id)) post({ relayError: id, message: "File sync worker stopped reading" });
+    } catch (error) {
+      complete = true;
+      if (this.relays.has(id)) {
+        const reason = guard.signal.aborted && !controller.signal.aborted ? guard.signal.reason : error;
+        const unreachable = (reason as { code?: unknown })?.code === "unreachable" || isPeerUnreachable(reason);
+        // Away in peer presence now (refused, or the failure just recorded): main reports its return to the worker, which
+        // stops trying until then. A stall or a missing address leaves no such record, so the worker keeps its own backoff.
+        post({ relayError: id, message: messageOf(reason), ...(unreachable ? { code: "unreachable" } : {}), ...(unreachable && peerAway(String(event.peer)) ? { away: true } : {}) });
+      }
+    } finally {
+      guard.done();
+      if (!complete) await reader?.cancel().catch(() => undefined);
+      if (this.relays.get(id)?.controller === controller) this.relays.delete(id);
+      window.close();
+    }
   }
 
   private dispatch(event: CoreEvent): void {

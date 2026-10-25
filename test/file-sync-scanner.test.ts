@@ -506,18 +506,38 @@ test("a path the rules now ignore leaves the index without a tombstone", async (
   s.write("cache/a.bin");
   await s.scanner.scan("full");
   const seqBefore = s.db.share(s.key)!.maxSeq;
+  const notesSeq = s.row("notes.txt")!.seq;
   s.scanner.update(s.context({ rules: { userRules: ["private.txt", "cache/"] } }));
   const result = await s.scanner.scan({ paths: [] });
   assert.equal(result.tombstones, 0);
   assert.deepEqual(s.rows().map((row) => row.path), ["notes.txt"]);
   const share = s.db.share(s.key)!;
-  assert.equal(share.maxSeq, seqBefore, "dropping publishes nothing");
+  assert.equal(share.maxSeq, seqBefore + 1, "one seq without a row tells peers that something left");
+  assert.equal(share.prunedBelow, share.maxSeq, "above every peer's cursor: they list the index again and lose the dropped rows");
+  assert.equal(s.row("notes.txt")!.seq, notesSeq, "no row is written for what was dropped");
   assert.equal(share.digest, digestOf(s.live().values()));
   assert.equal(share.liveFiles, 1);
+  const again = await s.scanner.scan("full");
+  assert.equal(again.changed, 0);
+  assert.equal(s.db.share(s.key)!.maxSeq, share.maxSeq, "nothing left to drop: no new seq");
 });
 
-test("a deleted folder that comes back holding only ignored files stays deleted", async (t) => {
+test("in shadow mode a deleted folder that comes back is live whatever it holds", async (t) => {
   const s = setup(t);
+  s.write("d/a.txt");
+  await s.scanner.scan("full");
+  rmSync(path.join(s.root, "d"), { recursive: true });
+  await s.scanner.scan({ paths: ["d"] });
+  assert.equal(s.row("d")!.deleted, true);
+  // Syncthing creates a folder that holds only ignored files on the other node empty: both trees have it.
+  s.write("d/.DS_Store", "finder");
+  await s.scanner.scan("full");
+  assert.equal(s.row("d")!.deleted, false);
+  assert.equal(s.row("d/.DS_Store"), undefined);
+});
+
+test("in builtin mode a deleted folder that comes back holding only ignored files stays deleted", async (t) => {
+  const s = setup(t, { phase: "builtin" });
   s.write("d/a.txt");
   await s.scanner.scan("full");
   rmSync(path.join(s.root, "d"), { recursive: true });
@@ -611,6 +631,36 @@ test("a row changed by another writer during the scan is not overwritten blindly
   assert.equal(row.size, 11, "the re-scan indexed what is on disk");
   assert.equal(row.version.other, 99, "the other writer's version is built on, not lost");
   assert.ok(row.version[NODE] > 0);
+});
+
+test("a delete whose row another writer changed during the scan still becomes a tombstone", async (t) => {
+  let s: Setup | undefined;
+  let interfere = false;
+  s = setup(t, {
+    beforeCommit: () => {
+      if (!interfere || !s) return;
+      interfere = false;
+      // A peer's identical version merged into the row (shadow mode) between the scanner's read and its commit.
+      const db = s.db;
+      for (const relative of ["a.txt", "dir/b.txt"]) {
+        const row = db.entry(s.key, relative)!;
+        db.writeTx(() => db.putEntry(s!.key, { ...row, seq: row.seq + 1000, version: { ...row.version, other: 99 } }));
+      }
+    },
+  });
+  s.write("a.txt", "one");
+  s.write("dir/b.txt", "two");
+  await s.scanner.scan("full");
+  unlinkSync(path.join(s.root, "a.txt"));
+  rmSync(path.join(s.root, "dir"), { recursive: true });
+  interfere = true;
+  await s.scanner.scan({ paths: ["a.txt", "dir"] });
+  for (const relative of ["a.txt", "dir/b.txt", "dir"]) {
+    const row = s.row(relative)!;
+    assert.equal(row.deleted, true, `${relative} is a tombstone after the compare-and-set retry`);
+  }
+  assert.equal(s.row("a.txt")!.version.other, 99, "the merged version is built on");
+  assert.deepEqual(s.rechecks, [], "settled within the scan");
 });
 
 test("tombstones are pruned only when every peer has them and they are old", async (t) => {

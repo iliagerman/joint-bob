@@ -102,6 +102,8 @@ test("decodeIndexPage refuses bodies that inflate past the limit", async () => {
 test("parseIndexPage checks the header fields and the entry count", () => {
   const wire = { ...page([]), entries: [] };
   assert.deepEqual(parseIndexPage({ ...wire, unknown: 1 }), page([]));
+  assert.deepEqual(parseIndexPage({ ...wire, rulesHash: DIGEST }), { ...page([]), rulesHash: DIGEST }, "the server's rules hash is carried when present");
+  assert.throws(() => parseIndexPage({ ...wire, rulesHash: "x" }), WireError);
   assert.throws(() => parseIndexPage({ ...wire, digest: "x" }), WireError);
   assert.throws(() => parseIndexPage({ ...wire, indexId: "has space" }), WireError);
   assert.throws(() => parseIndexPage({ ...wire, more: "no" }), WireError);
@@ -131,7 +133,9 @@ test("fetch and file bodies normalize paths and reject bad ones", () => {
 });
 
 test("changed, status and error bodies", () => {
-  assert.deepEqual(changedBodySchema.parse({ shares: [{ projectId: "p", kind: "project", indexId: "i", maxSeq: 3, rulesHash: DIGEST }], records: true }), { shares: [{ projectId: "p", kind: "project", indexId: "i", maxSeq: 3 }], records: true });
+  assert.deepEqual(changedBodySchema.parse({ shares: [{ projectId: "p", kind: "project", indexId: "i", maxSeq: 3, rulesHash: DIGEST, later: 1 }], records: true }), { shares: [{ projectId: "p", kind: "project", indexId: "i", maxSeq: 3, rulesHash: DIGEST }], records: true });
+  assert.deepEqual(changedBodySchema.parse({ shares: [{ projectId: "p", kind: "project", indexId: "i", maxSeq: 3 }] }), { shares: [{ projectId: "p", kind: "project", indexId: "i", maxSeq: 3 }] }, "rulesHash is optional");
+  assert.equal(changedBodySchema.safeParse({ shares: [{ projectId: "p", kind: "project", indexId: "i", maxSeq: 3, rulesHash: "not a hash" }] }).success, false);
   assert.equal(changedBodySchema.safeParse({ shares: [{ projectId: "p", kind: "project", indexId: "i", maxSeq: -1 }] }).success, false);
   assert.deepEqual(statusBodySchema.parse({ projectId: "p" }), { projectId: "p" });
   const answer = { shares: [{ kind: "project", state: "idle", cursor: 4, callerIndexId: null, need: { files: 0, bytes: 0 }, blocked: 0, errors: 0, digest: DIGEST, maxSeq: 4 }] };

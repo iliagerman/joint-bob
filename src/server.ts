@@ -87,6 +87,7 @@ import "./server/routes/dashboards.js";
 import { refreshSharedDashboards } from "./server/dashboard-sharing.js";
 import "./server/routes/relay.js";
 import "./file-sync/admin-routes.js";
+import "./file-sync/routes.js";
 import "./server/routes/webhooks.js";
 import "./server/routes/updates.js";
 import "./server/routes/not-found.js";

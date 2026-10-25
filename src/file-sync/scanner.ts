@@ -276,7 +276,8 @@ export class ShareScanner {
   /** Resolves once the scans queued so far have finished (or stopped). */
   idle(): Promise<void> { return this.chain.then(() => undefined); }
 
-  private classify(key: string, isDirectory: boolean): boolean {
+  /** Whether the share's rules (the .gitignore option included) leave the path out; the need engine compares with the same answer. */
+  classify(key: string, isDirectory: boolean): boolean {
     return this.ctx.matcher.classify(key, isDirectory, this.gitIgnored) !== null;
   }
 
@@ -417,6 +418,8 @@ export class ShareScanner {
         run.conflicts.clear();
         run.visited.clear();
         run.ancestors.clear();
+        // markGone puts every gone path in goneDirs, files included; left there, a conflicting tombstone would be skipped as already covered.
+        run.goneDirs.clear();
         await this.processScope(run, { paths });
         this.commit(run);
         this.settleDeletes(run);
@@ -783,8 +786,10 @@ export class ShareScanner {
       // A different inode is another directory in its place: what is below must be looked at again.
       return row.ino !== st.ino || regone ? 2 : changed ? 3 : 1;
     }
-    // A deleted folder that came back holding only ignored files stays deleted (it was cleared for a peer).
-    if (row && row.deleted && row.type === DIRECTORY && !this.resurrects(key, fsName ?? key)) return 0;
+    // In builtin mode a deleted folder that came back holding only ignored files stays deleted (apply cleared it for a
+    // peer and could not remove local-only content). In shadow mode Syncthing copies such a folder empty, so a folder
+    // on disk is live whatever it holds; otherwise two nodes with the same tree would index it differently for good.
+    if (row && row.deleted && row.type === DIRECTORY && this.ctx.phase === "builtin" && !this.resurrects(key, fsName ?? key)) return 0;
     this.queue(run, {
       kind: "version", path: key, expect: row?.seq ?? null,
       next: { path: key, ...this.fsFields(fsName, st), type: DIRECTORY, mtimeMs: st.mtimeMs, mode, sha256: null, target: null, deleted: false, deletedAt: null },
@@ -963,6 +968,7 @@ export class ShareScanner {
     const held = this.heldPaths;
     const unheld: string[] = [];
     const unhold = (relative: string) => { if (held?.has(relative)) { db.unhold(key, relative); unheld.push(relative); } };
+    let dropped = 0;
     db.writeTx(() => {
       const share = db.share(key)!;
       let maxSeq = share.maxSeq;
@@ -976,7 +982,7 @@ export class ShareScanner {
         const row = db.entry(key, change.path);
         if ((row?.seq ?? null) !== change.expect) { run.conflicts.add(row?.fsName ?? change.path); continue; }
         if (change.kind === "drop") {
-          if (row) { digest.change(row, undefined); count(row, -1); db.deleteEntry(key, change.path); moved.push({ path: change.path, before: row, after: undefined }); }
+          if (row) { digest.change(row, undefined); count(row, -1); db.deleteEntry(key, change.path); moved.push({ path: change.path, before: row, after: undefined }); dropped += 1; }
           unhold(change.path);
           continue;
         }
@@ -1003,12 +1009,16 @@ export class ShareScanner {
         if (problem) db.setError(key, errorPath, problem.kind, problem.reason, now);
         else db.clearError(key, errorPath);
       }
-      db.updateShare(key, { maxSeq, digest: digest.toString(), liveFiles, liveBytes });
+      // A dropped row leaves no tombstone (peers must not delete their copy), so peers learn of it like of a prune:
+      // a seq without a row, and prunedBelow above every cursor, which makes them list the index again from 0
+      // and lose the rows it no longer has (§5.4) instead of keeping a live row nobody will ever send again.
+      const prunedBelow = dropped ? ++maxSeq : share.prunedBelow;
+      db.updateShare(key, { maxSeq, digest: digest.toString(), liveFiles, liveBytes, prunedBelow });
     });
     run.reappeared.clear();
     run.errorOps.clear();
     for (const relative of unheld) held!.delete(relative);
-    if (written.length) this.deps.committed?.(written);
+    if (written.length || dropped) this.deps.committed?.(written);
   }
 
   /**

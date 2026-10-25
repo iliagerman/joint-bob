@@ -109,10 +109,12 @@ const indexPageHeader = z.object({
   digest: hex64,
   prunedBelow: safeInt,
   builtinSince: safeInt.nullable(),
+  /** The serving node's effective rules for the share (additive: a page without it leaves the stored hash alone). */
+  rulesHash: hex64.optional(),
   entries: z.array(z.unknown()).max(INDEX_PAGE_LIMIT),
   more: z.boolean(),
 });
-export interface IndexPage { indexId: string; maxSeq: number; digest: string; prunedBelow: number; builtinSince: number | null; entries: IndexEntry[]; more: boolean }
+export interface IndexPage { indexId: string; maxSeq: number; digest: string; prunedBelow: number; builtinSince: number | null; rulesHash?: string; entries: IndexEntry[]; more: boolean }
 
 export function parseIndexPage(value: unknown): IndexPage {
   const parsed = indexPageHeader.safeParse(value);
@@ -191,7 +193,8 @@ export const indexPageSchema = indexPageHeader;
 
 /** POST …/files/changed */
 export const changedBodySchema = z.object({
-  shares: z.array(z.object({ projectId: projectIdSchema, kind: shareKindSchema, indexId: indexIdSchema, maxSeq: safeInt })).max(30_000),
+  // rulesHash is additive: a sender's rules can change without a new row, and only a notice would tell.
+  shares: z.array(z.object({ projectId: projectIdSchema, kind: shareKindSchema, indexId: indexIdSchema, maxSeq: safeInt, rulesHash: hex64.optional() })).max(30_000),
   records: z.boolean().optional(),
 });
 

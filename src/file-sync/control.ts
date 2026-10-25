@@ -1,3 +1,5 @@
+import net from "node:net";
+import os from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { clusterV2Database } from "../cluster-v2-store.js";
@@ -18,6 +20,8 @@ export interface FileSyncConfig {
   enabledBy: "default" | "settings" | "environment";
   /** Projects indexed in shadow mode beside Syncthing; "all" or a list of project ids. */
   shadowProjects: "all" | string[];
+  /** JOINT_BOB_FILE_SYNC_PROJECTS overrides the stored list, as JOINT_BOB_FILE_SYNC does the switch. */
+  shadowProjectsBy: "default" | "settings" | "environment";
   port: number;
 }
 
@@ -60,18 +64,55 @@ function storedValue<T>(db: DatabaseSync, key: string, schema: z.ZodType<T>): T 
   try { const parsed = schema.safeParse(JSON.parse(row.value)); return parsed.success ? parsed.data : undefined; } catch { return undefined; }
 }
 
+/** JOINT_BOB_FILE_SYNC_PROJECTS: "all" or comma-separated project ids; anything unusable leaves the stored list in charge. */
+function projectsFromEnvironment(value: string | undefined): "all" | string[] | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  if (raw === "all") return "all";
+  const parsed = shadowProjectsSchema.safeParse([...new Set(raw.split(",").map((id) => id.trim()).filter(Boolean))].sort());
+  return parsed.success && parsed.data.length ? parsed.data : undefined;
+}
+
 export function readFileSyncConfig(db: DatabaseSync, env: NodeJS.ProcessEnv = process.env): FileSyncConfig {
   ensureControlSchema(db);
   const stored = storedValue(db, "enabled", z.boolean());
   const forced = env.JOINT_BOB_FILE_SYNC === "1" ? true : env.JOINT_BOB_FILE_SYNC === "0" ? false : undefined;
   const fallback = testContext(env) ? false : PRODUCTION_DEFAULT;
   const envPort = env.JOINT_BOB_FILE_SYNC_PORT ? portSchema.safeParse(Number(env.JOINT_BOB_FILE_SYNC_PORT)) : undefined;
+  const storedProjects = storedValue(db, "shadowProjects", shadowProjectsSchema);
+  const forcedProjects = projectsFromEnvironment(env.JOINT_BOB_FILE_SYNC_PROJECTS);
   return {
     enabled: forced ?? stored ?? fallback,
     enabledBy: forced !== undefined ? "environment" : stored !== undefined ? "settings" : "default",
-    shadowProjects: storedValue(db, "shadowProjects", shadowProjectsSchema) ?? [],
+    shadowProjects: forcedProjects ?? storedProjects ?? [],
+    shadowProjectsBy: forcedProjects !== undefined ? "environment" : storedProjects !== undefined ? "settings" : "default",
     port: envPort?.success ? envPort.data : storedValue(db, "port", portSchema) ?? DEFAULT_FILE_SYNC_PORT,
   };
+}
+
+/* Where the direct listener binds. Tailscale's 100.64.0.0/10 is WireGuard-encrypted and reaches
+   peers on other networks, so by default the worker listens there and nowhere else. */
+
+export function isTailnetAddress(address: string): boolean {
+  if (!net.isIPv4(address)) return false;
+  const [first, second] = address.split(".").map(Number);
+  return first === 100 && second >= 64 && second <= 127;
+}
+
+export function tailnetAddresses(interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces()): string[] {
+  const found = new Set<string>();
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) if (entry.family === "IPv4" && !entry.internal && isTailnetAddress(entry.address)) found.add(entry.address);
+  }
+  return [...found].sort();
+}
+
+/** The tailnet addresses, unless JOINT_BOB_FILE_SYNC_LISTEN names others (comma-separated IPv4) or "none" (peers only through the main server). */
+export function fileSyncListenAddresses(env: NodeJS.ProcessEnv = process.env, interfaces?: NodeJS.Dict<os.NetworkInterfaceInfo[]>): string[] {
+  const raw = env.JOINT_BOB_FILE_SYNC_LISTEN?.trim();
+  if (!raw) return tailnetAddresses(interfaces);
+  if (raw === "none") return [];
+  return [...new Set(raw.split(",").map((address) => address.trim()).filter((address) => net.isIPv4(address)))].sort();
 }
 
 export function writeFileSyncConfig(db: DatabaseSync, patch: FileSyncConfigPatch, env: NodeJS.ProcessEnv = process.env): FileSyncConfig {

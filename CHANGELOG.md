@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added peer comparison to the built-in file sync engine: while it is on, machines now compare their file indexes with each other and count the differences, without changing any files yet.
+
 ## 2.154.0 — 2026-10-25
 
 - Added a built-in file sync engine, off by default; when an administrator switches it on for chosen projects, it only watches and indexes their files without changing them, and file syncing is unchanged.

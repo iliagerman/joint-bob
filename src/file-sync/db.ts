@@ -11,7 +11,7 @@ import { bump, raiseClock } from "./vectors.js";
    schema from a newer release is dropped and rebuilt rather than migrated down. The node clock in
    meta is the one value kept across such a rebuild: counters must never go back. */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** Index entry plus what only this node needs: the on-disk spelling and the stat fingerprint. */
 export interface LocalEntry extends IndexEntry {
@@ -50,7 +50,27 @@ export interface ShareRow {
 }
 
 export interface ErrorRow { path: string; kind: "error" | "notice" | "blocked"; reason: string; at: number }
-export interface CursorRow { peer: string; indexId: string | null; seq: number; peerMaxSeq: number; peerDigest: string | null; peerRulesHash: string | null; peerBuiltinSince: number | null; updatedAt: number }
+export interface CursorRow {
+  peer: string;
+  /** The peer's index generation our remote rows and `seq` belong to; null before the first page. */
+  indexId: string | null;
+  seq: number;
+  /** What the peer last announced (shares answer, notice, status, index page); its index id may be newer than `indexId`. */
+  peerIndexId: string | null;
+  peerMaxSeq: number;
+  peerDigest: string | null;
+  peerRulesHash: string | null;
+  peerBuiltinSince: number | null;
+  /** A pull of `indexId` reached its end at least once: the remote rows are a whole index, not a first part. */
+  listed: boolean;
+  /** The peer's prunedBelow when we last stored a page: a higher one above our cursor means tombstones we never saw were pruned. */
+  peerPrunedBelow: number;
+  updatedAt: number;
+}
+
+export type CursorFields = Partial<Omit<CursorRow, "peer" | "updatedAt">>;
+export interface DiffRow { path: string; since: number; kind: string }
+export interface ShadowCleanRow { peer: string; cleanSince: number | null; differences: number; checkedAt: number }
 
 const MIGRATIONS: ReadonlyArray<string> = [
   // 1: the full §4 schema, plus fs_mtime_ms (touch detection), rules_hash and the pending root identity.
@@ -93,7 +113,22 @@ const MIGRATIONS: ReadonlyArray<string> = [
   CREATE TABLE IF NOT EXISTS errors(share TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(share, path));
   CREATE TABLE IF NOT EXISTS nonces(sender TEXT NOT NULL, nonce TEXT NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY(sender, nonce));
   `,
+  // 2: the peer's announced index id (caught up only within one generation), whether a whole listing arrived,
+  // the prunedBelow it was stored under, and the earliest settling difference without reading every one.
+  `
+  ALTER TABLE cursors ADD COLUMN peer_index_id TEXT;
+  ALTER TABLE cursors ADD COLUMN listed INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE cursors ADD COLUMN peer_pruned_below INTEGER NOT NULL DEFAULT 0;
+  CREATE INDEX IF NOT EXISTS diffs_since ON diffs(share, since);
+  `,
 ];
+
+/**
+ * A diffs row that is no difference: one side holds a live row the local rules ignore. Under equal rules only an
+ * index not yet rescanned under them holds one, and its digest still counts the row, so the live consistency
+ * check waits while any exists. Counts, pages, settle timers and the clean streak never see it.
+ */
+export const HIDDEN_DIFF = "ignored";
 
 const INDEX_TABLES = ["shares", "entries", "remote", "cursors", "acks", "need", "held", "expected", "diffs", "shadow_clean", "errors", "nonces"];
 const SHARE_TABLES = ["entries", "remote", "cursors", "acks", "need", "held", "expected", "diffs", "shadow_clean", "errors"];
@@ -116,6 +151,30 @@ const SHARE_FIELDS: Record<keyof ShareRow, string> = {
   rootIno: "root_ino", fullScanAt: "full_scan_at", watchState: "watch_state", scanError: "scan_error", digest: "digest",
   liveFiles: "live_files", liveBytes: "live_bytes", builtinSince: "builtin_since", prunedBelow: "pruned_below", rulesHash: "rules_hash",
   pendingDev: "pending_dev", pendingIno: "pending_ino",
+};
+
+const REMOTE_COLUMNS = "path, type, size, mtime_ms, mode, sha256, target, deleted, version, modified_by, seq";
+
+function toRemote(row: Row): IndexEntry {
+  return {
+    path: row.path as string, type: row.type as EntryType, size: row.size as number, mtimeMs: row.mtime_ms as number, mode: row.mode as number,
+    sha256: (row.sha256 as string | null) ?? null, target: (row.target as string | null) ?? null, deleted: row.deleted === 1,
+    version: JSON.parse(row.version as string) as Vector, modifiedBy: row.modified_by as string, seq: row.seq as number,
+  };
+}
+
+function toCursor(row: Row): CursorRow {
+  return {
+    peer: row.peer as string, indexId: (row.index_id as string | null) ?? null, seq: row.seq as number, peerIndexId: (row.peer_index_id as string | null) ?? null,
+    peerMaxSeq: row.peer_max_seq as number, peerDigest: (row.peer_digest as string | null) ?? null, peerRulesHash: (row.peer_rules_hash as string | null) ?? null,
+    peerBuiltinSince: (row.peer_builtin_since as number | null) ?? null, listed: row.listed === 1, peerPrunedBelow: row.peer_pruned_below as number,
+    updatedAt: row.updated_at as number,
+  };
+}
+
+const CURSOR_FIELDS: Record<keyof CursorFields, string> = {
+  indexId: "index_id", seq: "seq", peerIndexId: "peer_index_id", peerMaxSeq: "peer_max_seq", peerDigest: "peer_digest",
+  peerRulesHash: "peer_rules_hash", peerBuiltinSince: "peer_builtin_since", listed: "listed", peerPrunedBelow: "peer_pruned_below",
 };
 
 function toShare(row: Row): ShareRow {
@@ -222,6 +281,24 @@ export class FileSyncDb {
     }
   }
 
+  /**
+   * Reads that must come from one snapshot (an index page and the maxSeq it is paired with). The worker's
+   * single connection makes synchronous reads consistent already; the transaction states it and keeps it
+   * true against any other connection (WAL readers see the snapshot their transaction started with).
+   */
+  readTx<T>(run: () => T): T {
+    if (this.db.isTransaction) return run();
+    this.db.exec("BEGIN DEFERRED");
+    try {
+      const result = run();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   private requireTx(): void { if (!this.db.isTransaction) throw new Error("Index writes must run inside writeTx"); }
 
   meta(key: string): string | undefined {
@@ -263,6 +340,8 @@ export class FileSyncDb {
 
   insertShare(row: Pick<ShareRow, "share" | "projectId" | "kind" | "root" | "indexId">): ShareRow {
     this.requireTx();
+    // A new share starts with nothing: rows a pull stored after the share was dropped would claim a peer's index it never got whole.
+    for (const table of SHARE_TABLES) this.statement(`DELETE FROM ${table} WHERE share = ?`).run(row.share);
     this.statement("INSERT INTO shares(share, project_id, kind, root, index_id, digest) VALUES (?, ?, ?, ?, ?, ?)")
       .run(row.share, row.projectId, row.kind, row.root, row.indexId, EMPTY_DIGEST);
     return this.share(row.share)!;
@@ -370,11 +449,127 @@ export class FileSyncDb {
   }
 
   cursors(share: string): CursorRow[] {
-    return (this.statement("SELECT * FROM cursors WHERE share = ?").all(share) as Row[]).map((row) => ({
-      peer: row.peer as string, indexId: (row.index_id as string | null) ?? null, seq: row.seq as number, peerMaxSeq: row.peer_max_seq as number,
-      peerDigest: (row.peer_digest as string | null) ?? null, peerRulesHash: (row.peer_rules_hash as string | null) ?? null,
-      peerBuiltinSince: (row.peer_builtin_since as number | null) ?? null, updatedAt: row.updated_at as number,
-    }));
+    return (this.statement("SELECT * FROM cursors WHERE share = ?").all(share) as Row[]).map(toCursor);
+  }
+
+  cursor(share: string, peer: string): CursorRow | undefined {
+    const row = this.statement("SELECT * FROM cursors WHERE share = ? AND peer = ?").get(share, peer) as Row | undefined;
+    return row ? toCursor(row) : undefined;
+  }
+
+  /** Creates the cursor row when needed and sets the given fields. */
+  updateCursor(share: string, peer: string, fields: CursorFields, now: number): void {
+    this.requireTx();
+    this.statement("INSERT INTO cursors(share, peer, updated_at) VALUES (?, ?, ?) ON CONFLICT(share, peer) DO NOTHING").run(share, peer, now);
+    const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
+    const assignments = [...entries.map(([field]) => `${CURSOR_FIELDS[field as keyof CursorFields]} = ?`), "updated_at = ?"].join(", ");
+    const values = entries.map(([, value]) => typeof value === "boolean" ? (value ? 1 : 0) : value as string | number | null);
+    this.statement(`UPDATE cursors SET ${assignments} WHERE share = ? AND peer = ?`).run(...values, now, share, peer);
+  }
+
+  deleteCursor(share: string, peer: string): void {
+    this.requireTx();
+    this.statement("DELETE FROM cursors WHERE share = ? AND peer = ?").run(share, peer);
+  }
+
+  remote(share: string, peer: string, relative: string): IndexEntry | undefined {
+    const row = this.statement(`SELECT ${REMOTE_COLUMNS} FROM remote WHERE share = ? AND peer = ? AND path = ?`).get(share, peer, relative) as Row | undefined;
+    return row ? toRemote(row) : undefined;
+  }
+
+  putRemote(share: string, peer: string, entry: IndexEntry): void {
+    this.requireTx();
+    this.statement(`INSERT INTO remote(share, peer, ${REMOTE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(share, peer, path) DO UPDATE SET type = excluded.type, size = excluded.size, mtime_ms = excluded.mtime_ms, mode = excluded.mode,
+      sha256 = excluded.sha256, target = excluded.target, deleted = excluded.deleted, version = excluded.version, modified_by = excluded.modified_by,
+      seq = excluded.seq`).run(
+      share, peer, entry.path, entry.type, entry.size, entry.mtimeMs, entry.mode, entry.sha256, entry.target, entry.deleted ? 1 : 0,
+      JSON.stringify(entry.version), entry.modifiedBy, entry.seq,
+    );
+  }
+
+  /** A peer's rows in path order after `after`, for chunked walks. */
+  remoteAfter(share: string, peer: string, after: string, limit: number): IndexEntry[] {
+    return (this.statement(`SELECT ${REMOTE_COLUMNS} FROM remote WHERE share = ? AND peer = ? AND path > ? ORDER BY path LIMIT ?`).all(share, peer, after, limit) as Row[]).map(toRemote);
+  }
+
+  remoteCount(share: string, peer: string): number {
+    return (this.statement("SELECT COUNT(*) AS n FROM remote WHERE share = ? AND peer = ?").get(share, peer) as Row).n as number;
+  }
+
+  /**
+   * Our copy of one peer's index of a share goes: rows, our position in it, differences and the clean
+   * record. What the peer announced about itself (index id, maxSeq, digest, rules hash) stays: it is
+   * still true and the re-pull is judged against it.
+   */
+  resetPeer(share: string, peer: string): void {
+    this.requireTx();
+    for (const table of ["remote", "diffs", "shadow_clean"]) this.statement(`DELETE FROM ${table} WHERE share = ? AND peer = ?`).run(share, peer);
+    this.statement("UPDATE cursors SET index_id = NULL, seq = 0, listed = 0 WHERE share = ? AND peer = ?").run(share, peer);
+  }
+
+  /** Local rows in path order after `after`, for chunked walks. */
+  entriesAfter(share: string, after: string, limit: number): LocalEntry[] {
+    return (this.statement(`SELECT ${ENTRY_COLUMNS} FROM entries WHERE share = ? AND path > ? ORDER BY path LIMIT ?`).all(share, after, limit) as Row[]).map(toEntry);
+  }
+
+  diff(share: string, peer: string, relative: string): DiffRow | undefined {
+    const row = this.statement("SELECT path, since, kind FROM diffs WHERE share = ? AND peer = ? AND path = ?").get(share, peer, relative) as Row | undefined;
+    return row ? { path: row.path as string, since: row.since as number, kind: row.kind as string } : undefined;
+  }
+
+  putDiff(share: string, peer: string, relative: string, since: number, kind: string): void {
+    this.requireTx();
+    this.statement("INSERT INTO diffs(share, peer, path, since, kind) VALUES (?, ?, ?, ?, ?) ON CONFLICT(share, peer, path) DO UPDATE SET kind = excluded.kind").run(share, peer, relative, since, kind);
+  }
+
+  deleteDiff(share: string, peer: string, relative: string): void {
+    this.requireTx();
+    this.statement("DELETE FROM diffs WHERE share = ? AND peer = ? AND path = ?").run(share, peer, relative);
+  }
+
+  /** Differences that started at or before `settledAt` (all of them by default); hidden rows (HIDDEN_DIFF) are no difference. */
+  diffCount(share: string, peer: string, settledAt = Number.MAX_SAFE_INTEGER): number {
+    return (this.statement(`SELECT COUNT(*) AS n FROM diffs WHERE share = ? AND peer = ? AND since <= ? AND kind <> '${HIDDEN_DIFF}'`).get(share, peer, settledAt) as Row).n as number;
+  }
+
+  /** Every diffs row of the pair, hidden ones included: anything at all that keeps the two indexes from agreeing. */
+  pendingCount(share: string, peer: string): number {
+    return (this.statement("SELECT COUNT(*) AS n FROM diffs WHERE share = ? AND peer = ?").get(share, peer) as Row).n as number;
+  }
+
+  diffsPage(share: string, peer: string, settledAt: number, offset: number, limit: number): DiffRow[] {
+    return (this.statement(`SELECT path, since, kind FROM diffs WHERE share = ? AND peer = ? AND since <= ? AND kind <> '${HIDDEN_DIFF}' ORDER BY path LIMIT ? OFFSET ?`).all(share, peer, settledAt, limit, offset) as Row[])
+      .map((row) => ({ path: row.path as string, since: row.since as number, kind: row.kind as string }));
+  }
+
+  /** The earliest start of a difference that is still settling (after `settledAt`), over every peer of the share. */
+  earliestSettling(share: string, settledAt: number): number | undefined {
+    const row = this.statement(`SELECT MIN(since) AS since FROM diffs WHERE share = ? AND since > ? AND kind <> '${HIDDEN_DIFF}'`).get(share, settledAt) as Row;
+    return row.since === null ? undefined : row.since as number;
+  }
+
+  shadowClean(share: string, peer: string): ShadowCleanRow | undefined {
+    const row = this.statement("SELECT peer, clean_since, differences, checked_at FROM shadow_clean WHERE share = ? AND peer = ?").get(share, peer) as Row | undefined;
+    return row ? { peer: row.peer as string, cleanSince: (row.clean_since as number | null) ?? null, differences: row.differences as number, checkedAt: row.checked_at as number } : undefined;
+  }
+
+  putShadowClean(share: string, peer: string, cleanSince: number | null, differences: number, checkedAt: number): void {
+    this.requireTx();
+    this.statement(`INSERT INTO shadow_clean(share, peer, clean_since, differences, checked_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(share, peer) DO UPDATE SET clean_since = excluded.clean_since, differences = excluded.differences, checked_at = excluded.checked_at`).run(share, peer, cleanSince, differences, checkedAt);
+  }
+
+  /** Peers whose differences are tracked for the share (they have a shadow_clean row). */
+  comparedPeers(share: string): string[] {
+    return (this.statement("SELECT peer FROM shadow_clean WHERE share = ? ORDER BY peer").all(share) as Row[]).map((row) => row.peer as string);
+  }
+
+  /** Differences stop being tracked for this peer (not comparable any more). */
+  clearComparison(share: string, peer: string): void {
+    this.requireTx();
+    this.statement("DELETE FROM diffs WHERE share = ? AND peer = ?").run(share, peer);
+    this.statement("DELETE FROM shadow_clean WHERE share = ? AND peer = ?").run(share, peer);
   }
 
   held(share: string): string[] {
@@ -451,6 +646,17 @@ export class FileSyncDb {
   needSummary(share: string): { files: number; bytes: number; blocked: number } {
     const row = this.statement("SELECT COALESCE(SUM(blocked = 0), 0) AS files, COALESCE(SUM(CASE WHEN blocked = 0 THEN t_size ELSE 0 END), 0) AS bytes, COALESCE(SUM(blocked = 1), 0) AS blocked FROM need WHERE share = ?").get(share) as Row;
     return { files: row.files as number, bytes: row.bytes as number, blocked: row.blocked as number };
+  }
+
+  private noncesPrunedAt = Number.NEGATIVE_INFINITY;
+
+  /** Direct listener replay protection: false when the sender used this nonce before. Expired rows go at most once a minute. */
+  consumeNonce(sender: string, nonce: string, now: number, ttlMs: number): boolean {
+    return this.writeTx(() => {
+      if (now - this.noncesPrunedAt >= 60_000) { this.statement("DELETE FROM nonces WHERE expires_at < ?").run(now); this.noncesPrunedAt = now; }
+      // An expired row not pruned yet still refuses its nonce; its timestamp would fail the ±60 s check anyway.
+      return Number(this.statement("INSERT INTO nonces(sender, nonce, expires_at) VALUES (?, ?, ?) ON CONFLICT(sender, nonce) DO NOTHING").run(sender, nonce, now + ttlMs).changes) === 1;
+    });
   }
 
   close(): void {
