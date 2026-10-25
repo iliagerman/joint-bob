@@ -18,6 +18,7 @@ import { projectWorktreeRoot, projectWorktreeSyncFolderId } from "../project-wor
 import { WORKTREE_FOLDER_PREFIX } from "../worktree-filters.js";
 import { peerFetch } from "../relay/transport.js";
 import { notifyRelayPeersChanged } from "../relay/events.js";
+import { listPhases, projectFilesOnSyncthing, projectInsideBuiltin, whileFilesOnSyncthing, withProjectFilesLock } from "../file-sync/control.js";
 
 const deviceId=z.string().regex(/^[A-Z2-7]{7}(?:-[A-Z2-7]{7}){7}$/);
 export const fileEnrollmentSchema=z.object({deviceId,projects:z.array(z.string().min(1).max(300)).max(10000),
@@ -62,24 +63,27 @@ async function enrollFiles(db:DatabaseSync,local:string,peer:string,device:strin
  for(const id of ids){
   if(!mayShareProject(db,local,peer,id))continue;
   const project=await getProject(id);if(!project)continue;
+  // A project on built-in sync here keeps Syncthing out of its folders (cutover-engine, P5); the lock keeps a switch from
+  // releasing them between this check and the folder calls below. A folder over another project that built-in sync moves
+  // here is refused, and reported as skipped (fix P4+P5).
   try{
+   const ticketPath=path.dirname(expectedTaskWorkspacePath(id,'sharing')),worktreePath=projectWorktreeRoot(id);
+   await whileFilesOnSyncthing(id,async()=>{
    const folder=project.syncFolderId??`joint-bob-project-${createHash('sha256').update(id).digest('hex')}`;
    await mkdir(project.path,{recursive:true});
    await ensureSharedProjectFolder(folder,project.name,project.path,device);
    db.prepare("DELETE FROM cluster_v2_file_enrollments WHERE peer_id=? AND project_id=? AND folder_id<>?").run(peer,id,folder);
    if(!project.syncFolderId)await updateProjectSyncFolderId(id,folder);
    save.run(peer,device,folder,id);accepted.push(id);
-   const ticketPath=path.dirname(expectedTaskWorkspacePath(id,'sharing'));
    await mkdir(ticketPath,{recursive:true});
    const ticketFolder=projectTicketSyncFolderId(id);
    await ensureSharedProjectFolder(ticketFolder,`${project.name} tickets`,ticketPath,device);
    save.run(peer,device,ticketFolder,id);
-   const worktreePath=projectWorktreeRoot(id);
    await mkdir(worktreePath,{recursive:true});
    const worktreeFolder=projectWorktreeSyncFolderId(id);
    await ensureSharedProjectFolder(worktreeFolder,`${project.name} worktrees`,worktreePath,device);
    save.run(peer,device,worktreeFolder,id);
-  }catch(error){
+  },db,[project.path,ticketPath,worktreePath]);}catch(error){
    skipped.push({id,name:project.name,error:error instanceof Error?error.message:String(error)});
   }
  }
@@ -99,14 +103,19 @@ export async function receiveFileEnrollment(peer:string,input:unknown){
  const projects=await enroll(db,local.id,peer,payload.deviceId,payload.projects);
  // The peer answers again, so this node's own failed enrollment with it need not wait out its retry.
  retries.delete(peer);
- return {deviceId:device,projects,locations:projectLocations(db,projects)};
+ // Locations of every project asked about: one on built-in sync here is shared all the same, only not through Syncthing.
+ return {deviceId:device,projects,locations:projectLocations(db,payload.projects)};
 }
 async function revokeFiles(db:DatabaseSync,local:string):Promise<void>{
  const rows=db.prepare("SELECT peer_id,device_id,folder_id,project_id FROM cluster_v2_file_enrollments").all() as unknown as Array<{peer_id:string;device_id:string;folder_id:string;project_id:string|null}>;
  for(const row of rows){
   if(row.project_id&&mayShareProject(db,local,row.peer_id,row.project_id))continue;
-  await removeSyncthingDevices([row.device_id],[row.folder_id]);
-  db.prepare("DELETE FROM cluster_v2_file_enrollments WHERE peer_id=? AND folder_id=?").run(row.peer_id,row.folder_id);
+  const revoke=async()=>{
+   // A project on built-in sync has no folder to edit: rewriting one Syncthing just let go of would add it back.
+   if(!row.project_id||projectFilesOnSyncthing(db,row.project_id))await removeSyncthingDevices([row.device_id],[row.folder_id]);
+   db.prepare("DELETE FROM cluster_v2_file_enrollments WHERE peer_id=? AND folder_id=?").run(row.peer_id,row.folder_id);
+  };
+  await (row.project_id?withProjectFilesLock(row.project_id,revoke):revoke());
   notifyRelayPeersChanged();
  }
 }
@@ -114,10 +123,21 @@ export async function sharingFilesStatus(db:DatabaseSync,local:string,peer:strin
  ensureSchema(db);
  const error=db.prepare("SELECT error FROM cluster_v2_file_errors WHERE peer_id=?").get(peer) as {error:string}|undefined;
  if(error)return {ready:false,error:error.error};
+ // Projects on built-in sync here have no Syncthing folders to wait for (cutover-engine, P5); the engine's cursors say
+ // whether this node holds what the peer sent (integrate: facade peerFilesReady, from memory, no request).
+ const shared=sharedProjectIds(db,local,peer),elsewhere=shared.filter(id=>!projectFilesOnSyncthing(db,id));
+ // fix (P4+P5): a project inside one that built-in sync moves here gets no Syncthing folder (the guard refuses it), so it has none to wait for.
+ const onSyncthing:string[]=[];
+ for(const id of shared)if(projectFilesOnSyncthing(db,id)&&!await projectInsideBuiltin(db,id))onSyncthing.push(id);
+ if(elsewhere.length){
+  try{if(!(await (await import("../file-sync/facade.js")).peerFilesReady(peer,elsewhere)).ready)return {ready:false};}
+  catch(error){return {ready:false,error:error instanceof Error?error.message:"File sync status unavailable"};}
+ }
+ if(shared.length&&!onSyncthing.length)return {ready:true};
  // A node that predates worktrees never accepts their folder; it must not hold sharing back.
  const rows=(db.prepare("SELECT device_id,folder_id,project_id FROM cluster_v2_file_enrollments WHERE peer_id=?").all(peer) as unknown as Array<{device_id:string;folder_id:string;project_id:string|null}>)
-  .filter(row=>!row.folder_id.startsWith(WORKTREE_FOLDER_PREFIX));
- if(!rows.length||sharedProjectIds(db,local,peer).some(id=>!rows.some(row=>row.project_id===id)))return {ready:false};
+  .filter(row=>!row.folder_id.startsWith(WORKTREE_FOLDER_PREFIX)&&(!row.project_id||onSyncthing.includes(row.project_id)));
+ if(!rows.length||onSyncthing.some(id=>!rows.some(row=>row.project_id===id)))return {ready:false};
  try{return {ready:await syncthingPeerCaughtUp(rows[0].device_id,rows.map(row=>row.folder_id))};}
  catch(error){return {ready:false,error:error instanceof Error?error.message:"Syncthing status unavailable"};}
 }
@@ -131,7 +151,10 @@ const enrolled=new Map<string,string>();
 const retries=new Map<string,{count:number;state:string;at:number}>();
 function enrollmentState(db:DatabaseSync,projects:string[]):string{
  const lookup=db.prepare("SELECT id,name,path,sync_folder_id FROM projects WHERE id=?");
- return JSON.stringify([syncthingConnectionGeneration(),projects.map(id=>lookup.get(id))]);
+ // The phase too: a project back on Syncthing after built-in sync gets its folders again at the next flush, and so does one
+ // inside another project that just left built-in sync (fix P4+P5: the guard refused it meanwhile).
+ const engineProjects=[...listPhases(db).values()].filter(record=>record.phase!=="syncthing").map(record=>record.projectId).sort();
+ return JSON.stringify([syncthingConnectionGeneration(),projects.map(id=>[lookup.get(id),projectFilesOnSyncthing(db,id)]),engineProjects]);
 }
 
 export async function flushSharingFiles():Promise<void>{

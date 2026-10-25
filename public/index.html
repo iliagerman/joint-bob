@@ -734,6 +734,7 @@
           <option value="git">Git</option>
           <option value="classifiers">Classifiers</option>
           <option value="resources" data-admin-only>Resources</option>
+          <option value="file-sync" data-admin-only>File sync</option>
           <option value="shortcuts">Shortcuts</option>
           <option value="updates" data-admin-only>Updates</option>
           <option value="logs">Client logs</option>
@@ -770,6 +771,7 @@
           <div class="settings-group-label" role="presentation">This node</div>
           <button class="settings-tab" type="button" data-settings-tab="node" role="tab" id="settingsTab-node" aria-controls="settingsPanel-node" aria-selected="false" tabindex="-1" data-testid="settings-tab-node" data-admin-only><span class="settings-tab-icon" style="--tile:#64748b" aria-hidden="true">🖥️</span><span class="settings-tab-label">Node</span></button>
           <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources" data-admin-only><span class="settings-tab-icon" style="--tile:#84cc16" aria-hidden="true">📊</span><span class="settings-tab-label">Resources</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="file-sync" role="tab" id="settingsTab-file-sync" aria-controls="settingsPanel-file-sync" aria-selected="false" tabindex="-1" data-testid="settings-tab-file-sync" data-admin-only><span class="settings-tab-icon" style="--tile:#14b8a6" aria-hidden="true">🔄</span><span class="settings-tab-label">File sync</span></button>
           <button class="settings-tab" type="button" data-settings-tab="users" role="tab" id="settingsTab-users" aria-controls="settingsPanel-users" aria-selected="false" tabindex="-1" data-testid="settings-tab-users" data-admin-only><span class="settings-tab-icon" style="--tile:#f43f5e" aria-hidden="true">👥</span><span class="settings-tab-label">Users</span></button>
           <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates" data-admin-only><span class="settings-tab-icon" style="--tile:#22c55e" aria-hidden="true">⬇️</span><span class="settings-tab-label">Updates</span></button>
           <button class="settings-tab" type="button" data-settings-tab="logs" role="tab" id="settingsTab-logs" aria-controls="settingsPanel-logs" aria-selected="false" tabindex="-1" data-testid="settings-tab-logs"><span class="settings-tab-icon" style="--tile:#78716c" aria-hidden="true">📜</span><span class="settings-tab-label">Client logs</span></button>
@@ -1649,6 +1651,75 @@
             <button class="ghost" id="canvasKeymapResetButton" type="button" data-testid="canvas-keymap-reset-button">Reset to defaults</button>
             <button class="primary" id="canvasKeymapSaveButton" type="button" data-testid="canvas-keymap-save-button">Save shortcuts</button>
           </div>
+        </section>
+
+        <!-- settings-page (P4): Settings → File sync, filled by app/file-sync-settings.js. -->
+        <section class="settings-panel relay-panel file-sync-panel" id="settingsPanel-file-sync" role="tabpanel" aria-labelledby="settingsTab-file-sync" tabindex="0" data-testid="settings-panel-file-sync" data-admin-only hidden>
+          <div class="relay-head">
+            <p class="settings-hint">Joint Bob can copy project files between your machines itself, instead of Syncthing. Changes here apply at once. Only you, the admin of this node, see this section.</p>
+            <button class="ghost compact" type="button" id="fileSyncRefresh" data-testid="file-sync-refresh-button">Refresh</button>
+          </div>
+          <p class="settings-hint relay-inline-status" id="fileSyncLoadStatus" role="status" data-testid="file-sync-load-status"></p>
+          <div class="settings-subtabs" id="fileSyncTabs" role="tablist" aria-label="File sync sections">
+            <button class="settings-subtab" type="button" role="tab" id="fileSyncTab-status" data-file-sync-tab="status" aria-controls="fileSyncStatusSection" aria-selected="true" data-testid="file-sync-tab-status">Status</button>
+            <button class="settings-subtab" type="button" role="tab" id="fileSyncTab-differences" data-file-sync-tab="differences" aria-controls="fileSyncDifferencesSection" aria-selected="false" data-testid="file-sync-tab-differences">Differences <span class="cluster-tab-count" id="fileSyncDifferencesCount" data-testid="file-sync-differences-count"></span></button>
+          </div>
+
+          <section class="relay-section file-sync-section" id="fileSyncStatusSection" role="tabpanel" aria-labelledby="fileSyncTab-status" data-testid="file-sync-status-section">
+            <div class="relay-summary file-sync-engine" data-testid="file-sync-engine">
+              <label class="checkbox-row"><input type="checkbox" id="fileSyncEnabled" data-testid="file-sync-enabled-toggle" /> Built-in file sync on this machine</label>
+              <span class="cluster-badge" id="fileSyncWorker" data-testid="file-sync-worker">Off</span>
+              <button class="ghost compact" type="button" id="fileSyncRetry" data-testid="file-sync-retry-button" hidden>Try again</button>
+              <span class="cluster-muted" id="fileSyncAddresses" data-testid="file-sync-addresses"></span>
+            </div>
+            <p class="settings-hint relay-inline-status" id="fileSyncEngineStatus" role="status" data-testid="file-sync-engine-status"></p>
+            <div class="file-sync-overview" id="fileSyncOverview" data-testid="file-sync-overview">
+              <h3 class="file-sync-heading">Machines</h3>
+              <div class="relay-list file-sync-peers" id="fileSyncPeerList" data-testid="file-sync-peer-list"></div>
+              <div class="relay-pager" id="fileSyncPeerPager" data-testid="file-sync-peer-pager" hidden></div>
+              <h3 class="file-sync-heading">Projects</h3>
+              <p class="settings-hint relay-inline-status" id="fileSyncProjectsStatus" role="status" data-testid="file-sync-projects-status"></p>
+              <div class="relay-list file-sync-projects" id="fileSyncProjectList" data-testid="file-sync-project-list"></div>
+              <div class="relay-pager" id="fileSyncProjectPager" data-testid="file-sync-project-pager" hidden></div>
+            </div>
+            <div class="file-sync-detail" id="fileSyncProjectDetail" data-testid="file-sync-project-detail" hidden>
+              <div class="file-sync-detail-head">
+                <button class="ghost compact" type="button" id="fileSyncDetailBack" data-testid="file-sync-detail-back">All projects</button>
+                <strong id="fileSyncDetailName" data-testid="file-sync-detail-name"></strong>
+                <span class="cluster-badge" id="fileSyncDetailState" data-testid="file-sync-detail-state"></span>
+              </div>
+              <div class="file-sync-facts" id="fileSyncDetailFacts" data-testid="file-sync-detail-facts"></div>
+              <div class="relay-row-actions file-sync-detail-actions" id="fileSyncDetailActions" data-testid="file-sync-detail-actions"></div>
+              <p class="settings-hint" id="fileSyncMoveReason" data-testid="file-sync-move-reason" hidden></p>
+              <p class="settings-hint relay-inline-status" id="fileSyncDetailStatus" role="status" data-testid="file-sync-detail-status"></p>
+              <ul class="relay-check-list" id="fileSyncChecks" data-testid="file-sync-checks"></ul>
+              <p class="settings-hint" id="fileSyncCleanSince" data-testid="file-sync-clean-since" hidden></p>
+              <h3 class="file-sync-heading" id="fileSyncErrorsHeading" hidden>Files with problems</h3>
+              <div class="settings-subtabs" id="fileSyncErrorShares" role="group" aria-label="Show problems in" hidden></div>
+              <div class="relay-list" id="fileSyncErrorList" data-testid="file-sync-error-list" hidden></div>
+              <div class="relay-pager" id="fileSyncErrorPager" data-testid="file-sync-error-pager" hidden></div>
+            </div>
+          </section>
+
+          <section class="relay-section file-sync-section" id="fileSyncDifferencesSection" role="tabpanel" aria-labelledby="fileSyncTab-differences" data-testid="file-sync-differences-section" hidden>
+            <p class="settings-hint">While Syncthing still moves a project's files, Joint Bob compares its own view of them with each machine. A project is ready to move to built-in sync when nothing differs.</p>
+            <div class="file-sync-overview" id="fileSyncDiffOverview">
+              <div class="relay-list" id="fileSyncDiffList" data-testid="file-sync-diff-list"></div>
+              <div class="relay-pager" id="fileSyncDiffPager" data-testid="file-sync-diff-pager" hidden></div>
+            </div>
+            <div class="file-sync-detail" id="fileSyncDiffDetail" data-testid="file-sync-diff-detail" hidden>
+              <div class="file-sync-detail-head">
+                <button class="ghost compact" type="button" id="fileSyncDiffBack" data-testid="file-sync-diff-back">All projects</button>
+                <strong id="fileSyncDiffName" data-testid="file-sync-diff-name"></strong>
+                <span class="cluster-muted" id="fileSyncDiffMatching" data-testid="file-sync-diff-matching"></span>
+                <span class="relay-row-actions file-sync-head-actions" id="fileSyncDiffActions"></span>
+              </div>
+              <div class="settings-subtabs" id="fileSyncDiffShares" role="group" aria-label="Show differences in" hidden></div>
+              <p class="settings-hint relay-inline-status" id="fileSyncDiffStatus" role="status" data-testid="file-sync-diff-status"></p>
+              <div class="relay-list" id="fileSyncDiffItems" data-testid="file-sync-diff-items"></div>
+              <div class="relay-pager" id="fileSyncDiffItemsPager" data-testid="file-sync-diff-items-pager" hidden></div>
+            </div>
+          </section>
         </section>
 
         <section class="settings-panel" id="settingsPanel-updates" role="tabpanel" aria-labelledby="settingsTab-updates" tabindex="0" hidden data-admin-only>
@@ -2601,7 +2672,7 @@
       <div class="dialog-card handoff-progress-card">
         <div>
           <span class="eyebrow">Ticket handoff</span>
-          <h2>Waiting for Syncthing</h2>
+          <h2>Waiting for files to copy</h2>
         </div>
         <p id="handoffProgressStatus" role="status" aria-live="polite" data-testid="handoff-progress-status"></p>
         <progress aria-label="Handoff progress"></progress>

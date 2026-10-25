@@ -71,11 +71,12 @@ export function parseFileSyncPart(message: unknown, env: NodeJS.ProcessEnv = pro
   };
 }
 
-export interface HelloFileSync { protocol: number; minProtocol: number; origins: string[]; enabled: boolean }
+/** `enabled` absent: this node could not read its own switch (integrate: unknown, which an owner must not take for off). */
+export interface HelloFileSync { protocol: number; minProtocol: number; origins: string[]; enabled?: boolean }
 
 /** This node's part of a /hello body and answer. Old receivers ignore the body; old senders ignore the answer. */
-export function helloFileSync(self: { origins: readonly string[]; enabled: boolean }): HelloFileSync {
-  return { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [...self.origins], enabled: self.enabled };
+export function helloFileSync(self: { origins: readonly string[]; enabled: boolean | undefined }): HelloFileSync {
+  return { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [...self.origins], ...(self.enabled !== undefined ? { enabled: self.enabled } : {}) };
 }
 
 /** Records what a peer said about its engine; listeners hear of it only when its origins or capability changed. */

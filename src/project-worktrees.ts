@@ -5,7 +5,7 @@ import { getClusterNode } from "./cluster.js";
 import { syncConversationWorktrees } from "./conversation-records.js";
 import { managedHomePaths } from "./managed-home.js";
 import { applyMergeTransaction, recordMergeTransaction, rollbackMergeTransaction, type MergeOp } from "./merge-journal.js";
-import { worktreeFilesChanged } from "./file-sync/facade.js";
+import { worktreeFilesChanged, worktreeHasPendingFiles } from "./file-sync/facade.js";
 import { getSettings } from "./settings.js";
 import { promisify } from "node:util";
 import { execFile, spawn } from "./subprocess.js";
@@ -163,7 +163,7 @@ async function registerLocalPath(worktree: string, nodeId: string): Promise<void
   try { if (await fs.readFile(file, "utf8") === content) return; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   await writeAtomic(file, content);
-  worktreeFilesChanged(path.basename(path.dirname(worktree)));
+  worktreeFilesChanged(path.basename(path.dirname(worktree)), file);
 }
 
 export async function listProjectWorktrees(projectId: string, root = worktreeRoot()): Promise<ProjectWorktree[]> {
@@ -323,7 +323,7 @@ export async function createProjectWorktree(project: ProjectRecord, input: { nam
     if (uncommittedDiff) await writeAtomic(path.join(staging, WORKTREE_META_DIR, "base.patch"), uncommittedDiff);
     await fs.rename(staging, worktree);
     await registerLocalPath(worktree, node.id);
-    worktreeFilesChanged(project.id);
+    worktreeFilesChanged(project.id, worktree);
     return view(project.id, worktree, metadata);
   } catch (error) {
     await fs.rm(staging, { recursive: true, force: true });
@@ -342,7 +342,7 @@ export async function updateProjectWorktree(projectId: string, worktreeId: strin
   }
   const next = { ...metadata, name, color: normalizeColor(input.color, metadata.color) };
   await writeAtomic(metadataFile(worktree), `${JSON.stringify(next, null, 2)}\n`);
-  worktreeFilesChanged(projectId);
+  worktreeFilesChanged(projectId, metadataFile(worktree));
   await carryToConversationRecords(projectId, worktreeId, { id: worktreeId, name: next.name, color: next.color });
   return view(projectId, worktree, next);
 }
@@ -353,13 +353,13 @@ async function carryToConversationRecords(projectId: string, worktreeId: string,
   catch (error) { console.warn(`Could not update conversation records for worktree ${worktreeId}`, error); }
 }
 
-/** Deleting the folder is the deletion: Syncthing removes it from every node sharing the project. */
+/** Deleting the folder is the deletion: file sync removes it from every node sharing the project. */
 export async function deleteProjectWorktree(projectId: string, worktreeId: string, root = worktreeRoot()): Promise<void> {
   const worktree = expectedWorktreePath(projectId, worktreeId, root);
   if (!await readMetadata(worktree)) throw new ProjectWorktreeError(404, "Worktree not found");
   await fs.rm(metadataFile(worktree), { force: true });
   await fs.rm(worktree, { recursive: true, force: true });
-  worktreeFilesChanged(projectId);
+  worktreeFilesChanged(projectId, worktree);
   await carryToConversationRecords(projectId, worktreeId, null);
 }
 
@@ -374,7 +374,7 @@ export async function markWorktreeConversation(projectId: string, worktreeId: st
   try { await fs.access(file); return; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   await writeAtomic(file, `${JSON.stringify({ engine, sessionId, createdAt: new Date().toISOString() })}\n`);
-  worktreeFilesChanged(projectId);
+  worktreeFilesChanged(projectId, file);
 }
 
 /** `engine:sessionId` → worktree, for every conversation started inside a worktree of the project. */
@@ -444,6 +444,8 @@ async function mergeLocked(project: ProjectRecord, worktreeId: string, root: str
   const worktree = expectedWorktreePath(project.id, worktreeId, root);
   const metadata = await readMetadata(worktree);
   if (!metadata) throw new ProjectWorktreeError(404, "Worktree not found");
+  // Built-in sync: newer files of the worktree still on their way would leave this merge working from an older copy (design §6.5).
+  if (await worktreeHasPendingFiles(project.id, worktreeId)) throw new ProjectWorktreeError(409, "Files of this worktree are still arriving from another machine; merge again in a moment");
   const projectRoot = await fs.realpath(project.path).catch(() => { throw new ProjectWorktreeError(409, "Project folder is not available on this node"); });
   const workspace = await fs.realpath(worktree);
   try {
@@ -485,7 +487,7 @@ async function mergeLocked(project: ProjectRecord, worktreeId: string, root: str
     // The merged worktree is the new common ancestor, so the next merge only carries later edits.
     const baselineDigest = await captureBaseline(workspace, worktreePathAllowed, [WORKTREE_META_DIR, TICKET_MERGE_DIR]);
     await writeAtomic(metadataFile(workspace), `${JSON.stringify({ ...metadata, baselineDigest, lastMergedAt: new Date().toISOString() }, null, 2)}\n`);
-    worktreeFilesChanged(project.id);
+    worktreeFilesChanged(project.id, metadataFile(worktree));
     return { merged: true, applied: ops.filter((op) => op.op === "write").length, deleted: ops.filter((op) => op.op === "delete").length, conflicts: [] };
   } finally {
     await fs.rm(path.join(workspace, TICKET_MERGE_DIR), { recursive: true, force: true });
@@ -576,6 +578,6 @@ export async function recordWorktreePullRequest(projectId: string, worktreeId: s
   if (!metadata) throw new ProjectWorktreeError(404, "Worktree not found");
   const next = { ...metadata, pullRequest };
   await writeAtomic(metadataFile(worktree), `${JSON.stringify(next, null, 2)}\n`);
-  worktreeFilesChanged(projectId);
+  worktreeFilesChanged(projectId, metadataFile(worktree));
   return view(projectId, worktree, next);
 }

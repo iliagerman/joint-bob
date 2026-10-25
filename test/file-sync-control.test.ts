@@ -502,8 +502,9 @@ test("the engine's configure, its records and capability events, and the admin r
   assert.deepEqual([status.body.worker, status.body.origins, (status.body.config as Record<string, unknown>).shadowProjectsBy], ["running", ["http://127.0.0.1:22755"], "environment"]);
   const peers = (status.body.peers as Array<Record<string, unknown>>).map(({ heardAt, ...rest }) => ({ ...rest, heard: typeof heardAt === "string" }));
   assert.deepEqual(peers, [
-    { nodeId: PEER, present: true, protocol: 1, enabled: true, origins: ["http://192.168.1.20:22700"], route: "direct", heard: true },
-    { nodeId: SECOND, present: true, protocol: null, enabled: null, origins: [], route: "none", heard: false },
+    // switchCapable (fix P4+P5): protocol 1 has the engine but not the per-project switch.
+    { nodeId: PEER, present: true, protocol: 1, switchCapable: false, enabled: true, origins: ["http://192.168.1.20:22700"], route: "direct", heard: true },
+    { nodeId: SECOND, present: true, protocol: null, switchCapable: null, enabled: null, origins: [], route: "none", heard: false },
   ]);
 
   assert.deepEqual(await call("GET", "/errors?share=project:alpha&page=2&pageSize=5"), { status: 200, body: errorsPage });

@@ -13,6 +13,7 @@ import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { replicationPeers } from "./replication-v2.js";
 import { fetchPeer } from "./peer-availability.js";
+import { noteHandoffFiles } from "../file-sync/facade.js";
 
 const runtimeSockets=new Map<WebSocket,{peer:string;projectId:string}>();
 export function trackRuntimeSocket(socket:WebSocket,peer:string,projectId:string):void{
@@ -90,6 +91,10 @@ export function dispatchSignedRuntime(request:Request,response:Response,next:Nex
  if(!/^(tasks\/|sessions\/|browser\/|git\/|projects\/presence$|project-file|project-files$|cron$|quick-notes\/prepare$|background-tasks$|resources\/(?:inventory|manage-inventory|activation(?:\/(?:item|bulk))?)$)/.test(suffix)||!machineRoutes.has(`${request.method} ${target}`)){
   response.status(404).json({error:'Unsupported signed runtime route'});return;
  }
+ // A handoff source says how far its files reached (design §6.5); the handlers' schemas drop the part, so it is taken here,
+ // after twinRuntimeGuard checked the project is shared with the sender. Old sources send nothing and nothing changes.
+ const body=request.body as {projectId?:unknown;fileSync?:unknown}|undefined;
+ if((suffix==='tasks/eligibility'||suffix==='tasks/prepare')&&body?.fileSync!==undefined&&typeof response.locals.machineNodeId==='string')noteHandoffFiles(response.locals.machineNodeId,body.projectId,body.fileSync);
  request.url=request.url.replace(prefix,'/api/cluster/');next();
 }
 

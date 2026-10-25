@@ -7,10 +7,14 @@ import { removeTaskWorkspace, TaskWorkspaceError, taskWorkspaceKey } from "../ta
 import { abortOutgoingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, completeTaskHandoff, deleteTask, getTaskHandoff, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, type TaskHandoffRecord, unmergedWorkspaceBlocksClose, updateTask } from "../tasks.js";
 import type { ProjectRecord, TaskRecord } from "../types.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, TaskWorktreeError } from "../worktrees.js";
-import { abortPeerTaskHandoff, assertTaskFilesReady, peerTaskEligibilitySchema, publicClusterPeer } from "./cluster-helpers.js";
+import { abortPeerTaskHandoff, assertTaskFilesReady, peerTaskEligibilitySchema, publicClusterPeer, taskHandoffFiles } from "./cluster-helpers.js";
+import { READY_FLUSH_MS } from "../file-sync/facade.js";
 import { broadcastToProject } from "./realtime.js";
 import { taskHandoffDeletionSchema } from "./schemas.js";
 import { taskHandoffContext, taskRunActive } from "./task-runs.js";
+
+/** How long a handoff of a project on built-in sync waits for the destination to receive this node's latest files. */
+const HANDOFF_FILES_WAIT_MS = 30_000;
 
 export async function ownerPeer(task: TaskRecord, localId: string): Promise<ClusterPeer | undefined> {
   return task.currentNodeId === localId ? undefined : getRuntimePeer(task.currentNodeId);
@@ -120,7 +124,8 @@ async function resumeRemotePendingHandoff(record: TaskHandoffRecord, peer: Clust
   }
   const handoffContext = await taskHandoffContext(project, task);
   await assertTaskFilesReady(project, task);
-  const response = await runtimeFetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: record.projectId, task, handoffId: record.handoffId, handoffContext, handoffVersion: record.createdAt, bundle }), signal: AbortSignal.timeout(30_000) });
+  const files = await taskHandoffFiles(project, task, READY_FLUSH_MS);
+  const response = await runtimeFetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: record.projectId, task, handoffId: record.handoffId, handoffContext, handoffVersion: record.createdAt, bundle, ...files }), signal: AbortSignal.timeout(30_000) });
   if (!response.ok) return undefined;
   await markOutgoingTaskHandoff(record.handoffId, "prepared");
   return commitOutgoingTaskHandoff(record);
@@ -176,9 +181,20 @@ export async function handoffOwnedTask(project: ProjectRecord, task: TaskRecord,
   if (taskRunActive(task.id) || (task.leaseExpiresAt && Date.parse(task.leaseExpiresAt) > Date.now())) throw new TaskWorktreeError("Task has an active run or lease");
   const peer = await getRuntimePeer(peerId);
   if (!peer) throw new Error("Peer not found");
-  const eligibility = await runtimeFetch(`${peer.url}/api/cluster/tasks/eligibility`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task }), signal: AbortSignal.timeout(3_000) });
-  if (!eligibility.ok) throw new Error(`Peer eligibility check failed: ${eligibility.status}`);
-  const eligibilityResult = peerTaskEligibilitySchema.parse(await eligibility.json());
+  // Picked up before the question, so the destination checks against this node's latest files.
+  const eligibilityFiles = await taskHandoffFiles(project, task, READY_FLUSH_MS);
+  const askEligibility = async () => {
+    const eligibility = await runtimeFetch(`${peer.url}/api/cluster/tasks/eligibility`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task, ...eligibilityFiles }), signal: AbortSignal.timeout(3_000) });
+    if (!eligibility.ok) throw new Error(`Peer eligibility check failed: ${eligibility.status}`);
+    return peerTaskEligibilitySchema.parse(await eligibility.json());
+  };
+  let eligibilityResult = await askEligibility();
+  // On built-in sync the destination pulls the moment it hears how far this node got: changes picked up just now arrive
+  // within seconds, so it is asked again for a while instead of failing a handoff the dialog had already seen ready.
+  for (const deadline = Date.now() + HANDOFF_FILES_WAIT_MS; eligibilityFiles.fileSync && !eligibilityResult.eligible && eligibilityResult.waitingForSync && Date.now() < deadline;) {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    eligibilityResult = await askEligibility();
+  }
   if (!eligibilityResult.eligible) throw new TaskWorktreeError(eligibilityResult.reasons.join("; "));
   const previous = (await listUnfinishedOutgoingTaskHandoffs()).find((candidate) => candidate.projectId === project.id && candidate.taskId === task.id && candidate.destinationNodeId === peer.id);
   await assertTaskFilesReady(project, task);
@@ -214,7 +230,8 @@ export async function handoffOwnedTask(project: ProjectRecord, task: TaskRecord,
   }
   try {
     await assertTaskFilesReady(project, task);
-    const prepared = await runtimeFetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task: outgoing.task, handoffId: outgoing.handoffId, handoffContext, handoffVersion: outgoing.createdAt, bundle }), signal: AbortSignal.timeout(30_000) });
+    const files = await taskHandoffFiles(project, task, READY_FLUSH_MS);
+    const prepared = await runtimeFetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task: outgoing.task, handoffId: outgoing.handoffId, handoffContext, handoffVersion: outgoing.createdAt, bundle, ...files }), signal: AbortSignal.timeout(30_000) });
     if (!prepared.ok) return pendingHandoffResponse((await listTasks(project.id)).find((candidate) => candidate.id === task.id) as TaskRecord, peer);
   } catch {
     return pendingHandoffResponse((await listTasks(project.id)).find((candidate) => candidate.id === task.id) as TaskRecord, peer);

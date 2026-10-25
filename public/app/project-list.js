@@ -217,7 +217,7 @@ function projectRow(project) {
     // The sync status is a sibling of the path, not a child: the path truncates,
     // and a truncated path used to swallow the status entirely.
     const syncStatus = document.createElement("em");
-    const status = project.syncStatus || { state: "unavailable", message: "Syncthing status is unavailable" };
+    const status = project.syncStatus || { state: "unavailable", message: "Sync status is unavailable" };
     const syncLabels = { synced: "Synced", syncing: "Syncing", paused: "Paused", error: "Error", unavailable: "Unavailable" };
     syncStatus.className = `project-sync-status project-sync-status-${status.state}`;
     syncStatus.dataset.testid = "project-sync-status";
@@ -336,11 +336,11 @@ function projectMenuItems(project) {
       onSelect: () => openSecretScope("project", project.id, project.name).catch((error) => toast(error.message)),
     },
     {
-      label: "Rescan with Syncthing",
+      label: "Rescan files",
       icon: "refresh",
       testid: "project-rescan-button",
       disabled: !project.syncFolderId,
-      title: project.syncFolderId ? "Rescan project with Syncthing" : "Project is not synchronized with Syncthing",
+      title: project.syncFolderId ? "Look for changed files in this project now" : "This project is not synchronized with other machines",
       onSelect: () => rescanProject(project).catch((error) => toast(error.message, 8000)),
     },
     {

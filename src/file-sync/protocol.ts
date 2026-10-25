@@ -1,6 +1,6 @@
 import type { KeyObject } from "node:crypto";
 import { z } from "zod";
-import type { EngineRecord, IndexEntry, Phase, SettingsRecord, ShareKind, ShareState } from "./types.js";
+import type { EngineMode, EngineRecord, IndexEntry, Phase, SettingsRecord, ShareKind, ShareState } from "./types.js";
 
 /* Messages between the main thread (control plane) and the worker core (data plane). The worker is the
    only writer of file-sync.db; main owns everything durable (node.db) and pushes the desired state with
@@ -93,6 +93,8 @@ export interface PeerShareStatus {
   route: "direct" | "relay" | "none";
   /** Received from this peer for the share since the worker started (builtin transfers): bytes by route, files applied. */
   transfer?: { directBytes: number; relayBytes: number; files: number };
+  /** cutover-engine (P5): the peer's announced builtin_since (null: not on built-in sync there, or not heard). */
+  builtinSince?: number | null;
 }
 
 export interface ShareStatus {
@@ -114,9 +116,15 @@ export interface ShareStatus {
   watch: string;
   message?: string;
   peers: PeerShareStatus[];
+  /** cutover-engine (P5): this node's maxSeq when its switch bootstrapped the share; null outside a switch. */
+  builtinSince?: number | null;
+  /** cutover-engine (P5): the project's engine as its owner recorded it (main fills it in; the phase above is this node's progress). */
+  engine?: EngineMode;
 }
 
 export interface ListPage<T> { total: number; items: T[] }
+/** Need rows under a prefix, blocked ones left out: `files` can arrive now; `waiting` only from `waiting.peers`, none of them available. */
+export interface PendingFiles { files: number; bytes: number; waiting: { files: number; bytes: number; peers: string[] } }
 export interface DifferenceItem { path: string; kind: "only-here" | "only-there" | "content" | "mode"; local?: Pick<IndexEntry, "size" | "mtimeMs" | "sha256" | "deleted">; remote?: Pick<IndexEntry, "size" | "mtimeMs" | "sha256" | "deleted">; since: string }
 export interface ErrorItem { path: string; kind: "error" | "notice" | "blocked"; reason: string; at: string }
 
@@ -199,6 +207,8 @@ export const opSchemas = {
   /** Writes what a transfer brought (or a move, a local copy) into the tree (§5.5); builtin phase only. */
   applyBatch: z.object({ share: z.string(), items: z.array(applyItemSchema).max(1000) }),
   repair: z.object({ share: z.string(), peer: z.string() }),
+  /** fix (P4+P5): need rows under `prefix` (a worktree): what can arrive now from `availablePeers` or a local copy, and what only an unavailable peer has. */
+  pending: z.object({ share: z.string(), prefix: z.string(), availablePeers: z.array(z.string()) }),
   /** Answered by the worker's adapter (its network layer), not the core. */
   stats: z.object({}),
   /** Main's event loop is busy (ELU > 70 % for 10 s) or calm again: new relay-fallback transfers wait meanwhile (§6.2). */
@@ -228,6 +238,7 @@ export interface OpResults {
   nextNeeds: { items: NeedItem[]; nextRetryAt?: number };
   applyBatch: ApplyBatchResult;
   repair: Record<string, never>;
+  pending: PendingFiles;
   stats: { requests: RequestStats };
   pace: Record<string, never>;
   stop: Record<string, never>;
@@ -289,5 +300,8 @@ export type ServeMessage = { serveChunk: number; chunk: ArrayBuffer } | { serveE
 export type ServeControl = { serveAck: number; bytes: number } | { serveCancel: number };
 
 /** Version of the wire protocol between engines. Additive changes keep it; a required new behavior bumps it. */
-export const FILE_SYNC_PROTOCOL = 1;
+export const FILE_SYNC_PROTOCOL = 2;
+/** Older engines still compare in shadow mode: protocol 1 (2.157, 2.158) has the engine but not the switch. */
 export const FILE_SYNC_MIN_PROTOCOL = 1;
+/** cutover-engine (P5): a peer below this never leaves Syncthing for a switched project, so a project it shares stays on Syncthing (or moves back). */
+export const FILE_SYNC_SWITCH_PROTOCOL = 2;

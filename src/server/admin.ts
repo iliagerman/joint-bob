@@ -17,7 +17,9 @@ export const ADMIN_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "PUT", path: /^\/settings$/ },
   { method: "*", path: /^\/settings\/(sync-check|runtime-defaults|runtime-check|skills)(\/|$)/ },
   { method: "*", path: /^\/terminal-policy$/ },
-  // The file sync engine's status and switch (GET /file-sync/status, PUT /file-sync/config); peers use /cluster/v2/files.
+  // The file sync engine's status and switch (GET /file-sync/status, PUT /file-sync/config) and each project's move
+  // between Syncthing and built-in sync (GET /file-sync/projects, GET /file-sync/engine/checks, POST /file-sync/engine);
+  // peers use /cluster/v2/files.
   { method: "*", path: /^\/file-sync(\/|$)/ },
   { method: "*", path: /^\/node-blocks(\/|$)/ },
   { method: "*", path: /^\/users(\/|$)/ },

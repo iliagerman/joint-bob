@@ -14,7 +14,7 @@ import { signClusterRequest } from "../src/cluster-protocol.js";
 import { ensureTwinSchema } from "../src/cluster-twins.js";
 import { clusterV2Database } from "../src/cluster-v2-store.js";
 import { servingBridge, WorkerBridge, workerLaunch } from "../src/file-sync/bridge.js";
-import { STREAM_WINDOW_BYTES } from "../src/file-sync/protocol.js";
+import { FILE_SYNC_MIN_PROTOCOL, FILE_SYNC_PROTOCOL, STREAM_WINDOW_BYTES } from "../src/file-sync/protocol.js";
 import { verifyRequest } from "../src/file-sync/signing.js";
 import { sharesAnswerSchema } from "../src/file-sync/wire.js";
 import { systemClock } from "../src/file-sync/types.js";
@@ -121,7 +121,7 @@ test("with file sync off, main's files routes say so: shares answers enabled fal
   const shares = await fromPeer("GET", "/api/cluster/v2/files/shares");
   assert.equal(shares.status, 200);
   const off = await shares.json() as { hostId: string };
-  assert.deepEqual(off, { fileSync: { protocol: 1, minProtocol: 1, enabled: false }, nodeId: localId, hostId: off.hostId, origins: [], shares: [], engines: [], settings: [] });
+  assert.deepEqual(off, { fileSync: { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, enabled: false }, nodeId: localId, hostId: off.hostId, origins: [], shares: [], engines: [], settings: [] });
   assert.doesNotThrow(() => sharesAnswerSchema.parse(off), "a capable peer can read the answer");
   for (const [method, target, payload] of [["GET", "/api/cluster/v2/files/index?projectId=p1&kind=project&since=0", undefined], ["POST", "/api/cluster/v2/files/changed", { shares: [] }], ["POST", "/api/cluster/v2/files/fetch", { items: [] }], ["POST", "/api/cluster/v2/files/file", {}], ["POST", "/api/cluster/v2/files/status", { projectId: "p1" }]] as const) {
     const response = await fromPeer(method, target, payload);
@@ -130,6 +130,32 @@ test("with file sync off, main's files routes say so: shares answers enabled fal
   }
   const unsigned = await fetch(new URL("/api/cluster/v2/files/shares", origin));
   assert.equal(unsigned.status, 401, "the routes sit behind cluster authentication");
+});
+
+// fix (P4+P5): the switch's own endpoint is main's, answered whether or not the worker runs, behind the same authentication.
+test("the switch endpoint answers only signed peers the project is shared with, and checks its body", async () => {
+  const notShared = await fromPeer("POST", "/api/cluster/v2/files/switch", { projectId: "nobody-shares-this" });
+  assert.equal(notShared.status, 403);
+  assert.deepEqual(await notShared.json(), { error: "Project is not shared with this node" });
+  const malformed = await fromPeer("POST", "/api/cluster/v2/files/switch", { projectId: "p1", report: { phase: "elsewhere", error: null } });
+  assert.equal(malformed.status, 400);
+  const unsigned = await fetch(new URL("/api/cluster/v2/files/switch", origin), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: "p1" }) });
+  assert.equal(unsigned.status, 401);
+});
+
+test("switched on while its worker does not serve yet (starting, restarting), main's files routes say it is starting, never off", async () => {
+  // A peer reading "off" here would have the owner move its built-in projects back to Syncthing (migration.ts).
+  const { controlDatabase, writeFileSyncConfig } = await import("../src/file-sync/control.js");
+  const db = await controlDatabase();
+  writeFileSyncConfig(db, { enabled: true }, {});
+  try {
+    assert.equal(servingBridge(), undefined);
+    for (const [method, target, payload] of [["GET", "/api/cluster/v2/files/shares", undefined], ["POST", "/api/cluster/v2/files/status", { projectId: "p1" }]] as const) {
+      const response = await fromPeer(method, target, payload);
+      assert.equal(response.status, 503, target);
+      assert.deepEqual(await response.json(), { error: "File sync is starting on this node" });
+    }
+  } finally { writeFileSyncConfig(db, { enabled: false }, {}); }
 });
 
 test("a relayRequest is signed by main, fetched from the peer's replication URL and streamed back to the worker within the 4 MiB window", async () => {

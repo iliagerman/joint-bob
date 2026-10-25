@@ -15,6 +15,7 @@ const FILES = "/api/cluster/v2/files";
 /** Same ceiling as the direct listener: POST bodies are small JSON. */
 const MAX_BODY_BYTES = 1024 * 1024;
 const OFF = "File sync is off on this node";
+const STARTING = "File sync is starting on this node";
 const HOP_BY_HOP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection", "te", "trailer"]);
 
 function machineOnly(response: Response): string {
@@ -39,6 +40,14 @@ async function offSharesAnswer(): Promise<unknown> {
     fileSync: { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, enabled: false },
     nodeId: (await getClusterNode()).id, hostId: fileSyncHostId(), origins: [], shares: [], engines: [], settings: [],
   };
+}
+
+/** This node's switch (Settings or the environment). Unreadable settings are not "off", as the hello's part leaves them out: the peer tries again later. */
+async function switchedOn(): Promise<boolean> {
+  try {
+    const { controlDatabase, readFileSyncConfig } = await import("./control.js");
+    return readFileSyncConfig(await controlDatabase()).enabled;
+  } catch { return true; }
 }
 
 function query(request: Request): Record<string, string> {
@@ -78,6 +87,10 @@ function route(endpoint: FilesEndpoint, method: "GET" | "POST") {
       const { servingBridge } = await import("./bridge.js");
       const bridge = servingBridge();
       if (!bridge) {
+        // Switched on, the worker is starting (readiness comes first) or restarting: a peer must not read that as off, since
+        // an owner moves its built-in projects back from a peer with file sync off (integrate, migration.ts). Its sync layer
+        // takes the 503 as "try again later".
+        if (await switchedOn()) throw new ClusterV2HttpError(503, STARTING);
         // A peer probing for the engine learns it is off here; an old node answers 404 instead.
         if (endpoint === "shares") { response.json(await offSharesAnswer()); return; }
         throw new ClusterV2HttpError(503, OFF);
@@ -93,6 +106,20 @@ function route(endpoint: FilesEndpoint, method: "GET" | "POST") {
 }
 
 const ENDPOINTS: ReadonlyArray<[FilesEndpoint, "GET" | "POST"]> = [["shares", "GET"], ["index", "GET"], ["changed", "POST"], ["fetch", "POST"], ["file", "POST"], ["status", "POST"]];
+
+/* fix (P4+P5): the per-project switch between Syncthing and built-in sync (migration.ts) has one
+   endpoint of its own, answered here by main, not the worker: a project's owner asks a peer where
+   its move stands and what would hold it there, and a peer tells the owner when that changes. */
+app.post(`${FILES}/switch`, (request, response, next) => {
+  void (async () => {
+    const peer = machineOnly(response);
+    if (Number(request.header("content-length") ?? 0) > MAX_BODY_BYTES) throw new ClusterV2HttpError(413, "File sync request body is too large");
+    const { fileSyncSwitchAnswer } = await import("./index.js");
+    const answer = await fileSyncSwitchAnswer(peer, request.body ?? {});
+    if (!answer) throw new ClusterV2HttpError(403, "Project is not shared with this node");
+    response.json(answer);
+  })().catch((error) => mapError(error, response, next));
+});
 
 for (const [endpoint, method] of ENDPOINTS) {
   if (method === "GET") app.get(`${FILES}/${endpoint}`, route(endpoint, method));

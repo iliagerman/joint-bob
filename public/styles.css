@@ -5072,6 +5072,29 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
   .relay-row-actions { justify-content: flex-start; }
 }
 
+/* ---- File sync: Settings → File sync (settings-page, P4) ---- */
+/* Laid out like the Relay panel, whose column and rows it shares: the machines and projects
+   lists split the height left over and file-sync-settings.js pages them to it. A project's
+   details replace the lists instead of growing a row, so the rows keep one height. */
+.file-sync-engine { gap: 6px 14px; }
+.file-sync-engine .checkbox-row { font-size: 13px; }
+.file-sync-heading { margin: 2px 0 0; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+/* Each list keeps room for one row; only on a screen too short for that do the lists and the
+   details above them scroll, like the Relay serving form. */
+.file-sync-section > .file-sync-overview, .file-sync-section > .file-sync-detail { display: flex; flex: 1 1 0; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; padding: 3px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.file-sync-overview > *, .file-sync-detail > * { flex: none; }
+.file-sync-overview > .relay-list, .file-sync-detail > .relay-list { flex: 1 1 0; min-height: 56px; }
+.file-sync-overview > .file-sync-peers { flex: 0 1 auto; }
+.file-sync-overview > .file-sync-projects { min-height: 72px; }
+.file-sync-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.file-sync-detail-head strong { font-size: 14px; overflow-wrap: anywhere; }
+.file-sync-detail-actions { justify-content: flex-start; }
+.file-sync-head-actions { margin-left: auto; }
+.file-sync-facts { display: grid; gap: 4px; min-width: 0; }
+.file-sync-share { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font-size: 12.5px; }
+.file-sync-share .relay-error { flex-basis: 100%; }
+.file-sync-path { font: 12px var(--mono); overflow-wrap: anywhere; }
+
 /* A fixed height keeps the dialog from moving when the rows re-render on blur, which would swallow the click on Save. */
 .label-icons { display: grid; align-content: start; gap: 6px; height: 220px; margin: 0; padding: 8px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
 .label-icon-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; gap: 8px; align-items: center; }

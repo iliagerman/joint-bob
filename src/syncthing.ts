@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getSettings, syncthingApiKey } from "./settings.js";
@@ -285,9 +285,17 @@ export function syncthingUnreachable(error: unknown): boolean {
 }
 
 let connectionGeneration = 0;
+/** fix (P4+P5): told when the connection is reset, so the file sync switch checks its built-in projects against this Syncthing's folders again. */
+const resetListeners = new Set<() => void>();
 export function resetSyncthingConnection(): void {
   connectionPromise = undefined;
   connectionGeneration += 1;
+  for (const listener of resetListeners) { try { listener(); } catch { /* a listener's failure is its own */ } }
+}
+
+export function onSyncthingConnectionReset(listener: () => void): () => void {
+  resetListeners.add(listener);
+  return () => { resetListeners.delete(listener); };
 }
 
 /** Changes whenever this node is pointed at a different Syncthing, so work done against the old one is redone. */
@@ -600,4 +608,48 @@ export async function ensureConversationSyncFolders(folders: ConversationSyncFol
     await mkdir(path.resolve(folder.path), { recursive: true });
     await ensureFolder(folder.id, folder.label, folder.path, peerDeviceId, "none", true);
   }
+}
+
+/* cutover-engine (P5): releasing a project's folders, matched by path (FILE-SYNC-PLAN.md §7.3). */
+
+/** Where a path really is: `~` as Syncthing expands it, then the real path of its deepest existing part, so a symlinked folder or root matches its target. */
+async function comparablePath(value: string): Promise<string> {
+  const expanded = value === "~" ? os.homedir() : value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value;
+  let current = path.resolve(expanded);
+  const rest: string[] = [];
+  for (;;) {
+    try {
+      const real = path.join(await realpath(current), ...rest.reverse());
+      // macOS and Windows volumes are usually case-insensitive: /Code/app and /code/app are one folder there.
+      return process.platform === "darwin" || process.platform === "win32" ? real.toLowerCase() : real;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return process.platform === "darwin" || process.platform === "win32" ? path.resolve(expanded).toLowerCase() : path.resolve(expanded);
+      rest.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+/** `inner` is `outer` or lies inside it. A sibling that only shares a prefix (/a/proj, /a/project) does not. */
+function within(inner: string, outer: string): boolean {
+  const relative = path.relative(outer, inner);
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+/** Folders whose path equals, contains or lies inside one of `roots`, compared by real path, never by ID. */
+export async function syncthingFoldersCovering<T extends { path: string }>(folders: readonly T[], roots: readonly string[]): Promise<T[]> {
+  const real = await Promise.all(roots.map(comparablePath));
+  const covering: T[] = [];
+  for (const folder of folders) {
+    if (typeof folder.path !== "string" || !folder.path) continue;
+    const at = await comparablePath(folder.path);
+    if (real.some((root) => within(at, root) || within(root, at))) covering.push(folder);
+  }
+  return covering;
+}
+
+/** Takes one folder out of this node's Syncthing configuration. Syncthing keeps its files on disk: nothing is deleted. */
+export async function removeSyncthingFolderConfig(folderId: string): Promise<void> {
+  await request<void>(`/rest/config/folders/${encodeURIComponent(folderId)}`, { method: "DELETE" });
 }

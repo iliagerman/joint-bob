@@ -15,6 +15,7 @@ import { pendingEventsForPeer } from "../replication.js";
 import { listProjectMetadataDeliveries } from "../cluster-project-metadata.js";
 import { sessionTitleOverrides } from "../names.js";
 import { resumeSharedProjectFolder } from "../syncthing.js";
+import { FolderOverBuiltinError, whileFilesOnSyncthing } from "../file-sync/control.js";
 import { ensureTwinHttpSchema, pendingTwinDeliveries, bootstrapOwnedTwinPolicies } from "./twins.js";
 import { peerSnapshot, staleSnapshotReason } from "./peer-snapshots.js";
 import { peerFetch } from "../relay/transport.js";
@@ -67,7 +68,10 @@ export async function resumeTwinProjectFolders(db:DatabaseSync,relationshipId:st
   const peer=sharingTwin(db,local,relationshipId);
   const rows=db.prepare(`SELECT p.id,p.sync_folder_id folder FROM projects p JOIN sharing_resource_owners o
     ON o.kind='project' AND o.resource_id=p.id WHERE p.sync_folder_id IS NOT NULL`).all() as unknown as Array<{id:string;folder:string}>;
-  try{for(const row of rows)if(mayReceiveResource(db,local,'project',row.id)&&mayReceiveResource(db,peer,'project',row.id))await resumeSharedProjectFolder(row.folder);}
+  // cutover-engine (P5): a project on built-in sync here has no folder to resume, and resuming one Syncthing just let go of would add it back.
+  // fix (P4+P5): nor does one over another project that built-in sync moves here: it stays paused, the others resume.
+  const resume=(id:string,folder:string)=>whileFilesOnSyncthing(id,()=>resumeSharedProjectFolder(folder),db).catch((error)=>{if(!(error instanceof FolderOverBuiltinError))throw error;});
+  try{for(const row of rows)if(mayReceiveResource(db,local,'project',row.id)&&mayReceiveResource(db,peer,'project',row.id))await resume(row.id,row.folder);}
   catch(error){db.prepare("UPDATE cluster_v2_twin_sharing SET error=? WHERE relationship_id=?").run(error instanceof Error?error.message:"File enrollment failed",relationshipId);}
 }
 

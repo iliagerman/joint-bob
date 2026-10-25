@@ -19,7 +19,8 @@ import { peerAway } from "../peer-presence.js";
 import { settled, warnOnChange } from "./quiet-log.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
 import { listProjects } from "../store.js";
-import { reconcileSyncthingProjectFolders } from "../syncthing.js";
+import { reconcileSyncthingProjectFolders as reconcileAllSyncthingProjectFolders } from "../syncthing.js";
+import { controlDatabase, projectFilesOnSyncthing } from "../file-sync/control.js";
 import { ensureLegacySkillSyncPaused, refreshSharedSkills } from "./skill-sharing.js";
 import { listTasks, listUnfinishedOutgoingTaskHandoffs, releaseStaleTaskLease } from "../tasks.js";
 import type { HarnessId } from "../types.js";
@@ -72,6 +73,12 @@ export async function reconcileManagedAgentResources(): Promise<void> {
   } catch (error) { warnOnChange("agent-instructions", `Moving agent instructions into AGENTS.md failed: ${error instanceof Error ? error.message : String(error)}`); }
   try { await refreshSharedSkills(); }
   catch (error) { console.warn("Selective skill refresh failed", error); }
+}
+
+/** cutover-engine (P5): projects on built-in sync here are left out; their Syncthing folders are gone and stay gone. */
+async function reconcileSyncthingProjectFolders(projects: Array<{ id: string; syncFolderId?: string }>): Promise<void> {
+  const db = await controlDatabase();
+  await reconcileAllSyncthingProjectFolders(projects.filter((project) => projectFilesOnSyncthing(db, project.id)));
 }
 
 export async function initializeStartupReadiness(): Promise<void> {

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { mayShareProject } from "../server/sharing-files.js";
-import { saveEngineRecord, saveSettingsRecord } from "./control.js";
+import { projectOwnerNode, saveEngineRecord, saveSettingsRecord } from "./control.js";
 import type { EngineRecord, SettingsRecord } from "./types.js";
 import { nodeIdSchema, projectIdSchema } from "./wire.js";
 
@@ -44,15 +44,9 @@ export interface AcceptOptions {
   mayShare?: (peer: string, projectId: string) => boolean;
 }
 
-function projectOwner(db: DatabaseSync, projectId: string): string | undefined {
-  try {
-    const row = db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind = 'project' AND resource_id = ?").get(projectId) as { owner_node_id: string } | undefined;
-    return row?.owner_node_id;
-  } catch { return undefined; }
-}
-
 function engineProblem(db: DatabaseSync, local: string, fromPeer: string, record: EngineRecord): string | undefined {
-  const owner = projectOwner(db, record.projectId);
+  // The same owner the switch checks (migration.ts): the sharing registry, else the project's policy.
+  const owner = projectOwnerNode(db, record.projectId);
   if (!owner) return "project has no known owner here";
   if (owner === local) return "this node owns the project";
   if (fromPeer !== owner) return "sender is not the project's owner";

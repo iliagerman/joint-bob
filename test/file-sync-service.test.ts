@@ -6,7 +6,7 @@ import test, { type TestContext } from "node:test";
 import { createWorkerCore, type CoreDeps, type FileSyncCore, type PeerRequest, type PeerTransport } from "../src/file-sync/core.js";
 import { digestOf } from "../src/file-sync/digest.js";
 import { compileRules, effectiveRules } from "../src/file-sync/ignore.js";
-import type { ConfigureArgs, CoreEvent, FilesEndpoint, ServeAnswer } from "../src/file-sync/protocol.js";
+import { FILE_SYNC_MIN_PROTOCOL, FILE_SYNC_PROTOCOL, type ConfigureArgs, type CoreEvent, type FilesEndpoint, type ServeAnswer } from "../src/file-sync/protocol.js";
 import { PeerLimiter } from "../src/file-sync/sync.js";
 import type { Clock, EngineRecord, SettingsRecord } from "../src/file-sync/types.js";
 import { decodeIndexPage, FILES_API, INDEX_CONTENT_TYPE, NOT_SHARED_ERROR, sharesAnswerSchema, statusAnswerSchema } from "../src/file-sync/wire.js";
@@ -223,7 +223,7 @@ test("the shares answer describes each share and carries only records about the 
   await a.scan();
   const row = a.core.db.share(SHARE)!;
   const answer = sharesAnswerSchema.parse(await json(await serve(a, "node-b", "shares")));
-  assert.deepEqual(answer.fileSync, { protocol: 1, minProtocol: 1, enabled: true });
+  assert.deepEqual(answer.fileSync, { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, enabled: true });
   assert.equal(answer.nodeId, "node-a");
   assert.equal(answer.hostId, "host-node-a");
   assert.deepEqual(answer.shares, [{
@@ -258,7 +258,7 @@ test("a shares answer marks the peer capable and its records go to main with the
     engines: [{ projectId: "p1", mode: "syncthing", generation: 2, updatedAt: at, origin: "node-a" }],
     settings: [{ key: "project:p1", value: rules, updatedAt: at, origin: "node-a" }],
   }], "once, from the node that answered, without records about other nodes");
-  assert.deepEqual(b.events.filter((event) => event.event === "capability"), [{ event: "capability", peer: "node-a", protocol: 1, enabled: true, origins: [], hostId: "host-node-a" }]);
+  assert.deepEqual(b.events.filter((event) => event.event === "capability"), [{ event: "capability", peer: "node-a", protocol: FILE_SYNC_PROTOCOL, enabled: true, origins: [], hostId: "host-node-a" }]);
   await b.core.call("announce", { slept: false });
   await s.quiesce();
   assert.equal(b.events.filter((event) => event.event === "records").length, 1, "the same records are not forwarded again");

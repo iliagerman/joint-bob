@@ -12,7 +12,7 @@ import { getHarness, getHarnessRuntime, harnessForSessionPath } from "../harness
 import { resolveLocalSessionPath } from "../session-paths.js";
 import { getSettings, remoteTerminalAllowed, remoteTerminalSettings } from "../settings.js";
 import { canonicalProjectId, getProject, listProjects, listWorkspaces } from "../store.js";
-import { assertProjectFilesReady, taskShareStatuses } from "../file-sync/facade.js";
+import { assertProjectFilesReady, HANDOFF_POLL_FLUSH_MS, projectFilesHandoffPart, type HandoffFiles, type ProjectShareKind, taskShareStatuses } from "../file-sync/facade.js";
 import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, ProjectSyncStatus, TaskRecord } from "../types.js";
@@ -82,6 +82,21 @@ async function assertTaskSessionReadyNow(projectId:string, task:TaskRecord, sync
   } catch {
     throw new Error(`${adapter.label} conversation is not synchronized on this node`);
   }
+}
+
+/** The folder a ticket's files live in: its synchronized workspace, else the project (a Git worktree travels as a bundle). */
+export function taskShareKind(task: TaskRecord): ProjectShareKind {
+  return task.worktreePath && !task.worktreeBranch ? "tickets" : "project";
+}
+
+/**
+ * The source's `fileSync` part of an eligibility or prepare body (design §6.5): how far its index of
+ * the ticket's folder reached, so a destination on built-in sync waits until it holds that. Absent for
+ * projects on Syncthing; older destinations drop it with the rest of the unknown keys.
+ */
+export async function taskHandoffFiles(project: ProjectRecord, task: TaskRecord, flushTimeoutMs: number): Promise<{ fileSync?: HandoffFiles }> {
+  const part = await projectFilesHandoffPart(project, [taskShareKind(task)], flushTimeoutMs);
+  return part ? { fileSync: part } : {};
 }
 
 export async function assertTaskFilesReady(project: ProjectRecord, task: TaskRecord, syncStatusChecked = false): Promise<void> {
@@ -174,10 +189,13 @@ export async function taskHandoffEligibility(projectId: string, task: TaskRecord
 export async function peerTaskEligibilityEntry(peer: ClusterPeer, projectId: string, task: TaskRecord, source = false): Promise<TaskEligibilityEntry> {
   const node = publicClusterPeer(peer);
   try {
+    // Only the ticket's owner hands its files over; the dialog asks every second, so the flush is short.
+    const project = !source && task.currentNodeId === (await getClusterNode()).id ? await getProject(projectId) : undefined;
+    const files = project ? await taskHandoffFiles(project, task, HANDOFF_POLL_FLUSH_MS) : {};
     const remote = await runtimeFetch(`${peer.url}/api/cluster/tasks/eligibility`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, task, source }),
+      body: JSON.stringify({ projectId, task, source, ...files }),
       signal: AbortSignal.timeout(3_000),
     });
     if (!remote.ok) throw new Error(`Peer returned ${remote.status}`);

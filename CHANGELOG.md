@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a File sync tab in Settings for admins, showing which machines and projects are moved by Joint Bob's built-in file sync or by Syncthing, what is left to copy, any problems, and the differences between machines, with checked switches to move each project between the two.
+
 ## 2.158.0 — 2026-10-25
 
 - Activity Chat now searches conversation history and project files as needed instead of summarizing the whole history before answering, and keeps its own agent context for follow-ups.

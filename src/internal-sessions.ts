@@ -6,6 +6,8 @@ const INTERNAL_PREFIX = "b0b1f17e-";
 // Background runs that started before they used internal IDs, matched by their fixed prompt opening.
 const LEGACY_INTERNAL_PROMPTS = [
   "You are Joint Bob's background sync fixer. Syncthing found files that two machines edited at the same time and kept both versions.",
+  // Its engine-neutral wording since the built-in file sync (sync-check.ts SYNC_FIXER_OPENING).
+  "You are Joint Bob's background sync fixer. Two machines edited the same files at the same time, and file sync kept both versions.",
   "Read ONLY the supplied conversation transcript. Which pending paths did the coding agent say it changed",
   "Review the pending changes only. Return ONLY JSON: {\"summary\":string",
   "You are a read-only code reviewer. Explain code changes; never modify files",

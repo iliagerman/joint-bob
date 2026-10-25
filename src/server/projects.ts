@@ -9,6 +9,7 @@ import { getProjectLock, projectLocks } from "../project-locks.js";
 import { getSettings } from "../settings.js";
 import { listProjects, updateProjectWorkspaceAndPath } from "../store.js";
 import { ensureSyncthingFolder } from "../syncthing.js";
+import { controlDatabase, whileFilesOnSyncthing } from "../file-sync/control.js";
 import { projectSyncStatuses, unavailableProjectStatus } from "../file-sync/facade.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, ProjectView } from "../types.js";
@@ -128,11 +129,15 @@ export async function relocateProjectWorkspace(project: ProjectRecord, nextWorks
   let moved = false;
   let syncthingAttempted = false;
   try {
+    // fix (P4+P5): nor may its folder land where Syncthing syncs: both would write the same files.
+    const covered = await (await import("../file-sync/migration.js")).syncthingFolderOverTarget(await controlDatabase(), project.id, destination);
+    if (covered) throw new ProjectDirectoryImportError(covered);
     await relocateProjectDirectory(project.path, destination, project.macPath);
     moved = true;
+    // A project on built-in sync has no Syncthing folder to move: its folders follow the project's path (cutover-engine, P5).
     if (project.syncFolderId) {
       syncthingAttempted = true;
-      await ensureSyncthingFolder(project.syncFolderId, project.name, destination);
+      await whileFilesOnSyncthing(project.id, () => ensureSyncthingFolder(project.syncFolderId!, project.name, destination), undefined, [destination]);
     }
     const updated = await updateProjectWorkspaceAndPath(project.id, nextWorkspaceId, destination);
     sessionWatcher.ensureProject(updated);
@@ -143,7 +148,7 @@ export async function relocateProjectWorkspace(project: ProjectRecord, nextWorks
     try { await relocateProjectDirectory(destination, project.path, project.macPath); }
     catch (rollbackError) { rollbackFailures.push(rollbackError); }
     if (syncthingAttempted && project.syncFolderId) {
-      try { await ensureSyncthingFolder(project.syncFolderId, project.name, project.path); }
+      try { await whileFilesOnSyncthing(project.id, () => ensureSyncthingFolder(project.syncFolderId!, project.name, project.path), undefined, [project.path]); }
       catch (rollbackError) { rollbackFailures.push(rollbackError); }
     }
     if (rollbackFailures.length) throw new AggregateError([error, ...rollbackFailures], "Project relocation rollback failed");

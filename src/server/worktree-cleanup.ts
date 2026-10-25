@@ -7,6 +7,7 @@ import { resolveDataDirectory } from "../data-directory.js";
 import { conversationLeaseRunning } from "../conversation-runtime.js";
 import { sessionDoneOverrides } from "../names.js";
 import { deleteProjectWorktree, listProjectWorktrees, worktreeConversationIndex } from "../project-worktrees.js";
+import { worktreeSweepRefusal } from "../file-sync/facade.js";
 import { listProjects } from "../store.js";
 import { isHarnessId, type ProjectRecord } from "../types.js";
 import { findHarnessSession, harnessSessionBusy, harnessSessions } from "./harness-sessions.js";
@@ -83,6 +84,12 @@ async function cleanup(project: ProjectRecord): Promise<CleanupResult> {
         result.retainedWorktrees[worktree.id] = "Worktree kept: a conversation is still running";
         continue;
       }
+      // app-integration (P4): on built-in sync this deletion reaches every machine (design §6.5).
+      const refusal = await worktreeSweepRefusal(project.id, worktree);
+      if (refusal) {
+        result.retainedWorktrees[worktree.id] = refusal;
+        continue;
+      }
       await deleteProjectWorktree(project.id, worktree.id);
       result.deletedWorktreeIds.push(worktree.id);
     } catch (error) {
@@ -111,6 +118,12 @@ async function cleanupEmptyWorktrees(project: ProjectRecord, result: CleanupResu
       if (await hasConversations(worktree.id)) continue;
       if (await worktreeInUse(worktree.path)) {
         result.retainedWorktrees[worktree.id] = "Worktree kept: recent activity";
+        continue;
+      }
+      // app-integration (P4): a worktree another machine created may look empty only because its markers have not arrived.
+      const refusal = await worktreeSweepRefusal(project.id, worktree);
+      if (refusal) {
+        result.retainedWorktrees[worktree.id] = refusal;
         continue;
       }
       await deleteProjectWorktree(project.id, worktree.id);

@@ -27,6 +27,8 @@ import { loadGitReviewerSettings } from "./git-reviewer-options.js";
 import { loadSummaryModelSettings } from "./summary-model-settings.js";
 import { labelIconsValue, loadLabelIcons } from "./label-icons.js";
 import { createSettingsSearch } from "./settings-search.js";
+// settings-page (P4): Settings → File sync.
+import { loadFileSyncSettings } from "./file-sync-settings.js";
 
 /** Compares two "major.minor.patch" strings; anything else never counts as newer. */
 function isNewerVersion(candidate, baseline) {
@@ -95,7 +97,7 @@ function renderClientLogs() {
 }
 
 // These panels guard their own loading and do not depend on Save settings.
-const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users"].includes(panel.id);
+const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users", "settingsPanel-file-sync"].includes(panel.id);
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(requested) {
@@ -117,6 +119,7 @@ function selectSettingsTab(requested) {
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
+  if (name === "file-sync") void loadFileSyncSettings(); // settings-page (P4)
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
   if (name === "conversations") void loadSummaryModelSettings().catch((error) => toast(error.message));
   if (name === "users") void loadUsers().catch((error) => toast(error.message));

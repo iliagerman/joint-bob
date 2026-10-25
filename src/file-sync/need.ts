@@ -2,7 +2,7 @@ import { performance } from "node:perf_hooks";
 import { decideGlobal, pickTarget, sameContent, sameMeta, type Decision } from "./conflicts.js";
 import { HIDDEN_DIFF, type CursorRow, type FileSyncDb, type LocalEntry, type NeedAction, type NeedRow } from "./db.js";
 import { caseFoldKey, isSameOrInside, normalizeRelativePath, parentKey } from "./paths.js";
-import type { DifferenceItem, ListPage, LocalSource, NeedItem } from "./protocol.js";
+import type { DifferenceItem, ListPage, LocalSource, NeedItem, PendingFiles } from "./protocol.js";
 import { DIRECTORY, FILE, type Clock, type IndexEntry, type Phase, type ShareKind } from "./types.js";
 import { compareVectors, mergeVectors, vectorsEqual } from "./vectors.js";
 import { WireError, type IndexPage } from "./wire.js";
@@ -1035,6 +1035,31 @@ export class NeedEngine {
       } catch { /* the share went away meanwhile */ }
     }
     this.armPriorityTimer();
+  }
+
+  /**
+   * fix (P4+P5): need rows at `prefix` and below, blocked ones left out (they wait for a person, not a
+   * peer). A delete, a folder, a link, a mode change, a rename or content held locally can be applied
+   * now; other content counts as arriving only while one of `availablePeers` has it. What only peers
+   * outside that set have waits for them: a worktree merge does not hold for a machine that is away.
+   */
+  pendingUnder(key: string, prefix: string, availablePeers: readonly string[]): PendingFiles {
+    const result: PendingFiles = { files: 0, bytes: 0, waiting: { files: 0, bytes: 0, peers: [] } };
+    const share = this.deps.share(key);
+    if (!share) return result;
+    const trimmed = prefix.replace(/\/+$/, "");
+    const available = new Set(availablePeers);
+    const waitingFor = new Set<string>();
+    for (const row of this.deps.db.needsUnder(key, trimmed === "" ? "" : normalizeRelativePath(trimmed))) {
+      if (row.blocked) continue;
+      const size = !row.target.deleted && row.target.type === FILE ? row.target.size : 0;
+      if (row.action === "delete" || this.contentItem({ ...row, share: key }, share, available)) { result.files++; result.bytes += size; continue; }
+      result.waiting.files++;
+      result.waiting.bytes += size;
+      for (const peer of share.peers()) if (sameContent(this.deps.db.remote(key, peer, row.path), row.target)) waitingFor.add(peer);
+    }
+    result.waiting.peers = [...waitingFor].sort();
+    return result;
   }
 
   /**

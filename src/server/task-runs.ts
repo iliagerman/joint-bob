@@ -229,7 +229,7 @@ async function taskPromptText(project: ProjectRecord, task: TaskRecord, phase: T
   const images = (task.attachments ?? []).filter(({ kind }) => kind === "image").map((attachment) => ({ name: attachment.name, path: taskAttachmentFile(cwd, attachment) }));
   const files = (task.attachments ?? []).filter(({ kind }) => kind === "file").map((attachment) => ({ name: attachment.name, path: taskAttachmentFile(cwd, attachment) }));
   const instruction = phase === "planning" && task.planMode ? planInstructions : phase === "review" ? reviewInstructions : "";
-  const workspace = !task.worktreePath ? "" : task.worktreeBranch ? `Ticket Git worktree: ${task.worktreePath}\nTicket branch: ${task.worktreeBranch}\nWork only in this worktree.${phase === "in_progress" ? " Before finishing, commit all ticket changes to this branch using a Conventional Commit message." : ""}` : `Ticket synchronized workspace: ${task.worktreePath}\nWork only in this workspace. Git is optional; Syncthing transfers these files between nodes.`;
+  const workspace = !task.worktreePath ? "" : task.worktreeBranch ? `Ticket Git worktree: ${task.worktreePath}\nTicket branch: ${task.worktreeBranch}\nWork only in this worktree.${phase === "in_progress" ? " Before finishing, commit all ticket changes to this branch using a Conventional Commit message." : ""}` : `Ticket synchronized workspace: ${task.worktreePath}\nWork only in this workspace. Git is optional; Joint Bob copies these files between nodes.`;
   const handoff = phase === "planning" ? "" : task.handoffContext ?? await taskHandoffContext(project, task);
   return [instruction, workspace, handoff, promptTextWithAttachments(body, images, files)].filter(Boolean).join("\n\n");
 }

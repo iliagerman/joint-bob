@@ -22,6 +22,8 @@ export interface DeriveInput {
   shadowProjects: "all" | readonly string[];
   /** Node-local phase per project; absent means "syncthing" (shadow). */
   phases: ReadonlyMap<string, Phase>;
+  /** Projects with an engine record (either mode); read from node.db when absent. */
+  switched?: ReadonlySet<string>;
   /** Settings records by key (`project:<id>`, `global:<nodeId>`). */
   settings: ReadonlyMap<string, RuleSettings>;
   ticketRoot?: string;
@@ -47,17 +49,27 @@ export function verifiablePeers(db: DatabaseSync, local: string): string[] {
   return peers.filter((peer) => safely(() => pinnedClusterPublicKey(db, peer) !== undefined)).sort();
 }
 
+/** Projects the owner ever switched (cutover-engine, P5). */
+function switchedProjects(db: DatabaseSync): Set<string> {
+  if (!tableExists(db, "file_sync_engines")) return new Set();
+  return new Set((db.prepare("SELECT project_id FROM file_sync_engines").all() as Array<{ project_id: string }>).map((row) => row.project_id));
+}
+
 /**
  * Projects with a live policy whose metadata this node may see, that have at least one eligible
- * peer and are in the shadow allowlist (or past it: any phase but "syncthing"). A peer is eligible
- * while mayShareProject holds; it turns false for a while after a restart or a relay disconnect,
- * which only takes the peer out of this snapshot (stop serving and pulling), never the index.
+ * peer and are in the shadow allowlist, past it (any phase but "syncthing"), or switched at least
+ * once. A switched project stays checked in shadow after a move back: its engine record travels only
+ * in answers about projects a node serves, and a peer still on built-in sync (away when the owner
+ * moved it back) learns of the move from this node's answer. A peer is eligible while
+ * mayShareProject holds; it turns false for a while after a restart or a relay disconnect, which
+ * only takes the peer out of this snapshot (stop serving and pulling), never the index.
  */
 export function deriveShares(db: DatabaseSync, input: DeriveInput): ShareSpec[] {
   if (!tableExists(db, "projects") || !tableExists(db, "cluster_v2_resource_policy")) return [];
   const projects = db.prepare(`SELECT p.id, p.path FROM projects p JOIN cluster_v2_resource_policy r
     ON r.kind = 'project' AND r.resource_id = p.id AND r.deleted = 0 ORDER BY p.id`).all() as Array<{ id: string; path: string }>;
-  const allowed = (id: string): boolean => (input.phases.get(id) ?? "syncthing") !== "syncthing"
+  const switched = input.switched ?? switchedProjects(db);
+  const allowed = (id: string): boolean => (input.phases.get(id) ?? "syncthing") !== "syncthing" || switched.has(id)
     || input.shadowProjects === "all" || input.shadowProjects.includes(id);
   const candidates = projects.filter((project) => allowed(project.id));
   if (!candidates.length) return [];

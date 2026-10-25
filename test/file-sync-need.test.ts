@@ -314,6 +314,27 @@ test("priorities: worktree metadata and small files, project, tickets, worktree 
   assert.deepEqual([q.db.needRow(key, "other/assets/huge.bin")?.priority, q.db.needRow(key, "other/late.bin")?.priority], [4, 4]);
 });
 
+// fix (P4+P5): a worktree merge asks what of that worktree is still on its way, and from whom.
+test("what is pending under a worktree counts only its own rows, and what only an unavailable machine has waits for it", async (t) => {
+  const q = queue(t, { kind: "worktrees", peers: ["p1", "p2"] });
+  const key = "worktrees:p1";
+  await q.pull("p1", [
+    { path: "w1/a.ts", size: 10, sha256: SHA_X, version: { p1: 1 } },
+    { path: "w2/b.ts", size: 20, sha256: SHA_Y, version: { p1: 1 } },
+    { path: "w2/c.ts", size: 30, sha256: SHA_Z, version: { p1: 1 } },
+  ]);
+  const none = { files: 0, bytes: 0, peers: [] };
+  assert.deepEqual(q.need.pendingUnder(key, "w1", ["p1", "p2"]), { files: 1, bytes: 10, waiting: none });
+  assert.deepEqual(q.need.pendingUnder(key, "w2/", ["p1"]), { files: 2, bytes: 50, waiting: none });
+  assert.deepEqual(q.need.pendingUnder(key, "w3", ["p1"]), { files: 0, bytes: 0, waiting: none }, "a worktree with nothing on its way");
+  // p1, the only machine with the content, is away: nothing can come now.
+  assert.deepEqual(q.need.pendingUnder(key, "w2", ["p2"]), { files: 0, bytes: 0, waiting: { files: 2, bytes: 50, peers: ["p1"] } });
+  // A copy already here (the same bytes in w1) needs no machine; a blocked row waits for a person, not for a machine.
+  q.local({ path: "w1/copy.ts", size: 30, sha256: SHA_Z, version: { "node-b": 1 }, modifiedBy: "node-b" });
+  q.need.block(key, "w2/b.ts", "Another name in this folder differs only in case (B.ts)");
+  assert.deepEqual(q.need.pendingUnder(key, "w2", []), { files: 1, bytes: 30, waiting: none });
+});
+
 test("blocked rows are left out of the queue and the pending count, listed as problems, and tried again when something related changes", async (t) => {
   const q = queue(t, { peers: ["p1"] });
   await q.pull("p1", [{ path: "docs/readme.md", sha256: SHA_X, size: 3, version: { p1: 1 } }, { path: "x.txt", sha256: SHA_Y, size: 4, version: { p1: 1 } }]);

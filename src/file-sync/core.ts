@@ -345,6 +345,8 @@ class Core implements WorkerCore {
         else if (isTransferQueue(this.need)) this.need.prioritize?.(args.share, args.prefix, args.untilMs);
         return {};
       case "pace": this.sync?.pace(args.relayPaused); return {};
+      // fix (P4+P5): a worktree merge asks what of the worktree is still on its way, and from whom.
+      case "pending": this.runtime(args.share); return this.need.pendingUnder(args.share, args.prefix, args.availablePeers);
       case "nextNeeds": return this.need.nextNeeds(args);
       case "applyBatch": this.runtime(args.share); return this.applier.applyBatch(args);
       case "bootstrap": {
@@ -397,6 +399,11 @@ class Core implements WorkerCore {
         matcher: compileRules(effectiveRules(spec.kind, spec.rules)), peers: spec.peers,
       };
       this.ensureShareRow(spec, context.root);
+      // cutover-engine (P5): back on Syncthing (or on the way), this node's rows are Syncthing's again: a later switch must
+      // decide them as such, so the builtin_since served to peers goes until the next bootstrap sets it.
+      if ((spec.phase === "syncthing" || spec.phase === "restoring") && this.db.share(spec.key)?.builtinSince != null) {
+        this.db.writeTx(() => this.db.updateShare(spec.key, { builtinSince: null }));
+      }
       const existing = this.shares.get(spec.key);
       if (existing) {
         const rootChanged = existing.scanner.context.root !== context.root;
@@ -669,6 +676,8 @@ class Core implements WorkerCore {
         differences: comparison?.differences ?? 0, cleanSince: comparison?.cleanSince ? new Date(comparison.cleanSince).toISOString() : null,
         route: this.sync?.route(peer) ?? "none",
         ...(this.sync?.transferCounters(runtime.key, peer) ? { transfer: { ...this.sync.transferCounters(runtime.key, peer)! } } : {}),
+        // cutover-engine (P5): what the switch's bootstrap passes for this peer.
+        builtinSince: cursor?.peerBuiltinSince ?? null,
       };
     });
     return {
@@ -677,6 +686,8 @@ class Core implements WorkerCore {
       liveFiles: share?.liveFiles ?? 0, liveBytes: share?.liveBytes ?? 0, need: { files: need.files, bytes: need.bytes }, blocked: need.blocked,
       errors, scanning: scanner.running || Boolean(runtime.draining) || scanner.settlingCount > 0, watch: runtime.watcher?.state ?? "off",
       ...(message ? { message } : {}), peers,
+      // cutover-engine (P5): set by the bootstrap of the switch, recorded in node.db by main.
+      builtinSince: share?.builtinSince ?? null,
     };
   }
 
