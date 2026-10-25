@@ -42,7 +42,32 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
       return { background: style.backgroundColor, underline: style.borderBottomWidth };
     });
     assert.deepEqual(tabStyle, { background: "rgba(0, 0, 0, 0)", underline: "2px" });
+    const readOnly = page.getByTestId("conversation-chat-read-only");
+    assert.equal(await readOnly.isChecked(), true);
+    let releaseMode!: () => void;
+    const heldMode = new Promise<void>(resolve => { releaseMode = resolve; });
+    await page.route("**/api/projects/*/conversations/*/chat", async route => {
+      if (route.request().method() === "PATCH") await heldMode;
+      await route.continue();
+    });
+    const modeSaved = page.waitForResponse(response => response.url().endsWith("/chat") && response.request().method() === "PATCH");
+    await readOnly.uncheck();
+    await page.getByTestId("activity-activity-tab").click();
+    await page.getByTestId("activity-chat-tab").click();
+    await page.waitForFunction(() => !(document.querySelector("#conversationChatHarness") as HTMLSelectElement).disabled && (document.querySelector("#conversationChatSend") as HTMLButtonElement).disabled);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    // The HTTP save must finish safely even if its push invalidation is lost on reconnect.
+    await page.evaluate(() => document.addEventListener("conversation-chat-changed", event => event.stopImmediatePropagation(), { capture: true, once: true }));
+    releaseMode();
+    assert.equal((await modeSaved).status(), 200);
+    await page.waitForFunction(() => !(document.querySelector("#conversationChatSend") as HTMLButtonElement).disabled);
+    await page.unroute("**/api/projects/*/conversations/*/chat");
+    assert.equal(await readOnly.isChecked(), false, "action mode survives reopening the panel");
+    const safeMode = page.waitForResponse(response => response.url().endsWith("/chat") && response.request().method() === "PATCH");
+    await readOnly.check();
+    assert.equal((await safeMode).status(), 200);
     await page.getByTestId("conversation-chat-harness").selectOption("claude");
+    await page.getByTestId("conversation-chat-effort").selectOption("high");
     await page.getByTestId("conversation-chat-input").fill("side-only question");
     let releaseQuestion!: () => void;
     const heldQuestion = new Promise<void>((resolve) => { releaseQuestion = resolve; });
@@ -60,6 +85,8 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
     } finally { releaseQuestion(); }
     const answered = await answering;
     assert.equal(answered.status(), 202, await answered.text());
+    assert.equal(answered.request().postDataJSON().model.thinkingLevel, "high");
+    assert.equal(answered.request().postDataJSON().readOnly, true);
     await page.locator("#conversationChatMessages article.assistant .md").getByText("stubbed", { exact: true }).waitFor({ timeout: 5000 });
     assert.match(await page.getByTestId("conversation-chat-status").textContent() ?? "", /Answering/);
     assert.equal(await page.getByTestId("conversation-chat-input").inputValue(), "next question draft");
@@ -97,6 +124,7 @@ test("bob-btw opens read-only Chat, preserves history and clears only side-chat 
     await page.getByTestId("conversation-chat-messages").getByText("side-only question", { exact: true }).waitFor();
     await page.getByTestId("conversation-chat-clear").click();
     await page.waitForFunction(() => document.querySelector("#conversationChatMessages")?.textContent?.includes("Ask about this conversation"));
+    assert.equal(await readOnly.isChecked(), true, "clear history resets action permission");
     await page.locator("#messages").getByText("Single short line.", { exact: true }).waitFor();
     await page.getByTestId("settings-open-button").click();
     await page.waitForFunction(() => !document.querySelector("#settingsForm")!.hasAttribute("aria-busy"));

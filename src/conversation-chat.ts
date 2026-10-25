@@ -3,13 +3,15 @@ import { forgetTranscriptSummary, storeTranscriptSummary, storedTranscriptSummar
 
 export const chatModelSchema = z.object({
   harnessId: z.string().min(1).max(200), provider: z.string().max(200), modelId: z.string().max(300),
+  thinkingLevel: z.enum(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
 }).strict();
 export const chatDefaultsSchema = z.object({ showSelectors: z.boolean(), model: chatModelSchema.nullable() }).strict();
 export type ChatModel = z.infer<typeof chatModelSchema>;
 export interface ChatMessage { role: "user" | "assistant"; text: string; id?: string; error?: string; contextCompacted?: boolean }
-export interface ChatQuestion { id: string; question: string; model: ChatModel | null }
+export interface ChatQuestion { id: string; question: string; model: ChatModel | null; readOnly?: boolean }
 export interface ChatScope { userId: string; projectId: string; conversationId: string }
-export interface ChatState { messages: ChatMessage[]; model: ChatModel | null; queue: ChatQuestion[] }
+export interface ChatAgent { harnessId: string; sessionId: string; sessionPath: string; cwd: string; actionTools?: string[] }
+export interface ChatState { messages: ChatMessage[]; model: ChatModel | null; queue: ChatQuestion[]; readOnly: boolean; agent?: ChatAgent }
 
 export function chatScopeKey(scope: ChatScope): string {
   return JSON.stringify([scope.userId, scope.projectId, scope.conversationId]);
@@ -17,7 +19,7 @@ export function chatScopeKey(scope: ChatScope): string {
 
 export function chatState(scope: ChatScope): ChatState {
   const stored = storedTranscriptSummary<ChatState>("conversation-chat", chatScopeKey(scope));
-  return stored ? { ...stored, queue: stored.queue ?? [] } : { messages: [], model: null, queue: [] };
+  return stored ? { ...stored, readOnly: stored.readOnly ?? true, queue: stored.queue ?? [] } : { messages: [], model: null, queue: [], readOnly: true };
 }
 
 export function saveChatState(scope: ChatScope, state: ChatState): void {
@@ -25,7 +27,8 @@ export function saveChatState(scope: ChatScope, state: ChatState): void {
 }
 
 export function clearChatHistory(scope: ChatScope): void {
-  saveChatState(scope, { ...chatState(scope), messages: [], queue: [] });
+  const { agent: _agent, ...state } = chatState(scope);
+  saveChatState(scope, { ...state, messages: [], queue: [], readOnly: true });
   forgetTranscriptSummary("side-chat-context", chatScopeKey(scope));
 }
 

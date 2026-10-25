@@ -90,7 +90,7 @@ test("side-chat accepts follow-ups during an answer and drains them in FIFO orde
   }
 });
 
-for (const maxPromptBytes of [70_000, 20_000]) test(`long Claude context compacts and caches within a ${maxPromptBytes}-byte model limit`, { timeout: 60_000 }, async () => {
+for (const maxPromptBytes of [70_000, 20_000]) test(`long Claude context is searched without upfront summarization within a ${maxPromptBytes}-byte model limit`, { timeout: 60_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-chat-context-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
@@ -118,15 +118,14 @@ for (const maxPromptBytes of [70_000, 20_000]) test(`long Claude context compact
     assert.equal((await api(node, auth, "POST", url, { question: "What remains?", model })).status, 202);
     const first = await completedChat(node, auth, url);
     assert.equal(first.messages.at(-1)?.role, "assistant", JSON.stringify(first.messages.at(-1)));
-    assert.equal((first.messages.at(-1) as { contextCompacted?: boolean }).contextCompacted, true);
+    assert.equal((first.messages.at(-1) as { contextCompacted?: boolean }).contextCompacted, undefined);
     const firstCalls = (await readFile(log, "utf8")).trim().split("\n").length;
-    assert.ok(firstCalls > 1, "a smaller model requires compaction although initial context is below 120k");
-    assert.ok(firstCalls < 10, "native compaction removes obsolete history before preparing chunks");
+    assert.equal(firstCalls, 1, "the source history is not summarized before answering");
     assert.equal((await api(node, auth, "POST", url, { question: "And now?", model })).status, 202);
     const second = await completedChat(node, auth, url);
     assert.equal(second.messages.at(-1)?.role, "assistant");
     const newCalls = (await readFile(log, "utf8")).trim().split("\n").length - firstCalls;
-    assert.ok(newCalls < firstCalls, "unchanged chunks reuse summaries, not fresh model calls");
+    assert.equal(newCalls, 1, "follow-ups resume the agent without re-summarizing the source");
     assert.equal(await readFile(file, "utf8"), transcript, "side-chat compaction never changes the source transcript");
   } finally {
     await stopDevNode(server);
@@ -143,13 +142,9 @@ async function completedChat(node: Parameters<typeof api>[0], auth: Parameters<t
   throw new Error("Side-chat queue did not drain");
 }
 
-test("side chat always invokes the tool-disabled runner without a source runtime or truncation", async () => {
+test("Activity Chat never forks or continues the source runtime and avoids upfront summary calls", async () => {
   const source = await readFile(new URL("../src/server/conversation-chat-runner.ts", import.meta.url), "utf8");
-  assert.match(source, /useTools: false/);
-  assert.match(source, /conversationChatMaterial\(messages, history\)/);
-  assert.match(source, /prepareChatContext\(material, question, summarize, limit\)/);
-  assert.match(source, /diff: "", useTools: false/);
-  assert.doesNotMatch(source, /useTools: true|forkLocalConversation|findHarnessSession|\.slice\(/);
-  const runner = await readFile(new URL("../src/server/git-review-run.ts", import.meta.url), "utf8");
-  assert.match(runner, /await session.setTools\(\[\]\)/);
+  assert.doesNotMatch(source, /prepareChatContext|loadConversationMessages|forkLocalConversation|findHarnessSession/);
+  const agent = await readFile(new URL("../src/server/conversation-chat-agent.ts", import.meta.url), "utf8");
+  assert.match(agent, /internalSessionId\(\)/);
 });

@@ -2,7 +2,7 @@ import { harnessOption } from "../harness-metadata.js";
 import { renderMarkdown } from "../markdown.js";
 import { setActivityPanelOpen } from "./activity-panel.js";
 import { api } from "./api.js";
-import { fillModelOptions, selectedModel } from "./git-reviewer-options.js";
+import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
 
@@ -12,12 +12,14 @@ const activityTab = byId("activityActivityTab");
 const chatTab = byId("activityChatTab");
 const harnessSelect = byId("conversationChatHarness");
 const modelSelect = byId("conversationChatModel");
+const effortSelect = byId("conversationChatEffort");
+const readOnly = byId("conversationChatReadOnly");
 const input = byId("conversationChatInput");
 const send = byId("conversationChatSend");
 const clear = byId("conversationChatClear");
 const status = byId("conversationChatStatus");
-// Reuse the model option builder; effort is the selected harness's default, not another control.
-const unusedThinking = document.createElement("select");
+const settingsThinking = document.createElement("select");
+let savingMode = false;
 const submitting = new Map();
 let snapshot = { messages: [], queue: [], busy: false };
 let choices;
@@ -49,21 +51,28 @@ function fillHarness(select, automatic) {
 function fillModels(harness, model, preferred) {
   const descriptor = choices.harnesses.find((item) => item.id === harness.value);
   model.disabled = !descriptor;
-  if (descriptor) fillModelOptions(descriptor, choices.models, model, unusedThinking, preferred);
-  else model.replaceChildren(new Option("From conversation", ""));
+  const thinking = harness === harnessSelect ? effortSelect : settingsThinking;
+  thinking.disabled = !descriptor;
+  if (descriptor) fillModelOptions(descriptor, choices.models, model, thinking, preferred);
+  else {
+    model.replaceChildren(new Option("From conversation", ""));
+    thinking.replaceChildren(new Option("From conversation", ""));
+  }
 }
 
 function modelChoice(harness, model) {
-  return harness.value ? { harnessId: harness.value, ...selectedModel(model) } : null;
+  return harness.value ? { harnessId: harness.value, ...selectedModel(model), ...(harness === harnessSelect ? { thinkingLevel: effortSelect.value } : {}) } : null;
 }
 
 function setBusy(value) {
   busy = value;
-  send.disabled = !loadedUrl;
+  send.disabled = !loadedUrl || savingMode;
   send.textContent = value ? "Queue" : "Send";
   clear.disabled = value || !loadedUrl;
   harnessSelect.disabled = value;
   modelSelect.disabled = value || !harnessSelect.value;
+  effortSelect.disabled = value || !harnessSelect.value;
+  readOnly.disabled = value || savingMode || !loadedUrl;
 }
 
 function messageActions(message) {
@@ -104,7 +113,7 @@ function renderMessages(messages) {
   if (!messages.length) {
     const empty = document.createElement("p");
     empty.className = "settings-hint";
-    empty.textContent = "Ask about this conversation. Its original context stays unchanged.";
+    empty.textContent = "Ask about this conversation or project. The agent searches files as needed.";
     list.append(empty);
   }
   for (const message of messages) {
@@ -153,9 +162,13 @@ function renderChat() {
   const waitingMessages = [...queued, ...pending].filter((item) => item.id !== streaming?.questionId);
   const live = streaming ? [{ ...streaming, role: "assistant", streaming: true }] : [];
   renderMessages([...snapshot.messages, ...active, ...live, ...waitingMessages]);
+  readOnly.checked = snapshot.readOnly !== false;
+  byId("conversationChatModeHint").textContent = readOnly.checked
+    ? "Read-only. Search this conversation and project files. Messages stay here."
+    : "Actions enabled. The agent can edit files and run commands. Messages stay here.";
   setBusy(snapshot.busy || snapshot.queue.length > 0 || submitting.size > 0);
   const waiting = queued.length + pending.filter((item) => item.queued).length;
-  status.textContent = busy ? `${snapshot.preparing ? "Condensing long conversation…" : snapshot.busy ? "Answering…" : "Sending…"}${waiting ? ` · ${waiting} queued` : ""}` : "";
+  status.textContent = busy ? `${snapshot.busy ? "Answering…" : "Sending…"}${waiting ? ` · ${waiting} queued` : ""}` : "";
 }
 
 async function refreshChat() {
@@ -218,6 +231,29 @@ export async function openConversationChat() {
 chatTab.addEventListener("click", () => void openConversationChat());
 activityTab.addEventListener("click", () => showTab(false));
 harnessSelect.addEventListener("change", () => fillModels(harnessSelect, modelSelect, {}));
+modelSelect.addEventListener("change", () => {
+  fillThinkingOptions(choices.harnesses.find(item => item.id === harnessSelect.value), choices.models, modelSelect, effortSelect, effortSelect.value);
+});
+readOnly.addEventListener("change", async () => {
+  const url = loadedUrl;
+  const current = generation;
+  if (!url || busy || savingMode) return;
+  const checked = readOnly.checked;
+  savingMode = true;
+  setBusy(busy);
+  try {
+    const body = await api(url, { method: "PATCH", body: JSON.stringify({ readOnly: checked }) });
+    if (current === generation && url === conversationUrl()) acceptSnapshot({ ...body, busy: false });
+  } catch (error) { toast(error.message); }
+  finally {
+    savingMode = false;
+    if (current === generation) renderChat();
+    else {
+      await refreshChat();
+      setBusy(busy);
+    }
+  }
+});
 for (const tab of [activityTab, chatTab]) tab.addEventListener("keydown", (event) => {
   if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
   event.preventDefault();
@@ -230,14 +266,14 @@ byId("conversationChatForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const question = input.value.trim();
   const url = loadedUrl;
-  if (!question || !url || url !== conversationUrl()) return;
+  if (!question || !url || savingMode || url !== conversationUrl()) return;
   const id = crypto.randomUUID();
   const model = modelChoice(harnessSelect, modelSelect);
   submitting.set(id, { id, role: "user", text: question, queued: busy });
   input.value = "";
   renderChat();
   try {
-    await api(url, { method: "POST", body: JSON.stringify({ id, question, model }) });
+    await api(url, { method: "POST", body: JSON.stringify({ id, question, model, readOnly: readOnly.checked }) });
     submitting.delete(id);
     if (url === conversationUrl() && url === loadedUrl) await refreshChat();
   } catch (error) {
