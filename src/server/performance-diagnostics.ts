@@ -164,6 +164,19 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
     return requestContext.run(`${process.pid}-operation-${++sequence}`, () => measure(operation, run));
   }
 
+  /** A duration measured elsewhere, such as in the file sync worker, which must not write this log itself. Counted like `measure`; `fields` (code-owned counts) go on its slow line. */
+  function record(operation: string, durationMs: number, fields: Fields = {}): void {
+    if (!Number.isFinite(durationMs) || durationMs < 0) return;
+    count("operation_total", operation, { operation }, durationMs);
+    if (durationMs >= slowMs) log("slow_operation", { ...fields, operation, durationMs: Math.round(durationMs), requestId: requestContext.getStore() ?? "background" });
+  }
+
+  /* Worker threads have their own event loop and heap; the runtime line reports them beside the
+     main thread's. Reading them is asynchronous, so the line waits for the sampler, at most a second. */
+  let workerSampler: (() => Promise<Fields | undefined>) | undefined;
+  let sampling: Promise<void> | undefined;
+  function sampleWorker(sampler: (() => Promise<Fields | undefined>) | undefined): void { workerSampler = sampler; }
+
   function start(): void {
     if (timer) return;
     delay.enable();
@@ -177,12 +190,22 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
       const nextUtilization = performance.eventLoopUtilization();
       const loop = performance.eventLoopUtilization(nextUtilization, utilization);
       const memory = process.memoryUsage();
-      log("runtime", {
+      const runtime: Fields = {
         intervalMs: Math.round(now - last), cpuPercent: Math.round((nextCpu.user - cpu.user + nextCpu.system - cpu.system) / ((now - last) * 10)),
         eventLoopUtilization: Math.round(loop.utilization * 1000) / 1000,
         loopDelayMaxMs: Math.round(delay.max / 1e6), loopDelayP99Ms: Math.round(delay.percentile(99) / 1e6),
         rssMb: Math.round(memory.rss / 1048576), heapMb: Math.round(memory.heapUsed / 1048576), activeRequests,
-      });
+      };
+      const sampler = workerSampler;
+      if (!sampler || sampling) log("runtime", runtime);
+      else {
+        // A line that arrives after stop() (or a restart) is dropped, so stop never waits on the worker.
+        const owner = timer;
+        const timeout = new Promise<undefined>((resolve) => { setTimeout(() => resolve(undefined), 1000).unref(); });
+        sampling = Promise.race([sampler().catch(() => undefined), timeout])
+          .then((worker) => { if (timer === owner) log("runtime", { ...runtime, ...worker }); })
+          .finally(() => { sampling = undefined; });
+      }
       cpu = nextCpu; last = now; utilization = nextUtilization; delay.reset();
       if (now - totalsSince >= totalsMs) writeTotals(now);
       void considerProfile(now, loop.utilization).catch(() => undefined);
@@ -194,7 +217,7 @@ export function createPerformanceDiagnostics(directory: string, options: { slowM
     clearInterval(timer); timer = undefined; delay.disable();
     await writes;
   }
-  return { middleware, measure, trace, start, stop, flush: () => writes };
+  return { middleware, measure, trace, record, sampleWorker, start, stop, flush: () => writes };
 }
 
 export const performanceDiagnostics = createPerformanceDiagnostics(path.join(resolveDataDirectory(), "logs"));

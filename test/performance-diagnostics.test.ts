@@ -178,3 +178,73 @@ test("a CPU profile is taken on request and when the server stays busy, never wh
   await settled.stop();
   assert.deepEqual((await taken()).map(event => event.reason), ["requested", "busy"]);
 });
+
+const lines = async (root: string): Promise<Array<Record<string, unknown>>> => (await readFile(path.join(root, "performance.jsonl"), "utf8").catch(() => ""))
+  .split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+
+test("a duration measured in another thread is counted with the stages and logged with its fields when slow", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-record-"));
+  const diagnostics = createPerformanceDiagnostics(root, { slowMs: 20, intervalMs: 10, totalsMs: 30 });
+  t.after(async () => { await diagnostics.stop(); await rm(root, { recursive: true, force: true }); });
+  diagnostics.record("fileSync.scan", 45, { files: 3, scope: "full", thread: "worker" });
+  diagnostics.record("fileSync.scan", 15);
+  diagnostics.record("fileSync.scan", Number.NaN);
+  diagnostics.record("fileSync.scan", -1);
+  diagnostics.start();
+  await pause(80);
+  await diagnostics.stop();
+  const events = await lines(root);
+  assert.deepEqual(events.filter(event => event.event === "slow_operation").map(({ at: _at, pid: _pid, ...rest }) => rest),
+    [{ event: "slow_operation", files: 3, scope: "full", thread: "worker", operation: "fileSync.scan", durationMs: 45, requestId: "background" }]);
+  const totals = events.filter(event => event.event === "operation_total" && event.operation === "fileSync.scan");
+  assert.equal(totals.reduce((sum, event) => sum + Number(event.count), 0), 2, "invalid durations are not counted");
+  assert.equal(totals.reduce((sum, event) => sum + Number(event.totalMs), 0), 60);
+});
+
+test("fields recorded with a duration cannot replace its operation, duration or request", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-record-fields-"));
+  const diagnostics = createPerformanceDiagnostics(root, { slowMs: 0 });
+  t.after(async () => { await diagnostics.stop(); await rm(root, { recursive: true, force: true }); });
+  diagnostics.record("fileSync.apply", 7, { operation: "spoofed", durationMs: 1, requestId: "spoofed" });
+  await diagnostics.flush();
+  const [line] = (await lines(root)).filter(event => event.event === "slow_operation");
+  assert.deepEqual([line.operation, line.durationMs, line.requestId], ["fileSync.apply", 7, "background"]);
+});
+
+test("the runtime line carries a worker's figures only while a worker sampler is set", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-worker-"));
+  const diagnostics = createPerformanceDiagnostics(root, { intervalMs: 10 });
+  t.after(async () => { await diagnostics.stop(); await rm(root, { recursive: true, force: true }); });
+  diagnostics.sampleWorker(async () => ({ workerUtilization: 0.25, workerCpuPercent: 30, workerHeapMb: 12 }));
+  diagnostics.start();
+  await pause(60);
+  diagnostics.sampleWorker(undefined);
+  await pause(15);
+  const unsetAt = (await lines(root)).length;
+  await pause(60);
+  await diagnostics.stop();
+  const runtime = (await lines(root)).map((event, index) => ({ event, index })).filter(({ event }) => event.event === "runtime");
+  const sampled = runtime.filter(({ event }) => event.workerHeapMb === 12);
+  assert.ok(sampled.length > 0, "no runtime line had the worker's figures");
+  assert.ok(sampled.every(({ event }) => event.workerUtilization === 0.25 && event.workerCpuPercent === 30 && typeof event.eventLoopUtilization === "number"));
+  const after = runtime.filter(({ index }) => index >= unsetAt);
+  assert.ok(after.length > 0 && after.every(({ event }) => !("workerHeapMb" in event)), `runtime lines after the sampler was removed: ${JSON.stringify(after.map(({ event }) => event))}`);
+});
+
+test("a worker sampler that never answers costs the runtime lines only the worker's figures, and stop does not wait for it", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-perf-worker-hang-"));
+  const diagnostics = createPerformanceDiagnostics(root, { intervalMs: 10 });
+  t.after(async () => { await diagnostics.stop(); await rm(root, { recursive: true, force: true }); });
+  diagnostics.sampleWorker(() => new Promise(() => undefined));
+  diagnostics.start();
+  await pause(1_300);
+  const started = Date.now();
+  await diagnostics.stop();
+  assert.ok(Date.now() - started < 200, `stop took ${Date.now() - started} ms`);
+  const runtime = (await lines(root)).filter(event => event.event === "runtime");
+  assert.ok(runtime.length >= 10, `only ${runtime.length} runtime lines in 1.3 s`);
+  assert.ok(runtime.every(event => !("workerHeapMb" in event)));
+  const before = await readFile(path.join(root, "performance.jsonl"), "utf8");
+  await pause(1_100);
+  assert.equal(await readFile(path.join(root, "performance.jsonl"), "utf8"), before, "a sample still pending at stop wrote nothing afterwards");
+});

@@ -47,7 +47,7 @@ export async function runSelfTest(): Promise<{ passed: boolean; failures: string
     const dataDir = resolveDataDirectory();
     await inRuntime(b, `printf private-b > "$HOME/probe"`);
     if ((await inRuntime(a, `cat "${b.home}/probe"`)).ok) failures.push("One account can read another's home");
-    for (const file of ["node.db", "secret.key", "supervisor.db"]) {
+    for (const file of ["node.db", "secret.key", "supervisor.db", "file-sync.db"]) {
       if ((await inRuntime(a, `cat "${path.join(dataDir, file)}" >/dev/null`)).ok) failures.push(`An account can read the service's ${file}`);
     }
     await inRuntime(a, `printf from-a > "$HOME/out"`);

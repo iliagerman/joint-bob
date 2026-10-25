@@ -405,6 +405,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
   if (rawSessionPath === "watch") {
     // Session dirs may have appeared since startup (first session, new sync).
     sessionWatcher.ensureProject(project);
+    void import("../file-sync/index.js").then(({ fileSyncProjectOpened }) => fileSyncProjectOpened(project.id)).catch(() => undefined);
     const clients = watchClients.get(project.id) ?? new Set<WebSocket>();
     clients.add(socket);
     watchClients.set(project.id, clients);

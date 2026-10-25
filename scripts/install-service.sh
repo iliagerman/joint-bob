@@ -192,6 +192,7 @@ fi
 "${NODE_BIN}" "${REPO_ROOT}/scripts/install-claude-hooks.mjs" "${NODE_BIN}" "${REPO_ROOT}" "${STATE_DIR}"
 "${NODE_BIN}" "${REPO_ROOT}/scripts/install-pi-runtime.mjs" "${REPO_ROOT}" "${STATE_DIR}"
 chmod 600 "${STATE_DIR}/node.db" "${STATE_DIR}/node.db-wal" "${STATE_DIR}/node.db-shm" 2>/dev/null || true
+chmod 600 "${STATE_DIR}/file-sync.db" "${STATE_DIR}/file-sync.db-wal" "${STATE_DIR}/file-sync.db-shm" 2>/dev/null || true
 
 if [ "${service_platform}" = Linux ]; then
   systemctl --user disable pi-mobile-web.service pi-mobile-web-restart.path pi-mobile-web-restart.service >/dev/null 2>&1 || true

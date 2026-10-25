@@ -69,6 +69,9 @@ function slow(event, label) {
 }
 
 const runtime = windowed.filter((event) => event.event === "runtime");
+// Present only while the file sync worker runs; its CPU is also inside the process-wide cpuPercent.
+const worker = runtime.filter((event) => typeof event.workerHeapMb === "number");
+const present = (key) => worker.map((event) => event[key]).filter((value) => typeof value === "number");
 const report = {
   window: { since: new Date(since).toISOString(), until: new Date(until).toISOString(), minutes: round(minutes, 1), restarts: windowed.filter((event) => event.event === "started").length },
   runtime: {
@@ -78,6 +81,12 @@ const report = {
     stallMedianMs: percentile(runtime.map((event) => event.loopDelayMaxMs), 0.5),
     stallMaxMs: Math.max(0, ...runtime.map((event) => event.loopDelayMaxMs)),
     rssMb: round(mean(runtime.map((event) => event.rssMb))),
+  },
+  worker: {
+    samples: worker.length,
+    busyPercent: round(mean(present("workerUtilization")) * 100),
+    cpuPercent: round(mean(present("workerCpuPercent"))),
+    heapMb: round(mean(present("workerHeapMb"))),
   },
   allRequests: totals("route_total", (event) => `${event.method} ${event.route}`),
   allStages: totals("operation_total", (event) => event.operation),
@@ -99,6 +108,7 @@ function table(title, rows, columns) {
 
 console.log(`Window ${report.window.since} → ${report.window.until} (${report.window.minutes} min${report.window.restarts ? `, ${report.window.restarts} restart(s)` : ""})`);
 console.log(`Event loop busy ${report.runtime.busyPercent}%   CPU ${report.runtime.cpuPercent}%   stall median ${report.runtime.stallMedianMs} ms, longest ${report.runtime.stallMaxMs} ms   memory ${report.runtime.rssMb} MB   (${report.runtime.samples} samples)`);
+if (report.worker.samples) console.log(`File sync worker busy ${report.worker.busyPercent}%   CPU ${report.worker.cpuPercent}%   heap ${report.worker.heapMb} MB   (${report.worker.samples} samples)`);
 const totalColumns = [["count", "count"], ["per min", "perMinute"], ["mean ms", "meanMs"], ["max ms", "maxMs"], ["total s", "totalSeconds"]];
 const slowColumns = [["count", "count"], ["median ms", "medianMs"], ["p90 ms", "p90Ms"], ["max ms", "maxMs"], ["total s", "totalSeconds"]];
 table("All requests, by time spent", report.allRequests, totalColumns);

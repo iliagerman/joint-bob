@@ -45,12 +45,14 @@ require_free_port() {
 run_node() {
   # Each node needs its own session cookie name: cookies ignore the port, so two
   # nodes on 127.0.0.1 would otherwise sign each other out. JOINT_BOB_INSECURE_COOKIE
-  # drops the Secure flag, which browsers reject over plain HTTP.
+  # drops the Secure flag, which browsers reject over plain HTTP. File sync stays
+  # off unless asked for: cluster nodes here share one HOME and one set of folders.
   env JOINT_BOB_DATA_DIR="${ROOT}/nodes/$1/data" \
       HOME="${ROOT}/home" \
       PORT="$2" \
       JOINT_BOB_SESSION_COOKIE="mb_session_dev_$1" \
       JOINT_BOB_INSECURE_COOKIE=1 \
+      JOINT_BOB_FILE_SYNC="${JOINT_BOB_FILE_SYNC:-0}" \
       node --import tsx src/server.ts
 }
 

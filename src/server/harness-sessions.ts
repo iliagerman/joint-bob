@@ -97,6 +97,8 @@ function subscribe(shared: SharedHarnessSession): () => void {
     }
     if (event.type === "agent_end") {
       if (!internal) { shared.liveEvents = []; shared.turnStartedAt = undefined; }
+      // Internal turns write files too; what this turn wrote reaches the other machines now.
+      void import("../file-sync/index.js").then(({ fileSyncTurnEnded }) => fileSyncTurnEnded(shared.cwd)).catch(() => undefined);
       const refreshFile = file ? getHarness(shared.engine).paths.transcriptFile?.(file) ?? file : undefined;
       const refresh = refreshHarnessSessions(shared.projectId, refreshFile ? [refreshFile] : []);
       void refresh.then(() => {

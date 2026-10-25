@@ -3,17 +3,16 @@ import {
   createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
-  sign,
-  verify,
+  type KeyObject,
 } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { canonicalPublicKey, signMessage, verifyMessage } from "./file-sync/signing.js";
 import { decryptSecretValue, encryptSecretValue } from "./secrets.js";
 
 export interface ClusterIdentity { nodeId: string; publicKey: string; fingerprint: string }
 
 interface IdentityRow { node_id: string; public_key: string; private_key_encrypted: string }
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{86}$/;
 
 export function ensureClusterIdentitySchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS cluster_v2_identity (
@@ -30,23 +29,6 @@ export function ensureClusterIdentitySchema(db: DatabaseSync): void {
 
 function assertNodeId(nodeId: string): void {
   if (!UUID_PATTERN.test(nodeId)) throw new Error("Cluster node ID must be a UUID");
-}
-
-function assertDomain(domain: string): void {
-  if (!domain.trim() || domain.length > 80 || /[\x00-\x1f\x7f]/.test(domain)) throw new Error("Cluster signature domain is invalid");
-}
-
-function canonicalPublicKey(publicKey: string): string {
-  if (/PRIVATE KEY/.test(publicKey)) throw new Error("Cluster public key must be an Ed25519 public key");
-  let key;
-  try { key = createPublicKey(publicKey); } catch { throw new Error("Cluster public key is invalid"); }
-  if (key.asymmetricKeyType !== "ed25519") throw new Error("Cluster public key must be Ed25519");
-  return key.export({ type: "spki", format: "pem" }).toString();
-}
-
-function signedBytes(domain: string, payload: string): Buffer {
-  assertDomain(domain);
-  return Buffer.from(JSON.stringify(["joint-bob-v2", domain, payload]), "utf8");
 }
 
 export function clusterPublicKeyFingerprint(publicKey: string): string {
@@ -111,23 +93,20 @@ export function pinnedClusterPublicKey(db: DatabaseSync, nodeId: string): string
   return row?.public_key;
 }
 
-export function signClusterMessage(db: DatabaseSync, nodeId: string, domain: string, payload: string): string {
+/** The local node's signing key, decrypted (the file sync worker receives it as a KeyObject). */
+export function clusterPrivateKey(db: DatabaseSync, nodeId: string): KeyObject {
   assertNodeId(nodeId);
   const row = db.prepare("SELECT node_id, private_key_encrypted FROM cluster_v2_identity WHERE singleton = 1").get() as Pick<IdentityRow, "node_id" | "private_key_encrypted"> | undefined;
   if (!row || row.node_id !== nodeId) throw new Error("Local cluster identity does not match node ID");
   const privateKey = createPrivateKey(decryptSecretValue(row.private_key_encrypted));
   if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("Stored cluster private key is invalid");
-  return sign(null, signedBytes(domain, payload), privateKey).toString("base64url");
+  return privateKey;
+}
+
+export function signClusterMessage(db: DatabaseSync, nodeId: string, domain: string, payload: string): string {
+  return signMessage(clusterPrivateKey(db, nodeId), domain, payload);
 }
 
 export function verifyClusterMessage(publicKey: string, domain: string, payload: string, signature: string): boolean {
-  try {
-    if (!SIGNATURE_PATTERN.test(signature)) return false;
-    const decoded = Buffer.from(signature, "base64url");
-    if (decoded.length !== 64 || decoded.toString("base64url") !== signature) return false;
-    const key = createPublicKey(canonicalPublicKey(publicKey));
-    return verify(null, signedBytes(domain, payload), key, decoded);
-  } catch {
-    return false;
-  }
+  return verifyMessage(publicKey, domain, payload, signature);
 }

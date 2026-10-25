@@ -10,7 +10,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
-import { inBackground } from "./peer-presence.js";
+import { inBackground, outsideBackground } from "./peer-presence.js";
 import { refreshSharedCommands } from "./server/saved-commands.js";
 import { syncSharedWorkspaces } from "./server/shared-workspaces.js";
 import { placeConversationsWith } from "./session-listing-revisions.js";
@@ -86,6 +86,7 @@ import "./server/routes/usage.js";
 import "./server/routes/dashboards.js";
 import { refreshSharedDashboards } from "./server/dashboard-sharing.js";
 import "./server/routes/relay.js";
+import "./file-sync/admin-routes.js";
 import "./server/routes/webhooks.js";
 import "./server/routes/updates.js";
 import "./server/routes/not-found.js";
@@ -96,13 +97,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   // Playwright installs signal handlers of its own. Explicitly finish node shutdown
   // after closing Chrome rather than leaving the HTTP server alive after SIGTERM.
   let stopping = false;
+  // Loaded once cluster work starts; the shutdown and the 2 s pass reach it only if it was.
+  let fileSync: Promise<typeof import("./file-sync/index.js")> | undefined;
   for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, () => {
     if (stopping) return;
     stopping = true;
     server.close();
     stopRelay();
     const timeout = setTimeout(() => process.exit(0), 8000); timeout.unref();
-    void closeBrowserRuntime().catch(error => console.warn("Browser shutdown failed", error)).finally(() => process.exit(0));
+    const stopFileSync = fileSync?.then((module) => module.stopFileSync()).catch(error => console.warn("File sync shutdown failed", error));
+    void Promise.allSettled([closeBrowserRuntime().catch(error => console.warn("Browser shutdown failed", error)), stopFileSync]).finally(() => process.exit(0));
   });
   flags.startupReady = false;
   flags.startupError = undefined;
@@ -188,6 +192,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         syncSharedWorkspaces().catch((error) => console.warn("Shared workspace sync failed", error));
         syncNtfyServiceShares().catch((error) => console.warn("ntfy service share sync failed", error));
         syncGitResourceShares().catch((error) => console.warn("Repository share sync failed", error));
+        // Its loops are long-lived, so it must not inherit this pass's background context (peer-presence.ts).
+        outsideBackground(() => {
+          fileSync = import("./file-sync/index.js");
+          fileSync.then(({ startFileSync }) => startFileSync()).catch((error) => console.warn("File sync startup failed", error));
+        });
       }
       flushClusterWork();
     };
@@ -225,6 +234,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       void initializeStartupReadiness();
       sweepRuntimeLeases();
       if (slept && clusterStarted && clusterWorkAllowed()) announceReturn(true).catch((error) => console.warn("Announcing this machine's return failed", error));
+      // Re-derives the shared folders only when a trigger bumped file_sync_revision.
+      void fileSync?.then(({ fileSyncTick }) => fileSyncTick()).catch(() => undefined);
       inBackground(runClusterWork);
     }, 2_000).unref();
   });

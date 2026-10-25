@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a built-in file sync engine, off by default and switched on per node in Settings → File sync; while it is off, file syncing is unchanged.
+
 ## 2.153.0 — 2026-10-25
 
 - Fixed nodes whose Syncthing is stopped or missing being held back from starting; they now start straight away, can create projects and tickets, and sync again once Syncthing is running.

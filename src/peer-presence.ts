@@ -36,6 +36,9 @@ export function whilePeerOptional<T>(read: () => Promise<T>): Promise<T> { retur
 /** Runs background sync: nobody is waiting for it, so it sends nothing to a peer that is away. */
 export function inBackground<T>(work: () => T): T { return skippable.run(true, work); }
 
+/** Leaves background sync: a long-lived service started here (file sync) decides per request what may be skipped, instead of inheriting it for good. */
+export function outsideBackground<T>(work: () => T): T { return skippable.exit(work); }
+
 export class PeerUnreachableError extends Error {
   constructor(readonly peerId: string, message = "Cluster peer is unreachable") { super(message); }
 }
