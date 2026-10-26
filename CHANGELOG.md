@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.159.2 — 2026-10-26
 
-- Fixed selecting a workspace on one of your twin machines not sharing the projects the other twin owns in it; they now show as shared right away, and saving reports if the other machine could not finish.
+- Fixed workspace sharing omitting projects owned by your other twin machine. The project list now includes them, shows inherited workspace selections, and counts them as shared.
+- Kept local sharing changes when a twin is unavailable and reported incomplete saves instead of silently skipping projects.
 
 ## 2.159.1 — 2026-10-26
 
