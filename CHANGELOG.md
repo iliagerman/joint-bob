@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed force-starting a queued message during automatic context compaction showing an "operation was aborted" error after the cancelled compaction; the message now runs without the error.
+
 ## 2.161.0 — 2026-10-26
 
 - Added a Secrets button to Activity Chat so a side chat can use its own secret accounts, copied from its conversation the first time and kept separate after that; clearing the chat copies them again.

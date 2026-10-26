@@ -837,7 +837,9 @@ async function queueCommand(connection: HarnessChatConnection, message: ReturnTy
       try { await connection.shared.session.cancel("Stopped to run the queued prompt you started now"); }
       catch (error) { if (!/not running/i.test(chatErrorMessage(error))) throw error; }
       if (draining) try { await draining; }
-      catch (error) { publish(connection, { type: "error", error: chatErrorMessage(error) }); }
+      catch (error) {
+        if (!pausedDrains.has(key)) publish(connection, { type: "error", error: chatErrorMessage(error) });
+      }
       sendHarnessStatus(connection.shared);
     } finally {
       pausedDrains.delete(key);
@@ -937,7 +939,11 @@ function logChatFailure(context: string, connection: HarnessChatConnection, erro
 }
 
 function promptQueueFailed(connection: HarnessChatConnection): (error: unknown) => void {
-  return (error) => { logChatFailure("Prompt queue", connection, error); publish(connection, { type: "error", error: chatErrorMessage(error) }); };
+  return (error) => {
+    if (pausedDrains.has(queueKey(connection))) return;
+    logChatFailure("Prompt queue", connection, error);
+    publish(connection, { type: "error", error: chatErrorMessage(error) });
+  };
 }
 
 export async function attachHarnessChat(options: AttachOptions): Promise<void> {

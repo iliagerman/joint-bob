@@ -229,6 +229,39 @@ test("force starting a queued Pi prompt hides the canceled turn error", async (c
   }
 });
 
+test("force start hides errors from canceled Pi auto-compaction", async (context) => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+  sockets.push(opened.socket);
+  await waitForChatSession(opened);
+  const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId)!;
+  const compacting = Promise.withResolvers<void>();
+  let rejectCompaction!: (error: Error) => void;
+  const prompts: string[] = [];
+  context.mock.method(shared.session, "status", () => ({ contextUsage: { percent: 90 } }));
+  context.mock.method(shared.session, "compact", async () => {
+    compacting.resolve();
+    await new Promise<void>((_resolve, reject) => { rejectCompaction = reject; });
+  });
+  context.mock.method(shared.session, "prompt", async (input) => { prompts.push(input.text); input.onStarted?.(); });
+  context.mock.method(shared.session, "cancel", async () => {
+    rejectCompaction(new Error("Turn prefix summarization failed: This operation was aborted"));
+  });
+  const engineLog = process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  try {
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "run me" }));
+    await compacting.promise;
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "userMessage" && frame.queued));
+    const queued = opened.messages.find((frame) => frame.type === "userMessage" && frame.text === "run me")!;
+    opened.socket.send(JSON.stringify({ type: "forceStartQueuedPrompt", queueId: queued.queueId, queueRevision: queued.revision }));
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"));
+    assert.deepEqual(prompts, ["run me"]);
+    assert.deepEqual(opened.messages.filter((frame) => frame.type === "error"), []);
+  } finally { process.env.JOINT_BOB_TEST_ENGINE_LOG = engineLog; }
+});
+
 for (const outcome of ["cancelled", "started", "cancel-failed"] as const) {
   test(`force starting an in-flight Pi queue entry handles ${outcome} without duplicate dispatch`, async (context) => {
     const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
