@@ -3,9 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.160.0 — 2026-10-26
 
-- Changed file sync to move each shared project to built-in sync by itself once every machine has matched its files for a day, so no one has to coordinate the switch.
+- Added automatic move of shared projects to built-in file sync: once a project's files have matched on every machine for 24 hours and all checks pass, its owner switches it over by itself, with no one needing to act on another machine.
+- Changed file sync to be on by default and to compare every shared project, unless an admin picked a list; projects not yet read are indexed one at a time, smallest first, while the machine is quiet.
+- Changed the 24-hour wait so a machine being away or a copy still in transit does not restart it; checks repeat only on relevant changes, and a failing full check retries with longer waits, up to 30 minutes.
+- Changed machines to follow a project's move, and a machine that was offline catches up the next time it connects.
+- Changed a project moved back to Syncthing by hand to stay there until someone clicks the new "Allow automatic move" action; an automatic move back restarts the 24-hour wait.
+- Changed turning file sync off on a machine to move its built-in projects back to Syncthing first, with the owner or owning machine doing it while the engine keeps their files moving; peers hear the switch at once.
+- Changed the handover between the two sync engines so a project is never written by both at once: built-in sync stops writing a project as soon as a Syncthing folder is added or resumed over it, and old shared folders are paused right away.
+- Added waiting reasons for each project in the File sync settings, naming the machine holding it up, plus a "Compare these projects: All / Chosen…" choice and first-index progress.
 
 ## 2.159.2 — 2026-10-26
 
