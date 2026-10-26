@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.161.2 — 2026-10-26
 
-- Fixed conversation lists failing when a transcript had a damaged line, such as one cut short by a full disk; the damaged line is now skipped and the rest of the list loads.
+- Fixed conversation lists and usage totals failing with "Unterminated string in JSON" when a transcript had a damaged line, such as one cut short by a full disk; the damaged line is now skipped and logged once, and the rest of the list loads. Forking a conversation with a damaged history still refuses.
+- Changed deploys to keep only the newest pre-deploy database backup by default, removing older ones before writing a new one, and to stop and remove a backup cut short by a full disk instead of leaving the disk full.
 
 ## 2.161.1 — 2026-10-26
 
