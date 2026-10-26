@@ -12,7 +12,7 @@ import type { IgnoreClass } from "./ignore.js";
 import { CHANGED_RETRY_MS, isWorktreeBulk, peerCaughtUp, sameTarget, type NeedEngine } from "./need.js";
 import { caseFoldKey, joinInside, normalizeRelativePath, parentKey } from "./paths.js";
 import type { ApplyBatchResult, ApplyItemInput, ApplyItemResult, ApplyOutcome } from "./protocol.js";
-import type { Trash } from "./trash.js";
+import { renameIntoEmptyName, type Trash } from "./trash.js";
 import { DIRECTORY, FILE, SYMLINK, type Clock, type IndexEntry, type Phase, type ShareKind } from "./types.js";
 import { compareVectors, mergeVectors, vectorsEqual } from "./vectors.js";
 import type { SuppressionRegistry } from "./watch.js";
@@ -1057,6 +1057,14 @@ export class Applier {
     // Into an empty name a hard link (or the link itself), which fails if something took the name since the look, where a
     // rename would replace it unseen; filesystems without hard links rename.
     const place = (from: string) => {
+      if (emptyName() && this.darwin) {
+        // No hard link on darwin: FSEvents would never report this file's delete (renameIntoEmptyName).
+        try { renameIntoEmptyName(from, abs); } catch (error) {
+          if (errorCode(error) === "EEXIST") throw new Outcome("changed", "Something was written in its place meanwhile");
+          throw error;
+        }
+        return;
+      }
       if (emptyName()) {
         try { linkSync(from, abs); } catch (error) {
           const code = errorCode(error);

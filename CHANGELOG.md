@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed deletions of files placed by built-in file sync on Macs waiting up to an hour to reach other machines; they now go out right away.
+
 ## 2.159.0 — 2026-10-26
 
 - Added a File sync tab in Settings for admins that shows each machine and project, whether Joint Bob's built-in sync or Syncthing moves it, what is left to copy, any problems, and the differences between machines.

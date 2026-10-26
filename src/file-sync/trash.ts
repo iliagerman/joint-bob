@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, copyFileSync, linkSync, lstatSync, mkdirSync, readdirSync, readlinkSync, renameSync, rmdirSync, statfsSync, symlinkSync, unlinkSync, type Stats } from "node:fs";
+import { closeSync, constants, copyFileSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readlinkSync, renameSync, rmdirSync, statfsSync, symlinkSync, unlinkSync, type Stats } from "node:fs";
 import path from "node:path";
 import type { Clock } from "./types.js";
 
@@ -52,6 +52,8 @@ export interface TrashOptions {
   disk?(target: string): DiskInfo;
   /** Injectable for tests (EXDEV fallback). */
   link?(from: string, to: string): void;
+  /** Tests: darwin puts a taken file back without a hard link (renameIntoEmptyName). */
+  platform?: NodeJS.Platform;
 }
 
 /** One trashed file. `order` grows with every keep: items at or above a mark() are what an apply kept since. */
@@ -61,6 +63,23 @@ export type SpaceCheck = { ok: true; freeBytes: number; floorBytes: number } | {
 export interface KeepSince { keep?: number }
 
 const LINK_FALLBACK = new Set(["EXDEV", "EPERM", "ENOTSUP", "EMLINK"]);
+
+/**
+ * Moves `from` to the empty name `to` (EEXIST when something took it), as a hard link and an unlink would, for darwin:
+ * there FSEvents never reports the later delete of a file that ever had a second link (measured on APFS, 2026-10-26),
+ * so a delete of a file sync placed waited for the hourly walk. An empty placeholder taken exclusively holds the name,
+ * and the rename replaces only it.
+ */
+export function renameIntoEmptyName(from: string, to: string): void {
+  const fd = openSync(to, "wx");
+  let ino: number;
+  try { ino = fstatSync(fd).ino; } finally { closeSync(fd); }
+  try { renameSync(from, to); } catch (error) {
+    // Only the placeholder goes: whatever replaced it meanwhile stays.
+    try { if (lstatSync(to).ino === ino) unlinkSync(to); } catch { /* gone already */ }
+    throw error;
+  }
+}
 
 function dayStart(day: string): number {
   return Date.UTC(Number(day.slice(0, 4)), Number(day.slice(4, 6)) - 1, Number(day.slice(6, 8)));
@@ -72,6 +91,7 @@ export class Trash {
   private readonly budgetBytes: number;
   private readonly disk: (target: string) => DiskInfo;
   private readonly link: (from: string, to: string) => void;
+  private readonly darwin: boolean;
   private readonly reservations = new Map<string, number>();
   /** Every item by file, oldest kept first; listed from disk once, then kept current by every keep and removal. */
   private index: Map<string, TrashItem> | undefined;
@@ -84,6 +104,7 @@ export class Trash {
     this.budgetBytes = options.budgetBytes ?? defaultTrashBudget();
     this.disk = options.disk ?? statfsDisk;
     this.link = options.link ?? linkSync;
+    this.darwin = (options.platform ?? process.platform) === "darwin";
   }
 
   /** The filesystem holding `target` (or its nearest existing parent). */
@@ -234,9 +255,12 @@ export class Trash {
     return { file: target, moved: true, stat };
   }
 
-  /** Puts a taken file back at `absolute` when nothing took that name since (a hard link: never over something); false when something did. */
+  /** Puts a taken file back at `absolute` when nothing took that name since (a hard link, on darwin a held name and a rename: never over something); false when something did. */
   restore(file: string, absolute: string): boolean {
-    try { linkSync(file, absolute); } catch (error) {
+    try {
+      if (this.darwin) renameIntoEmptyName(file, absolute);
+      else linkSync(file, absolute);
+    } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
       throw error;
     }

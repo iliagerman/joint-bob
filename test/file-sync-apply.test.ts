@@ -586,7 +586,7 @@ test("the trash keeps a file under a name that was a trashed file the same day",
 });
 
 /** Runs `run` with one node:fs function wrapped (apply imports it by name: the ESM exports are synced both ways). */
-async function withFs<K extends "copyFileSync" | "renameSync" | "linkSync" | "symlinkSync", T>(name: K, wrap: (original: typeof fsModule[K]) => typeof fsModule[K], run: () => Promise<T>): Promise<T> {
+async function withFs<K extends "copyFileSync" | "renameSync" | "linkSync" | "symlinkSync" | "openSync", T>(name: K, wrap: (original: typeof fsModule[K]) => typeof fsModule[K], run: () => Promise<T>): Promise<T> {
   const original = fsModule[name];
   (fsModule as unknown as Record<string, unknown>)[name] = wrap(original);
   syncBuiltinESMExports();
@@ -705,11 +705,33 @@ test("into an empty name a link, or a file where a folder was cleared, never rep
   }) as typeof fsModule.symlinkSync, () => withFs("linkSync", (original) => ((from: fsModule.PathLike, to: fsModule.PathLike) => {
     if (String(to) === path.join(n.root, "d0")) writeFileSync(String(to), "written at d0");
     return original(from, to);
-  }) as typeof fsModule.linkSync, () => n.apply([{ path: "l2" }, { path: "d0", tempPath: temp, source: PEER }])));
+  }) as typeof fsModule.linkSync, () => withFs("openSync", (original) => ((file: fsModule.PathLike, flags?: fsModule.OpenMode, mode?: fsModule.Mode | null) => {
+    // darwin takes the empty name with an exclusive placeholder instead of a link.
+    if (String(file) === path.join(n.root, "d0") && flags === "wx") writeFileSync(String(file), "written at d0");
+    return original(file, flags, mode);
+  }) as typeof fsModule.openSync, () => n.apply([{ path: "l2" }, { path: "d0", tempPath: temp, source: PEER }]))));
   assert.deepEqual(result.items.map((item) => [item.outcome, item.reason]), [["changed", "Something was written in its place meanwhile"], ["changed", "Something was written in its place meanwhile"]]);
   assert.equal(onDisk(n.root, "l2"), "written at l2");
   assert.equal(onDisk(n.root, "d0"), "written at d0");
   assert.deepEqual(n.trashFiles().map((file) => file.content), ["x"]);
+});
+
+test("darwin: a file sync placed reports its later delete, as FSEvents never does for a file that had a second link", { skip: !darwin && "FSEvents is darwin's" }, async (t) => {
+  const n = await node(t);
+  // The stream must see the placement: one that starts afterwards reports the delete either way.
+  const seen: string[] = [];
+  const watcher = fsModule.watch(n.root, { recursive: true }, (_type, name) => { if (name !== null) seen.push(String(name)); });
+  t.after(() => watcher.close());
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await n.pull([{ path: "placed.txt", size: 6, sha256: sha("placed") }]);
+  const temp = n.download("placed.txt", "placed");
+  assert.deepEqual((await n.apply([{ path: "placed.txt", tempPath: temp, source: PEER }])).items, [{ path: "placed.txt", outcome: "applied" }]);
+  assert.equal(lstatSync(path.join(n.root, "placed.txt")).nlink, 1);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  seen.length = 0;
+  fsModule.unlinkSync(path.join(n.root, "placed.txt"));
+  for (let waited = 0; waited < 5000 && !seen.includes("placed.txt"); waited += 100) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(seen.includes("placed.txt"), `events: ${JSON.stringify(seen)}`);
 });
 
 test("engine temps stay out of git status: the exclude is written as a share moves into builtin, and in a repository around the project", async (t) => {

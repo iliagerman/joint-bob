@@ -79,6 +79,20 @@ test("other link failures are not hidden by a copy", (t) => {
   assert.throws(() => s.trash.preserve("project:p1", "a.txt", file), /denied/);
 });
 
+test("darwin: a taken file goes back by rename, so it never had a second link (FSEvents would not report its delete)", (t) => {
+  const s = setup(t, { platform: "darwin" });
+  const gone = s.put("gone.txt", "deleted by a peer");
+  const ino = lstatSync(gone).ino;
+  const taken = s.trash.take("project:p1", "gone.txt", gone);
+  assert.equal(s.trash.restore(taken.file, gone), true);
+  assert.deepEqual([lstatSync(gone).ino, lstatSync(gone).nlink, existsSync(taken.file)], [ino, 1, false], "a rename back");
+  const again = s.trash.take("project:p1", "gone.txt", gone);
+  writeFileSync(gone, "a new file took the name");
+  assert.equal(s.trash.restore(again.file, gone), false, "never over something");
+  assert.equal(readFileSync(gone, "utf8"), "a new file took the name");
+  assert.equal(readFileSync(again.file, "utf8"), "deleted by a peer");
+});
+
 test("a second copy of the same path on the same day gets ~1, then ~2", (t) => {
   const s = setup(t);
   const file = s.put("a.txt", "one");
