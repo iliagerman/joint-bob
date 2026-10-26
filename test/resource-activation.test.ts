@@ -80,6 +80,28 @@ test("blocked configured skills are absent from every harness root and native Cl
   }
 });
 
+test("malformed skills are skipped without dropping healthy siblings in any harness", async (t) => {
+  const root = path.join(fixture, "malformed-skills");
+  for (const name of ["healthy", "flight-search", "invalid-name"]) await mkdir(path.join(root, name), { recursive: true });
+  await writeFile(path.join(root, "healthy", "SKILL.md"), "---\nname: healthy\ndescription: valid\n---\n");
+  const malformed = path.join(root, "flight-search", "SKILL.md");
+  await writeFile(malformed, "---\nname: flight-search\ndescription: Search flights. Learned pitfalls: Explore pages hang\n---\n");
+  await writeFile(path.join(root, "invalid-name", "SKILL.md"), "---\nname: [invalid]\ndescription: invalid name\n---\n");
+  const warnings = t.mock.method(console, "warn", () => {});
+  for (const harness of ["pi", "claude", "kiro"] as const) {
+    const active = activeSkillRoot(harness, root);
+    assert.equal(existsSync(path.join(active, "healthy", "SKILL.md")), true);
+    assert.equal(existsSync(path.join(active, "flight-search")), false);
+    assert.equal(existsSync(path.join(active, "invalid-name")), false);
+    const single = activeSkillRoot(harness, malformed);
+    assert.equal(existsSync(path.join(single, "SKILL.md")), false, "a configured manifest is skipped too");
+  }
+  assert.ok(warnings.mock.calls.some(call => call.arguments.join(" ").includes(malformed)), "warning identifies the broken skill");
+  assert.ok(warnings.mock.calls.some(call => call.arguments.join(" ").includes("Nested mappings")), "warning preserves the parse error");
+  await writeFile(malformed, "---\nname: flight-search\ndescription: repaired\n---\n");
+  assert.equal(existsSync(path.join(activeSkillRoot("pi", root), "flight-search", "SKILL.md")), true, "repaired skills load on the next attempt");
+});
+
 test("Claude fails closed when native resource discovery cannot enforce a skill block", async () => {
   const project = path.join(fixture, "native-disabled-project");
   const native = path.join(getSettings().claude.configPath, "skills", "blocked-native-fixture");

@@ -144,6 +144,14 @@ export function skillNameFromFile(file: string, fallback: string): string {
   return name;
 }
 
+function loadSkillName(file: string, fallback: string): string | null {
+  try { return skillNameFromFile(file, fallback); }
+  catch (error) {
+    console.warn(`Skipping skill ${file}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
 export function blockedSkillNames(harness: HarnessId, context: SkillScopeContext = {}): string[] {
   schema();
   const local = settingsDatabase().prepare("SELECT name FROM resource_activation WHERE kind='skill' AND harness=? AND enabled=0")
@@ -158,7 +166,11 @@ export function activeSkillRoot(harness: HarnessId, root = agentResourcePaths().
   const unavailable = new Set(unavailableSkillNames(context));
   const empty = path.join(resolveDataDirectory(), "runtime", "active-skills", harness, "empty");
   if (statSync(root).isFile()) {
-    const name = skillNameFromFile(root, path.basename(path.dirname(root)));
+    const name = loadSkillName(root, path.basename(path.dirname(root)));
+    if (name === null) {
+      mkdirSync(empty, { recursive: true });
+      return empty;
+    }
     const canonical = realpathSync(root);
     const received = receivedSkillPath(path.dirname(root), path.dirname(path.dirname(root)), path.basename(path.dirname(root)), root)
       || receivedSkillPath(path.dirname(canonical), path.dirname(path.dirname(canonical)), path.basename(path.dirname(canonical)), canonical);
@@ -180,7 +192,12 @@ export function activeSkillRoot(harness: HarnessId, root = agentResourcePaths().
     const manifest = path.join(directory, "SKILL.md");
     if (existsSync(manifest)) {
       const fallback = path.basename(directory);
-      const name = skillNameFromFile(manifest, fallback);
+      const name = loadSkillName(manifest, fallback);
+      if (name === null) {
+        excluded = true;
+        visiting.delete(real);
+        return;
+      }
       const first = relative.split(path.sep)[0] || fallback;
       const received = receivedSkillPath(directory, relative ? root : path.dirname(root), first, manifest);
       if (unavailable.has(name) || !activationDecision("skill", name, harness, received, received && relayDeliveredSkill(name)).enabled) {
