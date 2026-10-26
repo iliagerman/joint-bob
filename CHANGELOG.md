@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.160.1 — 2026-10-26
 
-- Fixed a project moved back to Syncthing showing a missing-folder error; for up to 10 minutes it now shows the move as still going on while Syncthing adds the folder back.
+- Fixed a project moved back to Syncthing showing a missing-folder error; for up to 10 minutes it now shows "Moving back to Syncthing" while Syncthing adds the folder back.
 
 ## 2.160.0 — 2026-10-26
 
