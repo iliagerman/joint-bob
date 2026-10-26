@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isInternalSession } from "./internal-sessions.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { parseCompletedJsonl } from "./jsonl.js";
+import { parseJsonlSkippingDamage } from "./jsonl.js";
 import { mkdtemp, open, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path, { basename } from "node:path";
@@ -538,7 +538,7 @@ async function readPiSummaryState(filePath: string): Promise<PiTranscriptSummary
     const prefixBytes = appended ? cached!.tail.length : 0;
     const newBytes = buffer.subarray(prefixBytes);
     const completeBytes = completedPiBytes(newBytes);
-    const records = completeBytes ? parseCompletedJsonl(newBytes.toString("utf8", 0, completeBytes)) as UnknownRecord[] : [];
+    const records = completeBytes ? parseJsonlSkippingDamage(newBytes.toString("utf8", 0, completeBytes), resolved) as UnknownRecord[] : [];
     const header = appended ? undefined : records.shift();
     if (!appended && (header?.type !== "session" || typeof header.id !== "string" || typeof header.cwd !== "string")) return null;
     const state = appended ? { ...cached! } : newPiSummaryState(header!, identity, info.birthtime, info.mtime);

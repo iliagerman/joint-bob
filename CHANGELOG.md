@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed conversation lists failing when a transcript had a damaged line, such as one cut short by a full disk; the damaged line is now skipped and the rest of the list loads.
+
 ## 2.161.1 — 2026-10-26
 
 - Fixed force-starting a queued message during automatic context compaction showing an "operation was aborted" error after the cancelled compaction; the message now runs without the error.

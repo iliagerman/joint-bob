@@ -3,7 +3,7 @@ import { claudeSubscriptionEnvironment, currentRuntime, spawnInRuntime } from ".
 import { mapWithConcurrency } from "./concurrency.js";
 import { isInternalSession } from "./internal-sessions.js";
 import { createHash, randomUUID } from "node:crypto";
-import { parseCompletedJsonl } from "./jsonl.js";
+import { parseJsonlSkippingDamage } from "./jsonl.js";
 import type { Stats } from "node:fs";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { spawn } from "./subprocess.js";
@@ -374,9 +374,9 @@ async function appendedClaudeFacts(filePath: string, fileStat: Stats, previous: 
     if ((await handle.read(before, 0, before.length, resume.consumed - before.length)).bytesRead !== before.length || resumeHash(before) !== resume.tailHash) return undefined;
     const appended = Buffer.alloc(fileStat.size - resume.consumed);
     if ((await handle.read(appended, 0, appended.length, resume.consumed)).bytesRead !== appended.length) return undefined;
-    // Complete lines must parse; a last record without its newline counts once it parses (see parseCompletedJsonl).
+    // A damaged complete line is skipped; a last record without its newline counts once it parses (see parseJsonlSkippingDamage).
     const consumed = appended.lastIndexOf(10) + 1;
-    const records = parseCompletedJsonl(appended.toString("utf8")) as UnknownRecord[];
+    const records = parseJsonlSkippingDamage(appended.toString("utf8"), filePath) as UnknownRecord[];
     const fold: ClaudeFactsFold = { customTitle: resume.customTitle, aiTitle: resume.aiTitle, prompt: previous.prompt, cwds: new Set(previous.cwds), firstEventAt: previous.firstEventAt, lastEventAt: previous.lastEventAt, contextUsage: previous.contextUsage };
     foldClaudeRecords(fold, records, previous.startPrompt);
     return { fold, consumed: resume.consumed + consumed, tail: Buffer.concat([before, appended.subarray(0, consumed)]) };
@@ -389,7 +389,7 @@ async function readClaudeSessionFacts(filePath: string, fileStat: Stats, startPr
     const text = await readFile(filePath, "utf8");
     const complete = text.slice(0, text.lastIndexOf("\n") + 1);
     const fold: ClaudeFactsFold = { customTitle: "", aiTitle: "", prompt: "", cwds: new Set(), firstEventAt: "", lastEventAt: "" };
-    foldClaudeRecords(fold, parseCompletedJsonl(text) as UnknownRecord[], startPrompt);
+    foldClaudeRecords(fold, parseJsonlSkippingDamage(text, filePath) as UnknownRecord[], startPrompt);
     // A few characters more than the checked bytes, so a character cut in half at the front never reaches them.
     read = { fold, consumed: Buffer.byteLength(complete), tail: Buffer.from(complete.slice(-(RESUME_CHECK_BYTES + 4))) };
   }

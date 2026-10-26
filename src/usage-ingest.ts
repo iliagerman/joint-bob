@@ -3,7 +3,7 @@ import path from "node:path";
 import { getClusterNode } from "./cluster.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import type { ConversationRecord } from "./conversation-records.js";
-import { parseCompletedJsonl } from "./jsonl.js";
+import { parseJsonlSkippingDamage } from "./jsonl.js";
 import type { ProjectRecord, SessionSummary } from "./types.js";
 import { normalizeUsageRecords } from "./usage-import.js";
 import { saveUsageEvents, saveUsageIngestFingerprint, upsertUsageInventory, usageIngestFingerprint } from "./usage-ledger.js";
@@ -56,7 +56,7 @@ async function importSession(project: ProjectRecord, session: SessionSummary, co
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
       throw error;
     }
-    const records = parseCompletedJsonl(contents);
+    const records = parseJsonlSkippingDamage(contents, file);
     const { usageModelPricing } = await import("./pi-service.js");
     const events = normalizeUsageRecords(session.harnessId, session.id, records, {
       projectId: project.id, conversationId, createdAt: session.createdAt || project.createdAt,

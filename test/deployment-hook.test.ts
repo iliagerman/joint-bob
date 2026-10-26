@@ -22,8 +22,10 @@ test("main pushes deploy exact commits to durable node installations", async () 
   assert.match(deploy, /127\.0\.0\.1:8787/);
   assert.match(deploy, /127\.0\.0\.1:8790/);
   assert.match(deploy, /local \| homeserver \| all/);
-  assert.match(deploy, /JOINT_BOB_DEPLOY_BACKUP_KEEP:-5/);
-  assert.equal(deploy.match(/pre-deploy-\*\.db \| tail -n "\+\$\(\(BACKUP_KEEP \+ 1\)\)"/g)?.length, 2);
+  // Only the newest backup is kept, older ones go before the new one is written, and one cut short is removed.
+  assert.match(deploy, /JOINT_BOB_DEPLOY_BACKUP_KEEP:-1/);
+  assert.equal(deploy.match(/pre-deploy-\*\.db 2>\/dev\/null \|\| true; \} \| tail -n "\+\$\{BACKUP_KEEP\}"/g)?.length, 2);
+  assert.equal(deploy.match(/rm -f -- "\$\{?backup_db\}?" "\$\{?backup_db\}?-journal"/g)?.length, 2);
   assert.match(installer, /for hook_name in pre-commit pre-push/);
   assert.match(installer, /hooks\/\$\{hook_name\}/);
   assert.match(justfile, /^update-local:/m);

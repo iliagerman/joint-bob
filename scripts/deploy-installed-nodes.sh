@@ -10,7 +10,8 @@ if [ -f "${HOME}/.joint-bob/env" ]; then
 fi
 COMMIT="${1:-$(git -C "${ROOT}" rev-parse HEAD)}"
 DESTINATION="${2:-all}"
-BACKUP_KEEP="${JOINT_BOB_DEPLOY_BACKUP_KEEP:-5}"
+# Each backup is a full node.db copy (2.6 GB on the homeserver in 2026-10); only the newest is kept unless asked.
+BACKUP_KEEP="${JOINT_BOB_DEPLOY_BACKUP_KEEP:-1}"
 [[ "${COMMIT}" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected a 40-character commit" >&2; exit 1; }
 [[ "${BACKUP_KEEP}" =~ ^[1-9][0-9]*$ ]] || { echo "JOINT_BOB_DEPLOY_BACKUP_KEEP must be a positive integer" >&2; exit 1; }
 case "${DESTINATION}" in
@@ -104,15 +105,22 @@ backup_local_state() {
   [ -f "${state_dir}/node.db" ] || return
   mkdir -p "${backup_dir}"
   chmod 700 "${backup_dir}"
+  # Older backups go first, so a deploy never needs room for more than BACKUP_KEEP copies of node.db.
+  { ls -1t "${backup_dir}"/pre-deploy-*.db 2>/dev/null || true; } | tail -n "+${BACKUP_KEEP}" | while read -r old; do rm -f -- "${old}" "${old}-journal"; done
   local backup_db="${backup_dir}/pre-deploy-${COMMIT}-$(date -u +%Y%m%dT%H%M%SZ).db"
-  BACKUP_DB="${backup_db}" JOINT_BOB_DATA_DIR="${state_dir}" node - <<'NODE'
+  if ! BACKUP_DB="${backup_db}" JOINT_BOB_DATA_DIR="${state_dir}" node - <<'NODE'
 const { DatabaseSync } = require("node:sqlite");
 const db = new DatabaseSync(`${process.env.JOINT_BOB_DATA_DIR}/node.db`);
 db.exec(`VACUUM INTO '${process.env.BACKUP_DB.replaceAll("'", "''")}'`);
 db.close();
 NODE
+  then
+    # A backup cut short is worthless, and left in place it keeps the disk full (homeserver, 2026-10-26).
+    rm -f -- "${backup_db}" "${backup_db}-journal"
+    echo "Could not back up node.db before deploying (is the disk full?); nothing was installed" >&2
+    return 1
+  fi
   chmod 600 "${backup_db}"
-  ls -1t "${backup_dir}"/pre-deploy-*.db | tail -n "+$((BACKUP_KEEP + 1))" | while read -r old; do rm -f -- "${old}"; done
 }
 
 install_homeserver() {
@@ -123,15 +131,20 @@ install_homeserver() {
 set -euo pipefail
 node_bin="$(command -v node)"
 if [ -f "$HOME/.joint-bob/node.db" ]; then
+  { ls -1t "$HOME"/.joint-bob/backups/pre-deploy-*.db 2>/dev/null || true; } | tail -n "+${BACKUP_KEEP}" | while read -r old; do rm -f -- "$old" "$old-journal"; done
   backup_db="$HOME/.joint-bob/backups/pre-deploy-${COMMIT}-$(date -u +%Y%m%dT%H%M%SZ).db"
-  BACKUP_DB="$backup_db" JOINT_BOB_DATA_DIR="$HOME/.joint-bob" "$node_bin" - <<'NODE'
+  if ! BACKUP_DB="$backup_db" JOINT_BOB_DATA_DIR="$HOME/.joint-bob" "$node_bin" - <<'NODE'
 const { DatabaseSync } = require("node:sqlite");
 const db = new DatabaseSync(`${process.env.JOINT_BOB_DATA_DIR}/node.db`);
 db.exec(`VACUUM INTO '${process.env.BACKUP_DB.replaceAll("'", "''")}'`);
 db.close();
 NODE
+  then
+    rm -f -- "$backup_db" "$backup_db-journal"
+    echo "Could not back up node.db before deploying (is the disk full?); nothing was installed" >&2
+    exit 1
+  fi
   chmod 600 "$backup_db"
-  ls -1t "$HOME"/.joint-bob/backups/pre-deploy-*.db | tail -n "+$((BACKUP_KEEP + 1))" | while read -r old; do rm -f -- "$old"; done
 fi
 extract="$HOME/.joint-bob/deploy/${COMMIT}/extract"
 rm -rf "$extract"
