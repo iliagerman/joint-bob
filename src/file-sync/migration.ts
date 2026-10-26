@@ -946,7 +946,7 @@ export class Migration {
     return reasons;
   }
 
-  /** What would hold this node's release of the project: nested projects and folders Syncthing may write in that are not the project's own. */
+  /** What would hold this node's release of the project: nested projects, folders Syncthing may write in that are not the project's own, and its own elsewhere. */
   private async releaseBlockers(projectId: string): Promise<{ blockers: string[]; remove: SyncthingFolder[]; syncthing?: string }> {
     const roots = this.roots(projectId);
     if (!roots) return { blockers: ["This project's folder is not known on this machine"], remove: [] };
@@ -954,7 +954,13 @@ export class Migration {
     let folders: SyncthingFolder[];
     try { folders = await this.folderList(projectId); } catch (error) { return { blockers, remove: [], syncthing: messageOf(error) }; }
     const { remove, blocked } = await this.classify(projectId, folders, roots);
-    return { blockers: [...blockers, ...blocked.map((entry) => entry.reason)], remove };
+    // fix: the project's own folder syncing somewhere else here (a received project given another folder): built-in sync
+    // would sync its folder, and the files Syncthing keeps there would stay behind with nobody to sync with.
+    const owners = this.folderOwners(projectId);
+    const kindOf = (id: string): ShareKind => id === projectTicketSyncFolderId(projectId) ? "tickets" : id === projectWorktreeSyncFolderId(projectId) ? "worktrees" : "project";
+    const elsewhere = folders.filter((folder) => owners.get(folder.id)?.id === projectId && folder.paused !== true && !remove.some((held) => held.id === folder.id))
+      .map((folder) => `Syncthing syncs ${folderLabel(folder)} in ${folder.path} on this machine, but the project's folder here is ${roots[kindOf(folder.id)]}; moving it would leave the files in ${folder.path} behind`);
+    return { blockers: [...blockers, ...blocked.map((entry) => entry.reason), ...elsewhere], remove };
   }
 
   // ---- continuous check: every eligible peer must be able to take files from the engine ----

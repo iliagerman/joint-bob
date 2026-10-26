@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir, rmdir, stat } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
@@ -9,8 +9,9 @@ import { mayReceiveResource } from "../cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { clearHarnessSessionCache, listHarnessSyncFolders } from "../harnesses.js";
-import { getProject, updateProjectSyncFolderId } from "../store.js";
-import { ensureSyncthingDevice, ensureSharedProjectFolder, removeSyncthingDevices, pauseSyncthingFolders, syncthingConnectionGeneration, syncthingDeviceId, syncthingPeerCaughtUp } from "../syncthing.js";
+import { getProject, updateProjectPath, updateProjectSyncFolderId } from "../store.js";
+import type { ProjectRecord } from "../types.js";
+import { ensureSyncthingDevice, ensureSharedProjectFolder, listSyncthingFolders, removeSyncthingDevices, pauseSyncthingFolders, syncthingConnectionGeneration, syncthingDeviceId, syncthingPeerCaughtUp } from "../syncthing.js";
 import { expectedTaskWorkspacePath, projectTicketSyncFolderId, TICKET_WORKSPACE_FOLDER_ID } from "../task-workspaces.js";
 import { replicationPeers } from "./replication-v2.js";
 import { peerAway } from "../peer-presence.js";
@@ -53,6 +54,24 @@ async function enroll(db:DatabaseSync,local:string,peer:string,device:string,ids
  try{return await enrollFiles(db,local,peer,device,ids);}finally{notifyRelayPeersChanged();}
 }
 const reportedSkips=new Map<string,string>();
+/* fix: a project received from its owner can get a new, empty folder here while Syncthing already syncs it into another
+   one (accepted before the project came). Every enrollment then refused it ("different local path"), the project
+   showed no files, and built-in sync compared the empty folder. While its own folder holds nothing, the project takes
+   Syncthing's, unless another project lies inside or around that one. */
+async function adoptSyncthingFolder(db:DatabaseSync,project:ProjectRecord,folder:string):Promise<string>{
+ const held=(await listSyncthingFolders()).find(candidate=>candidate.id===folder);
+ if(!held||path.resolve(held.path)===path.resolve(project.path))return project.path;
+ const target=path.resolve(held.path);
+ const entries=await readdir(project.path).catch((error:NodeJS.ErrnoException)=>error.code==="ENOENT"?[]:undefined);
+ if(!entries||entries.some(name=>name!==".DS_Store")||!await stat(target).then(found=>found.isDirectory(),()=>false))return project.path;
+ const within=(outer:string,inner:string)=>{const relative=path.relative(outer,inner);return !relative.startsWith("..")&&!path.isAbsolute(relative);};
+ const rows=db.prepare("SELECT path FROM projects WHERE id<>?").all(project.id) as Array<{path:string}>;
+ if(rows.some(row=>within(path.resolve(row.path),target)||within(target,path.resolve(row.path))))return project.path;
+ await updateProjectPath(project.id,target);
+ await rmdir(project.path).catch(()=>undefined);
+ console.warn(`Project ${project.name} now uses ${target} on this machine, where Syncthing syncs its files; its folder ${project.path} was empty`);
+ return target;
+}
 async function enrollFiles(db:DatabaseSync,local:string,peer:string,device:string,ids:string[]):Promise<string[]> {
  await ensureSyncthingDevice(device,peer);
  await removeSyncthingDevices([device],[TICKET_WORKSPACE_FOLDER_ID,...listHarnessSyncFolders().map(folder=>folder.id)]);
@@ -70,8 +89,9 @@ async function enrollFiles(db:DatabaseSync,local:string,peer:string,device:strin
    const ticketPath=path.dirname(expectedTaskWorkspacePath(id,'sharing')),worktreePath=projectWorktreeRoot(id);
    await whileFilesOnSyncthing(id,async()=>{
    const folder=project.syncFolderId??`joint-bob-project-${createHash('sha256').update(id).digest('hex')}`;
-   await mkdir(project.path,{recursive:true});
-   await ensureSharedProjectFolder(folder,project.name,project.path,device);
+   const projectPath=await adoptSyncthingFolder(db,project,folder);
+   await mkdir(projectPath,{recursive:true});
+   await ensureSharedProjectFolder(folder,project.name,projectPath,device);
    db.prepare("DELETE FROM cluster_v2_file_enrollments WHERE peer_id=? AND project_id=? AND folder_id<>?").run(peer,id,folder);
    if(!project.syncFolderId)await updateProjectSyncFolderId(id,folder);
    save.run(peer,device,folder,id);accepted.push(id);

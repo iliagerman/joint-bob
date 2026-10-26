@@ -884,6 +884,26 @@ export async function updateProjectWorkspaceAndPath(projectId: string, workspace
   return (await getProject(canonicalId))!;
 }
 
+/** The project's folder on this machine becomes `folderPath`; nothing on disk moves (sharing-files adopts Syncthing's folder). */
+export async function updateProjectPath(projectId: string, folderPath: string): Promise<ProjectRecord> {
+  const db = await projectDatabase();
+  const canonicalId = resolveProjectId(db, projectId);
+  if (!canonicalId) throw new Error("Project not found");
+  const before = (db.prepare("SELECT path FROM projects WHERE id = ?").get(canonicalId) as { path: string }).path;
+  const nextPath = path.resolve(folderPath);
+  if (db.prepare("SELECT 1 FROM projects WHERE path = ? AND id <> ?").get(nextPath, canonicalId)) throw new ResourceSharingError("Project path conflict", 409);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE projects SET path = ? WHERE id = ?").run(nextPath, canonicalId);
+    db.prepare("UPDATE project_locations SET path = ? WHERE project_id = ? AND path = ?").run(nextPath, canonicalId, before);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return (await getProject(canonicalId))!;
+}
+
 export async function updateProjectMacPath(projectId: string, macPath: string): Promise<ProjectRecord> {
   const project = await getProject(projectId);
   if (!project) throw new Error("Project not found");

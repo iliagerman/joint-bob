@@ -296,6 +296,8 @@ User requirement (2026-10-25): nobody coordinates the switch with the people who
 - Turning file sync off on any machine (Settings, or `JOINT_BOB_FILE_SYNC=0`) needs nobody else. The machine tells the other machines at once. Its built-in projects go back to Syncthing first: the owner moves them for every machine, and a machine that owns one moves it right away. The engine keeps their files moving until then, compares nothing new, and stops once it holds no project. A full check that keeps failing waits twice as long each time, up to 30 minutes.
 - Writes on a built-in root wait only for the first folder check after the move. After that, a Syncthing outage doesn't stop built-in sync. Syncthing's event stream rechecks when its folders change. A node counts as having no Syncthing only if Joint Bob never gave it the project's folders and no Syncthing configuration exists there.
 
+- A project's own Syncthing folder at another path than its folder on that machine blocks the move there, because its files would stay behind. Found on 2026-10-26: the Mac had given two received projects new, empty `projects/<digest>` folders, while Syncthing synced them elsewhere. The sharing pass now repoints a project whose folder is empty to Syncthing's folder, unless another project lies inside or around it.
+
 ### 7.4 Syncthing cleanup (P6)
 
 - Remove every Joint Bob folder from Syncthing's configuration, including the legacy paused ones.

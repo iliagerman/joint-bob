@@ -378,6 +378,11 @@ test("each check fails alone with its own message", async () => {
       await mkdir(path.join(f.dir, "real-alpha", "videos"));
       f.syncthing.add("video-translator", path.join(f.dir, "real-alpha", "videos"), "Videos");
     } },
+    // fix: the project's own folder syncs somewhere else here; the move would leave those files behind.
+    { key: "folders", expect: /^Syncthing syncs Alpha in .*elsewhere-alpha on this machine, but the project's folder here is .*\/alpha; moving it would leave the files in .*elsewhere-alpha behind$/, set: async (f) => {
+      await mkdir(path.join(f.dir, "elsewhere-alpha"));
+      f.syncthing.folders_.find((folder) => folder.id === `joint-bob-${PROJECT}`)!.path = path.join(f.dir, "elsewhere-alpha");
+    } },
     { key: "activity", expect: /^A task is running in this project; wait for it to finish$/, set: (f) => { f.activity.reason = "A task is running in this project; wait for it to finish"; } },
   ];
   for (const entry of cases) {
@@ -2036,6 +2041,63 @@ test("enrollment adds folders only for projects still on Syncthing here, and sti
       caughtUp = false;
       assert.deepEqual(await sharing.sharingFilesStatus(db, local, PEER), { ready: false }, "files still on their way from the peer hold readiness back");
     } finally { useFacadeEngineForTests(undefined); }
+  } finally {
+    for (const key of syncthingKeys) { if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; }
+    await rest.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a project whose own folder is empty takes the folder Syncthing already syncs it into here; one with files keeps its own", async () => {
+  const syncthingKeys = ["JOINT_BOB_SYNCTHING_URL", "JOINT_BOB_SYNCTHING_API_KEY", "PI_MOBILE_WEB_SYNCTHING_URL", "PI_MOBILE_WEB_SYNCTHING_API_KEY"];
+  const previous = Object.fromEntries(syncthingKeys.map((key) => [key, process.env[key]]));
+  const rest = await fakeSyncthingRest();
+  const dir = await mkdtemp(path.join(os.tmpdir(), "file-sync-adopt-"));
+  for (const key of syncthingKeys) delete process.env[key];
+  process.env.JOINT_BOB_SYNCTHING_URL = rest.url;
+  process.env.JOINT_BOB_SYNCTHING_API_KEY = "test-key";
+  // The enrollment test before this one left Syncthing's connection pointing at its own stand-in.
+  (await import("../src/syncthing.js")).resetSyncthingConnection();
+  try {
+    const [{ clusterV2Database }, { getClusterNode }, store, { registerLocalSharingResource }, sharing] = await Promise.all([
+      import("../src/cluster-v2-store.js"), import("../src/cluster.js"), import("../src/store.js"), import("../src/cluster-sharing.js"), import("../src/server/sharing-files.js")]);
+    const db = await clusterV2Database();
+    const local = (await getClusterNode()).id;
+    ensureResourceSharingSchema(db);
+    ensurePeerEndpointSchema(db);
+    const cluster = "6f1c2a8e-0d4b-4c1e-9a77-3b5d2e8f1a42";
+    createSharingCluster(db, { id: cluster, name: "home" }, local);
+    addSharingMember(db, cluster, local, PEER, getSharingCluster(db, cluster).managerEpoch);
+    recordPeerEndpoint(db, { kind: "cluster", id: cluster }, { nodeId: PEER, name: "node 2", url: "https://peer.example.com" });
+    // Each project's folder here, and the one Syncthing syncs it into (2026-10-26: received projects in projects/<digest>).
+    const made = [];
+    for (const [name, files] of [["Empty here", false], ["Files here", true]] as const) {
+      const own = path.join(dir, "projects", name), synced = path.join(dir, `${name} synced`);
+      await mkdir(own, { recursive: true });
+      await mkdir(synced, { recursive: true });
+      await writeFile(path.join(synced, "README.md"), "synced");
+      if (files) await writeFile(path.join(own, "notes.md"), "own");
+      const project = await store.addProject(name, own, { synced: true });
+      registerLocalSharingResource(db, local, { kind: "project", id: project.id });
+      setResourceShares(db, local, "project", project.id, [{ clusterId: cluster, projectId: null }]);
+      rest.folders.push({ id: project.syncFolderId!, label: name, path: synced, type: "sendreceive", devices: [] });
+      made.push({ project, own, synced });
+    }
+    const [empty, full] = made;
+    const warned: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(" ")); };
+    let answer;
+    try {
+      answer = await sharing.receiveFileEnrollment(PEER, { deviceId: "BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB", projects: [empty.project.id, full.project.id], locations: [] });
+    } finally { console.warn = warn; }
+    assert.deepEqual(answer.projects, [empty.project.id], "the empty one is enrolled in Syncthing's folder; the other is still refused");
+    assert.equal((await store.getProject(empty.project.id))?.path, empty.synced);
+    assert.equal(existsSync(empty.own), false, "its empty folder goes");
+    assert.equal((await store.getProject(full.project.id))?.path, full.own, "a folder with files is never left for another");
+    assert.equal(existsSync(path.join(full.own, "notes.md")), true);
+    assert.match(warned.join("\n"), /Project Empty here now uses .*Empty here synced on this machine, where Syncthing syncs its files/);
+    assert.match(warned.join("\n"), /File enrollment skipped 1 project\(s\).*Files here: Shared folder ID belongs to a different local path/);
   } finally {
     for (const key of syncthingKeys) { if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; }
     await rest.close();
