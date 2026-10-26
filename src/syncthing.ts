@@ -380,6 +380,9 @@ function unavailableStatus(message: string): ProjectSyncStatus {
   return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
 }
 
+/** A folder Joint Bob expects that Syncthing's configuration does not have (file sync: one being added back after a move back). */
+export const SYNCTHING_FOLDER_MISSING = "Syncthing folder is missing from configuration";
+
 export async function syncthingFolderStatuses(folderIds: string[]): Promise<Record<string, ProjectSyncStatus>> {
   const ids = [...new Set(folderIds.filter(Boolean))];
   if (!ids.length) return {};
@@ -393,7 +396,7 @@ export async function syncthingFolderStatuses(folderIds: string[]): Promise<Reco
   const configured = new Map(folders.map((folder) => [folder.id, folder]));
   const entries = await Promise.all(ids.map(async (id): Promise<[string, ProjectSyncStatus]> => {
     const folder = configured.get(id);
-    if (!folder) return [id, { state: "error", remainingFiles: 0, remainingBytes: 0, message: "Syncthing folder is missing from configuration" }];
+    if (!folder) return [id, { state: "error", remainingFiles: 0, remainingBytes: 0, message: SYNCTHING_FOLDER_MISSING }];
     if (folder.paused) return [id, { state: "paused", remainingFiles: 0, remainingBytes: 0, message: "Syncthing folder is paused" }];
     try {
       const status = await request<SyncthingFolderStatus>(`/rest/db/status?folder=${encodeURIComponent(id)}`);

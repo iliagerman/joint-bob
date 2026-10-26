@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { conflictCopyName } from "../src/file-sync/conflicts.js";
-import { controlDatabase, setPhase } from "../src/file-sync/control.js";
+import { controlDatabase, phaseOf, setPhase } from "../src/file-sync/control.js";
 import {
   assertProjectFilesReady, builtinProjectStatus, type EngineApi, noteHandoffFiles, peerFilesReady, ProjectFilesNotReadyError, projectFilesHandoffPart,
   projectSyncStatuses, rescanProjectFiles, taskShareStatuses, useFacadeEngineForTests, worktreeFilesChanged, worktreeHasPendingFiles, worktreeSweepRefusal,
@@ -165,6 +165,22 @@ test("a mixed node asks Syncthing only about projects still on it", async () => 
   assert.deepEqual(statuses[moving.id], { state: "syncing", remainingFiles: 0, remainingBytes: 0, message: "Moving to the built-in file sync", engine: "moving" });
   assert.equal(statuses[backward.id].message, "Moving back to Syncthing");
   assert.deepEqual(syncthingRequests, ["GET /rest/config/folders", "GET /rest/db/status?folder=folder-mixed"], "Syncthing is never asked about a project it no longer holds");
+});
+
+test("a project just moved back whose folder Syncthing has not added yet shows the move, not an error, for a while", async () => {
+  standIn();
+  const db = await controlDatabase();
+  const back = record("just-back", "folder-just-back"), never = record("never-switched", "folder-never");
+  setPhase(db, back.id, "syncthing");
+  const at = Date.parse(phaseOf(db, back.id)!.updatedAt);
+  // The next sharing pass adds the folders (76 s on the Mac on 2026-10-26); until then Syncthing has none.
+  const soon = await projectSyncStatuses([back, never], at + 76_000);
+  assert.deepEqual(soon[back.id], { state: "syncing", remainingFiles: 0, remainingBytes: 0, message: "Moving back to Syncthing", engine: "moving" });
+  assert.deepEqual([soon[never.id].state, soon[never.id].message], ["error", "Syncthing folder is missing from configuration"], "a project that never moved keeps the error");
+  const later = await projectSyncStatuses([back], at + 11 * 60_000);
+  assert.deepEqual([later[back.id].state, later[back.id].message], ["error", "Syncthing folder is missing from configuration"], "still missing after the grace is an error");
+  syncthingFolders.push({ id: "folder-just-back", path: back.path });
+  assert.equal((await projectSyncStatuses([back], at + 76_000))[back.id].state, "synced", "once Syncthing has it, its own status");
 });
 
 test("Rescan files walks the engine's folders for a built-in project and asks Syncthing for the rest", async () => {

@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { peerAway } from "../peer-presence.js";
 import { getProject } from "../store.js";
-import { assertSyncthingFolderReady, listSyncthingFolders, rescanSyncthingFolder, syncthingFolderStatuses } from "../syncthing.js";
+import { assertSyncthingFolderReady, listSyncthingFolders, rescanSyncthingFolder, SYNCTHING_FOLDER_MISSING, syncthingFolderStatuses } from "../syncthing.js";
 import { projectTicketSyncFolderId } from "../task-workspaces.js";
 import type { ProjectRecord, ProjectSyncStatus } from "../types.js";
 import { projectWorktreeSyncFolderId } from "../worktree-filters.js";
-import { controlDatabase, listPhases } from "./control.js";
+import { controlDatabase, listPhases, type PhaseRecord } from "./control.js";
 import type { FileSyncPeerFacts, FileSyncProjectView } from "./index.js";
 import { FILE_SYNC_SWITCH_PROTOCOL, type ShareStatus } from "./protocol.js";
 import { projectSyncStatus } from "./status.js";
@@ -72,9 +72,16 @@ export function filesEngineOf(phase: Phase | undefined): ProjectFilesEngine {
 
 /** Node-local phases; a node.db that cannot be read counts as everything on Syncthing, as before the engine existed. */
 async function phases(): Promise<Map<string, Phase>> {
-  try { return new Map([...listPhases(await controlDatabase())].map(([projectId, record]) => [projectId, record.phase])); }
+  return new Map([...await phaseRecords()].map(([projectId, record]) => [projectId, record.phase]));
+}
+
+async function phaseRecords(): Promise<Map<string, PhaseRecord>> {
+  try { return listPhases(await controlDatabase()); }
   catch { return new Map(); }
 }
+
+/** How long after a move back a missing Syncthing folder is the move still going on (the next sharing pass adds it), not an error. */
+const RESTORE_GRACE_MS = 10 * 60_000;
 
 async function phaseOfProject(projectId: string): Promise<Phase | undefined> {
   return (await phases()).get(projectId);
@@ -290,13 +297,18 @@ export async function projectFilesHandoffPart(project: ProjectRecord, kinds: rea
 /* ---- the facade ---- */
 
 /** Keyed by project id. Projects on Syncthing get Syncthing's answer, exactly as before; built-in ones are computed in memory. */
-export async function projectSyncStatuses(projects: ProjectRecord[]): Promise<Record<string, FacadeSyncStatus>> {
-  const held = projects.length ? await phases() : new Map<string, Phase>();
+export async function projectSyncStatuses(projects: ProjectRecord[], now = Date.now()): Promise<Record<string, FacadeSyncStatus>> {
+  const records = projects.length ? await phaseRecords() : new Map<string, PhaseRecord>();
+  const held = new Map([...records].map(([projectId, record]) => [projectId, record.phase]));
   const onSyncthing = projects.filter((project) => filesEngineOf(held.get(project.id)) === "syncthing");
   const statuses = await syncthingFolderStatuses(onSyncthing.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []));
-  const result: Record<string, FacadeSyncStatus> = Object.fromEntries(onSyncthing.map((project) => [project.id, project.syncFolderId
-    ? statuses[project.syncFolderId] ?? unavailableProjectStatus("Loading sync status")
-    : unavailableProjectStatus()]));
+  // fix: just moved back, its folder may not be in Syncthing yet (the next sharing pass adds it): shown as the move going on.
+  const justBack = (projectId: string) => { const record = records.get(projectId); return Boolean(record && now - Date.parse(record.updatedAt) < RESTORE_GRACE_MS); };
+  const result: Record<string, FacadeSyncStatus> = Object.fromEntries(onSyncthing.map((project) => {
+    const status = project.syncFolderId ? statuses[project.syncFolderId] : undefined;
+    if (status?.state === "error" && status.message === SYNCTHING_FOLDER_MISSING && justBack(project.id)) return [project.id, movingStatus("restoring")];
+    return [project.id, project.syncFolderId ? status ?? unavailableProjectStatus("Loading sync status") : unavailableProjectStatus()];
+  }));
   const elsewhere = projects.filter((project) => filesEngineOf(held.get(project.id)) !== "syncthing");
   if (!elsewhere.length) return result;
   const builtin = elsewhere.filter((project) => held.get(project.id) === "builtin");

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed a project moved back to Syncthing showing a missing-folder error; for up to 10 minutes it now shows the move as still going on while Syncthing adds the folder back.
+
 ## 2.160.0 — 2026-10-26
 
 - Added automatic move of shared projects to built-in file sync: once a project's files have matched on every machine for 24 hours and all checks pass, its owner switches it over by itself, with no one needing to act on another machine.
