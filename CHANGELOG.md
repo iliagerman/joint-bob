@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.159.1 — 2026-10-26
 
-- Fixed deletions of files placed by built-in file sync on Macs waiting up to an hour to reach other machines; they now go out right away.
+- Fixed deletions of files that built-in file sync placed on a Mac waiting for the next full scan, an hour or more, before reaching other machines; they now go out right away.
 
 ## 2.159.0 — 2026-10-26
 
