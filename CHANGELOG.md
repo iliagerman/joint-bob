@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.160.2 — 2026-10-26
 
-- Fixed received projects with an empty folder being refused by file sync when Syncthing already synced them into another folder; they now use that folder, and projects that hold files keep their own.
+- Fixed received projects showing as empty and being skipped by file sync when their files already synced into another folder; they now use that folder, while projects that hold files keep their own.
+- Added a check that stops a project moving to built-in file sync while its Syncthing folder sits at another path on that machine, so its files are not left behind.
 
 ## 2.160.1 — 2026-10-26
 
