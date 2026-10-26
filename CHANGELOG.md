@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.161.1 — 2026-10-26
 
 - Fixed force-starting a queued message during automatic context compaction showing an "operation was aborted" error after the cancelled compaction; the message now runs without the error.
 
