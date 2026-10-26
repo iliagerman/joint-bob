@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.161.0 — 2026-10-26
 
 - Added a Secrets button to Activity Chat so a side chat can use its own secret accounts, copied from its conversation the first time and kept separate after that; clearing the chat copies them again.
 - Fixed one malformed skill stopping the other skills from loading; it is now skipped with a logged warning, the rest keep working, and it loads again once repaired.
