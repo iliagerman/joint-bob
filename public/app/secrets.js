@@ -478,10 +478,10 @@ function checkedSecretScopeIds() {
   return [...elements.secretScopeList.querySelectorAll("input:checked")].map((input) => input.value);
 }
 
-export async function openSecretScope(scopeType, scopeId, label) {
+export async function openSecretScope(scopeType, scopeId, label, selection = null) {
   await loadSecretAccounts();
-  const { accountIds } = await api(`/api/secrets/scopes/${encodeURIComponent(scopeType)}/${encodeURIComponent(scopeId)}`);
-  secretScopeTarget = { scopeType, scopeId };
+  const { accountIds } = selection ?? await api(`/api/secrets/scopes/${encodeURIComponent(scopeType)}/${encodeURIComponent(scopeId)}`);
+  secretScopeTarget = { scopeType, scopeId, save: selection?.save };
   elements.secretScopeTitle.textContent = `Secret accounts: ${label}`;
   // Every scope can create an account. Only a project owns the accounts it creates;
   // a workspace or conversation picker creates an ordinary node-local account.
@@ -511,7 +511,8 @@ elements.secretScopeForm.addEventListener("submit", async (event) => {
   try {
     if (!secretScopeTarget) throw new Error("Secret scope target is missing");
     const accountIds = checkedSecretScopeIds();
-    await api(`/api/secrets/scopes/${encodeURIComponent(secretScopeTarget.scopeType)}/${encodeURIComponent(secretScopeTarget.scopeId)}`, { method: "PUT", body: JSON.stringify({ accountIds }) });
+    if (secretScopeTarget.save) await secretScopeTarget.save(accountIds);
+    else await api(`/api/secrets/scopes/${encodeURIComponent(secretScopeTarget.scopeType)}/${encodeURIComponent(secretScopeTarget.scopeId)}`, { method: "PUT", body: JSON.stringify({ accountIds }) });
     elements.secretScopeDialog.close(); toast("Secret accounts saved");
   } catch (error) {
     secretScopeError.textContent = error.message;

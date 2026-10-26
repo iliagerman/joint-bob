@@ -11,7 +11,7 @@ export interface ChatMessage { role: "user" | "assistant"; text: string; id?: st
 export interface ChatQuestion { id: string; question: string; model: ChatModel | null; readOnly?: boolean }
 export interface ChatScope { userId: string; projectId: string; conversationId: string }
 export interface ChatAgent { harnessId: string; sessionId: string; sessionPath: string; cwd: string; actionTools?: string[] }
-export interface ChatState { messages: ChatMessage[]; model: ChatModel | null; queue: ChatQuestion[]; readOnly: boolean; agent?: ChatAgent }
+export interface ChatState { messages: ChatMessage[]; model: ChatModel | null; queue: ChatQuestion[]; readOnly: boolean; accountIds?: string[]; agent?: ChatAgent }
 
 export function chatScopeKey(scope: ChatScope): string {
   return JSON.stringify([scope.userId, scope.projectId, scope.conversationId]);

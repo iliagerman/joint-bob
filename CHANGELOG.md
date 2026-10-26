@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a Secrets button to Activity Chat so a side chat can use its own secret accounts, copied from its conversation the first time and kept separate after that; clearing the chat copies them again.
+
 ## 2.160.2 — 2026-10-26
 
 - Fixed received projects showing as empty and being skipped by file sync when their files already synced into another folder; they now use that folder, while projects that hold files keep their own.

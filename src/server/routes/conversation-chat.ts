@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { chatDefaults, chatDefaultsSchema, chatModelSchema, chatState, clearChatHistory, saveChatDefaults, saveChatState, type ChatScope } from "../../conversation-chat.js";
+import { Feature, hasFeature } from "../../features.js";
+import { validateProjectSecretAccounts } from "../../secrets.js";
 import { getProject, projectVisible } from "../../store.js";
 import { chatChanged, chatRunning, chatStream, startChatQueue } from "../conversation-chat-runner.js";
-import { GitReviewRunError } from "../git-review-run.js";
+import { GitReviewRunError, reviewAccountIds } from "../git-review-run.js";
 import { sendError } from "../http-auth.js";
 import { registeredHarnessIdSchema } from "../schemas.js";
 import { listReviewScopeSessions } from "../sessions-helpers.js";
@@ -12,7 +14,10 @@ import { app } from "../state.js";
 
 const modelSchema = chatModelSchema.extend({ harnessId: registeredHarnessIdSchema });
 const questionSchema = z.object({ id: z.string().uuid().optional(), question: z.string().trim().min(1).max(40_000), model: modelSchema.nullable(), readOnly: z.boolean().optional() }).strict();
-const modeSchema = z.object({ readOnly: z.boolean() }).strict();
+const modeSchema = z.union([
+  z.object({ readOnly: z.boolean() }).strict(),
+  z.object({ accountIds: z.array(z.string().uuid()).max(1000) }).strict(),
+]);
 const defaultsSchema = chatDefaultsSchema.extend({ model: modelSchema.nullable() });
 const endpoint = "/api/projects/:projectId/conversations/:conversationId/chat";
 
@@ -45,16 +50,31 @@ for (const method of ["get", "post", "patch", "delete"] as const) {
     const scope: ChatScope = { userId: auth.userId, projectId, conversationId };
     try {
       const project = await authorizedConversation(projectId, conversationId, auth);
+      let state = chatState(scope);
+      if (state.accountIds === undefined) {
+        const accountIds = await reviewAccountIds(projectId, conversationId);
+        // Read again after I/O so concurrent initialization does not overwrite changes.
+        state = chatState(scope);
+        if (state.accountIds === undefined) {
+          state.accountIds = accountIds;
+          saveChatState(scope, state);
+        }
+      }
       if (method === "get") {
         startChatQueue(project, scope, auth.accountId);
         response.json({ ...chatState(scope), defaults: chatDefaults(auth.userId), busy: chatRunning(scope), stream: chatStream(scope) });
         return;
       }
       if (method === "patch") {
-        const { readOnly } = modeSchema.parse(request.body);
-        if (chatRunning(scope) || chatState(scope).queue.length) throw new GitReviewRunError(409, "Wait for Activity Chat to finish before changing its permissions");
+        const change = modeSchema.parse(request.body);
+        if (chatRunning(scope) || chatState(scope).queue.length) throw new GitReviewRunError(409, "Wait for Activity Chat to finish before changing its permissions or secrets");
         const state = chatState(scope);
-        state.readOnly = readOnly;
+        if ("accountIds" in change) {
+          if (!hasFeature({ isRemoteLogin: auth.isRemoteLogin }, Feature.SECRETS_MANAGE)) throw new GitReviewRunError(403, "Secret management is not available for replicated users");
+          try { validateProjectSecretAccounts(projectId, change.accountIds); }
+          catch { throw new GitReviewRunError(400, "Selected secret accounts are unavailable for this project or conflict"); }
+          state.accountIds = change.accountIds;
+        } else state.readOnly = change.readOnly;
         saveChatState(scope, state);
         chatChanged(scope, auth.accountId);
         response.json(state);
@@ -62,14 +82,19 @@ for (const method of ["get", "post", "patch", "delete"] as const) {
       }
       if (method === "delete") {
         if (chatRunning(scope) || chatState(scope).queue.length) throw new GitReviewRunError(409, "A side-chat answer is still running");
+        const accountIds = await reviewAccountIds(projectId, conversationId);
+        if (chatRunning(scope) || chatState(scope).queue.length) throw new GitReviewRunError(409, "A side-chat answer is still running");
         clearChatHistory(scope);
+        const cleared = chatState(scope);
+        cleared.accountIds = accountIds;
+        saveChatState(scope, cleared);
         chatChanged(scope, auth.accountId);
         response.json(chatState(scope));
         return;
       }
       const payload = questionSchema.parse(request.body);
       const id = payload.id ?? randomUUID();
-      const state = chatState(scope);
+      state = chatState(scope);
       if (!state.queue.some((question) => question.id === id) && !state.messages.some((message) => message.id === id)) {
         state.queue.push({ id, question: payload.question, model: payload.model, readOnly: payload.readOnly ?? state.readOnly });
         state.model = payload.model;

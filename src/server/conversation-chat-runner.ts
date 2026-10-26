@@ -5,7 +5,7 @@ import { getProjectWorktree } from "../project-worktrees.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, SessionSummary } from "../types.js";
 import { runChatAgent } from "./conversation-chat-agent.js";
-import { reviewAccountIds } from "./git-review-run.js";
+import { validateProjectSecretAccounts } from "../secrets.js";
 import { assertProjectEditable } from "./projects.js";
 import { announceToAllClients, broadcastToAllClients } from "./realtime.js";
 import { listReviewScopeSessions } from "./sessions-helpers.js";
@@ -52,7 +52,10 @@ async function answerQuestion(project: ProjectRecord, scope: ChatScope, payload:
     if (flags.updatePreparing) throw new Error("An update is being prepared");
     const visible = await listReviewScopeSessions(project, scope.userId, accountId);
     if (!visible.some(item => (item.conversationId ?? item.id) === scope.conversationId)) throw new Error("Conversation is no longer accessible");
-    if (!readOnly) await assertProjectEditable(project);
+    if (!readOnly) {
+      await assertProjectEditable(project);
+      validateProjectSecretAccounts(project.id, state.accountIds!);
+    }
   };
   const transcripts = (source.segments ?? [{ engine: source.harnessId, path: source.path }]).map(segment => {
     const prefix = `${segment.engine}:`;
@@ -72,7 +75,7 @@ async function answerQuestion(project: ProjectRecord, scope: ChatScope, payload:
     `Current request: ${JSON.stringify(payload.question)}`,
   ].filter(Boolean).join("\n\n");
   return runChatAgent({ projectId: project.id, conversationId: scope.conversationId, cwd, model, readOnly, agent: state.agent,
-    accountIds: readOnly ? [] : await reviewAccountIds(project.id, scope.conversationId), prompt, beforeStart,
+    accountIds: readOnly ? [] : state.accountIds!, prompt, beforeStart,
     onText: text => onText(text, false),
     onAgent: agent => { const latest = chatState(scope); latest.agent = agent; saveChatState(scope, latest); },
   });

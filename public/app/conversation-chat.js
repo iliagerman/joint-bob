@@ -3,6 +3,7 @@ import { renderMarkdown } from "../markdown.js";
 import { setActivityPanelOpen } from "./activity-panel.js";
 import { api } from "./api.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
+import { openSecretScope } from "./secrets.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
 
@@ -17,6 +18,7 @@ const readOnly = byId("conversationChatReadOnly");
 const input = byId("conversationChatInput");
 const send = byId("conversationChatSend");
 const clear = byId("conversationChatClear");
+const secrets = byId("conversationChatSecrets");
 const status = byId("conversationChatStatus");
 const settingsThinking = document.createElement("select");
 let savingMode = false;
@@ -69,6 +71,8 @@ function setBusy(value) {
   send.disabled = !loadedUrl || savingMode;
   send.textContent = value ? "Queue" : "Send";
   clear.disabled = value || !loadedUrl;
+  secrets.disabled = value || !loadedUrl;
+  secrets.hidden = state.isRemoteLogin;
   harnessSelect.disabled = value;
   modelSelect.disabled = value || !harnessSelect.value;
   effortSelect.disabled = value || !harnessSelect.value;
@@ -163,6 +167,7 @@ function renderChat() {
   const live = streaming ? [{ ...streaming, role: "assistant", streaming: true }] : [];
   renderMessages([...snapshot.messages, ...active, ...live, ...waitingMessages]);
   readOnly.checked = snapshot.readOnly !== false;
+  secrets.textContent = `Secrets (${snapshot.accountIds.length})`;
   byId("conversationChatModeHint").textContent = readOnly.checked
     ? "Read-only. Search this conversation and project files. Messages stay here."
     : "Actions enabled. The agent can edit files and run commands. Messages stay here.";
@@ -230,6 +235,19 @@ export async function openConversationChat() {
 
 chatTab.addEventListener("click", () => void openConversationChat());
 activityTab.addEventListener("click", () => showTab(false));
+secrets.addEventListener("click", async () => {
+  const url = loadedUrl;
+  const current = generation;
+  try {
+    await openSecretScope("conversation", state.activeProjectId, "Activity Chat", {
+      accountIds: snapshot.accountIds,
+      save: async (accountIds) => {
+        const body = await api(url, { method: "PATCH", body: JSON.stringify({ accountIds }) });
+        if (current === generation && url === loadedUrl) { acceptSnapshot(body); renderChat(); }
+      },
+    });
+  } catch (error) { toast(`Could not load Activity Chat secrets: ${error.message}`); }
+});
 harnessSelect.addEventListener("change", () => fillModels(harnessSelect, modelSelect, {}));
 modelSelect.addEventListener("change", () => {
   fillThinkingOptions(choices.harnesses.find(item => item.id === harnessSelect.value), choices.models, modelSelect, effortSelect, effortSelect.value);
