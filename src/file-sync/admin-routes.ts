@@ -86,9 +86,30 @@ app.get("/api/file-sync/engine/checks", (request, response, next) => answer(resp
 app.post("/api/file-sync/engine", async (request, response, next) => {
   try {
     const body = engineBody.parse(request.body ?? {});
-    const { fileSyncSwitchEngine, FileSyncSwitchRefused } = await import("./index.js");
+    const [{ fileSyncSwitchEngine, FileSyncSwitchRefused }, { actingAccount }] = await Promise.all([import("./index.js"), import("../account-context.js")]);
+    // auto-transition: a move back by hand holds the project on Syncthing, in this person's name.
+    const account = actingAccount();
+    const person = account ? { name: account.username || account.email || account.accountId, id: account.userId ?? account.accountId } : undefined;
     try {
-      response.json(await fileSyncSwitchEngine(body.projectId, body.engine));
+      response.json(await fileSyncSwitchEngine(body.projectId, body.engine, person));
+    } catch (error) {
+      if (error instanceof FileSyncSwitchRefused) { response.status(409).json({ error: error.message, checks: error.checks }); return; }
+      throw error;
+    }
+  } catch (error) {
+    await answer(response, next, () => Promise.reject(error));
+  }
+});
+
+/* fix: lifts a move back by hand, so the owner moves the project to built-in sync by itself again once
+   every check passes; nothing moves now. Only the owner may (409 otherwise). */
+const allowBody = z.object({ projectId }).strict();
+app.post("/api/file-sync/engine/allow-auto", async (request, response, next) => {
+  try {
+    const body = allowBody.parse(request.body ?? {});
+    const { fileSyncAllowAuto, FileSyncSwitchRefused } = await import("./index.js");
+    try {
+      response.json(await fileSyncAllowAuto(body.projectId));
     } catch (error) {
       if (error instanceof FileSyncSwitchRefused) { response.status(409).json({ error: error.message, checks: error.checks }); return; }
       throw error;

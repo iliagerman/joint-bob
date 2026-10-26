@@ -1677,7 +1677,16 @@
               <h3 class="file-sync-heading">Machines</h3>
               <div class="relay-list file-sync-peers" id="fileSyncPeerList" data-testid="file-sync-peer-list"></div>
               <div class="relay-pager" id="fileSyncPeerPager" data-testid="file-sync-peer-pager" hidden></div>
-              <h3 class="file-sync-heading">Projects</h3>
+              <!-- auto-transition: which projects this machine compares, and the first index's progress, on the heading's line. -->
+              <div class="file-sync-detail-head" data-testid="file-sync-projects-head">
+                <h3 class="file-sync-heading">Projects</h3>
+                <span class="checkbox-row cluster-muted" role="radiogroup" aria-labelledby="fileSyncCompareLabel" data-testid="file-sync-compare" title="Joint Bob checks a project's files against the other machines' before it moves the project to built-in sync. A project that is not compared stays on Syncthing.">
+                  <span id="fileSyncCompareLabel">Compare these projects:</span>
+                  <label class="checkbox-row"><input type="radio" name="fileSyncCompare" value="all" id="fileSyncCompareAll" data-testid="file-sync-compare-all" /> All</label>
+                  <label class="checkbox-row"><input type="radio" name="fileSyncCompare" value="chosen" id="fileSyncCompareChosen" data-testid="file-sync-compare-chosen" /> Chosen…</label>
+                </span>
+                <span class="cluster-muted" id="fileSyncIndexing" data-testid="file-sync-indexing" hidden></span>
+              </div>
               <p class="settings-hint relay-inline-status" id="fileSyncProjectsStatus" role="status" data-testid="file-sync-projects-status"></p>
               <div class="relay-list file-sync-projects" id="fileSyncProjectList" data-testid="file-sync-project-list"></div>
               <div class="relay-pager" id="fileSyncProjectPager" data-testid="file-sync-project-pager" hidden></div>

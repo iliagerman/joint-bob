@@ -138,6 +138,8 @@ export function builtinProjectStatus(view: FileSyncProjectView, facts: PeerFacts
   if (view.enabled && view.worker === "running" && !view.shares.length) {
     return done({ state: "unavailable", remainingFiles: 0, remainingBytes: 0, message: "No other machine shares this project right now" });
   }
+  // fix: nothing is written here until Syncthing answers once: a problem to show, not syncing.
+  if (view.writesHeld) return done({ state: "unavailable", remainingFiles: 0, remainingBytes: 0, message: `Built-in sync is not writing files here yet: ${view.writesHeld}` });
   const status = projectSyncStatus(shares, { enabled: view.enabled, running: view.worker === "running", present: (peer) => presentPeer(facts, peer) }, peerProblem(view, facts));
   if (status.state !== "syncing") return done(status);
   const behind = shares.flatMap((share) => share.peers.filter((peer) => !peer.caughtUp && presentPeer(facts, peer.peer)).map((peer) => peer.peer));

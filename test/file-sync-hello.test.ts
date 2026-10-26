@@ -81,7 +81,7 @@ async function hello(sender: string | undefined, body: unknown): Promise<{ statu
   return { status: response.status, body: await response.json() };
 }
 
-const runningAnswer = { ok: true, fileSync: { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [OWN_ORIGIN], enabled: true } };
+const runningAnswer = { ok: true, fileSync: { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [OWN_ORIGIN], enabled: true, autoSwitch: true } };
 
 test("the engine starts against the stand-in worker", { timeout: 30_000 }, async () => {
   // A node that did cluster work has its identity; the worker gets its signing key.
@@ -149,7 +149,7 @@ test("a returning node says hello with its engine, reads old and new answers, th
   }
   const announcesBefore = (await stubOps()).filter((entry) => entry.op === "announce").length;
   await announceReturn(true);
-  const sent = { fileSync: { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [OWN_ORIGIN], enabled: true } };
+  const sent = { fileSync: { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [OWN_ORIGIN], enabled: true, autoSwitch: true } };
   assert.deepEqual(oldReceiver.received, [{ target: "/api/cluster/v2/hello", body: sent, signed: true }], "an old receiver gets the same body and ignores it");
   assert.deepEqual(newReceiver.received, [{ target: "/api/cluster/v2/hello", body: sent, signed: true }]);
   const { at: _old, ...fromOld } = peerFileSync(OLD_RECEIVER)!;
@@ -164,7 +164,7 @@ test("with file sync off a node still answers and sends its part of /hello, sayi
   await index.stopFileSync();
   process.env.JOINT_BOB_FILE_SYNC = "0";
   const presenceBefore = (await stubOps()).filter((entry) => entry.op === "peerPresence").length;
-  const offAnswer = { ok: true, fileSync: { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [], enabled: false } };
+  const offAnswer = { ok: true, fileSync: { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [], enabled: false, autoSwitch: true } };
   assert.deepEqual(await hello(NEW_SENDER, { fileSync: { protocol: 1, origins: ["http://127.0.0.1:23003"] } }), { status: 200, body: offAnswer });
   assert.deepEqual(peerFileSync(NEW_SENDER)?.origins, ["http://127.0.0.1:23003"], "what peers say is kept for when the engine starts");
   assert.deepEqual(await index.fileSyncHelloBody(), { fileSync: offAnswer.fileSync });
@@ -177,6 +177,6 @@ test("an unreadable switch is left out of the hello part and read back as unknow
   const { helloFileSync, parseFileSyncPart } = await import("../src/file-sync/peers.js");
   const part = helloFileSync({ origins: [], enabled: undefined });
   assert.equal(Object.hasOwn(part, "enabled"), false);
-  assert.deepEqual(parseFileSyncPart({ fileSync: part }), { protocol: part.protocol, minProtocol: part.minProtocol, origins: [] });
+  assert.deepEqual(parseFileSyncPart({ fileSync: part }), { protocol: part.protocol, minProtocol: part.minProtocol, autoSwitch: true, origins: [] });
   assert.equal(parseFileSyncPart({ fileSync: helloFileSync({ origins: [], enabled: false }) }).enabled, false);
 });

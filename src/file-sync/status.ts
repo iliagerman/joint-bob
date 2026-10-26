@@ -65,6 +65,8 @@ export function projectSyncStatus(shares: readonly ShareStatus[], engine: { enab
   const missing = shares.find((share) => share.state === "unavailable");
   if (missing) return status("unavailable", missing.message ?? "The folder is missing on this node");
   if (!engine.running || !shares.length || shares.some((share) => share.state === "starting")) return status("syncing", "Starting file sync");
+  // auto-transition: the worker writes only once the move here finished (a first folder check that Syncthing did not answer is shown by the facade).
+  if (shares.some((share) => share.phase !== "builtin")) return status("syncing", "Moving to built-in sync");
   if (shares.some((share) => share.scanning || share.state === "scanning")) return status("syncing", "Checking files");
   if (remainingFiles > 0) return status("syncing", `${plural(remainingFiles, "file")} to receive`);
   // An away peer's newer files cannot arrive until it is back; waiting for it is not syncing.

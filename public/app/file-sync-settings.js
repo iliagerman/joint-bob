@@ -1,13 +1,14 @@
-// Settings → File sync (admin only). Status: the built-in engine's switch on this machine, the
-// machines it syncs with, and each shared project: who moves its files (Syncthing or Joint Bob),
-// what is left to copy, problems, and the owner's move between the two. Differences: where Joint
-// Bob's view of a project's files differs from another machine's. Every action applies at once.
-// Lists page to the height they are given instead of scrolling; a project's details replace the
-// lists rather than growing a row.
+// Settings → File sync (admin only). Status: the built-in engine's switch on this machine, which
+// projects it compares, the machines it syncs with, and each shared project: who moves its files
+// (Syncthing or Joint Bob), what is left to copy, problems, what its automatic move waits for, and
+// the owner's move between the two. Differences: where Joint Bob's view of a project's files
+// differs from another machine's. Every action applies at once. Lists page to the height they are
+// given instead of scrolling; a project's details replace the lists rather than growing a row.
 import { api } from "./api.js";
 import { twinName } from "./cluster-twins.js";
 import { isNodeAdmin } from "./node-admin.js";
 import { createFittedList, formatBytes, formatWhen, makeBadge, makeButton, makeNode, makeTwoStepButton, showStatus } from "./relay-ui.js";
+import { confirmAction } from "./shell.js";
 import { state } from "./state.js";
 
 const byId = (id) => document.getElementById(id);
@@ -18,6 +19,8 @@ const projectsStatus = byId("fileSyncProjectsStatus");
 const detailStatus = byId("fileSyncDetailStatus");
 const diffStatus = byId("fileSyncDiffStatus");
 const enabledToggle = byId("fileSyncEnabled");
+const compareAll = byId("fileSyncCompareAll");
+const compareChosen = byId("fileSyncCompareChosen");
 const tabs = byId("fileSyncTabs");
 
 /** A moving or copying project is refreshed while the tab is visible, at most this often; nothing is refreshed otherwise. */
@@ -44,6 +47,10 @@ let errorSignature = "";
 let openDiff = null;
 let loadTicket = 0;
 let refreshTimer;
+/** auto-transition: the move this page started and still says it is making, cleared once the project has moved. */
+let moveNotice = null;
+/** The open project was moving at the last load: once it stops, its folders are loaded once more. */
+let openWasMoving = false;
 
 // ---- wording ----
 
@@ -67,6 +74,41 @@ function since(iso) {
 function matchingText(cleanSince) {
   const elapsed = since(cleanSince);
   return elapsed === null ? "Not matching yet" : `Matching for ${duration(elapsed)}`;
+}
+
+/** The server's short spans ("45 min", "6 h", "3 days"), so a waiting reason reads the same live as it was sent. */
+function span(ms) {
+  const minutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 72 ? `${hours} h` : `${Math.floor(hours / 24)} days`;
+}
+
+/** auto-transition: what the automatic move of a project on Syncthing waits for; a matching time is worded now, not when it was loaded. */
+function waitingText(project) {
+  const auto = project.autoSwitch;
+  if (!auto) return "";
+  const elapsed = since(auto.cleanSince);
+  if (auto.state === "matching" && elapsed !== null) return `Files have matched on every machine for ${span(elapsed)}; it moves to built-in sync after ${span(auto.cleanHours * 3_600_000)}`;
+  return auto.reason ?? "";
+}
+
+/** The facts line, ending with what the automatic move waits for (on the same line: a row's height is what the fitted list pages by). */
+function factsLine(project, view) {
+  const facts = factsOf(project, view);
+  const text = waitingText(project);
+  // The reason says how long the files have matched (and so that they are the same), or why nothing is compared here; the
+  // facts would say it twice, and a row must stay within two lines.
+  const matching = project.autoSwitch?.state === "matching";
+  const shown = text ? facts.filter((fact) => !fact.startsWith("Matching for") && fact !== "Not compared by built-in sync on this machine" && !(matching && fact === "Same files on every machine")) : facts;
+  const line = makeNode("p", "relay-row-meta", shown.join(" · "));
+  if (!text) return line;
+  const waiting = makeNode("span", "", text);
+  waiting.dataset.testid = "file-sync-project-waiting";
+  waiting.dataset.state = project.autoSwitch.state;
+  if (project.autoSwitch.decidedBy) waiting.title = `${project.autoSwitch.decidedBy} owns this project and moves it`;
+  line.append(shown.length ? " · " : "", waiting);
+  return line;
 }
 
 function nodeName(nodeId) { return twinName(nodeId, clusters); }
@@ -140,7 +182,7 @@ function projectsFromShares(shares) {
     return {
       projectId, name: state.projects?.find((project) => project.id === projectId)?.name ?? projectId, owner: false,
       engine: own.some((share) => share.phase === "builtin") ? "builtin" : "syncthing", phase: own[0]?.phase ?? "syncthing",
-      phaseMessage: null, phaseError: null, cleanSince: null, differences, shares: own.map((share) => share.kind), waiting: false, peers: [],
+      phaseMessage: null, phaseError: null, cleanSince: null, differences, shares: own.map((share) => share.kind), waiting: false, peers: [], autoSwitch: null,
     };
   });
 }
@@ -160,6 +202,12 @@ async function refresh(names = false) {
   projects = (nextProjects ?? projectsFromShares(status.shares ?? [])).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
   showStatus(projectsStatus, projectsError ? `Could not load the projects: ${projectsError.message}` : "", projectsError ? "error" : "info");
   render();
+  // fix (P4+P5): a move that just finished leaves its folders' last figures to come: they are loaded once more.
+  const open = projects.find((project) => project.projectId === openProjectId);
+  const moving = Boolean(open && (MOVING.has(open.phase) || projectView(open).moving));
+  const finished = openWasMoving && !moving;
+  openWasMoving = moving;
+  if (finished) { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (visible()) void refresh().catch(() => undefined); }, 1_000); return; }
   scheduleRefresh();
 }
 
@@ -173,7 +221,10 @@ function copying(share) {
 
 function busy() {
   if (["starting", "restarting"].includes(status?.worker)) return true;
-  return projects.some((project) => projectView(project).moving) || (status?.shares ?? []).some(copying);
+  // The open project's folders being scanned change their figures soon (fix P4+P5: they went stale after a move).
+  const scanning = (status?.shares ?? []).some((share) => share.projectId === openProjectId && (share.scanning || share.state === "scanning" || share.state === "starting"));
+  // The first index of the projects, one at a time: its line moves on by itself.
+  return Boolean(status?.indexing) || scanning || projects.some((project) => projectView(project).moving) || (status?.shares ?? []).some(copying);
 }
 
 /** One-shot, armed by the load before it: a quiet engine is never asked again until something happens here. */
@@ -218,9 +269,24 @@ function renderEngine() {
   badge.textContent = WORKER_LABEL[worker] ?? worker;
   badge.className = `cluster-badge ${worker === "running" ? "ok" : worker === "failed" ? "error" : ""}`.trim();
   byId("fileSyncRetry").hidden = worker !== "failed";
-  byId("fileSyncAddresses").textContent = !status.enabled ? "Off: Syncthing moves every project's files."
+  // fix: turned off while it held built-in projects, it runs until they are back on Syncthing.
+  byId("fileSyncAddresses").textContent = status.leaving ? "Turning off: built-in sync keeps moving its projects' files until they are back on Syncthing, then it stops."
+    : !status.enabled ? "Off: Syncthing moves every project's files."
     : origins.length ? `Other machines reach it directly at ${origins.map(hostOf).join(", ")}`
     : "No direct address here, so other machines reach it through Joint Bob's usual, slower connection.";
+  // auto-transition: every shared project unless the admin chose some.
+  const all = config.shadowProjects === "all";
+  compareAll.checked = all;
+  compareChosen.checked = !all;
+  const fixed = config.shadowProjectsBy === "environment";
+  for (const radio of [compareAll, compareChosen]) {
+    radio.disabled = fixed;
+    radio.closest("label").title = fixed ? "JOINT_BOB_FILE_SYNC_PROJECTS in this machine's service settings sets which projects are compared" : "";
+  }
+  const indexing = byId("fileSyncIndexing");
+  indexing.textContent = status.indexing ? `Reading ${status.indexing.name}'s files for the first time (${status.indexing.position} of ${status.indexing.total})` : "";
+  indexing.title = status.indexing ? "Each project's files are read once before they can be compared, one project at a time" : "";
+  indexing.hidden = !status.indexing;
 }
 
 async function saveEnabled(enabled) {
@@ -228,11 +294,61 @@ async function saveEnabled(enabled) {
   try {
     status = await api("/api/file-sync/config", { method: "PUT", body: JSON.stringify({ enabled }) });
     await refresh();
-    showStatus(engineStatus, enabled ? "Built-in file sync is on. Projects stay with Syncthing until their owner moves them." : "Built-in file sync is off.", "ok");
+    showStatus(engineStatus, enabled ? "Built-in file sync is on. Each project moves to it by itself once every machine is ready and its files have matched for a day."
+      : status.leaving ? "Built-in file sync turns off once its projects are back on Syncthing." : "Built-in file sync is off.", "ok");
   } catch (error) {
     enabledToggle.checked = !enabled;
     showStatus(engineStatus, error.message, "error");
   }
+}
+
+/** The projects compared here when a list was chosen: the ticked ones and those their owner asked for (fix); null for every project. */
+function chosenProjects() {
+  const config = status?.config;
+  return Array.isArray(config?.shadowProjects) ? [...new Set([...config.shadowProjects, ...(config.requestedProjects ?? [])])] : null;
+}
+
+/** Compared because its owner (another machine) asked: it means to move the project to built-in sync. */
+function requestedHere(projectId) {
+  const config = status?.config;
+  return Boolean(config?.requestedProjects?.includes(projectId)) && !(config?.shadowProjects ?? []).includes(projectId);
+}
+
+async function saveCompared(shadowProjects, done) {
+  showStatus(engineStatus, "");
+  try {
+    status = await api("/api/file-sync/config", { method: "PUT", body: JSON.stringify({ shadowProjects }) });
+    await refresh();
+    showStatus(engineStatus, done, "ok");
+  } catch (error) {
+    if (status) renderEngine();
+    showStatus(engineStatus, error.message, "error");
+  }
+}
+
+/** Built-in sync moves it (or is moving it) here, or its owner switched it: it is compared whatever the choice. */
+function alwaysCompared(project) { return project.engine === "builtin" || project.phase !== "syncthing"; }
+
+function compareToggle(project) {
+  const chosen = chosenProjects();
+  const label = makeNode("label", "checkbox-row");
+  const box = makeNode("input");
+  box.type = "checkbox";
+  box.dataset.testid = "file-sync-project-compare";
+  box.checked = alwaysCompared(project) || Boolean(chosen?.includes(project.projectId));
+  box.disabled = alwaysCompared(project) || status?.config?.shadowProjectsBy === "environment";
+  // fix: what the tick does, in plain words: a project that is not compared never moves to built-in sync.
+  label.title = alwaysCompared(project) ? "Built-in sync moves this project, so it is always compared"
+    : requestedHere(project.projectId) ? `${project.autoSwitch?.decidedBy ?? "Its owner"} asked this machine to compare it, to move it to built-in sync. Untick to keep it on Syncthing.`
+    : box.checked ? "Joint Bob checks this project's files against the other machines'. Untick to stop; it then stays on Syncthing."
+    : "Not compared here, so it stays on Syncthing. Tick to compare its files with the other machines' so it can move to built-in sync.";
+  box.addEventListener("change", () => {
+    const next = new Set(chosenProjects() ?? []);
+    if (box.checked) next.add(project.projectId); else next.delete(project.projectId);
+    void saveCompared([...next].sort(), box.checked ? `${project.name} is compared on this machine.` : `${project.name} is no longer compared on this machine, so it stays on Syncthing.`);
+  });
+  label.append(box, document.createTextNode(" Compare"));
+  return label;
 }
 
 // ---- machines ----
@@ -296,10 +412,11 @@ const projectList = createFittedList({
     const badge = makeBadge(view.label, view.kind);
     badge.dataset.testid = "file-sync-project-state";
     title.append(makeNode("strong", "relay-row-name", project.name), badge);
-    main.append(title, makeNode("p", "relay-row-meta", factsOf(project, view).join(" · ")));
+    main.append(title, factsLine(project, view));
     const problem = problemText(project, view);
     if (problem) main.append(makeNode("p", "relay-error", problem));
     const actions = makeNode("div", "relay-row-actions");
+    if (chosenProjects()) actions.append(compareToggle(project));
     actions.append(
       makeButton("Rescan files", "file-sync-project-rescan", () => void rescan(project, projectsStatus)),
       makeButton("Details", "file-sync-project-details", () => openProject(project.projectId, false)),
@@ -317,6 +434,8 @@ function openProject(projectId, withChecks) {
   if (checks?.projectId !== projectId) checks = null;
   errorShare = null;
   errorSignature = "";
+  moveNotice = null;
+  openWasMoving = false;
   showStatus(detailStatus, "");
   byId("fileSyncOverview").hidden = true;
   byId("fileSyncProjectDetail").hidden = false;
@@ -337,15 +456,19 @@ function closeProject() {
 
 function targetOf(project) { return project.engine === "builtin" ? "syncthing" : "builtin"; }
 
-async function loadChecks(projectId) {
+async function loadChecks(projectId, withFigures = false) {
   const project = projects.find((candidate) => candidate.projectId === projectId);
   if (!project) return;
   const engine = targetOf(project);
   checks = { projectId, engine, loading: true };
   renderProjectDetail();
   try {
-    // Each direction has its own checks: moving back needs only the owner and machines that answer.
-    const body = await api(`/api/file-sync/engine/checks?projectId=${encodeURIComponent(projectId)}&engine=${engine}`);
+    // Each direction has its own checks: moving back needs only the owner and machines that answer. "Check again" also
+    // brings the folders' figures up to date (fix P4+P5: they stayed as old as the last load).
+    const [body] = await Promise.all([
+      api(`/api/file-sync/engine/checks?projectId=${encodeURIComponent(projectId)}&engine=${engine}`),
+      withFigures ? refresh() : undefined,
+    ]);
     if (openProjectId !== projectId) return;
     checks = { projectId, engine: body.engine ?? engine, checks: body.checks ?? [], cleanSince: body.cleanSince ?? null };
   } catch (error) {
@@ -390,11 +513,31 @@ async function move(project, engine) {
       return;
     }
     checks = null;
-    await refresh();
+    moveNotice = { projectId: project.projectId, engine };
     showStatus(detailStatus, engine === "builtin"
       ? `${project.name} is moving to built-in sync. Each machine first makes Syncthing let go of its folders, then checks both machines' files. Nothing is deleted.`
-      : `${project.name} is moving back to Syncthing.`, "ok");
+      : `${project.name} is moving back to Syncthing; a machine that is away follows once it is back. It stays on Syncthing until someone clicks Allow automatic move.`, "ok");
+    await refresh();
   } catch (error) { showStatus(detailStatus, error.message, "error"); }
+}
+
+/** fix: lifts a move back by hand; nothing moves now. */
+async function allowAuto(project) {
+  showStatus(detailStatus, "");
+  try {
+    await api("/api/file-sync/engine/allow-auto", { method: "POST", body: JSON.stringify({ projectId: project.projectId }) });
+    await refresh();
+    showStatus(detailStatus, `${project.name} moves to built-in sync by itself once every machine is ready and its files have matched long enough.`, "ok");
+  } catch (error) { showStatus(detailStatus, error.message, "error"); }
+}
+
+/** fix (P4+P5): the move this page announced is over once the project is settled on its engine on every machine; the notice goes then. */
+function clearFinishedMove(project) {
+  if (!moveNotice || moveNotice.projectId !== project.projectId) return;
+  const settled = project.engine === moveNotice.engine && project.phase === (moveNotice.engine === "builtin" ? "builtin" : "syncthing") && !peersBehind(project).length;
+  if (!settled) return;
+  moveNotice = null;
+  showStatus(detailStatus, "");
 }
 
 function checkRow(check) {
@@ -458,8 +601,10 @@ function renderProjectDetail() {
   badge.textContent = view.label;
   badge.className = `cluster-badge ${view.kind}`.trim();
 
-  const facts = [makeNode("p", "relay-row-meta", factsOf(project, view).join(" · "))];
-  if (view.moving && project.phaseMessage) facts.push(makeNode("p", "relay-row-meta", project.phaseMessage));
+  clearFinishedMove(project);
+  const facts = [factsLine(project, view)];
+  // Held writes ("Waiting for Syncthing to answer before writing files") say so even on a project that has moved.
+  if ((view.moving || project.phase === "builtin") && project.phaseMessage) facts.push(makeNode("p", "relay-row-meta", project.phaseMessage));
   if (project.phaseError) facts.push(makeNode("p", "relay-error", project.phaseError));
   for (const peer of peersBehind(project)) if (peer.error) facts.push(makeNode("p", "relay-error", `${peer.name}: ${peer.error}`));
   facts.push(...view.shares.map(shareLine));
@@ -473,9 +618,13 @@ function renderProjectDetail() {
     testid: "file-sync-move-button", className: "primary compact", onConfirm: () => move(project, target),
   });
   moveButton.disabled = Boolean(reason);
+  // fix: a move back by hand holds the project on Syncthing; this lifts the hold without moving it now.
+  const allow = project.owner && project.autoSwitch?.state === "held"
+    ? [makeButton("Allow automatic move", "file-sync-allow-auto", () => void allowAuto(project))] : [];
   byId("fileSyncDetailActions").replaceChildren(
     makeButton("Rescan files", "file-sync-detail-rescan", () => void rescan(project, detailStatus)),
-    makeButton(held?.checks ? "Check again" : "Check this project", "file-sync-detail-check", () => void loadChecks(project.projectId)),
+    makeButton(held?.checks ? "Check again" : "Check this project", "file-sync-detail-check", () => void loadChecks(project.projectId, true)),
+    ...allow,
     moveButton,
   );
   const reasonNode = byId("fileSyncMoveReason");
@@ -489,8 +638,10 @@ function renderProjectDetail() {
   const clean = byId("fileSyncCleanSince");
   clean.hidden = !held?.checks || target !== "builtin";
   const elapsed = since(held?.cleanSince);
+  // auto-transition: the owner moves it by itself once the files matched long enough; a person may move it sooner.
+  const after = project.autoSwitch?.cleanHours ?? 24;
   clean.textContent = elapsed === null ? "The files do not match on every machine yet."
-    : `The files have matched on every machine for ${duration(elapsed)}. A week without differences is a good sign, but it is not required.`;
+    : `The files have matched on every machine for ${duration(elapsed)}. Joint Bob moves the project by itself once they have matched for ${span(after * 3_600_000)}; you can move it sooner.`;
 
   const troubled = view.shares.filter((share) => share.errors + share.blocked > 0);
   if (!troubled.some((share) => share.share === errorShare)) errorShare = troubled[0]?.share ?? null;
@@ -669,7 +820,31 @@ tabs.addEventListener("click", (event) => {
   const tab = event.target.closest("[data-file-sync-tab]");
   if (tab) showTab(tab.dataset.fileSyncTab);
 });
-enabledToggle.addEventListener("change", () => void saveEnabled(enabledToggle.checked));
+enabledToggle.addEventListener("change", async () => {
+  const held = enabledToggle.checked ? 0 : projects.filter(alwaysCompared).length;
+  // fix: off with projects on built-in sync sends them back to Syncthing on every machine first; it asks.
+  if (held && !await confirmAction({
+    eyebrow: "File sync", title: "Turn off built-in file sync on this machine?", confirmLabel: "Turn off",
+    message: `${held === 1 ? "1 project uses" : `${held} projects use`} built-in sync here. ${held === 1 ? "It goes" : "They go"} back to Syncthing first, on every machine that shares ${held === 1 ? "it" : "them"}: the owner moves ${held === 1 ? "it" : "them"}, and built-in sync keeps the files moving until then.`,
+  })) { enabledToggle.checked = true; return; }
+  void saveEnabled(enabledToggle.checked);
+});
+// fix: "All" over a chosen list asks first (an arrow key in the group would pick it): every shared project is then read and watched here.
+compareAll.addEventListener("change", async () => {
+  if (!compareAll.checked) return;
+  if (chosenProjects() && !await confirmAction({
+    eyebrow: "File sync", title: "Compare every shared project on this machine?", confirmLabel: "Compare all",
+    message: "This machine then reads and watches the files of every project it shares with another machine. The list chosen now is kept: picking Chosen… again brings it back.",
+  })) { renderEngine(); return; }
+  void saveCompared("all", "Every project shared with another machine is compared on this machine.");
+});
+// Choosing brings back the list chosen before "All"; without one it starts from every project listed, so nothing stops being compared until it is unticked.
+compareChosen.addEventListener("change", () => {
+  if (!compareChosen.checked) return;
+  const last = status?.config?.lastChosenProjects;
+  void saveCompared(Array.isArray(last) && last.length ? last : projects.map((project) => project.projectId).sort(),
+    "Untick the projects this machine should not compare; a project that is not compared stays on Syncthing.");
+});
 byId("fileSyncRetry").addEventListener("click", () => void saveEnabled(true));
 byId("fileSyncRefresh").addEventListener("click", () => void loadFileSyncSettings());
 byId("fileSyncDetailBack").addEventListener("click", closeProject);

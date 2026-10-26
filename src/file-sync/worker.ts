@@ -34,6 +34,9 @@ function problem(error: unknown): { message: string; code?: string } {
 
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
+/** The worker's own stop failed the request (code "stopping"): the sync layer neither retries nor reports it. */
+function stoppingError(): Error { return Object.assign(new Error("File sync worker is stopping"), { code: "stopping" }); }
+
 function idOf(message: unknown): number { return typeof (message as { id?: unknown })?.id === "number" ? (message as { id: number }).id : -1; }
 
 /** Validates one message and runs it on the core alone (no network); never throws. A message without a usable id gets id -1. */
@@ -206,7 +209,7 @@ export class WorkerAdapter {
   // ---- relay: the transport's fallback through main ----
 
   private relay(peer: string, request: RelayedRequest, signal?: AbortSignal): Promise<PeerResponse> {
-    if (this.stopping) return Promise.reject(new Error("File sync worker is stopping"));
+    if (this.stopping) return Promise.reject(stoppingError());
     if (signal?.aborted) return Promise.reject(signal.reason);
     const id = this.nextRelay++;
     return new Promise((resolve, reject) => {
@@ -262,7 +265,7 @@ export class WorkerAdapter {
   /** Stops serving and fails what is in flight; the core stops after. */
   private async closeNetwork(): Promise<void> {
     this.stopping = true;
-    const stopped = new Error("File sync worker is stopping");
+    const stopped = stoppingError();
     for (const [id, call] of this.relays) {
       this.relays.delete(id);
       call.detach();

@@ -775,6 +775,8 @@ export class SyncLayer {
       try {
         fetched = await this.fetch(state.id, { method: "GET", target: filesTarget("shares"), purpose: "shares" }, MAX_JSON_BYTES);
       } catch (error) {
+        // The worker is stopping (turned off, the node shutting down): nothing to retry, nothing about the peer to report.
+        if ((error as { code?: unknown })?.code === "stopping") return;
         this.contactFailed(state, (error as Error).message);
         return;
       }

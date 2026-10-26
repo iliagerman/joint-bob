@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed file sync to move each shared project to built-in sync by itself once every machine has matched its files for a day, so no one has to coordinate the switch.
+
 ## 2.159.2 — 2026-10-26
 
 - Fixed workspace sharing omitting projects owned by your other twin machine. The project list now includes them, shows inherited workspace selections, and counts them as shared.

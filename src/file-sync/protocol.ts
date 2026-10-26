@@ -120,6 +120,8 @@ export interface ShareStatus {
   builtinSince?: number | null;
   /** cutover-engine (P5): the project's engine as its owner recorded it (main fills it in; the phase above is this node's progress). */
   engine?: EngineMode;
+  /** auto-transition: a full scan of the current generation finished (the first index is done). */
+  indexed?: boolean;
 }
 
 export interface ListPage<T> { total: number; items: T[] }

@@ -72,10 +72,19 @@ class FakeSyncthing {
   hold = false;
   url = "";
   private server?: Server;
+  /** auto-transition: its event stream (/rest/events, long-polled): a ConfigSaved for every folder change. */
+  private readonly events: Array<{ id: number; type: string; data?: unknown }> = [];
+  private readonly waiters = new Set<() => void>();
 
   constructor(readonly myID: string) {}
 
-  add(folder: Omit<FakeFolder, "type" | "devices"> & Partial<FakeFolder>): void { this.folders.set(folder.id, { type: "sendreceive", devices: [], ...folder }); }
+  add(folder: Omit<FakeFolder, "type" | "devices"> & Partial<FakeFolder>): void { this.folders.set(folder.id, { type: "sendreceive", devices: [], ...folder }); this.publish("ConfigSaved"); }
+
+  private publish(type: string, data?: unknown): void {
+    this.events.push({ id: this.events.length + 1, type, ...(data === undefined ? {} : { data }) });
+    for (const wake of this.waiters) wake();
+    this.waiters.clear();
+  }
 
   removed(): string[] { return [...new Set(this.log.filter((entry) => entry.startsWith("remove ")).map((entry) => entry.slice(7)))].sort(); }
   added(after = 0): string[] { return this.log.slice(after).filter((entry) => entry.startsWith("add ")).map((entry) => entry.slice(4)); }
@@ -88,6 +97,9 @@ class FakeSyncthing {
 
   close(): Promise<void> {
     const server = this.server;
+    // Long polls end now, so no timer outlives the test.
+    for (const wake of this.waiters) wake();
+    this.waiters.clear();
     if (!server) return Promise.resolve();
     server.closeAllConnections();
     return new Promise((resolve) => server.close(() => resolve()));
@@ -111,7 +123,7 @@ class FakeSyncthing {
         return send(method === "GET" ? this.devices : undefined);
       case "/rest/config/folders":
         if (method === "GET") return send([...this.folders.values()]);
-        if (method === "POST" && body) { this.folders.set(String(body.id), body as FakeFolder); this.log.push(`add ${String(body.id)}`); }
+        if (method === "POST" && body) { this.folders.set(String(body.id), body as FakeFolder); this.log.push(`add ${String(body.id)}`); this.publish("ConfigSaved"); }
         return send();
       case "/rest/db/ignores":
         if (method === "POST" && body) this.ignores.set(folderParam, (body.ignore as string[]) ?? []);
@@ -120,6 +132,17 @@ class FakeSyncthing {
       case "/rest/db/status": return send({ state: this.folders.get(folderParam)?.paused ? "paused" : "idle", needTotalItems: 0, needBytes: 0, errors: 0 });
       case "/rest/db/completion": return send({ completion: 100, needItems: 0, needBytes: 0, needDeletes: 0, remoteState: "valid" });
       case "/rest/folder/errors": return send({ errors: [] });
+      case "/rest/events": {
+        const since = Number(url.searchParams.get("since") ?? 0), timeout = Number(url.searchParams.get("timeout") ?? 60), limit = Number(url.searchParams.get("limit") ?? 0);
+        const pick = () => { const fresh = this.events.filter((event) => event.id > since); return limit > 0 ? fresh.slice(-limit) : fresh; };
+        if (!pick().length && timeout > 0) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, timeout * 1000);
+            this.waiters.add(() => { clearTimeout(timer); resolve(); });
+          });
+        }
+        return send(pick());
+      }
     }
     if (url.pathname.startsWith("/rest/config/devices/") && method === "PATCH" && body) {
       const device = this.devices.find((candidate) => candidate.deviceID === tail);
@@ -130,12 +153,13 @@ class FakeSyncthing {
       const held = this.folders.get(tail);
       if (method === "DELETE") {
         this.log.push(`remove ${tail}`);
-        if (!this.hold) this.folders.delete(tail);
+        if (!this.hold) { this.folders.delete(tail); this.publish("ConfigSaved"); }
         return send();
       }
       if ((method === "PUT" || method === "PATCH") && body) {
         this.folders.set(tail, method === "PUT" ? body as FakeFolder : { ...held!, ...body } as FakeFolder);
         this.log.push(`${held ? "update" : "add"} ${tail}`);
+        this.publish("ConfigSaved");
         return send();
       }
       if (method === "GET" && held) return send(held);
@@ -593,3 +617,150 @@ async function runCutover(t: TestContext): Promise<void> {
 }
 
 test("the owner moves a project to built-in sync and back: every file kept, Syncthing lets go of only its folders, restarts resume", { timeout: 900_000 }, (t) => runCutover(t));
+
+/* ---- auto-transition: Matan's case. A (the owner) and B run the new release; C has file sync off.
+   Nobody presses anything: the project stays on Syncthing everywhere while C cannot take part,
+   C turns file sync on and compares in shadow, the files match for cleanHours (seconds here), A
+   moves the project by itself and B and C follow. C then goes away and comes back with file sync
+   off: A moves the project back by itself, B follows at once and C when it returns, and A moves it
+   again only after a fresh matching time. ---- */
+
+const CLEAN_SECONDS = 20;
+const C_NAME = "Matans-Sela-MacBook-Pro";
+
+async function eventually(read: () => Promise<boolean>, what: string, timeoutMs: number, sides: Side[]): Promise<void> {
+  const ok = await until(read, Boolean, timeoutMs, 500);
+  assert.ok(ok, `${what}\n${lines(sides)}`);
+}
+
+async function pairTwins(inviter: Side, acceptor: Side): Promise<void> {
+  const invitation = await api<{ link: string }>(inviter.node, inviter.session, "POST", "/twins/invitations", { confirmOwnedData: true });
+  assert.equal(invitation.status, 201, JSON.stringify(invitation.body));
+  const accepted = await api(acceptor.node, acceptor.session, "POST", "/twins/accept", { link: invitation.body.link, confirmOwnedData: true });
+  assert.equal(accepted.status, 201, JSON.stringify(accepted.body));
+}
+
+async function runMatanCase(t: TestContext): Promise<void> {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "file-sync-auto-")));
+  const sides: Side[] = [];
+  try {
+    const envs = await Promise.all(["a", "b", "c"].map((label) => seedDevEnvironment(path.join(root, label), 1)));
+    const make = async (label: string, env: DevEnvironment, device: string): Promise<Side> => {
+      const syncthing = new FakeSyncthing(device);
+      await syncthing.start();
+      const ticketRoot = path.join(root, `${label.toLowerCase()}-tickets`), worktreeRoot = path.join(root, `${label.toLowerCase()}-worktrees`);
+      await mkdir(ticketRoot, { recursive: true });
+      syncthing.add({ id: "user-photos", label: "Photos", path: path.join(root, `${label.toLowerCase()}-photos`) });
+      const port = await freePort();
+      return {
+        label, env, node: env.nodes[0], session: undefined as unknown as SignedIn, root: "", ticketRoot, worktreeRoot, syncthing, lines: [],
+        extraEnv: {
+          JOINT_BOB_FILE_SYNC_SETTLE_MS: "3000", JOINT_BOB_FILE_SYNC_PORT: String(port), JOINT_BOB_FILE_SYNC_LISTEN: "127.0.0.1",
+          JOINT_BOB_SYNCTHING_URL: syncthing.url, JOINT_BOB_SYNCTHING_API_KEY: "test-key", JOINT_BOB_TICKET_ROOT: ticketRoot, JOINT_BOB_WORKTREE_ROOT: worktreeRoot,
+        },
+      };
+    };
+    const device = (letter: string) => Array.from({ length: 8 }, () => letter.repeat(7)).join("-");
+    const [a, b, c] = await Promise.all([make("A", envs[0], device("A")), make("B", envs[1], device("B")), make("C", envs[2], device("C"))]);
+    sides.push(a, b, c);
+    await Promise.all(sides.map(startSide));
+    // Every seeded node has the same name; the reasons name machines, so each gets its own (C is someone else's Mac).
+    for (const [side, name] of [[a, "Ilia-MacBook-Pro"], [b, "homeserver"], [c, C_NAME]] as const) {
+      assert.equal((await api(side.node, side.session, "PUT", "/cluster/node", { name, url: side.node.url })).status, 200);
+      side.node.name = name;
+    }
+    await pairTwins(a, b);
+    await pairTwins(a, c);
+
+    a.root = path.join(root, "project");
+    const base = { "README.md": "# Auto transition\n", "src/index.ts": "export const answer = 41;\n", "notes.txt": "notes\n" };
+    await writeFiles(a.root, base);
+    const created = await api<{ project: { id: string } }>(a.node, a.session, "POST", "/projects", { name: "Dak-Live", type: "personal", path: a.root, synced: true });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const projectId = created.body.project.id;
+    for (const side of [b, c]) {
+      const listed = await until(() => api<{ projects: Array<{ id: string; path: string }> }>(side.node, side.session, "GET", "/projects?syncStatus=false"),
+        (answer) => answer.body.projects?.some((candidate) => candidate.id === projectId) ?? false, 30_000);
+      side.root = listed.body.projects?.find((candidate) => candidate.id === projectId)?.path ?? "";
+      assert.ok(side.root && side.root !== a.root, `${side.label} lists the project with its own folder`);
+      // Syncthing's part: the same files there.
+      await writeFiles(side.root, base);
+    }
+    // A and B run the new release with file sync on; the matching time is seconds instead of a day. C keeps file sync off.
+    for (const side of [a, b]) {
+      const configured = await api<FileSyncStatusAnswer>(side.node, side.session, "PUT", "/file-sync/config", { enabled: true, shadowProjects: [projectId], autoSwitch: { cleanHours: CLEAN_SECONDS / 3600 } });
+      assert.equal(configured.status, 200, JSON.stringify(configured.body));
+      await until(() => status(side), (answer) => answer.worker === "running", 30_000);
+    }
+    for (const side of sides) {
+      await until(async () => projectFolders(side, projectId), (folders) => folders.length === 3, 60_000, 500);
+      assert.equal(projectFolders(side, projectId).length, 3, `${side.label}'s Syncthing holds the project's folders`);
+    }
+
+    // 1. C cannot take part: the project stays on Syncthing everywhere, and A says why, naming C. B (not the owner) shows it too.
+    const waiting = await until(() => project(a, projectId), (entry) => entry?.autoSwitch?.reason === `Waiting for ${C_NAME} to turn on file sync`, 60_000, 500);
+    assert.equal(waiting?.autoSwitch?.reason, `Waiting for ${C_NAME} to turn on file sync`, `${JSON.stringify(waiting)}\n${lines(sides)}`);
+    const onB = await until(() => project(b, projectId), (entry) => entry?.autoSwitch?.reason === `Waiting for ${C_NAME} to turn on file sync`, 30_000, 500);
+    assert.equal(onB?.autoSwitch?.reason, `Waiting for ${C_NAME} to turn on file sync`, `B shows the owner's reason: ${JSON.stringify(onB)}`);
+    assert.equal(onB?.autoSwitch?.decidedBy, a.node.name);
+    await pause((CLEAN_SECONDS + 10) * 1000);
+    for (const side of sides) assert.deepEqual([(await project(side, projectId))?.engine, (await project(side, projectId))?.phase], ["syncthing", "syncthing"], `${side.label}: still on Syncthing while C cannot take part`);
+    assert.deepEqual(sides.map((side) => projectFolders(side, projectId).length), [3, 3, 3], "every Syncthing still holds the project");
+
+    // 2. C turns file sync on (the stored default list is "all"; here only this project): it indexes in shadow, the files match for
+    //    the matching time, and A moves the project by itself; B and C follow. Nobody calls the move.
+    const turnedOnAt = Date.now();
+    const onC = await api<FileSyncStatusAnswer>(c.node, c.session, "PUT", "/file-sync/config", { enabled: true, shadowProjects: [projectId], autoSwitch: { cleanHours: CLEAN_SECONDS / 3600 } });
+    assert.equal(onC.status, 200, JSON.stringify(onC.body));
+    const moved = await watchPhases(sides, projectId, (entries) => entries.every((entry) => entry?.phase === "builtin" && entry.engine === "builtin"), SYNC_TIMEOUT_MS + CLEAN_SECONDS * 1000);
+    assert.deepEqual(moved.last.map((entry) => [entry?.engine, entry?.phase]), [["builtin", "builtin"], ["builtin", "builtin"], ["builtin", "builtin"]], `${JSON.stringify(moved)}\n${lines(sides)}`);
+    for (const [index, phases] of moved.seen.entries()) assert.ok(inOrder(phases), `${sides[index].label} walked the phases in order: ${phases.join(" → ")}`);
+    t.diagnostic(`moved ${Math.round((Date.now() - turnedOnAt) / 1000)} s after C turned file sync on; phases: ${moved.seen.map((phases, index) => `${sides[index].label} ${phases.join(" → ")}`).join("; ")}`);
+    assert.ok(Date.now() - turnedOnAt >= CLEAN_SECONDS * 1000, "not before the files matched for the matching time");
+    assert.ok(a.lines.some((line) => /moved Dak-Live to built-in sync by itself/.test(line)), `A logged its own move:\n${lines([a])}`);
+    for (const side of sides) assert.deepEqual(projectFolders(side, projectId), [], `${side.label}: Syncthing let go of the project`);
+    // Files travel with the engine now: C's edit reaches A and B (B through A).
+    await writeFile(path.join(c.root, "from-c.txt"), "written on C\n");
+    await eventually(async () => existsSync(path.join(a.root, "from-c.txt")) && existsSync(path.join(b.root, "from-c.txt")), "C's file reached A and B", SYNC_TIMEOUT_MS, sides);
+    assert.equal(await readFile(path.join(b.root, "from-c.txt"), "utf8"), "written on C\n");
+
+    // 3. C goes away and comes back with file sync off (forced by its environment): A moves the project back by itself; B follows at
+    //    once; C, away and then off, follows when it runs file sync again. The move back starts the matching time over.
+    await stopDevNode(c.child!);
+    c.child = undefined;
+    c.extraEnv = { ...c.extraEnv, JOINT_BOB_FILE_SYNC: "0" };
+    const offAt = Date.now();
+    await startSide(c);
+    const back = await watchPhases([a, b], projectId, (entries) => entries.every((entry) => entry?.engine === "syncthing" && entry.phase === "syncthing"), SYNC_TIMEOUT_MS);
+    assert.deepEqual(back.last.map((entry) => [entry?.engine, entry?.phase]), [["syncthing", "syncthing"], ["syncthing", "syncthing"]], `${JSON.stringify(back)}\n${lines(sides)}`);
+    assert.ok(a.lines.some((line) => /moved Dak-Live back to Syncthing: .*(file sync turned off|turning file sync off)/.test(line)), `A logged why:\n${lines([a])}`);
+    // fix: C, off, still follows: its engine runs until the project is back on Syncthing there, Syncthing gets the folders
+    //    back, and only then the engine stops.
+    const leftC = await watchPhases([c], projectId, (entries) => entries[0]?.engine === "syncthing" && entries[0]?.phase === "syncthing", SYNC_TIMEOUT_MS);
+    assert.deepEqual([leftC.last[0]?.engine, leftC.last[0]?.phase], ["syncthing", "syncthing"], `${JSON.stringify(leftC)}\n${lines([c])}`);
+    const stoppedC = await until(() => status(c), (answer) => answer.worker === "off" && !answer.leaving, 30_000, 500);
+    assert.deepEqual([stoppedC.worker, stoppedC.leaving], ["off", false], `C's engine stopped once it held nothing: ${JSON.stringify(stoppedC)}\n${lines([c])}`);
+    await until(async () => projectFolders(c, projectId), (folders) => folders.length === 3, 60_000, 500);
+    assert.equal(projectFolders(c, projectId).length, 3, `C's Syncthing has the project's folders again\n${lines([c])}`);
+    // C comes back with file sync on: it learns of the move back and follows; nobody pressed anything there either.
+    await stopDevNode(c.child!);
+    c.child = undefined;
+    const { JOINT_BOB_FILE_SYNC: _off, ...withoutOverride } = c.extraEnv;
+    c.extraEnv = withoutOverride;
+    await startSide(c);
+    const followed = await watchPhases([c], projectId, (entries) => entries[0]?.engine === "syncthing" && entries[0]?.phase === "syncthing", SYNC_TIMEOUT_MS);
+    assert.deepEqual([followed.last[0]?.engine, followed.last[0]?.phase], ["syncthing", "syncthing"], `${JSON.stringify(followed)}\n${lines([c])}`);
+    const backAt = Date.now();
+    // Every machine runs file sync again: A moves the project once more by itself, a fresh matching time after the move back.
+    const again = await watchPhases(sides, projectId, (entries) => entries.every((entry) => entry?.phase === "builtin" && entry.engine === "builtin"), SYNC_TIMEOUT_MS + CLEAN_SECONDS * 1000);
+    assert.deepEqual(again.last.map((entry) => entry?.phase), ["builtin", "builtin", "builtin"], `${JSON.stringify(again.last)}\n${lines(sides)}`);
+    assert.ok(Date.now() - offAt >= CLEAN_SECONDS * 1000, "the move back started the matching time over");
+    t.diagnostic(`C followed the move back ${Math.round((backAt - offAt) / 1000)} s after it went away; moved again ${Math.round((Date.now() - backAt) / 1000)} s later`);
+  } finally {
+    await Promise.all(sides.map((side) => side.child ? stopDevNode(side.child) : undefined));
+    await Promise.all(sides.map((side) => side.syncthing.close()));
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("Matan's case: a project shared with three machines moves to built-in sync by itself once every one can take it, and back and forth without anyone pressing anything", { timeout: 900_000 }, (t) => runMatanCase(t));

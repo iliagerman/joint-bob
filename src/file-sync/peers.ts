@@ -18,6 +18,8 @@ export interface PeerFileSync {
   minProtocol?: number;
   /** Absent when the peer did not say (a hello body from a node that predates the field). */
   enabled?: boolean;
+  /** auto-transition: its owner moves projects by itself, and file sync is on there unless someone turned it off (said in hellos only). */
+  autoSwitch?: boolean;
   /** Direct origins that passed acceptablePeerOrigin. */
   origins: string[];
   hostId?: string;
@@ -55,6 +57,7 @@ const announced = z.object({
   minProtocol: z.number().int().min(1).max(1_000_000).optional().catch(undefined),
   origins: originList.default([]),
   enabled: z.boolean().optional().catch(undefined),
+  autoSwitch: z.boolean().optional().catch(undefined),
 });
 
 /** The fileSync part of a /hello body or answer; an absent or unreadable part means an engine-less (older) node. */
@@ -67,24 +70,29 @@ export function parseFileSyncPart(message: unknown, env: NodeJS.ProcessEnv = pro
     protocol: parsed.data.protocol,
     ...(parsed.data.minProtocol !== undefined ? { minProtocol: parsed.data.minProtocol } : {}),
     ...(parsed.data.enabled !== undefined ? { enabled: parsed.data.enabled } : {}),
+    ...(parsed.data.autoSwitch !== undefined ? { autoSwitch: parsed.data.autoSwitch } : {}),
     origins: [...new Set(origins)],
   };
 }
 
 /** `enabled` absent: this node could not read its own switch (integrate: unknown, which an owner must not take for off). */
-export interface HelloFileSync { protocol: number; minProtocol: number; origins: string[]; enabled?: boolean }
+export interface HelloFileSync { protocol: number; minProtocol: number; origins: string[]; enabled?: boolean; autoSwitch: true }
 
 /** This node's part of a /hello body and answer. Old receivers ignore the body; old senders ignore the answer. */
 export function helloFileSync(self: { origins: readonly string[]; enabled: boolean | undefined }): HelloFileSync {
-  return { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [...self.origins], ...(self.enabled !== undefined ? { enabled: self.enabled } : {}) };
+  return { protocol: FILE_SYNC_PROTOCOL, minProtocol: FILE_SYNC_MIN_PROTOCOL, origins: [...self.origins], ...(self.enabled !== undefined ? { enabled: self.enabled } : {}), autoSwitch: true };
 }
 
 /** Records what a peer said about its engine; listeners hear of it only when its origins or capability changed. */
 export function notePeerFileSync(peer: string, info: Omit<PeerFileSync, "at">, now = Date.now()): boolean {
   const previous = directory.get(peer);
-  const next: PeerFileSync = { ...info, origins: [...new Set(info.origins)], at: now };
+  // Shares answers do not say whether it moves projects by itself: what its hello said stays while its engine is the same, a
+  // hello that said nothing as false (a later shares answer must not make a release without automatic moves look like one).
+  const said = previous && previous.protocol === info.protocol && info.protocol > 0 ? previous.autoSwitch ?? (previous.via !== "shares" ? false : undefined) : undefined;
+  const autoSwitch = info.autoSwitch ?? (info.via === "shares" ? said : undefined);
+  const next: PeerFileSync = { ...info, ...(autoSwitch !== undefined ? { autoSwitch } : {}), origins: [...new Set(info.origins)], at: now };
   directory.set(peer, next);
-  const changed = !previous || previous.protocol !== next.protocol || previous.enabled !== next.enabled || previous.origins.join("\n") !== next.origins.join("\n");
+  const changed = !previous || previous.protocol !== next.protocol || previous.enabled !== next.enabled || predatesAutoSwitch(previous) !== predatesAutoSwitch(next) || previous.origins.join("\n") !== next.origins.join("\n");
   if (changed) for (const listener of listeners) {
     try { listener(peer); } catch { /* a listener's failure is not the directory's */ }
   }
@@ -92,6 +100,15 @@ export function notePeerFileSync(peer: string, info: Omit<PeerFileSync, "at">, n
 }
 
 export function peerFileSync(peer: string): PeerFileSync | undefined { return directory.get(peer); }
+
+/**
+ * auto-transition: the peer runs a release without automatic moves (its hello or answer said nothing
+ * of them), where file sync is off until someone turns it on: updating is what turns it on. False
+ * while only its shares answers were heard (they do not say).
+ */
+export function predatesAutoSwitch(known: PeerFileSync | undefined): boolean {
+  return Boolean(known && known.protocol > 0 && (known.autoSwitch === false || (known.via !== "shares" && known.autoSwitch === undefined)));
+}
 
 export function peerOrigins(peer: string): string[] { return [...directory.get(peer)?.origins ?? []]; }
 

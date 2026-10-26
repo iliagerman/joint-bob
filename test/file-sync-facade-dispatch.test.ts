@@ -141,6 +141,10 @@ test("a built-in project's status covers every state, in order, with plain texts
   assert.deepEqual(builtinProjectStatus(view(id, { worker: "off", enabled: false }, []), facts()), { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message: "File sync is off on this node", engine: "builtin" });
   assert.equal(builtinProjectStatus(view(id, {}, [share(id, "project", { state: "unavailable", message: "The folder is missing" })]), facts()).message, "The folder is missing");
   assert.equal(builtinProjectStatus(view(id, { peers: {} }, []), facts()).message, "No other machine shares this project right now");
+  // fix: writes held until Syncthing answers a first time are a problem to show, not syncing; a move in progress is syncing.
+  assert.deepEqual(builtinProjectStatus(view(id, { writesHeld: "Waiting for Syncthing to answer before writing files" }), facts()),
+    { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message: "Built-in sync is not writing files here yet: Waiting for Syncthing to answer before writing files", engine: "builtin" });
+  assert.deepEqual([builtinProjectStatus(view(id, {}, [share(id, "project", { phase: "bootstrapping" })]), facts()).state, builtinProjectStatus(view(id, {}, [share(id, "project", { phase: "bootstrapping" })]), facts()).message], ["syncing", "Moving to built-in sync"]);
   // Error beats unavailable beats syncing.
   assert.equal(builtinProjectStatus(view(id, {}, [share(id, "project", { state: "unavailable" }), share(id, "tickets", { blocked: 1 }), share(id, "worktrees", { need: { files: 4, bytes: 4 } })]), facts()).state, "error");
 });

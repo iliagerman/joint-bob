@@ -688,6 +688,8 @@ class Core implements WorkerCore {
       ...(message ? { message } : {}), peers,
       // cutover-engine (P5): set by the bootstrap of the switch, recorded in node.db by main.
       builtinSince: share?.builtinSince ?? null,
+      // auto-transition: main's first-index queue moves on once a project's shares say so.
+      indexed: share?.fullScanAt != null && share.pendingDev === null,
     };
   }
 

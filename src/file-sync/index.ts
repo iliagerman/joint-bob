@@ -5,13 +5,14 @@ import { peerAway } from "../peer-presence.js";
 import { onRelayPeersChanged } from "../relay/events.js";
 import { settled, warnOnChange } from "../server/quiet-log.js";
 import type { BridgeOptions, BridgeState, WorkerBridge } from "./bridge.js";
-import { controlDatabase, ensureRevisionTriggers, fileSyncListenAddresses, holdsEngineProjects, listEngineRecords, listPhases, listSettingsRecords, readFileSyncConfig, readRevision, setPhase, writeFileSyncConfig, type FileSyncConfig, type FileSyncConfigPatch } from "./control.js";
+import { comparedProjects, controlDatabase, ensureRevisionTriggers, fileSyncListenAddresses, holdsEngineProjects, listEngineRecords, listPhases, listSettingsRecords, markProjectsIndexed, readFileSyncConfig, readIndexedProjects, readRevision, setPhase, writeFileSyncConfig, type FileSyncConfig, type FileSyncConfigPatch } from "./control.js";
+import { FirstIndexQueue, type IndexingStatus } from "./first-index.js";
 import { acceptablePeerOrigin, helloFileSync, notePeerFileSync, onPeerFileSyncChanged, onPeerPresent, parseFileSyncPart, peerFileSync, peerOrigins, peerSpecs, type HelloFileSync } from "./peers.js";
 import { FILE_SYNC_SWITCH_PROTOCOL, type ConfigureArgs, type CoreEvent, type DifferenceItem, type ErrorItem, type ListPage, type PendingFiles, type RequestStats, type ScanResult, type ShareSpec, type ShareStatus } from "./protocol.js";
 import { ShareStatusStore } from "./status.js";
 import { parseShareKey, type Phase } from "./types.js";
 // cutover-engine (P5)
-import type { Check, ChecksAnswer, FileSyncProject, Migration, MigrationEngine, PeerRequest, SwitchAnswer } from "./migration.js";
+import type { Check, ChecksAnswer, FileSyncProject, Migration, MigrationDeps, MigrationEngine, PeerRequest, SwitchAnswer } from "./migration.js";
 import type { EngineMode } from "./types.js";
 // app-integration (P4)
 import path from "node:path";
@@ -64,6 +65,8 @@ interface Engine {
   announcing: boolean;
   presence: Map<string, { at: number; origins: string }>;
   unsubscribe: Array<() => void>;
+  /** auto-transition: projects never indexed here join the worker's shares one at a time. */
+  queue: FirstIndexQueue;
 }
 
 let modules: Promise<Modules> | undefined;
@@ -105,7 +108,8 @@ export async function startFileSync(): Promise<void> {
   scope ??= new AsyncResource("FileSync");
   try {
     const db = await controlDatabase();
-    if (!readFileSyncConfig(db).enabled) return;
+    // fix: turned off while it held built-in projects, it runs until they are back on Syncthing (applyFileSyncConfig).
+    if (!readFileSyncConfig(db).enabled && !holdsEngineProjects(db)) return;
     await neutral(ensureRunning);
   } catch (error) {
     warnOnChange("fileSync:start", `File sync could not start: ${messageOf(error)}`);
@@ -159,7 +163,15 @@ async function launch(generation: number): Promise<void> {
     db, nodeId, hostId: loaded.shares.fileSyncHostId(), signingKey, bridge: undefined as unknown as WorkerBridge, shares: [],
     pushing: false, pushAgain: false, pushWaiters: [], revision: -1, schema: readRevision(db).schema, origins: [],
     announceWanted: false, announceSlept: false, announcing: false, presence: new Map(), unsubscribe: [],
+    queue: new FirstIndexQueue({
+      indexed: () => readIndexedProjects(db) ?? new Set(),
+      markIndexed: (projectId) => { try { markProjectsIndexed(db, [projectId]); } catch (error) { warnOnChange("fileSync:index", `File sync could not note that ${projectId} is indexed: ${messageOf(error)}`); } },
+      changed: () => requestDerive(current),
+      name: (projectId) => projectName(db, projectId),
+    }),
   };
+  current.unsubscribe.push(() => current.queue.stop());
+  seedIndexedProjects(db);
   current.bridge = new loaded.bridge.WorkerBridge({
     nodeId,
     ...workerOverride,
@@ -168,15 +180,15 @@ async function launch(generation: number): Promise<void> {
     onEvent: (event) => handleEvent(current, event),
   });
   engine = current;
-  // Before the first scan, so a path Syncthing skips on this node is never indexed here.
-  await importStignoreRules(current);
+  // Before the first scan, so a path Syncthing skips on this node is never indexed here; with them, Syncthing's file counts order the first index.
+  await Promise.all([importStignoreRules(current), syncthingFileCounts(current)]);
   // The worker starts even so: its revision stays unknown, so the next 2 s pass derives again.
   await derive(current).catch((error) => warnOnChange("fileSync:derive", `File sync could not work out which folders to sync: ${messageOf(error)}`));
   if (engine !== current) return;
   current.unsubscribe.push(
     onRelayPeersChanged(() => requestDerive(current)),
     // Main had it as away: the worker stopped talking to it on that word (a relay answer marked away) and waits for this one.
-    onPeerPresent((peer) => { requestDerive(current); fileSyncPeerPresent(peer, true); }),
+    onPeerPresent((peer) => { requestDerive(current); fileSyncPeerPresent(peer, true); migrationContact(peer); }),
     // New origins or capability reach the worker with the next configure.
     onPeerFileSyncChanged(() => requestDerive(current)),
   );
@@ -191,8 +203,14 @@ async function derive(current: Engine): Promise<void> {
     const { revision } = readRevision(current.db);
     const config = readFileSyncConfig(current.db);
     const records = listSettingsRecords(current.db);
-    const phases = new Map([...listPhases(current.db)].map(([projectId, record]) => [projectId, record.phase]));
-    const shares = loaded.shares.deriveShares(current.db, { local: current.nodeId, shadowProjects: config.shadowProjects, phases, settings: new Map(records.map((record) => [record.key, record.value])) });
+    // auto-transition: a built-in project's writes wait until a folder check of its roots passed (once, kept in node.db).
+    const phases = new Map([...listPhases(current.db)].map(([projectId, record]): [string, Phase] => [projectId, record.phase === "builtin" && writesHeld(current, projectId) ? "bootstrapping" : record.phase]));
+    const switched = new Set(listEngineRecords(current.db).map((record) => record.projectId));
+    // fix: a chosen list takes in the projects their owner asked this node to compare.
+    // fix: turned off, it compares nothing more: only the projects on their way back to Syncthing keep their shares.
+    const allowed = loaded.shares.deriveShares(current.db, { local: current.nodeId, shadowProjects: config.enabled ? comparedProjects(config) : [], phases, switched, settings: new Map(records.map((record) => [record.key, record.value])) });
+    // Projects never indexed here go in one at a time; those past Syncthing or ever switched are wanted now.
+    const shares = current.queue.admit(allowed, (projectId) => (phases.get(projectId) ?? "syncthing") !== "syncthing" || switched.has(projectId));
     // Every peer main's cluster routes accept, not only those sharing a folder now: the direct listener verifies the same
     // signatures, and a share the caller is not in gets the service's 403 (not retried) instead of a 401 (retried for good).
     const peers = peerSpecs(current.db, [...shares.flatMap((share) => share.peers), ...loaded.shares.verifiablePeers(current.db, current.nodeId)]);
@@ -253,13 +271,61 @@ async function runPush(current: Engine): Promise<void> {
   if (current.announceWanted && current.sent !== undefined) void runAnnounce(current);
 }
 
-/** This node's own Syncthing ignore lines join the rules of every project it checks (stignore-import.ts). */
-async function importStignoreRules(current: Engine): Promise<void> {
+/** Whether the worker must not write the built-in project yet: no folder check of its roots passed since it moved here (tests that set phases directly drive writes themselves). */
+function writesHeld(current: Engine, projectId: string): boolean {
+  if (fileSyncTestPhasesEnabled()) return false;
+  return !(migration?.engine === current && migration.machine.writesAllowed(projectId));
+}
+
+function projectName(db: DatabaseSync, projectId: string): string {
+  try { return (db.prepare("SELECT name FROM projects WHERE id = ?").get(projectId) as { name: string } | undefined)?.name ?? projectId; } catch { return projectId; }
+}
+
+/** Once, on the first start of this release: the projects this node already compared (its chosen list, any switched) count as indexed, so they keep their place. */
+function seedIndexedProjects(db: DatabaseSync): void {
   try {
-    const config = readFileSyncConfig(current.db);
+    if (readIndexedProjects(db) !== undefined) return;
+    const stored = db.prepare("SELECT value FROM file_sync_config WHERE key = 'shadowProjects'").get() as { value: string } | undefined;
+    let chosen: string[] = [];
+    try { const parsed = stored ? JSON.parse(stored.value) as unknown : undefined; if (Array.isArray(parsed)) chosen = parsed.filter((id): id is string => typeof id === "string"); } catch { /* none chosen */ }
+    markProjectsIndexed(db, [...chosen, ...listPhases(db).keys(), ...listEngineRecords(db).map((record) => record.projectId)]);
+  } catch (error) {
+    warnOnChange("fileSync:index", `File sync could not read which projects it indexed before: ${messageOf(error)}`);
+  }
+}
+
+/**
+ * Syncthing's file count of each project's folder, so the smallest project is indexed first. Only
+ * projects still waiting for their first index here are asked about (fix: none, after the first
+ * start), two at a time; a Syncthing that does not answer in 3 s leaves the order by name.
+ */
+async function syncthingFileCounts(current: Engine): Promise<void> {
+  try {
+    const indexed = readIndexedProjects(current.db) ?? new Set<string>();
+    const phases = listPhases(current.db);
+    const switched = new Set(listEngineRecords(current.db).map((record) => record.projectId));
+    const compared = comparedProjects(readFileSyncConfig(current.db));
+    const rows = (current.db.prepare("SELECT id, sync_folder_id FROM projects").all() as Array<{ id: string; sync_folder_id: string | null }>)
+      .filter((row) => !indexed.has(row.id) && (phases.get(row.id)?.phase ?? "syncthing") === "syncthing" && !switched.has(row.id) && (compared === "all" || compared.includes(row.id)));
+    if (!rows.length) return;
+    const folder = new Map(rows.map((row) => [row.id, row.sync_folder_id ?? `joint-bob-project-${createHash("sha256").update(row.id).digest("hex")}`]));
+    const { syncthingFolderFileCounts } = await import("../syncthing.js");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3_000);
+    timer.unref();
+    const counts = await syncthingFolderFileCounts([...folder.values()], { signal: controller.signal, concurrency: 2 }).catch((): Record<string, number> => ({}));
+    clearTimeout(timer);
+    current.queue.setCounts(new Map([...folder].flatMap(([projectId, id]) => typeof counts[id] === "number" ? [[projectId, counts[id]]] : [])));
+  } catch { /* by name */ }
+}
+
+/** This node's own Syncthing ignore lines join the rules of every project it checks (stignore-import.ts); `extra`: about to be checked. */
+async function importStignoreRules(current: Engine, extra: readonly string[] = []): Promise<void> {
+  try {
+    const compared = comparedProjects(readFileSyncConfig(current.db));
     const phases = listPhases(current.db);
     const rows = current.db.prepare("SELECT id, sync_folder_id FROM projects").all() as Array<{ id: string; sync_folder_id: string | null }>;
-    const checked = rows.filter((row) => config.shadowProjects === "all" || config.shadowProjects.includes(row.id) || (phases.get(row.id)?.phase ?? "syncthing") !== "syncthing");
+    const checked = rows.filter((row) => compared === "all" || compared.includes(row.id) || extra.includes(row.id) || (phases.get(row.id)?.phase ?? "syncthing") !== "syncthing");
     if (!checked.length) return;
     const [{ importSyncthingUserRules }, syncthing, { projectTicketSyncFolderId }, { projectWorktreeSyncFolderId }] = await Promise.all([
       import("./stignore-import.js"), import("../syncthing.js"), import("../task-workspaces.js"), import("../worktree-filters.js")]);
@@ -318,8 +384,11 @@ function handleEvent(current: Engine, event: CoreEvent): void {
       // app-integration (P4): compared with the report it replaces, so before it is stored.
       if (event.event === "shareState") notePulls(event.status);
       statuses.apply(event);
+      if (event.event !== "shareState") return;
+      // auto-transition: the project indexing may be done, and the next one goes in.
+      current.queue.reported(event.status, (key) => statuses.get(key));
       // cutover-engine (P5): a switch waiting for its peers' lists of files tries again once they are here.
-      if (event.event === "shareState" && migration?.engine === current) migration.machine.shareChanged(event.status);
+      if (migration?.engine === current) migration.machine.shareChanged(event.status);
   }
 }
 
@@ -422,6 +491,7 @@ export async function fileSyncHelloReceived(peer: string, body: unknown): Promis
   try {
     notePeerFileSync(peer, { ...parseFileSyncPart(body), via: "hello" });
     fileSyncPeerPresent(peer);
+    migrationContact(peer);
   } catch (error) {
     warnOnChange("fileSync:hello", `File sync could not read ${peer}'s hello: ${messageOf(error)}`);
   }
@@ -430,7 +500,7 @@ export async function fileSyncHelloReceived(peer: string, body: unknown): Promis
 
 /** A peer answered this node's hello; an older one answers {ok: true} and so has no engine. Never throws. */
 export function fileSyncHelloAnswered(peer: string, answer: unknown): void {
-  try { notePeerFileSync(peer, { ...parseFileSyncPart(answer), via: "answer" }); }
+  try { notePeerFileSync(peer, { ...parseFileSyncPart(answer), via: "answer" }); migrationContact(peer); }
   catch (error) { warnOnChange("fileSync:hello", `File sync could not read ${peer}'s hello answer: ${messageOf(error)}`); }
 }
 
@@ -481,6 +551,8 @@ export interface FileSyncPeerStatus {
 
 export interface FileSyncStatusAnswer {
   enabled: boolean;
+  /** fix: turned off while it holds built-in projects: it runs until they are back on Syncthing, then stops. */
+  leaving: boolean;
   worker: BridgeState | "starting" | "off";
   config: FileSyncConfig;
   /** Direct origins this node's worker listens on. */
@@ -489,6 +561,8 @@ export interface FileSyncStatusAnswer {
   peers: FileSyncPeerStatus[];
   /** /files/* requests since the worker started: sent by route, served directly and through main's routes. Absent while the worker does not answer. */
   requests?: { sent: RequestStats["sent"]; served: RequestStats["served"] & { relay: number } };
+  /** auto-transition: the project whose first index runs now (one at a time), and its place among the projects compared here. */
+  indexing: IndexingStatus | null;
 }
 
 const STATS_TIMEOUT_MS = 2_000;
@@ -518,9 +592,10 @@ export async function fileSyncStatus(): Promise<FileSyncStatusAnswer> {
   // The counters live in the worker's network layer; a busy or restarting worker leaves them out rather than holding up the page.
   const stats = current?.bridge.state === "running" ? await current.bridge.call("stats", {}, { timeoutMs: STATS_TIMEOUT_MS }).catch(() => undefined) : undefined;
   return {
-    enabled: config.enabled, worker: current?.bridge.state ?? (starting ? "starting" : "off"), config,
+    enabled: config.enabled, leaving: !config.enabled && Boolean(current), worker: current?.bridge.state ?? (starting ? "starting" : "off"), config,
     origins: current?.origins ?? [], shares, peers: current ? peerStatuses(current, shares) : [],
     ...(stats?.requests && current ? { requests: { sent: stats.requests.sent, served: { direct: stats.requests.served.direct, relay: current.bridge.served } } } : {}),
+    indexing: current?.queue.status() ?? null,
   };
 }
 
@@ -594,15 +669,18 @@ export async function applyFileSyncConfig(patch: FileSyncConfigPatch): Promise<F
   if (wanted !== undefined && held.shadowProjectsBy === "environment" && JSON.stringify(wanted) !== JSON.stringify(held.shadowProjects)) {
     throw new FileSyncConfigError(409, "JOINT_BOB_FILE_SYNC_PROJECTS sets which projects file sync checks on this node; change it in the service's environment");
   }
-  if (patch.enabled === false && holdsEngineProjects(db)) throw new FileSyncConfigError(409, "Move every project back to Syncthing before turning file sync off");
   const config = writeFileSyncConfig(db, patch);
-  if (!config.enabled) await stopFileSync();
+  // fix: turned off while it holds built-in projects, the engine keeps them syncing until they are back on Syncthing: their
+  // owner moves them for every machine (this node's own at once), then it stops (`left`). Nobody has to move them first.
+  if (!config.enabled && !holdsEngineProjects(db)) await stopFileSync();
   else if (scope) {
     await neutral(ensureRunning);
     // Saving the switch again is how an admin retries a worker that kept crashing.
     if (engine?.bridge.state === "failed") neutral(() => engine?.bridge.start());
-    if (engine && patch.shadowProjects !== undefined) { await importStignoreRules(engine); await derive(engine); }
+    if (engine && (patch.shadowProjects !== undefined || patch.enabled !== undefined)) { await importStignoreRules(engine); await derive(engine); }
   }
+  // fix: peers hear of the switch now, not at this node's next return.
+  if (patch.enabled !== undefined && config.enabled !== held.enabled) void announceSwitch();
   return fileSyncStatus();
 }
 
@@ -667,6 +745,33 @@ function migrationEngine(current: Engine | undefined, db: DatabaseSync): Migrati
       return neutral(() => current!.bridge.call(op, args, options));
     },
     nudge: (peer) => fileSyncPeerPresent(peer, true),
+    left: () => {
+      if (!live()) return;
+      // After the step that moved it back has finished, not inside it.
+      setImmediate(() => {
+        try { if (engine === current && !readFileSyncConfig(db).enabled && !holdsEngineProjects(db)) void stopFileSync(); }
+        catch (error) { warnOnChange("fileSync:stop", `File sync could not stop after its last project went back to Syncthing: ${messageOf(error)}`); }
+      });
+    },
+  };
+}
+
+/** fix: file sync was turned on or off here: every peer gets this node's hello again, so owners move projects (or wait) at once. */
+async function announceSwitch(): Promise<void> {
+  try { await (await import("../server/peer-return.js")).helloPeers(); }
+  catch (error) { warnOnChange("fileSync:hello", `File sync could not tell the other machines it was turned ${readFileSyncConfig(await controlDatabase()).enabled ? "on" : "off"}: ${messageOf(error)}`); }
+}
+
+/** What every machine (running or stand-in) is given besides its engine: the audit log, performance records, this node's name. */
+async function migrationExtras(): Promise<Pick<MigrationDeps, "audit" | "metric" | "localName" | "info">> {
+  const [{ recordAuditEvent }, loaded] = await Promise.all([import("../audit.js"), load()]);
+  let name = "";
+  try { name = (await loaded.cluster.getClusterNode()).name ?? ""; } catch { /* the reasons say "the owner" */ }
+  return {
+    audit: (event) => recordAuditEvent(event),
+    metric: (operation, durationMs, fields) => loaded.performance.performanceDiagnostics.record(operation, durationMs, fields),
+    localName: () => name || "the project's owner",
+    info: (message) => console.log(message),
   };
 }
 
@@ -675,21 +780,44 @@ async function startMigration(current: Engine): Promise<void> {
   if (fileSyncTestPhasesEnabled()) return;
   try {
     const module = await loadMigration();
-    const syncthing = await module.syncthingForMigration();
+    const [syncthing, extras] = await Promise.all([module.syncthingForMigration(), migrationExtras()]);
     if (engine !== current) return;
     migration?.machine.stop();
     const machine = new module.Migration({
       db: current.db, nodeId: current.nodeId, syncthing, engine: migrationEngine(current, current.db), peerRequest: migrationPeerRequest,
-      capability: peerFileSync, log: warnOnChange, settle: settled,
+      capability: peerFileSync, log: warnOnChange, settle: settled, ...extras, peerAway: (peer) => peerAway(peer),
+      beforeCompare: (projectId) => importStignoreRules(current, [projectId]),
     });
     migration = { engine: current, machine };
+    // fix: a built-in project whose folder check passed before this start may write now; the derive before held it.
+    requestDerive(current);
+    const stream = await syncthingEventStream(machine);
     // fix (P4+P5): pointed at another Syncthing (or rediscovering it), built-in projects are checked against its folders.
-    current.unsubscribe.push((await import("../syncthing.js")).onSyncthingConnectionReset(() => { if (migration?.machine === machine) neutral(() => machine.kick()); }));
-    neutral(() => machine.kick());
+    current.unsubscribe.push(() => stream.stop(), (await import("../syncthing.js")).onSyncthingConnectionReset(() => {
+      if (migration?.machine !== machine) return;
+      neutral(() => { stream.restart(); machine.kick(); });
+    }));
+    neutral(() => { stream.start(); machine.kick(); });
     settled("fileSync:switch");
   } catch (error) {
     warnOnChange("fileSync:switch", `File sync could not resume moving projects between Syncthing and built-in sync: ${messageOf(error)}`);
   }
+}
+
+/** auto-transition: Syncthing's event stream into the machine (a folder added or resumed over a built-in project, a folder gone idle). */
+async function syncthingEventStream(machine: Migration): Promise<import("./syncthing-events.js").SyncthingEventStream> {
+  const [{ SyncthingEventStream, SYNCTHING_EVENT_TYPES }, syncthing] = await Promise.all([import("./syncthing-events.js"), import("../syncthing.js")]);
+  return new SyncthingEventStream({
+    types: SYNCTHING_EVENT_TYPES,
+    source: {
+      events: ({ since, types, timeoutSeconds, limit, signal }) => syncthing.syncthingEvents({ since, events: types, timeoutSeconds, limit, signal }),
+      notConfigured: (error) => messageOf(error) === "Syncthing is not configured on this node",
+    },
+    onEvents: (events) => neutral(() => machine.syncthingEvents(events)),
+    // Subscribed again: a change made while nobody listened is found by looking at every folder once.
+    onSubscribed: () => { settled("fileSync:syncthingEvents"); neutral(() => machine.syncthingChanged()); },
+    onFailure: (error) => warnOnChange("fileSync:syncthingEvents", `File sync cannot follow Syncthing's changes right now (${messageOf(error)}); it tries again`),
+  });
 }
 
 /** The running machine, or a stand-in while file sync is off or starting here: it lists and checks (the checks then say so) and switches nothing. */
@@ -701,8 +829,14 @@ async function migrationMachine(): Promise<Migration> {
   const nodeId = (await (await load()).cluster.getClusterNode()).id;
   return new module.Migration({
     db, nodeId, syncthing: await module.syncthingForMigration(), engine: migrationEngine(undefined, db), peerRequest: migrationPeerRequest,
-    capability: peerFileSync, log: warnOnChange, settle: settled,
+    capability: peerFileSync, log: warnOnChange, settle: settled, ...await migrationExtras(), peerAway: (peer) => peerAway(peer),
   });
+}
+
+/** auto-transition: the peer is in touch again: what the running machine owes it (a record notice it missed) goes now. */
+function migrationContact(peer: string): void {
+  const held = migration;
+  if (held && held.engine === engine) neutral(() => held.machine.peerContact(peer));
 }
 
 function withEngines(db: DatabaseSync, shares: ShareStatus[]): ShareStatus[] {
@@ -726,12 +860,24 @@ export async function fileSyncEngineChecks(projectId: string, target?: EngineMod
   return machine.checks(projectId, target);
 }
 
-/** The owner moves the project; refused with every check when one fails. */
-export async function fileSyncSwitchEngine(projectId: string, target: EngineMode): Promise<{ project: FileSyncProject }> {
+/** The owner moves the project; refused with every check when one fails. `person` made the move (a move back by hand holds the project on Syncthing in their name). */
+export async function fileSyncSwitchEngine(projectId: string, target: EngineMode, person?: { name: string; id: string }): Promise<{ project: FileSyncProject }> {
   const machine = await migrationMachine();
   knownProject(machine, projectId);
   try {
-    return { project: await machine.switchEngine(projectId, target) };
+    return { project: await machine.switchEngine(projectId, target, person ? { by: person.name, actorId: person.id } : {}) };
+  } catch (error) {
+    if (error instanceof (await loadMigration()).EngineSwitchRefused) throw new FileSyncSwitchRefused(error.checks, error.message);
+    throw error;
+  }
+}
+
+/** fix: the owner lifts a move back by hand; the project moves by itself again once every check passes and its files matched long enough. */
+export async function fileSyncAllowAuto(projectId: string): Promise<{ project: FileSyncProject }> {
+  const machine = await migrationMachine();
+  knownProject(machine, projectId);
+  try {
+    return { project: machine.allowAuto(projectId) };
   } catch (error) {
     if (error instanceof (await loadMigration()).EngineSwitchRefused) throw new FileSyncSwitchRefused(error.checks, error.message);
     throw error;
@@ -789,6 +935,8 @@ export interface FileSyncProjectView {
   shares: ShareStatus[];
   /** Eligible peers of each share right now. */
   peers: Partial<Record<ShareKind, string[]>>;
+  /** fix: on built-in sync here, but its writes wait for a first folder check Syncthing has not answered (a problem, not syncing). */
+  writesHeld?: string;
 }
 
 /** No worker call: what main last heard, per project. */
@@ -797,9 +945,12 @@ export async function fileSyncProjectViews(projectIds: readonly string[]): Promi
   try { enabled = readFileSyncConfig(await controlDatabase()).enabled; } catch { /* unknown counts as off */ }
   const current = engine;
   const worker = current?.bridge.state ?? (starting ? "starting" : "off");
+  const phases = current ? listPhases(current.db) : new Map<string, { phase: Phase }>();
   return new Map(projectIds.map((projectId) => {
     const specs = current ? current.shares.filter((share) => share.projectId === projectId) : [];
-    return [projectId, { worker, enabled, shares: statuses.list(specs), peers: Object.fromEntries(specs.map((spec) => [spec.kind, [...spec.peers]])) }];
+    const held = current && phases.get(projectId)?.phase === "builtin" && migration?.engine === current && writesHeld(current, projectId)
+      ? migration.machine.message(projectId) ?? "Waiting for Syncthing to answer before writing files" : undefined;
+    return [projectId, { worker, enabled, shares: statuses.list(specs), peers: Object.fromEntries(specs.map((spec) => [spec.kind, [...spec.peers]])), ...(held ? { writesHeld: held } : {}) }];
   }));
 }
 

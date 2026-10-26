@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { access, mkdir, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getSettings, syncthingApiKey } from "./settings.js";
@@ -409,6 +409,50 @@ export async function syncthingFolderStatuses(folderIds: string[]): Promise<Reco
     }
   }));
   return Object.fromEntries(entries);
+}
+
+/**
+ * auto-transition (file sync): how many files Syncthing knows in each folder; a folder it does not
+ * answer for is left out. /rest/db/status is an expensive call for Syncthing, so a few at a time,
+ * and none once `signal` aborts.
+ */
+export async function syncthingFolderFileCounts(folderIds: string[], options: { signal?: AbortSignal; concurrency?: number } = {}): Promise<Record<string, number>> {
+  if (!await connection()) return {};
+  const counts: Record<string, number> = {};
+  const queue = [...new Set(folderIds.filter(Boolean))];
+  const worker = async (): Promise<void> => {
+    for (let id = queue.shift(); id !== undefined && !options.signal?.aborted; id = queue.shift()) {
+      try {
+        const status = await request<{ globalFiles?: number; localFiles?: number }>(`/rest/db/status?folder=${encodeURIComponent(id)}`, options.signal ? { signal: AbortSignal.any([options.signal, AbortSignal.timeout(10_000)]) } : {});
+        const files = status.globalFiles ?? status.localFiles;
+        if (typeof files === "number" && Number.isFinite(files)) counts[id] = files;
+      } catch { /* unknown: ordered by name */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, options.concurrency ?? 2) }, worker));
+  return counts;
+}
+
+/** fix (file sync): a Syncthing configuration at its usual place on this machine, so a daemon may run here even when Joint Bob has no connection to it. */
+export async function syncthingConfigPresent(): Promise<boolean> {
+  for (const configPath of defaultConfigPaths()) {
+    try { await access(configPath); return true; } catch { /* not here */ }
+  }
+  return false;
+}
+
+export interface SyncthingEvent { id: number; type: string; time?: string; data?: unknown }
+
+/**
+ * auto-transition (file sync): Syncthing's event stream, long-polled. Events of `events` after
+ * `since`, waiting up to `timeoutSeconds` for one; `limit` keeps only the newest. Throws like every
+ * request here, "Syncthing is not configured on this node" included.
+ */
+export async function syncthingEvents(options: { since: number; events: readonly string[]; timeoutSeconds: number; limit?: number; signal?: AbortSignal }): Promise<SyncthingEvent[]> {
+  const query = new URLSearchParams({ since: String(options.since), events: options.events.join(","), timeout: String(options.timeoutSeconds), ...(options.limit ? { limit: String(options.limit) } : {}) });
+  const wait = AbortSignal.timeout((options.timeoutSeconds + 15) * 1000);
+  const events = await request<SyncthingEvent[] | null>(`/rest/events?${query}`, { signal: options.signal ? AbortSignal.any([options.signal, wait]) : wait });
+  return Array.isArray(events) ? events.filter((event) => Number.isInteger(event?.id) && typeof event.type === "string") : [];
 }
 
 /** The items Syncthing could not pull for a folder, with its reason for each. */

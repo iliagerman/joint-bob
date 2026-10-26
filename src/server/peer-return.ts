@@ -47,6 +47,15 @@ export function resumeDeliveriesOnReturn(): void {
   });
 }
 
+/** fix (file sync): this machine's engine was turned on or off: every peer hears its hello now, without the catch-up of a return. */
+export async function helloPeers(): Promise<void> {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  const fileSync = await import("../file-sync/index.js");
+  const hello = await fileSync.fileSyncHelloBody();
+  await Promise.all(replicationPeers(db, local.id).map((peer) => signedPeerPost(peer, "/api/cluster/v2/hello", hello)
+    .then((answer) => fileSync.fileSyncHelloAnswered(peer.nodeId, answer), () => undefined)));
+}
+
 let announcing: Promise<void> | undefined;
 /**
  * Tells every peer this machine is back and catches up from them. `slept` is true after a

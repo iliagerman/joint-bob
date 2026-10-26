@@ -284,6 +284,18 @@ With Syncthing still moving files, the engine scans, indexes and exchanges index
 
 **Rollback** is possible until P6: the owner records `engine: syncthing`, and each node re-adds the folders with today's `ensureSharedProjectFolder`. Syncthing rescans and finds the same content.
 
+### 7.3a Automatic move (nobody picks the moment)
+
+User requirement (2026-10-25): nobody coordinates the switch with the people whose machines share a project.
+
+- File sync is on by default, and every shared project is compared unless an admin chose a list. Projects not yet indexed join one at a time, smallest first. A project's owner asks a peer with a chosen list to compare a project it wants to move; an admin there can untick it, and then the project stays on Syncthing.
+- The owner moves a project to built-in sync by itself once all three folders have matched on every machine for `autoSwitch.cleanHours` (24 h) and every 7.3 check passes. It looks again when something changes (share reports, a peer's capability or return, records, Syncthing events), plus one one-shot timer per project. There is no polling.
+- The matching time counts only while the machines can exchange files. A difference whose files are still on their way doesn't end it: a machine away, a file list not fetched yet, or Syncthing still copying. A difference that stays for 15 minutes while every machine is present and Syncthing is done does end it.
+- The other machines follow the record. A notice a peer missed is sent again at its next contact. Moving back to Syncthing doesn't need every machine online; a machine that is away follows when it returns.
+- No flapping: a move back by hand holds the project on Syncthing until someone clicks *Allow automatic move*. The hold reaches every peer, so a twin that takes over keeps it. An automatic move back (a peer that can't take files) starts the matching time over.
+- Turning file sync off on any machine (Settings, or `JOINT_BOB_FILE_SYNC=0`) needs nobody else. The machine tells the other machines at once. Its built-in projects go back to Syncthing first: the owner moves them for every machine, and a machine that owns one moves it right away. The engine keeps their files moving until then, compares nothing new, and stops once it holds no project. A full check that keeps failing waits twice as long each time, up to 30 minutes.
+- Writes on a built-in root wait only for the first folder check after the move. After that, a Syncthing outage doesn't stop built-in sync. Syncthing's event stream rechecks when its folders change. A node counts as having no Syncthing only if Joint Bob never gave it the project's folders and no Syncthing configuration exists there.
+
 ### 7.4 Syncthing cleanup (P6)
 
 - Remove every Joint Bob folder from Syncthing's configuration, including the legacy paused ones.

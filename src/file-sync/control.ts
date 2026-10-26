@@ -12,27 +12,41 @@ import { EMPTY_RULE_SETTINGS, type EngineMode, type EngineRecord, type Phase, ty
    regenerable index state and belongs to the worker. */
 
 export const DEFAULT_FILE_SYNC_PORT = 22700;
-/** Off until enabled per node while the engine rolls out (design §1). Tests are off by default whatever this says. */
-const PRODUCTION_DEFAULT = false;
+/** auto-transition: on wherever nobody turned it off, so projects can move without anyone pressing a button. Tests are off by default whatever this says. */
+const PRODUCTION_DEFAULT = true;
+
+/** auto-transition: the owner moves a project to built-in sync by itself once every check passes and the files have matched this long. */
+export interface AutoSwitchConfig { enabled: boolean; cleanHours: number }
+export const DEFAULT_AUTO_SWITCH: AutoSwitchConfig = { enabled: true, cleanHours: 24 };
 
 export interface FileSyncConfig {
   /** Effective switch: the environment overrides the stored value. */
   enabled: boolean;
   enabledBy: "default" | "settings" | "environment";
-  /** Projects indexed in shadow mode beside Syncthing; "all" or a list of project ids. */
+  /** Projects indexed in shadow mode beside Syncthing; "all" (the default) or a list of project ids. */
   shadowProjects: "all" | string[];
   /** JOINT_BOB_FILE_SYNC_PROJECTS overrides the stored list, as JOINT_BOB_FILE_SYNC does the switch. */
   shadowProjectsBy: "default" | "settings" | "environment";
   port: number;
+  autoSwitch: AutoSwitchConfig;
+  /** auto-transition (fix): projects their owner asked this node to compare, beside a chosen list, so nobody ticks them on every machine; unticked ones are left out. */
+  requestedProjects: string[];
+  /** The chosen list before "All" replaced it, so choosing again brings it back; null when there was none. */
+  lastChosenProjects: string[] | null;
 }
 
 const projectIdSchema = z.string().min(1).max(300);
+const projectListSchema = z.array(projectIdSchema).max(10_000);
 const shadowProjectsSchema = z.union([z.literal("all"), z.array(projectIdSchema).max(10_000)]);
 const portSchema = z.number().int().min(1).max(65_535);
+/** Up to 60 days; a fraction of an hour lets a test wait seconds. */
+const cleanHoursSchema = z.number().finite().min(0).max(24 * 60);
+const autoSwitchSchema = z.object({ enabled: z.boolean(), cleanHours: cleanHoursSchema });
 export const fileSyncConfigPatchSchema = z.object({
   enabled: z.boolean().optional(),
   shadowProjects: shadowProjectsSchema.optional(),
   port: portSchema.optional(),
+  autoSwitch: z.object({ enabled: z.boolean().optional(), cleanHours: cleanHoursSchema.optional() }).strict().optional(),
 }).strict();
 export type FileSyncConfigPatch = z.infer<typeof fileSyncConfigPatchSchema>;
 
@@ -85,10 +99,48 @@ export function readFileSyncConfig(db: DatabaseSync, env: NodeJS.ProcessEnv = pr
   return {
     enabled: forced ?? stored ?? fallback,
     enabledBy: forced !== undefined ? "environment" : stored !== undefined ? "settings" : "default",
-    shadowProjects: forcedProjects ?? storedProjects ?? [],
+    // auto-transition: every shared project is compared unless someone chose a list (the Mac and homeserver have one).
+    shadowProjects: forcedProjects ?? storedProjects ?? "all",
     shadowProjectsBy: forcedProjects !== undefined ? "environment" : storedProjects !== undefined ? "settings" : "default",
     port: envPort?.success ? envPort.data : storedValue(db, "port", portSchema) ?? DEFAULT_FILE_SYNC_PORT,
+    autoSwitch: storedValue(db, "autoSwitch", autoSwitchSchema) ?? { ...DEFAULT_AUTO_SWITCH },
+    requestedProjects: requestedProjects(db),
+    lastChosenProjects: storedValue(db, "lastChosenProjects", projectListSchema) ?? null,
   };
+}
+
+function storedList(db: DatabaseSync, key: string): string[] { return storedValue(db, key, projectListSchema) ?? []; }
+
+function saveList(db: DatabaseSync, key: string, ids: Iterable<string>): void {
+  const list = [...new Set(ids)].sort();
+  if (!list.length) { db.prepare("DELETE FROM file_sync_config WHERE key = ?").run(key); return; }
+  db.prepare("INSERT INTO file_sync_config VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE value <> excluded.value").run(key, JSON.stringify(list));
+}
+
+function requestedProjects(db: DatabaseSync): string[] {
+  const declined = new Set(storedList(db, "declinedProjects"));
+  return storedList(db, "requestedProjects").filter((id) => !declined.has(id));
+}
+
+/** The projects compared here: every shared one, or the chosen ones and those their owner asked for. */
+export function comparedProjects(config: Pick<FileSyncConfig, "shadowProjects" | "requestedProjects">): "all" | string[] {
+  return config.shadowProjects === "all" ? "all" : [...new Set([...config.shadowProjects, ...config.requestedProjects])].sort();
+}
+
+/**
+ * auto-transition (fix): the project's owner means to move it and asks this node to compare it. A
+ * chosen list takes it in unless an admin unticked it here ("declined"); every other project the
+ * list leaves out stays left out. "yes": compared already (now, or once its first index ran);
+ * "added": compared from now on (`write` false: would be, nothing stored yet).
+ */
+export function requestCompare(db: DatabaseSync, projectId: string, env: NodeJS.ProcessEnv = process.env, options: { write?: boolean } = {}): "yes" | "added" | "declined" {
+  const config = readFileSyncConfig(db, env);
+  if (config.shadowProjects === "all" || config.shadowProjects.includes(projectId)) return "yes";
+  if (storedList(db, "declinedProjects").includes(projectId)) return "declined";
+  const requested = storedList(db, "requestedProjects");
+  if (requested.includes(projectId)) return "yes";
+  if (options.write !== false) saveList(db, "requestedProjects", [...requested, projectId]);
+  return "added";
 }
 
 /* Where the direct listener binds. Tailscale's 100.64.0.0/10 is WireGuard-encrypted and reaches
@@ -120,11 +172,94 @@ export function writeFileSyncConfig(db: DatabaseSync, patch: FileSyncConfigPatch
   ensureControlSchema(db);
   const parsed = fileSyncConfigPatchSchema.parse(patch);
   const save = db.prepare("INSERT INTO file_sync_config VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE value <> excluded.value");
+  const storedProjects = storedValue(db, "shadowProjects", shadowProjectsSchema);
+  if (Array.isArray(parsed.shadowProjects) && Array.isArray(storedProjects)) {
+    // A list saved over a list: projects asked for and ticked are chosen now; those unticked stay out, whoever asks.
+    const next = new Set(parsed.shadowProjects);
+    const unticked = [...storedProjects, ...requestedProjects(db)].filter((id) => !next.has(id));
+    saveList(db, "declinedProjects", [...storedList(db, "declinedProjects"), ...unticked].filter((id) => !next.has(id)));
+    saveList(db, "requestedProjects", storedList(db, "requestedProjects").filter((id) => !next.has(id) && !unticked.includes(id)));
+  }
+  // "All" over a chosen list keeps that list, so choosing again brings it back.
+  if (parsed.shadowProjects === "all" && Array.isArray(storedProjects)) saveList(db, "lastChosenProjects", storedProjects);
   for (const [key, value] of Object.entries(parsed)) {
     if (value === undefined) continue;
-    save.run(key, JSON.stringify(key === "shadowProjects" && Array.isArray(value) ? [...new Set(value)].sort() : value));
+    // A partial autoSwitch keeps what it does not name.
+    const stored = key === "autoSwitch" ? { ...readFileSyncConfig(db, env).autoSwitch, ...Object.fromEntries(Object.entries(value).filter(([, part]) => part !== undefined)) } : value;
+    save.run(key, JSON.stringify(key === "shadowProjects" && Array.isArray(stored) ? [...new Set(stored)].sort() : stored));
   }
   return readFileSyncConfig(db, env);
+}
+
+/* auto-transition: per-project state of the automatic move, on the owner, in file_sync_config rows
+   "hold:<projectId>". A manual move back holds the project on Syncthing until someone allows the
+   automatic move again (or moves it by hand); an automatic move back starts the matching time over
+   (cleanAfter). Peers keep the owner's hold too (`from`), so a twin that takes the project over
+   inherits it. */
+
+export interface ProjectHold {
+  /** `from`: the owner that said so, on a peer; absent on the owner where a person moved it back. */
+  stayOnSyncthing?: { by: string; at: string; from?: string };
+  /** The files count as matching only from here on. */
+  cleanAfter?: string;
+  /**
+   * fix: the owner's matching time, carried over differences that were only files on their way (a
+   * machine away, Syncthing still copying). `worker`: the worker's clean-since it last matched, null
+   * while such differences stand; `rules`: the folders' rules it was counted under.
+   */
+  matching?: { since: string; worker: string | null; rules: string };
+}
+
+const holdSchema = z.object({
+  stayOnSyncthing: z.object({ by: z.string().max(300), at: z.string().max(40), from: z.string().max(100).optional() }).optional(),
+  cleanAfter: z.string().max(40).optional(),
+  matching: z.object({ since: z.string().max(40), worker: z.string().max(40).nullable(), rules: z.string().max(200) }).optional(),
+});
+
+export function projectHold(db: DatabaseSync, projectId: string): ProjectHold {
+  ensureControlSchema(db);
+  return storedValue(db, `hold:${projectId}`, holdSchema) ?? {};
+}
+
+/** Merges `change` into the project's hold: a part set to null goes, one left out stays; an empty hold is deleted. */
+export function updateProjectHold(db: DatabaseSync, projectId: string, change: { [K in keyof ProjectHold]?: ProjectHold[K] | null }): ProjectHold {
+  const next: Record<string, unknown> = { ...projectHold(db, projectId) };
+  for (const [key, value] of Object.entries(change)) { if (value === null) delete next[key]; else if (value !== undefined) next[key] = value; }
+  const parsed = holdSchema.parse(next);
+  if (!Object.keys(parsed).length) db.prepare("DELETE FROM file_sync_config WHERE key = ?").run(`hold:${projectId}`);
+  else db.prepare("INSERT INTO file_sync_config VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE value <> excluded.value").run(`hold:${projectId}`, JSON.stringify(parsed));
+  return parsed;
+}
+
+/* auto-transition: projects whose first full index finished here. The first index of the others runs
+   one project at a time (first-index.ts); these join every later start at once. Undefined until
+   written: a node that compared a chosen list before counts those as indexed (seeded once). */
+
+export function readIndexedProjects(db: DatabaseSync): Set<string> | undefined {
+  ensureControlSchema(db);
+  const ids = storedValue(db, "indexedProjects", z.array(projectIdSchema).max(100_000));
+  return ids ? new Set(ids) : undefined;
+}
+
+export function markProjectsIndexed(db: DatabaseSync, projectIds: Iterable<string>): void {
+  const held = readIndexedProjects(db) ?? new Set<string>();
+  const next = [...new Set([...held, ...projectIds])].sort();
+  db.prepare("INSERT INTO file_sync_config VALUES ('indexedProjects', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE value <> excluded.value").run(JSON.stringify(next));
+}
+
+/* fix: the roots a built-in project's folder check last passed for (a fresh Syncthing list with no
+   live folder over them), in "verified:<projectId>", kept until the project leaves built-in sync.
+   With it the worker writes through a later Syncthing outage: Syncthing is not needed to run. */
+
+export function verifiedRoots(db: DatabaseSync, projectId: string): string | undefined {
+  ensureControlSchema(db);
+  return storedValue(db, `verified:${projectId}`, z.string().max(20_000));
+}
+
+export function setVerifiedRoots(db: DatabaseSync, projectId: string, roots: string | null): void {
+  ensureControlSchema(db);
+  if (roots === null) db.prepare("DELETE FROM file_sync_config WHERE key = ?").run(`verified:${projectId}`);
+  else db.prepare("INSERT INTO file_sync_config VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE value <> excluded.value").run(`verified:${projectId}`, JSON.stringify(roots));
 }
 
 /* Records. Engine records come only from a project's owner and settings records only from their
