@@ -185,7 +185,7 @@ function memberRow(cluster, member, matched, onChange) {
 }
 
 function renderReceived(cluster) {
-  const got = data.projects.filter((project) => project.clusterIds?.includes(cluster.id) && project.locallyOwned === false);
+  const got = data.projects.filter((project) => project.clusterIds?.includes(cluster.id) && project.locallyOwned === false && !twinNodeIds().includes(project.ownerNodeId));
   const heading = document.createElement("h4"); heading.className = "cluster-section-title";
   heading.append(text("span", `You get from ${cluster.name}`), text("span", String(got.length)));
   heading.dataset.testid = "cluster-received-summary";
@@ -249,7 +249,7 @@ function headerActions(cluster) {
 
 /** The selected cluster. `sharing` also rebuilds the share selection, which a twin refresh must not reset. */
 function renderDetail(cluster, { sharing, found }) {
-  const counts = clusterProjectCounts(cluster, data.projects);
+  const counts = clusterProjectCounts(cluster, data.projects, twinNodeIds());
   const manager = cluster.members.find((member) => member.nodeId === cluster.managerNodeId);
   const head = document.createElement("header"); head.className = "cluster-detail-head";
   const title = document.createElement("div");

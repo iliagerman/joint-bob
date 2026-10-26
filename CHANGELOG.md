@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed selecting a workspace on one of your twin machines not sharing the projects the other twin owns in it; they now show as shared right away, and saving reports if the other machine could not finish.
+
 ## 2.159.1 — 2026-10-26
 
 - Fixed deletions of files that built-in file sync placed on a Mac waiting for the next full scan, an hour or more, before reaching other machines; they now go out right away.

@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { z, ZodError } from "zod";
 import { getClusterNode } from "../../cluster.js";
-import { ensureResourceSharingSchema, getResourcePolicyState, ResourceSharingError, updateResourceSharing } from "../../cluster-sharing.js";
+import { ensureResourceSharingSchema, getResourcePolicyState, listResourcePolicyDeliveries, ResourceSharingError, updateResourceSharing } from "../../cluster-sharing.js";
 import { listResourceShares, listSharingClusterMembers, resourceOwner } from "../../cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
@@ -16,6 +16,10 @@ import { accountInCluster } from "../../cluster-accounts.js";
 import { actorOwns, memberOwnedIds } from "../../ownership.js";
 import { mayShareProject } from "../sharing-files.js";
 import { announceWorkspaceChanges, registerSharedWorkspaceRoutes } from "../shared-workspaces.js";
+import { forwardTwinSelection, receiveTwinSelection } from "../twin-selection.js";
+import { flushResourcePolicyDeliveries } from "../resource-policy.js";
+import { flushProjectMetadataDeliveries } from "../project-metadata.js";
+import { listProjectMetadataDeliveries } from "../../cluster-project-metadata.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const updateSchema = z.object({
@@ -126,9 +130,26 @@ app.put("/api/clusters/:clusterId/sharing", route(async (request, response) => {
   await requireActive(response);
   const selection = z.object({ projectIds: z.array(z.string().min(1).max(300)).max(10000),
     workspaceIds: z.array(z.string().min(1).max(300)).max(10000), confirmOwnedData: z.literal(true) }).strict().parse(request.body);
-  const result=updateClusterSelection(await clusterV2Database(), (await getClusterNode()).id,
-    uuid.parse(request.params.clusterId), selection.projectIds, selection.workspaceIds, personScope());
-  await disconnectRevokedRuntimeSockets();response.json(result);
+  const db = await clusterV2Database(), local = (await getClusterNode()).id, clusterId = uuid.parse(request.params.clusterId), scope = personScope();
+  updateClusterSelection(db, local, clusterId, selection.projectIds, selection.workspaceIds, scope);
+  await disconnectRevokedRuntimeSockets();
+  await forwardTwinSelection(db, local, clusterId, selection.projectIds, selection.workspaceIds, scope);
+  response.json(clusterSharingView(db, local, clusterId, scope));
+  void announceWorkspaceChanges().catch((error) => console.warn("Shared workspace notice failed", error));
+}));
+
+app.post("/api/cluster/v2/twins/selection", route(async (request, response) => {
+  if (response.locals.machineProtocol !== 2 || typeof response.locals.machineNodeId !== "string") throw new ClusterV2HttpError(401, "Unauthorized");
+  const sender = response.locals.machineNodeId, db = await clusterV2Database(), local = (await getClusterNode()).id;
+  receiveTwinSelection(db, local, sender, request.body);
+  await disconnectRevokedRuntimeSockets();
+  await flushResourcePolicyDeliveries(sender);
+  await flushProjectMetadataDeliveries(sender);
+  if (listResourcePolicyDeliveries(db).some(delivery => delivery.peerId === sender)
+    || listProjectMetadataDeliveries(db, local).some(delivery => delivery.peerId === sender)) {
+    throw new ResourceSharingError("Sharing saved on owner, but delivery to the requesting twin is still pending", 503);
+  }
+  response.json({ ok: true });
   void announceWorkspaceChanges().catch((error) => console.warn("Shared workspace notice failed", error));
 }));
 

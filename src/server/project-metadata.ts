@@ -28,11 +28,12 @@ function requestFor(db: DatabaseSync, local: string, delivery: ProjectMetadataDe
     signClusterRequest(db, local, delivery.peerId, "POST", target, body) };
 }
 
-export async function flushProjectMetadataDeliveries(): Promise<void> {
+export async function flushProjectMetadataDeliveries(peerId?: string): Promise<void> {
   await listProjects();
   const local = await getClusterNode();
   const db = await clusterV2Database();
   for (const delivery of listProjectMetadataDeliveries(db, local.id)) {
+    if (peerId && delivery.peerId !== peerId) continue;
     if (!resourcePolicyDeliveryIsCurrent(db, local.id, delivery.statement)) continue;
     if (peerAway(delivery.peerId)) continue;
     const request = requestFor(db, local.id, delivery);

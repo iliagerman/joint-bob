@@ -24,10 +24,11 @@ function policyRequest(
   };
 }
 
-export async function flushResourcePolicyDeliveries(): Promise<void> {
+export async function flushResourcePolicyDeliveries(peerId?: string): Promise<void> {
   const local = await getClusterNode();
   const db = await clusterV2Database();
   for (const delivery of listResourcePolicyDeliveries(db)) {
+    if (peerId && delivery.peerId !== peerId) continue;
     if (!resourcePolicyDeliveryIsCurrent(db, local.id, delivery.statement)) {
       acknowledgeResourcePolicyDelivery(db, delivery.operationId, delivery.peerId);
       continue;

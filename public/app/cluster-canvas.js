@@ -31,12 +31,10 @@ export function nodeAvatar(member, { local, manager, twin, small = false }) {
   return avatar;
 }
 
-export function clusterProjectCounts(cluster, projects) {
+export function clusterProjectCounts(cluster, projects, twinNodeIds = []) {
   const inCluster = projects.filter((project) => project.clusterIds?.includes(cluster.id));
-  return {
-    shared: inCluster.filter((project) => project.locallyOwned !== false).length,
-    received: inCluster.filter((project) => project.locallyOwned === false).length,
-  };
+  const shared = inCluster.filter((project) => project.locallyOwned !== false || twinNodeIds.includes(project.ownerNodeId)).length;
+  return { shared, received: inCluster.length - shared };
 }
 
 /** Which clusters and nodes match `query`, best cluster first. An empty query matches everything. */
@@ -90,7 +88,7 @@ function clusterButton(cluster, { projects, localNodeId, twinNodeIds, selected, 
   item.type = "button"; item.className = "cluster-item cluster-map-node";
   item.dataset.testid = "cluster-item"; item.dataset.clusterId = cluster.id;
   item.setAttribute("aria-pressed", String(selected));
-  const counts = clusterProjectCounts(cluster, projects);
+  const counts = clusterProjectCounts(cluster, projects, twinNodeIds);
   const top = document.createElement("span"); top.className = "cluster-item-top";
   top.append(text("strong", cluster.name), text("span", `${cluster.members.length} node${cluster.members.length === 1 ? "" : "s"}`));
   const faces = document.createElement("span"); faces.className = "cluster-faces";

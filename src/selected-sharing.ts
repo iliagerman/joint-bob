@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { ensureResourceSharingSchema, getResourcePolicyState, registerLocalSharingResource, ResourceSharingError, updateResourceSharing } from "./cluster-sharing.js";
 import { ensureProjectMetadataSchema } from "./cluster-project-metadata.js";
-import { listResourceShares } from "./cluster-sharing-policy.js";
+import { isTrustedTwin, listResourceShares } from "./cluster-sharing-policy.js";
 import { resourceOwner } from "./ownership.js";
 
 export function ensureSelectedSharingSchema(db: DatabaseSync): void {
@@ -25,10 +25,11 @@ export function clusterSharingView(db: DatabaseSync, local: string, clusterId: s
   if (!db.prepare("SELECT 1 FROM sharing_memberships WHERE cluster_id=? AND node_id=?").get(clusterId, local)) {
     throw new ResourceSharingError("Local node is not a cluster member", 403);
   }
-  const projects = (db.prepare(`SELECT p.id,p.name,p.workspace_id workspaceId FROM projects p
+  const projects = (db.prepare(`SELECT p.id,p.name,p.workspace_id workspaceId,o.owner_node_id ownerNodeId FROM projects p
     LEFT JOIN sharing_resource_owners o ON o.kind='project' AND o.resource_id=p.id
-    WHERE o.owner_node_id IS NULL OR o.owner_node_id=? ORDER BY p.name,p.id`).all(local) as unknown as Array<{id:string;name:string;workspaceId:string}>)
-    .filter((project) => owns(db, "project", project.id, scope));
+    ORDER BY p.name,p.id`).all() as unknown as Array<{id:string;name:string;workspaceId:string;ownerNodeId:string|null}>)
+    .filter((project) => owns(db, "project", project.id, scope) && (!project.ownerNodeId || project.ownerNodeId === local
+      || isTrustedTwin(db, local, project.ownerNodeId) && Boolean(db.prepare("SELECT 1 FROM sharing_memberships WHERE cluster_id=? AND node_id=?").get(clusterId, project.ownerNodeId))));
   const workspaces = (db.prepare(`SELECT w.id,w.label FROM workspaces w WHERE NOT EXISTS
     (SELECT 1 FROM cluster_v2_project_workspaces r WHERE r.workspace_id=w.id) ORDER BY w.label,w.id`).all() as unknown as Array<{id:string;label:string}>)
     .filter((workspace) => owns(db, "workspace", workspace.id, scope));
@@ -94,6 +95,8 @@ export function updateClusterSelection(db: DatabaseSync, local: string, clusterI
     for (const id of new Set(workspaceIds)) insert.run(clusterId,'workspace',id);
     for (const project of view.projects) {
       const selected = projectIds.includes(project.id) || workspaceIds.includes(project.workspaceId);
+      // Twin-owned projects are changed on their owner through the signed selection route.
+      if (project.ownerNodeId && project.ownerNodeId !== local) continue;
       if(!projectIds.includes(project.id)&&workspaceIds.includes(project.workspaceId))db.prepare('INSERT INTO cluster_v2_workspace_inherited_shares VALUES(?,?)').run(clusterId,project.id);
       const exists = db.prepare("SELECT 1 FROM cluster_v2_resource_policy WHERE kind='project' AND resource_id=?").get(project.id);
       if (!exists && !selected) continue;

@@ -81,6 +81,27 @@ export async function renderClusterSharing(cluster, { localNodeId, onSaved }) {
     document.createTextNode(` in ${cluster.name}${others.length ? ` (${others.join(", ")})` : ""}, and with nodes that join later. There is no per-node sharing. Removing a share never deletes files other nodes already have.`));
   const projects = scopeList("project", data.projects, "name", data.projectIds);
   const workspaces = scopeList("workspace", data.workspaces, "label", data.workspaceIds);
+  const explicitProjects = new Set(data.projectIds);
+  projects.addEventListener("change", (event) => {
+    if (event.target.name !== "projectIds") return;
+    if (event.target.checked) explicitProjects.add(event.target.value);
+    else explicitProjects.delete(event.target.value);
+  });
+  const showInheritedProjects = () => {
+    const selectedWorkspaces = new Set([...workspaces.querySelectorAll("input:checked")].map(input => input.value));
+    for (const checkbox of projects.querySelectorAll('input[name="projectIds"]')) {
+      const project = data.projects.find(project => project.id === checkbox.value);
+      const inherited = selectedWorkspaces.has(project.workspaceId);
+      checkbox.checked = explicitProjects.has(project.id) || inherited;
+      checkbox.disabled = inherited;
+      const row = checkbox.closest("label");
+      row.querySelector(".sharing-inherited")?.remove();
+      if (inherited) row.append(text("small", ` · via ${data.workspaces.find(workspace => workspace.id === project.workspaceId).label}`, "sharing-inherited"));
+    }
+    projects.dispatchEvent(new Event("change"));
+  };
+  workspaces.addEventListener("change", showInheritedProjects);
+  showInheritedProjects();
   const autoShare = text("label", "", "checkbox-row cluster-auto-share");
   const autoShareInput = document.createElement("input");
   Object.assign(autoShareInput, { type: "checkbox", name: "autoShareProjects", checked: cluster.autoShareProjects });
@@ -97,7 +118,7 @@ export async function renderClusterSharing(cluster, { localNodeId, onSaved }) {
     try {
       if (!await confirmAction({ eyebrow: "Sharing", title: `Save sharing with ${cluster.name}?`, message: `Every node in ${cluster.name} gets what you ticked. Secret accounts, including website credentials, travel only when marked to replicate. Browser profiles stay on this machine.`, confirmLabel: "Save sharing" })) return;
       const checked = (group) => [...group.querySelectorAll("input:checked")].map((control) => control.value);
-      const result = await api(`/api/clusters/${cluster.id}/sharing`, { method: "PUT", body: JSON.stringify({ projectIds: checked(projects), workspaceIds: checked(workspaces), confirmOwnedData: true }) });
+      const result = await api(`/api/clusters/${cluster.id}/sharing`, { method: "PUT", body: JSON.stringify({ projectIds: [...explicitProjects], workspaceIds: checked(workspaces), confirmOwnedData: true }) });
       if (secretsList) await api(`/api/clusters/${cluster.id}/secrets`, { method: "PUT", body: JSON.stringify({ accountIds: checked(secretsList) }) });
       // Saving a selection resets automatic sharing, so apply the box afterwards.
       if (autoShareInput.checked) await api(`/api/clusters/${cluster.id}/membership`, { method: "PATCH", body: JSON.stringify({ autoShareProjects: true }) });
