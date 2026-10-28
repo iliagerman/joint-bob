@@ -3,11 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.168.0 — 2026-10-28
 
-- Settings → Harnesses now shows harness setup and subscription profiles as separate cards with provider icons and coloured sign-in states, lets you pick profiles for your default and every workspace in one grid, and lists project and conversation overrides. Your twins receive your profiles and choices automatically; a twin without its own sign-in borrows short-lived tokens from the machine where you signed in.
-
-- Fixed the "Runs on this node" choice for other nodes not loading its saved state or saving your changes in Settings.
+- Split Settings → Harnesses into a harness setup card and a subscription profiles card, with provider icons and sign-in states that are checked automatically.
+- Added a grid that sets a subscription profile for your default and every workspace at once, and lists project and conversation overrides so you can edit them.
+- Subscription profiles and your choices now sync to your twins; a twin without its own sign-in borrows a short-lived access token from the machine where you signed in.
+- Fixed the app failing to start, and the "Runs on this node" choice for other nodes not loading its saved state or saving your changes in Settings.
 
 ## 2.167.0 — 2026-10-28
 
