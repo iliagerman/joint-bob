@@ -440,6 +440,7 @@ async function loadSettings() {
   if (!admin) return;
   elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
   elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
+  elements.settingsRunnerOtherNodes.checked = settings.runnerAccess.otherNodes;
   elements.settingsGitPullFileLimit.value = settings.gitPullFileLimit ?? 1000;
   elements.settingsGitPullTimeoutSeconds.value = settings.gitPullTimeoutSeconds ?? 360;
   elements.settingsProjectHome.value = settings.projects.homePath;
@@ -448,7 +449,6 @@ async function loadSettings() {
   elements.settingsShellTimeoutSeconds.value = settings.shellCommandTimeoutSeconds ?? 600;
   elements.settingsSubprocessMaxLifetimeMinutes.value = settings.subprocessMaxLifetimeMinutes ?? 360;
   elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
-  elements.settingsRunnerOtherNodes.checked = settings.runnerAccess.otherNodes;
   // A node that predates the limits sends neither field.
   elements.settingsConversationCpuLimitEnabled.checked = settings.conversationCpuLimitCores != null;
   elements.settingsConversationCpuLimitCores.value = settings.conversationCpuLimitCores ?? 2;
@@ -468,7 +468,6 @@ async function loadSettings() {
 
 const savedCommandsList = document.querySelector("#savedCommandsList");
 let savedCommandSnapshot = "";
-  elements.settingsRunnerOtherNodes.checked = settings.runnerAccess.otherNodes;
 
 function renderSavedCommands(commands) {
   savedCommandsList.replaceChildren();
@@ -604,6 +603,7 @@ async function saveSettings(event) {
       ...(syncCheck ? { syncCheck } : {}),
       ...(dashboards ? { dashboards } : {}),
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
+      runnerAccess: { otherNodes: elements.settingsRunnerOtherNodes.checked },
       conversationCommands: personalSettingsValue().conversationCommands,
     }),
   });
@@ -612,7 +612,6 @@ async function saveSettings(event) {
   state.conversationLabelIcons = saved.conversationLabelIcons;
   if (state.activeProjectId) await refreshSessionsQuietly();
   else renderSessions();
-      runnerAccess: { otherNodes: elements.settingsRunnerOtherNodes.checked },
   const restartRequired = harnessDescriptors.filter(({ id }) => saved.restartRequired[id]).map(({ label }) => `${label} configuration`);
   elements.settingsRestartMessage.hidden = restartRequired.length === 0;
   elements.settingsRestartMessage.textContent = restartRequired.length ? `Settings saved. Restart required for ${restartRequired.join(" and ")} changes.` : "";
