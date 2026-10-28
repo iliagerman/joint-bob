@@ -99,6 +99,19 @@ test("simultaneous Pi runtimes use their own profile callbacks during model auth
   assert.equal(a?.auth.apiKey, "fixture-one"); assert.equal(b?.auth.apiKey, "fixture-two");
 });
 
+test("a profile session runtime offers models from the node's refreshed catalog, not only built-in ones", async () => {
+  const { getAgentDir } = await import("@earendil-works/pi-coding-agent");
+  const builtIn = await createSessionModelRuntime(async () => undefined, async () => []);
+  const template = builtIn.getModels("openai-codex")[0];
+  const store = path.join(getAgentDir(), "models-store.json");
+  await mkdir(path.dirname(store), { recursive: true });
+  await writeFile(store, JSON.stringify({ "openai-codex": { models: [{ ...template, id: "fixture-catalog-only", name: "Catalog only" }], checkedAt: Date.now(), lastModified: Date.now(), etag: 'W/"fixture"' } }));
+  try {
+    const session = await createSessionModelRuntime(async () => undefined, async () => []);
+    assert.equal(session.getModel("openai-codex", "fixture-catalog-only")?.name, "Catalog only");
+  } finally { await rm(store, { force: true }); }
+});
+
 test("Claude profile contexts remain independent during overlapping turns", async () => {
   const { addProject } = await import("../src/store.js");
   const { setResourceOwner } = await import("../src/ownership.js");

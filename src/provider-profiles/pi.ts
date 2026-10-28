@@ -18,7 +18,8 @@ export async function createSessionModelRuntime(
       },
       delete: async () => { throw new Error("Manage subscription sign-ins in Settings > Harnesses"); },
     },
-    refreshOnCreate: false,
+    // Creation restores the node's cached model catalog (no network). Skipping it left only
+    // built-in models, so a model Pi had since learned about was "not found" in Joint Bob.
   });
 }
 
