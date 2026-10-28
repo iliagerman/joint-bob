@@ -3,10 +3,6 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Added Claude and ChatGPT subscription profiles that each user can pick for conversations, projects, workspaces, and scheduled, webhook, and automatic-reply runs.
-
 ## 2.162.0 — 2026-10-28
 
 - Added separate Claude and ChatGPT subscription profiles, with per-user defaults and workspace, project, and conversation selections. Pi and Claude turns use the selected profile, with node-local sign-in and token refresh.
