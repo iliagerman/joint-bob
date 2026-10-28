@@ -66,8 +66,9 @@ test("the shell wrapper's own SQLite warning never precedes command output", asy
     const warnings = { NODE_NO_WARNINGS: "" };
     const own = await wrapper(f, "printf useful", warnings);
     assert.equal(own.stdout, "useful"); assert.equal(own.stderr, "");
-    const command = await wrapper(f, `"${process.execPath}" -e 'require("node:sqlite")'`, warnings);
-    assert.match(command.stdout + command.stderr, /SQLite is an experimental feature/, "a command's own warnings still reach the agent");
+    // Node 24 no longer warns on node:sqlite, so the command raises an experimental warning of its own.
+    const command = await wrapper(f, `"${process.execPath}" -e 'process.emitWarning("command feature is experimental", "ExperimentalWarning")'`, warnings);
+    assert.match(command.stdout + command.stderr, /command feature is experimental/, "a command's own warnings still reach the agent");
   } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
 });
 

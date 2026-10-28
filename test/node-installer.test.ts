@@ -23,10 +23,10 @@ test("public node service assets contain no personal runtime defaults", async ()
   }
 });
 
-test("node runtime installer requires Node 22.19.0 or newer", async () => {
+test("node runtime installer requires Node 24.0.0 or newer", async () => {
   const installer = await readFile("scripts/install-node-runtime.sh", "utf8");
 
-  assert.match(installer, /MINIMUM_NODE_VERSION="22\.19\.0"/);
+  assert.match(installer, /MINIMUM_NODE_VERSION="24\.0\.0"/);
   assert.match(installer, /node_is_supported/);
   assert.doesNotMatch(installer, /process\.versions\.node\.split/);
 });

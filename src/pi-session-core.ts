@@ -184,7 +184,8 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     ? (hasSavedThinkingLevel ? saved.thinkingLevel as AgentSession["thinkingLevel"] : undefined)
     : inputs.defaults.thinkingLevel;
   // Bind provider extensions after session construction, so use an available model only as a bootstrap.
-  const model = inputs.sessionPath && saved.messages.length > 0
+  const restoredBySdk = Boolean(inputs.sessionPath) && saved.messages.length > 0;
+  const model = restoredBySdk
     ? undefined
     : (desiredModel && modelRuntime.getModel(desiredModel.provider, desiredModel.modelId)) ?? (await modelRuntime.getAvailable())[0];
   const result = await createAgentSession({
@@ -205,8 +206,9 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     await modelRuntime.getAvailable();
     if (desiredModel) {
       const selectedModel = modelRuntime.getModel(desiredModel.provider, desiredModel.modelId);
-      if (!selectedModel) throw new Error(`Model not found: ${desiredModel.provider}/${desiredModel.modelId}`);
-      if (session.model?.provider !== selectedModel.provider || session.model.id !== selectedModel.id) await session.setModel(selectedModel);
+      // A transcript with messages keeps whatever model the SDK restored when its saved model is gone.
+      if (!selectedModel && !restoredBySdk) throw new Error(`Model not found: ${desiredModel.provider}/${desiredModel.modelId}`);
+      if (selectedModel && (session.model?.provider !== selectedModel.provider || session.model.id !== selectedModel.id)) await session.setModel(selectedModel);
       if (thinkingLevel !== undefined) await session.setThinkingLevel(thinkingLevel);
     }
     const savedTools = sessionToolSelection(sessionManager);

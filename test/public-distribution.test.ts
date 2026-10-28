@@ -59,7 +59,7 @@ test("every referenced UI element is bound to the application shell before start
 test("one manifest pins every managed prerequisite", async () => {
   const versions = await text("scripts/versions.sh");
 
-  assert.match(versions, /^JOINT_BOB_NODE_VERSION=22\.23\.2$/m);
+  assert.match(versions, /^JOINT_BOB_NODE_VERSION=24\.22\.1$/m);
   assert.match(versions, /^JOINT_BOB_PI_VERSION=0\.84\.2$/m);
   assert.match(versions, /^JOINT_BOB_CLAUDE_VERSION=2\.1\.239$/m);
   assert.match(versions, /^JOINT_BOB_SYNCTHING_VERSION=2\.1\.3$/m);

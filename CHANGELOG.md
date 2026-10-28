@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed conversations with saved messages failing to open with "Model not found" when their saved model was no longer available; they now continue on the model the conversation restored.
+
 ## 2.168.0 — 2026-10-28
 
 - Split Settings → Harnesses into a harness setup card and a subscription profiles card, with provider icons and sign-in states that are checked automatically.
