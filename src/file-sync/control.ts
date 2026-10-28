@@ -12,7 +12,7 @@ import { EMPTY_RULE_SETTINGS, type EngineMode, type EngineRecord, type Phase, ty
    regenerable index state and belongs to the worker. */
 
 export const DEFAULT_FILE_SYNC_PORT = 22700;
-/** auto-transition: on wherever nobody turned it off, so projects can move without anyone pressing a button. Tests are off by default whatever this says. */
+/** On everywhere, so projects can move without anyone pressing a button. A saved switch is ignored; tests are off by default whatever this says. */
 const PRODUCTION_DEFAULT = true;
 
 /** auto-transition: the owner moves a project to built-in sync by itself once every check passes and the files have matched this long. */
@@ -20,9 +20,9 @@ export interface AutoSwitchConfig { enabled: boolean; cleanHours: number }
 export const DEFAULT_AUTO_SWITCH: AutoSwitchConfig = { enabled: true, cleanHours: 24 };
 
 export interface FileSyncConfig {
-  /** Effective switch: the environment overrides the stored value. */
+  /** Effective switch: JOINT_BOB_FILE_SYNC overrides the default; a saved switch is ignored. */
   enabled: boolean;
-  enabledBy: "default" | "settings" | "environment";
+  enabledBy: "default" | "environment";
   /** Projects indexed in shadow mode beside Syncthing; "all" (the default) or a list of project ids. */
   shadowProjects: "all" | string[];
   /** JOINT_BOB_FILE_SYNC_PROJECTS overrides the stored list, as JOINT_BOB_FILE_SYNC does the switch. */
@@ -90,15 +90,14 @@ function projectsFromEnvironment(value: string | undefined): "all" | string[] | 
 
 export function readFileSyncConfig(db: DatabaseSync, env: NodeJS.ProcessEnv = process.env): FileSyncConfig {
   ensureControlSchema(db);
-  const stored = storedValue(db, "enabled", z.boolean());
   const forced = env.JOINT_BOB_FILE_SYNC === "1" ? true : env.JOINT_BOB_FILE_SYNC === "0" ? false : undefined;
   const fallback = testContext(env) ? false : PRODUCTION_DEFAULT;
   const envPort = env.JOINT_BOB_FILE_SYNC_PORT ? portSchema.safeParse(Number(env.JOINT_BOB_FILE_SYNC_PORT)) : undefined;
   const storedProjects = storedValue(db, "shadowProjects", shadowProjectsSchema);
   const forcedProjects = projectsFromEnvironment(env.JOINT_BOB_FILE_SYNC_PROJECTS);
   return {
-    enabled: forced ?? stored ?? fallback,
-    enabledBy: forced !== undefined ? "environment" : stored !== undefined ? "settings" : "default",
+    enabled: forced ?? fallback,
+    enabledBy: forced !== undefined ? "environment" : "default",
     // auto-transition: every shared project is compared unless someone chose a list (the Mac and homeserver have one).
     shadowProjects: forcedProjects ?? storedProjects ?? "all",
     shadowProjectsBy: forcedProjects !== undefined ? "environment" : storedProjects !== undefined ? "settings" : "default",

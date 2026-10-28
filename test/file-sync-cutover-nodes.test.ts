@@ -371,7 +371,7 @@ async function runCutover(t: TestContext): Promise<void> {
       return {
         label, env, node: env.nodes[0], session: undefined as unknown as SignedIn, root: "", ticketRoot, worktreeRoot, syncthing, lines: [],
         extraEnv: {
-          JOINT_BOB_FILE_SYNC_SETTLE_MS: String(SETTLE_MS), JOINT_BOB_FILE_SYNC_PORT: String(port), JOINT_BOB_FILE_SYNC_LISTEN: "127.0.0.1",
+          JOINT_BOB_FILE_SYNC: "1", JOINT_BOB_FILE_SYNC_SETTLE_MS: String(SETTLE_MS), JOINT_BOB_FILE_SYNC_PORT: String(port), JOINT_BOB_FILE_SYNC_LISTEN: "127.0.0.1",
           JOINT_BOB_SYNCTHING_URL: syncthing.url, JOINT_BOB_SYNCTHING_API_KEY: "test-key", JOINT_BOB_TICKET_ROOT: ticketRoot, JOINT_BOB_WORKTREE_ROOT: worktreeRoot,
         },
       };
@@ -401,9 +401,9 @@ async function runCutover(t: TestContext): Promise<void> {
     // Syncthing's part: the same files on B.
     await writeFiles(b.root, base);
 
-    // File sync on, the project checked in shadow mode beside Syncthing (the environment does not force the switch, so B can turn it off later).
+    // File sync is on (each side's environment), the project checked in shadow mode beside Syncthing.
     for (const side of [a, b]) {
-      const configured = await api<FileSyncStatusAnswer>(side.node, side.session, "PUT", "/file-sync/config", { enabled: true, shadowProjects: [projectId] });
+      const configured = await api<FileSyncStatusAnswer>(side.node, side.session, "PUT", "/file-sync/config", { shadowProjects: [projectId] });
       assert.equal(configured.status, 200, JSON.stringify(configured.body));
       const running = await until(() => status(side), (answer) => answer.worker === "running", 30_000);
       assert.equal(running.worker, "running");
@@ -435,15 +435,13 @@ async function runCutover(t: TestContext): Promise<void> {
     const cleared = await until(() => checks(a, projectId), (answer) => !failing(answer).length, 60_000, 500);
     assert.deepEqual(failing(cleared), [], checkText(cleared));
 
-    // 3. File sync turned off on B fails the check that every machine runs it.
-    const off = await api<FileSyncStatusAnswer>(b.node, b.session, "PUT", "/file-sync/config", { enabled: false });
-    assert.equal(off.status, 200, JSON.stringify(off.body));
+    // 3. File sync turned off on B (by its environment) fails the check that every machine runs it.
+    await restart(b, async () => { b.extraEnv = { ...b.extraEnv, JOINT_BOB_FILE_SYNC: "0" }; });
     const peerOff = await until(() => checks(a, projectId), (answer) => failing(answer).includes("peers"), 30_000, 500);
     assert.ok(failing(peerOff).includes("peers"), checkText(peerOff));
     assert.match(peerOff.checks.find((check) => check.key === "peers")!.message, /file sync turned off|not running/);
-    const on = await api<FileSyncStatusAnswer>(b.node, b.session, "PUT", "/file-sync/config", { enabled: true });
-    assert.equal(on.status, 200, JSON.stringify(on.body));
-    const back = await until(() => checks(a, projectId), (answer) => !failing(answer).length, 90_000, 500);
+    await restart(b, async () => { b.extraEnv = { ...b.extraEnv, JOINT_BOB_FILE_SYNC: "1" }; });
+    const back =await until(() => checks(a, projectId), (answer) => !failing(answer).length, 90_000, 500);
     assert.deepEqual(failing(back), [], checkText(back));
 
     // 4. In-flight edits on both sides, as Syncthing would leave them mid-copy: still inside the settle window when the owner
@@ -663,6 +661,8 @@ async function runMatanCase(t: TestContext): Promise<void> {
     const device = (letter: string) => Array.from({ length: 8 }, () => letter.repeat(7)).join("-");
     const [a, b, c] = await Promise.all([make("A", envs[0], device("A")), make("B", envs[1], device("B")), make("C", envs[2], device("C"))]);
     sides.push(a, b, c);
+    // A and B start with file sync on by their environment; C starts off and is turned on below.
+    for (const side of [a, b]) side.extraEnv = { ...side.extraEnv, JOINT_BOB_FILE_SYNC: "1" };
     await Promise.all(sides.map(startSide));
     // Every seeded node has the same name; the reasons name machines, so each gets its own (C is someone else's Mac).
     for (const [side, name] of [[a, "Ilia-MacBook-Pro"], [b, "homeserver"], [c, C_NAME]] as const) {
@@ -688,7 +688,7 @@ async function runMatanCase(t: TestContext): Promise<void> {
     }
     // A and B run the new release with file sync on; the matching time is seconds instead of a day. C keeps file sync off.
     for (const side of [a, b]) {
-      const configured = await api<FileSyncStatusAnswer>(side.node, side.session, "PUT", "/file-sync/config", { enabled: true, shadowProjects: [projectId], autoSwitch: { cleanHours: CLEAN_SECONDS / 3600 } });
+      const configured = await api<FileSyncStatusAnswer>(side.node, side.session, "PUT", "/file-sync/config", { shadowProjects: [projectId], autoSwitch: { cleanHours: CLEAN_SECONDS / 3600 } });
       assert.equal(configured.status, 200, JSON.stringify(configured.body));
       await until(() => status(side), (answer) => answer.worker === "running", 30_000);
     }
@@ -710,7 +710,8 @@ async function runMatanCase(t: TestContext): Promise<void> {
     // 2. C turns file sync on (the stored default list is "all"; here only this project): it indexes in shadow, the files match for
     //    the matching time, and A moves the project by itself; B and C follow. Nobody calls the move.
     const turnedOnAt = Date.now();
-    const onC = await api<FileSyncStatusAnswer>(c.node, c.session, "PUT", "/file-sync/config", { enabled: true, shadowProjects: [projectId], autoSwitch: { cleanHours: CLEAN_SECONDS / 3600 } });
+    await restart(c, async () => { c.extraEnv = { ...c.extraEnv, JOINT_BOB_FILE_SYNC: "1" }; });
+    const onC = await api<FileSyncStatusAnswer>(c.node, c.session, "PUT", "/file-sync/config", { shadowProjects: [projectId], autoSwitch: { cleanHours: CLEAN_SECONDS / 3600 } });
     assert.equal(onC.status, 200, JSON.stringify(onC.body));
     const moved = await watchPhases(sides, projectId, (entries) => entries.every((entry) => entry?.phase === "builtin" && entry.engine === "builtin"), SYNC_TIMEOUT_MS + CLEAN_SECONDS * 1000);
     assert.deepEqual(moved.last.map((entry) => [entry?.engine, entry?.phase]), [["builtin", "builtin"], ["builtin", "builtin"], ["builtin", "builtin"]], `${JSON.stringify(moved)}\n${lines(sides)}`);
@@ -745,8 +746,7 @@ async function runMatanCase(t: TestContext): Promise<void> {
     // C comes back with file sync on: it learns of the move back and follows; nobody pressed anything there either.
     await stopDevNode(c.child!);
     c.child = undefined;
-    const { JOINT_BOB_FILE_SYNC: _off, ...withoutOverride } = c.extraEnv;
-    c.extraEnv = withoutOverride;
+    c.extraEnv = { ...c.extraEnv, JOINT_BOB_FILE_SYNC: "1" };
     await startSide(c);
     const followed = await watchPhases([c], projectId, (entries) => entries[0]?.engine === "syncthing" && entries[0]?.phase === "syncthing", SYNC_TIMEOUT_MS);
     assert.deepEqual([followed.last[0]?.engine, followed.last[0]?.phase], ["syncthing", "syncthing"], `${JSON.stringify(followed)}\n${lines([c])}`);

@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Fixed Resources jumping to a different page when you changed a skill's harness, reset it, or refreshed the list, and keeping your scroll position while you edit a row.
 - Fixed Pi models that the app had learned about since installation showing as "not found" in Joint Bob.
+- Turned built-in file sync on for every machine and removed its switch from Settings, so a saved "off" no longer stops it.
 
 ## 2.168.1 — 2026-10-28
 

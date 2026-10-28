@@ -63,9 +63,9 @@ async function stopTimed(child: ChildProcess): Promise<{ ms: number; code: numbe
   return { ms: Date.now() - started, code: child.exitCode, signal: child.signalCode };
 }
 
-test("turning file sync on, off and on again while it is starting leaves the worker running", { timeout: 60_000 }, async (t) => {
+test("several file sync starts and saves at once leave the worker running", { timeout: 60_000 }, async (t) => {
   const saved = process.env.JOINT_BOB_FILE_SYNC;
-  delete process.env.JOINT_BOB_FILE_SYNC;
+  process.env.JOINT_BOB_FILE_SYNC = "1";
   // This process's data directory is the test runner's temporary one.
   const { applyFileSyncConfig, fileSyncStatus, startFileSync, stopFileSync } = await import("../src/file-sync/index.js");
   t.after(async () => {
@@ -73,11 +73,8 @@ test("turning file sync on, off and on again while it is starting leaves the wor
     if (saved === undefined) delete process.env.JOINT_BOB_FILE_SYNC;
     else process.env.JOINT_BOB_FILE_SYNC = saved;
   });
-  // Off at startup: this only records that startup reached cluster work.
-  await startFileSync();
-  assert.equal((await fileSyncStatus()).worker, "off");
-  // A double click, or two admin tabs: the second "on" comes while the first launch is still loading.
-  await Promise.all([applyFileSyncConfig({ enabled: true }), applyFileSyncConfig({ enabled: false }), applyFileSyncConfig({ enabled: true })]);
+  // Startup reaches cluster work while two admin tabs save: the second save comes while the first launch is still loading.
+  await Promise.all([startFileSync(), applyFileSyncConfig({ enabled: true }), applyFileSyncConfig({ enabled: true })]);
   const settled = await until(fileSyncStatus, (answer) => answer.worker === "running", 30_000);
   assert.deepEqual([settled.enabled, settled.worker], [true, "running"]);
 });
@@ -220,18 +217,6 @@ test("a node with file sync on indexes a shared project in shadow mode, follows 
     assert.equal(existsSync(path.join(right.dataDir, "file-sync.db")), false, "the engine started without being enabled");
     const offStatus = await status(right, sb);
     assert.deepEqual([offStatus.enabled, offStatus.worker, offStatus.config.enabledBy], [false, "off", "default"]);
-    // Startup has reached cluster work by now, so enabling starts the worker at once.
-    const enabled = await api<FileSyncStatusAnswer>(right, sb, "PUT", "/file-sync/config", { enabled: true });
-    assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
-    assert.notEqual(enabled.body.worker, "off");
-    const running = await until(() => status(right, sb), (answer) => answer.worker === "running" && existsSync(path.join(right.dataDir, "file-sync.db")), 30_000);
-    assert.equal(running.worker, "running");
-    assert.ok(existsSync(path.join(right.dataDir, "file-sync.db")));
-    const disabled = await api<FileSyncStatusAnswer>(right, sb, "PUT", "/file-sync/config", { enabled: false });
-    assert.equal(disabled.status, 200, JSON.stringify(disabled.body));
-    assert.deepEqual([disabled.body.enabled, disabled.body.worker, disabled.body.shares], [false, "off", []]);
-    // The worker thread is gone: SQLite removes the write-ahead log when its connection closes.
-    assert.equal(existsSync(path.join(right.dataDir, "file-sync.db-wal")), false, "the worker still holds file-sync.db");
 
     for (const child of children.splice(0)) {
       const stopped = await stopTimed(child);

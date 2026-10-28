@@ -405,7 +405,7 @@ For every scenario: bytes on the wire, CPU time and RSS of the sync process (the
 | P3 (first writes) | shadow mode runs 7 days on every shared project with 0 unexplained differences; the randomized test is green on 10,000 seeds |
 | P5 (migration) | test projects run 7 days on the built-in engine with 0 lost files, 0 unexplained conflict copies and 0 consistency-check errors; the benchmark meets the pass bar |
 | Migrating `joint_bob` | several projects on the built-in engine for 7 days with the same results |
-| P6 (removal) | every shared project on the built-in engine for 14 days; rollback no longer used |
+| P6 (removal) | every shared project on the built-in engine. No waiting period (decided 2026-10-27). The release before it turns file sync on for every machine, whatever it saved, and hides the switch |
 
 ## 11. Risks
 

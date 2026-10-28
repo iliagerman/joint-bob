@@ -145,9 +145,8 @@ test("the switch endpoint answers only signed peers the project is shared with, 
 
 test("switched on while its worker does not serve yet (starting, restarting), main's files routes say it is starting, never off", async () => {
   // A peer reading "off" here would have the owner move its built-in projects back to Syncthing (migration.ts).
-  const { controlDatabase, writeFileSyncConfig } = await import("../src/file-sync/control.js");
-  const db = await controlDatabase();
-  writeFileSyncConfig(db, { enabled: true }, {});
+  const saved = process.env.JOINT_BOB_FILE_SYNC;
+  process.env.JOINT_BOB_FILE_SYNC = "1";
   try {
     assert.equal(servingBridge(), undefined);
     for (const [method, target, payload] of [["GET", "/api/cluster/v2/files/shares", undefined], ["POST", "/api/cluster/v2/files/status", { projectId: "p1" }]] as const) {
@@ -155,7 +154,7 @@ test("switched on while its worker does not serve yet (starting, restarting), ma
       assert.equal(response.status, 503, target);
       assert.deepEqual(await response.json(), { error: "File sync is starting on this node" });
     }
-  } finally { writeFileSyncConfig(db, { enabled: false }, {}); }
+  } finally { if (saved === undefined) delete process.env.JOINT_BOB_FILE_SYNC; else process.env.JOINT_BOB_FILE_SYNC = saved; }
 });
 
 test("a relayRequest is signed by main, fetched from the peer's replication URL and streamed back to the worker within the 4 MiB window", async () => {

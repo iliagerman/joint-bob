@@ -74,8 +74,8 @@ test("file sync is on by default, compares every shared project and moves them b
     enabled: true, enabledBy: "default", shadowProjects: "all", shadowProjectsBy: "default", port: 22700, autoSwitch: { enabled: true, cleanHours: 24 },
     requestedProjects: [], lastChosenProjects: null,
   });
-  // An explicit stored "off" and the environment's 0 are still respected.
-  assert.equal(writeFileSyncConfig(db, { enabled: false }, {}).enabled, false);
+  // A saved "off" is ignored (every machine is aligned on); the environment's 0 still turns it off.
+  assert.equal(writeFileSyncConfig(db, { enabled: false }, {}).enabled, true);
   assert.equal(readFileSyncConfig(database(), { JOINT_BOB_FILE_SYNC: "0" }).enabled, false);
   // A chosen list stays in charge until the admin picks every project again.
   assert.deepEqual(writeFileSyncConfig(db, { shadowProjects: ["alpha"] }, {}).shadowProjects, ["alpha"]);
@@ -87,14 +87,13 @@ test("file sync is on by default, compares every shared project and moves them b
   assert.throws(() => writeFileSyncConfig(db, { autoSwitch: { every: 1 } } as never, {}));
 });
 
-test("JOINT_BOB_FILE_SYNC overrides the stored switch both ways", () => {
+test("JOINT_BOB_FILE_SYNC is the only override: a saved switch is ignored, and only 0 and 1 count", () => {
   const db = database();
   writeFileSyncConfig(db, { enabled: false }, {});
+  assert.deepEqual([readFileSyncConfig(db, {}).enabled, readFileSyncConfig(db, {}).enabledBy], [true, "default"]);
   assert.deepEqual([readFileSyncConfig(db, { JOINT_BOB_FILE_SYNC: "1" }).enabled, readFileSyncConfig(db, { JOINT_BOB_FILE_SYNC: "1" }).enabledBy], [true, "environment"]);
-  writeFileSyncConfig(db, { enabled: true }, {});
   assert.equal(readFileSyncConfig(db, { JOINT_BOB_FILE_SYNC: "0" }).enabled, false);
-  assert.deepEqual([readFileSyncConfig(db, {}).enabled, readFileSyncConfig(db, {}).enabledBy], [true, "settings"]);
-  assert.equal(readFileSyncConfig(db, { JOINT_BOB_FILE_SYNC: "yes" }).enabledBy, "settings", "only 0 and 1 override");
+  assert.equal(readFileSyncConfig(db, { JOINT_BOB_FILE_SYNC: "yes" }).enabledBy, "default", "only 0 and 1 override");
 });
 
 test("under a test runner file sync is off unless a test turns it on", () => {

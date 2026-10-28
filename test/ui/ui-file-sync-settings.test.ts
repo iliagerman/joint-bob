@@ -222,6 +222,7 @@ test("the File sync tab sits next to Node and Resources and shows the engine and
   await page.getByTestId("settings-panel-file-sync").waitFor({ state: "visible" });
   await page.getByTestId("file-sync-worker").filter({ hasText: "Running" }).waitFor();
   assert.equal(await page.getByTestId("file-sync-enabled-toggle").isChecked(), true);
+  assert.equal(await page.getByTestId("file-sync-enabled-toggle").isVisible(), false, "the switch is hidden: file sync is on everywhere");
   assert.match(await page.getByTestId("file-sync-addresses").innerText(), /directly at 100\.64\.0\.5:22700/);
   const peer = page.getByTestId("file-sync-peer-row");
   await peer.waitFor();
