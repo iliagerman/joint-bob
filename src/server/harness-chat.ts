@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { resourceOwner } from "../ownership.js";
+import { runWithAutomationProfile } from "./automation-profile.js";
+import { resourceOwner, ownerAsActor } from "../ownership.js";
+import { runAsAccount } from "../account-context.js";
+import { withoutAutomationProfile } from "../provider-profiles/context.js";
 import { filterPersonalAssistantTools, personalAssistantContext, personalAssistantSettings, personalAssistantToolBaseline } from "../personal-assistants.js";
 import { revokeBrowserAgentTokens } from "../browser-agent.js";
 import { attachMessageAuthors, authoredPromptText, recordMessageAuthor, type MessageAuthor } from "../message-authors.js";
@@ -28,7 +31,7 @@ import { conversationScopeId, genericSecretEnvironment, getScopeSecretAccounts }
 import { getProjectLock } from "../project-locks.js";
 import { catchUpGitHead } from "../git-catch-up.js";
 import { getSettings } from "../settings.js";
-import { beginQueuedPrompt, bumpRoutingPromptCount, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, readRoutingState, recordQueueSettings, recordRoutingEval, resetQueuedPromptAttempt, setRoutingMode, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
+import { assertQueuedPromptEditor, beginQueuedPrompt, bumpRoutingPromptCount, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, readRoutingState, recordQueueSettings, recordRoutingEval, resetQueuedPromptAttempt, setRoutingMode, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { queuedAttachments } from "../queued-attachments.js";
 import { describeImage } from "../attachment-digest.js";
 import { listTurnFailures, recordTurnFailure, withTurnFailures } from "../turn-failures.js";
@@ -49,6 +52,7 @@ import { storedDigest } from "../conversation-digest.js";
 import { attachHarnessClient, compactHarnessSession, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, historyBeforeLiveTurn, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 
 export interface HarnessChatConnection {
+  automationProfile?: QueuedPrompt["automationProfile"];
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
   shared: SharedHarnessSession; handoffContext: string | null; accountIds: string[]; readOnly: boolean; conversationId: string;
   /** Who writes on this socket; prompts queued here carry it. */
@@ -56,6 +60,7 @@ export interface HarnessChatConnection {
 }
 
 export interface AttachOptions {
+  automationProfile?: QueuedPrompt["automationProfile"];
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId; sessionId: string;
   sessionPath?: string; accountIds: string[]; readOnly: boolean; ownership: ForeignConversationOwner | null;
   listedSessions?: SessionSummary[]; handoffContext: string | null; autoStartPrompt: string | null;
@@ -228,7 +233,7 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   const promptText = promptTextWithAttachments(message, imageAttachments, fileAttachments);
   const suffix = absolute.length ? `Attached: ${absolute.map(({ name }) => name).join(", ")}` : "";
   const displayText = [message.trim(), suffix].filter(Boolean).join("\n\n");
-  const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { requestId, author: connection.author, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
+  const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { automationProfile: connection.automationProfile, requestId, author: connection.author, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
   markHarnessInput(connection.shared);
   publish(connection, { type: "userMessage", text: displayText, timestamp: queued.createdAt, ...(queued.author ? { author: queued.author } : {}), scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
   refreshHarnessPromptQueue(connection);
@@ -357,6 +362,15 @@ async function catchUpProjectGit(connection: HarnessChatConnection): Promise<voi
 }
 
 async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt & { createdAt?: string }): Promise<void> {
+  if (!queued.automationProfile) {
+    const author = queued.author ?? connection.author;
+    return withoutAutomationProfile(() => runAsAccount(author ? ownerAsActor(author.accountId) : undefined, () => dispatchWithProfile(connection, queued)));
+  }
+  if (queued.automationProfile.nodeId !== (await getClusterNode()).id) throw new Error("Automation profile belongs to another execution node");
+  return runWithAutomationProfile({ creatorAccountId: queued.automationProfile.accountId, providerProfileId: queued.automationProfile.profileId }, () => dispatchWithProfile(connection, queued));
+}
+
+async function dispatchWithProfile(connection: HarnessChatConnection, queued: QueuedPrompt & { createdAt?: string }): Promise<void> {
   if (queued.dispatchState === "starting" || startingIds.has(queued.id)) throw new Error("Queued prompt start is uncertain; edit or cancel it before retrying");
   await ensureCurrentSession(connection);
   const shared = connection.shared;
@@ -529,7 +543,7 @@ async function runAutoResponse(connection: HarnessChatConnection): Promise<boole
   try {
     let decision = null;
     for (let attempt = 0; attempt < 2 && !decision; attempt++) {
-      const output = await runAutoResponder({ projectId, conversationId: connection.conversationId, cwd: connection.cwd, accountIds: connection.accountIds, config: state, prompt: responderPrompt(state, turns, state.responses + 1), signal: controller.signal, onStep });
+      const output = await runAutoResponder({ projectId, conversationId: connection.conversationId, cwd: connection.cwd, accountIds: connection.accountIds, creatorAccountId: state.creatorAccountId, config: state, prompt: responderPrompt(state, turns, state.responses + 1), signal: controller.signal, onStep });
       decision = parseAutoRespondDecision(output);
     }
     if (controller.signal.aborted) throw new Error("aborted");
@@ -815,6 +829,12 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
 
 async function queueCommand(connection: HarnessChatConnection, message: ReturnType<typeof socketMessageSchema.parse>): Promise<void> {
   await writable(connection);
+  const ids = message.queueId ? [message.queueId] : message.queueItems?.map(({ id }) => id) ?? [];
+  const prompts = listQueuedPrompts(queueKey(connection));
+  for (const id of ids) {
+    const prompt = prompts.find((entry) => entry.id === id);
+    if (prompt) assertQueuedPromptEditor(prompt, connection.author?.accountId);
+  }
   if (message.type === "forceStartQueuedPrompt") {
     if (!message.queueId || !message.queueRevision) throw new Error("Queued prompt force start is incomplete");
     const key = queueKey(connection);
@@ -904,7 +924,7 @@ async function autoRespondCommand(connection: HarnessChatConnection, request: No
   const readiness = await runtime.readiness(connection.cwd);
   if (readiness.length) throw new Error(readiness.join("\n"));
   autoDecisions.get(key)?.controller.abort("settings-changed");
-  publishAutoRespond(connection, await enableAutoRespond(connection.project.id, connection.conversationId, config, connection.author ?? null));
+  publishAutoRespond(connection, await enableAutoRespond(connection.project.id, connection.conversationId, config, connection.author ?? null, connection.author?.accountId ?? null));
   broadcastToProject(connection.project.id, { type: "sessionsChanged" });
   void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
 }
@@ -950,8 +970,8 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   let record = await getConversationRecord(options.project.id, options.engine, options.sessionId);
   const conversationId = record?.conversationId ?? options.sessionId;
   const runtimeWasOpen = Boolean(options.sessionId && findHarnessSession(options.project.id, options.engine, options.sessionId));
-  const shared = await measureOperation("chat.open.runtime", () => openHarnessSession(options.engine, { projectId: options.project.id, cwd: options.cwd, sessionId: options.sessionId, sessionPath: options.sessionPath, conversationId, accountIds: options.accountIds }));
-  const connection: HarnessChatConnection = { socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId, author: options.author };
+  const shared = await measureOperation("chat.open.runtime", () => runWithAutomationProfile({ creatorAccountId: options.automationProfile?.accountId, providerProfileId: options.automationProfile?.profileId }, () => openHarnessSession(options.engine, { projectId: options.project.id, cwd: options.cwd, sessionId: options.sessionId, sessionPath: options.sessionPath, conversationId, accountIds: options.accountIds })));
+  const connection: HarnessChatConnection = { automationProfile: options.automationProfile, socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId, author: options.author };
   const local = await getClusterNode();
   if (!record && !options.readOnly) record = await ensureConversationRecord(options.project.id, options.engine, options.sessionId, local.id, options.taskId ?? undefined, { conversationId, segmentIndex: 0 });
   const saved = readQueueSettings(queueKey(connection));

@@ -1,5 +1,6 @@
 import { harnessOption } from "../harness-metadata.js";
 import { api } from "./api.js";
+import { createAutomationProfilePicker } from "./provider-profile-picker.js";
 import { sendSocket } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel } from "./git-reviewer-options.js";
@@ -8,6 +9,7 @@ import { state } from "./state.js";
 
 let defaults = null;
 const picker = { harnesses: [], models: [] };
+const profilePicker = createAutomationProfilePicker(elements.autoRespondHarness.closest("label"), "auto-respond-provider-profile", () => api("/api/provider-profiles/available?usage=automation"));
 
 const PRESETS = {
   "review-consent": {
@@ -122,6 +124,9 @@ async function openAutoRespond() {
   const savedPick = saved ? { harnessId: saved.harnessId, provider: saved.provider, modelId: saved.modelId, thinkingLevel: saved.thinkingLevel } : undefined;
   elements.autoRespondHarness.value = picker.harnesses.some((harness) => harness.id === (saved?.harnessId ?? state.engine)) ? (saved?.harnessId ?? state.engine) : picker.harnesses[0]?.id ?? "";
   fillPickers(savedPick);
+  elements.saveAutoRespondButton.disabled = true;
+  try { await profilePicker.refresh(saved?.providerProfileId); }
+  finally { elements.saveAutoRespondButton.disabled = false; }
 }
 
 function applyPreset() {
@@ -148,7 +153,11 @@ function save(event) {
   if (!harness) { toast("Choose a harness"); return; }
   const { provider, modelId } = selectedModel(elements.autoRespondModel);
   const limit = elements.autoRespondLimit.value.trim();
+  let providerProfileId;
+  try { providerProfileId = profilePicker.value(); }
+  catch (error) { toast(error.message); return; }
   const config = {
+    providerProfileId,
     harnessId: harness.id,
     provider: provider || harness.configuration?.fixedProvider || harness.defaults.provider,
     modelId,

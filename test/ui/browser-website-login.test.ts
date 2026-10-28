@@ -179,7 +179,11 @@ test("origin-bound snapshot signs in on the designated browser node", { timeout:
     await command({ action: "navigate", url: origin });
 
     const executorDb = new DatabaseSync(path.join(executor.dataDir, "node.db"));
-    try { assert.equal(executorDb.prepare("SELECT 1 FROM secret_accounts WHERE id = ?").get(accountId), undefined); } finally { executorDb.close(); }
+    try {
+      const replica = executorDb.prepare("SELECT variables_encrypted FROM secret_accounts WHERE id = ?").get(accountId) as { variables_encrypted: string } | undefined;
+      assert.ok(replica, "active twins receive owned secret accounts");
+      assert.doesNotMatch(replica.variables_encrypted, /synthetic-(user|password|tenant)/);
+    } finally { executorDb.close(); }
     const takeover = await api(source, auth, "POST", `/browser/sessions/${sessionId}/command?nodeId=${executor.nodeId}`, { action: "takeControl" });
     assert.equal(takeover.status, 200, JSON.stringify(takeover.body));
     await fill("#loose", "PASSWORD", 409);

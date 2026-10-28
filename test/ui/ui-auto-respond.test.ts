@@ -36,6 +36,10 @@ test("the auto respond dialog opens from the chat menu with the default rules an
     assert.match(await page.getByTestId("auto-respond-instructions").inputValue(), /add a way to test it/, "the default asks the agent for a way to test what it built");
     assert.equal(await page.getByTestId("auto-respond-use-tools").isChecked(), true, "the responder may check the work by default");
     await page.getByTestId("auto-respond-harness").locator("option").first().waitFor({ state: "attached" });
+    const profilePicker = page.getByTestId("auto-respond-provider-profile");
+    await profilePicker.waitFor({ state: "visible" });
+    assert.equal(await profilePicker.inputValue(), "");
+    assert.equal(await profilePicker.locator("option").first().textContent(), "Use my current profile");
     await page.getByTestId("auto-respond-cancel-button").click();
     await page.getByTestId("auto-respond-dialog").waitFor({ state: "hidden" });
     assert.equal(await page.getByTestId("session-auto-respond-badge").count(), 0, "the conversation row shows no badge while it is off");

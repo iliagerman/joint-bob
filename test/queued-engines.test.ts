@@ -675,10 +675,13 @@ test("queue cancellation rejects replicated attachment paths outside attachment 
   sockets.push(opened.socket);
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
   const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+  await waitForChatSession(opened);
   const victim = path.join(root, "must-not-delete.txt");
   await writeFile(victim, "retained");
   const { enqueuePrompt } = await import("../src/prompt-queue.js");
-  const queued = enqueuePrompt(`${fixture.projectId}:${sessionId}`, "cancel", "cancel", { messageText: "cancel", promptSuffix: "", displaySuffix: "", attachmentPaths: [victim] });
+  const { harnessChatConnections } = await import("../src/server/harness-chat.js");
+  const author = [...harnessChatConnections].find((connection) => connection.shared.session.id === sessionId)!.author;
+  const queued = enqueuePrompt(`${fixture.projectId}:${sessionId}`, "cancel", "cancel", { author, messageText: "cancel", promptSuffix: "", displaySuffix: "", attachmentPaths: [victim] });
   opened.socket.send(JSON.stringify({ type: "cancelQueuedPrompt", queueId: queued.id, queueRevision: queued.revision }));
   await waitFor(opened.messages, () => opened.messages.some((frame) => ["error", "queuedPromptCancelled"].includes(String(frame.type))));
   assert.equal(await readFile(victim, "utf8"), "retained", "untrusted replicated path must never be unlinked");

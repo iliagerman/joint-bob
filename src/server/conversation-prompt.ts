@@ -10,6 +10,8 @@ export interface PromptAttachment { name: string; mimeType: string; data: string
 export interface PromptQueueSettings { harnessId: string; provider: string; modelId: string; reasoning: string }
 
 export interface ConversationPromptOptions {
+  /** Trusted automation assignment, forwarded only over the signed local socket. */
+  automationProfile?: { accountId: string; profileId: string | null };
   projectId: string;
   engine: string;
   sessionId: string;
@@ -35,6 +37,7 @@ export async function queueConversationPrompt(options: ConversationPromptOptions
   if (!address || typeof address === "string") throw new Error(`${label} executor server is not listening`);
   const url = new URL(`ws://127.0.0.1:${address.port}/ws`);
   const parameters: Record<string, string> = { projectId: options.projectId, sessionId: options.sessionId, sessionPath: `draft:${options.engine}:${options.sessionId}`, nodeSession: "1", ...(options.worktreeId ? { worktreeId: options.worktreeId } : {}) };
+  if (options.automationProfile) parameters.automationProfile = JSON.stringify(options.automationProfile);
   for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
   const record = await getConversationRecord(options.projectId, options.engine, options.sessionId);
   const queueKey = `${options.projectId}:${record?.conversationId ?? options.sessionId}`;

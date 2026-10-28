@@ -1,5 +1,6 @@
 import { harnessIdFromPath, harnessOption } from "../harness-metadata.js";
 import { api } from "./api.js";
+import { createAutomationProfilePicker } from "./provider-profile-picker.js";
 import { state } from "./state.js";
 import { renderSessions } from "./session-list.js";
 import { confirmAction, toast } from "./shell.js";
@@ -18,6 +19,9 @@ let availableHarnesses = [];
 let availableModels = [];
 const inputOf = ({ id, nextRun, lastRun, ...input }) => input;
 const command = (nodeId, value) => api("/api/cron", { method: "POST", body: JSON.stringify({ nodeId, command: value }) });
+
+const profilePicker = createAutomationProfilePicker(field("model").closest("label"), "cron-provider-profile", () => command(field("ownerNodeId").value, { action: "profiles", projectId: context.projectId }));
+field("ownerNodeId").addEventListener("change", () => void profilePicker.refresh());
 
 export async function openScheduledTasks(projectId, session = null) {
   if (!state.harnesses.length) state.harnesses = (await api("/api/harnesses")).harnesses;
@@ -208,6 +212,7 @@ function editTask(task) {
   body.scrollTo(0, 0);
   field("timezone").value = task ? task.schedule.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone;
   for (const name of ["name", "prompt", "ownerNodeId"]) if (task) field(name).value = task[name];
+  void profilePicker.refresh(task?.providerProfileId ?? null);
   field("engine").value = selectedEngine;
   renderExecutionFields(task?.model ? `${task.model.provider}|${task.model.modelId}` : "", task?.reasoning ?? task?.model?.reasoning ?? "");
   if (task) {
@@ -253,6 +258,7 @@ form.addEventListener("submit", async event => {
     const [provider, modelId] = field("model").value.split("|");
     const session = boundSession();
     const input = {
+      providerProfileId: profilePicker.value(),
       projectId: context.projectId, name: field("name").value, prompt: field("prompt").value,
       ownerNodeId: field("ownerNodeId").value, engine: field("engine").value,
       model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,

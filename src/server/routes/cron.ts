@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { actingAccount } from "../../account-context.js";
+import { assertAutomationCreator } from "../automation-profile.js";
+import { accessibleProviderProfile, listAccessibleProviderProfiles } from "../../provider-profiles/store.js";
 import { NotFoundError } from "../../not-found.js";
 import { getClusterNode } from "../../cluster.js";
 import { getRuntimePeer, runtimeFetch } from "../runtime-peers.js";
@@ -13,6 +16,7 @@ import { app } from "../state.js";
 import { listProjectCronTasks } from "../cron-list.js";
 
 const commandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("profiles"), projectId: z.string().min(1), accountId: z.string().nullable().optional() }).strict(),
   z.object({ action: z.literal("list"), projectId: z.string().min(1) }).strict(),
   z.object({ action: z.literal("ready"), projectId: z.string().min(1), sessionId: z.string().min(1), engine: registeredHarnessIdSchema }).strict(),
   z.object({ action: z.literal("create"), input: cronInputSchema }).strict(),
@@ -51,6 +55,7 @@ async function savedTask(task: CronTask): Promise<{ task: CronTask }> {
 async function manageCron(command: Command): Promise<unknown> {
   const store = cronStore();
   const local = await getClusterNode();
+  if (command.action === "profiles") return { profiles: command.accountId ? listAccessibleProviderProfiles(command.accountId, "automation") : [] };
   if (command.action === "list") {
     const project = await getProject(command.projectId);
     return { tasks: project ? store.list(project.id) : [] };
@@ -77,6 +82,18 @@ async function manageCron(command: Command): Promise<unknown> {
   const project = await getProject(command.input.projectId);
   if (!project) throw new Error("Project is not mapped on the execution node");
   command.input.projectId = project.id;
+  const existing = command.action === "update" ? store.get(command.id) : null;
+  if (existing) assertAutomationCreator(existing.creatorAccountId, command.input.creatorAccountId);
+  if (command.input.providerProfileId) {
+    if (!command.input.creatorAccountId) throw new Error("A signed-in creator is required to select a profile");
+    accessibleProviderProfile(command.input.creatorAccountId, command.input.providerProfileId, "automation");
+  }
+  command.input.creatorAccountId = existing?.creatorAccountId ?? command.input.creatorAccountId ?? null;
+  command.input.providerProfileId ??= null;
+  if (command.input.providerProfileId) {
+    if (!command.input.creatorAccountId) throw new Error("A signed-in creator is required to select a profile");
+    accessibleProviderProfile(command.input.creatorAccountId, command.input.providerProfileId, "automation");
+  }
   if (command.input.sessionId) await cronConversationReady(command.input.projectId, command.input.sessionId, command.input.engine);
   if (command.action === "create" || command.action === "install") {
     if (command.input.ownerNodeId !== local.id) throw new Error("Task must be stored on its execution owner");
@@ -112,6 +129,14 @@ app.post("/api/cron", async (request, response, next) => {
     const stored = !named && local && "id" in payload.command ? cronStore().get(payload.command.id) : undefined;
     const projectId = named ?? stored?.projectId;
     if (!projectId || !await getProject(projectId)) { sendError(response, 404, "Scheduled task not found"); return; }
+    if (payload.command.action === "profiles") payload.command.accountId = actingAccount()?.accountId ?? null;
+    if (payload.command.action === "create" || payload.command.action === "update") {
+      payload.command.input.creatorAccountId = actingAccount()?.accountId ?? null;
+      if (local && payload.command.input.providerProfileId) {
+        if (!payload.command.input.creatorAccountId) throw new Error("Sign in to select a profile");
+        accessibleProviderProfile(payload.command.input.creatorAccountId, payload.command.input.providerProfileId, "automation");
+      }
+    }
     response.json(await routeCommand(payload.nodeId, payload.command));
   } catch (error) { next(error); }
 });

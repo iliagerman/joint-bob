@@ -1,7 +1,8 @@
 import { internalSessionId } from "../internal-sessions.js";
 import { getHarness, getHarnessRuntime } from "../harnesses.js";
 import type { HarnessEvent, HarnessModelSettings } from "../harnesses/runtime.js";
-import type { AutoRespondConfig } from "../conversation-auto-respond.js";
+import { validateAutoRespondProfile, type AutoRespondConfig } from "../conversation-auto-respond.js";
+import { withAutomationProfile } from "../provider-profiles/context.js";
 
 // Checking the agent's work can mean running a test suite; judging text alone is quick.
 const RESPONDER_TIMEOUT_MS = 20 * 60_000;
@@ -12,6 +13,7 @@ export interface AutoRespondRunInput {
   conversationId: string;
   cwd: string;
   accountIds?: string[];
+  creatorAccountId?: string | null;
   config: AutoRespondConfig;
   prompt: string;
   signal: AbortSignal;
@@ -25,6 +27,13 @@ export interface AutoRespondRunInput {
  * runtime makes a used-up budget refuse the run.
  */
 export async function runAutoResponder(input: AutoRespondRunInput): Promise<string> {
+  const accountId = input.creatorAccountId;
+  if (!accountId) throw new Error("Auto responder creator is missing; save its settings again");
+  validateAutoRespondProfile(accountId, input.config);
+  return withAutomationProfile({ accountId, profileId: input.config.providerProfileId ?? null }, () => executeAutoResponder(input));
+}
+
+async function executeAutoResponder(input: AutoRespondRunInput): Promise<string> {
   const override = process.env.JOINT_BOB_AUTO_RESPONDER;
   if (override) {
     const module = await import(override) as { default: (input: AutoRespondRunInput) => Promise<string> };

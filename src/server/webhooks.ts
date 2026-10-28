@@ -1,6 +1,7 @@
 // Delivers a webhook call: a new conversation in the target project, or one more message in
 // the target conversation. Runs through this node's own chat socket, like a scheduled task.
 import { randomUUID } from "node:crypto";
+import { automationProfileContext, runWithAutomationProfile } from "./automation-profile.js";
 import path from "node:path";
 import { getClusterNode } from "../cluster.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
@@ -70,6 +71,10 @@ async function attachSecrets(webhook: Webhook, engine: string, sessionId: string
 
 /** Checks the target and queues the message. Throws when the target cannot take it. */
 async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
+  return runWithAutomationProfile(webhook, () => deliverWithProfile(webhook, call));
+}
+
+async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<string> {
   const local = await getClusterNode();
   const project = await getProject(webhook.target.projectId);
   if (!project) throw new WebhookError(404, "The webhook's project no longer exists");
@@ -85,6 +90,7 @@ async function deliver(webhook: Webhook, call: WebhookCall): Promise<string> {
   const message = [titleInstruction, webhookMessage(webhook, call), placed.listed].filter(Boolean).join("\n\n");
   const engine = webhook.target.engine ?? defaultEngine();
   const prompt = {
+    automationProfile: automationProfileContext(webhook),
     message, images: placed.images, files: placed.files, requestId: randomUUID(), label: "Webhook", until: "started" as const,
     // Apply settings when this turn starts, not while an existing conversation is busy.
     queueSettings: (status: { model: { provider: string; id: string }; thinkingLevel: string }): PromptQueueSettings | undefined => webhook.model || webhook.reasoning ? {

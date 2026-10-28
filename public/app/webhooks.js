@@ -3,6 +3,7 @@
 // secret the server returns and the relays its owner is on. Every action applies at once.
 // The list pages to the height it is given instead of scrolling.
 import { api } from "./api.js";
+import { createAutomationProfilePicker } from "./provider-profile-picker.js";
 import { copyText, createFittedList, formatWhen, makeBadge, makeButton, makeNode, makeTwoStepButton, showStatus } from "./relay-ui.js";
 
 const byId = (id) => document.getElementById(id);
@@ -35,8 +36,11 @@ let secretAccounts = [];
 const errorText = (error) => error?.message || "Something went wrong";
 const endpoint = (suffix = "") => `/api/webhooks${suffix}?nodeId=${encodeURIComponent(field.owner.value)}`;
 
+const profilePicker = createAutomationProfilePicker(field.model.closest("label"), "webhooks-provider-profile", () => api(endpoint("/profiles")));
+
 /** The body a PUT or POST sends: everything about the webhook, so saving one setting keeps the others. */
 const hookBody = (hook, changes = {}) => JSON.stringify({
+  providerProfileId: hook.providerProfileId ?? null,
   name: hook.name, target: hook.target, context: hook.context, enabled: hook.enabled, attachments: hook.attachments, markForReview: hook.markForReview, senders: hook.senders, model: hook.model, reasoning: hook.reasoning, secretAccountIds: hook.secretAccountIds, titleTemplate: hook.titleTemplate, ...changes,
 });
 
@@ -322,6 +326,7 @@ async function openForm(hook = null) {
   field.name.value = hook?.name ?? "";
   field.kind.value = hook?.target.kind ?? "project";
   fillHarnesses(hook?.target.engine ?? "");
+  void profilePicker.refresh(hook?.providerProfileId ?? null);
   renderExecution(hook?.model ? `${hook.model.provider}|${hook.model.modelId}` : "", hook?.reasoning ?? "");
   field.context.value = hook?.context ?? "";
   field.titleTemplate.value = hook?.titleTemplate ?? "";
@@ -373,7 +378,10 @@ async function submit(event) {
   const senders = field.sendersEnabled.checked
     ? { fields: field.senderFields.value.split(/[\s,]+/).filter(Boolean), allowed: parseAllowed(field.allowedSenders.value) }
     : null;
-  const body = JSON.stringify({ name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: selectedSecrets(), titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
+  let providerProfileId;
+  try { providerProfileId = profilePicker.value(); }
+  catch (error) { showStatus(status, errorText(error), "error"); return; }
+  const body = JSON.stringify({ providerProfileId, name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: selectedSecrets(), titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
   saving = true;
   field.save.disabled = true;
   field.owner.disabled = true;

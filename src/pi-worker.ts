@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { ModelRuntime, type AgentSession, type AgentSessionEvent, type readStoredCredential } from "@earendil-works/pi-coding-agent";
+import { createSessionModelRuntime } from "./provider-profiles/pi.js";
 import { createCoreSession, type PiCoreHooks, type PiCoreInputs, type PiCredentials, type PiSessionHandle } from "./pi-session-core.js";
 
 const sessions = new Map<string, PiSessionHandle>();
@@ -83,7 +84,11 @@ async function open(key: string, inputs: PiCoreInputs) {
     credentials: async (sessionId, logical) => await hook(key, "credentials", [sessionId, logical]) as PiCredentials,
     resources: async (logical) => await hook(key, "resources", [logical]) as Awaited<ReturnType<PiCoreHooks["resources"]>>,
   };
-  const handle = await createCoreSession(await runtime(), inputs, hooks);
+  const models = await createSessionModelRuntime(
+    async (provider) => await hook(key, "modelCredential", [provider]) as Credential | undefined,
+    async () => await hook(key, "modelCredentialList", []) as Array<{ providerId: string; type: Credential["type"] }>,
+  );
+  const handle = await createCoreSession(models, inputs, hooks);
   sessions.set(key, handle);
   handle.session.subscribe((event: AgentSessionEvent) => {
     if (STREAMING.has(event.type)) { send({ event: "session", key, payload: clone(event) }); return; }
@@ -112,7 +117,7 @@ async function call(key: string, op: string, args: unknown[]): Promise<unknown> 
     }
     case "getAuth": {
       const [provider, modelId] = args as [string, string];
-      const models = await runtime();
+      const models = handle.session.modelRuntime;
       await models.getAvailable();
       const model = models.getModel(provider, modelId);
       return Boolean(model && await models.getAuth(model));

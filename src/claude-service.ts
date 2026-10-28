@@ -1,4 +1,5 @@
 import { failUnobservedConversationWork, recordConversationWork } from "./conversation-work.js";
+import { selectedClaudeConfigPath, selectedClaudeEnvironment } from "./provider-profiles/execution.js";
 import { claudeSubscriptionEnvironment, currentRuntime, spawnInRuntime } from "./account-runtime.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { isInternalSession } from "./internal-sessions.js";
@@ -85,6 +86,8 @@ function blockText(content: unknown): string {
 }
 
 export function claudeConfigPath(): string | undefined {
+  const selected = selectedClaudeConfigPath();
+  if (selected) return selected;
   const configPath = getSettings().claude.configPath;
   const defaultPath = path.join(os.homedir(), ".claude");
   return configPath && path.resolve(configPath) !== defaultPath ? configPath : undefined;
@@ -99,7 +102,8 @@ const trustedWorkspaces = new Set<string>();
  */
 function trustWorkspace(cwd: string): void {
   const workspace = path.resolve(cwd);
-  if (trustedWorkspaces.has(workspace)) return;
+  const trustKey = `${claudeConfigPath() ?? ""}\n${workspace}`;
+  if (trustedWorkspaces.has(trustKey)) return;
   const configFile = path.join(claudeConfigPath() ?? os.homedir(), ".claude.json");
   let config: UnknownRecord = {};
   try {
@@ -114,7 +118,7 @@ function trustWorkspace(cwd: string): void {
     mkdirSync(path.dirname(configFile), { recursive: true });
     writeFileSync(configFile, JSON.stringify(config, null, 2));
   }
-  trustedWorkspaces.add(workspace);
+  trustedWorkspaces.add(trustKey);
 }
 
 export function claudeProjectsRoot(): string {
@@ -664,13 +668,13 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const child = spawnInRuntime(currentRuntime(), settings.executable || "claude", args, {
     detached: process.platform !== "win32",
     cwd: options.cwd,
-    env: {
+    env: selectedClaudeEnvironment({
       ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}), ...claudeSubscriptionEnvironment(), ...claudeIsolationEnvironment(),
       // `claude -p` otherwise stops background agents 10 minutes after the turn's answer, and the
       // next turn finds them "stopped". Their task_progress events keep the turn active, so Joint
       // Bob's inactivity watchdog decides when one is stale instead.
       CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0",
-    },
+    }),
     stdio: ["pipe", "pipe", "pipe"],
   });
   // Claude can exit before reading its prompt (a broken install, an unknown flag). The run then

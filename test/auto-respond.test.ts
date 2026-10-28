@@ -301,7 +301,7 @@ test("a responder cancelled before its turn starts never prompts its harness", a
     // cannot be cancelled, so the run itself must not start the turn.
     const controller = new AbortController();
     controller.abort("user-stop");
-    await assert.rejects(runAutoResponder({ projectId: project.id, conversationId: "cancelled-early", cwd: root, config, prompt: "Decide.", signal: controller.signal }), /cancelled/);
+    await assert.rejects(runAutoResponder({ creatorAccountId: "test-creator", projectId: project.id, conversationId: "cancelled-early", cwd: root, config, prompt: "Decide.", signal: controller.signal }), /cancelled/);
     const methods = (await readFile(wire, "utf8").catch(() => "")).trim().split("\n");
     assert.equal(methods.includes("session/prompt"), false, `the responder never prompted (${methods.join(", ")})`);
   } finally {

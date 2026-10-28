@@ -99,17 +99,20 @@ export class PiSession implements HarnessSession {
   }
 
   async preflight(): Promise<void> {
-    await service.reloadPiAuth();
     const model = this.handle.session.model;
-    if (!model || !await this.handle.session.modelRuntime.getAuth(model)) {
-      throw new Error("Pi model authentication unavailable on this node");
-    }
+    if (!model) throw new Error("Pi session has no selected model");
+    const check = async () => {
+      if (!await this.handle.session.modelRuntime.getAuth(model)) throw new Error("Pi model authentication unavailable on this node");
+    };
+    if (this.handle.withModelProfile) await this.handle.withModelProfile(model.provider, check);
+    else { await service.reloadPiAuth(); await check(); }
   }
 
   async prompt(input: HarnessPrompt): Promise<void> {
     if (this.handle.reloadingSkills) throw new Error("Pi session is reloading skills");
     let started = false;
     await service.promptIdlePiSession(this.handle, async () => {
+      const send = async () => {
       await input.beforeStart?.();
       const previousLastMessage = this.handle.session.messages.at(-1);
       const unsubscribe = this.handle.session.subscribe((event) => {
@@ -132,6 +135,10 @@ export class PiSession implements HarnessSession {
       } finally {
         unsubscribe();
       }
+      };
+      const provider = this.handle.session.model?.provider;
+      if (this.handle.withModelProfile && provider) await this.handle.withModelProfile(provider, send);
+      else await send();
     });
   }
 
@@ -174,7 +181,9 @@ export class PiSession implements HarnessSession {
   async compact(instructions?: string, beforeStart?: () => Promise<void>): Promise<void> {
     if (service.sessionIsBusy(this.handle)) throw new Error("Pi session is busy");
     await beforeStart?.();
-    await this.handle.session.compact(instructions);
+    const provider = this.handle.session.model?.provider;
+    if (this.handle.withModelProfile && provider) await this.handle.withModelProfile(provider, () => this.handle.session.compact(instructions));
+    else await this.handle.session.compact(instructions);
   }
 
   async rename(name: string): Promise<void> {

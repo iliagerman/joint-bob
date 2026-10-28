@@ -50,6 +50,9 @@ function fixture() {
   const options: any = { socket, project: { id: "project" }, engine: "pi", sessionId: "conversation", conversationId: "conversation", cwd: "/synthetic", taskId: null, accountIds: [], readOnly: false, ownership: {}, handoffContext: null, autoStartPrompt: null };
   const mocks: Record<string, any> = {
     resourceOwner: () => undefined, flags: {}, getProjectLock: async () => null,
+    withoutAutomationProfile: (action: () => any) => action(),
+    runAsAccount: (_account: unknown, action: () => any) => action(),
+    runWithAutomationProfile: (_assignment: unknown, action: () => any) => action(),
     queuedSettingsSchema: { parse: (value: any) => value }, socketMessageSchema: { parse: (value: any) => value },
     getConversationRecord: async () => ({ conversationId: "conversation", ...(scheduled ? { cronTaskId: "schedule" } : {}) }),
     getClusterNode: async () => ({ id: "local" }),
@@ -79,6 +82,7 @@ function fixture() {
     listConversationSegments: async () => [],
     send: (client: any, frame: any) => { if (client.readyState === 1) client.frames.push(structuredClone(frame)); },
     listQueuedPrompts: () => queue,
+    assertQueuedPromptEditor: () => {},
     isScheduledPromptText: () => false,
     conversationBelongsToDoneTask: async () => false,
     requireLocalConversationOwner: async () => {}, markHarnessInput: () => {},

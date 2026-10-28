@@ -28,6 +28,7 @@ export interface PiSessionHandle {
   refreshResources?: () => Promise<void>;
   /** Credentials the next model call uses, sent with each prompt by a remote server. */
   setCredentials?: (credentials: PiCredentials) => void;
+  withModelProfile?: <T>(provider: string, work: () => Promise<T>) => Promise<T>;
 }
 
 export interface PiCredentials {
@@ -65,6 +66,8 @@ export interface PiCoreHooks {
   /** In-process only: fresh credentials for the model call a user message starts. */
   credentialsNow?(sessionId: string, conversationId: string): PiCredentials;
   resources(conversationId: string): Promise<PiResources>;
+  modelCredential?(provider: string): Promise<NonNullable<ReturnType<typeof import("@earendil-works/pi-coding-agent").readStoredCredential>> | undefined>;
+  modelCredentialList?(): Promise<Array<{ providerId: string; type: "oauth" | "api_key" }>>;
 }
 
 type UnknownRecord = Record<string, unknown>;

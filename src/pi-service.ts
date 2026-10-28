@@ -273,8 +273,22 @@ function preferredModel(available: readonly AvailableModel[]): AvailableModel | 
   );
 }
 
+async function availableModelsWithProfiles() {
+  const available = [...await modelRuntime.getAvailable()];
+  const { actingAccount } = await import("./account-context.js");
+  const { adminAccountId } = await import("./ownership.js");
+  const owner = actingAccount()?.accountId ?? adminAccountId();
+  if (!owner || available.some((model) => model.provider === "openai-codex")) return available;
+  const { listProviderProfiles } = await import("./provider-profiles/store.js");
+  const { openAIAuthPath } = await import("./provider-profiles/service.js");
+  if (listProviderProfiles(owner).some((profile) => profile.provider === "openai-codex" && readStoredCredential("openai-codex", openAIAuthPath(profile))?.type === "oauth")) {
+    available.push(...modelRuntime.getModels("openai-codex"));
+  }
+  return available;
+}
+
 export async function listAvailableModels(): Promise<ModelSummary[]> {
-  const available = await modelRuntime.getAvailable();
+  const available = await availableModelsWithProfiles();
   const preferred = preferredModel(available);
   return available
     .filter((model) => !isDeprecatedDefault(model) && !isSupersededGlm(model) && !model.id.startsWith("gpt-5.6-"))
@@ -292,7 +306,7 @@ export async function listAvailableModels(): Promise<ModelSummary[]> {
     families listAvailableModels keeps out of pickers. Settings saved before a family was retired
     still name them, and a turn interrupted by an update resumes on the model it was using. */
 export async function modelIsRunnable(provider: string, modelId: string): Promise<boolean> {
-  return (await modelRuntime.getAvailable()).some((model) => model.provider === provider && model.id === modelId);
+  return (await availableModelsWithProfiles()).some((model) => model.provider === provider && model.id === modelId);
 }
 
 export function modelThinkingLevels(provider: string, modelId: string): string[] {
@@ -651,18 +665,33 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
 }
 
 export async function createPiSession(options: PiSessionOptions): Promise<PiSessionHandle> {
-  // In multi-user mode the session runs in a worker under the project's OS account.
+  const profiles = await import("./provider-profiles/service.js");
+  const { useProviderProfile } = await import("./provider-profiles/execution.js");
+  const { createSessionModelRuntime } = await import("./provider-profiles/pi.js");
+  const hooks = piSessionHooks(options);
+  let conversationId = options.conversationId ?? options.sessionId;
+  const logicalId = hooks.conversationId;
+  hooks.conversationId = async (id) => (conversationId = await logicalId(id));
+  let selected: import("./provider-profiles/store.js").ProviderProfile | undefined;
+  hooks.modelCredential = async (provider) => provider === "openai-codex" && selected
+    ? profiles.refreshedProfileCredential(selected) : nodePiCredential(provider);
+  hooks.modelCredentialList = async () => {
+    const entries = await nodePiCredentialList() as Array<{ providerId: string; type: "oauth" | "api_key" }>;
+    return selected ? [...entries.filter((entry) => entry.providerId !== "openai-codex"), { providerId: "openai-codex", type: "oauth" }] : entries;
+  };
   const runtime = currentRuntime();
-  if (runtime.name) return (await import("./harnesses/pi/remote.js")).createRemotePiSession(options, runtime, piSessionHooks(options), piSessionDefaults());
-  return createCoreSession(modelRuntime, {
-    cwd: options.cwd,
-    agentDir: getAgentDir(),
-    sessionRoot: piSessionPath(),
-    sessionPath: options.sessionPath,
-    sessionId: options.sessionId,
-    safeguardsEnabled: options.safeguardsEnabled,
-    defaults: piSessionDefaults(),
-  }, piSessionHooks(options));
+  const handle = runtime.name
+    ? await (await import("./harnesses/pi/remote.js")).createRemotePiSession(options, runtime, hooks, piSessionDefaults())
+    : await createCoreSession(await createSessionModelRuntime(hooks.modelCredential, hooks.modelCredentialList), {
+      cwd: options.cwd, agentDir: getAgentDir(), sessionRoot: piSessionPath(), sessionPath: options.sessionPath,
+      sessionId: options.sessionId, safeguardsEnabled: options.safeguardsEnabled, defaults: piSessionDefaults(),
+    }, hooks);
+  handle.withModelProfile = async (provider, work) => {
+    selected = await profiles.projectProviderProfile(options.projectId, conversationId, provider);
+    if (selected) await profiles.refreshedProfileCredential(selected);
+    return useProviderProfile(selected, work);
+  };
+  return handle;
 }
 
 export function piSessionDefaults(): PiCoreInputs["defaults"] {

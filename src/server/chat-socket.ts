@@ -1,3 +1,4 @@
+import { queuedAutomationProfileSchema } from "../prompt-queue.js";
 import { isTrustedTwin } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { randomUUID } from "node:crypto";
@@ -528,7 +529,11 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
   const conversationReadOnly = sessionReadOnly || task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
   try {
     const startCommand = getSettings().conversationCommands.start;
+    const rawAutomationProfile = url.searchParams.get("automationProfile");
+    if (rawAutomationProfile && signedPeer !== local.id) throw new Error("Automation profile context requires a signed local request");
+    const automationProfile = rawAutomationProfile ? queuedAutomationProfileSchema.parse({ ...JSON.parse(rawAutomationProfile), nodeId: local.id }) : undefined;
     await attachHarnessChat({
+      automationProfile,
       socket, project, taskId: task?.id ?? null, cwd, engine: sessionRequest.engine,
       sessionId: ownershipSessionId, sessionPath: sessionRequest.sessionPath,
       accountIds: secretAccountIds, readOnly: conversationReadOnly, ownership: foreignOwner,

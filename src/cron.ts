@@ -26,6 +26,8 @@ const cronModelSchema = z.object({
   reasoning: reasoningSchema.optional(),
 }).strict();
 export const cronInputSchema = z.object({
+  creatorAccountId: z.string().min(1).nullable().optional(),
+  providerProfileId: z.string().min(1).nullable().optional(),
   projectId: z.string().min(1).max(240), name: z.string().trim().min(1).max(120),
   prompt: z.string().trim().min(1).max(100000), ownerNodeId: z.string().uuid(),
   engine: z.string().refine(isHarnessId, "Harness ID is invalid")
@@ -102,7 +104,7 @@ export class CronStore {
   }
   get(id: string): CronTask | null {
     const row = this.db.prepare("SELECT * FROM cron_tasks WHERE id = ?").get(id) as { id: string; input: string; next_run: number } | undefined;
-    return row ? { ...cronInputSchema.parse(JSON.parse(row.input)), id: row.id, nextRun: row.next_run, lastRun: this.history(id, 1)[0] ?? null } : null;
+    return row ? { creatorAccountId: null, providerProfileId: null, ...cronInputSchema.parse(JSON.parse(row.input)), id: row.id, nextRun: row.next_run, lastRun: this.history(id, 1)[0] ?? null } : null;
   }
   list(projectId?: string): CronTask[] {
     const rows = (projectId === undefined ? this.db.prepare("SELECT id FROM cron_tasks").all() : this.db.prepare("SELECT id FROM cron_tasks WHERE project_id = ?").all(projectId)) as { id: string }[];

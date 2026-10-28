@@ -6,6 +6,7 @@ import { z } from "zod";
 import { resolveDataDirectory } from "./data-directory.js";
 import { messageAuthorSchema, type MessageAuthor } from "./message-author-schema.js";
 import { authorTextHash } from "./message-authors.js";
+import { accessibleProviderProfile } from "./provider-profiles/store.js";
 import type { ChatMessage } from "./types.js";
 
 export type AutoRespondStatus = "active" | "stopped" | "off";
@@ -25,6 +26,7 @@ export const DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS = [
 ].map((line) => `- ${line}`).join("\n");
 
 export const autoRespondConfigSchema = z.object({
+  providerProfileId: z.string().uuid().nullable().default(null),
   harnessId: z.string().min(1).max(100),
   provider: z.string().trim().min(1).max(200),
   modelId: z.string().trim().min(1).max(300),
@@ -35,9 +37,10 @@ export const autoRespondConfigSchema = z.object({
   /** The responder may read the project and run commands to check the agent's work. */
   useTools: z.boolean().default(true),
 }).strict();
-export type AutoRespondConfig = z.infer<typeof autoRespondConfigSchema>;
+export type AutoRespondConfig = z.input<typeof autoRespondConfigSchema>;
 
 export interface AutoRespondState extends AutoRespondConfig {
+  creatorAccountId: string | null;
   projectId: string;
   conversationId: string;
   status: AutoRespondStatus;
@@ -86,8 +89,10 @@ async function database(): Promise<DatabaseSync> {
 }
 
 function fromRow(row: Row): AutoRespondState {
+  const { creatorAccountId = null, ...config } = JSON.parse(row.config);
   return {
-    ...autoRespondConfigSchema.parse(JSON.parse(row.config)),
+    ...autoRespondConfigSchema.parse(config),
+    creatorAccountId,
     projectId: row.project_id, conversationId: row.conversation_id, status: row.status,
     stopKind: row.stop_kind, stopReason: row.stop_reason, responses: row.responses, answeredKey: row.answered_key,
     enabledBy: row.enabled_by ? messageAuthorSchema.parse(JSON.parse(row.enabled_by)) : null,
@@ -132,12 +137,20 @@ export async function getAutoRespond(projectId: string, conversationId: string):
   return select(await database(), projectId, conversationId);
 }
 
+export function validateAutoRespondProfile(accountId: string | null, config: AutoRespondConfig): void {
+  if (!config.providerProfileId) return;
+  if (!accountId) throw new Error("An authenticated creator is required for a provider profile");
+  const profile = accessibleProviderProfile(accountId, config.providerProfileId, "automation");
+  if (profile.provider !== config.provider) throw new Error("Profile provider does not match responder provider");
+}
+
 /** Turns auto respond on (resuming a stopped one and zeroing its count) with this configuration. */
-export async function enableAutoRespond(projectId: string, conversationId: string, config: AutoRespondConfig, enabledBy: MessageAuthor | null): Promise<AutoRespondState> {
+export async function enableAutoRespond(projectId: string, conversationId: string, config: AutoRespondConfig, enabledBy: MessageAuthor | null, creatorAccountId: string | null = enabledBy?.accountId ?? null): Promise<AutoRespondState> {
   const parsed = autoRespondConfigSchema.parse(config);
+  validateAutoRespondProfile(creatorAccountId, parsed);
   return (await change(projectId, conversationId, (current) => ({
     ...parsed, projectId, conversationId, status: "active", stopKind: null, stopReason: null,
-    responses: 0, answeredKey: null, enabledBy,
+    responses: 0, answeredKey: null, enabledBy, creatorAccountId,
   })))!;
 }
 

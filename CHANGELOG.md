@@ -3,6 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added Claude and ChatGPT subscription profiles that each user can pick for conversations, projects, workspaces, and scheduled, webhook, and automatic-reply runs.
+
+## 2.162.0 — 2026-10-28
+
+- Added separate Claude and ChatGPT subscription profiles, with per-user defaults and workspace, project, and conversation selections. Pi and Claude turns use the selected profile, with node-local sign-in and token refresh.
+- Added profile assignments for schedules, webhooks, and automatic replies. Automations can use their creator's current profile or a pinned profile; profiles shared for automation cannot be used in interactive turns.
+
 ## 2.161.2 — 2026-10-26
 
 - Fixed conversation lists and usage totals failing with "Unterminated string in JSON" when a transcript had a damaged line, such as one cut short by a full disk; the damaged line is now skipped and logged once, and the rest of the list loads. Forking a conversation with a damaged history still refuses.

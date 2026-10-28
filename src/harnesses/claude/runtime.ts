@@ -1,3 +1,4 @@
+import { withClaudeProfile } from "../../provider-profiles/execution.js";
 import { claudeSubscriptionEnvironment, runtimeExec } from "../../account-runtime.js";
 import { execFile } from "../../subprocess.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -151,7 +152,7 @@ class ClaudeSession implements HarnessSession {
 
   async preflight(): Promise<void> {
     const { env } = await this.currentEnvironment();
-    await preflightQueuedClaude(this.options.cwd, env);
+    await withClaudeProfile(this.options.projectId, this.options.conversationId ?? this.id, () => preflightQueuedClaude(this.options.cwd, env));
   }
 
   private recordTurnEvent(event: HarnessEvent, turn: TurnTranscript): void {
@@ -203,6 +204,10 @@ class ClaudeSession implements HarnessSession {
   }
 
   async prompt(input: HarnessPrompt): Promise<void> {
+    await withClaudeProfile(this.options.projectId, this.options.conversationId ?? this.id, () => this.promptWithProfile(input));
+  }
+
+  private async promptWithProfile(input: HarnessPrompt): Promise<void> {
     if (this.running) throw new Error("Claude session is busy");
     this.running = true;
     this.stopReason = undefined;
@@ -386,6 +391,14 @@ const runtime: HarnessRuntime = {
   },
 
   async signInProblems() {
+    const { actingAccount } = await import("../../account-context.js");
+    const { adminAccountId } = await import("../../ownership.js");
+    const { listProviderProfiles } = await import("../../provider-profiles/store.js");
+    const { profileLoginState } = await import("../../provider-profiles/service.js");
+    const owner = actingAccount()?.accountId ?? adminAccountId();
+    if (owner) for (const profile of listProviderProfiles(owner).filter((entry) => entry.provider === "claude")) {
+      if ((await profileLoginState(profile)).signedIn) return [];
+    }
     const configPath = claudeConfigPath();
     // `claude auth status` exits non-zero when no account or API provider is configured.
     try {

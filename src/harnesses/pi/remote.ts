@@ -279,6 +279,11 @@ function pinnedHooks(hooks: PiCoreHooks, expectedSessionId: string | undefined):
     persistAccounts: async (id) => { session(id); await hooks.persistAccounts(id); },
     credentials: async (id, logical) => { session(id); conversation(logical); return hooks.credentials(id, logical); },
     resources: async (logical) => { conversation(logical); return hooks.resources(logical); },
+    modelCredential: async (provider) => {
+      if (typeof provider !== "string" || provider.length > 200) throw new Error("Invalid model provider");
+      return hooks.modelCredential!(provider);
+    },
+    modelCredentialList: () => hooks.modelCredentialList!(),
   };
 }
 

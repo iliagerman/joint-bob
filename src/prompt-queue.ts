@@ -16,14 +16,16 @@ export const queuedSettingsSchema = z.object({
   claudeTools: z.object({ available: z.array(z.string()), enabled: z.array(z.string()).nullable() }).strict().optional(),
 }).strict();
 export type QueuedSettings = z.infer<typeof queuedSettingsSchema>;
+export const queuedAutomationProfileSchema = z.object({ accountId: z.string().min(1), profileId: z.string().min(1).nullable(), nodeId: z.string().min(1) }).strict();
 const promptSchema = z.object({
+  automationProfile: queuedAutomationProfileSchema.optional(),
   id: z.string().uuid(), requestId: z.string().uuid().optional(), systemEventId: z.string().uuid().optional(), dispatchState: z.enum(["pending", "starting"]).default("pending"), promptText: z.string(), displayText: z.string(),
   messageText: z.string().nullable(), promptSuffix: z.string().nullable(), displaySuffix: z.string().nullable(),
   attachmentPaths: z.array(z.string()), images: z.array(z.object({ path: z.string(), mimeType: z.string().min(1) }).strict()).default([]), settings: queuedSettingsSchema.nullable(), revision: z.number().int().positive(),
   author: messageAuthorSchema.optional(),
 });
 export type QueuedPrompt = z.infer<typeof promptSchema>;
-interface Metadata { requestId?: string; systemEventId?: string; author?: MessageAuthor; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
+interface Metadata { automationProfile?: z.infer<typeof queuedAutomationProfileSchema>; requestId?: string; systemEventId?: string; author?: MessageAuthor; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
 export type SystemPromptState = "pending" | "starting" | "consumed" | "missing";
 interface Row { id: string; queue_key: string; prompt: string; created_at: string; sequence: number; revision: number; origin_node_id: string }
 export interface QueuedPromptRef { id: string; revision: number }
@@ -315,6 +317,10 @@ export function swapQueuedPrompts(queueKey: string, refs: QueuedPromptRef[]): bo
   });
 }
 
+export function assertQueuedPromptEditor(prompt: QueuedPrompt, accountId: string | undefined): void {
+  if (prompt.automationProfile || prompt.author?.accountId !== accountId) throw new Error("Only the prompt's author may change it; automation prompts are managed by their automation");
+}
+
 export function mergeQueuedPrompts(queueKey: string, refs: QueuedPromptRef[]): QueuedPrompt | null {
   if (refs.length < 2 || new Set(refs.map(({ id }) => id)).size !== refs.length) return null;
   const db = queueDatabase();
@@ -325,6 +331,7 @@ export function mergeQueuedPrompts(queueKey: string, refs: QueuedPromptRef[]): Q
     if (rows.length !== refs.length || rows.some((row) => row.revision !== expected.get(row.id))) return null;
     const prompts = rows.map((row) => promptSchema.parse(JSON.parse(row.prompt)));
     if (prompts.some((prompt) => prompt.dispatchState !== "pending")) return null;
+    if (prompts.some(prompt => JSON.stringify(prompt.automationProfile) !== JSON.stringify(prompts[0].automationProfile) || prompt.author?.accountId !== prompts[0].author?.accountId)) return null;
     const modern = prompts.every((prompt) => prompt.messageText !== null);
     const join = (values: Array<string | null>): string => values.filter((value): value is string => Boolean(value)).join("\n\n");
     const messageText = modern ? join(prompts.map((prompt) => prompt.messageText)) : null;

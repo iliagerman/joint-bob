@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { automationProfileContext, runWithAutomationProfile } from "./automation-profile.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, runtimeFetch } from "./runtime-peers.js";
@@ -59,6 +60,7 @@ async function prepareConversation(task: CronTask): Promise<string> {
 export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: string): Promise<void> {
   const reasoning = task.reasoning ?? task.model?.reasoning;
   await queueConversationPrompt({
+    automationProfile: automationProfileContext(task),
     projectId: task.projectId, engine: task.engine, sessionId, message: scheduledPromptText(task.prompt), requestId: run.id, label: "Scheduled", until: "completed",
     // Model and reasoning ride along with the queued prompt instead of
     // configuring the live session here: unrelated scheduled tasks share a
@@ -76,12 +78,14 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
 
 async function executeCronRun(task: CronTask, run: CronRun): Promise<void> {
   try {
-    const sessionId = await prepareConversation(task);
-    await ensureConversationRecord(task.projectId, task.engine, sessionId, task.ownerNodeId);
-    await markCronConversation(task.projectId, task.engine, sessionId, task.id, task.ownerNodeId);
-    cronStore().target(run.id, sessionId);
-    await queuedCronPrompt(task, run, sessionId);
-    cronStore().finish(run.id, "succeeded", null);
+    await runWithAutomationProfile(task, async () => {
+      const sessionId = await prepareConversation(task);
+      await ensureConversationRecord(task.projectId, task.engine, sessionId, task.ownerNodeId);
+      await markCronConversation(task.projectId, task.engine, sessionId, task.id, task.ownerNodeId);
+      cronStore().target(run.id, sessionId);
+      await queuedCronPrompt(task, run, sessionId);
+      cronStore().finish(run.id, "succeeded", null);
+    });
   } catch (error) {
     // A used-up budget is not the task's fault: the run is recorded, the task stays enabled.
     if (error instanceof Error && /Budget reached:/.test(error.message)) { cronStore().finish(run.id, "failed", error.message); return; }

@@ -6,6 +6,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
+import { actingAccount } from "../../account-context.js";
+import { assertAutomationCreator } from "../automation-profile.js";
+import { accessibleProviderProfile, listAccessibleProviderProfiles } from "../../provider-profiles/store.js";
 import { getClusterNode } from "../../cluster.js";
 import { signClusterRequest } from "../../cluster-protocol.js";
 import { isTrustedTwin } from "../../cluster-sharing-policy.js";
@@ -182,6 +185,7 @@ async function checkTarget(input: WebhookInput): Promise<void> {
 }
 
 const commandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("profiles"), accountId: z.string().nullable().optional() }).strict(),
   z.object({ action: z.literal("list") }).strict(),
   z.object({ action: z.literal("projects") }).strict(),
   z.object({ action: z.literal("options") }).strict(),
@@ -197,6 +201,7 @@ type Command = z.infer<typeof commandSchema>;
 /** Always executes locally. A twin may manage a webhook, but never stores a copy of it. */
 async function manage(command: Command): Promise<unknown> {
   const db = await clusterV2Database();
+  if (command.action === "profiles") return { profiles: command.accountId ? listAccessibleProviderProfiles(command.accountId, "automation") : [] };
   if (command.action === "list") return { webhooks: listWebhooks(db), bases: await urlBases(), startupReady: flags.startupReady, telegramSenderFields: TELEGRAM_SENDER_FIELDS };
   if (command.action === "options") {
     const adapters = listHarnesses().filter(({ runtime }) => runtime);
@@ -216,6 +221,15 @@ async function manage(command: Command): Promise<unknown> {
       .map(({ id, title, firstMessage, harnessId }) => ({ id, title, firstMessage, harnessId })) };
   }
   if (command.action === "create" || command.action === "update") {
+    const existing = command.action === "update" ? getWebhook(db, command.id) : undefined;
+    if (existing) assertAutomationCreator(existing.creatorAccountId, command.input.creatorAccountId);
+    if (command.input.providerProfileId) {
+      if (!command.input.creatorAccountId) throw new WebhookError(400, "Sign in to select a profile");
+      accessibleProviderProfile(command.input.creatorAccountId, command.input.providerProfileId, "automation");
+    }
+    command.input.creatorAccountId = existing?.creatorAccountId ?? command.input.creatorAccountId ?? null;
+    command.input.providerProfileId ??= null;
+    if (command.input.providerProfileId) accessibleProviderProfile(command.input.creatorAccountId!, command.input.providerProfileId, "automation");
     await checkTarget(command.input);
     if (command.action === "create") return { ...createWebhook(db, command.input), bases: await urlBases() };
     return { webhook: updateWebhook(db, command.id, command.input) };
@@ -233,6 +247,8 @@ async function twinOwners() {
 }
 
 async function route(request: Request, command: Command): Promise<unknown> {
+  if (command.action === "profiles") command.accountId = actingAccount()?.accountId ?? null;
+  if (command.action === "create" || command.action === "update") command.input.creatorAccountId = actingAccount()?.accountId ?? null;
   const nodeId = z.string().uuid().optional().parse(request.query.nodeId);
   const local = await getClusterNode();
   if (!nodeId || nodeId === local.id) return manage(command);
@@ -263,6 +279,9 @@ app.post("/api/cluster/v2/webhooks", handle(async (request, response) => {
 app.get("/api/webhooks/owners", handle(async (_request, response) => {
   const local = await getClusterNode();
   response.json({ owners: [{ id: local.id, name: local.name, local: true }, ...(await twinOwners()).map(({ id, name }) => ({ id, name, local: false }))] });
+}));
+app.get("/api/webhooks/profiles", handle(async (request, response) => {
+  response.json(await route(request, { action: "profiles" }));
 }));
 app.get("/api/webhooks/options", handle(async (request, response) => {
   response.json(await route(request, { action: "options" }));
