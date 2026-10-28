@@ -12,7 +12,7 @@ import { abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, commitPrepare
 import { getRuntimePeer } from '../runtime-peers.js';
 import type { HarnessId, TaskRecord } from "../../types.js";
 import { type PreparedTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree } from "../../worktrees.js";
-import { assertTaskFilesReady, taskConversationIdentity, taskHandoffEligibility } from "../cluster-helpers.js";
+import { assertTaskFilesReady, peerMayRunHere, taskConversationIdentity, taskHandoffEligibility } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { announceConversationsChanged, broadcastReplicationInvalidations, broadcastSessionsChangedToAllProjects, broadcastToProject } from "../realtime.js";
 import { clusterNodeSchema, preparedTaskSchema, pushSubscriptionBatchSchema, replicationBatchSchema, runtimeSnapshotSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
@@ -201,6 +201,7 @@ app.post(["/api/cluster/tasks/eligibility", "/api/cluster/v2/runtime/tasks/eligi
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = taskEligibilitySchema.parse(request.body);
     const eligibility = await taskHandoffEligibility(payload.projectId, payload.task as TaskRecord, !payload.source);
+    if (!payload.source && !await peerMayRunHere(response.locals.machineNodeId)) eligibility.reasons.push("This node does not accept runs from other nodes");
     response.json({ eligible: eligibility.reasons.length === 0, ...eligibility });
   } catch (error) { next(error); }
 });
@@ -218,6 +219,7 @@ app.post(["/api/cluster/tasks/status", "/api/cluster/v2/runtime/tasks/status"], 
 app.post(["/api/cluster/tasks/prepare", "/api/cluster/v2/runtime/tasks/prepare"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    if (!await peerMayRunHere(response.locals.machineNodeId)) { sendError(response, 403, "This node does not accept runs from other nodes"); return; }
     const payload = preparedTaskSchema.parse(request.body);
     if (await isTaskHandoffRejected(payload.handoffId)) { sendError(response, 409, `Handoff ${payload.handoffId} is rejected`); return; }
     const task = payload.task as TaskRecord;

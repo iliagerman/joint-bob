@@ -28,7 +28,7 @@ import { ProjectFilesUnavailableError, ProjectNotSynchronizedError, rescanProjec
 import { warnOnChange } from "../quiet-log.js";
 import { listTasks, unmergedWorkspaceBlocksClose } from "../../tasks.js";
 import { sessionWatcher } from "../chat.js";
-import { clusterPeerMayAccessProject, conversationBelongsToDoneTask, mappedPathInsideHome, peerMayOpenTerminal } from "../cluster-helpers.js";
+import { clusterPeerMayAccessProject, conversationBelongsToDoneTask, mappedPathInsideHome, peerMayOpenTerminal, peerMayRunHere } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable, projectsWithSharedNames, projectView, relocateProjectWorkspace } from "../projects.js";
 import { broadcastToProject, projectAudience } from "../realtime.js";
@@ -369,7 +369,7 @@ app.get('/api/cluster/projects/presence',async(request,response,next)=>{
     if(!response.locals.machineAuth){sendError(response,401,'Unauthorized');return;}
     const projectId=z.string().min(1).parse(request.query.projectId);
     if(!await clusterPeerMayAccessProject(response.locals.machineNodeId,projectId)){sendError(response,403,'Project is not shared with this node');return;}
-    response.json({mapped:Boolean(await getProject(projectId)),terminal:terminalAccessSettings().mode!=="off"&&await peerMayOpenTerminal(response.locals.machineNodeId)});
+    response.json({mapped:Boolean(await getProject(projectId)),terminal:terminalAccessSettings().mode!=="off"&&await peerMayOpenTerminal(response.locals.machineNodeId),runner:await peerMayRunHere(response.locals.machineNodeId)});
   }catch(error){next(error);}
 });
 
@@ -392,16 +392,16 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
         const presence=await peerSnapshot(`presence:${project.id}`,peer.id,async()=>{
           const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(PRESENCE_LIMIT_MS)});
           if(!reply.ok)throw new Error('Project presence unavailable');
-          return await reply.json() as {mapped:boolean;terminal?:boolean};
+          return await reply.json() as {mapped:boolean;terminal?:boolean;runner?:boolean};
         },{waitMs:PRESENCE_LIMIT_MS});
-        // A peer that predates the terminal setting does not restrict it.
-        return {id:peer.id,name:peer.name,local:false,online:presence.fresh,mapped:presence.value.mapped,terminal:presence.value.terminal!==false};
+        // A peer that predates the terminal or runner setting does not restrict it.
+        return {id:peer.id,name:peer.name,local:false,online:presence.fresh,mapped:presence.value.mapped,terminal:presence.value.terminal!==false,runner:presence.value.runner!==false};
       } catch {
-        return { id: peer.id, name: peer.name, local: false, online: false, mapped: false, terminal: false };
+        return { id: peer.id, name: peer.name, local: false, online: false, mapped: false, terminal: false, runner: false };
       }
     }));
     // The local terminal follows the admin's policy for the signed-in person.
-    response.json({ nodes: [{ id: local.id, name: local.name, local: true, online: true, mapped: true, terminal: terminalAllowedFor(actingAccount()) }, ...peerNodes] });
+    response.json({ nodes: [{ id: local.id, name: local.name, local: true, online: true, mapped: true, terminal: terminalAllowedFor(actingAccount()), runner: true }, ...peerNodes] });
   } catch (error) {
     next(error);
   }

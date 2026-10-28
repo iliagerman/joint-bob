@@ -28,7 +28,7 @@ import { listTasks } from "../../tasks.js";
 import type { ProjectRecord, SessionSummary } from "../../types.js";
 import { TaskWorktreeError } from "../../worktrees.js";
 import { promptQueueIsDraining } from "../chat.js";
-import { conversationBelongsToDoneTask } from "../cluster-helpers.js";
+import { conversationBelongsToDoneTask, peerMayRunHere } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { flushReplicationOutbox } from "../maintenance.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
@@ -655,6 +655,7 @@ app.get("/api/running", async (_request, response, next) => {
 app.post(["/api/cluster/sessions/take-ownership", "/api/cluster/v2/runtime/sessions/take-ownership"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    if (!await peerMayRunHere(response.locals.machineNodeId)) { sendError(response, 403, "This node does not accept runs from other nodes"); return; }
     const payload = routedSessionTakeOwnershipSchema.parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }

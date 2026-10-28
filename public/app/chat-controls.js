@@ -111,8 +111,8 @@ export function renderChatSessionControls() {
   syncBackgroundTasks();
   syncSelectOptions(elements.chatNodeSelect, state.sessionNodes.map((node) => ({
     value: node.id,
-    label: `${node.name}${node.local ? " · local" : ""}${!node.online ? " · offline" : !node.mapped ? " · map required" : ""}`,
-    disabled: !node.online || !node.mapped,
+    label: `${node.name}${node.local ? " · local" : ""}${!node.online ? " · offline" : !node.mapped ? " · map required" : !node.runner ? " · not accepting runs" : ""}`,
+    disabled: !node.online || !node.mapped || !node.runner,
   })));
   elements.chatNodeSelect.value = state.activeNodeId || "";
   const activeTicket = state.activeTaskId ? state.tasks.find((task) => task.id === state.activeTaskId) : null;

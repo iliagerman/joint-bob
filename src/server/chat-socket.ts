@@ -14,7 +14,7 @@ import WebSocket from "ws";
 import { authSessionEvents, sessionCookieNameFor, sessionForId } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSocket } from "./runtime-peers.js";
-import { clusterPeerMayAccessProject, peerMayOpenTerminal } from "./cluster-helpers.js";
+import { clusterPeerMayAccessProject, peerMayOpenTerminal, peerMayRunHere } from "./cluster-helpers.js";
 import { type ConversationEngine, getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, getConversationRecord, listConversationSegments, parseConversationDraftPath, setConversationWorktree } from "../conversation-records.js";
 import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
@@ -222,6 +222,8 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
   }
   if(signedPeer){
     if(signedPeer!==(await getClusterNode()).id&&!await clusterPeerMayAccessProject(signedPeer,project.id)){socket.close(1008,'Project is not shared with this node');return;}
+    // Opening a conversation through a peer runs it here; only the read-only project watch and the terminal (own policy) and browser sockets are exempt.
+    if(!browserMode&&url.searchParams.get("sessionPath")!=="watch"&&!await peerMayRunHere(signedPeer)){socket.close(1008,'This node does not accept runs from other nodes');return;}
     trackRuntimeSocket(socket,signedPeer,project.id);
   }
   const taskIdResult = socketTaskIdSchema.safeParse(url.searchParams.get("taskId"));

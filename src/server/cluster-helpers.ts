@@ -10,7 +10,7 @@ import { listConversationRecords } from "../conversation-records.js";
 import type { ConversationEngine } from "../conversation-ownership.js";
 import { getHarness, getHarnessRuntime, harnessForSessionPath } from "../harnesses.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
-import { getSettings, remoteTerminalAllowed, remoteTerminalSettings } from "../settings.js";
+import { getSettings, remoteTerminalAllowed, remoteTerminalSettings, runnerAccessSettings } from "../settings.js";
 import { canonicalProjectId, getProject, listProjects, listWorkspaces } from "../store.js";
 import { assertProjectFilesReady, HANDOFF_POLL_FLUSH_MS, projectFilesHandoffPart, type HandoffFiles, type ProjectShareKind, taskShareStatuses } from "../file-sync/facade.js";
 import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
@@ -43,6 +43,13 @@ export async function peerMayOpenTerminal(machineNodeId: string): Promise<boolea
   const local = await getClusterNode();
   if (machineNodeId === local.id) return true;
   return remoteTerminalAllowed(remoteTerminalSettings(), isTrustedTwin(await clusterV2Database(), local.id, machineNodeId));
+}
+
+/** Whether a peer may pick this node in Runs on. Its twins always may; any other node only when this node allows it. */
+export async function peerMayRunHere(machineNodeId: string): Promise<boolean> {
+  const local = await getClusterNode();
+  if (machineNodeId === local.id) return true;
+  return isTrustedTwin(await clusterV2Database(), local.id, machineNodeId) || runnerAccessSettings().otherNodes;
 }
 
 export function publicClusterPeer(peer: ClusterPeer): ClusterPeer & { online: boolean } {

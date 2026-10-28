@@ -12,6 +12,7 @@ import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime, detectExecutable, runtimeOverrides } from "./harnesses/runtime-configuration.js";
 import type { HarnessAdapter } from "./harnesses/contract.js";
 import { decrypt, save, setting, settingsDatabase, value } from "./settings-store.js";
+import { servingSettings } from "./relay/store.js";
 import { commandPresetSchema, identifyCommandPresets } from "./saved-commands.js";
 import { defaultManagedHome } from "./managed-home.js";
 import { scopedSkillRoots } from "./scoped-skills.js";
@@ -51,6 +52,8 @@ export const DEFAULT_CONVERSATION_COMMANDS: ConversationCommandsSettings = {
 };
 
 export interface RemoteTerminalSettings { twins: boolean; otherNodes: boolean }
+/** Whether nodes other than this node's twins may pick it in Runs on. Twins always may. */
+export interface RunnerAccessSettings { otherNodes: boolean }
 
 /** The background check that finds Syncthing conflict copies and folder errors and fixes them quietly. */
 export interface SyncCheckSettings extends ConversationDefault { enabled: boolean; harnessId: string }
@@ -121,6 +124,12 @@ export function remoteTerminalSettings(): RemoteTerminalSettings {
     twins: value("remoteTerminal.twins", "true") === "true",
     otherNodes: value("remoteTerminal.otherNodes", "false") === "true",
   };
+}
+
+/** Other nodes may not run here unless this node says so; a node serving a relay allows it until told otherwise. */
+export function runnerAccessSettings(): RunnerAccessSettings {
+  const relayDefault = servingSettings(settingsDatabase()).enabled;
+  return { otherNodes: value("runnerAccess.otherNodes", String(relayDefault)) === "true" };
 }
 
 export type TerminalAccessMode = "off" | "admin" | "everyone" | "selected";
@@ -221,6 +230,7 @@ export interface SettingsInput {
   dashboards?: DashboardAgentSettings;
   /** Which other nodes may open a terminal on this node through a signed peer socket. */
   remoteTerminal?: RemoteTerminalSettings;
+  runnerAccess?: RunnerAccessSettings;
   conversationCommands?: ConversationCommandsSettings;
   conversationDefaults?: Record<string, ConversationDefault>;
 }
@@ -252,6 +262,7 @@ export interface SettingsResponse {
   syncCheck: SyncCheckSettings;
   dashboards: DashboardAgentSettings;
   remoteTerminal: RemoteTerminalSettings;
+  runnerAccess: RunnerAccessSettings;
   conversationCommands: ConversationCommandsSettings;
   conversationDefaults: ReturnType<typeof conversationDefaultsSchema.parse>;
   restartRequired: Record<string, boolean>;
@@ -523,6 +534,7 @@ export function nodeSettings(): SettingsResponse {
     syncCheck: syncCheck(conversationDefaults),
     dashboards: dashboardAgent(conversationDefaults),
     remoteTerminal: remoteTerminalSettings(),
+    runnerAccess: runnerAccessSettings(),
     conversationCommands: conversationCommands(),
     restartRequired: Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, false])),
   } as SettingsResponse;
@@ -675,6 +687,8 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     if (dashboardAgentSettings) save(db, "dashboards", JSON.stringify(dashboardAgentSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
     save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));
+    // Only an explicit choice is stored, so a node that later starts serving a relay still gets the relay default.
+    if (input.runnerAccess) save(db, "runnerAccess.otherNodes", String(input.runnerAccess.otherNodes));
     save(db, "conversationCommands", JSON.stringify(conversationCommands));
     save(db, "conversationDefaults", JSON.stringify(conversationDefaults));
     for (const type of RESOURCE_TYPES) save(db, `resources.${type}`, JSON.stringify(resources[type]));

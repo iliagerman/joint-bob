@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed nodes to refuse conversations, scheduled tasks, and quick notes that other nodes try to run on them, unless the node's owner allows it in Settings under "Runs on this node"; your own twins can always run there, and a node serving a relay still accepts by default.
+
 ## 2.166.0 — 2026-10-28
 
 - Fixed saved dashboards being cut short instead of filling the modal height when no notices are shown.

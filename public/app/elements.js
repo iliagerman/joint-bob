@@ -251,6 +251,7 @@ export const elements = {
   settingsDashboardsModel: document.querySelector("#settingsDashboardsModel"),
   settingsRemoteTerminalTwins: document.querySelector("#settingsRemoteTerminalTwins"),
   settingsRemoteTerminalOtherNodes: document.querySelector("#settingsRemoteTerminalOtherNodes"),
+  settingsRunnerOtherNodes: document.querySelector("#settingsRunnerOtherNodes"),
   settingsStartConversationEnabled: document.querySelector("#settingsStartConversationEnabled"),
   settingsStartConversationPrompt: document.querySelector("#settingsStartConversationPrompt"),
   settingsEndConversationEnabled: document.querySelector("#settingsEndConversationEnabled"),

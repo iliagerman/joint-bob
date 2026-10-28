@@ -242,6 +242,11 @@ test("embedded terminal proxies to the selected twin with a signed socket", { ti
       return Object.fromEntries(nodes.body.nodes.map((node) => [node.id, node.terminal]));
     };
     assert.deepEqual(await terminalFlags(), { [a.nodeId]: true, [b.nodeId]: true }, "a twin may open a terminal by default");
+    const runnerFlags = async (viewer: SeededNode, session: Awaited<ReturnType<typeof signIn>>): Promise<Record<string, unknown>> => {
+      const nodes = await api<{ nodes: Array<{ id: string; runner: boolean }> }>(viewer, session, "GET", `/projects/${project.id}/session-nodes`);
+      return Object.fromEntries(nodes.body.nodes.map((node) => [node.id, node.runner]));
+    };
+    assert.deepEqual(await runnerFlags(a, sessionA), { [a.nodeId]: true, [b.nodeId]: true }, "twins may always run on each other, with no setting changed");
 
     // B switches twins off: A's browser loses B's terminal in the node list and on the socket.
     const sessionB = await signIn(environment, b);

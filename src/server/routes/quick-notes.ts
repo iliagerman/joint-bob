@@ -10,6 +10,7 @@ import { launchQuickNote, prepareQuickNoteConversation, QuickNoteLaunchError } f
 import { sendError } from "../http-auth.js";
 import { quickNotePrepareSchema, quickNoteQueueSchema, quickNoteSchema } from "../schemas.js";
 import { app } from "../state.js";
+import { peerMayRunHere } from "../cluster-helpers.js";
 
 /** A note in a project the caller can't see is answered as if it didn't exist, and is never
     looked for on another node either. */
@@ -198,6 +199,7 @@ app.post("/api/cluster/v2/quick-notes/action", async (request, response, next) =
       deleteQuickNote(note.id);
       response.json({ ok: true });
     } else {
+      if (!await peerMayRunHere(peer)) { sendError(response, 403, "This node does not accept runs from other nodes"); return; }
       const launched = await launchQuickNote(note.id);
       response.json({ note: launched, sessionId: launched.sessionId, nodeId: launched.nodeId ?? (await getClusterNode()).id,
         sessionPath: launched.sessionId ? `draft:${launched.harnessId}:${launched.sessionId}` : null });
@@ -212,6 +214,7 @@ app.post("/api/cluster/v2/quick-notes/action", async (request, response, next) =
 app.post("/api/cluster/quick-notes/prepare", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    if (!await peerMayRunHere(response.locals.machineNodeId)) { sendError(response, 403, "This node does not accept runs from other nodes"); return; }
     const payload = quickNotePrepareSchema.parse(request.body);
     await prepareQuickNoteConversation(payload);
     response.json({ ok: true });

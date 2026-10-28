@@ -109,6 +109,19 @@ test("a node in two clusters shares each project only with the cluster it was se
       const browserNodes = await api<{ nodes: Array<{ id: string }> }>(a, sa, "GET", `/browser/status?projectId=${project.id}`);
       assert.deepEqual(machineIds(browserNodes.body.nodes), [a.nodeId, member.nodeId].sort(), `${project.name} offers only its cluster's browser machines`);
     }
+    // A cluster member that is not a twin may not be picked in Runs on until its owner allows it.
+    const takeOwnership = "/api/cluster/v2/runtime/sessions/take-ownership";
+    const offered = await api<{ nodes: Array<{ id: string; runner: boolean }> }>(b, sb, "GET", `/projects/${forX.id}/session-nodes`);
+    assert.equal(offered.body.nodes.find((node) => node.id === a.nodeId)?.runner, false, "A does not accept runs from B by default");
+    assert.equal(offered.body.nodes.find((node) => node.id === b.nodeId)?.runner, true, "a node always accepts its own runs");
+    const refused = await signedNodeRequest(envB, b, a, "POST", takeOwnership, { projectId: forX.id });
+    assert.deepEqual([refused.status, (await refused.json() as { error: string }).error], [403, "This node does not accept runs from other nodes"], "A refuses B's takeover");
+    const settingsA = (await api<Record<string, unknown>>(a, sa, "GET", "/settings")).body;
+    assert.equal((await api(a, sa, "PUT", "/settings", { ...settingsA, runnerAccess: { otherNodes: true } })).status, 200);
+    const accepted = await signedNodeRequest(envB, b, a, "POST", takeOwnership, { projectId: forX.id });
+    assert.notEqual((await accepted.json() as { error?: string }).error, "This node does not accept runs from other nodes", "A accepts B once allowed");
+    const reoffered = await api<{ nodes: Array<{ id: string; runner: boolean }> }>(b, sb, "GET", `/projects/${forX.id}/session-nodes`);
+    assert.equal(reoffered.body.nodes.find((node) => node.id === a.nodeId)?.runner, true);
     const unshared = await api<{ nodes: Array<{ id: string }> }>(a, sa, "GET", `/projects/${forNobody.id}/session-nodes`);
     assert.deepEqual(machineIds(unshared.body.nodes), [a.nodeId], "an unshared project runs only on its owner");
   } finally {

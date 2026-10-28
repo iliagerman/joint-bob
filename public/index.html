@@ -819,6 +819,14 @@
             </label>
             <p class="settings-hint">These apply when you are signed in to another node and open a terminal for a conversation or ticket running here. Signing in to this node directly always gives you its terminal.</p>
           </fieldset>
+          <fieldset class="phase-settings" data-admin-only>
+            <legend>Runs on this node</legend>
+            <label class="checkbox-row">
+              <input id="settingsRunnerOtherNodes" type="checkbox" data-testid="settings-runner-other-nodes" />
+              Allow other nodes to pick this node in Runs on
+            </label>
+            <p class="settings-hint">Off by default, except on a node that serves a relay. Your twins can always run conversations here.</p>
+          </fieldset>
           <fieldset class="phase-settings" data-testid="settings-node-blocks">
             <legend>Blocked nodes</legend>
             <p class="settings-hint">A blocked node can't connect here and its users can't sign in here. Nothing syncs in either direction, and the cluster keeps working for everyone else. Twins can't be blocked; unpair them first.</p>

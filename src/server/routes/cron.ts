@@ -16,6 +16,7 @@ import { sendError } from "../http-auth.js";
 import { registeredHarnessIdSchema } from "../schemas.js";
 import { app } from "../state.js";
 import { listProjectCronTasks } from "../cron-list.js";
+import { peerMayRunHere } from "../cluster-helpers.js";
 
 const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("profiles"), projectId: z.string().min(1), accountId: z.string().nullable().optional() }).strict(),
@@ -120,7 +121,10 @@ async function manageCron(command: Command): Promise<unknown> {
 app.post("/api/cluster/cron", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    response.json(await manageCron(commandSchema.parse(request.body)));
+    const command = commandSchema.parse(request.body);
+    // Hosting a scheduled task is running on this node; listing, running, deleting and reading history of existing ones is not.
+    if (["create", "install", "update"].includes(command.action) && !await peerMayRunHere(response.locals.machineNodeId)) { sendError(response, 403, "This node does not accept runs from other nodes"); return; }
+    response.json(await manageCron(command));
   } catch (error) { next(error); }
 });
 app.post("/api/cron", async (request, response, next) => {
