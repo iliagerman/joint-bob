@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.163.0 — 2026-10-28
 
-- Added sharing a dashboard with every node that has access to its project, sharing a credential-free dashboard's latest results with the people it is shared with, and letting chosen nodes edit a shared dashboard; a stale edit is rejected and its draft kept, so a newer version is never overwritten, while results from dashboards that need credentials stay private.
+- Added an "All nodes with access to this project" choice when sharing a dashboard, so nodes that gain access later receive it too.
+- Added sharing a credential-free dashboard's latest results with the people it is shared with; dashboards that need credentials still share only their code, so their data stays on each node.
+- Added "Allow edits" for each node or cluster a dashboard is shared with, and an "Edit shared dashboard" action for those who may edit.
+- Changed a stale edit to a shared dashboard to be rejected with its draft kept, so a newer version is never overwritten.
+- Added an "Owner published" time on shared dashboards, with a note naming the node whose results are shown.
 
 ## 2.162.0 — 2026-10-28
 
