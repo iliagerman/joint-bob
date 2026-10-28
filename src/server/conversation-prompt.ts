@@ -28,6 +28,7 @@ export interface ConversationPromptOptions {
   /** "started" returns once the turn runs; the turn continues after the socket closes. */
   until: "started" | "completed";
   onStarted?: () => void;
+  onCompleted?: () => void;
 }
 
 /** Queues a prompt in a local conversation through this node's own chat socket, as a browser would. */
@@ -75,7 +76,7 @@ export async function queueConversationPrompt(options: ConversationPromptOptions
         options.onStarted?.();
         if (options.until === "started") finish();
       }
-      if (event.type === "promptCompleted" && event.queueId === queueId) finish();
+      if (event.type === "promptCompleted" && event.queueId === queueId) { options.onCompleted?.(); finish(); }
       if (event.type === "queuedPromptCancelled" && event.queueId === queueId) finish(new Error(`${label} prompt was cancelled`));
       if (event.type === "promptFailed" && event.queueId === queueId || event.type === "error") finish(new Error(event.error));
     });

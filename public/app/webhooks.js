@@ -4,6 +4,7 @@
 // The list pages to the height it is given instead of scrolling.
 import { api } from "./api.js";
 import { createAutomationProfilePicker } from "./provider-profile-picker.js";
+import { createAutomationTagPicker } from "./automation-tag-picker.js";
 import { copyText, createFittedList, formatWhen, makeBadge, makeButton, makeNode, makeTwoStepButton, showStatus } from "./relay-ui.js";
 
 const byId = (id) => document.getElementById(id);
@@ -37,6 +38,7 @@ const errorText = (error) => error?.message || "Something went wrong";
 const endpoint = (suffix = "") => `/api/webhooks${suffix}?nodeId=${encodeURIComponent(field.owner.value)}`;
 
 const profilePicker = createAutomationProfilePicker(field.model.closest("label"), "webhooks-provider-profile", () => api(endpoint("/profiles")));
+const tagPicker = createAutomationTagPicker(byId("webhooksAutomationTags"), "webhooks-tags");
 
 /** The body a PUT or POST sends: everything about the webhook, so saving one setting keeps the others. */
 const hookBody = (hook, changes = {}) => JSON.stringify({
@@ -322,6 +324,9 @@ async function openForm(hook = null) {
   try { await loadProjects(); } catch (error) { editing = null; showStatus(status, errorText(error), "error"); return; }
   finally { field.owner.disabled = Boolean(editing); }
   fillProjects(hook?.target.projectId);
+  const project = await api(`/api/projects/${encodeURIComponent(field.project.value)}`);
+  await tagPicker.setWorkspace(project.project.type ?? "personal");
+  tagPicker.setValue(hook?.tags ?? { managedTagIds: [], manualTags: [] });
   renderSecrets(hook?.secretAccountIds ?? []);
   field.name.value = hook?.name ?? "";
   field.kind.value = hook?.target.kind ?? "project";
@@ -381,7 +386,7 @@ async function submit(event) {
   let providerProfileId;
   try { providerProfileId = profilePicker.value(); }
   catch (error) { showStatus(status, errorText(error), "error"); return; }
-  const body = JSON.stringify({ providerProfileId, name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: selectedSecrets(), titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
+  const body = JSON.stringify({ providerProfileId, tags: tagPicker.getValue(), name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: selectedSecrets(), titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
   saving = true;
   field.save.disabled = true;
   field.owner.disabled = true;
@@ -415,6 +420,10 @@ function wire() {
   byId("webhooksCancel").addEventListener("click", closeForm);
   byId("webhooksRevealDone").addEventListener("click", () => { reveal.hidden = true; byId("webhooksRevealUrls").replaceChildren(); });
   field.kind.addEventListener("change", syncKind);
+  field.project.addEventListener("change", async () => {
+    try { const project = await api(`/api/projects/${encodeURIComponent(field.project.value)}`); await tagPicker.setWorkspace(project.project.type ?? "personal"); tagPicker.setValue({ managedTagIds: [], manualTags: [] }); }
+    catch (error) { showStatus(status, errorText(error), "error"); }
+  });
   field.harness.addEventListener("change", () => renderExecution());
   field.model.addEventListener("change", () => renderExecution(field.model.value));
   field.conversation.addEventListener("change", syncConversationHarness);

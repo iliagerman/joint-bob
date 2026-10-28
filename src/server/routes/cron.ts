@@ -6,6 +6,8 @@ import { NotFoundError } from "../../not-found.js";
 import { getClusterNode } from "../../cluster.js";
 import { getRuntimePeer, runtimeFetch } from "../runtime-peers.js";
 import { cronInputSchema, cronRunSchema, cronStore, type CronTask } from "../../cron.js";
+import { automationWorkspaceIdentity, validateAutomationTagAssignments } from "../../automation-tags.js";
+import { clusterV2Database } from "../../cluster-v2-store.js";
 import { ensureConversationRecord, markCronConversation } from "../../conversation-records.js";
 import { broadcastToProject } from "../realtime.js";
 import { getProject } from "../../store.js";
@@ -82,6 +84,9 @@ async function manageCron(command: Command): Promise<unknown> {
   const project = await getProject(command.input.projectId);
   if (!project) throw new Error("Project is not mapped on the execution node");
   command.input.projectId = project.id;
+  const tagDatabase = await clusterV2Database();
+  const workspace = automationWorkspaceIdentity(tagDatabase, local.id, project.type ?? "personal");
+  validateAutomationTagAssignments(tagDatabase, workspace.workspaceId, command.input.tags, workspace.ownerNodeId);
   const existing = command.action === "update" ? store.get(command.id) : null;
   if (existing) assertAutomationCreator(existing.creatorAccountId, command.input.creatorAccountId);
   if (command.input.providerProfileId) {

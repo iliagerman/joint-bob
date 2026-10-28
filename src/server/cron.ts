@@ -8,6 +8,9 @@ import { getConversationOwnership } from "../conversation-ownership.js";
 import { scheduledPromptText } from "../scheduled-prompt.js";
 import { ensureConversationRecord, getConversationRecord, markCronConversation } from "../conversation-records.js";
 import { cronStore, type CronTask, type CronRun } from "../cron.js";
+import { clusterV2Database } from "../cluster-v2-store.js";
+import { automationWorkspaceIdentity, automationWorkspaceKey, snapshotAutomationTags } from "../automation-tags.js";
+import { transitionAutomationExecution } from "../automation-executions.js";
 import { ensureSessionTitle } from "../names.js";
 import { getProjectLock } from "../project-locks.js";
 import { cancelQueuedPrompt, listQueuedPrompts } from "../prompt-queue.js";
@@ -72,7 +75,7 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
       modelId: task.model?.modelId ?? status.model.id,
       reasoning: reasoning ?? status.thinkingLevel,
     } : undefined,
-    onStarted: () => cronStore().started(run.id, sessionId),
+    onStarted: () => { cronStore().started(run.id, sessionId); void clusterV2Database().then(db => transitionAutomationExecution(db, run.id, "running", null, sessionId)); },
   });
 }
 
@@ -84,16 +87,19 @@ async function executeCronRun(task: CronTask, run: CronRun): Promise<void> {
       await markCronConversation(task.projectId, task.engine, sessionId, task.id, task.ownerNodeId);
       cronStore().target(run.id, sessionId);
       await queuedCronPrompt(task, run, sessionId);
+      transitionAutomationExecution(await clusterV2Database(), run.id, "succeeded", null, sessionId);
       cronStore().finish(run.id, "succeeded", null);
     });
   } catch (error) {
     // A used-up budget is not the task's fault: the run is recorded, the task stays enabled.
-    if (error instanceof Error && /Budget reached:/.test(error.message)) { cronStore().finish(run.id, "failed", error.message); return; }
+    if (error instanceof Error && /Budget reached:/.test(error.message)) { transitionAutomationExecution(await clusterV2Database(), run.id, "failed", error.message); cronStore().finish(run.id, "failed", error.message); return; }
     if (task.pauseOnFailure) {
       const { id, nextRun, lastRun, ...input } = cronStore().get(task.id)!;
       cronStore().update(id, { ...input, enabled: false });
     }
-    cronStore().finish(run.id, "failed", error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    transitionAutomationExecution(await clusterV2Database(), run.id, "failed", message);
+    cronStore().finish(run.id, "failed", message);
   }
 }
 
@@ -101,7 +107,11 @@ export async function dispatchCronTasks(now = Date.now()): Promise<void> {
   if (!flags.startupReady || flags.updatePreparing) return;
   const local = await getClusterNode();
   for (const task of cronStore().list()) {
-    const run = cronStore().claim(task.id, local.id, now);
+    const project = await getProject(task.projectId);
+    const tagDatabase = await clusterV2Database();
+    const workspace = automationWorkspaceIdentity(tagDatabase, local.id, project?.type ?? "personal");
+    const tags = snapshotAutomationTags(tagDatabase, workspace.workspaceId, task.tags, workspace.ownerNodeId);
+    const run = cronStore().claim(task.id, local.id, now, tags, automationWorkspaceKey(workspace));
     if (run) void executeCronRun(task, run).catch(error => console.error("Scheduled run persistence failed", error));
   }
 }

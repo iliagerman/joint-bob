@@ -6,6 +6,8 @@ import { z } from "zod";
 import { resolveDataDirectory } from "./data-directory.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { isHarnessId } from "./types.js";
+import { automationTagAssignmentSchema, tagSnapshotSchema, type TagSnapshot } from "./automation-tags.js";
+import { createAutomationExecution, transitionAutomationExecution } from "./automation-executions.js";
 
 const timezoneSchema = z.string().min(1).max(100).refine(value => {
   try { new Intl.DateTimeFormat("en", { timeZone: value }); return true; } catch { return false; }
@@ -28,6 +30,7 @@ const cronModelSchema = z.object({
 export const cronInputSchema = z.object({
   creatorAccountId: z.string().min(1).nullable().optional(),
   providerProfileId: z.string().min(1).nullable().optional(),
+  tags: automationTagAssignmentSchema.default({ managedTagIds: [], manualTags: [] }),
   projectId: z.string().min(1).max(240), name: z.string().trim().min(1).max(120),
   prompt: z.string().trim().min(1).max(100000), ownerNodeId: z.string().uuid(),
   engine: z.string().refine(isHarnessId, "Harness ID is invalid")
@@ -50,7 +53,7 @@ export const cronInputSchema = z.object({
   if (providerMismatch || thinkingMismatch) context.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "Model settings do not belong to the selected harness" });
 });
 export type CronInput = z.infer<typeof cronInputSchema>;
-export const cronRunSchema = z.object({ id: z.string().uuid(), taskId: z.string().uuid(), dueAt: z.number().int(), status: z.enum(["waiting", "running", "succeeded", "failed"]), error: z.string().nullable(), sessionId: z.string().nullable(), finishedAt: z.number().int().nullable() }).strict();
+export const cronRunSchema = z.object({ id: z.string().uuid(), taskId: z.string().uuid(), dueAt: z.number().int(), status: z.enum(["waiting", "running", "succeeded", "failed"]), error: z.string().nullable(), sessionId: z.string().nullable(), finishedAt: z.number().int().nullable(), tags: z.array(tagSnapshotSchema).default([]) }).strict();
 export type CronRun = z.infer<typeof cronRunSchema>;
 export interface CronTask extends CronInput { id: string; nextRun: number; lastRun: CronRun | null }
 
@@ -99,8 +102,10 @@ export function nextCronRun(schedule: CronInput["schedule"], after: number): num
 export class CronStore {
   constructor(private readonly db: DatabaseSync) {
     db.exec(`CREATE TABLE IF NOT EXISTS cron_tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner_node_id TEXT NOT NULL, input TEXT NOT NULL, next_run INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS cron_runs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, due_at INTEGER NOT NULL, status TEXT NOT NULL, error TEXT, session_id TEXT, finished_at INTEGER, UNIQUE(task_id, due_at));
+      CREATE TABLE IF NOT EXISTS cron_runs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, due_at INTEGER NOT NULL, status TEXT NOT NULL, error TEXT, session_id TEXT, finished_at INTEGER, tags TEXT NOT NULL DEFAULT '[]', UNIQUE(task_id, due_at));
       CREATE UNIQUE INDEX IF NOT EXISTS cron_active_run ON cron_runs(task_id) WHERE status IN ('waiting', 'running');`);
+    const columns = db.prepare("PRAGMA table_info(cron_runs)").all() as Array<{ name: string }>;
+    if (!columns.some(column => column.name === "tags")) db.exec("ALTER TABLE cron_runs ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'");
   }
   get(id: string): CronTask | null {
     const row = this.db.prepare("SELECT * FROM cron_tasks WHERE id = ?").get(id) as { id: string; input: string; next_run: number } | undefined;
@@ -111,7 +116,7 @@ export class CronStore {
     return rows.map(row => this.get(row.id)!);
   }
   history(id: string, limit = 100): CronRun[] {
-    return this.db.prepare("SELECT id, task_id AS taskId, due_at AS dueAt, status, error, session_id AS sessionId, finished_at AS finishedAt FROM cron_runs WHERE task_id = ? ORDER BY due_at DESC LIMIT ?").all(id, limit) as unknown as CronRun[];
+    return (this.db.prepare("SELECT id, task_id AS taskId, due_at AS dueAt, status, error, session_id AS sessionId, finished_at AS finishedAt, tags FROM cron_runs WHERE task_id = ? ORDER BY due_at DESC LIMIT ?").all(id, limit) as Array<Omit<CronRun, "tags"> & { tags: string }>).map(run => ({ ...run, tags: JSON.parse(run.tags) }));
   }
   taskForRun(runId: string, sessionId: string): CronTask | null {
     const run = this.db.prepare("SELECT task_id FROM cron_runs WHERE id = ? AND session_id = ? AND status IN ('waiting', 'running')").get(runId, sessionId) as { task_id: string } | undefined;
@@ -127,7 +132,7 @@ export class CronStore {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.create(input, Date.now(), id);
-      for (const run of runs) this.db.prepare("INSERT INTO cron_runs VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, error = excluded.error, session_id = excluded.session_id, finished_at = excluded.finished_at").run(run.id, id, run.dueAt, run.status, run.error, run.sessionId, run.finishedAt);
+      for (const run of runs) this.db.prepare("INSERT INTO cron_runs (id,task_id,due_at,status,error,session_id,finished_at,tags) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, error = excluded.error, session_id = excluded.session_id, finished_at = excluded.finished_at, tags = excluded.tags").run(run.id, id, run.dueAt, run.status, run.error, run.sessionId, run.finishedAt, JSON.stringify(run.tags));
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     return this.get(id)!;
@@ -156,7 +161,7 @@ export class CronStore {
   active(id: string): boolean {
     return Boolean(this.db.prepare("SELECT 1 FROM cron_runs WHERE task_id = ? AND status IN ('waiting', 'running')").get(id));
   }
-  claim(id: string, nodeId: string, now = Date.now()): CronRun | null {
+  claim(id: string, nodeId: string, now = Date.now(), tags: TagSnapshot[] = [], workspaceId: string | null = null): CronRun | null {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const task = this.get(id);
@@ -164,8 +169,9 @@ export class CronStore {
       this.db.prepare("UPDATE cron_tasks SET next_run = ? WHERE id = ?").run(nextCronRun(task.schedule, now), id);
       // A late minute is missed, not replayed after reconnect/restart.
       if (now - task.nextRun >= 60000 || this.active(id)) return null;
-      const run: CronRun = { id: randomUUID(), taskId: id, dueAt: task.nextRun, status: "waiting", error: null, sessionId: task.sessionId, finishedAt: null };
-      this.db.prepare("INSERT INTO cron_runs (id, task_id, due_at, status, session_id) VALUES (?, ?, ?, ?, ?)").run(run.id, id, run.dueAt, run.status, run.sessionId);
+      const run: CronRun = { id: randomUUID(), taskId: id, dueAt: task.nextRun, status: "waiting", error: null, sessionId: task.sessionId, finishedAt: null, tags };
+      this.db.prepare("INSERT INTO cron_runs (id, task_id, due_at, status, session_id, tags) VALUES (?, ?, ?, ?, ?, ?)").run(run.id, id, run.dueAt, run.status, run.sessionId, JSON.stringify(tags));
+      createAutomationExecution(this.db, { id: run.id, sourceKind: "scheduled", sourceId: task.id, sourceName: task.name, workspaceId, projectId: task.projectId, ownerNodeId: nodeId, engine: task.engine, requestId: run.id, sessionId: run.sessionId, tags, status: "queued", error: null, acceptedAt: new Date(now).toISOString(), startedAt: null, finishedAt: null });
       return run;
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     finally { if (this.db.isTransaction) this.db.exec("COMMIT"); }
@@ -187,6 +193,8 @@ export class CronStore {
         const { id, nextRun, lastRun, ...input } = task;
         this.update(id, { ...input, enabled: false }, now);
       }
+      const interruptedRuns = this.db.prepare("SELECT id FROM cron_runs WHERE task_id=? AND status IN ('waiting','running')").all(task.id) as Array<{ id: string }>;
+      for (const { id } of interruptedRuns) transitionAutomationExecution(this.db, id, "interrupted", "Node restarted during scheduled run; outcome uncertain.");
       this.db.prepare("UPDATE cron_runs SET status = 'failed', error = ?, finished_at = ? WHERE task_id = ? AND status IN ('waiting', 'running')")
         .run(task.enabled && task.pauseOnFailure
           ? 'Node restarted during scheduled run; outcome uncertain. Task paused.'

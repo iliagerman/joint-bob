@@ -14,7 +14,7 @@ import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
 
-interface Hook { id: string; name: string; titleTemplate: string; model: { provider: string; modelId: string } | null; reasoning: string | null; secretAccountIds: string[]; target: { engine?: string }; enabled: boolean; attachments: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
+interface Hook { id: string; name: string; titleTemplate: string; model: { provider: string; modelId: string } | null; reasoning: string | null; secretAccountIds: string[]; tags: { managedTagIds: string[]; manualTags: string[] }; target: { engine?: string }; enabled: boolean; attachments: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
 
 let root: string;
 let environment: DevEnvironment;
@@ -89,9 +89,17 @@ test("a webhook made with Accept attachments keeps the option through turning of
     && document.querySelector<HTMLSelectElement>("#webhooksProject")!.options.length > 0
     && !document.querySelector<HTMLButtonElement>("#webhooksNew")!.disabled,
   );
+  const projects = await api<{ projects: Array<{ id: string; name: string; type: string }> }>(node, session, "GET", "/projects");
+  const project = projects.body.projects.find(item => item.name === "Internal Assistant")!;
+  const managedTag = await api<{ tag: { id: string } }>(node, session, "POST", `/workspaces/${project.type}/automation-tags`, { name: "Webhook managed" });
+  assert.equal(managedTag.status, 201, JSON.stringify(managedTag.body));
   await page.getByTestId("webhooks-new-button").click();
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), false, "a new webhook reads calls as text unless asked");
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="webhooks-tags-managed"] option').length > 0);
+  await page.getByTestId("webhooks-tags-managed").selectOption(managedTag.body.tag.id);
+  await page.getByTestId("webhooks-tags-manual").fill("Manual webhook label");
+  await page.getByTestId("webhooks-tags-add-manual").click();
   await page.getByTestId("webhooks-name-input").fill("Deals");
   await page.getByTestId("webhooks-title-template-input").fill("pr-[PR_REVIEW]");
   await page.getByTestId("webhooks-harness-select").selectOption("pi");
@@ -103,7 +111,7 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });
   await page.getByTestId("webhooks-reveal-done-button").click();
   await page.getByTestId("webhooks-list").getByText("accepts attachments").waitFor();
-  assert.deepEqual((await hooks()).map(({ name, enabled, attachments }) => [name, enabled, attachments]), [["Deals", true, true]]);
+  assert.deepEqual((await hooks()).map(({ name, enabled, attachments, tags }) => [name, enabled, attachments, tags]), [["Deals", true, true, { managedTagIds: [managedTag.body.tag.id], manualTags: ["Manual webhook label"] }]]);
 
   await page.getByTestId("webhooks-toggle-button").click();
   await until(async () => (await hooks())[0].enabled === false, "the webhook is off");

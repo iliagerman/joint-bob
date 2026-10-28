@@ -19,6 +19,7 @@ import { fillWebhookTitle, titlePlaceholders, webhookConversationTitle } from ".
 import { setSessionTitle } from "../../names.js";
 import { broadcastToProject } from "../realtime.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
+import { automationWorkspaceIdentity, validateAutomationTagAssignments } from "../../automation-tags.js";
 import { relayRuntimeInstance, relayServerInstance } from "../../relay/index.js";
 import { phoneAddress } from "../../relay/protocol.js";
 import { relayMachine } from "../../relay/store.js";
@@ -231,6 +232,11 @@ async function manage(command: Command): Promise<unknown> {
     command.input.providerProfileId ??= null;
     if (command.input.providerProfileId) accessibleProviderProfile(command.input.creatorAccountId!, command.input.providerProfileId, "automation");
     await checkTarget(command.input);
+    const tagProject = await getProject(command.input.target.projectId);
+    if (!tagProject) throw new WebhookError(404, "Project not found on this machine");
+    const local = await getClusterNode();
+    const workspace = automationWorkspaceIdentity(db, local.id, tagProject.type ?? "personal");
+    validateAutomationTagAssignments(db, workspace.workspaceId, command.input.tags, workspace.ownerNodeId);
     if (command.action === "create") return { ...createWebhook(db, command.input), bases: await urlBases() };
     return { webhook: updateWebhook(db, command.id, command.input) };
   }

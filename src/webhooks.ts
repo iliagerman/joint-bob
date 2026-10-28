@@ -8,6 +8,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { webhookTitleTemplateSchema } from "./webhook-title.js";
+import { automationTagAssignmentSchema } from "./automation-tags.js";
 
 export const WEBHOOK_SECRET_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
 /** Room for screenshots and documents; the whole body is held in memory while it is read. */
@@ -26,6 +27,7 @@ export const TELEGRAM_SENDER_FIELDS = [
 export const webhookInputSchema = z.object({
   creatorAccountId: z.string().min(1).nullable().optional(),
   providerProfileId: z.string().min(1).nullable().optional(),
+  tags: automationTagAssignmentSchema.default({ managedTagIds: [], manualTags: [] }),
   name: z.string().trim().min(1).max(120),
   target: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("project"), projectId: z.string().min(1).max(240), engine: z.string().min(1).max(80).optional() }).strict(),
@@ -57,6 +59,7 @@ export type WebhookSenders = NonNullable<WebhookInput["senders"]>;
 export interface Webhook {
   creatorAccountId?: string | null;
   providerProfileId?: string | null;
+  tags: WebhookInput["tags"];
   id: string;
   name: string;
   target: WebhookInput["target"];
@@ -115,6 +118,7 @@ export function ensureWebhookSchema(db: DatabaseSync): void {
   if (!columns.some((column) => column.name === "reasoning")) db.exec("ALTER TABLE webhooks ADD COLUMN reasoning TEXT");
   if (!columns.some((column) => column.name === "secret_account_ids")) db.exec("ALTER TABLE webhooks ADD COLUMN secret_account_ids TEXT NOT NULL DEFAULT '[]'");
   if (!columns.some((column) => column.name === "title_template")) db.exec("ALTER TABLE webhooks ADD COLUMN title_template TEXT NOT NULL DEFAULT ''");
+  if (!columns.some(column => column.name === "tags")) db.exec("ALTER TABLE webhooks ADD COLUMN tags TEXT NOT NULL DEFAULT '{}'");
   if (!columns.some(column => column.name === "creator_account_id")) db.exec("ALTER TABLE webhooks ADD COLUMN creator_account_id TEXT");
   if (!columns.some(column => column.name === "provider_profile_id")) db.exec("ALTER TABLE webhooks ADD COLUMN provider_profile_id TEXT");
   const deliveryColumns = db.prepare("PRAGMA table_info(webhook_deliveries)").all() as Array<{ name: string }>;
@@ -131,6 +135,7 @@ function webhookRow(row: Record<string, unknown>): Webhook {
     : { kind: "project" as const, projectId: String(row.project_id), ...(row.engine ? { engine: String(row.engine) } : {}) };
   return {
     id: String(row.id), name: String(row.name), target,
+    tags: automationTagAssignmentSchema.parse(row.tags ? JSON.parse(String(row.tags)) : {}),
     creatorAccountId: row.creator_account_id ? String(row.creator_account_id) : null,
     providerProfileId: row.provider_profile_id ? String(row.provider_profile_id) : null,
     secretAccountIds: row.secret_account_ids ? JSON.parse(String(row.secret_account_ids)) as string[] : [],
@@ -176,16 +181,16 @@ export function createWebhook(db: DatabaseSync, input: WebhookInput): { webhook:
   const id = randomUUID();
   const now = new Date().toISOString();
   const { sessionId, engine } = targetColumns(input.target);
-  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,context,enabled,attachments,mark_for_review,senders,model,reasoning,secret_account_ids,title_template,created_at,updated_at,creator_account_id,provider_profile_id)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, now, now, input.creatorAccountId ?? null, input.providerProfileId ?? null);
+  db.prepare(`INSERT INTO webhooks(id,name,secret_hash,target_kind,project_id,session_id,engine,context,enabled,attachments,mark_for_review,senders,model,reasoning,secret_account_ids,title_template,created_at,updated_at,creator_account_id,provider_profile_id,tags)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.name, hashWebhookSecret(secret), input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, now, now, input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags));
   return { webhook: getWebhook(db, id)!, secret };
 }
 
 export function updateWebhook(db: DatabaseSync, id: string, input: WebhookInput): Webhook {
   ensureWebhookSchema(db);
   const { sessionId, engine } = targetColumns(input.target);
-  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,context=?,enabled=?,attachments=?,mark_for_review=?,senders=?,model=?,reasoning=?,secret_account_ids=?,title_template=?,updated_at=?,creator_account_id=?,provider_profile_id=? WHERE id=?`)
-    .run(input.name, input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, new Date().toISOString(), input.creatorAccountId ?? null, input.providerProfileId ?? null, id);
+  const result = db.prepare(`UPDATE webhooks SET name=?,target_kind=?,project_id=?,session_id=?,engine=?,context=?,enabled=?,attachments=?,mark_for_review=?,senders=?,model=?,reasoning=?,secret_account_ids=?,title_template=?,updated_at=?,creator_account_id=?,provider_profile_id=?,tags=? WHERE id=?`)
+    .run(input.name, input.target.kind, input.target.projectId, sessionId, engine, input.context, input.enabled ? 1 : 0, input.attachments ? 1 : 0, input.markForReview ? 1 : 0, sendersColumn(input), input.model ? JSON.stringify(input.model) : null, input.reasoning, JSON.stringify(input.secretAccountIds), input.titleTemplate, new Date().toISOString(), input.creatorAccountId ?? null, input.providerProfileId ?? null, JSON.stringify(input.tags), id);
   if (!result.changes) throw new WebhookError(404, "Webhook not found");
   return getWebhook(db, id)!;
 }
@@ -250,7 +255,7 @@ const SHOWN_HEADER = /^(content-type|user-agent|x-[a-z0-9-]*(event|type|action|d
 
 export interface WebhookAttachment { name: string; mimeType: string; data: Buffer }
 export interface WebhookCall {
-  method: string; headers: Record<string, string>; query: string; body: string; attachments?: WebhookAttachment[];
+  method: string; headers: Record<string, string>; query: string; body: string; attachments?: WebhookAttachment[]; requestId?: string; started?: boolean;
   /** Set only when the webhook checked the sender against its list. */
   sender?: { value: string; label: string };
 }

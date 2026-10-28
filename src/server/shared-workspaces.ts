@@ -57,10 +57,20 @@ async function manifestFor(receiver: string) {
 }
 
 type Peer = Awaited<ReturnType<typeof clusterPeers>>["nodes"][number];
-function post(db: Awaited<ReturnType<typeof clusterV2Database>>, local: string, node: Peer, target: string): Promise<globalThis.Response> {
-  const body = Buffer.from("{}");
+function post(db: Awaited<ReturnType<typeof clusterV2Database>>, local: string, node: Peer, target: string, input: unknown = {}): Promise<globalThis.Response> {
+  const body = Buffer.from(JSON.stringify(input));
   return peerFetch(new URL(target, node.url), { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000), body,
     headers: { "Content-Type": "application/json", Authorization: signClusterRequest(db, local, node.nodeId, "POST", target, body) } }, node.nodeId);
+}
+
+export async function sharedWorkspacePeerIds(): Promise<string[]> {
+  return (await clusterPeers()).nodes.map(node => node.nodeId);
+}
+
+export async function postToSharedWorkspacePeer(nodeId: string, target: string, input: unknown = {}): Promise<globalThis.Response> {
+  const { db, local, nodes } = await clusterPeers(), node = nodes.find(peer => peer.nodeId === nodeId);
+  if (!node) throw failure("Workspace peer not found", 404);
+  return post(db, local, node, target, input);
 }
 
 async function syncOwner(owner: string): Promise<void> {
@@ -92,6 +102,7 @@ function refreshOwner(owner: string): Promise<void> {
 export async function syncSharedWorkspaces(): Promise<void> {
   const { nodes } = await clusterPeers();
   await Promise.all(nodes.map((node) => refreshOwner(node.nodeId)));
+  await import("./shared-automation-tags.js").then(({ syncSharedAutomationTags }) => syncSharedAutomationTags());
 }
 
 /** Tell the other members that this node's shared workspaces changed. */
@@ -123,5 +134,9 @@ function machineRoute(action: (response: Response) => Promise<unknown>) {
 
 export function registerSharedWorkspaceRoutes(): void {
   app.post("/api/cluster/v2/workspaces/manifest", machineRoute((response) => manifestFor(response.locals.machineNodeId)));
-  app.post("/api/cluster/v2/workspaces/changed", machineRoute(async (response) => { await refreshOwner(response.locals.machineNodeId); return { ok: true }; }));
+  app.post("/api/cluster/v2/workspaces/changed", machineRoute(async (response) => {
+    await refreshOwner(response.locals.machineNodeId);
+    await import("./shared-automation-tags.js").then(({ syncSharedAutomationTags }) => syncSharedAutomationTags());
+    return { ok: true };
+  }));
 }

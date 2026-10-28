@@ -1,6 +1,7 @@
 import { harnessIdFromPath, harnessOption } from "../harness-metadata.js";
 import { api } from "./api.js";
 import { createAutomationProfilePicker } from "./provider-profile-picker.js";
+import { createAutomationTagPicker } from "./automation-tag-picker.js";
 import { state } from "./state.js";
 import { renderSessions } from "./session-list.js";
 import { confirmAction, toast } from "./shell.js";
@@ -21,11 +22,14 @@ const inputOf = ({ id, nextRun, lastRun, ...input }) => input;
 const command = (nodeId, value) => api("/api/cron", { method: "POST", body: JSON.stringify({ nodeId, command: value }) });
 
 const profilePicker = createAutomationProfilePicker(field("model").closest("label"), "cron-provider-profile", () => command(field("ownerNodeId").value, { action: "profiles", projectId: context.projectId }));
+const tagPicker = createAutomationTagPicker(document.querySelector("#cronAutomationTags"), "cron-tags");
 field("ownerNodeId").addEventListener("change", () => void profilePicker.refresh());
 
 export async function openScheduledTasks(projectId, session = null) {
   if (!state.harnesses.length) state.harnesses = (await api("/api/harnesses")).harnesses;
-  context = { projectId, session };
+  const project = await api(`/api/projects/${encodeURIComponent(projectId)}`);
+  context = { projectId, session, workspaceId: project.project.type ?? "personal" };
+  await tagPicker.setWorkspace(context.workspaceId);
   editing = null;
   showList();
   showLoading();
@@ -33,21 +37,27 @@ export async function openScheduledTasks(projectId, session = null) {
   document.querySelector("#cronContext").textContent = session
     ? "Appends to this conversation. Ownership transfers automatically to the selected node after the active run finishes."
     : "Each run starts a new conversation using the selected agent's project settings and inherited credentials.";
+  const newTaskButton = document.querySelector("#cronNew");
+  newTaskButton.disabled = true;
   dialog.showModal();
-  const [body, harnessBody, modelBody] = await Promise.all([
-    api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes`), api("/api/harnesses"), api("/api/models"),
-  ]);
-  field("ownerNodeId").replaceChildren(...body.nodes.map(node => {
-    const option = new Option(`${node.name}${node.online ? "" : " (offline)"}`, node.id);
-    option.disabled = !node.mapped;
-    return option;
-  }));
-  availableHarnesses = harnessBody.harnesses;
-  field("engine").replaceChildren(...availableHarnesses.map(harnessOption));
-  availableModels = modelBody.models;
-  renderExecutionFields();
-  document.querySelector("#cronTimezones").replaceChildren(...["UTC", ...Intl.supportedValuesOf("timeZone")].map(zone => new Option(zone)));
-  await refreshTasks();
+  try {
+    const [body, harnessBody, modelBody] = await Promise.all([
+      api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes`), api("/api/harnesses"), api("/api/models"),
+    ]);
+    field("ownerNodeId").replaceChildren(...body.nodes.map(node => {
+      const option = new Option(`${node.name}${node.online ? "" : " (offline)"}`, node.id);
+      option.disabled = !node.mapped;
+      return option;
+    }));
+    availableHarnesses = harnessBody.harnesses;
+    field("engine").replaceChildren(...availableHarnesses.map(harnessOption));
+    availableModels = modelBody.models;
+    renderExecutionFields();
+    document.querySelector("#cronTimezones").replaceChildren(...["UTC", ...Intl.supportedValuesOf("timeZone")].map(zone => new Option(zone)));
+    await refreshTasks();
+  } finally {
+    newTaskButton.disabled = false;
+  }
 }
 
 export async function loadHiddenCronTasks(projectId) {
@@ -209,6 +219,7 @@ function editTask(task) {
   footer.hidden = true;
   formActions.hidden = false;
   document.querySelector("#cronFormTitle").textContent = task ? "Edit scheduled task" : "New scheduled task";
+  tagPicker.setValue(task?.tags ?? { managedTagIds: [], manualTags: [] });
   body.scrollTo(0, 0);
   field("timezone").value = task ? task.schedule.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone;
   for (const name of ["name", "prompt", "ownerNodeId"]) if (task) field(name).value = task[name];
@@ -258,7 +269,7 @@ form.addEventListener("submit", async event => {
     const [provider, modelId] = field("model").value.split("|");
     const session = boundSession();
     const input = {
-      providerProfileId: profilePicker.value(),
+      providerProfileId: profilePicker.value(), tags: tagPicker.getValue(),
       projectId: context.projectId, name: field("name").value, prompt: field("prompt").value,
       ownerNodeId: field("ownerNodeId").value, engine: field("engine").value,
       model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,

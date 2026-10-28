@@ -114,13 +114,27 @@ test("SQLite claims are owner-only, unique, non-overlapping and survive reopen; 
   } finally { db.close(); }
 });
 
+test("scheduled run history keeps the tag snapshot claimed for that run", async () => {
+  const { CronStore } = await import("../src/cron.js");
+  const db = new DatabaseSync(":memory:");
+  try {
+    const store = new CronStore(db), task = store.create(input(), 0);
+    const tags = [{ key: "nightly", name: "Nightly", managedTagId: null }];
+    const run = store.claim(task.id, task.ownerNodeId, task.nextRun, tags)!;
+    const { id: _id, nextRun: _nextRun, lastRun: _lastRun, ...taskInput } = task;
+    store.update(task.id, { ...taskInput, tags: { managedTagIds: [], manualTags: ["Changed"] } });
+    assert.deepEqual(store.history(task.id)[0].tags, tags);
+    assert.equal(run.tags[0].name, "Nightly");
+  } finally { db.close(); }
+});
+
 test("reading a task fetches only its latest run, while history still returns a hundred", async t => {
   const { CronStore } = await import("../src/cron.js");
   const db = new DatabaseSync(":memory:");
   t.after(() => db.close());
   const store = new CronStore(db), task = store.create(input());
   const ids = Array.from({ length: 150 }, () => randomUUID());
-  const insert = db.prepare("INSERT INTO cron_runs VALUES(?,?,?,'succeeded',NULL,NULL,?)");
+  const insert = db.prepare("INSERT INTO cron_runs(id,task_id,due_at,status,error,session_id,finished_at) VALUES(?,?,?,'succeeded',NULL,NULL,?)");
   ids.forEach((id, due) => insert.run(id, task.id, due, due + 1));
   let read = 0;
   const all = StatementSync.prototype.all;

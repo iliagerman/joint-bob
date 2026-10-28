@@ -57,6 +57,8 @@ import "./server/routes/sharing.js";
 import "./server/routes/resource-policy.js";
 import "./server/routes/preferences.js";
 import "./server/routes/provider-profiles.js";
+import "./server/routes/automation-tags.js";
+import "./server/routes/automation-executions.js";
 import "./server/routes/routing.js";
 import "./server/routes/cluster.js";
 import "./server/routes/cluster-tasks.js";

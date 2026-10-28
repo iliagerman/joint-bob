@@ -10,6 +10,7 @@ import { showSignedOut } from "./auth.js";
 import { loadClusterPanel } from "./cluster-panel.js";
 import { loadRelayServing } from "./relay-serving.js";
 import { loadWebhooks } from "./webhooks.js";
+import { loadAutomationTags } from "./automation-tags.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadNtfyServicesPanel } from "./ntfy.js";
@@ -98,7 +99,7 @@ function renderClientLogs() {
 }
 
 // These panels guard their own loading and do not depend on Save settings.
-const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users", "settingsPanel-file-sync"].includes(panel.id);
+const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users", "settingsPanel-file-sync", "settingsPanel-automation-tags"].includes(panel.id);
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(requested) {
@@ -116,6 +117,7 @@ function selectSettingsTab(requested) {
   if (name === "browser") void loadBrowserProfileDirectory();
   if (name === "relay") void loadRelayServing();
   if (name === "webhooks") void loadWebhooks();
+  if (name === "automation-tags") void loadAutomationTags();
   if (name === "notifications") { void loadNtfyServicesPanel(); void loadErrorReportingSettings(); }
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "logs") renderClientLogs();

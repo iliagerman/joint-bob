@@ -757,6 +757,7 @@
           <div class="settings-group-label" role="presentation">Workspace</div>
           <button class="settings-tab" type="button" data-settings-tab="conversations" role="tab" id="settingsTab-conversations" aria-controls="settingsPanel-conversations" aria-selected="false" tabindex="-1" data-testid="settings-tab-conversations"><span class="settings-tab-icon" style="--tile:#10b981" aria-hidden="true">💬</span><span class="settings-tab-label">Conversations</span></button>
           <button class="settings-tab" type="button" data-settings-tab="labels" role="tab" id="settingsTab-labels" aria-controls="settingsPanel-labels" aria-selected="false" tabindex="-1" data-testid="settings-tab-labels"><span class="settings-tab-icon" style="--tile:#f59e0b" aria-hidden="true">🏷️</span><span class="settings-tab-label">Labels</span></button>
+          <button class="settings-tab" type="button" data-settings-tab="automation-tags" role="tab" id="settingsTab-automation-tags" aria-controls="settingsPanel-automation-tags" aria-selected="false" tabindex="-1" data-testid="settings-tab-automation-tags"><span class="settings-tab-icon" style="--tile:#f59e0b" aria-hidden="true">#</span><span class="settings-tab-label">Automation tags</span></button>
           <button class="settings-tab" type="button" data-settings-tab="commands" role="tab" id="settingsTab-commands" aria-controls="settingsPanel-commands" aria-selected="false" tabindex="-1" data-testid="settings-tab-commands"><span class="settings-tab-icon" style="--tile:#eab308" aria-hidden="true">⚡</span><span class="settings-tab-label">Commands</span></button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces"><span class="settings-tab-icon" style="--tile:#06b6d4" aria-hidden="true">🗂️</span><span class="settings-tab-label">Workspaces</span></button>
           <button class="settings-tab" type="button" data-settings-tab="git" role="tab" id="settingsTab-git" aria-controls="settingsPanel-git" aria-selected="false" tabindex="-1" data-testid="settings-tab-git"><span class="settings-tab-icon" style="--tile:#f97316" aria-hidden="true">🌿</span><span class="settings-tab-label">Git</span></button>
@@ -1122,6 +1123,21 @@
           </fieldset>
         </section>
 
+        <section class="settings-panel" id="settingsPanel-automation-tags" role="tabpanel" aria-labelledby="settingsTab-automation-tags" tabindex="0" data-testid="settings-panel-automation-tags" hidden>
+          <p class="settings-hint">Manage workspace tags and review scheduled-task and webhook executions. Manual tags never enter this list unless you add them here.</p>
+          <label>Workspace<select id="automationTagsWorkspace" data-testid="automation-tags-workspace"></select></label>
+          <div class="relay-form"><label>New managed tag<input id="automationTagsNewName" maxlength="80" autocomplete="off" data-testid="automation-tags-new-name" /></label><button id="automationTagsAdd" type="button" class="primary compact" data-testid="automation-tags-add">Add tag</button></div>
+          <p id="automationTagsStatus" class="settings-hint" role="status" data-testid="automation-tags-status"></p>
+          <div id="automationTagsList" class="relay-list" data-testid="automation-tags-list"></div>
+          <div id="automationTagsPager" class="relay-pager" data-testid="automation-tags-pager"></div>
+          <h3>Execution history</h3>
+          <div class="relay-form"><label>Tag<select id="automationExecutionsTag" data-testid="automation-executions-tag"></select></label><label>Automation type<select id="automationExecutionsKind" data-testid="automation-executions-kind"><option value="">All</option><option value="scheduled">Scheduled task</option><option value="webhook">Webhook</option></select></label><label>Automation<select id="automationExecutionsSource" data-testid="automation-executions-source"><option value="">All automations</option></select></label><label>Status<select id="automationExecutionsStatus" data-testid="automation-executions-status"><option value="">All statuses</option><option>queued</option><option>running</option><option>succeeded</option><option>failed</option><option>cancelled</option><option>interrupted</option></select></label></div>
+          <div class="relay-form"><label>From<input id="automationExecutionsFrom" type="date" data-testid="automation-executions-from" /></label><label>To<input id="automationExecutionsTo" type="date" data-testid="automation-executions-to" /></label></div>
+          <div id="automationExecutionsSummary" class="relay-summary" data-testid="automation-executions-summary"></div>
+          <div id="automationExecutionsTrend" class="relay-list" data-testid="automation-executions-trend"></div>
+          <div id="automationExecutionsList" class="relay-list" data-testid="automation-executions-list"></div>
+          <div id="automationExecutionsPager" class="relay-pager" data-testid="automation-executions-pager"></div>
+        </section>
         <section class="settings-panel" id="settingsPanel-commands" role="tabpanel" aria-labelledby="settingsTab-commands" tabindex="0" hidden>
           <fieldset class="phase-settings">
             <legend>Conversation commands</legend>
@@ -1278,6 +1294,7 @@
               <label>Agent / model<select id="webhooksModel" data-testid="webhooks-model-select"></select></label>
               <label>Effort<select id="webhooksEffort" data-testid="webhooks-effort-select"></select></label>
             </div>
+            <fieldset class="relay-form-section"><legend>Tags</legend><div id="webhooksAutomationTags" data-testid="webhooks-automation-tags"></div></fieldset>
             <label id="webhooksTitleTemplateLabel">Conversation title template
               <input id="webhooksTitleTemplate" maxlength="200" autocomplete="off" placeholder="pr-[PR_REVIEW]" data-testid="webhooks-title-template-input" />
               <span class="settings-hint">Optional, for new conversations only. The agent fills [placeholders] from the call. Text outside brackets stays fixed. For example, pr-[PR_REVIEW] becomes pr-Fix login timeout. Blank uses the webhook name.</span>
@@ -2789,6 +2806,7 @@
           </div>
           <label>Name<input name="name" required maxlength="120" autocomplete="off" data-testid="cron-name"></label>
           <label>Prompt<textarea name="prompt" required maxlength="100000" rows="4" data-testid="cron-prompt"></textarea></label>
+          <fieldset class="relay-form-section"><legend>Tags</legend><div id="cronAutomationTags" data-testid="cron-automation-tags"></div></fieldset>
           <div class="cron-schedule-grid">
             <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="hourly">Hourly</option><option value="minutely">Minutes</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
             <label id="cronTimeLabel">Start time<input name="time" type="time" value="08:00" required data-testid="cron-time"></label>

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added tags to scheduled tasks and webhooks, with workspace tag lists shared across nodes and a Settings history of their runs showing counts, success rates, and cost.
+
 ## 2.163.0 — 2026-10-28
 
 - Added an "All nodes with access to this project" choice when sharing a dashboard, so nodes that gain access later receive it too.

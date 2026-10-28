@@ -16,6 +16,7 @@ import { accountInCluster } from "../../cluster-accounts.js";
 import { actorOwns, memberOwnedIds } from "../../ownership.js";
 import { mayShareProject } from "../sharing-files.js";
 import { announceWorkspaceChanges, registerSharedWorkspaceRoutes } from "../shared-workspaces.js";
+import { registerSharedAutomationTagRoutes } from "../shared-automation-tags.js";
 import { forwardTwinSelection, receiveTwinSelection } from "../twin-selection.js";
 import { flushResourcePolicyDeliveries } from "../resource-policy.js";
 import { flushProjectMetadataDeliveries } from "../project-metadata.js";
@@ -28,6 +29,7 @@ const updateSchema = z.object({
 }).strict();
 const emptySchema = z.object({}).strict();
 registerSharedWorkspaceRoutes();
+registerSharedAutomationTagRoutes();
 
 function localOnly(response: Response): void {
   if (!response.locals.authSession) throw new ClusterV2HttpError(401, "Unauthorized");

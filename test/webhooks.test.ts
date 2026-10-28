@@ -39,6 +39,15 @@ test("an update changes the target and keeps the address", () => {
   assert.equal(webhookForSecret(db, secret)?.id, webhook.id);
 });
 
+test("automation tags survive webhook creation and editing", () => {
+  const db = new DatabaseSync(":memory:");
+  const assigned = input({ tags: { managedTagIds: [], manualTags: ["Nightly"] } });
+  const { webhook, secret } = createWebhook(db, assigned);
+  assert.deepEqual(webhook.tags.manualTags, ["Nightly"]);
+  assert.deepEqual(webhookForSecret(db, secret)?.tags, assigned.tags);
+  assert.deepEqual(updateWebhook(db, webhook.id, input({ tags: { managedTagIds: [], manualTags: ["Ops"] } })).tags.manualTags, ["Ops"]);
+});
+
 test("model and effort survive storage, editing, and secret regeneration", () => {
   const db = new DatabaseSync(":memory:");
   const configured = input({ model: { provider: "anthropic", modelId: "claude-sonnet" }, reasoning: "high" });

@@ -2,6 +2,8 @@
 // the target conversation. Runs through this node's own chat socket, like a scheduled task.
 import { randomUUID } from "node:crypto";
 import { automationProfileContext, runWithAutomationProfile } from "./automation-profile.js";
+import { createAutomationExecution, transitionAutomationExecution } from "../automation-executions.js";
+import { automationWorkspaceIdentity, automationWorkspaceKey, snapshotAutomationTags } from "../automation-tags.js";
 import path from "node:path";
 import { getClusterNode } from "../cluster.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
@@ -89,9 +91,20 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
     : "";
   const message = [titleInstruction, webhookMessage(webhook, call), placed.listed].filter(Boolean).join("\n\n");
   const engine = webhook.target.engine ?? defaultEngine();
+  let activeSessionId = webhook.target.kind === "conversation" ? webhook.target.sessionId : null;
   const prompt = {
     automationProfile: automationProfileContext(webhook),
-    message, images: placed.images, files: placed.files, requestId: randomUUID(), label: "Webhook", until: "started" as const,
+    message, images: placed.images, files: placed.files, requestId: call.requestId!, label: "Webhook", until: "completed" as const,
+    onStarted: () => {
+      call.started = true;
+      const files = call.attachments?.length ? ` with ${call.attachments.length} file${call.attachments.length === 1 ? "" : "s"}` : "";
+      const detail = webhook.target.kind === "project" ? `Started conversation ${activeSessionId}${files}` : `Added to the conversation${files}`;
+      void clusterV2Database().then(db => {
+        transitionAutomationExecution(db, call.requestId!, "running", null, activeSessionId);
+        recordWebhookDelivery(db, webhook.id, "delivered", detail);
+      });
+    },
+    onCompleted: () => { void clusterV2Database().then(db => transitionAutomationExecution(db, call.requestId!, "succeeded")); },
     // Apply settings when this turn starts, not while an existing conversation is busy.
     queueSettings: (status: { model: { provider: string; id: string }; thinkingLevel: string }): PromptQueueSettings | undefined => webhook.model || webhook.reasoning ? {
       harnessId: engine,
@@ -112,6 +125,7 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   }
   if (!isHarnessId(engine) || !listDiscoveredHarnesses().some((adapter) => adapter.id === engine && adapter.runtime)) throw new WebhookError(409, "The webhook's agent is not available on this machine");
   const sessionId = randomUUID();
+  activeSessionId = sessionId;
   await ensureConversationRecord(project.id, engine, sessionId, local.id);
   if (titleTemplate) bindWebhookTitle(project.id, sessionId, titleTemplate);
   await ensureSessionTitle(sessionId, titleTemplate || webhook.name);
@@ -129,15 +143,27 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
 
 /** Accepts a call for delivery; the outcome lands in the webhook's call history. */
 export function acceptWebhookCall(webhook: Webhook, call: WebhookCall): void {
+  const requestId = randomUUID();
+  call = { ...call, requestId };
   void (async () => {
+    const db = await clusterV2Database();
+    const project = await getProject(webhook.target.projectId);
+    const local = await getClusterNode();
+    const workspace = project ? automationWorkspaceIdentity(db, local.id, project.type ?? "personal") : null;
+    const tags = workspace ? snapshotAutomationTags(db, workspace.workspaceId, webhook.tags, workspace.ownerNodeId) : [];
+    createAutomationExecution(db, { id: requestId, sourceKind: "webhook", sourceId: webhook.id, sourceName: webhook.name, workspaceId: workspace ? automationWorkspaceKey(workspace) : null, projectId: webhook.target.projectId, ownerNodeId: local.id, engine: webhook.target.kind === "conversation" ? webhook.target.engine : webhook.target.engine ?? null, requestId, sessionId: webhook.target.kind === "conversation" ? webhook.target.sessionId : null, tags, status: "queued", error: null, acceptedAt: new Date().toISOString(), startedAt: null, finishedAt: null });
     try {
       const sessionId = await deliver(webhook, call);
       const files = call.attachments?.length ? ` with ${call.attachments.length} file${call.attachments.length === 1 ? "" : "s"}` : "";
-      recordWebhookDelivery(await clusterV2Database(), webhook.id, "delivered", webhook.target.kind === "project" ? `Started conversation ${sessionId}${files}` : `Added to the conversation${files}`);
+      if (!call.started) recordWebhookDelivery(await clusterV2Database(), webhook.id, "delivered", webhook.target.kind === "project" ? `Started conversation ${sessionId}${files}` : `Added to the conversation${files}`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       console.warn(`Webhook ${webhook.id} delivery failed: ${detail}`);
-      try { recordWebhookDelivery(await clusterV2Database(), webhook.id, "failed", detail); } catch { /* history is best effort */ }
+      try {
+        const database = await clusterV2Database();
+        transitionAutomationExecution(database, call.requestId!, "failed", detail);
+        if (!call.started) recordWebhookDelivery(database, webhook.id, "failed", detail);
+      } catch { /* history is best effort */ }
     }
-  })();
+  })().catch(error => console.error(`Webhook ${webhook.id} execution setup failed`, error));
 }
