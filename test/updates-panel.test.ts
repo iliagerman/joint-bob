@@ -37,10 +37,12 @@ async function panel() {
 
 test("Pi has one harness row that shows the version conversations run and any fallback or pending switch", async () => {
   const p = await panel();
-  p.fixture.status.harnessUpdates.harnesses.unshift({ id: "pi", label: "Pi", state: "succeeded", checkedAt: null, error: null });
+  p.fixture.status.harnessUpdates.harnesses.unshift({ id: "pi", label: "Pi", state: "succeeded", checkedAt: null, error: null, version: "1.5.0" } as any);
+  (p.fixture.status.harnessUpdates.harnesses[1] as any).version = "2.1.312";
   (p.fixture.status.harnessUpdates as any).pi = { source: "harness", version: "1.4.0", reason: null, harnessVersion: "1.4.0", pendingVersion: null };
   await p.load();
   assert.deepEqual(p.elements.harnessUpdatesList.children.map((row: any) => row.children[0].textContent), ["Pi", "Claude"]);
+  assert.equal(p.elements.harnessUpdatesList.children[1].children[1].textContent, "2.1.312", "every harness shows its version");
   const row = () => p.elements.harnessUpdatesList.children[0];
   assert.deepEqual([row().children[1].textContent, row().children[2].textContent, row().children[2].dataset.state], ["1.4.0", "succeeded", "succeeded"]);
   (p.fixture.status.harnessUpdates as any).pi.pendingVersion = "1.5.0";

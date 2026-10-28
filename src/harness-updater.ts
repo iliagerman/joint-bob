@@ -32,6 +32,8 @@ export interface HarnessUpdateStatus {
   state: HarnessUpdateState;
   checkedAt: string | null;
   error: string | null;
+  /** What the configured executable reports with `--version`; null when it cannot say. */
+  version: string | null;
 }
 
 interface UpdateCommand {
@@ -41,7 +43,7 @@ interface UpdateCommand {
 }
 
 function status(adapter: HarnessAdapter, state: HarnessUpdateState, error: string | null = null): HarnessUpdateStatus {
-  return { id: adapter.id, label: adapter.label, state, checkedAt: ["idle", "unsupported"].includes(state) ? null : new Date().toISOString(), error };
+  return { id: adapter.id, label: adapter.label, state, checkedAt: ["idle", "unsupported"].includes(state) ? null : new Date().toISOString(), error, version: null };
 }
 
 function updateError(error: unknown): string {
@@ -144,6 +146,32 @@ export async function runHarnessUpdates(adapters = listDiscoveredHarnesses()): P
 let current = listDiscoveredHarnesses().map((adapter) => status(adapter, adapter.configuration?.update ? "idle" : "unsupported"));
 let active: Promise<void> | null = null;
 
+/** The version a harness's configured executable reports. A harness that is not installed yet,
+    or cannot say, shows none; its update row reports the failure itself. */
+async function installedVersion(adapter: HarnessAdapter): Promise<string | null> {
+  const configuration = adapter.configuration;
+  if (!configuration) return null;
+  const { executable } = configuredRuntime(adapter.id, configuration.defaults(os.homedir()));
+  try {
+    const { stdout } = await execute(executable, ["--version"], { env: process.env, timeout: 15_000, maxBuffer: 64 * 1024 });
+    return /\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?/.exec(stdout)?.[0] ?? null;
+  } catch { return null; }
+}
+
+async function withVersions(entries: HarnessUpdateStatus[], adapters: HarnessAdapter[]): Promise<HarnessUpdateStatus[]> {
+  return Promise.all(entries.map(async (entry) => {
+    const adapter = adapters.find(({ id }) => id === entry.id);
+    return { ...entry, version: adapter ? await installedVersion(adapter) : null };
+  }));
+}
+
+/** Reads every harness's version once at startup; each update run reads them again. */
+export async function loadHarnessVersions(adapters = listDiscoveredHarnesses()): Promise<void> {
+  const entries = adapters.map((adapter) => current.find(({ id }) => id === adapter.id) ?? status(adapter, adapter.configuration?.update ? "idle" : "unsupported"));
+  const versioned = await withVersions(entries, adapters);
+  if (!active) current = versioned;
+}
+
 export function harnessUpdateStatus(): { running: boolean; harnesses: HarnessUpdateStatus[]; pi: typeof piSdkStatus & { pendingVersion: string | null } } {
   return { running: Boolean(active), harnesses: current.map((entry) => ({ ...entry })), pi: { ...piSdkStatus, pendingVersion: pendingPiSdkVersion() } };
 }
@@ -151,7 +179,8 @@ export function harnessUpdateStatus(): { running: boolean; harnesses: HarnessUpd
 export function startHarnessUpdates(): { running: boolean; harnesses: HarnessUpdateStatus[] } {
   if (active) return harnessUpdateStatus();
   current = listDiscoveredHarnesses().map((adapter) => status(adapter, adapter.configuration?.update ? "running" : "unsupported"));
-  active = runHarnessUpdates().then((results) => { current = results; }).finally(() => { active = null; });
+  const adapters = listDiscoveredHarnesses();
+  active = runHarnessUpdates(adapters).then(async (results) => { current = await withVersions(results, adapters); }).finally(() => { active = null; });
   return harnessUpdateStatus();
 }
 

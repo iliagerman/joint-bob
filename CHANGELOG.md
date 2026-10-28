@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Settings → Updates now shows the installed version of every harness (Pi, Claude, Kiro), read from the program Joint Bob runs and refreshed after each harness update.
+
 ## 2.170.1 — 2026-10-28
 
 - Fixed Settings → Updates listing Pi twice; Pi now appears once in the harness list with the version your conversations run, and notes only when they fall back to the built-in Pi or a newer Pi is waiting for a restart.

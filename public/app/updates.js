@@ -149,7 +149,7 @@ function renderHarnessUpdates(status) {
     elements.harnessUpdatesList.append(nodeRow({
       name: harness.label,
       url: "",
-      version: isPi ? pi.version : "",
+      version: isPi ? pi.version : harness.version ?? "",
       state: isPi && pi.source === "built-in" ? "failed" : harness.state,
       detail: `${harness.state}${harness.error ? ` — ${harness.error}` : ""}${checked}${isPi ? piNotes(pi) : ""}`,
     }));

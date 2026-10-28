@@ -182,3 +182,19 @@ exit 0
     delete process.env.MOCK_PI_BROKEN;
   }
 });
+
+test("each harness shows the version its configured executable reports", async () => {
+  const { harnessUpdateStatus, loadHarnessVersions } = await import("../src/harness-updater.js");
+  const root = await mkdtemp(path.join(os.tmpdir(), "harness-versions-"));
+  const claude = path.join(root, "claude"), kiro = path.join(root, "kiro-cli");
+  await writeFile(claude, `#!/bin/sh\n[ "$1" = --version ] && echo "2.1.312 (Claude Code)"\n`);
+  await writeFile(kiro, `#!/bin/sh\n[ "$1" = --version ] && echo "kiro-cli 2.35.1"\n`);
+  await chmod(claude, 0o755);
+  await chmod(kiro, 0o755);
+  await loadHarnessVersions([
+    adapter("claude-version", claude, { type: "self", args: ["update"] }),
+    adapter("kiro-version", kiro, { type: "self", args: ["update"] }),
+    adapter("missing-version", path.join(root, "not-installed"), { type: "self", args: ["update"] }),
+  ]);
+  assert.deepEqual(harnessUpdateStatus().harnesses.map(({ id, version }) => [id, version]), [["claude-version", "2.1.312"], ["kiro-version", "2.35.1"], ["missing-version", null]]);
+});
