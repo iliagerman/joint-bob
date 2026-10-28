@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.166.0 — 2026-10-28
 
-- Added a single sharing picker for dashboards that adds nodes, clusters, workspaces, or the whole project, each shown as a row with its own view or edit choice and a Remove button; sharing with a workspace reaches its eligible nodes, including ones added later.
+- Fixed saved dashboards being cut short instead of filling the modal height when no notices are shown.
+
+- Changed dashboard sharing to a single picker that adds nodes, clusters, workspaces, or the whole project as rows you can remove, with view or edit choices for nodes and clusters; a shared workspace also reaches its eligible nodes, including ones added later.
 
 ## 2.165.0 — 2026-10-28
 
