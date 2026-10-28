@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added sharing a dashboard with every node that has access to its project, sharing a credential-free dashboard's latest results with the people it is shared with, and letting chosen nodes edit a shared dashboard; a stale edit is rejected and its draft kept, so a newer version is never overwritten, while results from dashboards that need credentials stay private.
+
 ## 2.162.0 — 2026-10-28
 
 - Added separate Claude and ChatGPT subscription profiles, with per-user defaults and workspace, project, and conversation selections. Pi and Claude turns use the selected profile, with node-local sign-in and token refresh.

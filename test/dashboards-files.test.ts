@@ -11,7 +11,7 @@ async function freshFiles() {
   return import(`../src/dashboards/files.js?files=${randomUUID()}`) as Promise<typeof import("../src/dashboards/files.js")>;
 }
 
-const manifest = (title: string) => JSON.stringify({ title, refresh: { method: "script", command: 'node "$JOINT_BOB_DASHBOARD_DIR/refresh.mjs"' } });
+const manifest = (title: string) => JSON.stringify({ title, requiresCredentials: true, refresh: { method: "script", command: 'node "$JOINT_BOB_DASHBOARD_DIR/refresh.mjs"' } });
 
 async function writeDraftFiles(directory: string, files: Record<string, string>): Promise<void> {
   for (const [name, content] of Object.entries(files)) {
@@ -68,6 +68,21 @@ test("a draft without a valid manifest, with a symlink, or over the size limit i
   assert.equal(files.readLiveDefinition(id), undefined);
 });
 
+test("legacy manifests default to requiring credentials, and credential-free manifests remain explicit", async () => {
+  const files = await freshFiles();
+  const legacy = randomUUID();
+  await writeDraftFiles(files.prepareDraft(legacy), { "manifest.json": JSON.stringify({ title: "Legacy", refresh: { method: "script", command: "echo {}" } }), "index.html": "<p>legacy</p>" });
+  assert.equal(files.checkDraft(legacy).ok, true);
+  const savedLegacy = files.promoteDraft(legacy);
+  assert.equal(savedLegacy.manifest.requiresCredentials, true);
+  assert.equal(files.readLiveDefinition(legacy)!.manifest.requiresCredentials, true);
+
+  const publicData = randomUUID();
+  const noCredentials = JSON.stringify({ title: "Public", requiresCredentials: false, refresh: { method: "script", command: "echo {}" } });
+  await writeDraftFiles(files.prepareDraft(publicData), { "manifest.json": noCredentials, "index.html": "<p>public</p>" });
+  assert.equal(files.promoteDraft(publicData).manifest.requiresCredentials, false);
+});
+
 test("a received definition is written as given and keeps the owner's digest", async () => {
   const files = await freshFiles();
   const owner = randomUUID();
@@ -78,6 +93,7 @@ test("a received definition is written as given and keeps the owner's digest", a
   const written = files.writeReceivedDefinition(copy, bundle.map((file) => ({ path: file.path, content: file.content })));
   assert.equal(written.digest, saved.digest);
   assert.throws(() => files.writeReceivedDefinition(copy, [{ path: "../escape", content: Buffer.from("x") }, ...bundle]), /path/);
+  assert.throws(() => files.writeReceivedDefinition(copy, [...bundle, { path: "index.html", content: Buffer.from("duplicate") } ]), /Duplicate/);
 });
 
 test("payloads, run logs and state stay per dashboard", async () => {

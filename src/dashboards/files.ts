@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { resolveDataDirectory } from "../data-directory.js";
-import { dashboardManifestSchema, type DashboardManifest, type DashboardPayload } from "./contract.js";
+import { dashboardManifestSchema, parsePayload, type DashboardManifest, type DashboardPayload } from "./contract.js";
 
 /**
  * A dashboard's files on this node, outside every project folder:
@@ -27,6 +27,7 @@ export function dashboardRoot(id: string): string {
 }
 
 const draftPath = (id: string) => path.join(dashboardRoot(id), "draft");
+const draftBasePath = (id: string) => path.join(dashboardRoot(id), "draft-base-digest");
 const versionPath = (id: string, digest: string) => path.join(dashboardRoot(id), "versions", digest);
 
 function assertRelativePath(relative: string): void {
@@ -62,7 +63,12 @@ function digestOf(files: DefinitionFile[]): string {
 function checkDefinition(files: DefinitionFile[]): DashboardManifest {
   if (files.length > MAX_FILES) throw new Error(`A dashboard can have at most ${MAX_FILES} files`);
   if (files.reduce((total, file) => total + file.content.length, 0) > MAX_BYTES) throw new Error("The dashboard definition is too large (4 MiB at most)");
-  for (const file of files) assertRelativePath(file.path);
+  const paths = new Set<string>();
+  for (const file of files) {
+    assertRelativePath(file.path);
+    if (paths.has(file.path)) throw new Error(`Duplicate dashboard file path: ${file.path}`);
+    paths.add(file.path);
+  }
   const manifestFile = files.find((file) => file.path === "manifest.json");
   if (!manifestFile) throw new Error("The dashboard needs a manifest.json");
   if (!files.some((file) => file.path === "index.html")) throw new Error("The dashboard needs an index.html");
@@ -121,13 +127,20 @@ export function prepareDraft(id: string): string {
   if (existsSync(draft)) return draft;
   mkdirSync(path.dirname(draft), { recursive: true, mode: 0o700 });
   const live = readLiveDefinition(id);
-  if (live) cpSync(live.directory, draft, { recursive: true });
-  else mkdirSync(draft, { mode: 0o700 });
+  if (live) {
+    cpSync(live.directory, draft, { recursive: true });
+    writeFileSync(draftBasePath(id), live.digest);
+  } else mkdirSync(draft, { mode: 0o700 });
   return draft;
 }
 
 export function draftExists(id: string): boolean {
   return existsSync(draftPath(id));
+}
+
+export function draftBaseDigest(id: string): string | undefined {
+  const file = draftBasePath(id);
+  return existsSync(file) ? readFileSync(file, "utf8") : undefined;
 }
 
 export function readDraftFiles(id: string): DefinitionFile[] {
@@ -136,6 +149,7 @@ export function readDraftFiles(id: string): DefinitionFile[] {
 
 export function discardDraft(id: string): void {
   rmSync(draftPath(id), { recursive: true, force: true });
+  rmSync(draftBasePath(id), { force: true });
   rmSync(payloadPath(id, "draft"), { force: true });
 }
 
@@ -203,6 +217,26 @@ export function payloadPath(id: string, target: PayloadTarget = "live"): string 
 export function readPayload(id: string, target: PayloadTarget = "live"): DashboardPayload | undefined {
   const file = payloadPath(id, target);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) as DashboardPayload : undefined;
+}
+
+const sharedPayloadPath = (id: string) => path.join(dashboardRoot(id), "shared-payload.json");
+
+export function readSharedPayload(id: string): DashboardPayload | undefined {
+  const file = sharedPayloadPath(id);
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) as DashboardPayload : undefined;
+}
+
+export function writeSharedPayload(id: string, value: unknown): void {
+  const payload = parsePayload(JSON.stringify(value));
+  const root = dashboardRoot(id);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const temporary = path.join(root, `.shared-payload-${process.pid}-${Date.now()}`);
+  writeFileSync(temporary, JSON.stringify(payload));
+  renameSync(temporary, sharedPayloadPath(id));
+}
+
+export function removeSharedPayload(id: string): void {
+  rmSync(sharedPayloadPath(id), { force: true });
 }
 
 export function writePayload(id: string, payload: DashboardPayload, target: PayloadTarget = "live"): void {

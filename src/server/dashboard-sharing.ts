@@ -1,10 +1,10 @@
-import type { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { signClusterRequest } from "../cluster-protocol.js";
-import { readLiveDefinition, removeDashboardFiles, writeReceivedDefinition } from "../dashboards/files.js";
+import { readLiveDefinition, readPayload, readSharedPayload, removeDashboardFiles, removeSharedPayload, writeReceivedDefinition, writeSharedPayload } from "../dashboards/files.js";
 import { dashboardFilesResponseSchema, dashboardManifestResponseSchema, offeredTo, type DashboardOffer } from "../dashboards/sharing.js";
 import {
-  dashboardSharing, deleteDashboard, getDashboard, listAllDashboards, receivedDashboardsFrom, upsertReceivedDashboard, type DashboardRecord,
+  dashboardSharing, deleteDashboard, getDashboard, listAllDashboards, mayEditDashboard, receivedDashboardsFrom, upsertReceivedDashboard, type DashboardRecord,
 } from "../dashboards/store.js";
 import { peerFetch } from "../relay/transport.js";
 import { settled, warnOnChange } from "./quiet-log.js";
@@ -15,17 +15,12 @@ type Peers = Awaited<ReturnType<typeof peers>>;
 type Peer = Peers["nodes"][number];
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
-function createdByAdmin(db: DatabaseSync, accountId: string | null): boolean {
-  if (!accountId) return false;
-  const row = db.prepare("SELECT role FROM users WHERE account_id = ? AND disabled = 0 AND home_node_id IS NULL").get(accountId) as { role: string } | undefined;
-  return row?.role === "admin";
-}
-
 function offered(context: Peers, peer: Peer, record: DashboardRecord): boolean {
+  const sharing = dashboardSharing(record.id);
   return offeredTo({
     saved: record.definitionDigest !== null, origin: record.origin, receiverNodeId: peer.nodeId,
-    receiverIsTwin: Boolean(peer.twinRelationshipId), createdByAdmin: createdByAdmin(context.db, record.accountId),
-    selection: dashboardSharing(record.id), receiverClusterIds: peer.clusterIds,
+    receiverIsTwin: Boolean(peer.twinRelationshipId), shareWithProject: sharing.allProjectNodes,
+    selection: sharing, receiverClusterIds: peer.clusterIds,
     projectShared: mayShareProject(context.db, context.local, peer.nodeId, record.hostProjectId),
   });
 }
@@ -43,6 +38,8 @@ export async function dashboardManifestFor(receiverNodeId: string): Promise<z.in
   const dashboards: DashboardOffer[] = listAllDashboards().filter((record) => offered(context, peer, record)).map((record) => ({
     id: record.id, entity: record.entity, hostProjectId: record.hostProjectId, title: record.title,
     refreshMethod: record.refreshMethod!, digest: record.definitionDigest!,
+    payloadDigest: sharedPayloadDigest(record),
+    canEdit: mayEditDashboard(record.id, peer.nodeId, peer.clusterIds),
   }));
   return { ownerNodeId: context.local, dashboards };
 }
@@ -53,7 +50,12 @@ export async function dashboardFilesFor(receiverNodeId: string, id: string): Pro
   const record = getDashboard(id);
   const live = record && offered(context, peer, record) ? readLiveDefinition(id) : undefined;
   if (!live) throw Object.assign(new Error("Dashboard not offered"), { expose: true, status: 404 });
-  return { digest: live.digest, files: live.files.map((file) => ({ path: file.path, content: file.content.toString("base64") })) };
+  const payload = live.manifest.requiresCredentials ? undefined : readPayload(id);
+  return {
+    digest: live.digest,
+    files: live.files.map((file) => ({ path: file.path, content: file.content.toString("base64") })),
+    payload: payload ?? null,
+  };
 }
 
 async function signedPost(context: Peers, peer: Peer, target: string, body: unknown): Promise<Response> {
@@ -80,6 +82,13 @@ async function boundedJson(response: Response): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+function sharedPayloadDigest(record: DashboardRecord): string | null {
+  const live = readLiveDefinition(record.id);
+  if (!live || live.manifest.requiresCredentials) return null;
+  const payload = readPayload(record.id);
+  return payload ? createHash("sha256").update(JSON.stringify(payload)).digest("hex") : null;
+}
+
 async function fetchManifest(context: Peers, peer: Peer): Promise<DashboardOffer[]> {
   const response = await signedPost(context, peer, "/api/cluster/v2/dashboards/manifest", {});
   if (response.status === 403) { await response.body?.cancel(); return []; } // The owner withdrew access.
@@ -96,9 +105,18 @@ async function installOffer(context: Peers, peer: Peer, offer: DashboardOffer): 
   const body = dashboardFilesResponseSchema.parse(await boundedJson(response));
   if (body.digest !== offer.digest) throw new Error("The dashboard changed while it was fetched");
   // The record goes first: new code is unapproved before its files are in place.
-  upsertReceivedDashboard({ id: offer.id, entity: offer.entity, hostProjectId: offer.hostProjectId, ownerNodeId: peer.nodeId, accountId: null, title: offer.title, refreshMethod: offer.refreshMethod, digest: offer.digest });
-  const written = writeReceivedDefinition(offer.id, body.files.map((file) => ({ path: file.path, content: Buffer.from(file.content, "base64") })));
-  if (written.digest !== offer.digest) throw new Error("Received dashboard files do not match their digest");
+  const existing = getDashboard(offer.id);
+  const definitionMatches = existing?.definitionDigest === offer.digest && readLiveDefinition(offer.id)?.digest === offer.digest;
+  upsertReceivedDashboard({ id: offer.id, entity: offer.entity, hostProjectId: offer.hostProjectId, ownerNodeId: peer.nodeId, accountId: null, title: offer.title, refreshMethod: offer.refreshMethod, digest: offer.digest, canEdit: offer.canEdit });
+  if (!definitionMatches) {
+    const written = writeReceivedDefinition(offer.id, body.files.map((file) => ({ path: file.path, content: Buffer.from(file.content, "base64") })));
+    if (written.digest !== offer.digest) throw new Error("Received dashboard files do not match their digest");
+  }
+  if (offer.payloadDigest && body.payload) {
+    const actual = createHash("sha256").update(JSON.stringify(body.payload)).digest("hex");
+    if (actual !== offer.payloadDigest) throw new Error("Received dashboard payload does not match its digest");
+    writeSharedPayload(offer.id, body.payload);
+  } else removeSharedPayload(offer.id);
 }
 
 async function syncFrom(context: Peers, peer: Peer): Promise<void> {
@@ -106,10 +124,6 @@ async function syncFrom(context: Peers, peer: Peer): Promise<void> {
   for (const offer of offers) {
     const existing = getDashboard(offer.id);
     if (existing && existing.origin !== "received") continue; // An id this node already owns is never overwritten.
-    if (existing?.definitionDigest === offer.digest && readLiveDefinition(offer.id)?.digest === offer.digest) {
-      upsertReceivedDashboard({ id: offer.id, entity: offer.entity, hostProjectId: offer.hostProjectId, ownerNodeId: peer.nodeId, accountId: null, title: offer.title, refreshMethod: offer.refreshMethod, digest: offer.digest });
-      continue;
-    }
     await installOffer(context, peer, offer);
   }
   const offered = new Set(offers.map((offer) => offer.id));
@@ -143,6 +157,18 @@ export async function refreshSharedDashboards(): Promise<void> {
 }
 
 /** Saves never wait for a peer; a peer that misses the notice catches up when it next lists dashboards or starts. */
+export async function submitDashboardEdit(ownerNodeId: string, id: string, baseDigest: string, files: Array<{ path: string; content: Buffer }>): Promise<{ accepted: true; digest: string }> {
+  const { context, peer } = await receiver(ownerNodeId);
+  const response = await signedPost(context, peer, "/api/cluster/v2/dashboards/edit", {
+    id, baseDigest, files: files.map((file) => ({ path: file.path, content: file.content.toString("base64") })),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw Object.assign(new Error(response.status === 409 ? "The dashboard changed on its owner; your draft is kept" : `Dashboard edit rejected (${response.status})`), { expose: true, status: response.status });
+  }
+  return z.object({ accepted: z.literal(true), digest: z.string().regex(/^[0-9a-f]{64}$/) }).parse(await boundedJson(response));
+}
+
 export async function announceDashboardChanges(): Promise<void> {
   const context = await peers();
   await Promise.all(context.nodes.map(async (node) => {

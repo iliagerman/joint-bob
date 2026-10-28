@@ -18,6 +18,7 @@ export interface DashboardRecord {
   title: string;
   refreshMethod: "script" | "ai" | null;
   origin: "own" | "received";
+  canEdit: boolean;
   ownerNodeId: string;
   /** The account that created it on its owner node; null when received. */
   accountId: string | null;
@@ -32,7 +33,7 @@ export interface DashboardRecord {
 
 interface Row {
   id: string; entity_kind: DashboardEntity["kind"]; entity_id: string; project_id: string | null; host_project_id: string; title: string;
-  refresh_method: "script" | "ai" | null; origin: "own" | "received"; owner_node_id: string; account_id: string | null;
+  refresh_method: "script" | "ai" | null; origin: "own" | "received"; can_edit: number; owner_node_id: string; account_id: string | null;
   definition_digest: string | null; approved_digest: string | null; active: number; last_refresh: string | null;
   created_at: string; updated_at: string;
 }
@@ -54,6 +55,7 @@ function db(): DatabaseSync {
       title TEXT NOT NULL,
       refresh_method TEXT,
       origin TEXT NOT NULL,
+      can_edit INTEGER NOT NULL DEFAULT 0,
       owner_node_id TEXT NOT NULL,
       account_id TEXT,
       definition_digest TEXT,
@@ -68,8 +70,17 @@ function db(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS dashboard_shares (
       dashboard_id TEXT PRIMARY KEY,
       node_ids TEXT NOT NULL,
-      cluster_ids TEXT NOT NULL
+      cluster_ids TEXT NOT NULL,
+      edit_node_ids TEXT NOT NULL DEFAULT '[]',
+      edit_cluster_ids TEXT NOT NULL DEFAULT '[]',
+      all_project_nodes INTEGER NOT NULL DEFAULT 0
     );`);
+  const dashboardColumns = (database.prepare("PRAGMA table_info(dashboards)").all() as { name: string }[]).map((column) => column.name);
+  if (!dashboardColumns.includes("can_edit")) database.exec("ALTER TABLE dashboards ADD COLUMN can_edit INTEGER NOT NULL DEFAULT 0");
+  const shareColumns = (database.prepare("PRAGMA table_info(dashboard_shares)").all() as { name: string }[]).map((column) => column.name);
+  if (!shareColumns.includes("edit_node_ids")) database.exec("ALTER TABLE dashboard_shares ADD COLUMN edit_node_ids TEXT NOT NULL DEFAULT '[]'");
+  if (!shareColumns.includes("edit_cluster_ids")) database.exec("ALTER TABLE dashboard_shares ADD COLUMN edit_cluster_ids TEXT NOT NULL DEFAULT '[]'");
+  if (!shareColumns.includes("all_project_nodes")) database.exec("ALTER TABLE dashboard_shares ADD COLUMN all_project_nodes INTEGER NOT NULL DEFAULT 0");
   return database;
 }
 
@@ -81,7 +92,7 @@ function entityOf(row: Row): DashboardEntity {
 function toRecord(row: Row): DashboardRecord {
   return {
     id: row.id, entity: entityOf(row), hostProjectId: row.host_project_id, title: row.title, refreshMethod: row.refresh_method, origin: row.origin,
-    ownerNodeId: row.owner_node_id, accountId: row.account_id, definitionDigest: row.definition_digest,
+    canEdit: row.can_edit === 1, ownerNodeId: row.owner_node_id, accountId: row.account_id, definitionDigest: row.definition_digest,
     approvedDigest: row.approved_digest, active: row.active === 1,
     lastRefresh: row.last_refresh ? JSON.parse(row.last_refresh) as DashboardRefresh : null,
     createdAt: row.created_at, updatedAt: row.updated_at,
@@ -180,24 +191,24 @@ export function approveDashboard(id: string, digest: string): void {
   db().prepare("UPDATE dashboards SET approved_digest = ?, updated_at = ? WHERE id = ?").run(digest, new Date().toISOString(), id);
 }
 
-export function upsertReceivedDashboard(input: { id: string; entity: DashboardEntity; hostProjectId?: string; ownerNodeId: string; accountId: string | null; title: string; refreshMethod: "script" | "ai"; digest: string }): void {
+export function upsertReceivedDashboard(input: { id: string; entity: DashboardEntity; hostProjectId?: string; ownerNodeId: string; accountId: string | null; title: string; refreshMethod: "script" | "ai"; digest: string; canEdit?: boolean }): void {
   const existing = getDashboard(input.id);
   if (existing && (existing.origin !== "received" || existing.ownerNodeId !== input.ownerNodeId)) throw new Error("Dashboard belongs to another owner");
   const now = new Date().toISOString();
   transaction(() => {
     if (!existing) {
-      db().prepare(`INSERT INTO dashboards (id, entity_kind, entity_id, project_id, host_project_id, title, refresh_method, origin, owner_node_id, account_id, definition_digest, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)`).run(input.id, input.entity.kind, input.entity.id,
-        input.entity.kind === "conversation" ? input.entity.projectId : null, hostProjectFor(input.entity, input.hostProjectId), input.title, input.refreshMethod, input.ownerNodeId, input.accountId, input.digest, now, now);
+      db().prepare(`INSERT INTO dashboards (id, entity_kind, entity_id, project_id, host_project_id, title, refresh_method, origin, can_edit, owner_node_id, account_id, definition_digest, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?, ?)`).run(input.id, input.entity.kind, input.entity.id,
+        input.entity.kind === "conversation" ? input.entity.projectId : null, hostProjectFor(input.entity, input.hostProjectId), input.title, input.refreshMethod, input.canEdit ? 1 : 0, input.ownerNodeId, input.accountId, input.digest, now, now);
       return;
     }
     if (existing.definitionDigest === input.digest) {
-      db().prepare("UPDATE dashboards SET title = ?, updated_at = ? WHERE id = ?").run(input.title, now, input.id);
+      db().prepare("UPDATE dashboards SET title = ?, can_edit = ?, updated_at = ? WHERE id = ?").run(input.title, input.canEdit ? 1 : 0, now, input.id);
       return;
     }
     // New code from the owner: it stops running here until someone approves it again.
-    db().prepare(`UPDATE dashboards SET title = ?, refresh_method = ?, definition_digest = ?, approved_digest = NULL, active = 0, updated_at = ? WHERE id = ?`)
-      .run(input.title, input.refreshMethod, input.digest, now, input.id);
+    db().prepare(`UPDATE dashboards SET title = ?, refresh_method = ?, can_edit = ?, definition_digest = ?, approved_digest = NULL, active = 0, updated_at = ? WHERE id = ?`)
+      .run(input.title, input.refreshMethod, input.canEdit ? 1 : 0, input.digest, now, input.id);
     activateFallback(existing.entity);
   });
 }
@@ -217,16 +228,24 @@ export function deleteDashboard(id: string): void {
 }
 
 /** Which other nodes and clusters a dashboard is shared with; twins need no entry. */
-export interface DashboardSharing { nodeIds: string[]; clusterIds: string[] }
+export interface DashboardSharing { nodeIds: string[]; clusterIds: string[]; editNodeIds: string[]; editClusterIds: string[]; allProjectNodes: boolean }
 export function dashboardSharing(id: string): DashboardSharing {
-  const row = db().prepare("SELECT node_ids, cluster_ids FROM dashboard_shares WHERE dashboard_id = ?").get(id) as { node_ids: string; cluster_ids: string } | undefined;
-  return row ? { nodeIds: JSON.parse(row.node_ids) as string[], clusterIds: JSON.parse(row.cluster_ids) as string[] } : { nodeIds: [], clusterIds: [] };
+  const row = db().prepare("SELECT node_ids, cluster_ids, edit_node_ids, edit_cluster_ids, all_project_nodes FROM dashboard_shares WHERE dashboard_id = ?").get(id) as { node_ids: string; cluster_ids: string; edit_node_ids: string; edit_cluster_ids: string; all_project_nodes: number } | undefined;
+  return row ? { nodeIds: JSON.parse(row.node_ids) as string[], clusterIds: JSON.parse(row.cluster_ids) as string[], editNodeIds: JSON.parse(row.edit_node_ids) as string[], editClusterIds: JSON.parse(row.edit_cluster_ids) as string[], allProjectNodes: row.all_project_nodes === 1 } : { nodeIds: [], clusterIds: [], editNodeIds: [], editClusterIds: [], allProjectNodes: false };
 }
 
-export function setDashboardSharing(id: string, sharing: DashboardSharing): void {
-  db().prepare(`INSERT INTO dashboard_shares (dashboard_id, node_ids, cluster_ids) VALUES (?, ?, ?)
-    ON CONFLICT(dashboard_id) DO UPDATE SET node_ids = excluded.node_ids, cluster_ids = excluded.cluster_ids`)
-    .run(id, JSON.stringify(sharing.nodeIds), JSON.stringify(sharing.clusterIds));
+export function setDashboardSharing(id: string, sharing: Partial<DashboardSharing> & Pick<DashboardSharing, "nodeIds" | "clusterIds">): void {
+  const editNodeIds = sharing.editNodeIds ?? [];
+  const editClusterIds = sharing.editClusterIds ?? [];
+  db().prepare(`INSERT INTO dashboard_shares (dashboard_id, node_ids, cluster_ids, edit_node_ids, edit_cluster_ids, all_project_nodes) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(dashboard_id) DO UPDATE SET node_ids = excluded.node_ids, cluster_ids = excluded.cluster_ids,
+      edit_node_ids = excluded.edit_node_ids, edit_cluster_ids = excluded.edit_cluster_ids, all_project_nodes = excluded.all_project_nodes`)
+    .run(id, JSON.stringify(sharing.nodeIds), JSON.stringify(sharing.clusterIds), JSON.stringify(editNodeIds), JSON.stringify(editClusterIds), sharing.allProjectNodes ? 1 : 0);
+}
+
+export function mayEditDashboard(id: string, nodeId: string, clusterIds: string[]): boolean {
+  const sharing = dashboardSharing(id);
+  return sharing.editNodeIds.includes(nodeId) || sharing.editClusterIds.some((clusterId) => clusterIds.includes(clusterId));
 }
 
 export function receivedDashboardsFrom(ownerNodeId: string): DashboardRecord[] {

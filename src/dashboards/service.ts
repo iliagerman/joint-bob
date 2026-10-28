@@ -180,7 +180,7 @@ async function refreshOnce(record: DashboardRecord, context: EntityContext, targ
 }
 
 /** Refreshes once, now. A received dashboard runs only when its current definition is approved. */
-export function startRefresh(record: DashboardRecord, context: EntityContext, target: PayloadTarget): void {
+export function startRefresh(record: DashboardRecord, context: EntityContext, target: PayloadTarget, afterPublish?: () => Promise<void>): void {
   assertSingleUserNode();
   if (target === "live" && record.approvedDigest !== record.definitionDigest) {
     throw Object.assign(new Error("Approve this dashboard before it runs on this node"), { expose: true, status: 403 });
@@ -190,7 +190,9 @@ export function startRefresh(record: DashboardRecord, context: EntityContext, ta
   startJob(record.id, { kind: "refresh", target }, async (run) => {
     const result = await refreshOnce(record, context, target, definition, run).catch((error: unknown) => ({ ok: false as const, error: (error as Error).message }));
     const outcome = { at: new Date().toISOString(), ok: result.ok, error: result.ok ? null : result.error };
-    if (target === "live") recordRefresh(record.id, outcome);
-    else draftRefreshes.set(record.id, outcome);
+    if (target === "live") {
+      recordRefresh(record.id, outcome);
+      if (outcome.ok && record.origin === "own" && !definition.manifest.requiresCredentials) await afterPublish?.();
+    } else draftRefreshes.set(record.id, outcome);
   });
 }

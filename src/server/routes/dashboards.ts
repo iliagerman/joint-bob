@@ -7,7 +7,7 @@ import { dashboardEntitySchema, type DashboardEntity } from "../../dashboards/co
 import { resolveEntity } from "../../dashboards/entity.js";
 import { composeFrame, FRAME_CONTENT_SECURITY_POLICY } from "../../dashboards/frame.js";
 import {
-  checkDraft, discardDraft, draftExists, draftState, promoteDraft, readCreatorMessages, readDraftFiles, readLiveDefinition, readPayload, readRunLog, removeDashboardFiles,
+  checkDraft, discardDraft, draftBaseDigest, draftExists, draftState, promoteDraft, readCreatorMessages, readDraftFiles, readLiveDefinition, readPayload, readSharedPayload, readRunLog, removeDashboardFiles,
   writeReceivedDefinition,
 } from "../../dashboards/files.js";
 import { forgetDraftRefresh, lastDraftRefresh, runningState, startCreatorTurn, startRefresh, stopJob } from "../../dashboards/service.js";
@@ -17,7 +17,7 @@ import {
 } from "../../dashboards/store.js";
 import { whilePeerOptional } from "../../peer-presence.js";
 import {
-  announceDashboardChanges, dashboardFilesFor, dashboardManifestFor, dashboardShareTargets, isTwinOwner, refreshSharedDashboards, syncDashboardsFromOwner,
+  announceDashboardChanges, dashboardFilesFor, dashboardManifestFor, dashboardShareTargets, isTwinOwner, refreshSharedDashboards, submitDashboardEdit, syncDashboardsFromOwner,
 } from "../dashboard-sharing.js";
 import { app } from "../state.js";
 
@@ -62,7 +62,9 @@ function framePage(record: DashboardRecord, draft: boolean): { html: string; pay
   }
   const live = readLiveDefinition(record.id);
   if (!live) throw new NotFoundError("Dashboard has not been saved yet");
-  return { html: live.html, payload: live.digest === record.approvedDigest ? readPayload(record.id, "live") : undefined };
+  const localPayload = readPayload(record.id, "live");
+  const sharedPayload = record.origin === "received" ? readSharedPayload(record.id) : undefined;
+  return { html: live.html, payload: live.digest === record.approvedDigest ? (sharedPayload ?? localPayload) : undefined };
 }
 
 app.get("/api/dashboards/:id/frame", dashboardRoute(async (request, response, auth) => {
@@ -91,10 +93,11 @@ function dashboardView(record: DashboardRecord) {
   return {
     draftHasPage: draft.hasPage, draftVersion: draft.version,
     id: record.id, title: record.title, entity: record.entity, hostProjectId: record.hostProjectId, origin: record.origin,
-    ownerNodeId: record.ownerNodeId, refreshMethod: record.refreshMethod, active: record.active, saved,
+    ownerNodeId: record.ownerNodeId, canEdit: record.canEdit, refreshMethod: record.refreshMethod, active: record.active, saved,
     approved: saved && record.approvedDigest === record.definitionDigest, definitionDigest: record.definitionDigest,
     hasDraft, draftCheck: check ? (check.ok ? { ok: true } : { ok: false, error: check.error }) : null,
-    lastRefresh: record.lastRefresh, draftRefresh: lastDraftRefresh(record.id), running: runningState(record.id),
+    lastRefresh: record.lastRefresh, publishedAt: record.origin === "received" ? readSharedPayload(record.id)?.generatedAt ?? null : null,
+    draftRefresh: lastDraftRefresh(record.id), running: runningState(record.id),
   };
 }
 
@@ -164,7 +167,7 @@ function idle(record: DashboardRecord): void {
 app.post("/api/dashboards/:id/messages", dashboardRoute(async (request, response, auth) => {
   const input = messageSchema.parse(request.body);
   const { record, context } = await visibleDashboard(String(request.params.id), auth);
-  ownDashboard(record);
+  if (record.origin !== "own" && !record.canEdit) throw new DashboardError(403, "This dashboard is read-only here");
   startCreatorTurn(record, context, input.text);
   response.status(202);
   return { dashboard: dashboardView(record) };
@@ -173,7 +176,7 @@ app.post("/api/dashboards/:id/messages", dashboardRoute(async (request, response
 app.post("/api/dashboards/:id/refresh", dashboardRoute(async (request, response, auth) => {
   const input = refreshSchema.parse(request.body);
   const { record, context } = await visibleDashboard(String(request.params.id), auth);
-  startRefresh(record, context, input.target);
+  startRefresh(record, context, input.target, dashboardsChanged);
   response.status(202);
   return { dashboard: dashboardView(record) };
 }));
@@ -181,7 +184,17 @@ app.post("/api/dashboards/:id/refresh", dashboardRoute(async (request, response,
 app.post("/api/dashboards/:id/draft/save", dashboardRoute(async (request, _response, auth) => {
   emptySchema.parse(request.body);
   const { record } = await visibleDashboard(String(request.params.id), auth);
-  ownDashboard(record);
+  if (record.origin === "received") {
+    if (!record.canEdit) throw new DashboardError(403, "This dashboard is read-only here");
+    idle(record);
+    if (!draftExists(record.id)) throw new DashboardError(409, "There is no draft to save");
+    const baseDigest = draftBaseDigest(record.id);
+    if (!baseDigest) throw new DashboardError(409, "This draft has no base version; discard it and start again");
+    const savedEdit = await submitDashboardEdit(record.ownerNodeId, record.id, baseDigest, readDraftFiles(record.id));
+    discardDraft(record.id);
+    await syncDashboardsFromOwner(record.ownerNodeId, true);
+    return { dashboard: dashboardView(getDashboard(record.id) ?? record), accepted: savedEdit.accepted };
+  }
   idle(record);
   if (!draftExists(record.id)) throw new DashboardError(409, "There is no draft to save");
   let saved: ReturnType<typeof promoteDraft>;
@@ -253,7 +266,11 @@ app.get("/api/dashboards/:id/definition", dashboardRoute(async (request, _respon
 
 // ---- sharing ---------------------------------------------------------------------------------
 
-const sharingSchema = z.object({ nodeIds: z.array(z.string().min(1).max(100)).max(100), clusterIds: z.array(z.string().uuid()).max(100), ...projectIdField }).strict();
+const sharingSchema = z.object({
+  nodeIds: z.array(z.string().min(1).max(100)).max(100).default([]), clusterIds: z.array(z.string().uuid()).max(100).default([]),
+  editNodeIds: z.array(z.string().min(1).max(100)).max(100).default([]), editClusterIds: z.array(z.string().uuid()).max(100).default([]),
+  allProjectNodes: z.boolean().default(false), ...projectIdField,
+}).strict();
 
 app.get("/api/dashboards/:id/sharing", dashboardRoute(async (request, _response, auth) => {
   const { record } = await visibleDashboard(String(request.params.id), auth);
@@ -267,10 +284,11 @@ app.put("/api/dashboards/:id/sharing", dashboardRoute(async (request, _response,
   ownDashboard(record);
   if (auth.isRemoteLogin) throw new DashboardError(403, "Change dashboard sharing on the node that owns it");
   const targets = await dashboardShareTargets();
-  if (input.nodeIds.some((id) => !targets.nodes.some((node) => node.nodeId === id)) || input.clusterIds.some((id) => !targets.clusters.some((cluster) => cluster.id === id))) {
+  if (input.nodeIds.some((id) => !targets.nodes.some((node) => node.nodeId === id)) || input.clusterIds.some((id) => !targets.clusters.some((cluster) => cluster.id === id)) ||
+    input.editNodeIds.some((id) => !input.nodeIds.includes(id)) || input.editClusterIds.some((id) => !input.clusterIds.includes(id))) {
     throw new DashboardError(403, "Sharing target is not available");
   }
-  setDashboardSharing(record.id, { nodeIds: input.nodeIds, clusterIds: input.clusterIds });
+  setDashboardSharing(record.id, { nodeIds: input.nodeIds, clusterIds: input.clusterIds, editNodeIds: input.editNodeIds, editClusterIds: input.editClusterIds, allProjectNodes: input.allProjectNodes });
   await dashboardsChanged();
   return dashboardSharing(record.id);
 }));
@@ -288,6 +306,16 @@ app.post("/api/dashboards/:id/copy", dashboardRoute(async (request, _response, a
   return { dashboard: dashboardView(getDashboard(copy.id)!) };
 }));
 
+const base64Schema = z.string().regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).max(6 * 1024 * 1024);
+const dashboardEditSchema = z.object({
+  id: z.string().uuid(), baseDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  files: z.array(z.object({ path: z.string().min(1).max(500), content: base64Schema }).strict()).max(50),
+}).strict().superRefine((input, context) => {
+  if (input.files.reduce((total, file) => total + file.content.length, 0) > 6 * 1024 * 1024) {
+    context.addIssue({ code: "custom", message: "The dashboard definition is too large" });
+  }
+});
+
 function machineRoute(handler: (request: Request, sender: string) => Promise<unknown>) {
   return (request: Request, response: Response, next: NextFunction): void => {
     if (response.locals.machineProtocol !== 2) { response.status(403).json({ error: "Forbidden" }); return; }
@@ -303,6 +331,18 @@ app.post("/api/cluster/v2/dashboards/manifest", machineRoute(async (request, sen
 app.post("/api/cluster/v2/dashboards/files", machineRoute(async (request, sender) => {
   const { id } = z.object({ id: z.string().uuid() }).strict().parse(request.body);
   return dashboardFilesFor(sender, id);
+}));
+
+app.post("/api/cluster/v2/dashboards/edit", machineRoute(async (request, sender) => {
+  const input = dashboardEditSchema.parse(request.body);
+  const record = getDashboard(input.id);
+  const offered = (await dashboardManifestFor(sender)).dashboards.find((dashboard) => dashboard.id === input.id);
+  if (!record || record.origin !== "own" || !offered?.canEdit) throw new DashboardError(403, "This node cannot edit the dashboard");
+  if (record.definitionDigest !== input.baseDigest) throw new DashboardError(409, "The dashboard changed on its owner; your draft is kept");
+  const written = writeReceivedDefinition(input.id, input.files.map((file) => ({ path: file.path, content: Buffer.from(file.content, "base64") })));
+  recordSavedDefinition(input.id, { title: written.manifest.title, refreshMethod: written.manifest.refresh.method, digest: written.digest });
+  await dashboardsChanged();
+  return { accepted: true, digest: written.digest };
 }));
 
 app.post("/api/cluster/v2/dashboards/changed", machineRoute(async (request, sender) => {

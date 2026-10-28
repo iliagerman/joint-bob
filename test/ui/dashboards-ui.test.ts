@@ -93,6 +93,11 @@ test("a project dashboard is described, previewed, saved and refreshed from dash
   await page.getByTestId("dashboard-status").filter({ hasText: /Refreshed/ }).waitFor();
   await page.frameLocator('[data-testid="dashboard-frame"]').getByText("7", { exact: true }).waitFor();
 
+  await page.getByTestId("dashboard-share").click();
+  await page.getByTestId("dashboard-share-project").check();
+  await page.getByTestId("dashboard-share-save").click();
+  await page.getByText("Sharing saved").waitFor();
+
   await page.getByTestId("dashboard-close").click();
   await page.locator("#dashboardDialog[open]").waitFor({ state: "hidden" });
 });

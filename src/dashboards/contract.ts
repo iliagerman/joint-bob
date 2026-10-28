@@ -13,6 +13,7 @@ export type RefreshMethod = z.infer<typeof refreshMethodSchema>;
 
 export const dashboardManifestSchema = z.object({
   title: z.string().trim().min(1).max(120),
+  requiresCredentials: z.boolean().default(true),
   refresh: refreshMethodSchema,
 }).strict();
 export type DashboardManifest = z.infer<typeof dashboardManifestSchema>;

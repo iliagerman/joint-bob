@@ -63,6 +63,23 @@ test("an owner change clears approval and the node falls back to its own dashboa
   assert.equal(store.getDashboard(id)?.title, "Renamed", "an unchanged definition keeps its record");
 });
 
+test("received dashboard edit permission follows the owner's current node and cluster grants", async () => {
+  const store = await freshStore();
+  const own = store.createDashboard({ entity: conversation, ownerNodeId: "node-a", accountId: "acct" });
+  store.setDashboardSharing(own.id, { nodeIds: ["node-b"], clusterIds: ["c1"], editNodeIds: ["node-b"], editClusterIds: [] });
+  assert.equal(store.mayEditDashboard(own.id, "node-b", []), true);
+  assert.equal(store.mayEditDashboard(own.id, "node-c", ["c1"]), false);
+  store.setDashboardSharing(own.id, { nodeIds: ["node-c"], clusterIds: ["c1"], editNodeIds: [], editClusterIds: ["c1"] });
+  assert.equal(store.mayEditDashboard(own.id, "node-b", []), false, "revoked node grants stop applying");
+  assert.equal(store.mayEditDashboard(own.id, "node-c", ["c1"]), true, "cluster edit grants cover current members");
+
+  const received = randomUUID();
+  store.upsertReceivedDashboard({ id: received, entity: conversation, ownerNodeId: "node-a", accountId: null, title: "Shared", refreshMethod: "script", digest: "d1", canEdit: true });
+  assert.equal(store.getDashboard(received)?.canEdit, true);
+  store.upsertReceivedDashboard({ id: received, entity: conversation, ownerNodeId: "node-a", accountId: null, title: "Shared", refreshMethod: "script", digest: "d1", canEdit: false });
+  assert.equal(store.getDashboard(received)?.canEdit, false);
+});
+
 test("deleting the active dashboard activates the node's own remaining one", async () => {
   const store = await freshStore();
   const a = store.createDashboard({ entity: { kind: "project", id: "p1" }, ownerNodeId: "n", accountId: "acct" });
@@ -89,9 +106,9 @@ test("refresh results and workspace host projects", async () => {
 test("sharing choices and received lookups", async () => {
   const store = await freshStore();
   const own = store.createDashboard({ entity: conversation, ownerNodeId: "node-a", accountId: "acct" });
-  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [] });
-  store.setDashboardSharing(own.id, { nodeIds: ["n2"], clusterIds: ["c1"] });
-  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: ["n2"], clusterIds: ["c1"] });
+  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [], editNodeIds: [], editClusterIds: [], allProjectNodes: false });
+  store.setDashboardSharing(own.id, { nodeIds: ["n2"], clusterIds: ["c1"], allProjectNodes: true });
+  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: ["n2"], clusterIds: ["c1"], editNodeIds: [], editClusterIds: [], allProjectNodes: true });
   assert.equal(store.hasOwnSavedDashboard(conversation), false, "an unsaved dashboard does not count");
   store.recordSavedDefinition(own.id, { title: "Mine", refreshMethod: "script", digest: "o1" });
   assert.equal(store.hasOwnSavedDashboard(conversation), true);
@@ -99,5 +116,5 @@ test("sharing choices and received lookups", async () => {
   store.upsertReceivedDashboard({ id: received, entity: conversation, ownerNodeId: "node-b", accountId: null, title: "Shared", refreshMethod: "script", digest: "r1" });
   assert.deepEqual(store.receivedDashboardsFrom("node-b").map((d) => d.id), [received]);
   store.deleteDashboard(own.id);
-  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [] }, "deleting forgets its sharing");
+  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [], editNodeIds: [], editClusterIds: [], allProjectNodes: false }, "deleting forgets its sharing");
 });

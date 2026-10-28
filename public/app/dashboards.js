@@ -104,7 +104,7 @@ export async function openDashboardMode(target) {
   const unsaved = view.listing.dashboards.find((dashboard) => dashboard.origin === "own" && !dashboard.saved);
   const running = view.listing.dashboards.find((dashboard) => dashboard.running?.kind === "creator");
   view.currentId = running?.id ?? view.listing.displayedId ?? unsaved?.id ?? null;
-  view.mode = !view.currentId ? "empty" : current().saved && !current().hasDraft ? "view" : "creator";
+  view.mode = !view.currentId ? "empty" : current().saved && (!current().hasDraft || (current().origin === "received" && !current().canEdit)) ? "view" : "creator";
   watching.delete(view.currentId);
   await loadDetail();
   render();
@@ -135,7 +135,7 @@ function renderPicker() {
 
 async function selectDashboard(id) {
   view.currentId = id;
-  view.mode = current().saved && !current().hasDraft ? "view" : "creator";
+  view.mode = current().saved && (!current().hasDraft || (current().origin === "received" && !current().canEdit)) ? "view" : "creator";
   view.creator = null;
   view.live = null;
   await loadDetail();
@@ -158,6 +158,10 @@ function renderStatus() {
   if (running) {
     pill.classList.add("busy");
     pill.append(el("span", "dashboard-spinner"), document.createTextNode(running.kind === "creator" ? "Agent working" : running.target === "draft" ? "Testing the refresh" : "Refreshing"));
+  } else if (dashboard.publishedAt) {
+    pill.classList.add("good");
+    const when = new Date(dashboard.publishedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    pill.append(el("span", "dashboard-dot"), document.createTextNode(`Owner published ${when}`));
   } else if (dashboard.lastRefresh && !dashboard.lastRefresh.ok) {
     pill.classList.add("bad");
     pill.append(el("span", "dashboard-dot"), document.createTextNode(describeRefresh(dashboard.lastRefresh, "Refresh")));
@@ -178,6 +182,7 @@ function renderActions() {
       actions.push(button("Edit", "dashboard-edit", () => { view.mode = "creator"; render(); }, { icon: "pencil" }));
       actions.push(button("Share", "dashboard-share", () => { view.mode = "share"; render(); }, { icon: "share" }));
     } else {
+      if (dashboard.canEdit) actions.push(button("Edit shared dashboard", "dashboard-edit", () => { view.mode = "creator"; render(); }, { icon: "pencil" }));
       actions.push(button("Make a copy", "dashboard-copy", copyDashboard, { icon: "copy" }));
     }
     if (!dashboard.active && dashboard.approved) actions.push(button("Use this one", "dashboard-activate", activate, { icon: "check" }));
@@ -280,6 +285,7 @@ function renderView() {
     parts.push(el("p", "dashboard-error", `The last refresh failed: ${dashboard.lastRefresh.error}. The data shown is from the last good refresh.`));
     if (view.detail.runLog) parts.push(runLogDetails(view.detail.runLog));
   }
+  if (dashboard.publishedAt) parts.push(el("p", "dashboard-note", `Showing results published by ${dashboard.ownerNodeId} at ${new Date(dashboard.publishedAt).toLocaleString()}.`));
   notices.replaceChildren(...parts);
   const key = `${dashboard.definitionDigest}:${dashboard.lastRefresh?.at ?? ""}:${dashboard.approved}`;
   if (key !== view.live.key) { view.live.key = key; setFrameSource(frame, false); }
@@ -381,28 +387,45 @@ async function renderReview() {
 async function renderShare() {
   const panel = el("section", "dashboard-share");
   panel.dataset.testid = "dashboard-share-panel";
-  panel.append(el("h3", "", "Share this dashboard"), el("p", "dashboard-note", "Other nodes get its definition, never its data. Each node runs it for itself after approving it, and keeps using its own dashboard unless someone chooses this one there."));
+  panel.append(el("h3", "", "Share this dashboard"), el("p", "dashboard-note", "Credential-free dashboards share the owner's latest results. Credential-required dashboards share code only; each recipient must approve it and refresh with their own credentials. Editors can change the shared original."));
   body.replaceChildren(panel);
   view.live = null;
   const sharing = await api(`${dashboardPath(view.currentId, "/sharing")}?${query({ projectId: hostProjectId() })}`);
   const boxes = [];
-  const option = (kind, id, label, checked, note) => {
+  const editors = [];
+  const option = (kind, id, label, checked, note, edit = false) => {
     const row = el("label", "checkbox-row");
     const box = el("input");
     box.type = "checkbox";
     Object.assign(box.dataset, { kind, id });
     box.checked = checked;
-    boxes.push(box);
+    if (kind === "project") box.dataset.testid = "dashboard-share-project";
+    (edit ? editors : boxes).push(box);
+    box.dataset.edit = String(edit);
     row.append(box, document.createTextNode(label));
     if (note) row.append(el("span", "dashboard-note", ` ${note}`));
     return row;
   };
-  for (const node of sharing.targets.nodes) panel.append(option("node", node.nodeId, node.name, sharing.nodeIds.includes(node.nodeId), node.twin ? "twin: receives your dashboards anyway" : ""));
-  for (const cluster of sharing.targets.clusters) panel.append(option("cluster", cluster.id, `Everyone in ${cluster.name}`, sharing.clusterIds.includes(cluster.id), ""));
-  if (!boxes.length) panel.append(el("p", "dashboard-note", "This node has no other nodes to share with."));
+  panel.append(option("project", "", "All nodes with access to this project", sharing.allProjectNodes, "Includes nodes added later."));
+  for (const node of sharing.targets.nodes) {
+    panel.append(option("node", node.nodeId, node.name, sharing.nodeIds.includes(node.nodeId), node.twin ? "twin: receives your dashboards anyway" : ""));
+    panel.append(option("node", node.nodeId, "Allow edits", sharing.editNodeIds.includes(node.nodeId), "", true));
+  }
+  for (const cluster of sharing.targets.clusters) {
+    panel.append(option("cluster", cluster.id, `Everyone in ${cluster.name}`, sharing.clusterIds.includes(cluster.id), ""));
+    panel.append(option("cluster", cluster.id, "Allow edits", sharing.editClusterIds.includes(cluster.id), "", true));
+  }
+  const syncEditors = () => editors.forEach((editor) => { editor.disabled = !boxes.some((box) => box.checked && box.dataset.kind === editor.dataset.kind && box.dataset.id === editor.dataset.id); });
+  boxes.forEach((box) => box.addEventListener("change", syncEditors));
+  syncEditors();
+  if (!sharing.targets.nodes.length && !sharing.targets.clusters.length) panel.append(el("p", "dashboard-note", "This node has no other nodes to share with."));
   const save = async () => {
-    const chosen = (kind) => boxes.filter((box) => box.checked && box.dataset.kind === kind).map((box) => box.dataset.id);
-    await api(dashboardPath(view.currentId, "/sharing"), { method: "PUT", body: JSON.stringify({ nodeIds: chosen("node"), clusterIds: chosen("cluster"), projectId: hostProjectId() }) });
+    const chosen = (collection, kind) => collection.filter((box) => box.checked && !box.disabled && box.dataset.kind === kind).map((box) => box.dataset.id);
+    await api(dashboardPath(view.currentId, "/sharing"), { method: "PUT", body: JSON.stringify({
+      nodeIds: chosen(boxes, "node"), clusterIds: chosen(boxes, "cluster"),
+      editNodeIds: chosen(editors, "node"), editClusterIds: chosen(editors, "cluster"),
+      allProjectNodes: boxes.some((box) => box.dataset.kind === "project" && box.checked), projectId: hostProjectId(),
+    }) });
     toast("Sharing saved");
     view.mode = "view";
     render();
