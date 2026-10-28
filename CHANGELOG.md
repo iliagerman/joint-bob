@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Settings → Updates lists Pi once: its harness row now shows the Pi version conversations run, and says when they fall back to the built-in Pi or a newer Pi is waiting for a restart.
+
 ## 2.170.0 — 2026-10-28
 
 - Moved Pi conversations onto the app-managed Pi harness, which updates daily, so newer Pi versions and models no longer wait for a Joint Bob release; a new Pi takes effect once it passes Joint Bob's check and no conversation is running, and Settings → Updates shows which Pi is in use and falls back to the built-in one if the harness cannot load.

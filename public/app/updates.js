@@ -131,26 +131,27 @@ function renderNodeList(status, inventory) {
   }
 }
 
-/** Which Pi Joint Bob's Pi conversations run on, and whether a newer installed one is waiting for a restart. */
-function piConversationsRow(pi) {
-  const running = pi.source === "harness" ? `Pi ${pi.version} from the managed harness` : `built-in Pi ${pi.version} — ${pi.reason}`;
-  const waiting = pi.pendingVersion ? ` · Pi ${pi.pendingVersion} is installed; Joint Bob restarts to use it once no conversation is running` : "";
-  const row = nodeRow({ name: "Pi conversations", url: "", version: pi.version, state: pi.source === "harness" ? "succeeded" : "failed", detail: `${running}${waiting}` });
-  row.dataset.testid = "pi-conversations-runtime";
-  return row;
+/** Pi's row shows the version Pi conversations run, and says more only when that is not simply
+    this harness: the built-in fallback and why, or a newer Pi waiting for the restart. */
+function piNotes(pi) {
+  const notes = [];
+  if (pi.source === "built-in") notes.push(`conversations use the built-in Pi ${pi.version}: ${pi.reason}`);
+  if (pi.pendingVersion) notes.push(`Pi ${pi.pendingVersion} is installed; Joint Bob restarts to use it once no conversation is running`);
+  return notes.map((note) => ` · ${note}`).join("");
 }
 
 function renderHarnessUpdates(status) {
   elements.harnessUpdatesList.replaceChildren();
-  if (status.harnessUpdates?.pi) elements.harnessUpdatesList.append(piConversationsRow(status.harnessUpdates.pi));
+  const pi = status.harnessUpdates?.pi;
   for (const harness of status.harnessUpdates?.harnesses ?? []) {
     const checked = harness.checkedAt ? ` · ${new Date(harness.checkedAt).toLocaleString()}` : "";
+    const isPi = harness.id === "pi" && pi;
     elements.harnessUpdatesList.append(nodeRow({
       name: harness.label,
       url: "",
-      version: "",
-      state: harness.state,
-      detail: `${harness.state}${harness.error ? ` — ${harness.error}` : ""}${checked}`,
+      version: isPi ? pi.version : "",
+      state: isPi && pi.source === "built-in" ? "failed" : harness.state,
+      detail: `${harness.state}${harness.error ? ` — ${harness.error}` : ""}${checked}${isPi ? piNotes(pi) : ""}`,
     }));
   }
 }
