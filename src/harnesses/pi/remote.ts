@@ -11,6 +11,8 @@ import { getSettings } from "../../settings.js";
 
 function serviceRuntimeSettings() { return runInRuntime(serviceRuntime(), () => getSettings()); }
 import type { PiCoreHooks, PiCoreInputs, PiCredentials, PiSessionHandle } from "../../pi-session-core.js";
+import { stageInstalledPiPackages } from "./package-staging.js";
+import { readInstalledPiPackages } from "./resource-loader.js";
 
 /**
  * Pi in multi-user mode. Pi's tools run inside its own process, so a person's Pi sessions
@@ -69,6 +71,7 @@ async function provisionAgentDir(runtime: RuntimeAccount): Promise<void> {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
   await rm(path.join(target, "auth.json"), { force: true });
+  await syncInstalledPiPackages(runtime);
 }
 
 class PiWorker {
@@ -155,10 +158,29 @@ class PiWorker {
 }
 
 const workers = new Map<string, PiWorker>();
+const packageSnapshots = new Map<string, string>();
+const packageSyncs = new Map<string, Promise<void>>();
+
+async function syncInstalledPiPackages(runtime: RuntimeAccount): Promise<void> {
+  const active = packageSyncs.get(runtime.key);
+  if (active) { await active; return syncInstalledPiPackages(runtime); }
+  const source = serviceRuntimeSettings().pi.configPath;
+  const packages = readInstalledPiPackages(path.join(source, "settings.json"));
+  const snapshot = JSON.stringify(packages);
+  if (packageSnapshots.get(runtime.key) === snapshot) return;
+  const target = path.join(runtime.home, ".pi", "agent");
+  const pending = stageInstalledPiPackages(source, target).then(() => { packageSnapshots.set(runtime.key, snapshot); });
+  packageSyncs.set(runtime.key, pending);
+  try { await pending; }
+  finally { if (packageSyncs.get(runtime.key) === pending) packageSyncs.delete(runtime.key); }
+}
 
 async function workerFor(runtime: RuntimeAccount): Promise<PiWorker> {
   const existing = workers.get(runtime.key);
-  if (existing && !existing.closed) return existing;
+  if (existing && !existing.closed) {
+    await syncInstalledPiPackages(runtime);
+    return existing;
+  }
   await provisionAgentDir(runtime);
   const worker = new PiWorker(runtime, () => { if (workers.get(runtime.key) === worker) workers.delete(runtime.key); });
   workers.set(runtime.key, worker);

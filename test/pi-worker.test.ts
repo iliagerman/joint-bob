@@ -51,9 +51,24 @@ test("a Pi conversation runs in a worker under its project's account and writes 
   await mkdir(homes, { recursive: true });
   const nativeAgent = path.join(homes, "jb-admin", ".pi", "agent");
   const nativeMarker = path.join(nativeAgent, "native-extension-ran");
+  const providerMarker = path.join(root, "worker-provider-ran");
+  const packageRoot = path.join(serviceAgent, "npm", "node_modules", "pi-worker-provider");
+  const dependencyRoot = path.join(serviceAgent, "npm", "node_modules", "pi-worker-dependency");
   await mkdir(path.join(nativeAgent, "extensions"), { recursive: true });
   await writeFile(path.join(nativeAgent, "AGENTS.md"), "NATIVE_WORKER_INSTRUCTIONS");
   await writeFile(path.join(nativeAgent, "extensions", "native.ts"), `import { writeFileSync } from "node:fs"; export default () => writeFileSync(${JSON.stringify(nativeMarker)}, "ran");`);
+  await mkdir(path.join(packageRoot, "extensions"), { recursive: true });
+  await mkdir(dependencyRoot, { recursive: true });
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "pi-worker-provider", version: "1.0.0", dependencies: { "pi-worker-dependency": "1.0.0" } }));
+  await writeFile(path.join(dependencyRoot, "package.json"), JSON.stringify({ name: "pi-worker-dependency", version: "1.0.0", main: "index.js" }));
+  await writeFile(path.join(dependencyRoot, "index.js"), `exports.marker = process.env.JOINT_BOB_PI_WORKER || "service";`);
+  await writeFile(path.join(packageRoot, "extensions", "provider.ts"), `import { marker } from "pi-worker-dependency";
+    import { writeFileSync } from "node:fs";
+    export default pi => { writeFileSync(${JSON.stringify(providerMarker)}, marker); pi.registerCommand("worker-provider", { description: marker, handler: async () => {} }); };`);
+  await writeFile(path.join(serviceAgent, "settings.json"), JSON.stringify({
+    defaultProvider: "native-setting-must-not-copy", shellPath: "native-shell-must-not-copy",
+    packages: [{ source: "npm:pi-worker-provider@1.0.0", skills: ["skills/**"], prompts: ["prompts/**"], themes: ["themes/**"] }],
+  }));
   await writeFile(path.join(serviceAgent, "models.json"), JSON.stringify({ providers: { fixture: {
     baseUrl: model.url, api: "openai-completions",
     models: [{ id: "fixture-model", name: "Fixture", reasoning: false, input: ["text"], contextWindow: 32000, maxTokens: 512 }],
@@ -89,6 +104,11 @@ test("a Pi conversation runs in a worker under its project's account and writes 
     assert.deepEqual((await files(path.join(serviceAgent, "sessions"))).filter((name) => name.endsWith(".jsonl")), [], "and never in the service's");
     assert.match(await readFile(path.join(homes, "runs.log"), "utf8"), /^admin$/m, "the worker ran through the helper as the admin's account");
     assert.ok(await readFile(path.join(admin, ".pi", "agent", "models.json"), "utf8"), "the node's model list was provisioned for the account");
+    const workerAgent = path.join(admin, ".pi", "agent");
+    assert.equal(await readFile(providerMarker, "utf8"), "1", "the worker imported the installed provider and its dependency");
+    assert.deepEqual(JSON.parse(await readFile(path.join(workerAgent, "settings.json"), "utf8")), {
+      packages: [{ source: path.join(workerAgent, "npm", "node_modules", "pi-worker-provider"), skills: [], prompts: [], themes: [] }],
+    }, "the worker received only filtered provider package declarations");
     assert.ok(model.prompts.some((prompt) => prompt.includes("hello worker")), "the prompt reached the model from the worker");
     assert.equal(model.prompts.some((prompt) => prompt.includes("NATIVE_WORKER_INSTRUCTIONS")), false);
     await assert.rejects(readFile(nativeMarker), { code: "ENOENT" }, "the worker never executes native extensions");

@@ -1,6 +1,6 @@
 {
   "name": "joint-bob",
-  "version": "2.164.0",
+  "version": "2.165.0",
   "description": "Private multi-node workspace for Pi and Claude coding agents",
   "private": false,
   "license": "MIT",
@@ -25,7 +25,7 @@
     "tsconfig.json"
   ],
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=24.0.0"
   },
   "repository": {
     "type": "git",

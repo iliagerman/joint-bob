@@ -26,6 +26,7 @@ import { stripHandoffEnvelope } from "./claude-service.js";
 import { stripScheduledPromptMarker } from "./scheduled-prompt.js";
 import { sessionCwds, type SessionProjectPaths } from "./harnesses/shared-paths.js";
 import { canonicalPiTranscriptName, piSessionIdFromFileName } from "./harnesses/pi/paths.js";
+import { createPiProviderCatalog, type PiProviderCatalog } from "./harnesses/pi/provider-catalog.js";
 import { forgetTranscriptSummary, storeTranscriptSummary, storedTranscriptSummary } from "./transcript-summary-store.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { agentResourcePaths, piAgentResourcePaths } from "./agent-resources.js";
@@ -61,7 +62,25 @@ const PI_LIST_CONCURRENCY = 8;
 const initialPiSettings = runInRuntime(serviceRuntime(), () => getSettings().pi);
 if (initialPiSettings.configPath) process.env.PI_CODING_AGENT_DIR = initialPiSettings.configPath;
 const modelRuntime = await ModelRuntime.create();
+let piProviderCatalog: Promise<PiProviderCatalog> | undefined;
 type AvailableModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
+
+function loadPiProviderCatalog(): Promise<PiProviderCatalog> {
+  if (piProviderCatalog) return piProviderCatalog;
+  const pending = createPiProviderCatalog(modelRuntime, {
+    agentDir: getAgentDir(),
+    strictResourceIsolation: getSettings().strictResourceIsolation,
+    packagesFile: agentResourcePaths().piPackages,
+    extensionPaths: piAgentResourcePaths().extensions,
+  });
+  piProviderCatalog = pending;
+  void pending.catch(() => { if (piProviderCatalog === pending) piProviderCatalog = undefined; });
+  return pending;
+}
+
+async function ensurePiProviderCatalog(): Promise<void> {
+  await (await loadPiProviderCatalog()).refreshIfChanged();
+}
 
 function piSessionPath(): string | undefined {
   return getSettings().pi.sessionPath || undefined;
@@ -274,6 +293,7 @@ function preferredModel(available: readonly AvailableModel[]): AvailableModel | 
 }
 
 async function availableModelsWithProfiles() {
+  await ensurePiProviderCatalog();
   const available = [...await modelRuntime.getAvailable()];
   const { actingAccount } = await import("./account-context.js");
   const { adminAccountId } = await import("./ownership.js");
@@ -320,6 +340,7 @@ export function modelThinkingLevels(provider: string, modelId: string): string[]
 }
 
 export async function setSessionModel(session: AgentSession, provider: string, modelId: string): Promise<ModelSummary> {
+  await ensurePiProviderCatalog();
   const model = modelRuntime.getModel(provider, modelId);
   if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
   await session.setModel(model);
@@ -618,11 +639,13 @@ export { isPermissionSafeguardExtension, sessionSafeguardsEnabled, sessionToolSe
 /** The node's Pi sign-ins, for a worker under a person's OS account: refreshed here first,
     under the service's lock, so the worker never refreshes or replaces a login itself. */
 export async function nodePiCredential(providerId: string): Promise<ReturnType<typeof readStoredCredential>> {
+  await ensurePiProviderCatalog();
   await modelRuntime.getAuth(providerId, { minOAuthValidityMs: 10 * 60_000 }).catch(() => undefined);
   return readStoredCredential(providerId, path.join(getAgentDir(), "auth.json"));
 }
 
 export async function nodePiCredentialList(): Promise<Array<{ providerId: string; type: string }>> {
+  await ensurePiProviderCatalog();
   return (await modelRuntime.listCredentials()).map((entry) => ({ providerId: entry.providerId, type: entry.type }));
 }
 
@@ -665,6 +688,7 @@ export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
 }
 
 export async function createPiSession(options: PiSessionOptions): Promise<PiSessionHandle> {
+  await ensurePiProviderCatalog();
   const profiles = await import("./provider-profiles/service.js");
   const { useProviderProfile } = await import("./provider-profiles/execution.js");
   const { createSessionModelRuntime } = await import("./provider-profiles/pi.js");
@@ -700,6 +724,7 @@ export function piSessionDefaults(): PiCoreInputs["defaults"] {
 }
 
 export async function reloadPiAuth(): Promise<void> {
+  await ensurePiProviderCatalog();
   await modelRuntime.getAvailable();
 }
 

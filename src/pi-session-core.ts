@@ -177,20 +177,16 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
   }, resources.strictResourceIsolation, resources.packagesFile);
   await resourceLoader.reload();
-  let model = inputs.sessionPath ? undefined : modelRuntime.getModel(inputs.defaults.provider, inputs.defaults.modelId);
-  let thinkingLevel: AgentSession["thinkingLevel"] | undefined = inputs.sessionPath ? undefined : inputs.defaults.thinkingLevel;
-  if (!inputs.sessionPath && !model) throw new Error(`Model not found: ${inputs.defaults.provider}/${inputs.defaults.modelId}`);
   const saved = sessionManager.buildSessionContext();
-  // The SDK only restores settings itself when the transcript contains messages.
-  if (inputs.sessionPath && saved.messages.length === 0) {
-    if (saved.model) {
-      model = modelRuntime.getModel(saved.model.provider, saved.model.modelId);
-      if (!model) throw new Error(`Model not found: ${saved.model.provider}/${saved.model.modelId}`);
-    }
-    if (sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change")) {
-      thinkingLevel = saved.thinkingLevel as AgentSession["thinkingLevel"];
-    }
-  }
+  const desiredModel = inputs.sessionPath ? saved.model : { provider: inputs.defaults.provider, modelId: inputs.defaults.modelId };
+  const hasSavedThinkingLevel = inputs.sessionPath && sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
+  const thinkingLevel: AgentSession["thinkingLevel"] | undefined = inputs.sessionPath
+    ? (hasSavedThinkingLevel ? saved.thinkingLevel as AgentSession["thinkingLevel"] : undefined)
+    : inputs.defaults.thinkingLevel;
+  // Bind provider extensions after session construction, so use an available model only as a bootstrap.
+  const model = inputs.sessionPath && saved.messages.length > 0
+    ? undefined
+    : (desiredModel && modelRuntime.getModel(desiredModel.provider, desiredModel.modelId)) ?? (await modelRuntime.getAvailable())[0];
   const result = await createAgentSession({
     cwd: inputs.cwd,
     model,
@@ -204,11 +200,24 @@ export async function createCoreSession(modelRuntime: ModelRuntime, inputs: PiCo
   });
   const session = result.session;
   const unsubscribeCredentials = bindCredentials(session, () => credentials, hooks.credentialsNow ? () => { credentials = hooks.credentialsNow!(sessionId, conversationId); } : undefined);
-  if ("bindExtensions" in session && typeof session.bindExtensions === "function") await session.bindExtensions({});
-  const savedTools = sessionToolSelection(sessionManager);
-  if (savedTools) {
-    const available = new Set(session.getAllTools().map((tool) => tool.name));
-    session.setActiveToolsByName(savedTools.filter((name) => available.has(name)));
+  try {
+    if ("bindExtensions" in session && typeof session.bindExtensions === "function") await session.bindExtensions({});
+    await modelRuntime.getAvailable();
+    if (desiredModel) {
+      const selectedModel = modelRuntime.getModel(desiredModel.provider, desiredModel.modelId);
+      if (!selectedModel) throw new Error(`Model not found: ${desiredModel.provider}/${desiredModel.modelId}`);
+      if (session.model?.provider !== selectedModel.provider || session.model.id !== selectedModel.id) await session.setModel(selectedModel);
+      if (thinkingLevel !== undefined) await session.setThinkingLevel(thinkingLevel);
+    }
+    const savedTools = sessionToolSelection(sessionManager);
+    if (savedTools) {
+      const available = new Set(session.getAllTools().map((tool) => tool.name));
+      session.setActiveToolsByName(savedTools.filter((name) => available.has(name)));
+    }
+  } catch (error) {
+    unsubscribeCredentials();
+    session.dispose();
+    throw error;
   }
   return {
     session,

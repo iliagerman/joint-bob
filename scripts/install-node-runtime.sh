@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/versions.sh"
 
-MINIMUM_NODE_VERSION="22.19.0"
+MINIMUM_NODE_VERSION="24.0.0"
 NODE_VERSION="${JOINT_BOB_NODE_VERSION_OVERRIDE:-${MASTER_BOB_NODE_VERSION:-${JOINT_BOB_NODE_VERSION}}}"
 RUNTIME_ROOT="${JOINT_BOB_RUNTIME_DIR:-${MASTER_BOB_RUNTIME_DIR:-${HOME}/.local/share/joint-bob/runtime}}"
 NODE_ROOT="${RUNTIME_ROOT}/node-v${NODE_VERSION}"
@@ -30,26 +30,11 @@ version_at_least() {
 node_is_supported() {
   local node_binary="$1"
 
-  MINIMUM_NODE_VERSION="${MINIMUM_NODE_VERSION}" "${node_binary}" -e '
-const parseVersion = (version) => {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match) return null;
-  const parts = match.slice(1).map(Number);
-  return parts.every(Number.isSafeInteger) ? parts : null;
-};
-const version = parseVersion(process.versions.node);
-const minimum = parseVersion(process.env.MINIMUM_NODE_VERSION);
-if (!version || !minimum) process.exit(1);
-for (let index = 0; index < version.length; index += 1) {
-  if (version[index] > minimum[index]) process.exit(0);
-  if (version[index] < minimum[index]) process.exit(1);
-}
-process.exit(0);
-'
+  "${node_binary}" "${SCRIPT_DIR}/node-version.mjs" "${MINIMUM_NODE_VERSION}"
 }
 
 if ! version_at_least "${NODE_VERSION}" "${MINIMUM_NODE_VERSION}"; then
-  echo "JOINT_BOB_NODE_VERSION_OVERRIDE must be at least 22.19.0" >&2
+  echo "JOINT_BOB_NODE_VERSION_OVERRIDE must be at least 24.0.0" >&2
   exit 1
 fi
 
@@ -58,7 +43,7 @@ if command -v node >/dev/null 2>&1 && node_is_supported "$(command -v node)"; th
 fi
 if [ -e "${NODE_ROOT}/bin/node" ]; then
   if ! node_is_supported "${NODE_ROOT}/bin/node"; then
-    echo "Cached Joint Bob Node runtime must be at least 22.19.0" >&2
+    echo "Cached Joint Bob Node runtime must be at least 24.0.0" >&2
     exit 1
   fi
   printf '%s\n' "${NODE_ROOT}/bin"

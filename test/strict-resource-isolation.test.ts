@@ -38,7 +38,7 @@ test.before(async () => {
 });
 test.after(async () => { await rm(root, { recursive: true, force: true }); });
 
-test("strict Pi catalogs never execute native extensions and retain arbitrary managed paths", async () => {
+test("strict Pi catalogs load installed package extensions only, not native or project extensions", async () => {
   await extension(path.join(pi, "extensions", "native.ts"), "native-extension");
   await extension(path.join(resources, "pi/extensions/managed.ts"), "managed-extension");
   await skill(path.join(pi, "skills"), "native-skill");
@@ -48,19 +48,22 @@ test("strict Pi catalogs never execute native extensions and retain arbitrary ma
   await write(path.join(resources, "pi/prompts/managed-prompt.md"), "Managed prompt");
   const nativePackage = path.join(root, "native-package");
   await extension(path.join(nativePackage, "extensions/native.ts"), "native-package");
+  await skill(path.join(nativePackage, "skills"), "native-package-skill");
   await write(path.join(pi, "settings.json"), JSON.stringify({ packages: [nativePackage] }));
   const projectPackage = path.join(project, "project-package");
   await extension(path.join(projectPackage, "extensions/project.ts"), "project-package");
   await write(path.join(project, ".pi/settings.json"), JSON.stringify({ packages: [projectPackage] }));
   const commands = await listHarnessCommands(project, "pi", { piAgentDir: pi, resourceRoot: resources });
-  assert.equal(commands.some((item) => item.name.startsWith("native-") || item.name.startsWith("skill:native-")), false);
+  assert.equal(commands.some((item) => item.name === "native-extension"), false);
+  assert.equal(commands.some((item) => item.name === "native-package"), true);
+  assert.equal(commands.some((item) => item.name === "skill:native-package-skill"), false);
   for (const name of ["managed-extension", "managed-prompt", "skill:managed-skill", "skill:project-skill"]) {
     assert.ok(commands.some((item) => item.name === name), `missing ${name}`);
   }
-  // A project's own Pi packages run code; the app does not carry them over from `.pi/settings.json`.
+  // Project packages remain excluded even though the personal Pi package is explicitly installed.
   assert.equal(commands.some((item) => item.name === "project-package"), false);
   await assert.rejects(readFile(path.join(root, "native-extension.ran")), { code: "ENOENT" });
-  await assert.rejects(readFile(path.join(root, "native-package.ran")), { code: "ENOENT" });
+  assert.equal(await readFile(path.join(root, "native-package.ran"), "utf8"), "ran");
   await assert.rejects(readFile(path.join(root, "project-package.ran")), { code: "ENOENT" });
 });
 

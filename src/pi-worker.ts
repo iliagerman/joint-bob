@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { ModelRuntime, type AgentSession, type AgentSessionEvent, type readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { createSessionModelRuntime } from "./provider-profiles/pi.js";
+import { createPiProviderCatalog, type PiProviderCatalog } from "./harnesses/pi/provider-catalog.js";
 import { createCoreSession, type PiCoreHooks, type PiCoreInputs, type PiCredentials, type PiSessionHandle } from "./pi-session-core.js";
 
 const sessions = new Map<string, PiSessionHandle>();
@@ -27,7 +28,19 @@ const nodeCredentials = {
   delete: async () => { throw new Error("Sign-ins belong to the node; the admin manages them"); },
 };
 let modelRuntimeReady: Promise<ModelRuntime> | undefined;
+let providerCatalogReady: Promise<PiProviderCatalog> | undefined;
 const runtime = () => (modelRuntimeReady ??= ModelRuntime.create({ credentials: nodeCredentials }));
+
+async function ensureProviderCatalog(): Promise<void> {
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  if (!agentDir) throw new Error("Pi worker agent directory is not configured");
+  if (!providerCatalogReady) {
+    const pending = runtime().then((models) => createPiProviderCatalog(models, { agentDir, strictResourceIsolation: true, extensionPaths: [] }));
+    providerCatalogReady = pending;
+    void pending.catch(() => { if (providerCatalogReady === pending) providerCatalogReady = undefined; });
+  }
+  await (await providerCatalogReady).refreshIfChanged();
+}
 
 function send(message: unknown): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -110,7 +123,9 @@ async function call(key: string, op: string, args: unknown[]): Promise<unknown> 
     }
     case "setModel": {
       const [provider, modelId] = args as [string, string];
-      const model = (await runtime()).getModel(provider, modelId);
+      const models = handle.session.modelRuntime;
+      await models.getAvailable();
+      const model = models.getModel(provider, modelId);
       if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
       await session.setModel(model);
       break;
@@ -146,8 +161,8 @@ async function handle(message: { id: string; method: string; params: Record<stri
     case "open": return open(message.params.key as string, message.params.inputs as PiCoreInputs);
     case "call": return call(message.params.key as string, message.params.op as string, (message.params.args as unknown[]) ?? []);
     case "dispose": { const key = message.params.key as string; sessions.get(key)?.dispose(); sessions.delete(key); return null; }
-    case "preflight": await (await runtime()).getAvailable(); return null;
-    case "models": return (await (await runtime()).getAvailable()).map((model) => ({ provider: String(model.provider), id: String(model.id) }));
+    case "preflight": await ensureProviderCatalog(); await (await runtime()).getAvailable(); return null;
+    case "models": await ensureProviderCatalog(); return (await (await runtime()).getAvailable()).map((model) => ({ provider: String(model.provider), id: String(model.id) }));
     default: throw new Error(`Unknown Pi worker request: ${message.method}`);
   }
 }
