@@ -1015,9 +1015,9 @@ function paged(items, page, size) {
 
 let refitting = false;
 const fittedFor = {};
-/** Whether this list was already fitted at its current size; rows differ in height, so refitting on every page would bounce Next back. */
+/** Refit for panel resizes, not temporary toolbar/status changes during refreshes. */
 function alreadyFitted(list, key) {
-  const signature = `${view.tab}:${list.clientWidth}x${list.clientHeight}`;
+  const signature = `${view.tab}:${list.clientWidth}x${elements.resourcesPanel.clientHeight}`;
   if (fittedFor[key] === signature) return true;
   fittedFor[key] = signature;
   return false;
@@ -1027,7 +1027,7 @@ function alreadyFitted(list, key) {
 function fitPage(list, key, pageKey, rerender) {
   const children = [...list.children];
   const rows = children.filter((child) => child.classList.contains("resources-row"));
-  if (!rows.length || !list.clientHeight) return;
+  if (view.loading || !rows.length || !list.clientHeight) return;
   if (!refitting && alreadyFitted(list, key)) return;
   const gap = parseFloat(getComputedStyle(list).rowGap) || 0;
   const rowHeight = Math.max(...rows.map((row) => row.offsetHeight)) + gap;
@@ -1170,6 +1170,7 @@ function render() {
 }
 
 async function loadInventory() {
+  const position = { tab: view.tab, page: view.page, scrollTop: elements.resourcesList.scrollTop };
   const request = ++view.request;
   view.loading = true;
   view.ready = false;
@@ -1198,7 +1199,12 @@ async function loadInventory() {
   } catch (error) {
     if (request === view.request) setStatus(error.message);
   } finally {
-    if (request === view.request) { view.loading = false; render(); }
+    if (request === view.request) {
+      view.loading = false;
+      render();
+      // The loading layout can clamp scrollTop; restore it only if the person stayed on this page.
+      if (view.tab === position.tab && view.page === position.page) elements.resourcesList.scrollTop = position.scrollTop;
+    }
   }
 }
 

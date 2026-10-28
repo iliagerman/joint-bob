@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed Resources jumping to a different page when you changed a skill's harness, reset it, or refreshed the list, and keeping your scroll position while you edit a row.
+
 ## 2.168.1 — 2026-10-28
 
 - Fixed conversations with saved messages failing to open with "Model not found" when their saved model was no longer available; they now continue on the model the conversation restored.
