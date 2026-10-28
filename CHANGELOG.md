@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.167.0 — 2026-10-28
 
-- Changed nodes to refuse conversations, scheduled tasks, and quick notes that other nodes try to run on them, unless the node's owner allows it in Settings under "Runs on this node"; your own twins can always run there, and a node serving a relay still accepts by default.
+- Changed nodes to refuse conversations, scheduled tasks, and quick notes from other nodes unless the node's owner allows it under "Runs on this node" in Settings; your own twins can always run there, and a node serving a relay accepts by default. The Runs on picker now marks a node that is not accepting runs.
 
 ## 2.166.0 — 2026-10-28
 
