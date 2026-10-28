@@ -81,6 +81,7 @@ function db(): DatabaseSync {
   if (!shareColumns.includes("edit_node_ids")) database.exec("ALTER TABLE dashboard_shares ADD COLUMN edit_node_ids TEXT NOT NULL DEFAULT '[]'");
   if (!shareColumns.includes("edit_cluster_ids")) database.exec("ALTER TABLE dashboard_shares ADD COLUMN edit_cluster_ids TEXT NOT NULL DEFAULT '[]'");
   if (!shareColumns.includes("all_project_nodes")) database.exec("ALTER TABLE dashboard_shares ADD COLUMN all_project_nodes INTEGER NOT NULL DEFAULT 0");
+  if (!shareColumns.includes("workspace_ids")) database.exec("ALTER TABLE dashboard_shares ADD COLUMN workspace_ids TEXT NOT NULL DEFAULT '[]'");
   return database;
 }
 
@@ -228,19 +229,19 @@ export function deleteDashboard(id: string): void {
 }
 
 /** Which other nodes and clusters a dashboard is shared with; twins need no entry. */
-export interface DashboardSharing { nodeIds: string[]; clusterIds: string[]; editNodeIds: string[]; editClusterIds: string[]; allProjectNodes: boolean }
+export interface DashboardSharing { nodeIds: string[]; clusterIds: string[]; editNodeIds: string[]; editClusterIds: string[]; allProjectNodes: boolean; workspaceIds: string[] }
 export function dashboardSharing(id: string): DashboardSharing {
-  const row = db().prepare("SELECT node_ids, cluster_ids, edit_node_ids, edit_cluster_ids, all_project_nodes FROM dashboard_shares WHERE dashboard_id = ?").get(id) as { node_ids: string; cluster_ids: string; edit_node_ids: string; edit_cluster_ids: string; all_project_nodes: number } | undefined;
-  return row ? { nodeIds: JSON.parse(row.node_ids) as string[], clusterIds: JSON.parse(row.cluster_ids) as string[], editNodeIds: JSON.parse(row.edit_node_ids) as string[], editClusterIds: JSON.parse(row.edit_cluster_ids) as string[], allProjectNodes: row.all_project_nodes === 1 } : { nodeIds: [], clusterIds: [], editNodeIds: [], editClusterIds: [], allProjectNodes: false };
+  const row = db().prepare("SELECT node_ids, cluster_ids, edit_node_ids, edit_cluster_ids, all_project_nodes, workspace_ids FROM dashboard_shares WHERE dashboard_id = ?").get(id) as { node_ids: string; cluster_ids: string; edit_node_ids: string; edit_cluster_ids: string; all_project_nodes: number; workspace_ids: string } | undefined;
+  return row ? { nodeIds: JSON.parse(row.node_ids) as string[], clusterIds: JSON.parse(row.cluster_ids) as string[], editNodeIds: JSON.parse(row.edit_node_ids) as string[], editClusterIds: JSON.parse(row.edit_cluster_ids) as string[], allProjectNodes: row.all_project_nodes === 1, workspaceIds: JSON.parse(row.workspace_ids) as string[] } : { nodeIds: [], clusterIds: [], editNodeIds: [], editClusterIds: [], allProjectNodes: false, workspaceIds: [] };
 }
 
 export function setDashboardSharing(id: string, sharing: Partial<DashboardSharing> & Pick<DashboardSharing, "nodeIds" | "clusterIds">): void {
   const editNodeIds = sharing.editNodeIds ?? [];
   const editClusterIds = sharing.editClusterIds ?? [];
-  db().prepare(`INSERT INTO dashboard_shares (dashboard_id, node_ids, cluster_ids, edit_node_ids, edit_cluster_ids, all_project_nodes) VALUES (?, ?, ?, ?, ?, ?)
+  db().prepare(`INSERT INTO dashboard_shares (dashboard_id, node_ids, cluster_ids, edit_node_ids, edit_cluster_ids, all_project_nodes, workspace_ids) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(dashboard_id) DO UPDATE SET node_ids = excluded.node_ids, cluster_ids = excluded.cluster_ids,
-      edit_node_ids = excluded.edit_node_ids, edit_cluster_ids = excluded.edit_cluster_ids, all_project_nodes = excluded.all_project_nodes`)
-    .run(id, JSON.stringify(sharing.nodeIds), JSON.stringify(sharing.clusterIds), JSON.stringify(editNodeIds), JSON.stringify(editClusterIds), sharing.allProjectNodes ? 1 : 0);
+      edit_node_ids = excluded.edit_node_ids, edit_cluster_ids = excluded.edit_cluster_ids, all_project_nodes = excluded.all_project_nodes, workspace_ids = excluded.workspace_ids`)
+    .run(id, JSON.stringify(sharing.nodeIds), JSON.stringify(sharing.clusterIds), JSON.stringify(editNodeIds), JSON.stringify(editClusterIds), sharing.allProjectNodes ? 1 : 0, JSON.stringify(sharing.workspaceIds ?? []));
 }
 
 export function mayEditDashboard(id: string, nodeId: string, clusterIds: string[]): boolean {

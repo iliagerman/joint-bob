@@ -93,10 +93,26 @@ test("a project dashboard is described, previewed, saved and refreshed from dash
   await page.getByTestId("dashboard-status").filter({ hasText: /Refreshed/ }).waitFor();
   await page.frameLocator('[data-testid="dashboard-frame"]').getByText("7", { exact: true }).waitFor();
 
+  const frameBounds = await live.boundingBox();
+  const bodyBounds = await page.getByTestId("dashboard-body").boundingBox();
+  assert.ok(frameBounds && bodyBounds && frameBounds.height > bodyBounds.height * 0.9, "saved dashboard fills the modal body even without notices");
+
   await page.getByTestId("dashboard-share").click();
-  await page.getByTestId("dashboard-share-project").check();
+  await page.getByTestId("dashboard-share-target").selectOption("project");
+  await page.getByTestId("dashboard-share-add").click();
+  await page.getByTestId("dashboard-share-row").filter({ hasText: "This project" }).waitFor();
   await page.getByTestId("dashboard-share-save").click();
   await page.getByText("Sharing saved").waitFor();
+  await page.getByTestId("dashboard-share").click();
+  await page.getByTestId("dashboard-share-row").filter({ hasText: "This project" }).waitFor();
+  await page.getByTestId("dashboard-share-remove").click();
+  assert.equal(await page.getByTestId("dashboard-share-row").count(), 0);
+  const workspaceOption = page.getByTestId("dashboard-share-target").locator('option[value^="workspace:"]');
+  await page.getByTestId("dashboard-share-target").selectOption((await workspaceOption.first().getAttribute("value"))!);
+  await page.getByTestId("dashboard-share-add").click();
+  await page.getByTestId("dashboard-share-save").click();
+  await page.getByTestId("dashboard-share").click();
+  await page.getByTestId("dashboard-share-row").filter({ hasText: "Workspace" }).waitFor();
 
   await page.getByTestId("dashboard-close").click();
   await page.locator("#dashboardDialog[open]").waitFor({ state: "hidden" });

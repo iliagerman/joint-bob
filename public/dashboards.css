@@ -55,7 +55,7 @@
 .dashboard-view { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-height: 0; }
 .dashboard-notices { display: grid; gap: 8px; }
 .dashboard-notices:empty { display: none; }
-.dashboard-view-stage { position: relative; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.dashboard-view-stage { grid-row: 2; position: relative; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
 .dashboard-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--amber) 8%, var(--surface)); }
 
 /* ---- creator: chat panel on the left, stage in the middle ---- */
@@ -123,6 +123,12 @@
 /* ---- review and share ---- */
 .dashboard-review, .dashboard-share { display: grid; align-content: start; gap: 8px; width: min(900px, 100%); margin: 0 auto; }
 .dashboard-review h3, .dashboard-share h3 { margin: 0; }
+.dashboard-share-add, .dashboard-share-row { display: flex; align-items: center; gap: 10px; }
+.dashboard-share-add select { flex: 1; min-width: 0; }
+.dashboard-share-list { display: grid; gap: 8px; }
+.dashboard-share-row { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
+.dashboard-share-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dashboard-share-row select { width: auto; }
 .dashboard-panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .toast .toast-action { margin-left: 8px; padding: 3px 10px; border-radius: 8px; font-size: 12.5px; }
 

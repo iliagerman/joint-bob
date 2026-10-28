@@ -106,9 +106,9 @@ test("refresh results and workspace host projects", async () => {
 test("sharing choices and received lookups", async () => {
   const store = await freshStore();
   const own = store.createDashboard({ entity: conversation, ownerNodeId: "node-a", accountId: "acct" });
-  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [], editNodeIds: [], editClusterIds: [], allProjectNodes: false });
-  store.setDashboardSharing(own.id, { nodeIds: ["n2"], clusterIds: ["c1"], allProjectNodes: true });
-  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: ["n2"], clusterIds: ["c1"], editNodeIds: [], editClusterIds: [], allProjectNodes: true });
+  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [], editNodeIds: [], editClusterIds: [], allProjectNodes: false, workspaceIds: [] });
+  store.setDashboardSharing(own.id, { nodeIds: ["n2"], clusterIds: ["c1"], allProjectNodes: true, workspaceIds: ["workspace-1"] });
+  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: ["n2"], clusterIds: ["c1"], editNodeIds: [], editClusterIds: [], allProjectNodes: true, workspaceIds: ["workspace-1"] });
   assert.equal(store.hasOwnSavedDashboard(conversation), false, "an unsaved dashboard does not count");
   store.recordSavedDefinition(own.id, { title: "Mine", refreshMethod: "script", digest: "o1" });
   assert.equal(store.hasOwnSavedDashboard(conversation), true);
@@ -116,5 +116,5 @@ test("sharing choices and received lookups", async () => {
   store.upsertReceivedDashboard({ id: received, entity: conversation, ownerNodeId: "node-b", accountId: null, title: "Shared", refreshMethod: "script", digest: "r1" });
   assert.deepEqual(store.receivedDashboardsFrom("node-b").map((d) => d.id), [received]);
   store.deleteDashboard(own.id);
-  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [], editNodeIds: [], editClusterIds: [], allProjectNodes: false }, "deleting forgets its sharing");
+  assert.deepEqual(store.dashboardSharing(own.id), { nodeIds: [], clusterIds: [], editNodeIds: [], editClusterIds: [], allProjectNodes: false, workspaceIds: [] }, "deleting forgets its sharing");
 });

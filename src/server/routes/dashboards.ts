@@ -269,13 +269,13 @@ app.get("/api/dashboards/:id/definition", dashboardRoute(async (request, _respon
 const sharingSchema = z.object({
   nodeIds: z.array(z.string().min(1).max(100)).max(100).default([]), clusterIds: z.array(z.string().uuid()).max(100).default([]),
   editNodeIds: z.array(z.string().min(1).max(100)).max(100).default([]), editClusterIds: z.array(z.string().uuid()).max(100).default([]),
-  allProjectNodes: z.boolean().default(false), ...projectIdField,
+  allProjectNodes: z.boolean().default(false), workspaceIds: z.array(z.string().min(1).max(300)).max(100).default([]), ...projectIdField,
 }).strict();
 
 app.get("/api/dashboards/:id/sharing", dashboardRoute(async (request, _response, auth) => {
   const { record } = await visibleDashboard(String(request.params.id), auth);
   ownDashboard(record);
-  return { ...dashboardSharing(record.id), targets: await dashboardShareTargets() };
+  return { ...dashboardSharing(record.id), targets: await dashboardShareTargets(record.hostProjectId) };
 }));
 
 app.put("/api/dashboards/:id/sharing", dashboardRoute(async (request, _response, auth) => {
@@ -283,12 +283,13 @@ app.put("/api/dashboards/:id/sharing", dashboardRoute(async (request, _response,
   const { record } = await visibleDashboard(String(request.params.id), auth);
   ownDashboard(record);
   if (auth.isRemoteLogin) throw new DashboardError(403, "Change dashboard sharing on the node that owns it");
-  const targets = await dashboardShareTargets();
+  const targets = await dashboardShareTargets(record.hostProjectId);
   if (input.nodeIds.some((id) => !targets.nodes.some((node) => node.nodeId === id)) || input.clusterIds.some((id) => !targets.clusters.some((cluster) => cluster.id === id)) ||
+    input.workspaceIds.some((id) => !targets.workspaces.some((workspace) => workspace.id === id)) ||
     input.editNodeIds.some((id) => !input.nodeIds.includes(id)) || input.editClusterIds.some((id) => !input.clusterIds.includes(id))) {
     throw new DashboardError(403, "Sharing target is not available");
   }
-  setDashboardSharing(record.id, { nodeIds: input.nodeIds, clusterIds: input.clusterIds, editNodeIds: input.editNodeIds, editClusterIds: input.editClusterIds, allProjectNodes: input.allProjectNodes });
+  setDashboardSharing(record.id, { nodeIds: input.nodeIds, clusterIds: input.clusterIds, editNodeIds: input.editNodeIds, editClusterIds: input.editClusterIds, allProjectNodes: input.allProjectNodes, workspaceIds: input.workspaceIds });
   await dashboardsChanged();
   return dashboardSharing(record.id);
 }));

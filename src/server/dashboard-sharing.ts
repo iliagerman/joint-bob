@@ -19,10 +19,15 @@ function offered(context: Peers, peer: Peer, record: DashboardRecord): boolean {
   const sharing = dashboardSharing(record.id);
   return offeredTo({
     saved: record.definitionDigest !== null, origin: record.origin, receiverNodeId: peer.nodeId,
-    receiverIsTwin: Boolean(peer.twinRelationshipId), shareWithProject: sharing.allProjectNodes,
+    receiverIsTwin: Boolean(peer.twinRelationshipId), shareWithProject: sharing.allProjectNodes || sharing.workspaceIds.some((id) => workspaceSharedWith(context, peer, id)),
     selection: sharing, receiverClusterIds: peer.clusterIds,
     projectShared: mayShareProject(context.db, context.local, peer.nodeId, record.hostProjectId),
   });
+}
+
+function workspaceSharedWith(context: Peers, peer: Peer, workspaceId: string): boolean {
+  const rows = context.db.prepare("SELECT cluster_id, node_ids FROM cluster_v2_share_selections WHERE kind = 'workspace' AND resource_id = ?").all(workspaceId) as Array<{ cluster_id: string; node_ids: string | null }>;
+  return rows.some((row) => peer.clusterIds.includes(row.cluster_id) && (row.node_ids === null || (JSON.parse(row.node_ids) as string[]).includes(peer.nodeId)));
 }
 
 async function receiver(nodeId: string): Promise<{ context: Peers; peer: Peer }> {
@@ -187,10 +192,11 @@ export async function isTwinOwner(ownerNodeId: string): Promise<boolean> {
 }
 
 /** Nodes and clusters a dashboard may be shared with, for the share dialog. */
-export async function dashboardShareTargets(): Promise<{ nodes: Array<{ nodeId: string; name: string; twin: boolean }>; clusters: Array<{ id: string; name: string }> }> {
+export async function dashboardShareTargets(hostProjectId: string): Promise<{ nodes: Array<{ nodeId: string; name: string; twin: boolean }>; clusters: Array<{ id: string; name: string }>; workspaces: Array<{ id: string; name: string }> }> {
   const context = await peers();
   return {
     nodes: context.nodes.map((node) => ({ nodeId: node.nodeId, name: node.name, twin: Boolean(node.twinRelationshipId) })),
     clusters: context.clusters.map((cluster) => ({ id: cluster.id, name: cluster.name })),
+    workspaces: context.db.prepare("SELECT w.id, w.label AS name FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE p.id = ?").all(hostProjectId) as Array<{ id: string; name: string }>,
   };
 }

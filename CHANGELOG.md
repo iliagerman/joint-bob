@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a single sharing picker for dashboards that adds nodes, clusters, workspaces, or the whole project, each shown as a row with its own view or edit choice and a Remove button; sharing with a workspace reaches its eligible nodes, including ones added later.
+
 ## 2.165.0 — 2026-10-28
 
 - Added support for model providers installed in Pi, including Cursor, and raised Joint Bob's required Node version to 24.

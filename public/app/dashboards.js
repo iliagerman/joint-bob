@@ -391,40 +391,47 @@ async function renderShare() {
   body.replaceChildren(panel);
   view.live = null;
   const sharing = await api(`${dashboardPath(view.currentId, "/sharing")}?${query({ projectId: hostProjectId() })}`);
-  const boxes = [];
-  const editors = [];
-  const option = (kind, id, label, checked, note, edit = false) => {
-    const row = el("label", "checkbox-row");
-    const box = el("input");
-    box.type = "checkbox";
-    Object.assign(box.dataset, { kind, id });
-    box.checked = checked;
-    if (kind === "project") box.dataset.testid = "dashboard-share-project";
-    (edit ? editors : boxes).push(box);
-    box.dataset.edit = String(edit);
-    row.append(box, document.createTextNode(label));
-    if (note) row.append(el("span", "dashboard-note", ` ${note}`));
-    return row;
+  const targets = [
+    { key: "project", kind: "project", id: "", label: "This project · all nodes", selected: sharing.allProjectNodes },
+    ...sharing.targets.workspaces.map((w) => ({ key: `workspace:${w.id}`, kind: "workspace", id: w.id, label: `Workspace · ${w.name}`, selected: sharing.workspaceIds.includes(w.id) })),
+    ...sharing.targets.clusters.map((c) => ({ key: `cluster:${c.id}`, kind: "cluster", id: c.id, label: `Cluster · ${c.name}`, selected: sharing.clusterIds.includes(c.id), edit: sharing.editClusterIds.includes(c.id) })),
+    ...sharing.targets.nodes.map((n) => ({ key: `node:${n.nodeId}`, kind: "node", id: n.nodeId, label: `Node · ${n.name}`, selected: sharing.nodeIds.includes(n.nodeId), edit: sharing.editNodeIds.includes(n.nodeId) })),
+  ];
+  const picker = el("select");
+  picker.dataset.testid = "dashboard-share-target";
+  picker.setAttribute("aria-label", "Sharing target");
+  const list = el("div", "dashboard-share-list");
+  const redraw = () => {
+    picker.replaceChildren(new Option("Choose a node, cluster, workspace or project…", ""), ...targets.filter((target) => !target.selected).map((target) => new Option(target.label, target.key)));
+    list.replaceChildren(...targets.filter((target) => target.selected).map((target) => {
+      const row = el("div", "dashboard-share-row");
+      row.dataset.testid = "dashboard-share-row";
+      row.append(el("span", "dashboard-share-label", target.label));
+      if (target.kind === "node" || target.kind === "cluster") {
+        const permission = el("select");
+        permission.setAttribute("aria-label", `Permission for ${target.label}`);
+        permission.append(new Option("Can view", "view"), new Option("Can edit", "edit"));
+        permission.value = target.edit ? "edit" : "view";
+        permission.addEventListener("change", () => { target.edit = permission.value === "edit"; });
+        row.append(permission);
+      } else row.append(el("span", "dashboard-note", "Can view"));
+      row.append(button("Remove", "dashboard-share-remove", () => { target.selected = false; target.edit = false; redraw(); }));
+      return row;
+    }));
   };
-  panel.append(option("project", "", "All nodes with access to this project", sharing.allProjectNodes, "Includes nodes added later."));
-  for (const node of sharing.targets.nodes) {
-    panel.append(option("node", node.nodeId, node.name, sharing.nodeIds.includes(node.nodeId), node.twin ? "twin: receives your dashboards anyway" : ""));
-    panel.append(option("node", node.nodeId, "Allow edits", sharing.editNodeIds.includes(node.nodeId), "", true));
-  }
-  for (const cluster of sharing.targets.clusters) {
-    panel.append(option("cluster", cluster.id, `Everyone in ${cluster.name}`, sharing.clusterIds.includes(cluster.id), ""));
-    panel.append(option("cluster", cluster.id, "Allow edits", sharing.editClusterIds.includes(cluster.id), "", true));
-  }
-  const syncEditors = () => editors.forEach((editor) => { editor.disabled = !boxes.some((box) => box.checked && box.dataset.kind === editor.dataset.kind && box.dataset.id === editor.dataset.id); });
-  boxes.forEach((box) => box.addEventListener("change", syncEditors));
-  syncEditors();
-  if (!sharing.targets.nodes.length && !sharing.targets.clusters.length) panel.append(el("p", "dashboard-note", "This node has no other nodes to share with."));
+  const add = el("div", "dashboard-share-add");
+  add.append(picker, button("Add", "dashboard-share-add", () => {
+    const target = targets.find((target) => target.key === picker.value);
+    if (target) { target.selected = true; redraw(); }
+  }));
+  panel.append(add, list, el("p", "dashboard-note", "Twins receive dashboards automatically. Project and workspace sharing include future eligible nodes. Project access is always required."));
+  redraw();
   const save = async () => {
-    const chosen = (collection, kind) => collection.filter((box) => box.checked && !box.disabled && box.dataset.kind === kind).map((box) => box.dataset.id);
+    const chosen = (kind, edit = false) => targets.filter((target) => target.selected && target.kind === kind && (!edit || target.edit)).map((target) => target.id);
     await api(dashboardPath(view.currentId, "/sharing"), { method: "PUT", body: JSON.stringify({
-      nodeIds: chosen(boxes, "node"), clusterIds: chosen(boxes, "cluster"),
-      editNodeIds: chosen(editors, "node"), editClusterIds: chosen(editors, "cluster"),
-      allProjectNodes: boxes.some((box) => box.dataset.kind === "project" && box.checked), projectId: hostProjectId(),
+      nodeIds: chosen("node"), clusterIds: chosen("cluster"), workspaceIds: chosen("workspace"),
+      editNodeIds: chosen("node", true), editClusterIds: chosen("cluster", true),
+      allProjectNodes: targets[0].selected, projectId: hostProjectId(),
     }) });
     toast("Sharing saved");
     view.mode = "view";
