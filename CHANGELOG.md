@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.171.0 — 2026-10-28
 
-- Settings → Updates now shows the installed version of every harness (Pi, Claude, Kiro), read from the program Joint Bob runs and refreshed after each harness update.
+- Added the installed version of every harness (Pi, Claude, Kiro) to Settings → Updates, read when Joint Bob starts and refreshed after each harness update.
 
 ## 2.170.1 — 2026-10-28
 
