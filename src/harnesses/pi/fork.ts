@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { migrateSessionEntries, SessionManager, type FileEntry } from "@earendil-works/pi-coding-agent";
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
+import { migrateSessionEntries, SessionManager } from "../../pi-sdk.js";
 import { conversationDraftPath } from "../../conversation-records.js";
 import { getSettings } from "../../settings.js";
 import type { HarnessForkOptions, HarnessForkSnapshot } from "../fork.js";

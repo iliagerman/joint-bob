@@ -5,20 +5,8 @@ import { parseJsonlSkippingDamage } from "./jsonl.js";
 import { mkdtemp, open, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path, { basename } from "node:path";
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  getAgentDir,
-  readStoredCredential,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  createBashTool,
-  loadSkills,
-  type AgentSession,
-  type Skill,
-  type AgentSessionEvent,
-} from "@earendil-works/pi-coding-agent";
+import type { AgentSession, Skill, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, getAgentDir, readStoredCredential, ModelRuntime, SessionManager, SettingsManager, createBashTool, loadSkills } from "./pi-sdk.js";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts, type SecretConversation } from "./secrets.js";
 import { agentCapabilityEnvironment, agentCapabilityInstructionFiles } from "./agent-capabilities.js";
 import { getConversationRecord } from "./conversation-records.js";

@@ -25,7 +25,7 @@ async function inspectPiTranscript(filePath: string, sessionId: string): Promise
   });
   if (new Set(eventIds).size !== eventIds.length) throw new Error("duplicate Pi event identity");
   // Generic path resolution must not load the native SDK.
-  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { SessionManager } = await import("../../pi-sdk.js");
   SessionManager.open(filePath, path.dirname(filePath)).getBranch();
   return { filePath, canonical: !isSyncConflictPath(filePath), cwd: path.resolve(header.cwd), latestTimestamp: Math.max(...timestamps), eventIds };
 }

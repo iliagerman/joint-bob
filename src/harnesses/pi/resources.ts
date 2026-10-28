@@ -1,4 +1,5 @@
-import { getAgentDir, SettingsManager, type PromptTemplate, type Skill } from "@earendil-works/pi-coding-agent";
+import type { PromptTemplate, Skill } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SettingsManager } from "../../pi-sdk.js";
 import path from "node:path";
 import { agentResourcePaths, piAgentResourcePaths } from "../../agent-resources.js";
 import { builtinCommands, type CommandDiscoveryOptions, type HarnessCommand } from "../../commands.js";

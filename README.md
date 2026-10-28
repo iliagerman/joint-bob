@@ -82,6 +82,16 @@ After enabling MFA, sign in with your password and a fresh authenticator code, o
 
 Use **Manage MFA** to replace recovery codes or disable MFA. Both require your password and a fresh authenticator or recovery code. Enabling, disabling, or replacing recovery codes signs out your other sessions on that node. If you lose both the authenticator and all recovery codes, there is no password-only web bypass. MFA protects human sign-in, not machine or agent capabilities, and does not replace the private-network deployment requirement.
 
+### Pi version and updates
+
+Pi conversations run on the app-managed Pi harness in `~/.joint-bob/harnesses/pi`, not on the Pi bundled with the Joint Bob release, so a Pi update reaches conversations without a Joint Bob update. The daily harness update, and **Update harnesses now** in **Settings > Updates**, install the newest Pi there only after it passes Joint Bob's check: it must load, offer models and open an agent session in a throwaway folder. A Pi release Joint Bob cannot run never replaces the working one.
+
+Each Pi version runs from its own frozen copy in `~/.joint-bob/pi-sdk/<version>`, made the first time Joint Bob starts with that version (about 160 MB, a few seconds). Pi loads parts of itself on first use, so running straight from the harness folder would mix two versions once the next update replaced it. A newly installed Pi therefore takes effect after a restart: an installed node restarts itself once no conversation turn is running, the same way a release update does, and a turn that starts meanwhile resumes afterwards.
+
+If the managed harness is missing (a new node before its first harness update) or its Pi cannot load, Pi conversations use the Pi bundled with the release. **Settings > Updates** shows which Pi conversations run on, why it fell back, and any newer Pi waiting for the restart. Pi workers for other people's OS accounts run the server's copy when they can read it, and the bundled Pi otherwise.
+
+Packages installed with `pi install` and sign-ins saved with `/login` live in the Pi configuration folder (**Settings > Harnesses > Pi**), separately on each machine.
+
 ### Kiro setup
 
 Kiro is not installed by the Joint Bob installer. Install the official Kiro CLI separately on every execution node, then authenticate it as the OS user that runs Joint Bob:

@@ -3,7 +3,8 @@
 // Requests arrive as JSON lines on stdin; replies, session events and state go to stdout.
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
-import { ModelRuntime, type AgentSession, type AgentSessionEvent, type readStoredCredential } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, readStoredCredential } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "./pi-sdk.js";
 import { createSessionModelRuntime } from "./provider-profiles/pi.js";
 import { createPiProviderCatalog, type PiProviderCatalog } from "./harnesses/pi/provider-catalog.js";
 import { createCoreSession, type PiCoreHooks, type PiCoreInputs, type PiCredentials, type PiSessionHandle } from "./pi-session-core.js";

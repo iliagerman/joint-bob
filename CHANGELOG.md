@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Pi conversations now run on the app-managed Pi harness, which updates daily, so a newer Pi and its models no longer wait for a Joint Bob release. A new Pi is installed only after it passes Joint Bob's check, takes effect when Joint Bob restarts itself once no conversation is running, and Joint Bob falls back to its built-in Pi, saying why in Settings → Updates, when the harness is missing or cannot load.
+
 ## 2.169.0 — 2026-10-28
 
 - Turned built-in file sync on for every machine and removed its switch from Settings, so a saved "off" no longer stops it; only the JOINT_BOB_FILE_SYNC=0 setting still turns it off.

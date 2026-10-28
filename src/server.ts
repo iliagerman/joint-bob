@@ -32,6 +32,9 @@ import { flushAccountReplication, flushBlockNotices, syncLocalAccountIds } from 
 import { getClusterNode } from "./cluster.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { activateManagedHarnesses, startHarnessUpdateScheduler } from "./harness-updater.js";
+import { configurePiSdkSwitch } from "./pi-sdk-switch.js";
+import { prepareForUpdate } from "./server/realtime.js";
+import { harnessSessionBusy, harnessSessions } from "./server/harness-sessions.js";
 import { clusterWorkAllowed, flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
@@ -156,6 +159,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     reconcileUpdateJobs();
     startUpdateScheduler();
     startHarnessUpdateScheduler();
+    // An installed node runs a newly installed Pi harness after restarting, once nothing is running.
+    if (/^[0-9a-f]{40}$/i.test(process.env.JOINT_BOB_RELEASE ?? "")) configurePiSdkSwitch({
+      idle: () => !flags.updatePreparing && ![...harnessSessions.values()].some(harnessSessionBusy),
+      restart: async () => { await prepareForUpdate(); process.exit(0); },
+    });
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
     startConversationDigests();
     void startQuickNoteScheduler().catch(error => console.error("Quick note recovery failed; scheduler not started", error));

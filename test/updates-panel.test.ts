@@ -35,6 +35,21 @@ async function panel() {
   } };
 }
 
+test("the harness list says which Pi conversations run on and when a newer one takes over", async () => {
+  const p = await panel();
+  (p.fixture.status.harnessUpdates as any).pi = { source: "harness", version: "1.4.0", reason: null, harnessVersion: "1.4.0", pendingVersion: "1.5.0" };
+  await p.load();
+  const [pi, claude] = p.elements.harnessUpdatesList.children;
+  assert.equal(pi.children[0].textContent, "Pi conversations");
+  assert.equal(pi.children.at(-1).textContent, "Pi 1.4.0 from the managed harness · Pi 1.5.0 is installed; Joint Bob restarts to use it once no conversation is running");
+  assert.equal(claude.children[0].textContent, "Claude");
+  (p.fixture.status.harnessUpdates as any).pi = { source: "built-in", version: "0.87.1", reason: "the managed Pi harness is not installed yet", harnessVersion: null, pendingVersion: null };
+  await p.load();
+  const fallback = p.elements.harnessUpdatesList.children[0];
+  assert.equal(fallback.children.at(-1).textContent, "built-in Pi 0.87.1 — the managed Pi harness is not installed yet");
+  assert.equal(fallback.children.at(-1).dataset.state, "failed");
+});
+
 test("harness update control renders status and starts updates", async () => {
   const p = await panel();
   await p.load();

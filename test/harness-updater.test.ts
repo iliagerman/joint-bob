@@ -133,3 +133,52 @@ test("managed harness activation replaces a bundled executable setting", async (
     else process.env.JOINT_BOB_INSTALL_ROOT = previousInstallRoot;
   }
 });
+
+test("a Pi release that fails Joint Bob's check never replaces the working Pi harness; one that passes waits for a restart", async () => {
+  const update = { type: "npm", packageName: "@earendil-works/pi-coding-agent", binaryName: "pi" } as const;
+  const command = harnessUpdateCommand("pi", "pi", update);
+  const executable = path.join(command.cwd, "node_modules", ".bin", "pi");
+  await mkdir(path.dirname(executable), { recursive: true });
+  await writeFile(executable, "previous");
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-harness-update-"));
+  const npm = path.join(root, "npm");
+  const bundledPi = path.resolve("node_modules/@earendil-works/pi-coding-agent");
+  // A broken release lacks Pi's exports; a working one is the Pi bundled with this checkout.
+  await writeFile(npm, `#!/bin/sh
+while [ "$1" != "--prefix" ]; do shift; done
+shift
+mkdir -p "$1/node_modules/.bin" "$1/node_modules/@earendil-works"
+printf 'replacement' > "$1/node_modules/.bin/pi"
+chmod +x "$1/node_modules/.bin/pi"
+if [ "$MOCK_PI_BROKEN" = 1 ]; then
+  mkdir -p "$1/node_modules/@earendil-works/pi-coding-agent/dist"
+  printf '{"name":"@earendil-works/pi-coding-agent","version":"9.0.0","type":"module","exports":{".":{"import":"./dist/index.js"}}}' > "$1/node_modules/@earendil-works/pi-coding-agent/package.json"
+  printf 'export const VERSION = "9.0.0";' > "$1/node_modules/@earendil-works/pi-coding-agent/dist/index.js"
+else
+  ln -s "${bundledPi}" "$1/node_modules/@earendil-works/pi-coding-agent"
+fi
+exit 0
+`);
+  await chmod(npm, 0o755);
+  const previousPath = process.env.PATH;
+  const { harnessUpdateStatus } = await import("../src/harness-updater.js");
+  try {
+    process.env.PATH = `${root}${path.delimiter}${previousPath ?? ""}`;
+    process.env.MOCK_PI_BROKEN = "1";
+    const [failure] = await runHarnessUpdates([adapter("pi", "pi", update)]);
+    assert.equal(failure.state, "failed");
+    assert.match(failure.error ?? "", /failed Joint Bob's check and was not installed: .*Pi 9\.0\.0 no longer provides createAgentSession/s);
+    assert.equal(await readFile(executable, "utf8"), "previous");
+    assert.equal(harnessUpdateStatus().pi.pendingVersion, null);
+    delete process.env.MOCK_PI_BROKEN;
+    const [success] = await runHarnessUpdates([adapter("pi", "pi", update)]);
+    assert.equal(success.state, "succeeded", success.error ?? undefined);
+    assert.equal(await readFile(executable, "utf8"), "replacement");
+    const bundledVersion = JSON.parse(await readFile(path.join(bundledPi, "package.json"), "utf8")).version;
+    assert.equal(harnessUpdateStatus().pi.pendingVersion, bundledVersion, "the new Pi waits for a restart");
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    delete process.env.MOCK_PI_BROKEN;
+  }
+});

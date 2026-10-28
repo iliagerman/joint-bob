@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader, SettingsManager } from "../../pi-sdk.js";
 
 type LoaderOptions = ConstructorParameters<typeof DefaultResourceLoader>[0] & { agentDir: string };
 

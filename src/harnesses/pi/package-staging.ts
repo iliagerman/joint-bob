@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmod, cp, mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { DefaultPackageManager, SettingsManager } from "../../pi-sdk.js";
 import { readInstalledPiPackages, type PiExtensionPackage } from "./resource-loader.js";
 
 function contains(root: string, candidate: string): boolean {

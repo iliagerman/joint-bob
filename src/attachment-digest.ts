@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "./pi-sdk.js";
 import { getSettings } from "./settings.js";
 
 export interface ImageInput { data: string; mimeType: string; }

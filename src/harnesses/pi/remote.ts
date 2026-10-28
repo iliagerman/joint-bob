@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { piSdkEntry } from "../../pi-sdk.js";
 import { runInRuntime, runtimeEnvironment, serviceRuntime, spawnInRuntime, type RuntimeAccount } from "../../account-runtime.js";
 import { getSettings } from "../../settings.js";
 
@@ -85,7 +86,7 @@ class PiWorker {
     const { command, args } = workerCommand();
     this.child = spawnInRuntime(runtime, command, args, {
       cwd: runtime.home,
-      env: runtimeEnvironment(runtime, { ...process.env, PI_CODING_AGENT_DIR: path.join(runtime.home, ".pi", "agent"), JOINT_BOB_PI_WORKER: "1" }),
+      env: runtimeEnvironment(runtime, { ...process.env, PI_CODING_AGENT_DIR: path.join(runtime.home, ".pi", "agent"), JOINT_BOB_PI_WORKER: "1", ...(piSdkEntry ? { JOINT_BOB_PI_SDK_ENTRY: piSdkEntry } : {}) }),
       stdio: ["pipe", "pipe", "pipe"],
     });
     // A write racing the worker's exit fails with a broken pipe; the exit handler below rejects

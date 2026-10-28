@@ -3,16 +3,27 @@ import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, renameSync, 
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { HarnessAdapter } from "./harnesses/contract.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime, type HarnessUpdateInstructions } from "./harnesses/runtime-configuration.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { save, settingsDatabase, value } from "./settings-store.js";
+import { piSdkStatus, readPiPackage } from "./pi-sdk.js";
+import { pendingPiSdkVersion, piHarnessInstalled } from "./pi-sdk-switch.js";
 
 const execute = promisify(execFile);
 const UPDATE_INTERVAL_MS = 24 * 60 * 60_000;
 const UPDATE_TIMEOUT_MS = 10 * 60_000;
 const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
+const PI_CHECK_SCRIPT = fileURLToPath(new URL("../scripts/check-pi-sdk.mjs", import.meta.url));
+
+/** Joint Bob runs its Pi conversations on the managed Pi harness, so a Pi release it cannot run
+    must never replace the working one. */
+async function verifyPiInstall(nodeModules: string): Promise<void> {
+  try { await execute(process.execPath, [PI_CHECK_SCRIPT, nodeModules], { env: process.env, timeout: UPDATE_TIMEOUT_MS, maxBuffer: 1024 * 1024 }); }
+  catch (error) { throw new Error(`The new Pi failed Joint Bob's check and was not installed: ${updateError(error)}`); }
+}
 
 export type HarnessUpdateState = "idle" | "running" | "succeeded" | "failed" | "unsupported";
 export interface HarnessUpdateStatus {
@@ -106,6 +117,7 @@ export async function runHarnessUpdates(adapters = listDiscoveredHarnesses()): P
             cwd: staging, env: process.env, timeout: UPDATE_TIMEOUT_MS, maxBuffer: 1024 * 1024,
           });
           accessSync(path.join(staging, "node_modules", ".bin", `${configuration.update.binaryName}${process.platform === "win32" ? ".cmd" : ""}`), constants.X_OK);
+          if (adapter.id === "pi") await verifyPiInstall(path.join(staging, "node_modules"));
           const hadPrevious = existsSync(root);
           if (hadPrevious) renameSync(root, backup);
           try { renameSync(staging, root); }
@@ -115,6 +127,7 @@ export async function runHarnessUpdates(adapters = listDiscoveredHarnesses()): P
           rmSync(staging, { recursive: true, force: true });
         }
         activateManagedHarness(adapter.id, configuration.update.binaryName);
+        if (adapter.id === "pi") piHarnessInstalled((await readPiPackage(path.join(root, "node_modules"))).version);
       } else {
         await execute(command.executable, command.args, {
           cwd: command.cwd, env: process.env, timeout: UPDATE_TIMEOUT_MS, maxBuffer: 1024 * 1024,
@@ -131,8 +144,8 @@ export async function runHarnessUpdates(adapters = listDiscoveredHarnesses()): P
 let current = listDiscoveredHarnesses().map((adapter) => status(adapter, adapter.configuration?.update ? "idle" : "unsupported"));
 let active: Promise<void> | null = null;
 
-export function harnessUpdateStatus(): { running: boolean; harnesses: HarnessUpdateStatus[] } {
-  return { running: Boolean(active), harnesses: current.map((entry) => ({ ...entry })) };
+export function harnessUpdateStatus(): { running: boolean; harnesses: HarnessUpdateStatus[]; pi: typeof piSdkStatus & { pendingVersion: string | null } } {
+  return { running: Boolean(active), harnesses: current.map((entry) => ({ ...entry })), pi: { ...piSdkStatus, pendingVersion: pendingPiSdkVersion() } };
 }
 
 export function startHarnessUpdates(): { running: boolean; harnesses: HarnessUpdateStatus[] } {

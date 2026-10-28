@@ -1,16 +1,8 @@
 import { basename } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
-import {
-  createAgentSession,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  createBashTool,
-  loadSkills,
-  type AgentSession,
-  type Skill,
-} from "@earendil-works/pi-coding-agent";
+import type { AgentSession, Skill } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, createBashTool, loadSkills } from "./pi-sdk.js";
 
 import { createPiResourceLoader } from "./harnesses/pi/resource-loader.js";
 

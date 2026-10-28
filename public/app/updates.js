@@ -131,8 +131,18 @@ function renderNodeList(status, inventory) {
   }
 }
 
+/** Which Pi Joint Bob's Pi conversations run on, and whether a newer installed one is waiting for a restart. */
+function piConversationsRow(pi) {
+  const running = pi.source === "harness" ? `Pi ${pi.version} from the managed harness` : `built-in Pi ${pi.version} — ${pi.reason}`;
+  const waiting = pi.pendingVersion ? ` · Pi ${pi.pendingVersion} is installed; Joint Bob restarts to use it once no conversation is running` : "";
+  const row = nodeRow({ name: "Pi conversations", url: "", version: pi.version, state: pi.source === "harness" ? "succeeded" : "failed", detail: `${running}${waiting}` });
+  row.dataset.testid = "pi-conversations-runtime";
+  return row;
+}
+
 function renderHarnessUpdates(status) {
   elements.harnessUpdatesList.replaceChildren();
+  if (status.harnessUpdates?.pi) elements.harnessUpdatesList.append(piConversationsRow(status.harnessUpdates.pi));
   for (const harness of status.harnessUpdates?.harnesses ?? []) {
     const checked = harness.checkedAt ? ` · ${new Date(harness.checkedAt).toLocaleString()}` : "";
     elements.harnessUpdatesList.append(nodeRow({

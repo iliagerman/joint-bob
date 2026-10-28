@@ -1,4 +1,4 @@
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "../pi-sdk.js";
 import type { PiCoreHooks } from "../pi-session-core.js";
 import type { ProfileCredential } from "./service.js";
 

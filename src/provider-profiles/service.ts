@@ -1,6 +1,6 @@
 import { chmod, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, readStoredCredential } from "../pi-sdk.js";
 import { actingAccount, asNode } from "../account-context.js";
 import { automationProfileContext } from "./context.js";
 import { resolveDataDirectory } from "../data-directory.js";

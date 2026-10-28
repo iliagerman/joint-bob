@@ -7,7 +7,8 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readlinkSync, readdirSy
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadSkills, SettingsManager, type PackageSource } from "@earendil-works/pi-coding-agent";
+import type { PackageSource } from "@earendil-works/pi-coding-agent";
+import { loadSkills, SettingsManager } from "./pi-sdk.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { allowSkillImport, receivedOwner, skillSuppressed, withSkillMutation } from "./skill-sharing-files.js";
 

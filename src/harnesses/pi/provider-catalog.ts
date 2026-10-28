@@ -1,11 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  createAgentSession,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } from "../../pi-sdk.js";
 import { createPiResourceLoader } from "./resource-loader.js";
 
 export interface PiProviderCatalog {
