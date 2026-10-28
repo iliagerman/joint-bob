@@ -45,7 +45,7 @@ export function replicationEventProject(db: DatabaseSync, event: ReplicationEven
 
 /** Where each event type may go. A type without a scope goes nowhere, so a new event
     type has to be placed here before it can leave the node. */
-export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twins" | "separate">> = {
+export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twins" | "twins-only" | "separate">> = {
   // Shared project state: nodes the project is shared with.
   "name.override": "project",
   "project.lock": "project",
@@ -68,6 +68,9 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
   "canvas.shortcut": "twins",
   // The AGENTS.md every project's agents read, kept the same on the owner's machines.
   "instructions.global": "twins",
+  // Subscription profile names and choices: the administrator's twins, never a visited node.
+  "provider.profile": "twins-only",
+  "provider.selection": "twins-only",
   // Routing configurations have their own distribution (routing-configs.ts).
   "cluster.routing": "separate",
 };
@@ -151,6 +154,7 @@ export function mayReplicateEvent(db: DatabaseSync, local: string, peer: string,
   if (!peerUnderstands(db, peer, event.entityType)) return false;
   // A block between any two of the three nodes involved stops the event, relays included.
   if (nodesBlockedBetween(db, local, peer) || nodesBlockedBetween(db, local, event.originNodeId, peer)) return false;
+  if (scope === "twins-only") return isTrustedTwin(db, local, peer) && twinHoldsAccount(db, event);
   if (scope === "account" || scope === "twins") return isTrustedTwin(db, local, peer) ? twinHoldsAccount(db, event) : visitorEventRoute(db, local, peer, event);
   const project = replicationEventProject(db, event);
   // Data outside any project stays on the user's own machines: twins only.

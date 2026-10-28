@@ -10,6 +10,7 @@ import { profileLogins } from "./login.js";
 import { claudeOAuthIdentity } from "./claude-identity.js";
 import { prepareClaudeProfile, readLegacyClaudeCredential, removeLegacyClaudeCredential } from "./claude.js";
 import { withProfileAuthority } from "./broker.js";
+import { borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
 import { accessibleProviderProfile, providerProfile, resolveProviderProfile, type ProfileProvider, type ProviderProfile } from "./store.js";
 
 export type ProfileCredential = NonNullable<ReturnType<typeof readStoredCredential>>;
@@ -87,17 +88,32 @@ async function migrateClaudeProfile(profile: ProviderProfile): Promise<void> {
 /** Only the access token crosses into a turn's execution runtime. */
 export async function claudeProfileAccessToken(profile: ProviderProfile): Promise<string> {
   if (profile.provider !== "claude") throw new Error("Expected Claude profile");
-  return withProfileAuthority(openAIAuthPath(profile), async () => {
+  return (await localProfileCredential(profile) ?? await borrowTwinCredential(profile)).access;
+}
+
+/**
+ * This node's own sign-in, refreshed under its lock to stay valid for ten minutes, or
+ * undefined when the user never signed in here (or signed out). Twins borrow from this.
+ */
+export async function localProfileCredential(profile: ProviderProfile): Promise<ProfileOAuthCredential | undefined> {
+  const message = `Sign in to ${profile.label} again on this node. No other account was used.`;
+  const providerId = profile.provider === "claude" ? "anthropic" : "openai-codex";
+  const refresh = async () => {
+    if (readStoredCredential(providerId, openAIAuthPath(profile))?.type !== "oauth") return undefined;
     try {
-      await migrateClaudeProfile(profile);
-      if (readStoredCredential("anthropic", openAIAuthPath(profile))?.type !== "oauth") throw new Error();
-      await (await profileModelRuntime(profile)).getAuth("anthropic", { minOAuthValidityMs: 10 * 60_000, env: {} });
-      const credential = readStoredCredential("anthropic", openAIAuthPath(profile));
-      if (credential?.type !== "oauth" || !credential.access || credential.expires < Date.now() + 10 * 60_000) throw new Error();
-      return credential.access;
-    } catch { throw new Error(`Sign in to ${profile.label} again on this node. No other account was used.`); }
+      await (await profileModelRuntime(profile)).getAuth(providerId, { minOAuthValidityMs: MIN_TOKEN_VALIDITY_MS, env: {} });
+      const fresh = readStoredCredential(providerId, openAIAuthPath(profile));
+      if (fresh?.type !== "oauth" || !fresh.access || fresh.expires < Date.now() + MIN_TOKEN_VALIDITY_MS) throw new Error(message);
+      return fresh;
+    } catch { throw new Error(message); }
+  };
+  if (profile.provider === "openai-codex") return refresh();
+  return withProfileAuthority(openAIAuthPath(profile), async () => {
+    try { await migrateClaudeProfile(profile); } catch { throw new Error(message); }
+    return refresh();
   });
 }
+type ProfileOAuthCredential = Extract<ProfileCredential, { type: "oauth" }>;
 
 export async function startProfileLogin(owner: string, id: string) {
   const profile = providerProfile(owner, id);
@@ -129,16 +145,19 @@ export async function startProfileLogin(owner: string, id: string) {
 }
 
 /** The SDK's file lock serializes renewal across sessions and processes. Never use ambient keys. */
-export async function refreshedProfileCredential(profile: ProviderProfile): Promise<ProfileCredential> {
+export async function refreshedProfileCredential(profile: ProviderProfile): Promise<ProfileOAuthCredential | BorrowedCredential> {
   if (profile.provider !== "openai-codex") throw new Error("This profile is not an OpenAI profile");
-  const message = `Sign in to ${profile.label} again on this node. No other account was used.`;
-  if (readStoredCredential("openai-codex", openAIAuthPath(profile))?.type !== "oauth") throw new Error(message);
-  try {
-    await (await profileModelRuntime(profile)).getAuth("openai-codex", { minOAuthValidityMs: 10 * 60_000, env: {} });
-    const fresh = readStoredCredential("openai-codex", openAIAuthPath(profile));
-    if (fresh?.type !== "oauth" || fresh.expires <= Date.now()) throw new Error(message);
-    return fresh;
-  } catch { throw new Error(message); }
+  return await localProfileCredential(profile) ?? borrowTwinCredential(profile);
+}
+
+/** Where a turn on this node would get the profile's token: here, from a twin, or nowhere. */
+export async function profileAvailability(profile: ProviderProfile): Promise<{ signedIn: boolean; twin: string | null; message: string }> {
+  const local = await profileLoginState(profile);
+  if (local.signedIn || local.message !== "Sign in on this node") return { ...local, twin: null };
+  const { holder, unchecked } = await twinLoginHolder(profile);
+  if (holder) return { signedIn: false, twin: holder, message: `Uses the sign-in on ${holder}. Turns here borrow short-lived tokens from it.` };
+  const note = unchecked.length ? ` ${unchecked.join(", ")} could not be checked.` : "";
+  return { signedIn: false, twin: null, message: `Sign in on this node${note}` };
 }
 
 export async function profileLoginState(profile: ProviderProfile): Promise<{ signedIn: boolean; message: string }> {

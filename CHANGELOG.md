@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Settings → Harnesses now shows harness setup and subscription profiles as separate cards with provider icons and coloured sign-in states, lets you pick profiles for your default and every workspace in one grid, and lists project and conversation overrides. Your twins receive your profiles and choices automatically; a twin without its own sign-in borrows short-lived tokens from the machine where you signed in.
+
 ## 2.167.0 — 2026-10-28
 
 - Changed nodes to refuse conversations, scheduled tasks, and quick notes from other nodes unless the node's owner allows it under "Runs on this node" in Settings; your own twins can always run there, and a node serving a relay accepts by default. The Runs on picker now marks a node that is not accepting runs.

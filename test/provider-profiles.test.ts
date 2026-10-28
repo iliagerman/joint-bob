@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { settingsDatabase } from "../src/settings-store.js";
 import { createProviderProfile, listProviderProfiles, deleteProviderProfile, setProviderProfileSelection, resolveProviderProfile, providerProfile } from "../src/provider-profiles/store.js";
+import { getClusterNode } from "../src/cluster.js";
+
+// Profile writes are stamped with this node's identity for twin sync.
+await getClusterNode();
 
 test("profile selection inherits conversation > project > workspace > default without crossing users or providers", () => {
   const defaults = createProviderProfile("alice", { label: "Personal", provider: "claude" });

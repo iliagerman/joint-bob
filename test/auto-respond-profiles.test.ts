@@ -3,6 +3,10 @@ import test from "node:test";
 import { autoRespondConfigSchema, enableAutoRespond, getAutoRespond, stopAutoRespond, validateAutoRespondProfile } from "../src/conversation-auto-respond.js";
 import { runAutoResponder } from "../src/server/auto-respond-run.js";
 import { createProviderProfile, deleteProviderProfile, setProviderProfileShared } from "../src/provider-profiles/store.js";
+import { getClusterNode } from "../src/cluster.js";
+
+// Profile writes are stamped with this node's identity for twin sync.
+await getClusterNode();
 
 const config = { harnessId: "claude", provider: "claude", modelId: "test", thinkingLevel: "default" as const, instructions: "Review", stopInstructions: "", maxResponses: 2, useTools: false };
 

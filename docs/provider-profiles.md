@@ -4,9 +4,17 @@ Joint Bob supports multiple node-local Claude subscription logins and ChatGPT lo
 
 ## Add a profile
 
-On each node that should run the subscription, open Settings → Harnesses → Subscription profiles on this node. Add a Claude or ChatGPT profile, then sign in on that node. The OAuth flow opens the provider's sign-in page or shows a device code. Complete it in the browser, then return to Joint Bob. Logins never go through the relay.
+Open Settings → Harnesses. The **Subscription profiles** card sits below the **Harness configuration** card. Choose Claude or ChatGPT, name the profile, add it, then sign in. The OAuth flow opens the provider's sign-in page or shows a device code. Complete it in the browser, then return to Joint Bob. Logins never go through the relay.
 
-Profile names and scope selections are currently node-local too. Add a profile and select it separately on each node. Credentials are not copied by Syncthing or cluster replication.
+Each profile card shows its sign-in state: **Signed in on this node**, **Using the sign-in on <twin>**, **Not signed in**, or **Sign-in unavailable**. The state is checked when the card is shown and again with **Check status**.
+
+## Twins
+
+Your twins receive your profiles (name, provider, sharing state) and every default, workspace, project and conversation choice automatically, and the newest edit wins. Deleting a profile on one twin deletes it on the others, along with their own sign-ins for it. A member's profiles never go to the administrator's twins, and profile events never go to a cluster or to a node you only visited.
+
+A sign-in stays on the node where you signed in. A twin without its own sign-in for a profile asks the twin that has one for a short-lived access token over the signed, end-to-end encrypted machine channel. The lending twin refreshes the login under its own lock and sends only the access token; the refresh token never leaves it. Two machines therefore never rotate the same login and sign each other out. The borrowing twin keeps the token in memory until ten minutes before it expires.
+
+The lending twin must be online when the borrowing twin starts a turn and its token has run out. If no twin can lend one, the turn stops with a sign-in error and no other account is used. Signing in on a twin as well gives that twin its own independent login, which it uses first.
 
 ## Ownership and sharing
 
@@ -16,7 +24,7 @@ Profiles start private. The owner can choose **Share for automation** to make a 
 
 ## Select a profile
 
-Under Subscription selection, choose the provider and scope. These choices belong to **you**, not the project owner, even on a shared project. Assigning your profile to a workspace, project, or conversation never shares the profile with another user. Queued human turns retain their author's identity when another user's connection drains the queue.
+Under **Where each profile is used**, pick a profile for your default and for each workspace, for Claude and ChatGPT, then choose **Save choices** once. Inherited cells show which profile they fall back to. Under **Project and conversation overrides**, add or remove an override for a single project or conversation. These choices belong to **you**, not the project owner, even on a shared project. Assigning your profile to a workspace, project, or conversation never shares the profile with another user. Queued human turns retain their author's identity when another user's connection drains the queue.
 
 The most specific saved choice wins:
 
@@ -25,7 +33,7 @@ The most specific saved choice wins:
 3. Workspace
 4. Your default
 
-Choose Inherit to remove a choice at that level. Members without an applicable subscription profile must select their own profile; they cannot fall through to the node administrator's subscription. Existing administrator/node configuration remains available for legacy unassigned node work.
+Choose the inherit option to remove a choice at that level. Members without an applicable subscription profile must select their own profile; they cannot fall through to the node administrator's subscription. Existing administrator/node configuration remains available for legacy unassigned node work. A choice that points at a profile shared for automation is marked in red and must be changed before your next turn.
 
 The selection takes effect on the next turn. An already-running turn keeps its existing account. Switching a conversation can send its prior transcript to a different provider account, so Joint Bob asks for confirmation before saving the selection.
 

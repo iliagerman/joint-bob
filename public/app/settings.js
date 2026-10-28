@@ -1,5 +1,6 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { loadProviderProfiles } from "./provider-profiles.js";
+import { brandIcon, menuIcon } from "./icons.js";
 import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks, loadTerminalPolicy, loadUsers, saveChangedTerminalPolicy } from "./node-admin.js";
 import { loadMyNodes } from "./roaming.js";
 import { loadBrowserStatus } from "./browser.js";
@@ -275,7 +276,7 @@ function renderHarnessSettings(descriptors, settings, defaults) {
   const tabs = document.querySelector("#harnessTabs"); const panels = document.querySelector("#harnessPanels"); tabs.replaceChildren(); panels.replaceChildren();
   for (const descriptor of descriptors) {
     const tab = document.createElement("button"); tab.className = "settings-subtab"; tab.type = "button"; tab.id = `harnessTab-${descriptor.id}`;
-    tab.dataset.harnessTab = descriptor.id; tab.dataset.testid = `harness-tab-${descriptor.id}`; tab.setAttribute("role", "tab"); tab.setAttribute("aria-controls", `harnessPanel-${descriptor.id}`); tab.textContent = descriptor.label;
+    tab.dataset.harnessTab = descriptor.id; tab.dataset.testid = `harness-tab-${descriptor.id}`; tab.setAttribute("role", "tab"); tab.setAttribute("aria-controls", `harnessPanel-${descriptor.id}`); tab.append(brandIcon(descriptor.id, `harness-tab-icon ${descriptor.id}`), descriptor.label);
     bindHarnessTab(tab); tabs.append(tab); panels.append(createHarnessPanel(descriptor, settings, defaults));
   }
   selectHarnessTab(descriptors.some(({ id }) => id === previous) ? previous : descriptors.find(({ runtimeConfigured }) => runtimeConfigured)?.id || descriptors[0].id);
@@ -353,7 +354,14 @@ function dashboardAgentValue() {
   return { harnessId: descriptor.id, provider: provider ? provider.value : descriptor.configuration.fixedProvider, modelId: model.value, thinkingLevel: thinking.value };
 }
 
-function renderRuntimeReadiness(readiness) { elements.settingsRuntimeStatus.textContent = Object.entries(readiness).flatMap(([id, fields]) => Object.entries(fields).map(([field, result]) => `${runtimeLabels[id][field]}: ${result.message}`)).join(". "); }
+/** One row per checked path, marked passed or failed so a problem stands out from the rest. */
+function renderRuntimeReadiness(readiness) {
+  elements.settingsRuntimeStatus.replaceChildren(...Object.entries(readiness).flatMap(([id, fields]) => Object.entries(fields).map(([field, result]) => {
+    const row = document.createElement("p"); row.className = `engine-check-row ${result.ok ? "ok" : "failed"}`;
+    row.append(menuIcon(result.ok ? "check" : "close"), `${runtimeLabels[id][field]}: ${result.message}`);
+    return row;
+  })));
+}
 async function checkRuntimePaths() { const readiness = await api("/api/settings/runtime-check", { method: "POST", body: JSON.stringify(runtimeFieldsValue()) }); renderRuntimeReadiness(readiness); return readiness; }
 function useHarnessDefaults(id) { clearedHarnessesOnSave.add(id); for (const input of Object.values(runtimeFields[id])) input.value = ""; checkRuntimePaths().catch((error) => toast(error.message)); }
 function invalidRuntimeOverrides(readiness, values) { return Object.entries(readiness).flatMap(([id, fields]) => Object.entries(fields).filter(([field, result]) => !result.ok && values[id][field] !== runtimeDefaults[id][field]).map(([field]) => runtimeLabels[id][field])); }

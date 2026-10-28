@@ -3,8 +3,12 @@ import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { getProject, listWorkspaces } from "../../store.js";
 import { latestConversationSegment } from "../../conversation-records.js";
-import { createProviderProfile, deleteProviderProfile, listProviderProfiles, listProviderProfileSelections, providerProfile, profileSelectionSchema, setProviderProfileSelection, listAccessibleProviderProfiles, setProviderProfileShared } from "../../provider-profiles/store.js";
-import { logoutProfile, profileLoginState, startProfileLogin } from "../../provider-profiles/service.js";
+import { getClusterNode } from "../../cluster.js";
+import { isTrustedTwin } from "../../cluster-sharing-policy.js";
+import { clusterV2Database } from "../../cluster-v2-store.js";
+import { createProviderProfile, deleteProviderProfile, listProviderProfiles, listProviderProfileSelections, providerProfile, profileSelectionSchema, setProviderProfileSelection, listAccessibleProviderProfiles, setProviderProfileShared, twinProviderProfile } from "../../provider-profiles/store.js";
+import { localProfileCredential, logoutProfile, profileAvailability, profileLoginState, startProfileLogin } from "../../provider-profiles/service.js";
+import { TWIN_PROFILE_TOKEN_PATH } from "../../provider-profiles/twin-login.js";
 import { profileLogins } from "../../provider-profiles/login.js";
 import { profileBusy } from "../../provider-profiles/execution.js";
 import { sendError } from "../http-auth.js";
@@ -45,7 +49,7 @@ app.post("/api/provider-profiles", route((request, response) => {
 }));
 app.get("/api/provider-profiles/:id/status", route(async (request, response) => {
   const selected = profile(request, response);
-  response.json({ ...await profileLoginState(selected), login: profileLogins.status(owner(response), selected.id) ?? null });
+  response.json({ ...await profileAvailability(selected), login: profileLogins.status(owner(response), selected.id) ?? null });
 }));
 app.get("/api/provider-profiles/:id/login", route((request, response) => {
   const selected = profile(request, response);
@@ -103,4 +107,19 @@ app.put("/api/provider-profiles/selection", route(async (request, response) => {
   if (!await scopeAllowed(selection)) { sendError(response, 404, "Scope not found or not accessible to this account"); return; }
   setProviderProfileSelection(owner(response), selection);
   response.json({ selections: listProviderProfileSelections(owner(response)) });
+}));
+
+/** A twin without its own sign-in borrows a short-lived token. The refresh token stays here. */
+app.post(TWIN_PROFILE_TOKEN_PATH, route(async (request, response) => {
+  const sender = response.locals.machineProtocol === 2 && typeof response.locals.machineNodeId === "string" ? response.locals.machineNodeId : undefined;
+  if (!sender) { sendError(response, 401, "Unauthorized"); return; }
+  if (!isTrustedTwin(await clusterV2Database(), (await getClusterNode()).id, sender)) { sendError(response, 403, "Forbidden"); return; }
+  const body = z.object({ profileId: idSchema, check: z.literal(true).optional() }).strict().parse(request.body);
+  const selected = twinProviderProfile(body.profileId);
+  if (!selected) { sendError(response, 404, "Provider profile not found on this node"); return; }
+  if (body.check) { response.json({ signedIn: (await profileLoginState(selected)).signedIn }); return; }
+  try {
+    const credential = await localProfileCredential(selected);
+    response.json({ credential: credential ? { ...credential, refresh: "" } : null });
+  } catch (error) { sendError(response, 409, error instanceof Error ? error.message : "Sign-in unavailable on this node"); }
 }));

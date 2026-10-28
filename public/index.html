@@ -1507,11 +1507,17 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-engines" role="tabpanel" aria-labelledby="settingsTab-engines" tabindex="0" hidden>
-          <p data-admin-only>Harness paths are detected automatically for this node. Do not copy paths from another machine. Overrides are blank until you change them; a blank field uses the node default shown here.</p>
-          <div class="settings-subtabs" role="tablist" aria-label="Installed harnesses" id="harnessTabs"></div>
-          <div id="harnessPanels"></div>
-          <div class="engine-actions" data-admin-only><button class="ghost" id="settingsCheckRuntimePathsButton" type="button" data-testid="settings-check-runtime-paths-button">Check paths</button></div>
-          <p class="engine-readiness" data-admin-only id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></p>
+          <section class="engines-card" aria-labelledby="harnessConfigTitle" data-testid="harness-config-card">
+            <header class="engines-card-header">
+              <span class="engines-card-icon" style="--tile:#a855f7" aria-hidden="true">🤖</span>
+              <div class="engines-card-title"><h3 id="harnessConfigTitle">Harness configuration</h3><p>Models for new conversations<span data-admin-only> and this node's harness paths</span>.</p></div>
+            </header>
+            <p class="settings-hint" data-admin-only>Harness paths are detected automatically for this node. Do not copy paths from another machine. Overrides are blank until you change them; a blank field uses the node default shown here.</p>
+            <div class="settings-subtabs" role="tablist" aria-label="Installed harnesses" id="harnessTabs"></div>
+            <div id="harnessPanels"></div>
+            <div class="engine-actions" data-admin-only><button class="ghost engine-check" id="settingsCheckRuntimePathsButton" type="button" data-testid="settings-check-runtime-paths-button"><svg class="row-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v4h4"/></svg>Check paths</button></div>
+            <div class="engine-readiness" data-admin-only id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></div>
+          </section>
         </section>
 
         <section class="settings-panel" id="settingsPanel-git" role="tabpanel" aria-labelledby="settingsTab-git" tabindex="0" hidden>

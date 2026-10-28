@@ -8,6 +8,10 @@ import { claudeProfileEnvironment, prepareClaudeProfile, prepareClaudeExecution,
 import { createSessionModelRuntime } from "../src/provider-profiles/pi.js";
 import { openAIAuthPath, persistOpenAIProfileCredential, profileModelRuntime, refreshedProfileCredential } from "../src/provider-profiles/service.js";
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
+import { getClusterNode } from "../src/cluster.js";
+
+// Profile writes are stamped with this node's identity for twin sync.
+await getClusterNode();
 
 test("selected Claude profiles scrub competing authentication without changing the caller's environment", () => {
   const inherited = { CLAUDE_CODE_OAUTH_TOKEN: "fixture-old", CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR: "9", ANTHROPIC_API_KEY: "fixture-api", ANTHROPIC_AUTH_TOKEN: "fixture-auth", ANTHROPIC_OAUTH_TOKEN: "fixture-oauth", CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_BASE_URL: "https://example.invalid", PATH: "/bin" };

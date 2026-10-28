@@ -20,6 +20,7 @@ import { applyClusterRoutingEvent, ensureRoutingPolicySchema } from "./routing-p
 import { applyUsageDifficultyEvent, applyUsageEvent, ensureUsageSchema } from "./usage-ledger.js";
 import { isTwinOrigin, translateLegacyAccountEvent } from "./account-keys.js";
 import { applyMessageAuthorEvent } from "./message-authors.js";
+import { applyProviderProfileEvent, applyProviderSelectionEvent } from "./provider-profiles/store.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -362,6 +363,8 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "user.recent": applyUserRecentSessionEvent,
   "model.usage": applyUsageEvent,
   "usage.difficulty": applyUsageDifficultyEvent,
+  "provider.profile": applyProviderProfileEvent,
+  "provider.selection": applyProviderSelectionEvent,
 };
 
 /** Every event type this node can apply. Each one needs a scope in replication-v2.ts. */

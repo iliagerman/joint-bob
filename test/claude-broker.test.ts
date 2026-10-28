@@ -6,6 +6,10 @@ import { test } from "node:test";
 import { createProviderProfile } from "../src/provider-profiles/store.js";
 import { claudeProfileAccessToken, logoutProfile, openAIAuthPath, profileLoginState, profileModelRuntime } from "../src/provider-profiles/service.js";
 import { prepareClaudeExecution, prepareClaudeProfile, profileDirectory } from "../src/provider-profiles/claude.js";
+import { getClusterNode } from "../src/cluster.js";
+
+// Profile writes are stamped with this node's identity for twin sync.
+await getClusterNode();
 
 const credential = (access = "synthetic-access", refresh = "synthetic-refresh") => ({ type: "oauth", access, refresh, expires: Date.now() + 3_600_000 });
 async function canonical(profile: ReturnType<typeof createProviderProfile>, value: object) {
