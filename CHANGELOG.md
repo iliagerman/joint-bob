@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added private files and tools for webhooks, each with a description and up to 4 MiB; a webhook keeps the version it was accepted with, so editing a file later does not change what it already runs with.
+
 ## 2.173.0 — 2026-10-29
 
 - Made the harness, model, and effort pickers in the mobile chat menu searchable, and the menu now stays open after you choose one; Runs on stays a segmented control.
