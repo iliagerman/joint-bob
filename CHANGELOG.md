@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.177.2 — 2026-10-29
 
-- Fixed Git stories and conversation reviews failing or leaving out turns when a conversation had an empty segment; they now include every real turn and skip the empty ones.
+- Fixed Git stories and conversation reviews failing or leaving out turns when a conversation had empty draft segments; they now include every real turn and skip the placeholders.
 
 ## 2.177.1 — 2026-10-29
 
