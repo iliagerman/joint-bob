@@ -126,7 +126,7 @@ export interface ShareStatus {
 
 export interface ListPage<T> { total: number; items: T[] }
 /** Need rows under a prefix, blocked ones left out: `files` can arrive now; `waiting` only from `waiting.peers`, none of them available. */
-export interface PendingFiles { files: number; bytes: number; waiting: { files: number; bytes: number; peers: string[] } }
+export interface PendingFiles { files: number; bytes: number; blocked: number; errors: number; waiting: { files: number; bytes: number; peers: string[] } }
 export interface DifferenceItem { path: string; kind: "only-here" | "only-there" | "content" | "mode"; local?: Pick<IndexEntry, "size" | "mtimeMs" | "sha256" | "deleted">; remote?: Pick<IndexEntry, "size" | "mtimeMs" | "sha256" | "deleted">; since: string }
 export interface ErrorItem { path: string; kind: "error" | "notice" | "blocked"; reason: string; at: string }
 

@@ -122,6 +122,15 @@ test("a project rescan covers its ticket and worktree folders when Syncthing has
     assert.equal(created.status, 201, node.output());
     const project = (await created.json() as { project: { id: string; syncFolderId: string } }).project;
     const rescan = (id: string) => fetch(`${node!.baseUrl}/api/projects/${id}/sync/rescan`, { method: "POST", headers });
+    const scopedStatus = `${node.baseUrl}/api/projects/${project.id}/sync/status`;
+    assert.equal((await fetch(scopedStatus)).status, 401, "sync counts require authentication");
+    const scoped = await fetch(scopedStatus, { headers });
+    assert.equal(scoped.status, 200);
+    assert.equal((await scoped.json() as { syncStatus: { state: string } }).syncStatus.state, "synced");
+    for (const query of ["worktreeId=../outside", "worktreeId=", "worktreeId[]=one", "worktreeId=one&worktreeId=two"]) {
+      assert.equal((await fetch(`${scopedStatus}?${query}`, { headers })).status, 400, query);
+    }
+    assert.equal((await fetch(`${node.baseUrl}/api/projects/missing/sync/status`, { headers })).status, 404);
 
     // Without peers this node has no ticket or worktree folder, so only the project folder is scanned.
     scans.length = 0;

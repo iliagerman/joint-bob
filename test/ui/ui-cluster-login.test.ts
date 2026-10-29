@@ -161,8 +161,24 @@ test("an open remote conversation can switch locally and take ownership", async 
     lockDetail: document.querySelector("#conversationLockDetail")?.textContent,
   }));
   assert.equal(await takeButton.isVisible(), true, `local view offers takeover: ${JSON.stringify(takeoverState)}`);
+  // The real two-node takeover must proceed once its own folder catches up,
+  // even while the project-wide status still counts thousands of worktree files.
+  const projectId = await homeserverPage.evaluate(async () => {
+    const modulePath = "/app/state.js";
+    const { state } = await import(modulePath);
+    state.projects.find((project) => project.id === state.activeProjectId).syncStatus = { engine: "builtin", state: "syncing", remainingFiles: 77569, remainingBytes: 869164646 };
+    return state.activeProjectId;
+  });
+  let pending = 3;
+  const statusRoute = `**/api/projects/${projectId}/sync/status`;
+  await homeserverPage.route(statusRoute, route => route.fulfill({ json: { syncStatus: {
+    engine: "builtin", state: pending ? "syncing" : "synced", remainingFiles: pending, remainingBytes: pending * 1024,
+  } } }));
   await takeButton.click();
+  await homeserverPage.waitForFunction(() => document.querySelector("#conversationLockStatus")!.textContent!.includes("3 files, 3.0 KB"));
+  pending = 0;
   await homeserverPage.locator("#conversationLock").waitFor({ state: "hidden", timeout: 30_000 });
+  await homeserverPage.unroute(statusRoute);
   await homeserverPage.locator("#messageInput:not(:disabled)").waitFor({ timeout: 30_000 });
   assert.equal(await homeserverPage.getByTestId("chat-message-input").isEnabled(), true, "the destination can continue the conversation after takeover");
 

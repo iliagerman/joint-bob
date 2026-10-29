@@ -321,6 +321,34 @@ export async function projectSyncStatuses(projects: ProjectRecord[], now = Date.
   return result;
 }
 
+/** Takeover waits on the conversation's working folder, never on unrelated worktree copies. */
+export async function conversationFilesStatus(project: ProjectRecord, worktreeId?: string): Promise<FacadeSyncStatus> {
+  const phase = await phaseOfProject(project.id);
+  const engine = filesEngineOf(phase);
+  if (engine === "syncthing") return (await projectSyncStatuses([project]))[project.id];
+  if (engine === "moving") return movingStatus(phase);
+  const api = await engineApi();
+  const view = (await api.fileSyncProjectViews([project.id])).get(project.id)!;
+  const kind = worktreeId ? "worktrees" : "project";
+  const shares = view.shares.filter((share) => share.kind === kind).map((share) => worktreeId ? { ...share, need: { files: 0, bytes: 0 } } : share);
+  const peers = [...new Set([...(view.peers[kind] ?? []), ...shares.flatMap((share) => share.peers.map((peer) => peer.peer))])];
+  const facts = await api.fileSyncPeerFacts(peers);
+  const scoped = { ...view, shares, peers: { [kind]: peers } };
+  if (!worktreeId || view.worker !== "running" || !view.enabled || view.writesHeld || !shares.length) return builtinProjectStatus(scoped, facts);
+  api.fileSyncPrioritize(project.id, "worktrees", worktreeId, Date.now() + WORKTREE_PRIORITY_MS);
+  const present = peers.filter((peer) => presentPeer(facts, peer) && facts.peers.get(peer)?.protocol !== 0 && facts.peers.get(peer)?.enabled !== false);
+  const pending = await api.fileSyncPendingFiles(project.id, "worktrees", worktreeId, present);
+  if (!pending) return { state: "syncing", remainingFiles: 0, remainingBytes: 0, message: "Checking files", engine: "builtin" };
+  const share = shares[0];
+  share.need = { files: pending.files + pending.waiting.files, bytes: pending.bytes + pending.waiting.bytes };
+  share.blocked = pending.blocked;
+  share.errors = pending.errors;
+  // After the first index, sibling rescans do not hold this worktree. Root errors still do.
+  if (share.indexed && share.state === "scanning") { share.state = "idle"; share.scanning = false; }
+  // Keep peer-index catch-up: an empty prefix is not current until newer index pages have arrived.
+  return builtinProjectStatus(scoped, facts);
+}
+
 /** Asks for an immediate scan of the project and of its ticket and worktree folders. */
 export async function rescanProjectFiles(projectId: string): Promise<void> {
   const project = await getProject(projectId);

@@ -654,8 +654,11 @@ export class FileSyncDb {
     return (this.statement("SELECT path FROM errors WHERE share = ?").all(share) as Row[]).map((row) => row.path as string);
   }
 
-  errorCount(share: string): number {
-    return (this.statement("SELECT COUNT(*) AS n FROM errors WHERE share = ?").get(share) as Row).n as number;
+  errorCount(share: string, prefix = ""): number {
+    if (!prefix) return (this.statement("SELECT COUNT(*) AS n FROM errors WHERE share = ?").get(share) as Row).n as number;
+    const [low, high] = below(prefix);
+    return (this.statement("SELECT COUNT(*) AS n FROM errors WHERE share = ? AND path >= ? AND path < ? AND (path = ? OR path >= ?)")
+      .get(share, prefix, high, prefix, low) as Row).n as number;
   }
 
   errorsPage(share: string, offset: number, limit: number): { total: number; items: ErrorRow[] } {

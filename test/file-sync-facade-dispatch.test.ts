@@ -9,7 +9,7 @@ import { conflictCopyName } from "../src/file-sync/conflicts.js";
 import { controlDatabase, phaseOf, setPhase } from "../src/file-sync/control.js";
 import {
   assertProjectFilesReady, builtinProjectStatus, type EngineApi, noteHandoffFiles, peerFilesReady, ProjectFilesNotReadyError, projectFilesHandoffPart,
-  projectSyncStatuses, rescanProjectFiles, taskShareStatuses, useFacadeEngineForTests, worktreeFilesChanged, worktreeHasPendingFiles, worktreeSweepRefusal,
+  conversationFilesStatus, projectSyncStatuses, rescanProjectFiles, taskShareStatuses, useFacadeEngineForTests, worktreeFilesChanged, worktreeHasPendingFiles, worktreeSweepRefusal,
 } from "../src/file-sync/facade.js";
 import type { FileSyncPeerFacts, FileSyncProjectView } from "../src/file-sync/index.js";
 import { FILE_SYNC_PROTOCOL, type PeerShareStatus, type PendingFiles, type ShareStatus } from "../src/file-sync/protocol.js";
@@ -89,7 +89,7 @@ function standIn(): Stand {
       stand.calls.pending.push({ projectId, kind, prefix, availablePeers: [...availablePeers] });
       if (stand.pending) return stand.pending(projectId, kind, prefix, availablePeers);
       const need = stand.views.get(projectId)?.shares.find((candidate) => candidate.kind === kind)?.need ?? { files: 0, bytes: 0 };
-      return { files: need.files, bytes: need.bytes, waiting: { files: 0, bytes: 0, peers: [] } };
+      return { files: need.files, bytes: need.bytes, blocked: 0, errors: 0, waiting: { files: 0, bytes: 0, peers: [] } };
     },
   };
   useFacadeEngineForTests(engine);
@@ -147,6 +147,79 @@ test("a built-in project's status covers every state, in order, with plain texts
   assert.deepEqual([builtinProjectStatus(view(id, {}, [share(id, "project", { phase: "bootstrapping" })]), facts()).state, builtinProjectStatus(view(id, {}, [share(id, "project", { phase: "bootstrapping" })]), facts()).message], ["syncing", "Moving to built-in sync"]);
   // Error beats unavailable beats syncing.
   assert.equal(builtinProjectStatus(view(id, {}, [share(id, "project", { state: "unavailable" }), share(id, "tickets", { blocked: 1 }), share(id, "worktrees", { need: { files: 4, bytes: 4 } })]), facts()).state, "error");
+});
+
+test("conversation readiness excludes unrelated shares and counts only its worktree prefix", async () => {
+  const stand = standIn(), project = record("conversation-scope");
+  setPhase(await controlDatabase(), project.id, "builtin");
+  const worktreeId = "11111111-1111-4111-8111-111111111111";
+  stand.views.set(project.id, view(project.id, {}, [
+    share(project.id, "project", { need: { files: 31, bytes: 1600 } }),
+    share(project.id, "tickets", { need: { files: 9, bytes: 900 } }),
+    share(project.id, "worktrees", { need: { files: 77569, bytes: 869164646 } }),
+  ]));
+  const main = await conversationFilesStatus(project);
+  assert.deepEqual([main.state, main.remainingFiles, main.remainingBytes], ["syncing", 31, 1600]);
+  assert.equal(stand.calls.pending.length, 0, "the main project uses its own share's status");
+  stand.pending = () => ({ files: 3, bytes: 3072, blocked: 0, errors: 0, waiting: { files: 0, bytes: 0, peers: [] } });
+  const worktree = await conversationFilesStatus(project, worktreeId);
+  assert.deepEqual([worktree.state, worktree.remainingFiles, worktree.remainingBytes], ["syncing", 3, 3072]);
+  assert.deepEqual(stand.calls.pending.at(-1), { projectId: project.id, kind: "worktrees", prefix: worktreeId, availablePeers: [PEER] });
+  assert.deepEqual(stand.calls.prioritize.at(-1), { projectId: project.id, kind: "worktrees", prefix: worktreeId });
+
+  stand.pending = () => ({ files: 0, bytes: 0, blocked: 0, errors: 0, waiting: { files: 0, bytes: 0, peers: [] } });
+  assert.equal((await conversationFilesStatus(project, worktreeId)).state, "synced", "siblings still copying do not delay this worktree");
+  stand.views.set(project.id, view(project.id, {}, [share(project.id, "project"), share(project.id, "worktrees", { need: { files: 77569, bytes: 869164646 } })]));
+  assert.equal((await conversationFilesStatus(project)).state, "synced", "worktrees still copying do not delay the main project");
+});
+
+test("scoped readiness retains index catch-up and reports unavailable worker answers without whole-share counts", async () => {
+  const stand = standIn(), project = record("conversation-catchup"), worktreeId = "11111111-1111-4111-8111-111111111111";
+  setPhase(await controlDatabase(), project.id, "builtin");
+  const shares = [share(project.id, "worktrees", { need: { files: 77569, bytes: 869164646 }, peers: [peerEntry(PEER, { caughtUp: false })] })];
+  stand.views.set(project.id, view(project.id, {}, shares));
+  stand.pending = () => ({ files: 0, bytes: 0, blocked: 0, errors: 0, waiting: { files: 0, bytes: 0, peers: [] } });
+  const catchingUp = await conversationFilesStatus(project, worktreeId);
+  assert.deepEqual([catchingUp.state, catchingUp.remainingFiles, catchingUp.remainingBytes], ["syncing", 0, 0], "until the index arrives, an empty prefix is not proof of readiness");
+  assert.match(catchingUp.message!, /Catching up/);
+  stand.pending = () => ({ files: 0, bytes: 0, blocked: 0, errors: 0, waiting: { files: 2, bytes: 200, peers: [PEER] } });
+  stand.facts[PEER] = { name: "homeserver", present: false, protocol: FILE_SYNC_PROTOCOL, enabled: true };
+  const away = await conversationFilesStatus(project, worktreeId);
+  assert.deepEqual([away.remainingFiles, away.remainingBytes], [2, 200], "only this worktree's waiting files count");
+  assert.match(away.message!, /waiting for homeserver/);
+  stand.pending = () => undefined;
+  const unknown = await conversationFilesStatus(project, worktreeId);
+  assert.deepEqual([unknown.state, unknown.remainingFiles], ["syncing", 0], "a missing worker answer is not a completed copy");
+  stand.pending = () => { throw new Error("Worker timed out"); };
+  await assert.rejects(conversationFilesStatus(project, worktreeId), /Worker timed out/);
+  stand.views.set(project.id, view(project.id, { worker: "failed" }, shares));
+  const failed = await conversationFilesStatus(project, worktreeId);
+  assert.deepEqual([failed.state, failed.remainingFiles], ["error", 0]);
+  setPhase(await controlDatabase(), project.id, "bootstrapping");
+  assert.equal((await conversationFilesStatus(project, worktreeId)).engine, "moving");
+});
+
+test("worktree readiness excludes sibling errors and rescans but keeps its own problems and first index", async () => {
+  const stand = standIn(), project = record("conversation-problems"), worktreeId = "11111111-1111-4111-8111-111111111111";
+  setPhase(await controlDatabase(), project.id, "builtin");
+  const worktrees = share(project.id, "worktrees", { state: "scanning", scanning: true, indexed: true, blocked: 2, errors: 3 });
+  stand.views.set(project.id, view(project.id, {}, [worktrees]));
+  let pending: PendingFiles = { files: 3, bytes: 300, blocked: 0, errors: 0, waiting: { files: 0, bytes: 0, peers: [] } };
+  stand.pending = () => pending;
+  assert.equal((await conversationFilesStatus(project, worktreeId)).state, "syncing", "sibling errors must not let takeover skip pending files");
+  pending = { ...pending, files: 0, bytes: 0 };
+  assert.equal((await conversationFilesStatus(project, worktreeId)).state, "synced", "sibling rescans and errors must not hold a ready worktree");
+  pending.blocked = 1;
+  assert.equal((await conversationFilesStatus(project, worktreeId)).state, "error", "selected worktree problems remain visible");
+  pending.blocked = 0;
+  pending.errors = 1;
+  assert.equal((await conversationFilesStatus(project, worktreeId)).state, "error");
+  pending.errors = 0;
+  worktrees.indexed = false;
+  assert.equal((await conversationFilesStatus(project, worktreeId)).state, "syncing", "the first local index must finish");
+  worktrees.state = "error";
+  worktrees.message = "The worktree root is unreadable";
+  assert.equal((await conversationFilesStatus(project, worktreeId)).state, "error", "root failures affect every worktree");
 });
 
 test("a mixed node asks Syncthing only about projects still on it", async () => {
@@ -327,7 +400,7 @@ test("a merge waits only for its own worktree's files, and only while a machine 
   const id = "pending-narrow";
   setPhase(db, id, "builtin");
   stand.views.set(id, view(id, {}, [share(id, "worktrees", { need: { files: 1, bytes: 10 } })]));
-  const nothing = { files: 0, bytes: 0, waiting: { files: 0, bytes: 0, peers: [] } };
+  const nothing = { files: 0, bytes: 0, blocked: 0, errors: 0, waiting: { files: 0, bytes: 0, peers: [] } };
   // The one file on its way belongs to w2: w1 merges now, w2 waits for it.
   stand.pending = (_project, _kind, prefix) => prefix === "w2" ? { ...nothing, files: 1, bytes: 10 } : nothing;
   assert.equal(await worktreeHasPendingFiles(id, "w1"), false, "another worktree's file does not hold this one");

@@ -324,15 +324,23 @@ test("what is pending under a worktree counts only its own rows, and what only a
     { path: "w2/c.ts", size: 30, sha256: SHA_Z, version: { p1: 1 } },
   ]);
   const none = { files: 0, bytes: 0, peers: [] };
-  assert.deepEqual(q.need.pendingUnder(key, "w1", ["p1", "p2"]), { files: 1, bytes: 10, waiting: none });
-  assert.deepEqual(q.need.pendingUnder(key, "w2/", ["p1"]), { files: 2, bytes: 50, waiting: none });
-  assert.deepEqual(q.need.pendingUnder(key, "w3", ["p1"]), { files: 0, bytes: 0, waiting: none }, "a worktree with nothing on its way");
+  assert.deepEqual(q.need.pendingUnder(key, "w1", ["p1", "p2"]), { files: 1, bytes: 10, blocked: 0, errors: 0, waiting: none });
+  assert.deepEqual(q.need.pendingUnder(key, "w2/", ["p1"]), { files: 2, bytes: 50, blocked: 0, errors: 0, waiting: none });
+  assert.deepEqual(q.need.pendingUnder(key, "w3", ["p1"]), { files: 0, bytes: 0, blocked: 0, errors: 0, waiting: none }, "a worktree with nothing on its way");
   // p1, the only machine with the content, is away: nothing can come now.
-  assert.deepEqual(q.need.pendingUnder(key, "w2", ["p2"]), { files: 0, bytes: 0, waiting: { files: 2, bytes: 50, peers: ["p1"] } });
+  assert.deepEqual(q.need.pendingUnder(key, "w2", ["p2"]), { files: 0, bytes: 0, blocked: 0, errors: 0, waiting: { files: 2, bytes: 50, peers: ["p1"] } });
   // A copy already here (the same bytes in w1) needs no machine; a blocked row waits for a person, not for a machine.
   q.local({ path: "w1/copy.ts", size: 30, sha256: SHA_Z, version: { "node-b": 1 }, modifiedBy: "node-b" });
   q.need.block(key, "w2/b.ts", "Another name in this folder differs only in case (B.ts)");
-  assert.deepEqual(q.need.pendingUnder(key, "w2", []), { files: 1, bytes: 30, waiting: none });
+  q.db.writeTx(() => {
+    q.db.setError(key, "w1/a.ts", "error", "Unreadable", q.clock.now());
+    q.db.setError(key, "w2", "error", "Unreadable folder", q.clock.now());
+    q.db.setError(key, "w2/secret.txt", "error", "Unreadable", q.clock.now());
+    q.db.setError(key, "w2-other/file.txt", "error", "Different worktree", q.clock.now());
+  });
+  assert.deepEqual(q.need.pendingUnder(key, "w2", []), { files: 1, bytes: 30, blocked: 1, errors: 2, waiting: none });
+  assert.deepEqual(q.need.pendingUnder(key, "w1", []), { files: 0, bytes: 0, blocked: 0, errors: 1, waiting: { files: 1, bytes: 10, peers: ["p1"] } });
+  assert.equal(q.need.pendingUnder(key, "", []).errors, 4, "the whole-share prefix still includes every error");
 });
 
 test("blocked rows are left out of the queue and the pending count, listed as problems, and tried again when something related changes", async (t) => {

@@ -24,7 +24,7 @@ import { conversationBelongsElsewhere, getConversationRecord } from "../../conve
 import { addProject, getProject, listProjects, listWorkspaces, removeProject, renameProject, updateProjectColor, updateProjectMacPath, WorkspaceError } from "../../store.js";
 import { ensureSyncthingFolder } from "../../syncthing.js";
 import { whileFilesOnSyncthing } from "../../file-sync/control.js";
-import { ProjectFilesUnavailableError, ProjectNotSynchronizedError, rescanProjectFiles } from "../../file-sync/facade.js";
+import { conversationFilesStatus, ProjectFilesUnavailableError, ProjectNotSynchronizedError, rescanProjectFiles } from "../../file-sync/facade.js";
 import { warnOnChange } from "../quiet-log.js";
 import { listTasks, unmergedWorkspaceBlocksClose } from "../../tasks.js";
 import { sessionWatcher } from "../chat.js";
@@ -61,6 +61,19 @@ app.get("/api/projects/:projectId", async (request, response, next) => {
       return;
     }
     response.json({ project: await projectView(project) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const conversationSyncQuerySchema = z.object({ worktreeId: z.string().uuid().optional() });
+
+app.get("/api/projects/:projectId/sync/status", async (request, response, next) => {
+  try {
+    const { worktreeId } = conversationSyncQuerySchema.parse(request.query);
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    response.json({ syncStatus: await conversationFilesStatus(project, worktreeId) });
   } catch (error) {
     next(error);
   }

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed taking over a worktree conversation waiting for every worktree's files in the project; it now waits only for its own worktree's files, and a failed file check shows an error instead of taking over.
+
 ## 2.177.2 — 2026-10-29
 
 - Fixed Git stories and conversation reviews failing or leaving out turns when a conversation had empty draft segments; they now include every real turn and skip the placeholders.

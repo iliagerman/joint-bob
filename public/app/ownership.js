@@ -52,16 +52,16 @@ function formatOwnershipBytes(bytes) {
   return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
-// The built-in file sync knows when this node holds every machine's latest files: the
-// project's status is checked every second and the wait ends the moment nothing is left
-// to copy (at once when nothing was). Errors and missing folders do not hold it either;
-// they show on the project as before.
-function waitForProjectFiles(projectId, destination, report) {
+// Wait only for this conversation's working folder, not the project's other worktrees.
+// Errors and missing folders keep their existing project-level handling.
+function waitForConversationFiles(projectId, destination, worktreeId, report) {
   if (shared.ownershipWait) return shared.ownershipWait.promise;
   const started = Date.now();
   const wait = { promise: null, resolve: null, settled: false };
   let timer = null;
-  wait.promise = new Promise((resolve) => {
+  const query = new URLSearchParams(worktreeId ? { worktreeId } : {});
+  const endpoint = `/api/projects/${encodeURIComponent(projectId)}/sync/status${query.size ? `?${query}` : ""}`;
+  wait.promise = new Promise((resolve, reject) => {
     const finish = (value) => {
       if (wait.settled) return;
       wait.settled = true;
@@ -71,9 +71,13 @@ function waitForProjectFiles(projectId, destination, report) {
     wait.resolve = finish;
     const check = async () => {
       let status;
-      try { status = (await api(`/api/projects/${encodeURIComponent(projectId)}`)).project?.syncStatus; } catch { status = undefined; }
+      try { status = (await api(endpoint)).syncStatus; }
+      catch (error) {
+        if (!wait.settled) { wait.settled = true; reject(error); }
+        return;
+      }
       if (wait.settled) return;
-      if (status?.state !== "syncing" || Date.now() - started > PROJECT_FILES_WAIT_MS) { finish(true); return; }
+      if (status.state !== "syncing" || Date.now() - started > PROJECT_FILES_WAIT_MS) { finish(true); return; }
       const files = status.remainingFiles;
       report(files ? `Copying files to ${destination.name}: ${files} ${files === 1 ? "file" : "files"}, ${formatOwnershipBytes(status.remainingBytes)} left…` : `${status.message || "Checking files"}…`);
       timer = setTimeout(check, 1000);
@@ -85,14 +89,14 @@ function waitForProjectFiles(projectId, destination, report) {
   return wait.promise;
 }
 
-function waitForLockOwnershipSync(projectId, destination) {
+function waitForLockOwnershipSync(projectId, destination, worktreeId) {
   elements.conversationLockTakeButton.textContent = "Cancel transfer";
   elements.conversationLockTakeButton.disabled = false;
   const report = (text) => { elements.conversationLockStatus.textContent = text; };
   const engine = state.projects.find((project) => project.id === projectId)?.syncStatus?.engine;
   if (!engine) return countdownOwnershipWait(report);
   // The status this page can read is this node's; for another destination only the grace period is left.
-  return destination.local ? waitForProjectFiles(projectId, destination, report) : countdownOwnershipWait(report, "files");
+  return destination.local ? waitForConversationFiles(projectId, destination, worktreeId, report) : countdownOwnershipWait(report, "files");
 }
 
 let takeoverController = null;
@@ -107,7 +111,7 @@ async function takeLockedConversationOwnership() {
   const owner = state.conversationLock;
   const destination = state.sessionNodes.find((node) => node.id === state.activeNodeId);
   if (!destination?.mapped) throw new Error("Map project first on this node");
-  const proceed = await waitForLockOwnershipSync(projectId, destination);
+  const proceed = await waitForLockOwnershipSync(projectId, destination, session.worktree?.id);
   if (!proceed) { resetOwnershipWait(); return; }
   shared.ownershipTaking = true;
   elements.conversationLockStatus.textContent = "Taking ownership…";

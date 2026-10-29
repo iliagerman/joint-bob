@@ -1044,14 +1044,16 @@ export class NeedEngine {
    * outside that set have waits for them: a worktree merge does not hold for a machine that is away.
    */
   pendingUnder(key: string, prefix: string, availablePeers: readonly string[]): PendingFiles {
-    const result: PendingFiles = { files: 0, bytes: 0, waiting: { files: 0, bytes: 0, peers: [] } };
+    const result: PendingFiles = { files: 0, bytes: 0, blocked: 0, errors: 0, waiting: { files: 0, bytes: 0, peers: [] } };
     const share = this.deps.share(key);
     if (!share) return result;
     const trimmed = prefix.replace(/\/+$/, "");
     const available = new Set(availablePeers);
     const waitingFor = new Set<string>();
-    for (const row of this.deps.db.needsUnder(key, trimmed === "" ? "" : normalizeRelativePath(trimmed))) {
-      if (row.blocked) continue;
+    const normalized = trimmed === "" ? "" : normalizeRelativePath(trimmed);
+    result.errors = this.deps.db.errorCount(key, normalized);
+    for (const row of this.deps.db.needsUnder(key, normalized)) {
+      if (row.blocked) { result.blocked++; continue; }
       const size = !row.target.deleted && row.target.type === FILE ? row.target.size : 0;
       if (row.action === "delete" || this.contentItem({ ...row, share: key }, share, available)) { result.files++; result.bytes += size; continue; }
       result.waiting.files++;
