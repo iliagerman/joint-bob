@@ -53,6 +53,8 @@ import { attachHarnessClient, compactHarnessSession, detachHarnessClient, dispos
 
 export interface HarnessChatConnection {
   automationProfile?: QueuedPrompt["automationProfile"];
+  /** Run-denied peers may read stored summaries but cannot start a summary agent. */
+  peerReadOnly?: boolean;
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
   shared: SharedHarnessSession; handoffContext: string | null; accountIds: string[]; readOnly: boolean; conversationId: string;
   /** Who writes on this socket; prompts queued here carry it. */
@@ -61,6 +63,7 @@ export interface HarnessChatConnection {
 
 export interface AttachOptions {
   automationProfile?: QueuedPrompt["automationProfile"];
+  peerReadOnly?: boolean;
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId; sessionId: string;
   sessionPath?: string; accountIds: string[]; readOnly: boolean; ownership: ForeignConversationOwner | null;
   listedSessions?: SessionSummary[]; handoffContext: string | null; autoStartPrompt: string | null;
@@ -756,7 +759,11 @@ async function restartHarnessSession(connection: HarnessChatConnection): Promise
 async function controls(connection: HarnessChatConnection, message: ReturnType<typeof socketMessageSchema.parse>): Promise<boolean> {
   if (message.type === "ping") { send(connection.socket, { type: "pong" }); return true; }
   // The page asks for the summary to catch up: the button, opening the panel, or the panel-only policy. Read-only viewers may ask too.
-  if (message.type === "refreshDigest") { requestDigestQuietly(connection.project, connection.conversationId, conversationLiveModel(connection.shared)); return true; }
+  if (message.type === "refreshDigest") {
+    if (connection.peerReadOnly) throw new Error("This node does not accept runs from other nodes");
+    requestDigestQuietly(connection.project, connection.conversationId, conversationLiveModel(connection.shared));
+    return true;
+  }
   if (message.type === "models") { await models(connection); return true; }
   if (message.type === "tools") { send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); return true; }
   if (message.type === "compact") {
@@ -971,7 +978,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const conversationId = record?.conversationId ?? options.sessionId;
   const runtimeWasOpen = Boolean(options.sessionId && findHarnessSession(options.project.id, options.engine, options.sessionId));
   const shared = await measureOperation("chat.open.runtime", () => runWithAutomationProfile({ creatorAccountId: options.automationProfile?.accountId, providerProfileId: options.automationProfile?.profileId }, () => openHarnessSession(options.engine, { projectId: options.project.id, cwd: options.cwd, sessionId: options.sessionId, sessionPath: options.sessionPath, conversationId, accountIds: options.accountIds })));
-  const connection: HarnessChatConnection = { automationProfile: options.automationProfile, socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId, author: options.author };
+  const connection: HarnessChatConnection = { automationProfile: options.automationProfile, socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, peerReadOnly: options.peerReadOnly, conversationId, author: options.author };
   const local = await getClusterNode();
   if (!record && !options.readOnly) record = await ensureConversationRecord(options.project.id, options.engine, options.sessionId, local.id, options.taskId ?? undefined, { conversationId, segmentIndex: 0 });
   const saved = readQueueSettings(queueKey(connection));
@@ -1032,7 +1039,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     for (const event of shared.liveEvents) send(options.socket, event);
     refreshHarnessPromptQueue(connection);
     // A summary that fell behind while nobody had this open catches up now; one is first written after the next answer.
-    if (summaryPolicy.updates === "each-message" && storedDigest(options.project.id, conversationId)) requestDigestQuietly(options.project, conversationId, conversationLiveModel(shared));
+    if (!options.peerReadOnly && summaryPolicy.updates === "each-message" && storedDigest(options.project.id, conversationId)) requestDigestQuietly(options.project, conversationId, conversationLiveModel(shared));
     break;
   }
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {

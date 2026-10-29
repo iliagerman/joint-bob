@@ -14,7 +14,7 @@ function gate() {
   const promise = new Promise<void>(resolve => { release = resolve; });
   return { promise, release };
 }
-function fixture() {
+function fixture(overrides: Record<string, any> = {}) {
   const metadataRead = gate(), metadataRelease = gate(), preflightEntered = gate(), preflightRelease = gate(), startEntered = gate(), startRelease = gate(), started = gate(), finish = gate();
   let holdMetadata = false, holdPreflight = false, holdStart = false, metadataHeld = false;
   let historyReads = 0, executions = 0, claims = 0;
@@ -93,6 +93,7 @@ function fixture() {
     saveDifficulty: () => {}, authoredPromptText: (_p: any, _c: any, text: string) => text,
     sendHarnessStatus: () => {},
     DEFAULT_AUTO_RESPOND_INSTRUCTIONS: "", DEFAULT_AUTO_RESPOND_STOP_INSTRUCTIONS: "",
+    ...overrides,
   };
   const exports: any = {};
   vm.runInThisContext(`(function(require, exports) { ${compiled}\n})`)((name: string) => name.startsWith("node:") || name === "ws" ? require(name) : new Proxy(mocks, { get(target, key: string) { if (key in target) return target[key]; throw new Error(`Unexpected boundary ${name}:${key}`); } }), exports);
@@ -106,6 +107,26 @@ function fixture() {
     closeSocket: () => { socket.readyState = 3; listeners.get("close")?.(); },
   };
 }
+for (const peerReadOnly of [true, false]) test(`read-only attach ${peerReadOnly ? "blocks" : "allows"} summary runs when peer run access is ${peerReadOnly ? "denied" : "allowed"}`, async () => {
+  let summaryRequests = 0;
+  const f = fixture({
+    summaryPolicyNow: async () => ({ updates: "each-message", writer: { source: "automatic" }, from: { kind: "node" } }),
+    storedDigest: () => ({ summary: "Existing summary", turns: 1, messages: 2 }),
+    requestDigestQuietly: () => { summaryRequests++; },
+  });
+  f.options.readOnly = true;
+  f.options.peerReadOnly = peerReadOnly;
+  await f.exports.attachHarnessChat(f.options);
+  assert.equal(summaryRequests, peerReadOnly ? 0 : 1, "opening a denied peer's history must not request a summary agent");
+  const connection = [...f.exports.harnessChatConnections][0];
+  const refresh = f.exports.handleHarnessChatMessage(connection, Buffer.from(JSON.stringify({ type: "refreshDigest" })));
+  if (peerReadOnly) await assert.rejects(refresh, /This node does not accept runs from other nodes/);
+  else await refresh;
+  assert.equal(summaryRequests, peerReadOnly ? 0 : 2, "manual refresh must obey run permission too");
+  assert.equal(f.frames.find(frame => frame.type === "ready").digest.summary, "Existing summary", "stored summaries remain viewable");
+  f.closeSocket();
+});
+
 function visiblePromptCount(frames: any[]): number {
   // Same identity rules as socket.js: ready replaces history, queue snapshots retain IDs,
   // promptStarted clears the queued mark without removing the user bubble.

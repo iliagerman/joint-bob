@@ -222,8 +222,6 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
   }
   if(signedPeer){
     if(signedPeer!==(await getClusterNode()).id&&!await clusterPeerMayAccessProject(signedPeer,project.id)){socket.close(1008,'Project is not shared with this node');return;}
-    // Opening a conversation through a peer runs it here; only the read-only project watch and the terminal (own policy) and browser sockets are exempt.
-    if(!browserMode&&url.searchParams.get("sessionPath")!=="watch"&&!await peerMayRunHere(signedPeer)){socket.close(1008,'This node does not accept runs from other nodes');return;}
     trackRuntimeSocket(socket,signedPeer,project.id);
   }
   const taskIdResult = socketTaskIdSchema.safeParse(url.searchParams.get("taskId"));
@@ -441,6 +439,13 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
     socket.close(1008, "Conversation not found");
     return;
   }
+  // Run permission does not hide shared history. Existing conversations use the
+  // same server-side read-only fence as subagent transcripts and Done tickets.
+  const peerReadOnly = Boolean(signedPeer && !await peerMayRunHere(signedPeer));
+  if (peerReadOnly && !listedSession) {
+    socket.close(1008, "This node does not accept runs from other nodes");
+    return;
+  }
   // A conversation that switched harness lists only its newest segment; opening
   // any older segment's path opens the conversation itself. A path that is not
   // part of a listed group (an undiscovered ticket transcript) stays authoritative.
@@ -476,7 +481,7 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
   const ownershipSessionId = listedSession && !listedSession.draft ? listedSession.id : sessionRequest.draft?.sessionId ?? validRequestedSessionId ?? randomUUID();
   const sessionReadOnly = listedSession?.readOnly === true;
   let foreignOwner: ForeignConversationOwner | null = null;
-  if (!sessionReadOnly) {
+  if (!sessionReadOnly && !peerReadOnly) {
     try {
       foreignOwner = await measureOperation("chat.open.ownership", () => openConversationOwnership(sessionRequest.engine, ownershipSessionId, local.id));
     } catch (error) {
@@ -506,11 +511,13 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
     worktree = known ?? requested;
     if (worktree) {
       cwd = worktree.path;
-      await provisionWorktree(project.path, worktree.path);
-      if (!known) await markWorktreeConversation(project.id, worktree.id, sessionRequest.engine, ownershipSessionId);
+      if (!peerReadOnly) {
+        await provisionWorktree(project.path, worktree.path);
+        if (!known) await markWorktreeConversation(project.id, worktree.id, sessionRequest.engine, ownershipSessionId);
+      }
     }
   }
-  if (refreshSessionsAfterReady) {
+  if (refreshSessionsAfterReady && !peerReadOnly) {
     try {
       await ensureConversationRecord(project.id, sessionRequest.engine, ownershipSessionId, local.id);
     } catch (error) {
@@ -524,11 +531,11 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
     }
   }
   // File sync delivers a worktree's own metadata behind every smaller file in it; the record tells other nodes now.
-  if (worktree) {
+  if (worktree && !peerReadOnly) {
     await setConversationWorktree(project.id, sessionRequest.engine, ownershipSessionId, { id: worktree.id, name: worktree.name, color: worktree.color }, local.id)
       .catch((error) => console.warn("Could not record the conversation's worktree", error));
   }
-  const conversationReadOnly = sessionReadOnly || task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
+  const conversationReadOnly = peerReadOnly || sessionReadOnly || task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
   try {
     const startCommand = getSettings().conversationCommands.start;
     const rawAutomationProfile = url.searchParams.get("automationProfile");
@@ -538,9 +545,9 @@ async function handleBrowserConnection(socket: WebSocket, request: IncomingMessa
       automationProfile,
       socket, project, taskId: task?.id ?? null, cwd, engine: sessionRequest.engine,
       sessionId: ownershipSessionId, sessionPath: sessionRequest.sessionPath,
-      accountIds: secretAccountIds, readOnly: conversationReadOnly, ownership: foreignOwner,
+      accountIds: secretAccountIds, readOnly: conversationReadOnly, peerReadOnly, ownership: foreignOwner,
       listedSessions, handoffContext: spinOffContext, author,
-      autoStartPrompt: refreshSessionsAfterReady && !sessionRequest.draft && !worktree && startCommand.enabled ? startCommand.prompt : null,
+      autoStartPrompt: !conversationReadOnly && refreshSessionsAfterReady && !sessionRequest.draft && !worktree && startCommand.enabled ? startCommand.prompt : null,
     });
     if (refreshSessionsAfterReady) broadcastToProject(project.id, { type: "sessionsChanged" });
   } catch (error) {

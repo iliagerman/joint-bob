@@ -57,7 +57,7 @@ test("Claude sub-agent transcripts list as read-only children of their parent", 
 test("read-only conversations skip ownership and fence writes on the server", async () => {
   const server = await serverSource();
   assert.match(server, /const sessionReadOnly = listedSession\?\.readOnly === true;/);
-  assert.match(server, /if \(!sessionReadOnly\) \{[\s\S]*openConversationOwnership/);
+  assert.match(server, /if \(!sessionReadOnly && !peerReadOnly\) \{[\s\S]*openConversationOwnership/);
   assert.match(server, /if \(connection\.readOnly\) throw new Error\("This conversation is read-only"\);/);
 });
 
