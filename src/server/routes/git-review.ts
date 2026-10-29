@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { hostname } from "node:os";
 import { discoverGitRepositories, resolveGitRepository } from "../../project-git-repositories.js";
 import { z } from "zod";
 import type { Request, Response } from "express";
@@ -596,20 +597,39 @@ const wantsStream = (request: Request) => Boolean(request.get("accept")?.include
 // Streams progress lines and a final "done" (or "error") line when the client asks for
 // NDJSON. Once the stream has started, failures travel as a line, not an HTTP status.
 async function sendStory(request: Request, response: Response, run: (onProgress?: (event: StoryProgress) => void) => Promise<unknown>): Promise<void> {
-  if (!wantsStream(request)) { response.json(await run()); return; }
-  response.status(200).setHeader("Content-Type", NDJSON);
-  response.setHeader("Cache-Control", "no-cache");
-  response.setHeader("X-Accel-Buffering", "no");
-  response.flushHeaders();
-  const send = (line: object) => { if (!response.writableEnded && !response.destroyed) response.write(`${JSON.stringify(line)}\n`); };
-  try {
-    send({ type: "done", ...await run(send) as object });
-  } catch (error) {
-    const known = error instanceof GitReviewError || error instanceof GitReviewRunError;
-    send({ type: "error", status: known ? error.status : 500, error: known ? error.message : "The story could not be written." });
-    if (!known) console.error("Change story failed", error);
+  const streaming = wantsStream(request);
+  if (streaming) {
+    response.status(200).setHeader("Content-Type", NDJSON);
+    response.setHeader("Cache-Control", "no-cache");
+    response.setHeader("X-Accel-Buffering", "no");
+    response.flushHeaders();
   }
-  response.end();
+  const send = (line: object) => { if (!response.writableEnded && !response.destroyed) response.write(`${JSON.stringify(line)}\n`); };
+  let stage = "Reading conversation and changes";
+  try {
+    const result = await run((event) => {
+      if (event.type === "facts") stage = "Writing with the reviewer";
+      if (event.type === "checking") stage = "Checking and saving the story";
+      if (streaming) send(event);
+    });
+    if (streaming) send({ type: "done", ...result as object });
+    else response.json(result);
+  } catch (error) {
+    const status = error instanceof GitReviewError || error instanceof GitReviewRunError ? error.status : 500;
+    const message = error instanceof Error ? error.message : String(error);
+    // Keep prompts, diffs, credentials and stack traces out of the copyable report.
+    const details = [
+      message, `Status: ${status}`, `Stage: ${stage}`, `Server: ${hostname()}`, `Time: ${new Date().toISOString()}`,
+      `Project: ${request.params.projectId ?? queryString(request, "projectId")}`,
+      `Conversation: ${request.body.conversationId ?? "none"}`,
+      `Reviewer: ${request.body.harnessId} / ${request.body.modelId}`,
+    ].join("\n");
+    const failure = { type: "error", status, error: message, details };
+    console.error(`Change story failed\n${details}`, error);
+    if (streaming) send(failure);
+    else response.status(status).json(failure);
+  }
+  if (streaming) response.end();
 }
 
 app.post("/api/cluster/git/story", async (request, response, next) => {

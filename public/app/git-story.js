@@ -15,6 +15,8 @@ const story = {
   previous: null,
   commits: [],
   error: "",
+  errorStatus: 0,
+  errorDetails: "",
   request: 0,
   section: "overview",
   phase: 0,
@@ -79,6 +81,8 @@ export function resetStory(ctx) {
   story.previous = null;
   story.commits = [];
   story.error = "";
+  story.errorStatus = 0;
+  story.errorDetails = "";
   story.request += 1;
   story.section = "overview";
   story.phase = 0;
@@ -173,6 +177,8 @@ export async function generateStory(payload) {
   const request = ++story.request;
   story.state = "writing";
   story.error = "";
+  story.errorStatus = 0;
+  story.errorDetails = "";
   story.draft = { facts: null, patches: [], sources: null, story: {}, checking: false };
   story.section = "overview";
   story.chose = false;
@@ -193,7 +199,7 @@ export async function generateStory(payload) {
     }
     await apiLines(story.ctx.apiUrl("story"), { method: "POST", body: JSON.stringify(body) }, (line) => {
       if (request !== story.request) return;
-      if (line.type === "error") throw new Error(line.error);
+      if (line.type === "error") throw Object.assign(new Error(line.error), { status: line.status, details: line.details });
       if (line.type === "facts") Object.assign(story.draft, { facts: line.facts, patches: line.patches, sources: line.sources });
       else if (line.type === "section") {
         if (line.section === "title") Object.assign(story.draft.story, line.data);
@@ -216,6 +222,8 @@ export async function generateStory(payload) {
     if (request !== story.request) return;
     story.state = "rejected";
     story.error = error.message;
+    story.errorStatus = error.status;
+    story.errorDetails = error.details ?? error.message;
     story.draft = null;
     changed();
   }
@@ -371,7 +379,7 @@ export function renderStory() {
     renderSection();
     return;
   }
-  if (story.state === "rejected") { container.append(errorPanel("Story rejected", story.error, true)); return; }
+  if (story.state === "rejected") { container.append(errorPanel(story.errorStatus === 422 ? "Story rejected" : "Could not write the story", story.error, true)); return; }
   if (story.picking) { renderPicker(container); return; }
   if (story.state === "empty") { container.append(emptyPanel()); return; }
   if (story.state === "error") { container.append(errorPanel("Could not load the story", story.error, false)); return; }
@@ -423,13 +431,26 @@ function emptyPanel() {
     h("p", { class: "gs-state-note" }, "Written in a separate read-only reviewer session with the reviewer picked below. Nothing is posted to this conversation.")));
 }
 
+async function copyStoryError() {
+  try {
+    await navigator.clipboard.writeText(story.errorDetails);
+    toast("Error details copied");
+  } catch (error) {
+    toast(`Could not copy error details: ${error.message}. Select the text under Error details to copy it manually.`, 6000);
+  }
+}
+
 function errorPanel(title, message, offerRetry) {
   return h("div", { class: "gs-state" }, h("div", { class: "gs-state-card is-error", role: "alert", "data-testid": "git-story-rejected" },
     h("h3", {}, title),
     h("p", {}, message || "The story could not be written."),
+    offerRetry ? h("details", {},
+      h("summary", { "data-testid": "git-story-error-summary" }, "Error details"),
+      h("pre", { class: "gs-small", style: "white-space:pre-wrap;overflow-wrap:anywhere", "data-testid": "git-story-error-details" }, story.errorDetails)) : null,
     h("div", { class: "gs-state-actions" },
       h("button", { class: "primary", type: "button", onclick: () => offerRetry ? story.ctx.generate() : loadStory() }, "Try again"),
-      offerRetry ? h("button", { class: "ghost gs-boxed", type: "button", onclick: () => story.ctx.focusReviewer() }, "Use another reviewer") : null,
+      offerRetry ? h("button", { class: "ghost gs-boxed", type: "button", "data-testid": "git-story-copy-error", onclick: copyStoryError }, "Copy error details") : null,
+      offerRetry && [422, 502, 504].includes(story.errorStatus) ? h("button", { class: "ghost gs-boxed", type: "button", onclick: () => story.ctx.focusReviewer() }, "Use another reviewer") : null,
       offerRetry && story.picking ? h("button", { class: "ghost gs-boxed", type: "button", onclick: () => { story.state = story.latest ? "ready" : "empty"; changed(); } }, "Change commits") : null),
     story.latest ? h("p", { class: "gs-state-note" }, `Your previous story from ${relativeTime(story.latest.thread.createdAt)} is still available. `,
       h("button", { class: "gs-link", type: "button", onclick: () => { story.state = "ready"; story.picking = false; changed(); } }, "Show it")) : null));

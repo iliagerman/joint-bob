@@ -21,7 +21,7 @@ async function send(path, options) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }));
     if (response.status === 401 && !["/api/auth/status", "/api/auth/login", "/api/auth/login/mfa"].includes(path)) showSignedOut();
-    throw Object.assign(new Error(body.error || response.statusText), { method, path, status: response.status });
+    throw Object.assign(new Error(body.error || response.statusText), { method, path, status: response.status, details: body.details });
   }
   return response;
 }

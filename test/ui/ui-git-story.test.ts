@@ -182,6 +182,43 @@ test("Story tab writes a story out of band, explains it in four sections, and op
   assert.equal(await page.getByTestId("git-review-generate").innerText(), "Generate review comments");
 });
 
+test("Story failures show and copy server diagnostics instead of blaming the reviewer", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const reason = "Claude session path is outside Claude projects";
+  const details = `${reason}\nStatus: 500\nStage: Reading conversation and changes\nServer: fixture-homeserver\nTime: 2026-10-29T18:41:23.000Z\nProject: fixture-project\nConversation: fixture-conversation\nReviewer: pi / test-model`;
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  let streamed = true;
+  await page.route("**/api/projects/*/git/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/status")) return route.fulfill({ json: status });
+    if (url.pathname.endsWith("/scope")) return route.fulfill({ json: { paths: ["app.ts"], lastHarness: "claude" } });
+    if (url.pathname.endsWith("/guide-latest")) return route.fulfill({ json: { latest: null } });
+    if (url.pathname.endsWith("/story-latest")) return route.fulfill({ json: { latest: null, commits: [] } });
+    if (url.pathname.endsWith("/story")) {
+      const failure = { type: "error", status: 500, error: reason, details };
+      return streamed
+        ? route.fulfill({ contentType: "application/x-ndjson", body: `${JSON.stringify(failure)}\n` })
+        : route.fulfill({ status: 500, json: failure });
+    }
+    return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
+  });
+  await mockReviewers(page);
+  await openGit(page, environment, node.url);
+  await page.getByTestId("git-review-tab-story").click();
+  for (const format of ["stream", "json"]) {
+    streamed = format === "stream";
+    await page.getByTestId("git-review-generate").click();
+    const panel = page.getByTestId("git-story-rejected");
+    await panel.waitFor();
+    assert.equal(await panel.locator("h3").innerText(), "Could not write the story");
+    assert.match(await panel.innerText(), /Claude session path is outside Claude projects/);
+    await panel.locator("summary").click();
+    assert.equal(await page.getByTestId("git-story-error-details").innerText(), details);
+    await page.getByTestId("git-story-copy-error").click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), details);
+  }
+});
+
 test("Story tab opens each section while the reviewer is still writing the rest", { timeout: 150_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   // The story route streams JSON lines; the test pushes each line when it wants the next state.

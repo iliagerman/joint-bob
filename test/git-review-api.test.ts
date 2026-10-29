@@ -150,7 +150,29 @@ test("git review endpoints report status, diff, history, and commit for a projec
       method: "POST", headers: { ...headers, Accept: "application/x-ndjson" },
       body: JSON.stringify({ conversationId: null, scope: "all", paths: ["missing.ts"], includeCommits: false, harnessId: "pi", modelId: "m", thinkingLevel: "off" }),
     });
-    assert.deepEqual(JSON.parse((await refused.text()).trim().split("\n").at(-1)!), { type: "error", status: 409, error: "Selected files changed; refresh Git status" });
+    const refusal = JSON.parse((await refused.text()).trim().split("\n").at(-1)!);
+    assert.equal(refusal.status, 409);
+    assert.equal(refusal.error, "Selected files changed; refresh Git status");
+
+    // Unexpected source-loading failures must be diagnosable in either response format.
+    for (const accept of ["application/x-ndjson", "application/json"]) {
+      const failed = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story`, {
+        method: "POST", headers: { ...headers, Accept: accept },
+        body: JSON.stringify({ conversationId: "missing-conversation", scope: "all", paths: [], includeCommits: true, harnessId: "pi", modelId: "no-such-model", thinkingLevel: "off" }),
+      });
+      assert.equal(failed.status, accept === "application/x-ndjson" ? 200 : 500);
+      const failure = JSON.parse((await failed.text()).trim().split("\n").at(-1)!);
+      assert.equal(failure.status, 500);
+      assert.equal(failure.error, "Conversation not found in this project");
+      assert.match(failure.details, /Stage: Reading conversation and changes/);
+      assert.match(failure.details, /Server: .+/);
+      assert.match(failure.details, /Time: \d{4}-\d{2}-\d{2}T/);
+      assert.ok(failure.details.includes(`Project: ${project.id}`));
+      assert.match(failure.details, /Conversation: missing-conversation/);
+      assert.match(failure.details, /Reviewer: pi.*no-such-model/);
+      assert.ok(node.output().includes(failure.details), "the copied details identify the same failure in the server log");
+      assert.doesNotMatch(failure.details, /\n\s+at |initial-password|replacement-password/, "details exclude stacks and credentials");
+    }
 
     const invalidGithub = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/github?op=run&id=oops`, { headers });
     assert.equal(invalidGithub.status, 400);
