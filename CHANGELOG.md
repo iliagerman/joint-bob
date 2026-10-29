@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added GitLab to Settings → Secrets with its orange Tanuki logo, saving its URL and access token as the account's variables.
+
 ## 2.171.0 — 2026-10-28
 
 - Added the installed version of every harness (Pi, Claude, Kiro) to Settings → Updates, read when Joint Bob starts and refreshed after each harness update.
