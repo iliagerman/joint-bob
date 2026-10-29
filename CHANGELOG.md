@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.173.0 — 2026-10-29
 
-- Reworked the mobile chat menu: harness, model, and effort open as searchable lists inside the menu, and Mark done, Auto respond, Add secret, and Conversations sit in a pinned bottom row.
+- Made the harness, model, and effort pickers in the mobile chat menu searchable, and the menu now stays open after you choose one; Runs on stays a segmented control.
+- Moved Mark done, New note, New conversation, Add secret, Auto respond, and Conversations into a pinned bottom dock in the mobile chat menu.
+- Added Bob auto to the mobile model list whenever automatic routing is on.
 
 ## 2.172.0 — 2026-10-29
 
