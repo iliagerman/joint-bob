@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -9,6 +10,8 @@ import test from "node:test";
 import { createWebhook, webhookInputSchema } from "../src/webhooks.js";
 import { resolveWebhookResources, snapshotWebhookResources } from "../src/webhook-resources.js";
 import { discoverWebhookGitSkills, importExistingWebhookSkill, importWebhookGitSkill, listSelectableWebhookSkills, removeWebhookSkill, uploadWebhookSkill } from "../src/webhook-skills.js";
+import type { SkillRoots } from "../src/skills.js";
+import { getSettings, updateSettings } from "../src/settings.js";
 
 const input = webhookInputSchema.parse({ name: "Issues", target: { kind: "project", projectId: "p1" } });
 
@@ -51,9 +54,44 @@ test("Git skills are discovered and imported at the selected commit without glob
     const imported = await importWebhookGitSkill(db, webhook.id, gitUrl, null, commit, "skill:skills/csv-review", { root });
     assert.equal(imported.source, "git");
     assert.match(await readFile(path.join(imported.path, "SKILL.md"), "utf8"), /Review CSVs/);
+    await import("node:fs/promises").then(fs => fs.writeFile(path.join(repo, "skills", "csv-review", "SKILL.md"), "---\nname: csv-review\ndescription: Review updated CSVs.\n---\n"));
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", ["-C", repo, "commit", "-m", "update skill"]);
+    const updatedCommit = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const updated = await importWebhookGitSkill(db, webhook.id, gitUrl, null, updatedCommit, "skill:skills/csv-review", { root }, imported.id);
+    assert.equal(updated.id, imported.id);
+    assert.notEqual(updated.versionId, imported.versionId);
+    assert.match(await readFile(path.join(updated.path, "SKILL.md"), "utf8"), /Review updated CSVs/);
     assert.equal(db.prepare("SELECT 1 FROM sqlite_master WHERE name='git_resources'").get(), undefined);
   } finally {
     db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("existing webhook skill choices exclude machine defaults", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "webhook-skill-scope-"));
+  const project = path.join(root, "project"), user = path.join(root, "machine-skills"), shared = path.join(root, "managed-skills");
+  const strictResourceIsolation = getSettings().strictResourceIsolation;
+  updateSettings({ syncthing: { endpoint: "" }, strictResourceIsolation: false });
+  try {
+    for (const [folder, name] of [[path.join(project, ".agents", "skills", "project-review"), "project-review"], [path.join(user, "machine-review"), "machine-review"], [path.join(shared, "managed-review"), "managed-review"]]) {
+      await import("node:fs/promises").then(fs => fs.mkdir(folder, { recursive: true }));
+      await import("node:fs/promises").then(fs => fs.writeFile(path.join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: ${name} skill.\n---\n`));
+    }
+    const roots: SkillRoots = { shared, user: { pi: user }, piUser: user, global: [], project: [] };
+    const names = (await listSelectableWebhookSkills(project, undefined, roots)).map(skill => skill.name);
+    assert.ok(names.includes("project-review"));
+    assert.ok(names.includes("managed-review"));
+    assert.equal(names.includes("machine-review"), false);
+    const db = new DatabaseSync(":memory:");
+    try {
+      const { webhook } = createWebhook(db, input);
+      const machineInventoryId = createHash("sha256").update(`pi\0machine-review\0${path.resolve(user, "machine-review")}`).digest("hex");
+      await assert.rejects(importExistingWebhookSkill(db, webhook.id, project, machineInventoryId, { root }, roots), /no longer available/i);
+    } finally { db.close(); }
+  } finally {
+    updateSettings({ syncthing: { endpoint: "" }, strictResourceIsolation });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -68,6 +106,7 @@ test("existing skills can be snapshotted privately without changing their source
     const original = "---\nname: local-review\ndescription: Local review skill.\n---\nKeep this source.";
     await import("node:fs/promises").then(fs => fs.writeFile(path.join(folder, "SKILL.md"), original));
     const available = await listSelectableWebhookSkills(project);
+    assert.equal(JSON.stringify(available).includes(project), false, "the browser inventory does not expose local paths");
     const selected = available.find(skill => skill.name === "local-review");
     assert.ok(selected);
     const { webhook } = createWebhook(db, input);

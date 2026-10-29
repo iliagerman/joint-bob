@@ -3,6 +3,7 @@
 // marked webhook-only, which can reach nothing else on this machine. Settings → Webhooks
 // manages them through `/api/webhooks`.
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { lstat, readFile } from "node:fs/promises";
 import type { Duplex } from "node:stream";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
@@ -37,6 +38,11 @@ import { Feature, isClusterOriginUrl, requireFeature, sendError } from "../http-
 import { listProjectSessionsWithReviewState } from "../sessions-helpers.js";
 import { app, flags, requestInterceptors, upgradeHandlers } from "../state.js";
 import { acceptWebhookCall } from "../webhooks.js";
+import { snapshotWebhookResources, listWebhookResources, saveWebhookResource, removeWebhookResource, WebhookResourceError } from "../../webhook-resources.js";
+import { webhookMemoryAgentIdentity, runWebhookMemoryAgentCommand } from "../../webhook-agent.js";
+import { readWebhookMemory, writeWebhookMemory, setWebhookMemoryEnabled } from "../../webhook-memory.js";
+import { webhookMemoryEnabled } from "../../webhook-resources.js";
+import { listWebhookSkills, listSelectableWebhookSkills, uploadWebhookSkill, importExistingWebhookSkill, discoverWebhookGitSkills, importWebhookGitSkill, removeWebhookSkill } from "../../webhook-skills.js";
 
 const HOOK_PATH = /^\/hooks\/([A-Za-z0-9_-]{20,128})$/;
 
@@ -68,7 +74,8 @@ function flatHeaders(request: IncomingMessage): Record<string, string> {
 async function handleHook(request: IncomingMessage, response: ServerResponse, secret: string): Promise<void> {
   if (request.method !== "POST") { request.resume(); reply(response, 405, "Webhooks accept POST only", { Allow: "POST" }); return; }
   if (!flags.startupReady) { request.resume(); reply(response, 503, "Starting up; try again shortly", { "Retry-After": "10" }); return; }
-  const webhook = webhookForSecret(await clusterV2Database(), secret);
+  const database = await clusterV2Database();
+  const webhook = webhookForSecret(database, secret);
   if (!webhook) { request.resume(); reply(response, 404, "Not found"); return; }
   if (!webhook.enabled) { request.resume(); reply(response, 403, "This webhook is turned off"); return; }
   const body = await readBody(request);
@@ -85,8 +92,10 @@ async function handleHook(request: IncomingMessage, response: ServerResponse, se
     return;
   }
   const query = (request.url ?? "").split("?", 2)[1] ?? "";
+  const local = await getClusterNode();
   acceptWebhookCall(webhook, {
     method: request.method ?? "POST", headers: flatHeaders(request), query: query.slice(0, 1000), body: payload.text, attachments: payload.attachments,
+    resourceSnapshot: snapshotWebhookResources(database, webhook.id, local.id),
     ...(sender.value ? { sender: { value: sender.value, label: sender.label } } : {}),
   });
   response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store", Connection: "close" }).end(JSON.stringify({ accepted: true, attachments: payload.attachments.length }));
@@ -120,11 +129,28 @@ function handle(work: (request: Request, response: Response) => Promise<void>) {
   return async (request: Request, response: Response, next: NextFunction): Promise<void> => {
     try { await work(request, response); } catch (error) {
       if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
-      if (error instanceof WebhookError) { sendError(response, error.statusCode, error.message); return; }
+      if (error instanceof WebhookError || error instanceof WebhookResourceError) { sendError(response, error.statusCode, error.message); return; }
       next(error);
     }
   };
 }
+
+const webhookMemoryAgentCommandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("list") }).strict(),
+  z.object({ action: z.literal("read") }).strict(),
+  z.object({ action: z.literal("write"), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/), content: z.string().max(200_000) }).strict(),
+]);
+
+app.post("/api/webhook-agent/memory", handle(async (request, response) => {
+  const token = /^Bearer ([a-f0-9]{64})$/.exec(request.get("authorization") ?? "")?.[1];
+  if (!token) throw new WebhookError(403, "Webhook memory capability required");
+  const db = await clusterV2Database();
+  const owner = await getClusterNode();
+  const identity = webhookMemoryAgentIdentity(db, token, owner.id);
+  if (!identity) throw new WebhookError(403, "Webhook memory capability is no longer valid");
+  const command = webhookMemoryAgentCommandSchema.parse(request.body);
+  response.json(await runWebhookMemoryAgentCommand(db, identity, command));
+}));
 
 const titleCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status") }).strict(),
@@ -185,6 +211,24 @@ async function checkTarget(input: WebhookInput): Promise<void> {
   if (ownership && ownership.ownerNodeId !== (await getClusterNode()).id) throw new WebhookError(409, "Choose the machine that owns this conversation");
 }
 
+const webhookResourceCommandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("resource-list"), id: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("resource-download"), id: z.string().uuid(), resourceId: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("resource-save"), id: z.string().uuid(), resource: z.object({ kind: z.enum(["file", "tool"]), resourceId: z.string().uuid().optional(), name: z.string().min(1).max(240), description: z.string().min(1).max(2000), usage: z.string().max(2000).nullable().optional(), mimeType: z.string().max(120).optional(), data: z.string().max(5_592_408) }).strict(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("resource-remove"), id: z.string().uuid(), resourceId: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("skill-list"), id: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("skill-inventory"), id: z.string().uuid(), harness: z.enum(["pi", "claude", "kiro"]).optional(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("skill-upload"), id: z.string().uuid(), files: z.array(z.object({ relativePath: z.string().min(1).max(1000), data: z.string().max(5_592_408) }).strict()).max(200), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("skill-import-existing"), id: z.string().uuid(), inventoryId: z.string().min(1).max(4096), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("skill-discover-git"), id: z.string().uuid(), url: z.string().min(1).max(2048), ref: z.string().max(200).nullable().optional(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("skill-import-git"), id: z.string().uuid(), url: z.string().min(1).max(2048), ref: z.string().max(200).nullable().optional(), commit: z.string().regex(/^[a-f0-9]{40}([a-f0-9]{24})?$/), key: z.string().min(1).max(4096), skillId: z.string().uuid().optional(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("skill-remove"), id: z.string().uuid(), skillId: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("memory-read"), id: z.string().uuid(), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("memory-write"), id: z.string().uuid(), content: z.string().max(200_000), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/), creatorAccountId: z.string().nullable().optional() }).strict(),
+  z.object({ action: z.literal("memory-enable"), id: z.string().uuid(), enabled: z.boolean(), creatorAccountId: z.string().nullable().optional() }).strict(),
+]);
+
+type WebhookResourceCommand = z.infer<typeof webhookResourceCommandSchema>;
 const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("profiles"), accountId: z.string().nullable().optional() }).strict(),
   z.object({ action: z.literal("list") }).strict(),
@@ -196,10 +240,26 @@ const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("regenerate"), id: z.string().uuid() }).strict(),
   z.object({ action: z.literal("deliveries"), id: z.string().uuid() }).strict(),
   z.object({ action: z.literal("delete"), id: z.string().uuid() }).strict(),
+  ...webhookResourceCommandSchema.options,
 ]);
 type Command = z.infer<typeof commandSchema>;
 
 /** Always executes locally. A twin may manage a webhook, but never stores a copy of it. */
+function isWebhookResourceCommand(command: Command): command is WebhookResourceCommand {
+  return webhookResourceCommandSchema.safeParse(command).success;
+}
+
+function publicWebhookSkill(skill: Awaited<ReturnType<typeof uploadWebhookSkill>>) {
+  const { path: _path, ...metadata } = skill;
+  return metadata;
+}
+
+function decodeResourceData(data: string): Buffer {
+  const decoded = Buffer.from(data, "base64");
+  if (decoded.toString("base64").replace(/=+$/, "") !== data.replace(/=+$/, "")) throw new WebhookError(400, "Resource data is not valid base64");
+  return decoded;
+}
+
 async function manage(command: Command): Promise<unknown> {
   const db = await clusterV2Database();
   if (command.action === "profiles") return { profiles: command.accountId ? listAccessibleProviderProfiles(command.accountId, "automation") : [] };
@@ -220,6 +280,50 @@ async function manage(command: Command): Promise<unknown> {
     const sessions = await listProjectSessionsWithReviewState(project, "", "");
     return { sessions: sessions.filter(session => !session.readOnly && !session.taskId && !session.doneAt && (!session.executionNodeId || session.executionNodeId === local.id))
       .map(({ id, title, firstMessage, harnessId }) => ({ id, title, firstMessage, harnessId })) };
+  }
+  if (isWebhookResourceCommand(command)) {
+    const webhook = getWebhook(db, command.id);
+    if (!webhook) throw new WebhookError(404, "Webhook not found");
+    assertAutomationCreator(webhook.creatorAccountId, command.creatorAccountId);
+    if (command.action === "resource-list") return { resources: listWebhookResources(db, webhook.id).map(({ path: _path, ...item }) => item) };
+    if (command.action === "resource-download") {
+      const resource = listWebhookResources(db, webhook.id).find(item => item.id === command.resourceId);
+      if (!resource) throw new WebhookError(404, "Webhook resource not found");
+      const info = await lstat(resource.path);
+      if (!info.isFile() || info.isSymbolicLink() || info.size !== resource.bytes) throw new WebhookResourceError("Webhook resource version is unavailable", 409);
+      return { name: resource.name, mimeType: resource.mimeType, data: (await readFile(resource.path)).toString("base64") };
+    }
+    if (command.action === "resource-save") {
+      const resource = await saveWebhookResource(db, webhook.id, { kind: command.resource.kind, id: command.resource.resourceId, name: command.resource.name, description: command.resource.description, usage: command.resource.usage, mimeType: command.resource.mimeType, bytes: decodeResourceData(command.resource.data) });
+      const { path: _path, ...publicResource } = resource;
+      return { resource: publicResource };
+    }
+    if (command.action === "resource-remove") { await removeWebhookResource(db, webhook.id, command.resourceId); return { ok: true }; }
+    if (command.action === "skill-list") return { skills: listWebhookSkills(db, webhook.id).map(({ path: _path, ...item }) => item) };
+    if (command.action === "skill-inventory") {
+      const project = await getProject(webhook.target.projectId);
+      if (!project) throw new WebhookError(404, "Webhook project not found");
+      return { skills: await listSelectableWebhookSkills(project.path, command.harness) };
+    }
+    if (command.action === "skill-upload") return { skill: publicWebhookSkill(await uploadWebhookSkill(db, webhook.id, command.files.map(file => ({ relativePath: file.relativePath, data: decodeResourceData(file.data) })))) };
+    if (command.action === "skill-import-existing") {
+      const project = await getProject(webhook.target.projectId);
+      if (!project) throw new WebhookError(404, "Webhook project not found");
+      return { skill: publicWebhookSkill(await importExistingWebhookSkill(db, webhook.id, project.path, command.inventoryId)) };
+    }
+    if (command.action === "skill-discover-git") return await discoverWebhookGitSkills(command.url, command.ref ?? null);
+    if (command.action === "skill-import-git") return { skill: publicWebhookSkill(await importWebhookGitSkill(db, webhook.id, command.url, command.ref ?? null, command.commit, command.key, {}, command.skillId)) };
+    if (command.action === "skill-remove") { await removeWebhookSkill(db, webhook.id, command.skillId); return { ok: true }; }
+    if (command.action === "memory-read") {
+      const { path: _path, ...memory } = await readWebhookMemory(webhook.id);
+      return { ...memory, enabled: webhookMemoryEnabled(db, webhook.id) };
+    }
+    if (command.action === "memory-write") {
+      const { path: _path, ...memory } = await writeWebhookMemory(db, webhook.id, command.expectedRevision, command.content);
+      return memory;
+    }
+    setWebhookMemoryEnabled(db, webhook.id, command.enabled);
+    return { enabled: command.enabled };
   }
   if (command.action === "create" || command.action === "update") {
     const existing = command.action === "update" ? getWebhook(db, command.id) : undefined;
@@ -255,6 +359,7 @@ async function twinOwners() {
 async function route(request: Request, command: Command): Promise<unknown> {
   if (command.action === "profiles") command.accountId = actingAccount()?.accountId ?? null;
   if (command.action === "create" || command.action === "update") command.input.creatorAccountId = actingAccount()?.accountId ?? null;
+  if (isWebhookResourceCommand(command)) command.creatorAccountId = actingAccount()?.accountId ?? null;
   const nodeId = z.string().uuid().optional().parse(request.query.nodeId);
   const local = await getClusterNode();
   if (!nodeId || nodeId === local.id) return manage(command);
@@ -262,8 +367,9 @@ async function route(request: Request, command: Command): Promise<unknown> {
   if (!peer) throw new WebhookError(403, "Webhook owner must be this machine or an active twin");
   const target = "/api/cluster/v2/webhooks", body = Buffer.from(JSON.stringify(command));
   try {
+    const timeout = isWebhookResourceCommand(command) ? 210_000 : 10_000;
     const reply = await peerFetch(new URL(target, peer.url), {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000), body,
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(timeout), body,
       headers: { "Content-Type": "application/json", Authorization: signClusterRequest(await clusterV2Database(), local.id, peer.id, "POST", target, body) },
     }, peer.id);
     const result = await reply.json() as { error?: string };
@@ -303,6 +409,51 @@ app.get("/api/webhooks", handle(async (request, response) => {
 }));
 app.post("/api/webhooks", handle(async (request, response) => {
   response.status(201).json(await route(request, { action: "create", input: webhookInputSchema.parse(request.body) }));
+}));
+const webhookIdParam = (request: Request) => z.string().uuid().parse(request.params.id);
+app.get("/api/webhooks/:id/resources", handle(async (request, response) => {
+  response.json(await route(request, { action: "resource-list", id: webhookIdParam(request) }));
+}));
+app.post("/api/webhooks/:id/resources", handle(async (request, response) => {
+  const body = z.object({ kind: z.enum(["file", "tool"]), resourceId: z.string().uuid().optional(), name: z.string().min(1).max(240), description: z.string().min(1).max(2000), usage: z.string().max(2000).nullable().optional(), mimeType: z.string().max(120).optional(), data: z.string().max(5_592_408) }).strict().parse(request.body);
+  response.status(body.resourceId ? 200 : 201).json(await route(request, { action: "resource-save", id: webhookIdParam(request), resource: { ...body, resourceId: body.resourceId } }));
+}));
+app.get("/api/webhooks/:id/resources/:resourceId/download", handle(async (request, response) => {
+  response.json(await route(request, { action: "resource-download", id: webhookIdParam(request), resourceId: z.string().uuid().parse(request.params.resourceId) }));
+}));
+app.delete("/api/webhooks/:id/resources/:resourceId", handle(async (request, response) => {
+  await route(request, { action: "resource-remove", id: webhookIdParam(request), resourceId: z.string().uuid().parse(request.params.resourceId) });
+  response.status(204).end();
+}));
+app.get("/api/webhooks/:id/skills", handle(async (request, response) => {
+  const inventory = z.enum(["0", "1"]).default("0").parse(request.query.inventory);
+  const harness = z.enum(["pi", "claude", "kiro"]).optional().parse(request.query.harness);
+  response.json(await route(request, inventory === "1" ? { action: "skill-inventory", id: webhookIdParam(request), harness } : { action: "skill-list", id: webhookIdParam(request) }));
+}));
+app.post("/api/webhooks/:id/skills", handle(async (request, response) => {
+  const body = z.discriminatedUnion("action", [
+    z.object({ action: z.literal("upload"), files: z.array(z.object({ relativePath: z.string().min(1).max(1000), data: z.string().max(5_592_408) }).strict()).max(200) }).strict(),
+    z.object({ action: z.literal("import-existing"), inventoryId: z.string().min(1).max(4096) }).strict(),
+    z.object({ action: z.literal("discover-git"), url: z.string().min(1).max(2048), ref: z.string().max(200).nullable().optional() }).strict(),
+    z.object({ action: z.literal("import-git"), url: z.string().min(1).max(2048), ref: z.string().max(200).nullable().optional(), commit: z.string().regex(/^[a-f0-9]{40}([a-f0-9]{24})?$/), key: z.string().min(1).max(4096), skillId: z.string().uuid().optional() }).strict(),
+  ]).parse(request.body);
+  const action = body.action === "upload" ? "skill-upload" : body.action === "import-existing" ? "skill-import-existing" : body.action === "discover-git" ? "skill-discover-git" : "skill-import-git";
+  response.status(action === "skill-discover-git" ? 200 : 201).json(await route(request, { ...body, action, id: webhookIdParam(request) } as Command));
+}));
+app.delete("/api/webhooks/:id/skills/:skillId", handle(async (request, response) => {
+  await route(request, { action: "skill-remove", id: webhookIdParam(request), skillId: z.string().uuid().parse(request.params.skillId) });
+  response.status(204).end();
+}));
+app.get("/api/webhooks/:id/memory", handle(async (request, response) => {
+  response.json(await route(request, { action: "memory-read", id: webhookIdParam(request) }));
+}));
+app.put("/api/webhooks/:id/memory", handle(async (request, response) => {
+  const body = z.object({ content: z.string().max(200_000), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(request.body);
+  response.json(await route(request, { action: "memory-write", id: webhookIdParam(request), ...body }));
+}));
+app.post("/api/webhooks/:id/memory", handle(async (request, response) => {
+  const body = z.object({ action: z.literal("enable"), enabled: z.boolean() }).strict().parse(request.body);
+  response.json(await route(request, { action: "memory-enable", id: webhookIdParam(request), enabled: body.enabled }));
 }));
 app.put("/api/webhooks/:id", handle(async (request, response) => {
   response.json(await route(request, { action: "update", id: z.string().uuid().parse(request.params.id), input: webhookInputSchema.parse(request.body) }));

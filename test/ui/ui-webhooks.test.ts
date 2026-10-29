@@ -5,10 +5,12 @@
 // Run with `npm run test:file -- test/ui/ui-webhooks.test.ts`. Like the rest of test/ui it needs a
 // Chrome binary, and it fails rather than skipping when there is none.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test, { after, before } from "node:test";
 import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
@@ -26,6 +28,8 @@ let browser: Browser;
 let page: Page;
 let webhookSecretId: string;
 const consoleErrors: string[] = [];
+const expectedConsoleErrors: string[] = [];
+let expectingMemoryConflict = false;
 
 async function hooks(): Promise<Hook[]> {
   return (await api<{ webhooks: Hook[] }>(node, session, "GET", "/webhooks")).body.webhooks;
@@ -43,6 +47,25 @@ before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-webhooks-"));
   environment = await seedDevEnvironment(root, 2);
   node = environment.nodes[0];
+  for (const project of node.projects) {
+    const existingSkill = path.join(project.path, ".agents", "skills", "project-review");
+    await mkdir(existingSkill, { recursive: true });
+    await writeFile(path.join(existingSkill, "SKILL.md"), "---\nname: project-review\ndescription: Review project notes.\n---\nRead the linked reference files.\n");
+  }
+  const uploadSkill = path.join(root, "uploaded-review");
+  await mkdir(path.join(uploadSkill, "references"), { recursive: true });
+  const uploadedSkillText = "---\nname: uploaded-review\ndescription: Review uploaded fixtures.\n---\nKeep the references nearby.\n";
+  await writeFile(path.join(uploadSkill, "SKILL.md"), uploadedSkillText);
+  await writeFile(path.join(uploadSkill, "references", "notes.md"), "Private reference.\n");
+  const gitRepo = path.join(root, "git-skill-repo");
+  const gitSkill = path.join(gitRepo, "skills", "repo-review");
+  await mkdir(gitSkill, { recursive: true });
+  execFileSync("git", ["init", "--initial-branch=main", gitRepo]);
+  execFileSync("git", ["-C", gitRepo, "config", "user.email", "test@example.invalid"]);
+  execFileSync("git", ["-C", gitRepo, "config", "user.name", "Webhook Test"]);
+  await writeFile(path.join(gitSkill, "SKILL.md"), "---\nname: repo-review\ndescription: Review repository changes.\n---\n");
+  execFileSync("git", ["-C", gitRepo, "add", "."]);
+  execFileSync("git", ["-C", gitRepo, "commit", "-m", "add review skill"]);
   const modelFile = path.join(environment.home, ".pi", "models.json");
   const modelConfig = JSON.parse(await readFile(modelFile, "utf8"));
   modelConfig.providers["dev-environment"].models[0].reasoning = true;
@@ -61,7 +84,11 @@ before(async () => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
   page = await context.newPage();
   page.setDefaultNavigationTimeout(60_000);
-  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    if (expectingMemoryConflict && /status of 409 \(Conflict\)/.test(message.text())) expectedConsoleErrors.push(message.text());
+    else consoleErrors.push(message.text());
+  });
 }, { timeout: 120_000 });
 
 after(async () => {
@@ -101,6 +128,25 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-tags-manual").fill("Manual webhook label");
   await page.getByTestId("webhooks-tags-add-manual").click();
   await page.getByTestId("webhooks-name-input").fill("Deals");
+  for (const viewport of [{ width: 1440, height: 700 }, { width: 390, height: 700 }]) {
+    await page.setViewportSize(viewport);
+    const form = page.getByTestId("webhooks-form");
+    const layout = await form.evaluate(element => {
+      const tags = element.querySelector('[data-testid="webhooks-automation-tags"]');
+      return { scrollable: element.scrollHeight > element.clientHeight, overflow: getComputedStyle(element).overflowY,
+        tagsHeight: tags.getBoundingClientRect().height, children: [...tags.children].map(child => ({ tag: child.tagName, height: child.getBoundingClientRect().height, display: getComputedStyle(child).display })), width: element.clientWidth, contentWidth: element.scrollWidth };
+    });
+    assert.equal(layout.overflow, "auto");
+    assert.ok(layout.scrollable, "the long webhook form scrolls inside Settings");
+    assert.ok(layout.tagsHeight < (viewport.width < 500 ? 400 : 240), `tag controls stay compact and wrap on mobile: ${JSON.stringify({ viewport, layout })}`);
+    assert.ok(layout.contentWidth <= layout.width + 1, "form fits without horizontal clipping");
+    await page.getByTestId("webhooks-secret-account-checkbox").first().scrollIntoViewIfNeeded();
+    assert.equal(await page.getByTestId("webhooks-secret-account-checkbox").first().isVisible(), true);
+    await page.getByTestId("webhooks-save-button").scrollIntoViewIfNeeded();
+    const bounds = await page.getByTestId("webhooks-save-button").boundingBox();
+    assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, "webhook actions remain reachable");
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByTestId("webhooks-title-template-input").fill("pr-[PR_REVIEW]");
   await page.getByTestId("webhooks-harness-select").selectOption("pi");
   await page.getByTestId("webhooks-model-select").selectOption("dev-environment|dev-model");
@@ -140,6 +186,71 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await until(async () => (await hooks())[0].attachments, "the option is saved on");
+
+  await page.getByTestId("webhooks-form").waitFor({ state: "hidden" });
+  const hook = (await hooks())[0];
+  await page.getByTestId("webhooks-resources-button").waitFor({ state: "visible" });
+  await page.getByTestId("webhooks-resources-button").click();
+  await page.getByTestId("webhook-resources-manager").waitFor({ state: "visible" });
+  await page.getByTestId("webhook-memory-enabled-toggle").check();
+  await until(async () => (await api<{ enabled: boolean }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.enabled, "webhook memory is enabled");
+  await page.getByTestId("webhook-memory-content-input").fill("# Durable note\\nKeep this private to the webhook.\\n");
+  await page.getByTestId("webhook-memory-save-button").click();
+  await until(async () => (await api<{ content: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.content.includes("Keep this private"), "memory is saved");
+  const savedMemory = await api<{ content: string; revision: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`);
+  const memoryDraft = "# User draft\\nKeep this edit until the conflict is resolved.\\n";
+  await page.getByTestId("webhook-memory-content-input").fill(memoryDraft);
+  const agentEdit = await api(node, session, "PUT", `/webhooks/${hook.id}/memory`, { content: "# Agent update\\n", expectedRevision: savedMemory.body.revision });
+  assert.equal(agentEdit.status, 200);
+  expectingMemoryConflict = true;
+  await page.getByTestId("webhook-memory-save-button").click();
+  await page.getByTestId("webhook-resources-status").getByText(/changed since you read/i).waitFor();
+  expectingMemoryConflict = false;
+  assert.equal(await page.getByTestId("webhook-memory-content-input").inputValue(), memoryDraft, "a 409 preserves the user's unsaved draft");
+  await page.getByTestId("webhook-memory-reload-button").click();
+  await until(async () => (await page.getByTestId("webhook-memory-content-input").inputValue()) === "# Agent update\\n", "the newer memory is reloaded");
+  await page.getByTestId("webhook-memory-upload-input").setInputFiles({ name: "notes.md", mimeType: "text/markdown", buffer: Buffer.from("# Uploaded note\\n") });
+  await until(async () => (await api<{ content: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.content === "# Uploaded note\\n", "the Markdown upload is saved");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("webhook-memory-download-button").click();
+  assert.equal((await downloadPromise).suggestedFilename(), "MEMORY.md");
+  const resetButton = page.getByTestId("webhook-memory-reset-button");
+  await resetButton.click();
+  assert.equal(await resetButton.getAttribute("data-armed"), "true", "reset asks for confirmation first");
+  await resetButton.click();
+  await page.getByTestId("webhook-resources-status").getByText("Memory reset.").waitFor();
+  await until(async () => (await api<{ content: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.content === "", "explicit reset clears the memory");
+  await page.getByTestId("webhook-resource-description-input").fill("Rates used by the agent");
+  await page.getByTestId("webhook-resource-files-input").setInputFiles({ name: "rates.csv", mimeType: "text/csv", buffer: Buffer.from("day,rate\\n1,2\\n") });
+  await page.getByText("rates.csv", { exact: true }).waitFor();
+  const resources = await api<{ resources: Array<{ name: string; description: string; path?: string }> }>(node, session, "GET", `/webhooks/${hook.id}/resources`);
+  assert.deepEqual(resources.body.resources.map(({ name, description, path: filePath }) => [name, description, filePath]), [["rates.csv", "Rates used by the agent", undefined]]);
+  const inventoryApi = await api<{ skills: Array<{ name: string }> }>(node, session, "GET", `/webhooks/${hook.id}/skills?inventory=1`);
+  assert.equal(inventoryApi.status, 200, JSON.stringify(inventoryApi.body));
+  const localSkill = await page.locator("#webhookSkillInventory option").evaluateAll(options => options.find(option => option.textContent?.includes("project-review"))?.value ?? "");
+  assert.ok(localSkill, `the webhook can select an app-configured project skill: ${JSON.stringify(inventoryApi.body.skills)}`);
+  await page.getByTestId("webhook-skill-inventory-select").selectOption(localSkill);
+  await page.getByTestId("webhook-skill-import-existing-button").click();
+  await page.getByTestId("webhook-skill-list").getByText(/project-review/).waitFor();
+  await page.getByTestId("webhook-skill-git-url-input").fill(pathToFileURL(path.join(root, "git-skill-repo")).href);
+  await page.getByTestId("webhook-skill-git-discover-button").click();
+  await page.getByText(/repo-review · Review repository changes/).waitFor();
+  await page.getByTestId("webhook-git-skill-import-button").click();
+  await page.getByTestId("webhook-skill-list").getByText(/repo-review/).waitFor();
+  await writeFile(path.join(root, "git-skill-repo", "skills", "repo-review", "SKILL.md"), "---\nname: repo-review\ndescription: Review updated repository changes.\n---\n");
+  execFileSync("git", ["-C", path.join(root, "git-skill-repo"), "add", "."]);
+  execFileSync("git", ["-C", path.join(root, "git-skill-repo"), "commit", "-m", "update review skill"]);
+  const updateButton = page.getByTestId("webhook-git-skill-update-button");
+  await updateButton.click();
+  await updateButton.click();
+  await page.getByTestId("webhook-resources-status").getByText("Git skill updated.").waitFor();
+  const uploadSkill = path.join(root, "uploaded-review");
+  const uploadedSkillText = await readFile(path.join(uploadSkill, "SKILL.md"), "utf8");
+  await page.getByTestId("webhook-skill-folder-input").setInputFiles(uploadSkill);
+  await page.getByTestId("webhook-skill-list").getByText(/uploaded-review/).waitFor();
+  assert.equal(await readFile(path.join(uploadSkill, "SKILL.md"), "utf8"), uploadedSkillText, "upload copies the folder without changing its source");
+  await page.getByTestId("webhook-resources-back-button").click();
+  await page.getByTestId("webhooks-list").waitFor({ state: "visible" });
 });
 
 test("a call to the webhook hands over its files instead of reading them as text", async () => {
@@ -264,6 +375,7 @@ test("an existing conversation fixes the harness while allowing model and effort
   await page.getByTestId("webhooks-reveal-done-button").click();
 });
 
-test("the page logged no errors", () => {
+test("the page logged no unexpected errors", () => {
   assert.deepEqual(consoleErrors, []);
+  assert.equal(expectedConsoleErrors.length, 1, "the UI surfaced the one intentional memory conflict");
 });

@@ -53,6 +53,12 @@ test("webhooks have one chosen twin owner, route management there, and never fal
     assert.equal(created.status, 201, JSON.stringify(created.body));
     const { webhook, secret } = created.body;
     assert.ok(created.body.bases.some(base => base.base === `${b.url}/hooks`), "addresses come from the owner, not the laptop");
+    const resource = await api<{ resource: { id: string } }>(a, authA, "POST", `/webhooks/${webhook.id}/resources${suffix}`, { kind: "file", name: "rules.md", description: "Private reference", data: Buffer.from("owner-only").toString("base64") });
+    assert.equal(resource.status, 201, JSON.stringify(resource.body));
+    const remoteResources = await api<{ resources: Array<{ id: string }> }>(a, authA, "GET", `/webhooks/${webhook.id}/resources${suffix}`);
+    assert.deepEqual(remoteResources.body.resources.map(item => item.id), [resource.body.resource.id]);
+    const localResources = await api(a, authA, "GET", `/webhooks/${webhook.id}/resources?nodeId=${a.nodeId}`);
+    assert.equal(localResources.status, 404, "the requester stores no duplicate resource");
     const local = () => api<{ webhooks: Webhook[] }>(a, authA, "GET", "/webhooks");
     const remote = () => api<{ webhooks: Webhook[] }>(b, authB, "GET", "/webhooks");
     assert.deepEqual((await local()).body.webhooks, [], "no local copy");

@@ -11,6 +11,7 @@ import { getSettings } from "./settings.js";
 import { agentGitPolicyEnvironment, agentGitPolicyInstructions } from "./agent-git-policy.js";
 import { multiUserEnabled } from "./account-runtime.js";
 import { revokeWebhookTitleAgentTokens, webhookTitleAgentEnvironment, webhookTitleInstructions } from "./webhook-title.js";
+import { webhookMemoryAgentEnvironmentForConversation, webhookMemoryAgentInstructions } from "./webhook-agent.js";
 
 export interface AgentCapabilityIdentity {
   projectId: string;
@@ -141,6 +142,11 @@ Attachments can change during a turn. New shell commands use current attached en
     id: "webhook-title",
     instructions: { path: "/virtual/JOINT_BOB_WEBHOOK_TITLE.md", content: webhookTitleInstructions },
     environment: webhookTitleAgentEnvironment,
+  },
+  {
+    id: "webhook-memory",
+    instructions: { path: "/virtual/JOINT_BOB_WEBHOOK_MEMORY.md", content: webhookMemoryAgentInstructions },
+    environment: ({ projectId, conversationId }) => webhookMemoryAgentEnvironmentForConversation(projectId, conversationId),
   },
   {
     id: "git-policy",

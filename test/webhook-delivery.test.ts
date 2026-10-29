@@ -14,6 +14,7 @@ import { conversationScopeId, getScopeSecretAccounts, saveSecretAccount, setScop
 import { listTurnFailures } from "../src/turn-failures.js";
 import { webhookConversationTitle } from "../src/webhook-title.js";
 import { createWebhook, webhookDeliveries, webhookInputSchema } from "../src/webhooks.js";
+import { saveWebhookResource } from "../src/webhook-resources.js";
 
 // A machine whose agent has no model sign-in still accepts the call and lists a new
 // conversation for it. The conversation used to open blank, with the reason only under
@@ -68,6 +69,7 @@ test("a webhook call's files reach the conversation as attachments, and the rest
     const project = await addProject("Webhook attachments", path.join(root, "project"), { writeInstructions: false });
     const db = await clusterV2Database();
     const { webhook } = createWebhook(db, webhookInputSchema.parse({ name: "Deals", target: { kind: "project", projectId: project.id, engine: "pi" }, attachments: true }));
+    const resource = await saveWebhookResource(db, webhook.id, { kind: "file", name: "rates.csv", description: "Current price source", bytes: Buffer.from("static-only-data") });
     const shots = Array.from({ length: 5 }, (_, index) => ({ name: `shot-${index}.png`, mimeType: "image/png", data: Buffer.from(`png ${index}`) }));
     acceptWebhookCall(webhook, {
       method: "POST", headers: {}, query: "", body: "x".repeat(25_000),
@@ -76,6 +78,9 @@ test("a webhook call's files reach the conversation as attachments, and the rest
     for (let attempt = 0; attempt < 200 && !webhookDeliveries(db, webhook.id).length; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.deepEqual(webhookDeliveries(db, webhook.id).map(({ status, detail }) => [status, detail.replace(/[0-9a-f-]{36}/, "<id>")]), [["delivered", "Started conversation <id> with 6 files"]]);
     const [prompt] = prompts;
+    assert.match(prompt.message, /Current price source/);
+    assert.ok(prompt.message.includes(resource.path));
+    assert.doesNotMatch(prompt.message, /static-only-data/);
     assert.deepEqual(prompt.images?.map(({ name, mimeType, data }) => [name, mimeType, Buffer.from(data, "base64").toString()]), shots.slice(0, 4).map(({ name, data }) => [name, "image/png", data.toString()]));
     assert.deepEqual(prompt.files?.map(({ name }) => name), ["spec.pdf", "webhook-payload.txt"], "a payload too long for the message travels whole as a file");
     assert.equal(Buffer.from(prompt.files![1].data, "base64").toString().length, 25_000);

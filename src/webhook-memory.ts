@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, readFile, rename, rm, writeFile } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { ensureWebhookResourceDirectory, setWebhookMemoryEnabled as setEnabled, type WebhookResourceOptions, WebhookResourceError } from "./webhook-resources.js";
@@ -10,6 +10,16 @@ const memoryLocks = new Map<string, Promise<void>>();
 export interface WebhookMemory { content: string; revision: string; path: string }
 
 function memoryPath(directory: string): string { return path.join(directory, "MEMORY.md"); }
+async function readMemoryBytes(file: string): Promise<Buffer> {
+  try {
+    const info = await lstat(file);
+    if (!info.isFile() || info.isSymbolicLink()) throw new WebhookResourceError("Webhook memory file is unavailable", 409);
+    return await readFile(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return Buffer.alloc(0);
+    throw error;
+  }
+}
 function revision(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
 
 export function setWebhookMemoryEnabled(db: DatabaseSync, webhookId: string, enabled: boolean): void {
@@ -18,9 +28,7 @@ export function setWebhookMemoryEnabled(db: DatabaseSync, webhookId: string, ena
 
 export async function readWebhookMemory(webhookId: string, options: WebhookResourceOptions = {}): Promise<WebhookMemory> {
   const file = memoryPath(await ensureWebhookResourceDirectory(webhookId, options));
-  let bytes: Buffer;
-  try { bytes = await readFile(file); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") bytes = Buffer.alloc(0); else throw error; }
+  const bytes = await readMemoryBytes(file);
   let content: string;
   try { content = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
   catch { throw new WebhookResourceError("Webhook memory is not valid UTF-8", 409); }
@@ -52,9 +60,7 @@ export async function writeWebhookMemory(db: DatabaseSync, webhookId: string, ex
   return withMemoryLock(webhookId, async () => {
     db.exec("BEGIN IMMEDIATE");
     try {
-      let current: Buffer;
-      try { current = await readFile(file); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") current = Buffer.alloc(0); else throw error; }
+      const current = await readMemoryBytes(file);
       if (revision(current) !== expectedRevision) throw new WebhookResourceError("Webhook memory changed since you read it. Reload and reconcile before saving.", 409);
       await writeFile(temporary, bytes, { flag: "wx", mode: 0o600 });
       await rename(temporary, file);

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a Resources button to each webhook so you can manage its files, skills, and memory in one place; the webhook's agent can now read and update its memory during runs, and Git skills can be updated to their latest commit.
+
 ## 2.174.0 — 2026-10-29
 
 - Added private files and tools for webhooks, each with a description and up to 4 MiB; a webhook keeps the version it was accepted with, so editing a file later does not change what it already runs with.

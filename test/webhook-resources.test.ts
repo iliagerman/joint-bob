@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createWebhook, webhookInputSchema } from "../src/webhooks.js";
-import { listWebhookResources, removeWebhookResource, resolveWebhookResources, saveWebhookResource, snapshotWebhookResources } from "../src/webhook-resources.js";
+import { listWebhookResources, removeWebhookResource, resolveWebhookResources, saveWebhookResource, snapshotWebhookResources, webhookResourceInstructions } from "../src/webhook-resources.js";
 
 const input = webhookInputSchema.parse({ name: "Issues", target: { kind: "project", projectId: "p1" } });
 
@@ -43,6 +43,31 @@ test("webhook resources reject empty descriptions, oversized files and unsafe na
     db.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("webhook resource instructions give paths and descriptions without including static contents", () => {
+  const context = webhookResourceInstructions({ files: [{ name: "deals.csv", description: "Current deal export", path: "/private/webhook/deals.csv" }], tools: [{ name: "clean.py", description: "Check duplicate rows", usage: "python3 /private/webhook/clean.py", path: "/private/webhook/clean.py" }], skills: [{ name: "csv-review", path: "/private/webhook/skills/csv-review" }], memoryPath: "/private/webhook/MEMORY.md", memoryCli: "node \"$JOINT_BOB_WEBHOOK_MEMORY_CLI\"" });
+  assert.match(context, /deals\.csv/);
+  assert.match(context, /Current deal export/);
+  assert.match(context, /\/private\/webhook\/deals\.csv/);
+  assert.match(context, /SKILL\.md/);
+  assert.match(context, /MEMORY\.md/);
+  assert.match(context, /python3 \/private\/webhook\/clean\.py/);
+  assert.doesNotMatch(context, /id,value/);
+});
+
+test("a saved resource version cannot be redirected through a file symlink", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "webhook-resource-file-link-"));
+  const db = new DatabaseSync(path.join(root, "node.db"));
+  try {
+    const { webhook } = createWebhook(db, input);
+    const saved = await saveWebhookResource(db, webhook.id, { kind: "file", name: "safe.txt", description: "Safe", bytes: Buffer.from("inside") }, { root });
+    const outside = path.join(root, "outside.txt");
+    await writeFile(outside, "public");
+    await unlink(saved.path);
+    await symlink(outside, saved.path);
+    await assert.rejects(resolveWebhookResources(db, snapshotWebhookResources(db, webhook.id, "owner-a"), { root }), /unavailable/i);
+  } finally { db.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("webhook resource directories cannot be redirected through symlinks", async () => {

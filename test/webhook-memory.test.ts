@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -47,6 +47,19 @@ test("concurrent webhook memory writes reject the stale revision without losing 
     db.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("webhook memory refuses a symlinked Markdown file", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "webhook-memory-link-"));
+  const db = new DatabaseSync(path.join(root, "node.db"));
+  try {
+    const { webhook } = createWebhook(db, input);
+    const initial = await readWebhookMemory(webhook.id, { root });
+    const outside = path.join(root, "outside.md");
+    await writeFile(outside, "not webhook memory");
+    await symlink(outside, initial.path);
+    await assert.rejects(readWebhookMemory(webhook.id, { root }), /memory file is unavailable/i);
+  } finally { db.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("webhook memory enforces UTF-8 byte limit", async () => {

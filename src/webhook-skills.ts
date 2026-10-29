@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { listSkills, parseResourceFrontmatter } from "./skills.js";
+import { defaultSkillRoots, listSkills, parseResourceFrontmatter } from "./skills.js";
+import type { SkillRoots } from "./skills.js";
 import type { HarnessId } from "./types.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { validateSkillName } from "./skill-sharing.js";
@@ -11,7 +12,7 @@ import { ensureWebhookResourceDirectory, type WebhookResourceOptions, WebhookRes
 export const WEBHOOK_SKILL_MAX_BYTES = 4 * 1024 * 1024;
 export const WEBHOOK_SKILL_MAX_FILES = 200;
 export interface WebhookSkillFile { relativePath: string; data: Buffer }
-export interface WebhookSkillRecord { id: string; webhookId: string; versionId: string; name: string; description: string; source: "upload" | "existing" | "git"; path: string }
+export interface WebhookSkillRecord { id: string; webhookId: string; versionId: string; name: string; description: string; source: "upload" | "existing" | "git"; path: string; sourceUrl?: string; sourceRef?: string | null; sourceCommit?: string; sourceKey?: string }
 
 function ensureSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS webhook_skill_versions (
@@ -34,7 +35,7 @@ function safeRelativePath(value: string): string {
 }
 
 function activeSkills(db: DatabaseSync, webhookId: string) {
-  return db.prepare(`SELECT s.id,v.version_id,v.name,v.description,v.source,v.relative_path
+  return db.prepare(`SELECT s.id,v.version_id,v.name,v.description,v.source,v.relative_path,v.source_url,v.source_ref,v.source_commit,v.source_key
     FROM webhook_skills s JOIN webhook_skill_versions v ON v.version_id=s.current_version_id
     WHERE s.webhook_id=? ORDER BY s.created_at,s.id`).all(webhookId) as Array<Record<string, unknown>>;
 }
@@ -42,10 +43,10 @@ function activeSkills(db: DatabaseSync, webhookId: string) {
 export function listWebhookSkills(db: DatabaseSync, webhookId: string, options: WebhookResourceOptions = {}): WebhookSkillRecord[] {
   ensureSchema(db);
   const parent = path.join(options.root ?? resolveDataDirectory(), "webhook-resources", webhookId);
-  return activeSkills(db, webhookId).map(row => ({ id: String(row.id), webhookId, versionId: String(row.version_id), name: String(row.name), description: String(row.description), source: row.source as WebhookSkillRecord["source"], path: path.join(parent, String(row.relative_path)) }));
+  return activeSkills(db, webhookId).map(row => ({ id: String(row.id), webhookId, versionId: String(row.version_id), name: String(row.name), description: String(row.description), source: row.source as WebhookSkillRecord["source"], path: path.join(parent, String(row.relative_path)), ...(row.source_url ? { sourceUrl: String(row.source_url) } : {}), ...(row.source_ref !== null ? { sourceRef: String(row.source_ref) } : {}), ...(row.source_commit ? { sourceCommit: String(row.source_commit) } : {}), ...(row.source_key ? { sourceKey: String(row.source_key) } : {}) }));
 }
 
-export async function uploadWebhookSkill(db: DatabaseSync, webhookId: string, files: WebhookSkillFile[], options: WebhookResourceOptions = {}): Promise<WebhookSkillRecord> {
+export async function uploadWebhookSkill(db: DatabaseSync, webhookId: string, files: WebhookSkillFile[], options: WebhookResourceOptions = {}, replaceSkillId?: string): Promise<WebhookSkillRecord> {
   ensureSchema(db);
   if (!db.prepare("SELECT 1 FROM webhooks WHERE id=?").get(webhookId)) throw new WebhookResourceError("Webhook not found", 404);
   if (!files.length || files.length > WEBHOOK_SKILL_MAX_FILES) throw new WebhookResourceError(`A skill folder needs 1–${WEBHOOK_SKILL_MAX_FILES} files`);
@@ -61,10 +62,14 @@ export async function uploadWebhookSkill(db: DatabaseSync, webhookId: string, fi
   const description = frontmatter.description?.trim() ?? "";
   if (!description) throw new WebhookResourceError("SKILL.md must declare a description");
   if (description.length > 2000) throw new WebhookResourceError("Skill description must be at most 2,000 characters");
-  if (activeSkills(db, webhookId).length >= 20) throw new WebhookResourceError("A webhook can have at most 20 skills");
-  if (activeSkills(db, webhookId).some(skill => skill.name === name)) throw new WebhookResourceError(`Webhook already has a skill named ${name}`, 409);
+  const currentSkills = activeSkills(db, webhookId);
+  const replaced = replaceSkillId ? currentSkills.find(skill => skill.id === replaceSkillId) : undefined;
+  if (replaceSkillId && !replaced) throw new WebhookResourceError("Webhook skill not found", 404);
+  if (replaced && replaced.name !== name) throw new WebhookResourceError("A Git update cannot change a skill name", 409);
+  if (currentSkills.some(skill => skill.name === name && skill.id !== replaceSkillId)) throw new WebhookResourceError(`Webhook already has a skill named ${name}`, 409);
+  if (!replaced && currentSkills.length >= 20) throw new WebhookResourceError("A webhook can have at most 20 skills");
   const directory = await ensureWebhookResourceDirectory(webhookId, options);
-  const id = randomUUID(), versionId = randomUUID(), now = new Date().toISOString();
+  const id = replaceSkillId ?? randomUUID(), versionId = randomUUID(), now = new Date().toISOString();
   const relativePath = path.join("skills", `${versionId}-${name}`);
   const target = path.join(directory, relativePath);
   const staged = `${target}.${randomUUID()}.tmp`;
@@ -81,7 +86,8 @@ export async function uploadWebhookSkill(db: DatabaseSync, webhookId: string, fi
     try {
       db.prepare(`INSERT INTO webhook_skill_versions(version_id,webhook_id,skill_id,name,description,source,relative_path,created_at)
         VALUES(?,?,?,?,?,?,?,?)`).run(versionId, webhookId, id, name, description, "upload", relativePath, now);
-      db.prepare("INSERT INTO webhook_skills VALUES(?,?,?,?,?)").run(id, webhookId, versionId, now, now);
+      if (replaced) db.prepare("UPDATE webhook_skills SET current_version_id=?,updated_at=? WHERE webhook_id=? AND id=?").run(versionId, now, webhookId, id);
+      else db.prepare("INSERT INTO webhook_skills VALUES(?,?,?,?,?)").run(id, webhookId, versionId, now, now);
       db.exec("COMMIT");
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   } catch (error) { await rm(staged, { recursive: true, force: true }); await rm(target, { recursive: true, force: true }); throw error; }
@@ -116,28 +122,35 @@ export async function discoverWebhookGitSkills(url: string, ref: string | null, 
   return withGitSkillCheckout(url, ref, null, async (_checkout, commit, skills) => ({ commit, skills: skills.map(({ key, name, description }) => ({ key, name, description })) }), { dataDir: options.root });
 }
 
-export async function importWebhookGitSkill(db: DatabaseSync, webhookId: string, url: string, ref: string | null, commit: string, key: string, options: WebhookResourceOptions = {}): Promise<WebhookSkillRecord> {
+export async function importWebhookGitSkill(db: DatabaseSync, webhookId: string, url: string, ref: string | null, commit: string, key: string, options: WebhookResourceOptions = {}, replaceSkillId?: string): Promise<WebhookSkillRecord> {
   const { withGitSkillCheckout } = await import("./git-resources.js");
   return withGitSkillCheckout(url, ref, commit, async (checkout, actualCommit, skills) => {
     const selected = skills.find(skill => skill.key === key);
     if (!selected) throw new WebhookResourceError("Selected Git skill is no longer available", 409);
-    const saved = await uploadWebhookSkill(db, webhookId, await skillFiles(path.join(checkout, selected.path)), options);
+    const saved = await uploadWebhookSkill(db, webhookId, await skillFiles(path.join(checkout, selected.path)), options, replaceSkillId);
     db.prepare("UPDATE webhook_skill_versions SET source='git',source_url=?,source_ref=?,source_commit=?,source_key=? WHERE version_id=?")
       .run(url, ref, actualCommit, key, saved.versionId);
     return { ...saved, source: "git" };
   }, { dataDir: options.root });
 }
 
-export async function listSelectableWebhookSkills(projectPath: string, harness?: HarnessId): Promise<Array<{ inventoryId: string; name: string; description: string; harness: HarnessId }>> {
-  const skills = await listSkills(projectPath);
+function skillInventoryId(skill: { harness: HarnessId; name: string; path?: string }): string {
+  return createHash("sha256").update(`${skill.harness}\0${skill.name}\0${path.resolve(skill.path ?? "")}`).digest("hex");
+}
+
+function appConfiguredSkillRoots(roots: SkillRoots): SkillRoots {
+  return { shared: roots.shared, global: roots.global, project: roots.project };
+}
+
+export async function listSelectableWebhookSkills(projectPath: string, harness?: HarnessId, configuredRoots: SkillRoots = defaultSkillRoots()): Promise<Array<{ inventoryId: string; name: string; description: string; harness: HarnessId }>> {
+  const skills = await listSkills(projectPath, appConfiguredSkillRoots(configuredRoots));
   return skills.filter(skill => !harness || skill.harness === harness).map(skill => ({
-    inventoryId: `${skill.harness}:${skill.name}:${path.resolve(skill.path ?? "")}`,
-    name: skill.name, description: skill.description, harness: skill.harness,
+    inventoryId: skillInventoryId(skill), name: skill.name, description: skill.description, harness: skill.harness,
   }));
 }
 
-export async function importExistingWebhookSkill(db: DatabaseSync, webhookId: string, projectPath: string, inventoryId: string, options: WebhookResourceOptions = {}): Promise<WebhookSkillRecord> {
-  const selected = (await listSkills(projectPath)).find(skill => `${skill.harness}:${skill.name}:${path.resolve(skill.path ?? "")}` === inventoryId);
+export async function importExistingWebhookSkill(db: DatabaseSync, webhookId: string, projectPath: string, inventoryId: string, options: WebhookResourceOptions = {}, configuredRoots: SkillRoots = defaultSkillRoots()): Promise<WebhookSkillRecord> {
+  const selected = (await listSkills(projectPath, appConfiguredSkillRoots(configuredRoots))).find(skill => skillInventoryId(skill) === inventoryId);
   if (!selected?.path) throw new WebhookResourceError("Selected skill is no longer available", 409);
   const saved = await uploadWebhookSkill(db, webhookId, await skillFiles(selected.path), options);
   db.prepare("UPDATE webhook_skill_versions SET source='existing',source_key=? WHERE version_id=?").run(inventoryId, saved.versionId);

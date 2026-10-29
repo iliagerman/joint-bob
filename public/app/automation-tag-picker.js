@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 
 export function createAutomationTagPicker(container, testId) {
+  container.classList.add("automation-tag-picker");
   let workspaceId = "", managed = [], value = { managedTagIds: [], manualTags: [] };
   const select = document.createElement("select");
   select.multiple = true; select.dataset.testid = `${testId}-managed`; select.setAttribute("aria-label", "Managed tags");
@@ -10,7 +11,9 @@ export function createAutomationTagPicker(container, testId) {
   const managedName = document.createElement("input"); managedName.type = "text"; managedName.maxLength = 80; managedName.placeholder = "New managed tag"; managedName.dataset.testid = `${testId}-new-managed`;
   const createButton = document.createElement("button"); createButton.type = "button"; createButton.className = "ghost"; createButton.textContent = "Add to managed tags"; createButton.dataset.testid = `${testId}-create-managed`;
   const error = document.createElement("p"); error.className = "automation-tag-error"; error.setAttribute("role", "status");
-  container.replaceChildren(select, chips, manual, manualButton, managedName, createButton, error);
+  const manualRow = document.createElement("div"); manualRow.className = "automation-tag-entry"; manualRow.append(manual, manualButton);
+  const managedRow = document.createElement("div"); managedRow.className = "automation-tag-entry"; managedRow.append(managedName, createButton);
+  container.replaceChildren(select, chips, manualRow, managedRow, error);
 
   function render() {
     chips.replaceChildren();
@@ -22,6 +25,7 @@ export function createAutomationTagPicker(container, testId) {
       remove.addEventListener("click", () => { value = entry.managed ? { ...value, managedTagIds: value.managedTagIds.filter(id => id !== entry.id) } : { ...value, manualTags: value.manualTags.filter(name => name !== entry.name) }; render(); });
       chip.append(remove); chips.append(chip);
     }
+    select.hidden = !managed.some(tag => !tag.retired);
     select.replaceChildren(...managed.filter(tag => !tag.retired).map(tag => { const option = new Option(tag.name, tag.id); option.selected = value.managedTagIds.includes(tag.id); return option; }));
   }
   async function refresh() {

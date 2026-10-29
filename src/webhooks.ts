@@ -9,6 +9,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { webhookTitleTemplateSchema } from "./webhook-title.js";
 import { automationTagAssignmentSchema } from "./automation-tags.js";
+import type { WebhookResourceSnapshot } from "./webhook-resources.js";
 
 export const WEBHOOK_SECRET_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
 /** Room for screenshots and documents; the whole body is held in memory while it is read. */
@@ -256,6 +257,7 @@ const SHOWN_HEADER = /^(content-type|user-agent|x-[a-z0-9-]*(event|type|action|d
 export interface WebhookAttachment { name: string; mimeType: string; data: Buffer }
 export interface WebhookCall {
   method: string; headers: Record<string, string>; query: string; body: string; attachments?: WebhookAttachment[]; requestId?: string; started?: boolean;
+  resourceSnapshot?: WebhookResourceSnapshot;
   /** Set only when the webhook checked the sender against its list. */
   sender?: { value: string; label: string };
 }

@@ -95,6 +95,7 @@ function hookRow(hook) {
   actions.append(
     makeButton("Calls", "webhooks-calls-button", () => showCalls(hook)),
     makeButton("Edit", "webhooks-edit-button", () => openForm(hook)),
+    makeButton("Resources", "webhooks-resources-button", () => void openResources(hook)),
     makeButton(hook.enabled ? "Turn off" : "Turn on", "webhooks-toggle-button", () => run(async () => {
       await api(endpoint(`/${hook.id}`), { method: "PUT", body: hookBody(hook, { enabled: !hook.enabled }) });
       await refresh();
@@ -178,6 +179,7 @@ async function loadProjects() {
 
 /** Changing owner drops old targets and rows before loading. A slow peer must not restore them. */
 async function loadOwner() {
+  closeResources();
   const revision = ++ownerRevision;
   ownerReady = false;
   field.save.disabled = true;
@@ -412,6 +414,134 @@ async function submit(event) {
   }
 }
 
+let managedHook = null;
+let memoryRevision = "";
+const resourcesManager = byId("webhookResourcesManager");
+const resourceStatus = byId("webhookResourcesStatus");
+
+function resourcesEndpoint(suffix = "") {
+  const query = suffix.includes("?") ? "&" : "?";
+  return `/api/webhooks/${managedHook.id}${suffix}${query}nodeId=${encodeURIComponent(field.owner.value)}`;
+}
+
+async function resourceTask(work) {
+  if (saving) return;
+  saving = true;
+  field.owner.disabled = true;
+  resourceStatus.textContent = "";
+  try { await work(); }
+  catch (error) { resourceStatus.textContent = errorText(error); }
+  finally { saving = false; field.owner.disabled = false; }
+}
+
+async function encodeFile(file) {
+  if (file.size > 4 * 1024 * 1024) throw new Error(`${file.name} exceeds the 4 MiB limit`);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+
+function renderWebhookResources(resources) {
+  const container = byId("webhookResourceList");
+  container.replaceChildren();
+  if (!resources.length) container.append(makeNode("p", "relay-empty", "No files or tools yet."));
+  for (const resource of resources) {
+    const row = makeNode("div", "relay-row");
+    const main = makeNode("div", "relay-row-main");
+    main.append(makeNode("strong", "relay-row-name", resource.name), makeNode("p", "relay-row-meta", `${resource.kind === "tool" ? "Tool" : "File"} · ${resource.description}`));
+    const description = document.createElement("input");
+    description.value = resource.description;
+    description.setAttribute("aria-label", `Description for ${resource.name}`);
+    const usage = document.createElement("input");
+    usage.value = resource.usage ?? "";
+    usage.placeholder = "Usage notes";
+    usage.setAttribute("aria-label", `Usage notes for ${resource.name}`);
+    main.append(description, usage);
+    const actions = makeNode("div", "relay-row-actions");
+    actions.append(makeButton("Save details", "webhook-resource-save-button", () => resourceTask(async () => {
+      const current = await api(resourcesEndpoint(`/resources/${resource.id}/download`));
+      await api(resourcesEndpoint("/resources"), { method: "POST", body: JSON.stringify({ kind: resource.kind, resourceId: resource.id, name: resource.name, description: description.value, usage: usage.value || null, mimeType: current.mimeType, data: current.data }) });
+      await loadResourceManager();
+    })), makeButton("Download", "webhook-resource-download-button", async () => {
+      try {
+        const current = await api(resourcesEndpoint(`/resources/${resource.id}/download`));
+        const binary = atob(current.data);
+        const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: current.mimeType || "application/octet-stream" }));
+        const anchor = document.createElement("a"); anchor.href = url; anchor.download = current.name; anchor.click(); URL.revokeObjectURL(url);
+      } catch (error) { resourceStatus.textContent = errorText(error); }
+    }), makeTwoStepButton({ label: "Delete", armedLabel: "Delete it?", testid: "webhook-resource-delete-button", onConfirm: () => resourceTask(async () => {
+      await api(resourcesEndpoint(`/resources/${resource.id}`), { method: "DELETE" });
+      await loadResourceManager();
+    }) }));
+    row.append(main, actions);
+    container.append(row);
+  }
+}
+
+function renderWebhookSkills(skills) {
+  const container = byId("webhookSkillList");
+  container.replaceChildren();
+  if (!skills.length) container.append(makeNode("p", "relay-empty", "No private skills yet."));
+  for (const skill of skills) {
+    const row = makeNode("div", "relay-row");
+    const actions = makeNode("div", "relay-row-actions");
+    if (skill.source === "git" && skill.sourceUrl && skill.sourceKey) actions.append(makeTwoStepButton({ label: "Update from Git", armedLabel: "Update to latest?", testid: "webhook-git-skill-update-button", onConfirm: () => resourceTask(async () => {
+      const source = await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "discover-git", url: skill.sourceUrl, ref: skill.sourceRef ?? null }) });
+      const latest = source.skills.find(item => item.key === skill.sourceKey);
+      if (!latest) throw new Error("This skill is no longer available at the selected Git ref");
+      if (source.commit === skill.sourceCommit) { resourceStatus.textContent = "This skill is already current."; return; }
+      await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "import-git", url: skill.sourceUrl, ref: skill.sourceRef ?? null, commit: source.commit, key: skill.sourceKey, skillId: skill.id }) });
+      await loadResourceManager();
+      resourceStatus.textContent = "Git skill updated.";
+    }) }));
+    actions.append(makeButton("Remove", "webhook-skill-remove-button", () => resourceTask(async () => {
+      await api(resourcesEndpoint(`/skills/${skill.id}`), { method: "DELETE" });
+      await loadResourceManager();
+    })));
+    row.append(makeNode("div", "relay-row-main", `${skill.name} · ${skill.description} · ${skill.source}`), actions);
+    container.append(row);
+  }
+}
+
+async function loadResourceManager() {
+  const revision = ownerRevision;
+  const webhookId = managedHook?.id;
+  const [resources, privateSkills, inventory, memory] = await Promise.all([
+    api(resourcesEndpoint("/resources")), api(resourcesEndpoint("/skills")), api(resourcesEndpoint("/skills?inventory=1")), api(resourcesEndpoint("/memory")),
+  ]);
+  if (revision !== ownerRevision || managedHook?.id !== webhookId) return;
+  renderWebhookResources(resources.resources);
+  renderWebhookSkills(privateSkills.skills);
+  const inventorySelect = byId("webhookSkillInventory");
+  inventorySelect.replaceChildren(...inventory.skills.map(skill => new Option(`${skill.name} · ${skill.harness} · ${skill.description}`, skill.inventoryId)));
+  if (!inventory.skills.length) inventorySelect.add(new Option("No available skills", ""));
+  byId("webhookMemoryEnabled").checked = memory.enabled;
+  byId("webhookMemoryContent").value = memory.content;
+  byId("webhookMemoryContent").disabled = !memory.enabled;
+  memoryRevision = memory.revision;
+}
+
+async function openResources(hook) {
+  if (saving || !ownerReady) return;
+  managedHook = hook;
+  resourcesManager.hidden = false;
+  byId("webhooksList").hidden = true;
+  byId("webhooksPager").hidden = true;
+  history.hidden = true;
+  byId("webhookResourcesTitle").textContent = `Resources for “${hook.name}”`;
+  resourceStatus.textContent = "Loading…";
+  await resourceTask(async () => { await loadResourceManager(); resourceStatus.textContent = ""; });
+}
+
+function closeResources() {
+  managedHook = null;
+  resourcesManager.hidden = true;
+  byId("webhooksList").hidden = false;
+  void list.reload();
+}
+
 function wire() {
   if (wired) return;
   wired = true;
@@ -419,6 +549,99 @@ function wire() {
   byId("webhooksNew").addEventListener("click", () => void openForm());
   byId("webhooksCancel").addEventListener("click", closeForm);
   byId("webhooksRevealDone").addEventListener("click", () => { reveal.hidden = true; byId("webhooksRevealUrls").replaceChildren(); });
+  byId("webhookResourcesBack").addEventListener("click", closeResources);
+  byId("webhookResourceFiles").addEventListener("change", () => void resourceTask(async () => {
+    const files = [...byId("webhookResourceFiles").files];
+    if (!files.length) return;
+    const description = byId("webhookResourceDescription").value.trim();
+    if (!description) throw new Error("Add a description before uploading files");
+    const kind = byId("webhookResourceKind").value;
+    for (const file of files) await api(resourcesEndpoint("/resources"), { method: "POST", body: JSON.stringify({ kind, name: file.name, description, usage: byId("webhookResourceUsage").value || null, mimeType: file.type || "application/octet-stream", data: await encodeFile(file) }) });
+    byId("webhookResourceFiles").value = "";
+    await loadResourceManager();
+  }));
+  byId("webhookSkillImportExisting").addEventListener("click", () => void resourceTask(async () => {
+    const inventoryId = byId("webhookSkillInventory").value;
+    if (!inventoryId) throw new Error("Choose an available skill");
+    await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "import-existing", inventoryId }) });
+    await loadResourceManager();
+  }));
+  byId("webhookSkillFolder").addEventListener("change", () => void resourceTask(async () => {
+    const files = [...byId("webhookSkillFolder").files];
+    if (!files.length) return;
+    let total = 0;
+    const encoded = [];
+    for (const file of files) {
+      total += file.size;
+      if (total > 4 * 1024 * 1024) throw new Error("A skill folder must be at most 4 MiB");
+      const relativePath = file.webkitRelativePath?.split("/").slice(1).join("/") || file.name;
+      encoded.push({ relativePath, data: await encodeFile(file) });
+    }
+    await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "upload", files: encoded }) });
+    byId("webhookSkillFolder").value = "";
+    await loadResourceManager();
+  }));
+  byId("webhookSkillGitDiscover").addEventListener("click", () => void resourceTask(async () => {
+    const url = byId("webhookSkillGitUrl").value.trim();
+    if (!url) throw new Error("Enter a Git repository URL");
+    const ref = byId("webhookSkillGitRef").value.trim() || null;
+    const result = await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "discover-git", url, ref }) });
+    const container = byId("webhookSkillGitResults");
+    container.replaceChildren();
+    if (!result.skills.length) container.append(makeNode("p", "relay-empty", "No skills found at this ref."));
+    for (const skill of result.skills) {
+      const row = makeNode("div", "relay-row");
+      row.append(makeNode("div", "relay-row-main", `${skill.name} · ${skill.description}`), makeButton("Import this version", "webhook-git-skill-import-button", () => void resourceTask(async () => {
+        await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "import-git", url, ref, commit: result.commit, key: skill.key }) });
+        await loadResourceManager();
+      })));
+      container.append(row);
+    }
+  }));
+  byId("webhookMemoryEnabled").addEventListener("change", () => void resourceTask(async () => {
+    const enabled = byId("webhookMemoryEnabled").checked;
+    await api(resourcesEndpoint("/memory"), { method: "POST", body: JSON.stringify({ action: "enable", enabled }) });
+    byId("webhookMemoryContent").disabled = !enabled;
+  }));
+  byId("webhookMemoryReload").addEventListener("click", () => void resourceTask(async () => {
+    const memory = await api(resourcesEndpoint("/memory"));
+    byId("webhookMemoryEnabled").checked = memory.enabled;
+    byId("webhookMemoryContent").value = memory.content;
+    byId("webhookMemoryContent").disabled = !memory.enabled;
+    memoryRevision = memory.revision;
+  }));
+  byId("webhookMemorySave").addEventListener("click", () => void resourceTask(async () => {
+    const memory = await api(resourcesEndpoint("/memory"), { method: "PUT", body: JSON.stringify({ content: byId("webhookMemoryContent").value, expectedRevision: memoryRevision }) });
+    memoryRevision = memory.revision;
+    resourceStatus.textContent = "Memory saved.";
+  }));
+  byId("webhookMemoryUpload").addEventListener("change", () => void resourceTask(async () => {
+    const file = byId("webhookMemoryUpload").files[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".md")) throw new Error("Choose a Markdown file ending in .md");
+    const content = await file.text();
+    if (!byId("webhookMemoryEnabled").checked) {
+      await api(resourcesEndpoint("/memory"), { method: "POST", body: JSON.stringify({ action: "enable", enabled: true }) });
+      byId("webhookMemoryEnabled").checked = true;
+      byId("webhookMemoryContent").disabled = false;
+    }
+    const memory = await api(resourcesEndpoint("/memory"), { method: "PUT", body: JSON.stringify({ content, expectedRevision: memoryRevision }) });
+    memoryRevision = memory.revision;
+    byId("webhookMemoryContent").value = content;
+    byId("webhookMemoryUpload").value = "";
+    resourceStatus.textContent = "Memory uploaded.";
+  }));
+  byId("webhookMemoryDownload").addEventListener("click", () => {
+    const url = URL.createObjectURL(new Blob([byId("webhookMemoryContent").value], { type: "text/markdown;charset=utf-8" }));
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = "MEMORY.md"; anchor.click(); URL.revokeObjectURL(url);
+  });
+  const resetMemory = makeTwoStepButton({ label: "Reset memory", armedLabel: "Erase it?", testid: "webhook-memory-reset-button", onConfirm: () => resourceTask(async () => {
+    const memory = await api(resourcesEndpoint("/memory"), { method: "PUT", body: JSON.stringify({ content: "", expectedRevision: memoryRevision }) });
+    memoryRevision = memory.revision;
+    byId("webhookMemoryContent").value = "";
+    resourceStatus.textContent = "Memory reset.";
+  }) });
+  byId("webhookMemoryReset").replaceWith(resetMemory);
   field.kind.addEventListener("change", syncKind);
   field.project.addEventListener("change", async () => {
     try { const project = await api(`/api/projects/${encodeURIComponent(field.project.value)}`); await tagPicker.setWorkspace(project.project.type ?? "personal"); tagPicker.setValue({ managedTagIds: [], manualTags: [] }); }
@@ -441,6 +664,7 @@ function wire() {
 
 export async function loadWebhooks() {
   wire();
+  closeResources();
   if (saving) return;
   closeForm();
   showStatus(status, "");

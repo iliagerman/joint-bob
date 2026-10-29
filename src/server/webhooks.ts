@@ -22,6 +22,9 @@ import {
 } from "../webhooks.js";
 import { persistTaskAttachments } from "./chat.js";
 import { markSilentWebhookRequest } from "./scheduled-review.js";
+import { snapshotWebhookResources, resolveWebhookResources, webhookResourceInstructions } from "../webhook-resources.js";
+import { bindWebhookConversation } from "../webhook-agent.js";
+import { readWebhookMemory } from "../webhook-memory.js";
 import { queueConversationPrompt, type PromptAttachment, type PromptQueueSettings } from "./conversation-prompt.js";
 import { broadcastToProject } from "./realtime.js";
 
@@ -82,6 +85,16 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   if (!project) throw new WebhookError(404, "The webhook's project no longer exists");
   const lock = await getProjectLock(project.id);
   if (lock && lock.nodeId !== local.id) throw new WebhookError(409, `Project is locked by ${lock.nodeName}`);
+  const db = await clusterV2Database();
+  const resourceSnapshot = call.resourceSnapshot ?? snapshotWebhookResources(db, webhook.id, local.id);
+  if (resourceSnapshot.ownerNodeId !== local.id || resourceSnapshot.webhookId !== webhook.id) throw new WebhookError(409, "Webhook resources belong to another owner");
+  const resources = await resolveWebhookResources(db, resourceSnapshot);
+  const memory = resourceSnapshot.memoryEnabled ? await readWebhookMemory(webhook.id) : undefined;
+  const resourceContext = webhookResourceInstructions({
+    files: resources.files.map(({ name, description, path: filePath }) => ({ name, description, path: filePath })),
+    tools: resources.tools.map(({ name, description, usage, path: filePath }) => ({ name, description, usage, path: filePath })),
+    skills: resources.skills, memoryPath: memory?.path, memoryCli: memory ? 'node "$JOINT_BOB_WEBHOOK_MEMORY_CLI"' : undefined,
+  });
   const attachments = [...(call.attachments ?? [])];
   if (call.body.trim().length > MAX_PAYLOAD_CHARS) attachments.push({ name: PAYLOAD_FILE_NAME, mimeType: "text/plain", data: Buffer.from(call.body) });
   const placed = await placeAttachments(project.path, attachments);
@@ -89,7 +102,7 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   const titleInstruction = titleTemplate && titlePlaceholders(titleTemplate).length
     ? `Complete this conversation's title template using the webhook content: ${JSON.stringify(titleTemplate)}. Infer concise text for each bracketed placeholder. Run node "$JOINT_BOB_WEBHOOK_TITLE_CLI" status, then use its fill command with the placeholder replacements. Text outside brackets is fixed and is preserved by the server. Do this before the webhook's main work.`
     : "";
-  const message = [titleInstruction, webhookMessage(webhook, call), placed.listed].filter(Boolean).join("\n\n");
+  const message = [titleInstruction, webhookMessage(webhook, call), resourceContext, placed.listed].filter(Boolean).join("\n\n");
   const engine = webhook.target.engine ?? defaultEngine();
   let activeSessionId = webhook.target.kind === "conversation" ? webhook.target.sessionId : null;
   const prompt = {
@@ -119,6 +132,7 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
     if (!isHarnessId(engine)) throw new WebhookError(409, "The conversation's agent is not available");
     const ownership = await getConversationOwnership(engine, sessionId);
     if (ownership && ownership.ownerNodeId !== local.id) throw new WebhookError(409, "The conversation lives on another machine; create the webhook there");
+    bindWebhookConversation(db, webhook.id, project.id, sessionId, local.id);
     await attachSecrets(webhook, engine, sessionId);
     await queueConversationPrompt({ projectId: project.id, engine, sessionId, ...prompt });
     return sessionId;
@@ -131,6 +145,7 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   await ensureSessionTitle(sessionId, titleTemplate || webhook.name);
   broadcastToProject(project.id, { type: "sessionsChanged" });
   try {
+    bindWebhookConversation(db, webhook.id, project.id, sessionId, local.id);
     await attachSecrets(webhook, engine, sessionId);
     await queueConversationPrompt({ projectId: project.id, engine, sessionId, ...prompt });
   } catch (error) {

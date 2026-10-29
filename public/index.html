@@ -1346,6 +1346,31 @@
             <div class="relay-list" id="webhooksHistory" data-testid="webhooks-history" hidden></div>
             <div class="relay-list" id="webhooksList" data-testid="webhooks-list"></div>
             <div class="relay-pager" id="webhooksPager" data-testid="webhooks-pager" hidden></div>
+            <section class="relay-form-section" id="webhookResourcesManager" data-testid="webhook-resources-manager" hidden>
+              <div class="relay-row-actions"><button class="ghost compact" type="button" id="webhookResourcesBack" data-testid="webhook-resources-back-button">Back to webhooks</button><h3 id="webhookResourcesTitle"></h3></div>
+              <p class="settings-hint">These resources belong only to this webhook's owner. Files are described to its agent by name and path; contents are not added to the prompt automatically. Imports are stored as inert files and are never run or installed.</p>
+              <h4>Static files and tools</h4>
+              <label>Resource type<select id="webhookResourceKind" data-testid="webhook-resource-kind-select"><option value="file">Static file</option><option value="tool">Tool or script</option></select></label>
+              <label>Description for uploaded files<input id="webhookResourceDescription" data-testid="webhook-resource-description-input" maxlength="2000" placeholder="What the agent should use this file for" /></label>
+              <label>Usage notes (for tools)<textarea id="webhookResourceUsage" data-testid="webhook-resource-usage-input" rows="2" maxlength="2000"></textarea></label>
+              <label>Add files<input id="webhookResourceFiles" data-testid="webhook-resource-files-input" type="file" multiple /></label>
+              <div class="relay-list" id="webhookResourceList"></div>
+              <h4>Skills</h4>
+              <label>Import from this machine<select id="webhookSkillInventory" data-testid="webhook-skill-inventory-select"></select></label>
+              <button class="ghost compact" type="button" id="webhookSkillImportExisting" data-testid="webhook-skill-import-existing-button">Import selected skill</button>
+              <label>Upload a skill folder<input id="webhookSkillFolder" data-testid="webhook-skill-folder-input" type="file" multiple webkitdirectory /></label>
+              <div class="relay-list" id="webhookSkillList" data-testid="webhook-skill-list"></div>
+              <label>Git repository URL<input id="webhookSkillGitUrl" data-testid="webhook-skill-git-url-input" maxlength="2048" placeholder="https://github.com/org/repo.git" /></label>
+              <label>Git ref (optional)<input id="webhookSkillGitRef" data-testid="webhook-skill-git-ref-input" maxlength="200" placeholder="main" /></label>
+              <button class="ghost compact" type="button" id="webhookSkillGitDiscover" data-testid="webhook-skill-git-discover-button">Discover skills</button>
+              <div class="relay-list" id="webhookSkillGitResults"></div>
+              <h4>Persistent memory</h4>
+              <label class="checkbox-row"><input type="checkbox" id="webhookMemoryEnabled" data-testid="webhook-memory-enabled-toggle" /> Give this webhook's agent persistent memory</label>
+              <label>Markdown memory<textarea id="webhookMemoryContent" data-testid="webhook-memory-content-input" rows="12" maxlength="200000" spellcheck="false"></textarea></label>
+              <label>Upload Markdown<input id="webhookMemoryUpload" data-testid="webhook-memory-upload-input" type="file" accept=".md,text/markdown" /></label>
+              <div class="relay-row-actions"><button class="ghost compact" type="button" id="webhookMemoryReload" data-testid="webhook-memory-reload-button">Reload</button><button class="ghost compact" type="button" id="webhookMemoryDownload" data-testid="webhook-memory-download-button">Download</button><button class="ghost compact" type="button" id="webhookMemoryReset" data-testid="webhook-memory-reset-button">Reset memory</button><button class="primary compact" type="button" id="webhookMemorySave" data-testid="webhook-memory-save-button">Save memory</button></div>
+              <p class="settings-hint" id="webhookResourcesStatus" data-testid="webhook-resources-status" role="status"></p>
+            </section>
           </section>
         </section>
 
