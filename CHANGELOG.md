@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.175.0 — 2026-10-29
 
-- Added a Resources button to each webhook so you can manage its files, skills, and memory in one place; the webhook's agent can now read and update its memory during runs, and Git skills can be updated to their latest commit.
+- Added a Resources button to each webhook to manage private files, tools, skills, and editable memory; agents can read and update that webhook's memory, and Git skills have an explicit update action.
+- Fixed webhook settings getting cut off before Secret accounts and the form buttons; the form now scrolls within Settings on desktop and mobile.
+- Made webhook tag controls compact, with wrapping input rows, styled selected tags, and no empty managed-tag list.
 
 ## 2.174.0 — 2026-10-29
 
