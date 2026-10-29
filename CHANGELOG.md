@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Changed GitHub pipeline job logs to open per task, with failed tasks expanded first; a task's log loads only when you open it, and a log GitHub has not published yet shows a clear message instead of an error.
+- Added a Watch video button to saved Git stories that plays the story as an animated walkthrough, with an optional narrator voice from ElevenLabs once a project ElevenLabs key is set up.
 
 ## 2.175.0 — 2026-10-29
 

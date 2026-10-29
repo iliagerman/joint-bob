@@ -32,6 +32,11 @@ export async function api(path, options = {}) {
   return response.json();
 }
 
+/** For a route that replies with a file, such as audio. */
+export async function apiBlob(path, options = {}) {
+  return (await send(path, options)).blob();
+}
+
 const NDJSON = "application/x-ndjson";
 
 /** Calls a route that streams JSON lines, handing each line to onLine. A plain JSON reply arrives as one "done" line. */

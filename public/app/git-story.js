@@ -3,6 +3,7 @@ import { openDiffDialog } from "./git-diff-view.js";
 import { h, s } from "./git-story-dom.js";
 import { diagramLegend, mountStoryDiagram } from "./git-story-diagram.js";
 import { toast } from "./shell.js";
+import { playStoryVideo, storyVoiceConfigured, VOICE_SETUP } from "./git-story-video.js";
 
 // A change story explains a conversation's commits and pending files. A separate read-only
 // reviewer writes it; nothing here is posted to the conversation.
@@ -31,6 +32,8 @@ const story = {
   pullNumber: null,
   pullUrl: null,
   pullDraft: "",
+  // Whether the server holds an ElevenLabs key; null until asked.
+  voice: null,
 };
 
 // Where the reader was in a story, so closing the Git view and opening it again lands on the same page.
@@ -89,6 +92,7 @@ export function resetStory(ctx) {
   story.pullNumber = null;
   story.pullUrl = null;
   story.pullDraft = "";
+  story.voice = null;
 }
 
 export function selectStoryPull(number, url = null) {
@@ -464,7 +468,28 @@ function storyHead() {
       facts.conversation ? ` · ${facts.turns.length} turns` : "",
       facts.omitted?.length ? h("span", { class: "gs-del", "data-testid": "git-story-omitted", title: `The reviewer saw only line counts for: ${facts.omitted.join(", ")}` }, ` · ${plural(facts.omitted.length, "diff")} too large to read`) : "",
       draft ? " · not checked yet" : ` · ${thread.harnessId} · ${thread.modelId} · ${thread.thinkingLevel} · written ${relativeTime(thread.createdAt)}`),
-    !draft ? pullForm() : null);
+    !draft ? pullForm() : null,
+    !draft ? videoSuggestion() : null);
+}
+
+// Optional: an animated walkthrough of the saved story, with a narrator voice when an ElevenLabs key is set up.
+function videoSuggestion() {
+  if (story.voice === null) {
+    story.voice = false;
+    void storyVoiceConfigured(story.ctx.apiUrl).then((configured) => { if (configured) { story.voice = true; renderStory(); } });
+  }
+  const { saved } = shown();
+  const play = (voice) => playStoryVideo({ story: saved.story, facts: saved.facts, apiUrl: story.ctx.apiUrl, voice, host: story.ctx.container.closest("dialog") ?? document.body });
+  return h("div", { class: "gsv-suggest", "data-testid": "git-story-video-suggestion" },
+    h("p", {}, h("b", {}, "Watch this story as a video. "), "An animated walkthrough of the flow and examples, made from this story. A narrator voice is optional."),
+    h("div", { class: "gsv-suggest-row" },
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-play", onclick: () => play(story.voice) }, story.voice ? "▶ Play with voice" : "▶ Play video"),
+      story.voice ? h("button", { class: "ghost compact gs-boxed", type: "button", onclick: () => play(false) }, "Play without voice") : null,
+      story.voice ? h("span", { class: "gs-muted gs-small" }, "Narration by ElevenLabs.") : null),
+    story.voice ? null : h("details", { "data-testid": "git-story-voice-setup" },
+      h("summary", {}, "Add a narrator voice with ElevenLabs (optional)"),
+      h("ol", {}, VOICE_SETUP.map((step) => h("li", {}, step))),
+      h("p", { class: "gs-muted gs-small" }, "Each scene's text is sent to ElevenLabs and the audio is saved on this machine, so replays cost nothing.")));
 }
 
 function storySections() {

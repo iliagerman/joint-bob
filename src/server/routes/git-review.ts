@@ -23,6 +23,7 @@ import {
   type GitReviewSelection,
   type GitReviewThread,
 } from "../../git-review-threads.js";
+import { narrateStoryText, NARRATION_LIMIT, storyVoiceKey } from "../story-voice.js";
 import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StoryProgress, type StorySources } from "../git-change-story.js";
 import { getProject } from "../../store.js";
 import { genericSecretEnvironment, githubAccountsForProject } from "../../secrets.js";
@@ -644,6 +645,18 @@ app.get("/api/projects/:projectId/git/pushes", async (request, response, next) =
   try {
     await withOwningNode(request, response, "/api/cluster/git/pushes", {}, async () =>
       ({ pushes: await gitPushHistory(await reviewCwd(request.params.projectId, queryOptional(request, "taskId"), queryOptional(request, "repository"))) }));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+// Optional narration for the story video. The ElevenLabs key is a project secret on this node.
+app.get("/api/projects/:projectId/git/story-voice", (request, response) => {
+  response.json({ configured: Boolean(storyVoiceKey(request.params.projectId)) });
+});
+
+app.post("/api/projects/:projectId/git/story-voice", async (request, response, next) => {
+  try {
+    const { text } = z.object({ text: z.string().trim().min(1).max(NARRATION_LIMIT) }).parse(request.body);
+    response.type("audio/mpeg").send(await narrateStoryText(storyVoiceKey(request.params.projectId), text));
   } catch (error) { handleGitError(response, error, next); }
 });
 
