@@ -47,12 +47,14 @@ test("schedule profile picker defaults to current profile and restores explicit 
   await page.getByTestId('webhooks-save-button').click();
   await page.getByTestId('webhooks-reveal').waitFor({ state: 'visible' });
   await page.getByTestId('webhooks-reveal-done-button').click();
-  await page.getByTestId('webhooks-edit-button').click();
+  await page.getByTestId('webhooks-back-button').click();
+  await page.getByTestId('webhooks-open-button').click();
   await page.waitForFunction(() => !(document.querySelector('[data-testid="webhooks-provider-profile"]') as HTMLSelectElement).disabled);
   assert.equal(await webhookPicker.inputValue(), created.body.profile.id);
   await webhookPicker.selectOption('');
   await page.getByTestId('webhooks-save-button').click();
-  await page.getByTestId('webhooks-form').waitFor({ state: 'hidden' });
-  await page.getByTestId('webhooks-edit-button').click();
+  await page.getByTestId('webhooks-status').getByText('Saved.').waitFor();
+  await page.getByTestId('webhooks-back-button').click();
+  await page.getByTestId('webhooks-open-button').click();
   assert.equal(await webhookPicker.inputValue(), '');
 });

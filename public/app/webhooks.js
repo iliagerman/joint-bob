@@ -1,24 +1,29 @@
 // Settings → Webhooks. A webhook is a secret address; a call to it starts a conversation in a
 // project or adds a message to one conversation. The address is shown once, built here from the
-// secret the server returns and the relays its owner is on. Every action applies at once.
-// The list pages to the height it is given instead of scrolling.
+// secret the server returns and the relays its owner is on. The list pages to the height it is
+// given instead of scrolling. A webhook opens as a detail view with tabs: Setup and Access share
+// one save bar, Files, Skills and Memory apply at once, and Calls shows recent deliveries.
 import { api } from "./api.js";
 import { createAutomationProfilePicker } from "./provider-profile-picker.js";
 import { createAutomationTagPicker } from "./automation-tag-picker.js";
 import { copyText, createFittedList, formatWhen, makeBadge, makeButton, makeNode, makeTwoStepButton, showStatus } from "./relay-ui.js";
+import { createWebhookFiles } from "./webhook-files.js";
+import { createWebhookMemory } from "./webhook-memory.js";
+import { createWebhookSkills } from "./webhook-skills.js";
+import { byId, errorText } from "./webhook-ui.js";
 
-const byId = (id) => document.getElementById(id);
 const status = byId("webhooksStatus");
 const form = byId("webhooksForm");
 const listSection = byId("webhooksListSection");
 const reveal = byId("webhooksReveal");
-const history = byId("webhooksHistory");
+const savebar = byId("webhooksSavebar");
+const SECRET_ROWS = 8;
 const field = {
   owner: byId("webhooksOwner"), name: byId("webhooksName"), kind: byId("webhooksTargetKind"), project: byId("webhooksProject"), conversation: byId("webhooksConversation"),
   harness: byId("webhooksHarness"), model: byId("webhooksModel"), effort: byId("webhooksEffort"), titleTemplate: byId("webhooksTitleTemplate"),
   conversationLabel: byId("webhooksConversationLabel"), context: byId("webhooksContext"), enabled: byId("webhooksEnabled"),
   attachments: byId("webhooksAttachments"), markForReview: byId("webhooksMarkForReview"), sendersEnabled: byId("webhooksSendersEnabled"), senders: byId("webhooksSenders"),
-  senderFields: byId("webhooksSenderFields"), allowedSenders: byId("webhooksAllowedSenders"), save: byId("webhooksSave"),
+  senderFields: byId("webhooksSenderFields"), allowedSenders: byId("webhooksAllowedSenders"), save: byId("webhooksSave"), secretSearch: byId("webhooksSecretSearch"),
 };
 
 let webhooks = [];
@@ -28,17 +33,39 @@ let ownerReady = false;
 let saving = false;
 let projectNames = new Map();
 let editing = null;
+let creating = false;
+let dirty = false;
 let wired = false;
 let telegramSenderFields = [];
 let harnesses = [];
 let models = [];
 let secretAccounts = [];
+let selectedSecretIds = new Set();
+let deliveries = [];
 
-const errorText = (error) => error?.message || "Something went wrong";
 const endpoint = (suffix = "") => `/api/webhooks${suffix}?nodeId=${encodeURIComponent(field.owner.value)}`;
+/** Addresses the open webhook; the files, skills and memory modules build their requests with it. */
+function hookUrl(suffix = "") {
+  const query = suffix.includes("?") ? "&" : "?";
+  return `/api/webhooks/${editing.id}${suffix}${query}nodeId=${encodeURIComponent(field.owner.value)}`;
+}
+const say = (message, kind = "info") => showStatus(status, message, kind);
 
 const profilePicker = createAutomationProfilePicker(field.model.closest("label"), "webhooks-provider-profile", () => api(endpoint("/profiles")));
 const tagPicker = createAutomationTagPicker(byId("webhooksAutomationTags"), "webhooks-tags");
+
+/** One guarded action at a time; failures land in the status line. */
+async function run(work) {
+  if (saving) return;
+  saving = true;
+  say("");
+  try { await work(); } catch (error) { say(errorText(error), "error"); }
+  finally { saving = false; }
+}
+
+const files = createWebhookFiles({ url: hookUrl, run, onCount: (count) => { byId("webhooksCountFiles").textContent = String(count); } });
+const skills = createWebhookSkills({ url: hookUrl, run, say, onCount: (count) => { byId("webhooksCountSkills").textContent = String(count); } });
+const memory = createWebhookMemory({ url: hookUrl, run, say, onEnabled: (on) => { byId("webhooksMemoryDot").hidden = !on; } });
 
 /** The body a PUT or POST sends: everything about the webhook, so saving one setting keeps the others. */
 const hookBody = (hook, changes = {}) => JSON.stringify({
@@ -83,6 +110,14 @@ function showUrls(title, secret, available) {
 
 // ---- list ----
 
+function setEnabled(hook, enabled) {
+  return run(async () => {
+    await api(endpoint(`/${hook.id}`), { method: "PUT", body: hookBody(hook, { enabled }) });
+    await refresh();
+    if (editing?.id === hook.id) { syncEditing(); field.enabled.checked = editing.enabled; renderDetailHead(); }
+  });
+}
+
 function hookRow(hook) {
   const row = makeNode("div", "relay-row");
   const main = makeNode("div", "relay-row-main");
@@ -93,22 +128,9 @@ function hookRow(hook) {
     makeNode("p", "relay-row-meta", hook.receivedCount ? `${hook.receivedCount} call${hook.receivedCount === 1 ? "" : "s"} · last ${formatWhen(hook.lastReceivedAt)}` : "No calls yet"));
   const actions = makeNode("div", "relay-row-actions");
   actions.append(
-    makeButton("Calls", "webhooks-calls-button", () => showCalls(hook)),
-    makeButton("Edit", "webhooks-edit-button", () => openForm(hook)),
-    makeButton("Resources", "webhooks-resources-button", () => void openResources(hook)),
-    makeButton(hook.enabled ? "Turn off" : "Turn on", "webhooks-toggle-button", () => run(async () => {
-      await api(endpoint(`/${hook.id}`), { method: "PUT", body: hookBody(hook, { enabled: !hook.enabled }) });
-      await refresh();
-    })),
-    makeTwoStepButton({ label: "New address", armedLabel: "Replace address?", testid: "webhooks-regenerate-button", onConfirm: () => run(async () => {
-      const body = await api(endpoint(`/${hook.id}/regenerate`), { method: "POST", body: "{}" });
-      showUrls(`New address for “${hook.name}”. The old one no longer works.`, body.secret, body.bases);
-    }) }),
-    makeTwoStepButton({ label: "Delete", armedLabel: "Delete it?", testid: "webhooks-delete-button", onConfirm: () => run(async () => {
-      await api(endpoint(`/${hook.id}`), { method: "DELETE" });
-      history.hidden = true;
-      await refresh();
-    }) }));
+    makeButton("Open", "webhooks-open-button", () => void openDetail(hook), "primary compact"),
+    makeButton("Calls", "webhooks-calls-button", () => void openDetail(hook, "calls")),
+    makeButton(hook.enabled ? "Turn off" : "Turn on", "webhooks-toggle-button", () => void setEnabled(hook, !hook.enabled)));
   row.append(main, actions);
   return row;
 }
@@ -120,44 +142,6 @@ const list = createFittedList({
   renderItem: hookRow,
 });
 
-async function showCalls(hook) {
-  try {
-    const revision = ownerRevision;
-    const { deliveries } = await api(endpoint(`/${hook.id}/deliveries`));
-    if (revision !== ownerRevision) return;
-    history.replaceChildren(makeNode("p", "relay-row-meta", `Recent calls to “${hook.name}” (newest first)`));
-    if (!deliveries.length) history.append(makeNode("p", "relay-empty", "No calls yet."));
-    for (const call of deliveries.slice(0, 5)) {
-      const row = makeNode("div", "relay-row relay-row-compact");
-      const main = makeNode("div", "relay-row-main");
-      main.append(makeNode("span", "relay-row-meta", `${formatWhen(call.at)} · ${call.detail}`));
-      const label = { failed: "Failed", refused: "Refused" }[call.status] ?? "Delivered";
-      row.append(main, makeBadge(label, call.status === "delivered" ? "ok" : ""));
-      if (call.status === "refused" && call.sender && hook.senders && !hook.senders.allowed.some(({ value }) => value === call.sender)) {
-        row.append(makeButton("Allow", "webhooks-allow-sender-button", () => run(async () => {
-          const current = webhooks.find((candidate) => candidate.id === hook.id) ?? hook;
-          await api(endpoint(`/${hook.id}`), { method: "PUT", body: hookBody(current, { senders: { ...current.senders, allowed: [...current.senders.allowed, { value: call.sender, label: "" }] } }) });
-          await refresh();
-          await showCalls(webhooks.find((candidate) => candidate.id === hook.id) ?? hook);
-          showStatus(status, `Sender ${call.sender} is allowed. Add a name for it under Edit.`, "ok");
-        })));
-      }
-      history.append(row);
-    }
-    history.append(makeButton("Hide", "webhooks-calls-hide-button", () => { history.hidden = true; }));
-    history.hidden = false;
-  } catch (error) { showStatus(status, errorText(error), "error"); }
-}
-
-async function run(work) {
-  if (saving) return;
-  saving = true;
-  showStatus(status, "");
-  field.owner.disabled = true;
-  try { await work(); } catch (error) { showStatus(status, errorText(error), "error"); }
-  finally { saving = false; field.owner.disabled = Boolean(editing); }
-}
-
 async function refresh() {
   const revision = ownerRevision;
   const body = await api(endpoint());
@@ -167,7 +151,12 @@ async function refresh() {
   await list.reload();
 }
 
-// ---- form ----
+/** After a reload, the open webhook is the fresh copy of itself. */
+function syncEditing() {
+  if (editing) editing = webhooks.find((hook) => hook.id === editing.id) ?? editing;
+}
+
+// ---- owner, projects, options ----
 
 async function loadProjects() {
   const revision = ownerRevision;
@@ -179,14 +168,13 @@ async function loadProjects() {
 
 /** Changing owner drops old targets and rows before loading. A slow peer must not restore them. */
 async function loadOwner() {
-  closeResources();
+  closeDetail();
   const revision = ++ownerRevision;
   ownerReady = false;
   field.save.disabled = true;
   byId("webhooksNew").disabled = true;
   reveal.hidden = true;
   byId("webhooksRevealUrls").replaceChildren();
-  history.hidden = true;
   projects = [];
   webhooks = [];
   projectNames.clear();
@@ -195,22 +183,22 @@ async function loadOwner() {
   harnesses = [];
   models = [];
   secretAccounts = [];
+  selectedSecretIds = new Set();
   renderSecrets();
   fillHarnesses();
   await list.reload();
   if (revision !== ownerRevision) return;
-  showStatus(status, "Loading owner…");
+  say("Loading owner…");
   try {
     await Promise.all([loadProjects(), refresh(), loadOptions()]);
     if (revision !== ownerRevision) return;
     fillProjects();
     await list.reload();
     if (revision !== ownerRevision) return;
-    if (!form.hidden) syncKind();
     ownerReady = true;
-    showStatus(status, "");
+    say("");
   } catch (error) {
-    if (revision === ownerRevision) showStatus(status, errorText(error), "error");
+    if (revision === ownerRevision) say(errorText(error), "error");
   } finally {
     if (revision === ownerRevision) {
       field.save.disabled = !ownerReady;
@@ -230,26 +218,46 @@ async function loadOptions() {
   fillHarnesses();
 }
 
-function selectedSecrets() {
-  return [...byId("webhooksSecrets").querySelectorAll("input:checked")].map(input => input.value);
+// ---- Setup and Access fields ----
+
+function markDirty() {
+  dirty = true;
+  updateSavebar();
 }
 
-function renderSecrets(selected = []) {
+function updateSavebar() {
+  savebar.hidden = !(creating || dirty);
+  byId("webhooksSavebarText").textContent = creating ? "New webhook. Create it to get an address." : "Unsaved changes.";
+  field.save.textContent = creating ? "Create webhook" : "Save changes";
+}
+
+function availableSecrets() {
+  return secretAccounts.filter((account) => !account.projectId || account.projectId === field.project.value);
+}
+
+function renderSecrets() {
   const container = byId("webhooksSecrets");
   container.replaceChildren();
-  const available = secretAccounts.filter(account => !account.projectId || account.projectId === field.project.value);
-  const accounts = [...available, ...selected.filter(id => !available.some(account => account.id === id)).map(id => ({ id, label: "Unavailable account. Remove to save." }))];
-  for (const account of accounts) {
+  const available = availableSecrets();
+  const unavailable = [...selectedSecretIds].filter((id) => !available.some((account) => account.id === id)).map((id) => ({ id, label: "Unavailable account. Remove to save." }));
+  const query = field.secretSearch.value.trim().toLowerCase();
+  const matches = [...unavailable, ...available].filter((account) => `${account.label} ${account.provider ?? ""}`.toLowerCase().includes(query));
+  for (const account of matches.slice(0, SECRET_ROWS)) {
     const label = makeNode("label", "checkbox-row");
     const input = document.createElement("input");
     input.type = "checkbox";
     input.value = account.id;
-    input.checked = selected.includes(account.id);
+    input.checked = selectedSecretIds.has(account.id);
     input.dataset.testid = "webhooks-secret-account-checkbox";
+    input.addEventListener("change", () => {
+      if (input.checked) selectedSecretIds.add(account.id); else selectedSecretIds.delete(account.id);
+      markDirty();
+    });
     label.append(input, document.createTextNode(account.provider ? `${account.label} · ${account.provider}` : account.label));
     container.append(label);
   }
-  if (!accounts.length) container.append(makeNode("p", "settings-hint", "No secret accounts available. Add accounts in Settings → Secrets on the webhook's owner machine."));
+  if (matches.length > SECRET_ROWS) container.append(makeNode("p", "settings-hint", `${matches.length - SECRET_ROWS} more. Search to narrow the list.`));
+  if (!matches.length) container.append(makeNode("p", "settings-hint", secretAccounts.length ? "No accounts match." : "No secret accounts available. Add accounts in Settings → Secrets on the webhook's owner machine."));
 }
 
 function fillHarnesses(engine = "") {
@@ -313,23 +321,18 @@ function syncKind() {
   field.conversationLabel.hidden = !conversation;
   byId("webhooksTitleTemplateLabel").hidden = conversation;
   field.harness.disabled = conversation;
-  if (conversation) void fillConversations(editing?.target.sessionId).catch((error) => showStatus(status, errorText(error), "error"));
+  if (conversation) void fillConversations(editing?.target.sessionId).catch((error) => say(errorText(error), "error"));
 }
 
-async function openForm(hook = null) {
-  if (!ownerReady || saving) return;
-  editing = hook;
-  field.owner.disabled = true;
-  showStatus(status, "");
-  reveal.hidden = true;
-  history.hidden = true;
-  try { await loadProjects(); } catch (error) { editing = null; showStatus(status, errorText(error), "error"); return; }
-  finally { field.owner.disabled = Boolean(editing); }
+/** Puts a webhook's saved values (or the defaults for a new one) into the Setup and Access fields. */
+async function fillFields(hook) {
   fillProjects(hook?.target.projectId);
   const project = await api(`/api/projects/${encodeURIComponent(field.project.value)}`);
   await tagPicker.setWorkspace(project.project.type ?? "personal");
   tagPicker.setValue(hook?.tags ?? { managedTagIds: [], manualTags: [] });
-  renderSecrets(hook?.secretAccountIds ?? []);
+  selectedSecretIds = new Set(hook?.secretAccountIds ?? []);
+  field.secretSearch.value = "";
+  renderSecrets();
   field.name.value = hook?.name ?? "";
   field.kind.value = hook?.target.kind ?? "project";
   fillHarnesses(hook?.target.engine ?? "");
@@ -344,37 +347,141 @@ async function openForm(hook = null) {
   field.senderFields.value = hook?.senders?.fields.join(", ") ?? "";
   field.allowedSenders.value = allowedText(hook?.senders?.allowed ?? []);
   syncSenders();
-  field.save.textContent = hook ? "Save webhook" : "Create webhook";
-  byId("webhooksNew").hidden = true;
-  form.hidden = false;
-  listSection.hidden = true;
   syncKind();
-  field.name.focus();
+  dirty = false;
+  updateSavebar();
 }
 
-function closeForm() {
+// ---- detail view ----
+
+function showTab(name) {
+  for (const panel of document.querySelectorAll("[data-webhook-panel]")) panel.hidden = panel.dataset.webhookPanel !== name;
+  for (const button of document.querySelectorAll("[data-webhook-tab]")) {
+    const active = button.dataset.webhookTab === name;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  }
+  if (name === "calls" && editing) void loadCalls();
+}
+
+function renderDetailHead() {
+  byId("webhooksDetailTitle").textContent = editing?.name ?? "New webhook";
+  byId("webhooksDetailState").replaceChildren(...(editing ? [makeBadge(editing.enabled ? "On" : "Off", editing.enabled ? "ok" : "")] : []));
+  const actions = byId("webhooksDetailActions");
+  actions.replaceChildren();
+  if (!editing) return;
+  const hook = editing;
+  actions.append(
+    makeButton(hook.enabled ? "Turn off" : "Turn on", "webhooks-detail-toggle-button", () => void setEnabled(hook, !hook.enabled)),
+    makeTwoStepButton({ label: "New address", armedLabel: "Replace address?", testid: "webhooks-regenerate-button", onConfirm: () => run(async () => {
+      const body = await api(endpoint(`/${hook.id}/regenerate`), { method: "POST", body: "{}" });
+      showUrls(`New address for “${hook.name}”. The old one no longer works.`, body.secret, body.bases);
+    }) }),
+    makeTwoStepButton({ label: "Delete", armedLabel: "Delete it?", testid: "webhooks-delete-button", onConfirm: () => run(async () => {
+      await api(endpoint(`/${hook.id}`), { method: "DELETE" });
+      closeDetail();
+      await refresh();
+    }) }));
+}
+
+/** Skills and Memory need a webhook to belong to; a new one shows a hint instead. */
+function renderLiveTabs() {
+  for (const hint of document.querySelectorAll("[data-create-first]")) hint.hidden = !creating;
+  for (const live of document.querySelectorAll("[data-live]")) live.hidden = creating;
+  byId("webhooksCallsTab").hidden = creating;
+}
+
+async function openHookTabs(hook) {
+  renderDetailHead();
+  renderLiveTabs();
+  await Promise.all([files.open(hook), skills.open(hook), memory.open(hook)]);
+}
+
+async function openDetail(hook = null, tab = "setup") {
+  if (!ownerReady || saving) return;
+  creating = !hook;
+  editing = hook;
+  say("");
+  reveal.hidden = true;
+  try {
+    await loadProjects();
+    await fillFields(hook);
+    await openHookTabs(hook);
+  } catch (error) { editing = null; creating = false; say(errorText(error), "error"); return; }
+  listSection.hidden = true;
+  form.hidden = false;
+  showTab(tab);
+  updateSavebar();
+  if (tab === "setup") field.name.focus();
+}
+
+function closeDetail() {
   editing = null;
-  field.owner.disabled = saving;
+  creating = false;
+  dirty = false;
   form.hidden = true;
+  savebar.hidden = true;
   listSection.hidden = false;
-  byId("webhooksNew").hidden = false;
   void list.reload();
 }
 
-/** The editor sits inside the Settings form, so its fields are checked here rather than by the browser. */
-function missingField() {
-  if (!field.name.value.trim()) return { element: field.name, message: "Enter a name for the webhook" };
-  if (!field.project.value) return { element: field.project, message: "Choose a project" };
-  if (field.kind.value === "conversation" && !field.conversation.value) return { element: field.conversation, message: "Choose a conversation" };
-  if (field.sendersEnabled.checked && !field.senderFields.value.trim()) return { element: field.senderFields, message: "Enter the field that names the sender, or use the Telegram bot fields" };
-  return null;
+// ---- calls ----
+
+function callRow(call) {
+  const row = makeNode("div", "relay-row relay-row-compact");
+  const main = makeNode("div", "relay-row-main");
+  main.append(makeNode("span", "relay-row-meta", `${formatWhen(call.at)} · ${call.detail}`));
+  const label = { failed: "Failed", refused: "Refused" }[call.status] ?? "Delivered";
+  row.append(main, makeBadge(label, call.status === "delivered" ? "ok" : ""));
+  if (call.status === "refused" && call.sender && editing?.senders && !editing.senders.allowed.some(({ value }) => value === call.sender)) {
+    row.append(makeButton("Allow", "webhooks-allow-sender-button", () => void allowSender(call.sender)));
+  }
+  return row;
 }
 
-async function submit(event) {
-  event.preventDefault();
-  if (!ownerReady || saving || field.save.disabled) return;
-  const missing = missingField();
-  if (missing) { showStatus(status, missing.message, "error"); missing.element.focus(); return; }
+const callsList = createFittedList({
+  list: byId("webhooksCalls"), pager: byId("webhooksCallsPager"), testPrefix: "webhooks-calls",
+  emptyText: "No calls yet.",
+  fetchPage: async (page, size) => ({ total: deliveries.length, items: deliveries.slice((page - 1) * size, page * size) }),
+  renderItem: callRow,
+});
+
+async function loadCalls() {
+  const hook = editing;
+  const revision = ownerRevision;
+  try {
+    const body = await api(endpoint(`/${hook.id}/deliveries`));
+    if (revision !== ownerRevision || editing?.id !== hook.id) return;
+    deliveries = body.deliveries;
+    byId("webhooksCallsTitle").textContent = `Recent calls to “${hook.name}” (newest first)`;
+    await callsList.reload();
+  } catch (error) { say(errorText(error), "error"); }
+}
+
+function allowSender(sender) {
+  return run(async () => {
+    const current = webhooks.find((candidate) => candidate.id === editing.id) ?? editing;
+    await api(endpoint(`/${current.id}`), { method: "PUT", body: hookBody(current, { senders: { ...current.senders, allowed: [...current.senders.allowed, { value: sender, label: "" }] } }) });
+    await refresh();
+    syncEditing();
+    if (!dirty) field.allowedSenders.value = allowedText(editing.senders?.allowed ?? []);
+    await loadCalls();
+    say(`Sender ${sender} is allowed. Add a name for it under Access.`, "ok");
+  });
+}
+
+// ---- save ----
+
+/** The editor is not a browser form, so its fields are checked here. */
+function missingField() {
+  if (!field.name.value.trim()) return { tab: "setup", element: field.name, message: "Enter a name for the webhook" };
+  if (!field.project.value) return { tab: "setup", element: field.project, message: "Choose a project" };
+  if (field.kind.value === "conversation" && !field.conversation.value) return { tab: "setup", element: field.conversation, message: "Choose a conversation" };
+  if (field.sendersEnabled.checked && !field.senderFields.value.trim()) return { tab: "access", element: field.senderFields, message: "Enter the field that names the sender, or use the Telegram bot fields" };
+  return creating ? files.missing() : null;
+}
+
+function buildBody() {
   const target = field.kind.value === "conversation"
     ? { kind: "conversation", projectId: field.project.value, sessionId: field.conversation.value, engine: field.conversation.selectedOptions[0]?.dataset.engine || "" }
     : { kind: "project", projectId: field.project.value, ...(field.harness.value ? { engine: field.harness.value } : {}) };
@@ -385,289 +492,93 @@ async function submit(event) {
   const senders = field.sendersEnabled.checked
     ? { fields: field.senderFields.value.split(/[\s,]+/).filter(Boolean), allowed: parseAllowed(field.allowedSenders.value) }
     : null;
-  let providerProfileId;
-  try { providerProfileId = profilePicker.value(); }
-  catch (error) { showStatus(status, errorText(error), "error"); return; }
-  const body = JSON.stringify({ providerProfileId, tags: tagPicker.getValue(), name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: selectedSecrets(), titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
+  return JSON.stringify({ providerProfileId: profilePicker.value(), tags: tagPicker.getValue(), name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: [...selectedSecretIds], titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
+}
+
+async function submit() {
+  if (!ownerReady || saving || field.save.disabled || form.hidden) return;
+  const missing = missingField();
+  if (missing) { say(missing.message, "error"); showTab(missing.tab); missing.element.focus(); return; }
+  let body;
+  try { body = buildBody(); } catch (error) { say(errorText(error), "error"); return; }
   saving = true;
   field.save.disabled = true;
-  field.owner.disabled = true;
-  byId("webhooksCancel").disabled = true;
+  say("");
   try {
     if (editing) {
       await api(endpoint(`/${editing.id}`), { method: "PUT", body });
       await refresh();
-      closeForm();
+      syncEditing();
+      await fillFields(editing);
+      renderDetailHead();
+      say("Saved.", "ok");
     } else {
       const created = await api(endpoint(), { method: "POST", body });
-      closeForm();
-      // Show the secret before refreshing: a failed list request must not lose the only copy.
+      // Show the secret before anything else can fail: this is the only copy.
       showUrls(`Address for “${created.webhook.name}”`, created.secret, created.bases);
-      await refresh();
+      editing = created.webhook;
+      creating = false;
+      dirty = false;
+      updateSavebar();
+      files.attach(created.webhook);
+      renderDetailHead();
+      renderLiveTabs();
+      await Promise.all([refresh().then(syncEditing), skills.open(editing), memory.open(editing)]);
+      await files.uploadStaged();
     }
-  } catch (error) { showStatus(status, errorText(error), "error"); }
+  } catch (error) { say(errorText(error), "error"); }
   finally {
     saving = false;
     field.save.disabled = !ownerReady;
-    field.owner.disabled = Boolean(editing);
-    byId("webhooksCancel").disabled = false;
   }
-}
-
-let managedHook = null;
-let memoryRevision = "";
-const resourcesManager = byId("webhookResourcesManager");
-const resourceStatus = byId("webhookResourcesStatus");
-
-function resourcesEndpoint(suffix = "") {
-  const query = suffix.includes("?") ? "&" : "?";
-  return `/api/webhooks/${managedHook.id}${suffix}${query}nodeId=${encodeURIComponent(field.owner.value)}`;
-}
-
-async function resourceTask(work) {
-  if (saving) return;
-  saving = true;
-  field.owner.disabled = true;
-  resourceStatus.textContent = "";
-  try { await work(); }
-  catch (error) { resourceStatus.textContent = errorText(error); }
-  finally { saving = false; field.owner.disabled = false; }
-}
-
-async function encodeFile(file) {
-  if (file.size > 4 * 1024 * 1024) throw new Error(`${file.name} exceeds the 4 MiB limit`);
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  return btoa(binary);
-}
-
-function renderWebhookResources(resources) {
-  const container = byId("webhookResourceList");
-  container.replaceChildren();
-  if (!resources.length) container.append(makeNode("p", "relay-empty", "No files or tools yet."));
-  for (const resource of resources) {
-    const row = makeNode("div", "relay-row");
-    const main = makeNode("div", "relay-row-main");
-    main.append(makeNode("strong", "relay-row-name", resource.name), makeNode("p", "relay-row-meta", `${resource.kind === "tool" ? "Tool" : "File"} · ${resource.description}`));
-    const description = document.createElement("input");
-    description.value = resource.description;
-    description.setAttribute("aria-label", `Description for ${resource.name}`);
-    const usage = document.createElement("input");
-    usage.value = resource.usage ?? "";
-    usage.placeholder = "Usage notes";
-    usage.setAttribute("aria-label", `Usage notes for ${resource.name}`);
-    main.append(description, usage);
-    const actions = makeNode("div", "relay-row-actions");
-    actions.append(makeButton("Save details", "webhook-resource-save-button", () => resourceTask(async () => {
-      const current = await api(resourcesEndpoint(`/resources/${resource.id}/download`));
-      await api(resourcesEndpoint("/resources"), { method: "POST", body: JSON.stringify({ kind: resource.kind, resourceId: resource.id, name: resource.name, description: description.value, usage: usage.value || null, mimeType: current.mimeType, data: current.data }) });
-      await loadResourceManager();
-    })), makeButton("Download", "webhook-resource-download-button", async () => {
-      try {
-        const current = await api(resourcesEndpoint(`/resources/${resource.id}/download`));
-        const binary = atob(current.data);
-        const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
-        const url = URL.createObjectURL(new Blob([bytes], { type: current.mimeType || "application/octet-stream" }));
-        const anchor = document.createElement("a"); anchor.href = url; anchor.download = current.name; anchor.click(); URL.revokeObjectURL(url);
-      } catch (error) { resourceStatus.textContent = errorText(error); }
-    }), makeTwoStepButton({ label: "Delete", armedLabel: "Delete it?", testid: "webhook-resource-delete-button", onConfirm: () => resourceTask(async () => {
-      await api(resourcesEndpoint(`/resources/${resource.id}`), { method: "DELETE" });
-      await loadResourceManager();
-    }) }));
-    row.append(main, actions);
-    container.append(row);
-  }
-}
-
-function renderWebhookSkills(skills) {
-  const container = byId("webhookSkillList");
-  container.replaceChildren();
-  if (!skills.length) container.append(makeNode("p", "relay-empty", "No private skills yet."));
-  for (const skill of skills) {
-    const row = makeNode("div", "relay-row");
-    const actions = makeNode("div", "relay-row-actions");
-    if (skill.source === "git" && skill.sourceUrl && skill.sourceKey) actions.append(makeTwoStepButton({ label: "Update from Git", armedLabel: "Update to latest?", testid: "webhook-git-skill-update-button", onConfirm: () => resourceTask(async () => {
-      const source = await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "discover-git", url: skill.sourceUrl, ref: skill.sourceRef ?? null }) });
-      const latest = source.skills.find(item => item.key === skill.sourceKey);
-      if (!latest) throw new Error("This skill is no longer available at the selected Git ref");
-      if (source.commit === skill.sourceCommit) { resourceStatus.textContent = "This skill is already current."; return; }
-      await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "import-git", url: skill.sourceUrl, ref: skill.sourceRef ?? null, commit: source.commit, key: skill.sourceKey, skillId: skill.id }) });
-      await loadResourceManager();
-      resourceStatus.textContent = "Git skill updated.";
-    }) }));
-    actions.append(makeButton("Remove", "webhook-skill-remove-button", () => resourceTask(async () => {
-      await api(resourcesEndpoint(`/skills/${skill.id}`), { method: "DELETE" });
-      await loadResourceManager();
-    })));
-    row.append(makeNode("div", "relay-row-main", `${skill.name} · ${skill.description} · ${skill.source}`), actions);
-    container.append(row);
-  }
-}
-
-async function loadResourceManager() {
-  const revision = ownerRevision;
-  const webhookId = managedHook?.id;
-  const [resources, privateSkills, inventory, memory] = await Promise.all([
-    api(resourcesEndpoint("/resources")), api(resourcesEndpoint("/skills")), api(resourcesEndpoint("/skills?inventory=1")), api(resourcesEndpoint("/memory")),
-  ]);
-  if (revision !== ownerRevision || managedHook?.id !== webhookId) return;
-  renderWebhookResources(resources.resources);
-  renderWebhookSkills(privateSkills.skills);
-  const inventorySelect = byId("webhookSkillInventory");
-  inventorySelect.replaceChildren(...inventory.skills.map(skill => new Option(`${skill.name} · ${skill.harness} · ${skill.description}`, skill.inventoryId)));
-  if (!inventory.skills.length) inventorySelect.add(new Option("No available skills", ""));
-  byId("webhookMemoryEnabled").checked = memory.enabled;
-  byId("webhookMemoryContent").value = memory.content;
-  byId("webhookMemoryContent").disabled = !memory.enabled;
-  memoryRevision = memory.revision;
-}
-
-async function openResources(hook) {
-  if (saving || !ownerReady) return;
-  managedHook = hook;
-  resourcesManager.hidden = false;
-  byId("webhooksList").hidden = true;
-  byId("webhooksPager").hidden = true;
-  history.hidden = true;
-  byId("webhookResourcesTitle").textContent = `Resources for “${hook.name}”`;
-  resourceStatus.textContent = "Loading…";
-  await resourceTask(async () => { await loadResourceManager(); resourceStatus.textContent = ""; });
-}
-
-function closeResources() {
-  managedHook = null;
-  resourcesManager.hidden = true;
-  byId("webhooksList").hidden = false;
-  void list.reload();
 }
 
 function wire() {
   if (wired) return;
   wired = true;
   field.owner.addEventListener("change", () => void loadOwner());
-  byId("webhooksNew").addEventListener("click", () => void openForm());
-  byId("webhooksCancel").addEventListener("click", closeForm);
+  byId("webhooksNew").addEventListener("click", () => void openDetail());
+  byId("webhooksBack").addEventListener("click", closeDetail);
   byId("webhooksRevealDone").addEventListener("click", () => { reveal.hidden = true; byId("webhooksRevealUrls").replaceChildren(); });
-  byId("webhookResourcesBack").addEventListener("click", closeResources);
-  byId("webhookResourceFiles").addEventListener("change", () => void resourceTask(async () => {
-    const files = [...byId("webhookResourceFiles").files];
-    if (!files.length) return;
-    const description = byId("webhookResourceDescription").value.trim();
-    if (!description) throw new Error("Add a description before uploading files");
-    const kind = byId("webhookResourceKind").value;
-    for (const file of files) await api(resourcesEndpoint("/resources"), { method: "POST", body: JSON.stringify({ kind, name: file.name, description, usage: byId("webhookResourceUsage").value || null, mimeType: file.type || "application/octet-stream", data: await encodeFile(file) }) });
-    byId("webhookResourceFiles").value = "";
-    await loadResourceManager();
-  }));
-  byId("webhookSkillImportExisting").addEventListener("click", () => void resourceTask(async () => {
-    const inventoryId = byId("webhookSkillInventory").value;
-    if (!inventoryId) throw new Error("Choose an available skill");
-    await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "import-existing", inventoryId }) });
-    await loadResourceManager();
-  }));
-  byId("webhookSkillFolder").addEventListener("change", () => void resourceTask(async () => {
-    const files = [...byId("webhookSkillFolder").files];
-    if (!files.length) return;
-    let total = 0;
-    const encoded = [];
-    for (const file of files) {
-      total += file.size;
-      if (total > 4 * 1024 * 1024) throw new Error("A skill folder must be at most 4 MiB");
-      const relativePath = file.webkitRelativePath?.split("/").slice(1).join("/") || file.name;
-      encoded.push({ relativePath, data: await encodeFile(file) });
-    }
-    await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "upload", files: encoded }) });
-    byId("webhookSkillFolder").value = "";
-    await loadResourceManager();
-  }));
-  byId("webhookSkillGitDiscover").addEventListener("click", () => void resourceTask(async () => {
-    const url = byId("webhookSkillGitUrl").value.trim();
-    if (!url) throw new Error("Enter a Git repository URL");
-    const ref = byId("webhookSkillGitRef").value.trim() || null;
-    const result = await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "discover-git", url, ref }) });
-    const container = byId("webhookSkillGitResults");
-    container.replaceChildren();
-    if (!result.skills.length) container.append(makeNode("p", "relay-empty", "No skills found at this ref."));
-    for (const skill of result.skills) {
-      const row = makeNode("div", "relay-row");
-      row.append(makeNode("div", "relay-row-main", `${skill.name} · ${skill.description}`), makeButton("Import this version", "webhook-git-skill-import-button", () => void resourceTask(async () => {
-        await api(resourcesEndpoint("/skills"), { method: "POST", body: JSON.stringify({ action: "import-git", url, ref, commit: result.commit, key: skill.key }) });
-        await loadResourceManager();
-      })));
-      container.append(row);
-    }
-  }));
-  byId("webhookMemoryEnabled").addEventListener("change", () => void resourceTask(async () => {
-    const enabled = byId("webhookMemoryEnabled").checked;
-    await api(resourcesEndpoint("/memory"), { method: "POST", body: JSON.stringify({ action: "enable", enabled }) });
-    byId("webhookMemoryContent").disabled = !enabled;
-  }));
-  byId("webhookMemoryReload").addEventListener("click", () => void resourceTask(async () => {
-    const memory = await api(resourcesEndpoint("/memory"));
-    byId("webhookMemoryEnabled").checked = memory.enabled;
-    byId("webhookMemoryContent").value = memory.content;
-    byId("webhookMemoryContent").disabled = !memory.enabled;
-    memoryRevision = memory.revision;
-  }));
-  byId("webhookMemorySave").addEventListener("click", () => void resourceTask(async () => {
-    const memory = await api(resourcesEndpoint("/memory"), { method: "PUT", body: JSON.stringify({ content: byId("webhookMemoryContent").value, expectedRevision: memoryRevision }) });
-    memoryRevision = memory.revision;
-    resourceStatus.textContent = "Memory saved.";
-  }));
-  byId("webhookMemoryUpload").addEventListener("change", () => void resourceTask(async () => {
-    const file = byId("webhookMemoryUpload").files[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".md")) throw new Error("Choose a Markdown file ending in .md");
-    const content = await file.text();
-    if (!byId("webhookMemoryEnabled").checked) {
-      await api(resourcesEndpoint("/memory"), { method: "POST", body: JSON.stringify({ action: "enable", enabled: true }) });
-      byId("webhookMemoryEnabled").checked = true;
-      byId("webhookMemoryContent").disabled = false;
-    }
-    const memory = await api(resourcesEndpoint("/memory"), { method: "PUT", body: JSON.stringify({ content, expectedRevision: memoryRevision }) });
-    memoryRevision = memory.revision;
-    byId("webhookMemoryContent").value = content;
-    byId("webhookMemoryUpload").value = "";
-    resourceStatus.textContent = "Memory uploaded.";
-  }));
-  byId("webhookMemoryDownload").addEventListener("click", () => {
-    const url = URL.createObjectURL(new Blob([byId("webhookMemoryContent").value], { type: "text/markdown;charset=utf-8" }));
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = "MEMORY.md"; anchor.click(); URL.revokeObjectURL(url);
+  for (const button of document.querySelectorAll("[data-webhook-tab]")) button.addEventListener("click", () => showTab(button.dataset.webhookTab));
+  byId("webhooksDiscard").addEventListener("click", () => {
+    if (creating) { closeDetail(); return; }
+    void fillFields(editing).catch((error) => say(errorText(error), "error"));
   });
-  const resetMemory = makeTwoStepButton({ label: "Reset memory", armedLabel: "Erase it?", testid: "webhook-memory-reset-button", onConfirm: () => resourceTask(async () => {
-    const memory = await api(resourcesEndpoint("/memory"), { method: "PUT", body: JSON.stringify({ content: "", expectedRevision: memoryRevision }) });
-    memoryRevision = memory.revision;
-    byId("webhookMemoryContent").value = "";
-    resourceStatus.textContent = "Memory reset.";
-  }) });
-  byId("webhookMemoryReset").replaceWith(resetMemory);
+  for (const panel of [byId("webhooksSetupPanel"), byId("webhooksAccessPanel")]) {
+    const onEdit = (event) => { if (event.target !== field.secretSearch) markDirty(); };
+    panel.addEventListener("input", onEdit);
+    panel.addEventListener("change", onEdit);
+  }
+  byId("webhooksAutomationTags").addEventListener("click", markDirty);
   field.kind.addEventListener("change", syncKind);
-  field.project.addEventListener("change", async () => {
-    try { const project = await api(`/api/projects/${encodeURIComponent(field.project.value)}`); await tagPicker.setWorkspace(project.project.type ?? "personal"); tagPicker.setValue({ managedTagIds: [], manualTags: [] }); }
-    catch (error) { showStatus(status, errorText(error), "error"); }
-  });
   field.harness.addEventListener("change", () => renderExecution());
   field.model.addEventListener("change", () => renderExecution(field.model.value));
   field.conversation.addEventListener("change", syncConversationHarness);
   field.sendersEnabled.addEventListener("change", syncSenders);
-  byId("webhooksSenderTelegram").addEventListener("click", () => { field.senderFields.value = telegramSenderFields.join(", "); });
-  field.project.addEventListener("change", () => {
-    const allowed = new Set(secretAccounts.filter(account => !account.projectId || account.projectId === field.project.value).map(account => account.id));
-    renderSecrets(selectedSecrets().filter(id => allowed.has(id)));
+  field.secretSearch.addEventListener("input", renderSecrets);
+  byId("webhooksSenderTelegram").addEventListener("click", () => { field.senderFields.value = telegramSenderFields.join(", "); markDirty(); });
+  field.project.addEventListener("change", async () => {
+    const allowed = new Set(availableSecrets().map((account) => account.id));
+    selectedSecretIds = new Set([...selectedSecretIds].filter((id) => allowed.has(id)));
+    renderSecrets();
     if (field.kind.value === "conversation") syncKind();
+    try {
+      const project = await api(`/api/projects/${encodeURIComponent(field.project.value)}`);
+      await tagPicker.setWorkspace(project.project.type ?? "personal");
+      tagPicker.setValue({ managedTagIds: [], manualTags: [] });
+    } catch (error) { say(errorText(error), "error"); }
   });
-  field.save.addEventListener("click", (event) => void submit(event));
+  field.save.addEventListener("click", () => void submit());
   // Enter in the name would otherwise submit the whole Settings form.
   field.name.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); field.save.click(); } });
 }
 
 export async function loadWebhooks() {
   wire();
-  closeResources();
   if (saving) return;
-  closeForm();
-  showStatus(status, "");
+  closeDetail();
+  say("");
   try {
     const { owners } = await api("/api/webhooks/owners");
     const selected = field.owner.value;
@@ -678,5 +589,5 @@ export async function loadWebhooks() {
       field.owner.value = selected;
     }
     await loadOwner();
-  } catch (error) { showStatus(status, errorText(error), "error"); }
+  } catch (error) { say(errorText(error), "error"); }
 }

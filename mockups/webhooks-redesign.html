@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Webhooks redesign · mockup</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#08090b; --panel:#101215; --header:#171a1e; --surface:#191c20; --field:#212529;
+    --line:rgba(255,255,255,.075); --line-strong:rgba(255,255,255,.17);
+    --text:#ebeced; --muted:#94999e; --heading:#f1f4f3;
+    --btn-bg:#24272b; --btn-border:rgba(255,255,255,.13); --btn-hover:#2c3035;
+    --accent:#37cfab; --accent-soft:color-mix(in srgb, var(--accent) 14%, transparent);
+    --claude:#b39bff; --amber:#d0a63c; --danger:#e0564e; --live:#3cb474;
+    --radius-card:12px; --radius-ctl:10px;
+    --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Inter",sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 var(--sans); -webkit-font-smoothing:antialiased; }
+  button, input, select, textarea { font:inherit; color:inherit; }
+  button { cursor:pointer; }
+  :focus-visible { outline:2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset:2px; }
+
+  /* mockup chrome */
+  .page { max-width:1320px; margin:0 auto; padding:24px 28px 48px; }
+  .eyebrow { margin:0 0 6px; color:var(--accent); font:700 11px/1.2 var(--mono); letter-spacing:.14em; text-transform:uppercase; }
+  h1 { margin:0 0 6px; font-size:26px; letter-spacing:-.02em; color:var(--heading); font-weight:650; }
+  .lede { margin:0 0 18px; color:var(--muted); max-width:900px; }
+  .switcher { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .switcher button { border:1px solid var(--line-strong); background:transparent; color:var(--muted); padding:6px 12px; border-radius:999px; font-size:13px; }
+  .switcher button[aria-pressed="true"] { background:var(--accent-soft); color:var(--accent); border-color:color-mix(in srgb, var(--accent) 45%, transparent); }
+  .note { border:1px dashed color-mix(in srgb, var(--amber) 55%, transparent); background:color-mix(in srgb, var(--amber) 7%, transparent); color:#e9d9a8; border-radius:10px; padding:10px 14px; margin-bottom:16px; font-size:13px; }
+  .note b { color:var(--amber); }
+  .note ul { margin:4px 0 0; padding-left:18px; }
+
+  /* settings dialog shell */
+  .settings { display:grid; grid-template-columns:210px 1fr; grid-template-rows:1fr auto; height:760px; background:var(--panel); border:1px solid var(--line-strong); border-radius:16px; overflow:hidden; box-shadow:0 20px 56px rgba(0,0,0,.55); }
+  .nav { grid-row:1 / 3; background:var(--header); border-right:1px solid var(--line); padding:16px 10px; }
+  .nav h2 { margin:0 8px 12px; font-size:16px; color:var(--heading); }
+  .nav a { display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:8px; color:var(--text); text-decoration:none; font-size:13.5px; }
+  .nav a.on { background:var(--btn-bg); }
+  .tile { width:24px; height:24px; border-radius:7px; display:grid; place-items:center; font-size:13px; background:var(--tile); }
+  .content { overflow:hidden; display:flex; flex-direction:column; min-height:0; }
+  .footer { grid-column:2; display:flex; justify-content:flex-end; gap:10px; padding:12px 18px; border-top:1px solid var(--line); }
+
+  /* controls */
+  .btn { border:1px solid var(--btn-border); background:var(--btn-bg); padding:7px 13px; border-radius:var(--radius-ctl); font-size:13px; white-space:nowrap; }
+  .btn:hover { background:var(--btn-hover); }
+  .btn.primary { background:var(--accent); color:#06231c; border-color:transparent; font-weight:600; }
+  .btn.ghost { background:transparent; }
+  .btn.danger { color:var(--danger); }
+  .btn.icon { padding:6px 9px; }
+  .btn.sm { padding:4px 10px; font-size:12.5px; }
+  .field { display:flex; flex-direction:column; gap:5px; font-size:12.5px; color:var(--muted); }
+  .field > span:first-child { font-weight:600; color:var(--text); font-size:13px; }
+  input.in, select.in, textarea.in { background:var(--field); border:1px solid var(--line); border-radius:var(--radius-ctl); padding:8px 11px; font-size:13.5px; width:100%; }
+  textarea.in { resize:vertical; }
+  .hint { color:var(--muted); font-size:12.5px; margin:0; }
+  .pill { display:inline-flex; align-items:center; gap:5px; font:600 11px/1 var(--mono); padding:4px 8px; border-radius:999px; border:1px solid var(--line-strong); color:var(--muted); white-space:nowrap; }
+  .pill.on { color:var(--live); border-color:color-mix(in srgb, var(--live) 45%, transparent); }
+  .pill.claude { color:var(--claude); border-color:color-mix(in srgb, var(--claude) 40%, transparent); }
+  .pill.accent { color:var(--accent); border-color:color-mix(in srgb, var(--accent) 40%, transparent); }
+  .pill.amber { color:var(--amber); border-color:color-mix(in srgb, var(--amber) 40%, transparent); }
+  .switch { position:relative; width:34px; height:20px; flex:none; border-radius:999px; background:var(--field); border:1px solid var(--line-strong); }
+  .switch::after { content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:var(--muted); transition:.15s; }
+  .switch[aria-checked="true"] { background:color-mix(in srgb, var(--accent) 35%, var(--field)); border-color:color-mix(in srgb, var(--accent) 55%, transparent); }
+  .switch[aria-checked="true"]::after { left:16px; background:var(--accent); }
+  .seg { display:inline-flex; gap:2px; padding:3px; background:var(--field); border:1px solid var(--line); border-radius:9px; }
+  .seg button { border:0; background:transparent; color:var(--muted); padding:5px 12px; border-radius:7px; font-size:12.5px; }
+  .seg button[aria-pressed="true"] { background:var(--btn-bg); color:var(--text); box-shadow:inset 0 0 0 1px var(--btn-border); }
+
+  /* list view */
+  .pane-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 22px 12px; border-bottom:1px solid var(--line); }
+  .pane-head h3 { margin:0; font-size:18px; color:var(--heading); }
+  .pane-head .hint { margin-top:2px; }
+  .head-actions { display:flex; gap:8px; align-items:center; }
+  .owner { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); }
+  .owner select { width:auto; padding:6px 10px; font-size:13px; }
+  .rows { padding:10px 14px; display:flex; flex-direction:column; gap:6px; flex:1; }
+  .hook { display:grid; grid-template-columns:1fr auto; gap:14px; align-items:center; padding:12px 14px; border:1px solid var(--line); background:var(--surface); border-radius:var(--radius-card); cursor:pointer; }
+  .hook:hover { border-color:var(--line-strong); }
+  .hook-title { display:flex; align-items:center; gap:8px; }
+  .hook-title strong { font-size:14.5px; }
+  .meta { color:var(--muted); font-size:12.5px; margin-top:2px; }
+  .chips { display:flex; gap:6px; margin-top:7px; flex-wrap:wrap; }
+  .pager { display:flex; justify-content:space-between; align-items:center; padding:8px 22px 12px; color:var(--muted); font-size:12.5px; }
+  .menu { position:relative; }
+  .menu-pop { position:absolute; right:0; top:calc(100% + 4px); z-index:5; min-width:180px; background:var(--header); border:1px solid var(--line-strong); border-radius:10px; padding:4px; box-shadow:0 6px 20px rgba(0,0,0,.4); }
+  .menu-pop button { display:block; width:100%; text-align:left; border:0; background:transparent; padding:7px 10px; border-radius:7px; font-size:13px; }
+  .menu-pop button:hover { background:var(--btn-bg); }
+
+  /* detail view */
+  .detail-head { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 22px 0; }
+  .crumb { display:flex; align-items:center; gap:10px; min-width:0; }
+  .crumb a { color:var(--muted); text-decoration:none; font-size:13px; }
+  .crumb a:hover { color:var(--text); }
+  .crumb h3 { margin:0; font-size:18px; color:var(--heading); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tabs { display:flex; gap:2px; padding:10px 18px 0; border-bottom:1px solid var(--line); }
+  .tabs button { border:0; background:transparent; color:var(--muted); padding:9px 12px 10px; font-size:13.5px; border-bottom:2px solid transparent; margin-bottom:-1px; display:flex; align-items:center; gap:7px; }
+  .tabs button[aria-selected="true"] { color:var(--text); border-bottom-color:var(--accent); }
+  .count { font:600 10.5px/1 var(--mono); padding:3px 6px; border-radius:999px; background:var(--field); color:var(--muted); }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--live); }
+  .tab-body { flex:1; min-height:0; overflow:hidden; padding:18px 22px; display:flex; flex-direction:column; gap:14px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; }
+  .grid3 { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px 16px; }
+  .section-title { margin:0; font-size:13px; font-weight:650; color:var(--heading); }
+  .savebar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 22px; border-top:1px solid var(--line); background:color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+  .savebar .hint { color:var(--text); }
+  .tags { display:flex; gap:6px; flex-wrap:wrap; align-items:center; background:var(--field); border:1px solid var(--line); border-radius:var(--radius-ctl); padding:6px 8px; }
+  .tag { display:inline-flex; gap:6px; align-items:center; padding:3px 9px; border-radius:999px; background:var(--btn-bg); border:1px solid var(--btn-border); font-size:12.5px; }
+  .tags input { border:0; background:transparent; flex:1; min-width:120px; padding:3px; font-size:13px; }
+  .toggle-row { display:flex; gap:12px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line); border-radius:var(--radius-card); background:var(--surface); }
+  .toggle-row b { display:block; font-size:13.5px; font-weight:600; }
+  .toggle-row .hint { margin-top:1px; }
+  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; min-height:0; flex:1; }
+  .col { display:flex; flex-direction:column; gap:8px; min-height:0; }
+  .acct { display:flex; align-items:center; gap:10px; padding:7px 10px; border-bottom:1px solid var(--line); font-size:13px; }
+  .acct:last-child { border-bottom:0; }
+  .acct small { color:var(--muted); margin-left:auto; font-family:var(--mono); font-size:11px; }
+  .box { border:1px solid var(--line); border-radius:var(--radius-card); background:var(--surface); }
+
+  /* files */
+  .drop { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border:1.5px dashed var(--line-strong); border-radius:var(--radius-card); background:color-mix(in srgb, var(--accent) 3%, transparent); }
+  .drop b { font-size:13.5px; }
+  .staged { border:1px solid color-mix(in srgb, var(--accent) 40%, transparent); background:color-mix(in srgb, var(--accent) 5%, var(--surface)); border-radius:var(--radius-card); padding:12px 14px; display:grid; grid-template-columns:auto 1fr; gap:10px 14px; align-items:start; }
+  .file-ico { width:34px; height:34px; border-radius:9px; display:grid; place-items:center; background:var(--field); font:700 10px var(--mono); color:var(--muted); flex:none; }
+  .file-ico.tool { color:var(--claude); }
+  .staged-fields { display:grid; grid-template-columns:150px 1fr; gap:8px 12px; align-items:center; }
+  .staged-fields .seg { justify-self:start; }
+  .staged-actions { grid-column:2; display:flex; gap:8px; justify-content:flex-end; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-size:11.5px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; padding:6px 10px; border-bottom:1px solid var(--line); }
+  td { padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:middle; font-size:13px; }
+  tr:last-child td { border-bottom:0; }
+  .name-cell { display:flex; gap:10px; align-items:center; }
+  .name-cell small { display:block; color:var(--muted); font-size:11.5px; }
+  .inline-edit { display:block; width:100%; border:1px solid transparent; background:transparent; border-radius:8px; padding:5px 8px; font-size:13px; }
+  .inline-edit:hover { border-color:var(--line); }
+  .inline-edit:focus { background:var(--field); border-color:var(--line-strong); }
+  .run { font-family:var(--mono); font-size:11.5px; color:var(--claude); padding:0 8px; }
+  .row-actions { display:flex; gap:4px; justify-content:flex-end; }
+
+  /* skills */
+  .skill { display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center; padding:11px 14px; border-bottom:1px solid var(--line); }
+  .skill:last-child { border-bottom:0; }
+  .skill-ico { width:34px; height:34px; border-radius:9px; display:grid; place-items:center; background:color-mix(in srgb, var(--claude) 16%, var(--field)); font-size:15px; }
+  .add-panel { border:1px solid var(--line-strong); border-radius:var(--radius-card); background:var(--surface); padding:14px; display:flex; flex-direction:column; gap:12px; }
+  .pick { display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; background:var(--panel); }
+  .pick .grow { flex:1; min-width:0; }
+  .pick .grow div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  /* memory */
+  .mem-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .editor { flex:1; min-height:0; display:flex; flex-direction:column; border:1px solid var(--line); border-radius:var(--radius-card); overflow:hidden; }
+  .editor textarea { flex:1; border:0; background:var(--field); padding:14px 16px; font:12.5px/1.6 var(--mono); resize:none; }
+  .preview { flex:1; overflow:hidden; padding:14px 18px; background:var(--surface); font-size:13.5px; }
+  .preview h4 { margin:0 0 6px; font-size:14px; } .preview h5 { margin:12px 0 4px; font-size:13px; color:var(--accent); }
+  .preview ul { margin:0; padding-left:18px; }
+  .editor-foot { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-top:1px solid var(--line); background:var(--panel); font-size:12px; color:var(--muted); }
+  .empty { flex:1; display:grid; place-items:center; text-align:center; border:1px dashed var(--line-strong); border-radius:var(--radius-card); color:var(--muted); padding:30px; }
+  .empty b { display:block; color:var(--text); font-size:15px; margin-bottom:4px; }
+
+  .call { display:grid; grid-template-columns:110px 1fr auto auto; gap:14px; align-items:center; padding:9px 12px; border-bottom:1px solid var(--line); font-size:13px; }
+  .call:last-child { border-bottom:0; }
+  .muted { color:var(--muted); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="eyebrow">Mockup · Settings → Webhooks</p>
+  <h1>Webhooks redesign</h1>
+  <p class="lede">Clickable. Use the buttons below or click inside the frame: open a row, switch tabs, try “Browse…”, “Add skill” and the memory switch. Sample data comes from your “dba only vms” webhook.</p>
+
+  <div class="switcher" id="switcher">
+    <button data-go="list">1 · Webhook list</button>
+    <button data-go="setup">2 · Setup</button>
+    <button data-go="access">3 · Access</button>
+    <button data-go="files">4 · Files &amp; tools</button>
+    <button data-go="skills">5 · Skills</button>
+    <button data-go="memory">6 · Memory</button>
+    <button data-go="new">7 · New webhook with files</button>
+  </div>
+  <div class="note" id="note"></div>
+
+  <div class="settings">
+    <nav class="nav" aria-label="Settings">
+      <h2>Settings</h2>
+      <a href="#"><span class="tile" style="--tile:#3b82f6">⚙︎</span>General</a>
+      <a href="#"><span class="tile" style="--tile:#8b5cf6">✦</span>Agents</a>
+      <a href="#"><span class="tile" style="--tile:#f59e0b">🔑</span>Secrets</a>
+      <a href="#"><span class="tile" style="--tile:#10b981">◎</span>Browser</a>
+      <a href="#"><span class="tile" style="--tile:#0ea5e9">🔔</span>Notifications</a>
+      <a href="#"><span class="tile" style="--tile:#64748b">⏱</span>Schedules</a>
+      <a href="#" class="on"><span class="tile" style="--tile:#ec4899">🪝</span>Webhooks</a>
+      <a href="#"><span class="tile" style="--tile:#14b8a6">▤</span>Resources</a>
+    </nav>
+
+    <div class="content">
+      <!-- ============ LIST ============ -->
+      <section id="viewList" style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <div class="pane-head">
+          <div>
+            <h3>Webhooks</h3>
+            <p class="hint">A secret address another service can call. Each call starts or continues a conversation. Changes save as you make them.</p>
+          </div>
+          <div class="head-actions">
+            <label class="owner">Owner
+              <select class="in"><option>ai-kms-test (this machine)</option><option>Homeserver</option></select>
+            </label>
+            <button class="btn primary" data-go="new">+ New webhook</button>
+          </div>
+        </div>
+        <div class="rows">
+          <div class="hook" data-go="setup">
+            <div>
+              <div class="hook-title"><strong>dba only vms</strong><span class="pill on">● On</span></div>
+              <div class="meta">New conversation in <b>Contigos</b> · Claude · Opus 5.5 · only listed senders</div>
+              <div class="chips"><span class="pill accent">2 files &amp; tools</span><span class="pill claude">1 skill</span><span class="pill amber">Memory on</span><span class="pill">12 calls · last 2 h ago</span></div>
+            </div>
+            <div class="head-actions" onclick="event.stopPropagation()">
+              <button class="btn sm" data-go="calls">Calls</button>
+              <button class="btn sm" data-go="setup">Open</button>
+              <div class="menu"><button class="btn sm icon" data-menu>⋯</button>
+                <div class="menu-pop" hidden><button>Turn off</button><button>New address…</button><button style="color:var(--danger)">Delete…</button></div>
+              </div>
+            </div>
+          </div>
+          <div class="hook" data-go="setup">
+            <div>
+              <div class="hook-title"><strong>GitHub issues</strong><span class="pill on">● On</span></div>
+              <div class="meta">New conversation in <b>Joint Bob</b> · Claude · Sonnet 5.5 · anyone with the address</div>
+              <div class="chips"><span class="pill">No files</span><span class="pill">No skills</span><span class="pill">Memory off</span><span class="pill">48 calls · last yesterday</span></div>
+            </div>
+            <div class="head-actions" onclick="event.stopPropagation()">
+              <button class="btn sm" data-go="calls">Calls</button>
+              <button class="btn sm" data-go="setup">Open</button>
+              <div class="menu"><button class="btn sm icon" data-menu>⋯</button>
+                <div class="menu-pop" hidden><button>Turn off</button><button>New address…</button><button style="color:var(--danger)">Delete…</button></div>
+              </div>
+            </div>
+          </div>
+          <div class="hook" data-go="setup">
+            <div>
+              <div class="hook-title"><strong>Telegram bot</strong><span class="pill">○ Off</span></div>
+              <div class="meta">Adds to “Daily notes” · Pi · accepts attachments</div>
+              <div class="chips"><span class="pill accent">1 file</span><span class="pill">No skills</span><span class="pill amber">Memory on</span><span class="pill">No calls yet</span></div>
+            </div>
+            <div class="head-actions" onclick="event.stopPropagation()">
+              <button class="btn sm" data-go="calls">Calls</button>
+              <button class="btn sm" data-go="setup">Open</button>
+              <div class="menu"><button class="btn sm icon" data-menu>⋯</button>
+                <div class="menu-pop" hidden><button>Turn on</button><button>New address…</button><button style="color:var(--danger)">Delete…</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="pager"><span>1–3 of 3</span><span><button class="btn sm ghost" disabled>‹ Previous</button> <button class="btn sm ghost" disabled>Next ›</button></span></div>
+      </section>
+
+      <!-- ============ DETAIL ============ -->
+      <section id="viewDetail" style="display:flex;flex-direction:column;flex:1;min-height:0" hidden>
+        <div class="detail-head">
+          <div class="crumb">
+            <a href="#" data-go="list">‹ Webhooks</a><span class="muted">/</span>
+            <h3 id="detailTitle">dba only vms</h3>
+            <span class="pill on" id="detailState">● On</span>
+          </div>
+          <div class="head-actions" id="detailActions">
+            <span class="hint">Owner: ai-kms-test</span>
+            <button class="btn sm">Turn off</button>
+            <div class="menu"><button class="btn sm icon" data-menu>⋯</button>
+              <div class="menu-pop" hidden><button>New address…</button><button style="color:var(--danger)">Delete webhook…</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="tabs" role="tablist" id="tabs">
+          <button role="tab" data-tab="setup">Setup</button>
+          <button role="tab" data-tab="access">Access</button>
+          <button role="tab" data-tab="files">Files &amp; tools <span class="count" id="filesCount">2</span></button>
+          <button role="tab" data-tab="skills">Skills <span class="count" id="skillsCount">1</span></button>
+          <button role="tab" data-tab="memory">Memory <span class="dot" id="memDot"></span></button>
+          <button role="tab" data-tab="calls" id="callsTab">Calls <span class="count">12</span></button>
+        </div>
+
+        <!-- SETUP -->
+        <div class="tab-body" data-panel="setup">
+          <div class="grid2">
+            <label class="field"><span>Name</span><input class="in" id="nameInput" value="dba only vms"></label>
+            <label class="field"><span>Each call</span>
+              <select class="in"><option>Starts a new conversation</option><option>Adds a message to one conversation</option></select></label>
+          </div>
+          <div class="grid3">
+            <label class="field"><span>Project</span><select class="in"><option>Contigos</option></select></label>
+            <label class="field"><span>Agent</span><select class="in"><option>Claude · Opus 5.5</option></select></label>
+            <label class="field"><span>Effort</span><select class="in"><option>High</option></select></label>
+          </div>
+          <label class="field"><span>Instructions</span>
+            <textarea class="in" rows="4">You are the DBA assistant for customer VMs. Use customer-map.csv to find the customer's resources before answering. Never run destructive commands.</textarea>
+            Goes ahead of the call's content in every message.</label>
+          <div class="grid2">
+            <label class="field"><span>Conversation title</span><input class="in" value="dba-[CUSTOMER]" placeholder="pr-[PR_REVIEW]">
+              Optional. The agent fills [placeholders]; blank uses the name.</label>
+            <div class="field"><span>Tags</span>
+              <div class="tags"><span class="tag">dba ×</span><span class="tag">customers ×</span><input placeholder="Add tag…"></div></div>
+          </div>
+        </div>
+
+        <!-- ACCESS -->
+        <div class="tab-body" data-panel="access" hidden>
+          <div class="two-col">
+            <div class="col">
+              <p class="section-title">Calls</p>
+              <div class="toggle-row"><span class="switch" role="switch" aria-checked="true"></span><div><b>Accept calls</b><p class="hint">Off rejects every call without starting anything.</p></div></div>
+              <div class="toggle-row"><span class="switch" role="switch" aria-checked="false"></span><div><b>Accept attachments</b><p class="hint">Files sent with a call are saved and passed to the agent.</p></div></div>
+              <div class="toggle-row"><span class="switch" role="switch" aria-checked="false"></span><div><b>Count toward Needs review</b><p class="hint">Off keeps these conversations out of the review badge until you reply.</p></div></div>
+              <div class="toggle-row"><span class="switch" role="switch" aria-checked="true"></span><div style="flex:1"><b>Only listed senders</b><p class="hint">Reject calls whose sender field doesn't match.</p>
+                <div class="grid2" style="margin-top:8px">
+                  <label class="field"><span>Sender field</span><input class="in" value="message.from.id"></label>
+                  <label class="field"><span>Allowed senders</span><input class="in" value="123456789 Ilia, 555123 Dana"></label>
+                </div></div></div>
+            </div>
+            <div class="col">
+              <div class="mem-bar"><p class="section-title">Secret accounts</p><span class="hint">2 selected</span></div>
+              <p class="hint">Project and workspace secrets come automatically. Picked accounts are attached to each conversation this webhook reaches.</p>
+              <input class="in" placeholder="Search accounts…">
+              <div class="box">
+                <label class="acct"><input type="checkbox" checked> aws “agentleauge”<small>AWS</small></label>
+                <label class="acct"><input type="checkbox"> github “iliagerman”<small>GITHUB</small></label>
+                <label class="acct"><input type="checkbox" checked> Contigos Dev<small>WEBSITE</small></label>
+                <label class="acct"><input type="checkbox"> tavily<small>CUSTOM</small></label>
+                <label class="acct"><input type="checkbox"> ElevnLabs<small>CUSTOM</small></label>
+              </div>
+              <div class="pager" style="padding:0"><span>1–5 of 9</span><span><button class="btn sm ghost" disabled>‹</button> <button class="btn sm ghost">›</button></span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- FILES & TOOLS -->
+        <div class="tab-body" data-panel="files" hidden>
+          <p class="hint" id="filesHint">The agent sees each file's name, path and description, and opens it when needed. Tools are stored as files; the agent runs them only as your notes describe.</p>
+          <div class="drop">
+            <div><b>Drop files here</b> <span class="muted">or</span> <button class="btn sm" id="browseBtn">Browse…</button>
+              <div class="hint">CSV, JSON, Markdown, Python scripts… up to 4 MiB each</div></div>
+            <span class="hint">Each file needs a short description before it's added.</span>
+          </div>
+          <div id="stagedList"></div>
+          <div class="box">
+            <table>
+              <thead><tr><th style="width:30%">Name</th><th>What the agent should know</th><th style="width:96px"></th></tr></thead>
+              <tbody id="fileRows">
+                <tr>
+                  <td><div class="name-cell"><span class="file-ico">CSV</span><div>customer-map.csv<small>File · 18 KB</small></div></div></td>
+                  <td><input class="inline-edit" value="Mapping between customers and their VM resources (customer id → VM names, region, DB engine)"></td>
+                  <td><div class="row-actions"><button class="btn sm icon" title="Download">⤓</button><button class="btn sm icon danger" title="Delete">🗑</button></div></td>
+                </tr>
+                <tr>
+                  <td><div class="name-cell"><span class="file-ico tool">PY</span><div>vm_health.py<small>Tool · 4 KB</small></div></div></td>
+                  <td><input class="inline-edit" value="Checks CPU, disk and replication lag for one VM">
+                    <div class="run">How to run: python3 vm_health.py --vm &lt;name&gt;</div></td>
+                  <td><div class="row-actions"><button class="btn sm icon" title="Download">⤓</button><button class="btn sm icon danger" title="Delete">🗑</button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="hint" id="savedHint">Descriptions save when you leave the field. ✓ Saved</p>
+        </div>
+
+        <!-- SKILLS -->
+        <div class="tab-body" data-panel="skills" hidden>
+          <div class="mem-bar">
+            <p class="hint">Skills only this webhook's agent can use. They are not added anywhere else.</p>
+            <button class="btn primary sm" id="addSkillBtn">+ Add skill</button>
+          </div>
+          <div class="add-panel" id="addSkillPanel" hidden>
+            <div class="mem-bar">
+              <div class="seg" id="skillSeg">
+                <button data-method="machine" aria-pressed="true">From this machine</button>
+                <button data-method="upload" aria-pressed="false">Upload a folder</button>
+                <button data-method="git" aria-pressed="false">From Git</button>
+              </div>
+              <button class="btn ghost sm" id="closeSkillPanel">Close</button>
+            </div>
+            <div data-method-panel="machine">
+              <input class="in" placeholder="Search skills on ai-kms-test…" style="margin-bottom:8px">
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div class="pick"><div class="grow"><div><b>pdf</b> <span class="pill">claude</span></div><div class="hint">Extract text and tables, fill PDF forms</div></div><button class="btn sm">Add</button></div>
+                <div class="pick"><div class="grow"><div><b>xlsx</b> <span class="pill">claude</span></div><div class="hint">Read, edit and create spreadsheets</div></div><button class="btn sm">Add</button></div>
+                <div class="pick"><div class="grow"><div><b>tavily-search</b> <span class="pill">pi</span></div><div class="hint">AI-optimized web search</div></div><button class="btn sm">Add</button></div>
+              </div>
+              <p class="hint" style="margin-top:6px">When this machine has no skills: “No skills on ai-kms-test. Upload a folder or use Git.”</p>
+            </div>
+            <div data-method-panel="upload" hidden>
+              <div class="drop"><div><b>Drop a skill folder</b> <span class="muted">or</span> <button class="btn sm">Choose folder…</button><div class="hint">The folder must contain SKILL.md. Files are stored as-is and never run on upload.</div></div></div>
+            </div>
+            <div data-method-panel="git" hidden>
+              <div style="display:grid;grid-template-columns:1fr 140px auto;gap:8px;align-items:end">
+                <label class="field"><span>Repository URL</span><input class="in" value="https://github.com/acme/dba-skills.git"></label>
+                <label class="field"><span>Branch or tag</span><input class="in" placeholder="main"></label>
+                <button class="btn">Find skills</button>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
+                <div class="pick"><div class="grow"><div><b>pg-slow-queries</b> <span class="pill">skills/pg-slow-queries</span></div><div class="hint">Find and explain slow PostgreSQL queries</div></div><button class="btn sm">Add</button></div>
+                <div class="pick"><div class="grow"><div><b>mysql-backup-check</b> <span class="pill">skills/mysql-backup</span></div><div class="hint">Verify last backup age and restore test</div></div><span class="pill on">Added</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="box" id="skillList">
+            <div class="skill">
+              <span class="skill-ico">✦</span>
+              <div><b>mysql-backup-check</b> <span class="pill">Git · acme/dba-skills @ a1b2c3d</span>
+                <div class="hint">Verify last backup age and restore test</div></div>
+              <div class="row-actions"><button class="btn sm">Update</button><button class="btn sm danger">Remove</button></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MEMORY -->
+        <div class="tab-body" data-panel="memory" hidden>
+          <div class="toggle-row">
+            <span class="switch" role="switch" aria-checked="true" id="memSwitch" tabindex="0"></span>
+            <div><b>Persistent memory</b><p class="hint">The agent reads this note at the start of every call and adds what it learns from feedback and problems. You can edit it here.</p></div>
+          </div>
+          <div id="memOn" style="display:flex;flex-direction:column;gap:10px;flex:1;min-height:0">
+            <div class="mem-bar">
+              <div class="seg" id="memSeg"><button data-mode="edit" aria-pressed="true">Edit</button><button data-mode="preview" aria-pressed="false">Preview</button></div>
+              <div class="head-actions">
+                <button class="btn sm">Upload .md</button>
+                <button class="btn sm">Download</button>
+                <button class="btn sm danger">Clear…</button>
+              </div>
+            </div>
+            <div class="editor">
+              <textarea id="memText" spellcheck="false"># dba only vms — memory
+
+## Customers
+- ACME uses MySQL 8 on vm-acme-db1; replica is vm-acme-db2.
+- Globex asked to be called by account id, not name.
+
+## Lessons
+- 2026-10-27: customer-map.csv lists retired VMs too; check the `active` column first.
+- Replication lag over 30 s on vm-acme-db2 is normal during the nightly backup (02:00–02:40 UTC).</textarea>
+              <div class="preview" id="memPreview" hidden>
+                <h4>dba only vms — memory</h4>
+                <h5>Customers</h5><ul><li>ACME uses MySQL 8 on vm-acme-db1; replica is vm-acme-db2.</li><li>Globex asked to be called by account id, not name.</li></ul>
+                <h5>Lessons</h5><ul><li>2026-10-27: customer-map.csv lists retired VMs too; check the <code>active</code> column first.</li><li>Replication lag over 30 s on vm-acme-db2 is normal during the nightly backup (02:00–02:40 UTC).</li></ul>
+              </div>
+              <div class="editor-foot"><span>Last changed by the agent · 2 h ago · 1.2 KB of 200 KB</span><span><button class="btn sm ghost">Discard</button> <button class="btn sm primary">Save memory</button></span></div>
+            </div>
+          </div>
+          <div class="empty" id="memOff" hidden><div><b>Memory is off</b>Each call starts with no notes from earlier calls. Turn it on to let the agent keep what it learns.</div></div>
+        </div>
+
+        <!-- CALLS -->
+        <div class="tab-body" data-panel="calls" hidden>
+          <div class="box">
+            <div class="call"><span class="muted">Today 11:42</span><span>“VM vm-acme-db2 replication lag alert”</span><span class="pill on">succeeded</span><button class="btn sm">Open conversation</button></div>
+            <div class="call"><span class="muted">Today 09:10</span><span>“Globex disk usage 91%”</span><span class="pill on">succeeded</span><button class="btn sm">Open conversation</button></div>
+            <div class="call"><span class="muted">Yesterday</span><span>“Unknown sender 777”</span><span class="pill" style="color:var(--danger)">rejected</span><span></span></div>
+          </div>
+          <div class="pager" style="padding:0"><span>1–3 of 12</span><span><button class="btn sm ghost" disabled>‹ Previous</button> <button class="btn sm ghost">Next ›</button></span></div>
+        </div>
+
+        <div class="savebar" id="savebar" hidden>
+          <span class="hint" id="savebarText">Unsaved changes to Setup</span>
+          <span class="head-actions"><button class="btn ghost sm">Discard</button><button class="btn primary sm" id="saveBtn">Save changes</button></span>
+        </div>
+      </section>
+    </div>
+
+    <div class="footer"><button class="btn ghost">Close</button><button class="btn" disabled title="Webhooks save on their own">Save settings</button></div>
+  </div>
+</div>
+
+<script>
+const notes = {
+  list: `<b>Webhook list.</b><ul><li>Owner moves next to <i>New webhook</i>; the long owner paragraph becomes a tooltip.</li><li>Each row shows what the webhook carries: files, skills, memory, calls.</li><li>Click a row (or <i>Open</i>) to open it. <i>Turn off</i>, <i>New address</i> and <i>Delete</i> move into ⋯.</li><li>The separate <i>Edit</i> form and <i>Resources</i> page are gone: both live in one webhook page.</li></ul>`,
+  setup: `<b>One page per webhook, with tabs.</b><ul><li>Setup holds what the agent is and where calls go, in a compact grid instead of one long column.</li><li>A save bar appears at the bottom only when something here or in Access changed (type in Name to see it).</li></ul>`,
+  access: `<b>Access.</b><ul><li>On/off options become switches with one-line explanations.</li><li>Secret accounts get search and paging, so the list fits and is never cut at the bottom.</li></ul>`,
+  files: `<b>Files &amp; tools.</b><ul><li>One drop zone. Each picked file gets its <i>own</i> type and description before it's added (try <i>Browse…</i>). Tools also get “How to run”.</li><li>The list shows each description once and edits it in place; no <i>Save details</i> button and no repeated text.</li><li>Download and delete are icons at the row's end.</li></ul>`,
+  skills: `<b>Skills.</b><ul><li>Attached skills first, with their source (machine, folder, Git @ commit) and Update/Remove.</li><li><i>Add skill</i> opens one panel; you pick one source at a time instead of seeing all three forms at once.</li></ul>`,
+  memory: `<b>Memory.</b><ul><li>One switch. When off, the editor is replaced by a short explanation (try the switch).</li><li>When on: Edit/Preview, when the agent last changed it, size used, and one row of actions.</li><li>“Reload” goes away; the editor shows a notice if the agent changes the note while you edit.</li></ul>`,
+  calls: `<b>Calls.</b> The call history moves into the webhook page as its own tab, paged.`,
+  new: `<b>New webhook.</b><ul><li>Same page and tabs as an existing webhook, so you can add files, skills and memory before it exists.</li><li>Everything uploads when you press <i>Create webhook</i>; the address appears right after.</li><li>The Calls tab is hidden until the webhook exists.</li></ul>`,
+};
+
+let view = "list", tab = "setup", creating = false;
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+function render() {
+  $("#viewList").hidden = view !== "list";
+  $("#viewDetail").hidden = view !== "detail";
+  $$("#tabs [data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  $$("[data-panel]").forEach(p => p.hidden = p.dataset.panel !== tab);
+  $("#detailTitle").textContent = creating ? "New webhook" : "dba only vms";
+  $("#detailState").hidden = creating;
+  $("#detailActions").hidden = creating;
+  $("#callsTab").hidden = creating;
+  $("#nameInput").placeholder = "GitHub issues";
+  $("#filesCount").textContent = creating ? "1" : "2";
+  $("#skillsCount").textContent = creating ? "0" : "1";
+  $("#skillList").hidden = creating;
+  $("#fileRows").closest(".box").hidden = creating;
+  $("#savedHint").hidden = creating;
+  $("#memDot").hidden = creating || $("#memSwitch").getAttribute("aria-checked") !== "true";
+  $("#filesHint").textContent = creating
+    ? "Files you add now upload when you press Create webhook."
+    : "The agent sees each file's name, path and description, and opens it when needed. Tools are stored as files; the agent runs them only as your notes describe.";
+  $("#savebar").hidden = !(creating || ["setup", "access"].includes(tab) && dirty);
+  $("#savebarText").textContent = creating ? "Not created yet · files, skills and memory upload with it" : "Unsaved changes";
+  $("#saveBtn").textContent = creating ? "Create webhook" : "Save changes";
+  if (creating && !$("#stagedList").children.length) addStaged("customer-map.csv", "18 KB", "CSV", "Mapping between customers and their VM resources");
+  if (!creating) $("#stagedList").replaceChildren();
+  const key = view === "list" ? "list" : creating ? "new" : tab;
+  $("#note").innerHTML = notes[key];
+  $$("#switcher button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.go === (creating ? "new" : view === "list" ? "list" : tab))));
+}
+
+let dirty = false;
+$("#nameInput").addEventListener("input", () => { dirty = true; render(); });
+
+function go(target) {
+  $$(".menu-pop").forEach(m => m.hidden = true);
+  if (target === "list") { view = "list"; creating = false; }
+  else if (target === "new") { view = "detail"; creating = true; tab = "files"; }
+  else { view = "detail"; if (creating) { creating = false; dirty = false; } tab = target; }
+  $("#nameInput").value = creating ? "" : "dba only vms";
+  render();
+}
+document.addEventListener("click", e => {
+  const menu = e.target.closest("[data-menu]");
+  if (menu) { const pop = menu.nextElementSibling; const open = pop.hidden; $$(".menu-pop").forEach(m => m.hidden = true); pop.hidden = !open; e.stopPropagation(); return; }
+  if (!e.target.closest(".menu-pop")) $$(".menu-pop").forEach(m => m.hidden = true);
+  const goEl = e.target.closest("[data-go]");
+  if (goEl) { e.preventDefault(); go(goEl.dataset.go); return; }
+  const tabEl = e.target.closest("[data-tab]");
+  if (tabEl) { tab = tabEl.dataset.tab; render(); }
+});
+$$(".toggle-row .switch").forEach(s => s.addEventListener("click", () => {
+  s.setAttribute("aria-checked", String(s.getAttribute("aria-checked") !== "true"));
+  if (s.id === "memSwitch") {
+    const on = s.getAttribute("aria-checked") === "true";
+    $("#memOn").hidden = !on; $("#memOff").hidden = on; $("#memDot").hidden = !on;
+  } else if (!creating) { dirty = true; render(); }
+}));
+
+function addStaged(name, size, ext, description = "") {
+  const card = document.createElement("div");
+  card.className = "staged";
+  card.style.marginBottom = "8px";
+  card.innerHTML = `
+    <span class="file-ico">${ext}</span>
+    <div class="staged-fields">
+      <div><b>${name}</b><div class="hint">${size}</div></div>
+      <div class="seg"><button aria-pressed="true" data-kind="file">Static file</button><button aria-pressed="false" data-kind="tool">Tool or script</button></div>
+      <span class="hint">Description</span>
+      <input class="in" placeholder="What is this file and when should the agent use it?" value="${description}">
+      <span class="hint" data-run hidden>How to run</span>
+      <input class="in" data-run hidden placeholder="python3 ${name} --help">
+    </div>
+    <div class="staged-actions"><button class="btn ghost sm" data-remove>Remove</button>${creating ? "" : '<button class="btn primary sm" data-add>Add file</button>'}</div>`;
+  card.querySelectorAll("[data-kind]").forEach(b => b.addEventListener("click", () => {
+    card.querySelectorAll("[data-kind]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    card.querySelectorAll("[data-run]").forEach(x => x.hidden = b.dataset.kind !== "tool");
+  }));
+  card.querySelector("[data-remove]").addEventListener("click", () => card.remove());
+  card.querySelector("[data-add]")?.addEventListener("click", () => card.remove());
+  $("#stagedList").append(card);
+}
+$("#browseBtn").addEventListener("click", () => addStaged("check_replication.py", "3 KB", "PY"));
+
+$("#addSkillBtn").addEventListener("click", () => $("#addSkillPanel").hidden = false);
+$("#closeSkillPanel").addEventListener("click", () => $("#addSkillPanel").hidden = true);
+$$("#skillSeg [data-method]").forEach(b => b.addEventListener("click", () => {
+  $$("#skillSeg [data-method]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  $$("[data-method-panel]").forEach(p => p.hidden = p.dataset.methodPanel !== b.dataset.method);
+}));
+$$("#memSeg [data-mode]").forEach(b => b.addEventListener("click", () => {
+  $$("#memSeg [data-mode]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  $("#memText").hidden = b.dataset.mode !== "edit"; $("#memPreview").hidden = b.dataset.mode !== "preview";
+}));
+render();
+</script>
+</body>
+</html>

@@ -1277,14 +1277,6 @@
         </section>
 
         <section class="settings-panel relay-panel" id="settingsPanel-webhooks" role="tabpanel" aria-labelledby="settingsTab-webhooks" tabindex="0" data-testid="settingsPanel-webhooks" hidden>
-          <div class="relay-head">
-            <p class="settings-hint">A webhook is a secret address another service can call. Each call starts a new conversation in a project, or adds a message to one conversation. Changes apply at once and do not need Save settings.</p>
-            <button class="primary compact" type="button" id="webhooksNew" data-testid="webhooks-new-button">New webhook</button>
-          </div>
-          <div class="relay-form">
-            <label>Owner<select id="webhooksOwner" data-testid="webhooks-owner-select" aria-describedby="webhooksOwnerHint"></select></label>
-          </div>
-          <p class="settings-hint" id="webhooksOwnerHint">Choose this machine or an active twin. Webhooks listed here belong only to that owner, which stores them and handles calls. No copies or automatic fallback. An existing webhook's owner cannot be changed.</p>
           <p class="settings-hint relay-inline-status" id="webhooksStatus" role="status" data-testid="webhooks-status"></p>
           <div class="relay-reveal" id="webhooksReveal" data-testid="webhooks-reveal" hidden>
             <p class="settings-hint" id="webhooksRevealTitle"></p>
@@ -1292,85 +1284,177 @@
             <p class="settings-hint">Shown once; only a fingerprint of the secret is kept. Anyone with the address can call the webhook, so keep it private. If it leaks, make a new address and the old one stops working. Send a POST with any body, up to 100 MB.</p>
             <button class="ghost compact" type="button" id="webhooksRevealDone" data-testid="webhooks-reveal-done-button">Done</button>
           </div>
-          <div class="relay-form-section" id="webhooksForm" data-testid="webhooks-form" hidden>
-            <div class="relay-form">
-              <label>Name<input id="webhooksName" name="name" maxlength="120" autocomplete="off" placeholder="GitHub issues" data-testid="webhooks-name-input" /></label>
-              <label>Send each call to
-                <select id="webhooksTargetKind" data-testid="webhooks-target-kind-select">
-                  <option value="project">A project: start a new conversation</option>
-                  <option value="conversation">A conversation: add a message</option>
-                </select>
-              </label>
-              <label>Project<select id="webhooksProject" data-testid="webhooks-project-select"></select></label>
-              <label id="webhooksConversationLabel" hidden>Conversation<select id="webhooksConversation" data-testid="webhooks-conversation-select"></select></label>
-              <label>Harness<select id="webhooksHarness" data-testid="webhooks-harness-select"></select></label>
-              <label>Agent / model<select id="webhooksModel" data-testid="webhooks-model-select"></select></label>
-              <label>Effort<select id="webhooksEffort" data-testid="webhooks-effort-select"></select></label>
-            </div>
-            <fieldset class="relay-form-section"><legend>Tags</legend><div id="webhooksAutomationTags" data-testid="webhooks-automation-tags"></div></fieldset>
-            <label id="webhooksTitleTemplateLabel">Conversation title template
-              <input id="webhooksTitleTemplate" maxlength="200" autocomplete="off" placeholder="pr-[PR_REVIEW]" data-testid="webhooks-title-template-input" />
-              <span class="settings-hint">Optional, for new conversations only. The agent fills [placeholders] from the call. Text outside brackets stays fixed. For example, pr-[PR_REVIEW] becomes pr-Fix login timeout. Blank uses the webhook name.</span>
-            </label>
-            <fieldset class="relay-form-section">
-              <legend>Secret accounts</legend>
-              <p class="settings-hint">Project and workspace secrets are inherited. Selected accounts are also attached to each conversation this webhook reaches. Removing a selection affects future calls, not accounts already attached to conversations.</p>
-              <div id="webhooksSecrets" data-testid="webhooks-secret-accounts"></div>
-            </fieldset>
-            <label>Context for the agent
-              <textarea id="webhooksContext" rows="4" maxlength="10000" placeholder="Optional. For example: Triage new issues and reply with a plan." data-testid="webhooks-context-input"></textarea>
-            </label>
-            <p class="settings-hint">This text goes ahead of the call's content in every message this webhook creates.</p>
-            <label class="checkbox-row"><input type="checkbox" id="webhooksEnabled" checked data-testid="webhooks-enabled-toggle" /> Accept calls</label>
-            <label class="checkbox-row"><input type="checkbox" id="webhooksAttachments" data-testid="webhooks-attachments-toggle" /> Accept attachments</label>
-            <label class="checkbox-row"><input type="checkbox" id="webhooksMarkForReview" data-testid="webhooks-mark-for-review-toggle" /> Count calls toward Needs review</label>
-            <p class="settings-hint">Off by default: conversations this webhook starts or adds to stay out of the review badge and inbox until you open them and reply.</p>
-            <p class="settings-hint">Files in a call reach the conversation as attachments: the file parts of a multipart/form-data body, or a JSON body's <code>attachments</code> list of <code>{"name", "mimeType", "data"}</code> with base64 data.</p>
-            <label class="checkbox-row"><input type="checkbox" id="webhooksSendersEnabled" data-testid="webhooks-senders-toggle" /> Only accept calls from listed senders</label>
-            <div id="webhooksSenders" data-testid="webhooks-senders" hidden>
-              <div class="relay-form">
-                <label>Sender field<input id="webhooksSenderFields" autocomplete="off" placeholder="message.from.id" data-testid="webhooks-sender-fields-input" /></label>
+          <section class="webhooks-view" id="webhooksListSection" data-testid="webhooks-list-section">
+            <div class="relay-head">
+              <p class="settings-hint">A secret address another service can call. Each call starts a conversation or adds a message to one. Changes save as you make them.</p>
+              <div class="relay-row-actions">
+                <label class="webhooks-owner" title="Choose this machine or an active twin. Webhooks listed here belong only to that owner, which stores them and handles calls. No copies or automatic fallback. An existing webhook's owner cannot be changed.">Owner<select id="webhooksOwner" data-testid="webhooks-owner-select"></select></label>
+                <button class="primary compact" type="button" id="webhooksNew" data-testid="webhooks-new-button">+ New webhook</button>
               </div>
-              <button class="ghost compact" type="button" id="webhooksSenderTelegram" data-testid="webhooks-sender-telegram-button">Use Telegram bot fields</button>
-              <label>Allowed senders
-                <textarea id="webhooksAllowedSenders" rows="3" placeholder="123456789 Ilia" data-testid="webhooks-allowed-senders-input"></textarea>
-              </label>
-              <p class="settings-hint">The sender is the first of these fields (dot paths, separated by commas) found in a JSON body or form fields. List one allowed value per line, optionally followed by a name the agent sees. A call from anyone else is refused before it reaches the conversation and shows under Calls, with an Allow button.</p>
             </div>
-            <div class="relay-row-actions">
-              <button class="ghost compact" type="button" id="webhooksCancel" data-testid="webhooks-cancel-button">Cancel</button>
-              <button class="primary compact" type="button" id="webhooksSave" data-testid="webhooks-save-button">Create webhook</button>
-            </div>
-          </div>
-          <section class="relay-section" id="webhooksListSection" data-testid="webhooks-list-section">
-            <div class="relay-list" id="webhooksHistory" data-testid="webhooks-history" hidden></div>
             <div class="relay-list" id="webhooksList" data-testid="webhooks-list"></div>
             <div class="relay-pager" id="webhooksPager" data-testid="webhooks-pager" hidden></div>
-            <section class="relay-form-section" id="webhookResourcesManager" data-testid="webhook-resources-manager" hidden>
-              <div class="relay-row-actions"><button class="ghost compact" type="button" id="webhookResourcesBack" data-testid="webhook-resources-back-button">Back to webhooks</button><h3 id="webhookResourcesTitle"></h3></div>
-              <p class="settings-hint">These resources belong only to this webhook's owner. Files are described to its agent by name and path; contents are not added to the prompt automatically. Imports are stored as inert files and are never run or installed.</p>
-              <h4>Static files and tools</h4>
-              <label>Resource type<select id="webhookResourceKind" data-testid="webhook-resource-kind-select"><option value="file">Static file</option><option value="tool">Tool or script</option></select></label>
-              <label>Description for uploaded files<input id="webhookResourceDescription" data-testid="webhook-resource-description-input" maxlength="2000" placeholder="What the agent should use this file for" /></label>
-              <label>Usage notes (for tools)<textarea id="webhookResourceUsage" data-testid="webhook-resource-usage-input" rows="2" maxlength="2000"></textarea></label>
-              <label>Add files<input id="webhookResourceFiles" data-testid="webhook-resource-files-input" type="file" multiple /></label>
-              <div class="relay-list" id="webhookResourceList"></div>
-              <h4>Skills</h4>
-              <label>Import from this machine<select id="webhookSkillInventory" data-testid="webhook-skill-inventory-select"></select></label>
-              <button class="ghost compact" type="button" id="webhookSkillImportExisting" data-testid="webhook-skill-import-existing-button">Import selected skill</button>
-              <label>Upload a skill folder<input id="webhookSkillFolder" data-testid="webhook-skill-folder-input" type="file" multiple webkitdirectory /></label>
-              <div class="relay-list" id="webhookSkillList" data-testid="webhook-skill-list"></div>
-              <label>Git repository URL<input id="webhookSkillGitUrl" data-testid="webhook-skill-git-url-input" maxlength="2048" placeholder="https://github.com/org/repo.git" /></label>
-              <label>Git ref (optional)<input id="webhookSkillGitRef" data-testid="webhook-skill-git-ref-input" maxlength="200" placeholder="main" /></label>
-              <button class="ghost compact" type="button" id="webhookSkillGitDiscover" data-testid="webhook-skill-git-discover-button">Discover skills</button>
-              <div class="relay-list" id="webhookSkillGitResults"></div>
-              <h4>Persistent memory</h4>
-              <label class="checkbox-row"><input type="checkbox" id="webhookMemoryEnabled" data-testid="webhook-memory-enabled-toggle" /> Give this webhook's agent persistent memory</label>
-              <label>Markdown memory<textarea id="webhookMemoryContent" data-testid="webhook-memory-content-input" rows="12" maxlength="200000" spellcheck="false"></textarea></label>
-              <label>Upload Markdown<input id="webhookMemoryUpload" data-testid="webhook-memory-upload-input" type="file" accept=".md,text/markdown" /></label>
-              <div class="relay-row-actions"><button class="ghost compact" type="button" id="webhookMemoryReload" data-testid="webhook-memory-reload-button">Reload</button><button class="ghost compact" type="button" id="webhookMemoryDownload" data-testid="webhook-memory-download-button">Download</button><button class="ghost compact" type="button" id="webhookMemoryReset" data-testid="webhook-memory-reset-button">Reset memory</button><button class="primary compact" type="button" id="webhookMemorySave" data-testid="webhook-memory-save-button">Save memory</button></div>
-              <p class="settings-hint" id="webhookResourcesStatus" data-testid="webhook-resources-status" role="status"></p>
-            </section>
+          </section>
+          <section class="webhooks-view" id="webhooksForm" data-testid="webhooks-form" hidden>
+            <div class="relay-head">
+              <div class="relay-row-actions webhooks-crumb">
+                <button class="ghost compact" type="button" id="webhooksBack" data-testid="webhooks-back-button">‹ Webhooks</button>
+                <h3 id="webhooksDetailTitle"></h3>
+                <span id="webhooksDetailState"></span>
+              </div>
+              <div class="relay-row-actions" id="webhooksDetailActions"></div>
+            </div>
+            <div class="webhooks-tabs" role="tablist" aria-label="Webhook sections" id="webhooksTabs">
+              <button type="button" role="tab" data-webhook-tab="setup" data-testid="webhooks-tab-setup">Setup</button>
+              <button type="button" role="tab" data-webhook-tab="access" data-testid="webhooks-tab-access">Access</button>
+              <button type="button" role="tab" data-webhook-tab="files" data-testid="webhooks-tab-files">Files &amp; tools <span class="cluster-badge" id="webhooksCountFiles">0</span></button>
+              <button type="button" role="tab" data-webhook-tab="skills" data-testid="webhooks-tab-skills">Skills <span class="cluster-badge" id="webhooksCountSkills">0</span></button>
+              <button type="button" role="tab" data-webhook-tab="memory" data-testid="webhooks-tab-memory">Memory <span class="webhooks-dot" id="webhooksMemoryDot" role="img" aria-label="Memory is on" hidden></span></button>
+              <button type="button" role="tab" data-webhook-tab="calls" data-testid="webhooks-tab-calls" id="webhooksCallsTab">Calls</button>
+            </div>
+
+            <div class="webhooks-tab-body" role="tabpanel" data-webhook-panel="setup" id="webhooksSetupPanel">
+              <div class="relay-form">
+                <label>Name<input id="webhooksName" name="name" maxlength="120" autocomplete="off" placeholder="GitHub issues" data-testid="webhooks-name-input" /></label>
+                <label>Each call
+                  <select id="webhooksTargetKind" data-testid="webhooks-target-kind-select">
+                    <option value="project">Starts a new conversation in a project</option>
+                    <option value="conversation">Adds a message to one conversation</option>
+                  </select>
+                </label>
+                <label>Project<select id="webhooksProject" data-testid="webhooks-project-select"></select></label>
+                <label id="webhooksConversationLabel" hidden>Conversation<select id="webhooksConversation" data-testid="webhooks-conversation-select"></select></label>
+                <label>Harness<select id="webhooksHarness" data-testid="webhooks-harness-select"></select></label>
+                <label>Agent / model<select id="webhooksModel" data-testid="webhooks-model-select"></select></label>
+                <label>Effort<select id="webhooksEffort" data-testid="webhooks-effort-select"></select></label>
+              </div>
+              <label>Instructions
+                <textarea id="webhooksContext" rows="4" maxlength="10000" placeholder="Optional. For example: Triage new issues and reply with a plan." data-testid="webhooks-context-input"></textarea>
+                <span class="settings-hint">Goes ahead of the call's content in every message this webhook creates.</span>
+              </label>
+              <div class="relay-form">
+                <label id="webhooksTitleTemplateLabel">Conversation title
+                  <input id="webhooksTitleTemplate" maxlength="200" autocomplete="off" placeholder="pr-[PR_REVIEW]" data-testid="webhooks-title-template-input" />
+                  <span class="settings-hint">Optional, for new conversations only. The agent fills [placeholders] from the call; text outside brackets stays fixed. Blank uses the webhook name.</span>
+                </label>
+                <div><span class="webhooks-label">Tags</span><div id="webhooksAutomationTags" data-testid="webhooks-automation-tags"></div></div>
+              </div>
+            </div>
+
+            <div class="webhooks-tab-body" role="tabpanel" data-webhook-panel="access" id="webhooksAccessPanel" hidden>
+              <div class="webhooks-columns">
+                <div class="webhooks-column">
+                  <h4>Calls</h4>
+                  <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksEnabled" checked data-testid="webhooks-enabled-toggle" /><span><strong>Accept calls</strong><span class="settings-hint">Off rejects every call without starting anything.</span></span></label>
+                  <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksAttachments" data-testid="webhooks-attachments-toggle" /><span><strong>Accept attachments</strong><span class="settings-hint">Files sent with a call are saved and passed to the agent: multipart file parts, or a JSON <code>attachments</code> list of <code>{"name", "mimeType", "data"}</code> with base64 data.</span></span></label>
+                  <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksMarkForReview" data-testid="webhooks-mark-for-review-toggle" /><span><strong>Count toward Needs review</strong><span class="settings-hint">Off keeps these conversations out of the review badge and inbox until you reply.</span></span></label>
+                  <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksSendersEnabled" data-testid="webhooks-senders-toggle" /><span><strong>Only listed senders</strong><span class="settings-hint">Refuse calls whose sender is not on the list. Refused calls show under Calls with an Allow button.</span></span></label>
+                  <div class="webhooks-senders" id="webhooksSenders" data-testid="webhooks-senders" hidden>
+                    <label>Sender field<input id="webhooksSenderFields" autocomplete="off" placeholder="message.from.id" data-testid="webhooks-sender-fields-input" /></label>
+                    <button class="ghost compact" type="button" id="webhooksSenderTelegram" data-testid="webhooks-sender-telegram-button">Use Telegram bot fields</button>
+                    <label>Allowed senders
+                      <textarea id="webhooksAllowedSenders" rows="3" placeholder="123456789 Ilia" data-testid="webhooks-allowed-senders-input"></textarea>
+                    </label>
+                    <p class="settings-hint">The sender is the first of these fields (dot paths, separated by commas) found in a JSON body or form fields. List one allowed value per line, optionally followed by a name the agent sees.</p>
+                  </div>
+                </div>
+                <div class="webhooks-column">
+                  <h4>Secret accounts</h4>
+                  <p class="settings-hint">Project and workspace secrets are inherited. Selected accounts are also attached to each conversation this webhook reaches. Removing one affects future calls only.</p>
+                  <input type="search" id="webhooksSecretSearch" placeholder="Search accounts…" aria-label="Search secret accounts" data-testid="webhooks-secret-search-input" />
+                  <div class="relay-list" id="webhooksSecrets" data-testid="webhooks-secret-accounts"></div>
+                  <div class="relay-pager" id="webhooksSecretsPager" data-testid="webhooks-secrets-pager" hidden></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="webhooks-tab-body" role="tabpanel" data-webhook-panel="files" hidden>
+              <p class="settings-hint" id="webhookResourceHint">The agent sees each file's name, path and description and opens it when needed. Tools are stored as files; the agent runs them only as your notes describe. Up to 4 MiB each.</p>
+              <div class="webhooks-drop" id="webhookResourceDrop" data-testid="webhook-resource-drop">
+                <span><strong>Drop files here</strong> or</span>
+                <button class="ghost compact" type="button" id="webhookResourceBrowse" data-testid="webhook-resource-browse-button">Browse…</button>
+                <input id="webhookResourceFiles" data-testid="webhook-resource-files-input" type="file" multiple hidden />
+              </div>
+              <div class="webhooks-staged-list" id="webhookResourceStaged"></div>
+              <div class="relay-list" id="webhookResourceList" data-testid="webhook-resource-list"></div>
+              <div class="relay-pager" id="webhookResourcePager" data-testid="webhook-resource-pager" hidden></div>
+            </div>
+
+            <div class="webhooks-tab-body" role="tabpanel" data-webhook-panel="skills" hidden>
+              <p class="settings-hint" data-create-first hidden>Create the webhook first, then add skills to it.</p>
+              <div class="webhooks-live" data-live>
+                <div class="relay-head">
+                  <p class="settings-hint">Skills only this webhook's agent can use. They are not added anywhere else. Imports are stored as inert files and never run or installed.</p>
+                  <button class="primary compact" type="button" id="webhookSkillAdd" data-testid="webhook-skill-add-button">+ Add skill</button>
+                </div>
+                <div class="webhooks-add-panel" id="webhookSkillPanel" data-testid="webhook-skill-panel" hidden>
+                  <div class="relay-head"><div id="webhookSkillMethods"></div><button class="ghost compact" type="button" id="webhookSkillClose" data-testid="webhook-skill-close-button">Close</button></div>
+                  <div data-skill-method="machine">
+                    <input type="search" id="webhookSkillSearch" placeholder="Search skills on this machine…" aria-label="Search skills on this machine" data-testid="webhook-skill-search-input" />
+                    <div class="relay-list" id="webhookSkillInventory" data-testid="webhook-skill-inventory"></div>
+                  </div>
+                  <div data-skill-method="upload" hidden>
+                    <div class="webhooks-drop">
+                      <span>A skill folder must contain SKILL.md. Files are stored as-is and never run on upload.</span>
+                      <button class="ghost compact" type="button" id="webhookSkillChoose" data-testid="webhook-skill-choose-button">Choose folder…</button>
+                      <input id="webhookSkillFolder" data-testid="webhook-skill-folder-input" type="file" multiple webkitdirectory hidden />
+                    </div>
+                  </div>
+                  <div data-skill-method="git" hidden>
+                    <div class="relay-form">
+                      <label>Repository URL<input id="webhookSkillGitUrl" data-testid="webhook-skill-git-url-input" maxlength="2048" placeholder="https://github.com/org/repo.git" /></label>
+                      <label>Branch or tag (optional)<input id="webhookSkillGitRef" data-testid="webhook-skill-git-ref-input" maxlength="200" placeholder="main" /></label>
+                    </div>
+                    <button class="ghost compact" type="button" id="webhookSkillGitDiscover" data-testid="webhook-skill-git-discover-button">Find skills</button>
+                    <div class="relay-list" id="webhookSkillGitResults"></div>
+                  </div>
+                </div>
+                <div class="relay-list" id="webhookSkillList" data-testid="webhook-skill-list"></div>
+                <div class="relay-pager" id="webhookSkillPager" data-testid="webhook-skill-pager" hidden></div>
+              </div>
+            </div>
+
+            <div class="webhooks-tab-body" role="tabpanel" data-webhook-panel="memory" hidden>
+              <p class="settings-hint" data-create-first hidden>Create the webhook first, then turn on its memory.</p>
+              <div class="webhooks-live" data-live>
+                <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhookMemoryEnabled" data-testid="webhook-memory-enabled-toggle" /><span><strong>Persistent memory</strong><span class="settings-hint">The agent reads this note at the start of every call and adds what it learns from feedback and problems. You can edit it here.</span></span></label>
+                <div class="webhooks-memory" id="webhookMemoryOn">
+                  <div class="relay-head">
+                    <div id="webhookMemoryModes"></div>
+                    <div class="relay-row-actions" id="webhookMemoryActions">
+                      <button class="ghost compact" type="button" id="webhookMemoryUploadButton" data-testid="webhook-memory-upload-button">Upload .md</button>
+                      <input id="webhookMemoryUpload" data-testid="webhook-memory-upload-input" type="file" accept=".md,text/markdown" hidden />
+                      <button class="ghost compact" type="button" id="webhookMemoryDownload" data-testid="webhook-memory-download-button">Download</button>
+                      <button class="ghost compact" type="button" id="webhookMemoryReset" data-testid="webhook-memory-reset-button">Clear</button>
+                    </div>
+                  </div>
+                  <textarea id="webhookMemoryContent" data-testid="webhook-memory-content-input" maxlength="200000" spellcheck="false" aria-label="Markdown memory"></textarea>
+                  <div class="webhooks-preview" id="webhookMemoryPreview" data-testid="webhook-memory-preview" hidden></div>
+                  <div class="relay-head">
+                    <span class="settings-hint" id="webhookMemorySize"></span>
+                    <div class="relay-row-actions">
+                      <button class="ghost compact" type="button" id="webhookMemoryDiscard" data-testid="webhook-memory-discard-button">Discard</button>
+                      <button class="primary compact" type="button" id="webhookMemorySave" data-testid="webhook-memory-save-button">Save memory</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="webhooks-empty" id="webhookMemoryOff" data-testid="webhook-memory-off" hidden><strong>Memory is off</strong><span class="settings-hint">Each call starts with no notes from earlier calls. Turn it on to let the agent keep what it learns.</span></div>
+              </div>
+            </div>
+
+            <div class="webhooks-tab-body" role="tabpanel" data-webhook-panel="calls" hidden>
+              <p class="settings-hint" id="webhooksCallsTitle"></p>
+              <div class="relay-list" id="webhooksCalls" data-testid="webhooks-history"></div>
+              <div class="relay-pager" id="webhooksCallsPager" data-testid="webhooks-calls-pager" hidden></div>
+            </div>
+
+            <div class="webhooks-savebar" id="webhooksSavebar" data-testid="webhooks-savebar" hidden>
+              <span class="settings-hint" id="webhooksSavebarText"></span>
+              <div class="relay-row-actions">
+                <button class="ghost compact" type="button" id="webhooksDiscard" data-testid="webhooks-discard-button">Discard</button>
+                <button class="primary compact" type="button" id="webhooksSave" data-testid="webhooks-save-button">Save changes</button>
+              </div>
+            </div>
           </section>
         </section>
 

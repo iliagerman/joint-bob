@@ -130,19 +130,13 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-name-input").fill("Deals");
   for (const viewport of [{ width: 1440, height: 700 }, { width: 390, height: 700 }]) {
     await page.setViewportSize(viewport);
-    const form = page.getByTestId("webhooks-form");
-    const layout = await form.evaluate(element => {
-      const tags = element.querySelector('[data-testid="webhooks-automation-tags"]');
-      return { scrollable: element.scrollHeight > element.clientHeight, overflow: getComputedStyle(element).overflowY,
-        tagsHeight: tags.getBoundingClientRect().height, children: [...tags.children].map(child => ({ tag: child.tagName, height: child.getBoundingClientRect().height, display: getComputedStyle(child).display })), width: element.clientWidth, contentWidth: element.scrollWidth };
+    const layout = await page.locator("#webhooksSetupPanel").evaluate(element => {
+      const tags = element.querySelector('[data-testid="webhooks-automation-tags"]')!;
+      return { overflow: getComputedStyle(element).overflowY, tagsHeight: tags.getBoundingClientRect().height, width: element.clientWidth, contentWidth: element.scrollWidth };
     });
     assert.equal(layout.overflow, "auto");
-    assert.ok(layout.scrollable, "the long webhook form scrolls inside Settings");
     assert.ok(layout.tagsHeight < (viewport.width < 500 ? 400 : 240), `tag controls stay compact and wrap on mobile: ${JSON.stringify({ viewport, layout })}`);
-    assert.ok(layout.contentWidth <= layout.width + 1, "form fits without horizontal clipping");
-    await page.getByTestId("webhooks-secret-account-checkbox").first().scrollIntoViewIfNeeded();
-    assert.equal(await page.getByTestId("webhooks-secret-account-checkbox").first().isVisible(), true);
-    await page.getByTestId("webhooks-save-button").scrollIntoViewIfNeeded();
+    assert.ok(layout.contentWidth <= layout.width + 1, "setup fits without horizontal clipping");
     const bounds = await page.getByTestId("webhooks-save-button").boundingBox();
     assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, "webhook actions remain reachable");
   }
@@ -151,11 +145,13 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-harness-select").selectOption("pi");
   await page.getByTestId("webhooks-model-select").selectOption("dev-environment|dev-model");
   await page.getByTestId("webhooks-effort-select").selectOption("high");
+  await page.getByTestId("webhooks-tab-access").click();
   await page.getByTestId("webhooks-secret-account-checkbox").filter({ visible: true }).first().check();
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });
   await page.getByTestId("webhooks-reveal-done-button").click();
+  await page.getByTestId("webhooks-back-button").click();
   await page.getByTestId("webhooks-list").getByText("accepts attachments").waitFor();
   assert.deepEqual((await hooks()).map(({ name, enabled, attachments, tags }) => [name, enabled, attachments, tags]), [["Deals", true, true, { managedTagIds: [managedTag.body.tag.id], manualTags: ["Manual webhook label"] }]]);
 
@@ -170,33 +166,31 @@ test("a webhook made with Accept attachments keeps the option through turning of
   assert.deepEqual((await hooks())[0].model, { provider: "dev-environment", modelId: "dev-model" });
   assert.equal((await hooks())[0].reasoning, "high", "toggle keeps execution settings");
   assert.deepEqual((await hooks())[0].secretAccountIds, [webhookSecretId], "toggle keeps attached secret selections");
-  await page.getByTestId("webhooks-edit-button").click();
+  await page.getByTestId("webhooks-open-button").click();
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("webhooks-harness-select").inputValue(), "pi");
   assert.equal(await page.getByTestId("webhooks-title-template-input").inputValue(), "pr-[PR_REVIEW]");
   assert.equal(await page.getByTestId("webhooks-model-select").inputValue(), "dev-environment|dev-model");
   assert.equal(await page.getByTestId("webhooks-effort-select").inputValue(), "high");
+  await page.getByTestId("webhooks-tab-access").click();
   assert.equal(await page.getByTestId("webhooks-secret-account-checkbox").first().isChecked(), true);
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), true, "the editor shows the stored option");
+  assert.equal(await page.getByTestId("webhooks-savebar").isVisible(), false, "nothing to save until something changes");
   await page.getByTestId("webhooks-attachments-toggle").uncheck();
   await page.getByTestId("webhooks-save-button").click();
   await until(async () => (await hooks())[0].attachments === false, "the option is saved off");
-  await page.getByTestId("webhooks-edit-button").click();
-  await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await until(async () => (await hooks())[0].attachments, "the option is saved on");
 
-  await page.getByTestId("webhooks-form").waitFor({ state: "hidden" });
   const hook = (await hooks())[0];
-  await page.getByTestId("webhooks-resources-button").waitFor({ state: "visible" });
-  await page.getByTestId("webhooks-resources-button").click();
-  await page.getByTestId("webhook-resources-manager").waitFor({ state: "visible" });
+  const statusLine = page.getByTestId("webhooks-status");
+  await page.getByTestId("webhooks-tab-memory").click();
   await page.getByTestId("webhook-memory-enabled-toggle").check();
   await until(async () => (await api<{ enabled: boolean }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.enabled, "webhook memory is enabled");
   await page.getByTestId("webhook-memory-content-input").fill("# Durable note\\nKeep this private to the webhook.\\n");
   await page.getByTestId("webhook-memory-save-button").click();
-  await until(async () => (await api<{ content: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.content.includes("Keep this private"), "memory is saved");
+  await until(async () => { const r = await api<{ content: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`); return (r.body.content ?? "").includes("Keep this private"); }, "memory is saved");
   const savedMemory = await api<{ content: string; revision: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`);
   const memoryDraft = "# User draft\\nKeep this edit until the conflict is resolved.\\n";
   await page.getByTestId("webhook-memory-content-input").fill(memoryDraft);
@@ -204,10 +198,10 @@ test("a webhook made with Accept attachments keeps the option through turning of
   assert.equal(agentEdit.status, 200);
   expectingMemoryConflict = true;
   await page.getByTestId("webhook-memory-save-button").click();
-  await page.getByTestId("webhook-resources-status").getByText(/changed since you read/i).waitFor();
+  await statusLine.getByText(/changed since you read/i).waitFor();
   expectingMemoryConflict = false;
   assert.equal(await page.getByTestId("webhook-memory-content-input").inputValue(), memoryDraft, "a 409 preserves the user's unsaved draft");
-  await page.getByTestId("webhook-memory-reload-button").click();
+  await page.getByTestId("webhook-memory-discard-button").click();
   await until(async () => (await page.getByTestId("webhook-memory-content-input").inputValue()) === "# Agent update\\n", "the newer memory is reloaded");
   await page.getByTestId("webhook-memory-upload-input").setInputFiles({ name: "notes.md", mimeType: "text/markdown", buffer: Buffer.from("# Uploaded note\\n") });
   await until(async () => (await api<{ content: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.content === "# Uploaded note\\n", "the Markdown upload is saved");
@@ -218,20 +212,25 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await resetButton.click();
   assert.equal(await resetButton.getAttribute("data-armed"), "true", "reset asks for confirmation first");
   await resetButton.click();
-  await page.getByTestId("webhook-resources-status").getByText("Memory reset.").waitFor();
+  await statusLine.getByText("Memory reset.").waitFor();
   await until(async () => (await api<{ content: string }>(node, session, "GET", `/webhooks/${hook.id}/memory`)).body.content === "", "explicit reset clears the memory");
-  await page.getByTestId("webhook-resource-description-input").fill("Rates used by the agent");
+
+  await page.getByTestId("webhooks-tab-files").click();
   await page.getByTestId("webhook-resource-files-input").setInputFiles({ name: "rates.csv", mimeType: "text/csv", buffer: Buffer.from("day,rate\\n1,2\\n") });
-  await page.getByText("rates.csv", { exact: true }).waitFor();
+  await page.getByTestId("webhook-resource-description-input").fill("Rates used by the agent");
+  await page.getByTestId("webhook-resource-add-button").click();
+  await page.getByTestId("webhook-resource-list").getByText("rates.csv", { exact: true }).waitFor();
   const resources = await api<{ resources: Array<{ name: string; description: string; path?: string }> }>(node, session, "GET", `/webhooks/${hook.id}/resources`);
   assert.deepEqual(resources.body.resources.map(({ name, description, path: filePath }) => [name, description, filePath]), [["rates.csv", "Rates used by the agent", undefined]]);
+
+  await page.getByTestId("webhooks-tab-skills").click();
   const inventoryApi = await api<{ skills: Array<{ name: string }> }>(node, session, "GET", `/webhooks/${hook.id}/skills?inventory=1`);
   assert.equal(inventoryApi.status, 200, JSON.stringify(inventoryApi.body));
-  const localSkill = await page.locator("#webhookSkillInventory option").evaluateAll(options => options.find(option => option.textContent?.includes("project-review"))?.value ?? "");
-  assert.ok(localSkill, `the webhook can select an app-configured project skill: ${JSON.stringify(inventoryApi.body.skills)}`);
-  await page.getByTestId("webhook-skill-inventory-select").selectOption(localSkill);
-  await page.getByTestId("webhook-skill-import-existing-button").click();
+  await page.getByTestId("webhook-skill-add-button").click();
+  await page.getByTestId("webhook-skill-search-input").fill("project-review");
+  await page.getByTestId("webhook-skill-inventory").locator(".relay-row").filter({ hasText: "project-review" }).first().getByTestId("webhook-skill-import-existing-button").click();
   await page.getByTestId("webhook-skill-list").getByText(/project-review/).waitFor();
+  await page.getByTestId("webhook-skill-method-git").click();
   await page.getByTestId("webhook-skill-git-url-input").fill(pathToFileURL(path.join(root, "git-skill-repo")).href);
   await page.getByTestId("webhook-skill-git-discover-button").click();
   await page.getByText(/repo-review · Review repository changes/).waitFor();
@@ -243,13 +242,13 @@ test("a webhook made with Accept attachments keeps the option through turning of
   const updateButton = page.getByTestId("webhook-git-skill-update-button");
   await updateButton.click();
   await updateButton.click();
-  await page.getByTestId("webhook-resources-status").getByText("Git skill updated.").waitFor();
+  await statusLine.getByText("Git skill updated.").waitFor();
   const uploadSkill = path.join(root, "uploaded-review");
   const uploadedSkillText = await readFile(path.join(uploadSkill, "SKILL.md"), "utf8");
   await page.getByTestId("webhook-skill-folder-input").setInputFiles(uploadSkill);
   await page.getByTestId("webhook-skill-list").getByText(/uploaded-review/).waitFor();
   assert.equal(await readFile(path.join(uploadSkill, "SKILL.md"), "utf8"), uploadedSkillText, "upload copies the folder without changing its source");
-  await page.getByTestId("webhook-resources-back-button").click();
+  await page.getByTestId("webhooks-back-button").click();
   await page.getByTestId("webhooks-list").waitFor({ state: "visible" });
 });
 
@@ -287,8 +286,9 @@ test("a sender list refuses strangers before the conversation, and Allow lets a 
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ update_id: id, message: { message_id: 1, from: { id }, chat: { id }, text: "hi" } }),
   });
 
-  await page.getByTestId("webhooks-edit-button").click();
+  await page.getByTestId("webhooks-open-button").click();
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
+  await page.getByTestId("webhooks-tab-access").click();
   assert.equal(await page.getByTestId("webhooks-senders").isVisible(), false, "the sender list stays folded away until asked for");
   await page.getByTestId("webhooks-senders-toggle").check();
   await page.getByTestId("webhooks-senders").waitFor({ state: "visible" });
@@ -298,6 +298,7 @@ test("a sender list refuses strangers before the conversation, and Allow lets a 
   await page.getByTestId("webhooks-save-button").click();
   await until(async () => Boolean((await hooks())[0].senders), "the sender list is saved");
   assert.deepEqual((await hooks())[0].senders?.allowed, [{ value: "111", label: "Ilia" }]);
+  await page.getByTestId("webhooks-back-button").click();
   await page.getByTestId("webhooks-list").getByText("1 allowed sender").waitFor();
 
   assert.deepEqual(await (await update(111)).json(), { accepted: true, attachments: 0 }, "a listed sender gets through");
@@ -306,6 +307,7 @@ test("a sender list refuses strangers before the conversation, and Allow lets a 
   assert.deepEqual(await stranger.json(), { accepted: false });
 
   await page.getByTestId("webhooks-calls-button").click();
+  await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
   const refused = page.getByTestId("webhooks-history").locator(".relay-row").filter({ hasText: "Refused sender 999" });
   await refused.getByText("Refused", { exact: true }).waitFor();
   await refused.getByTestId("webhooks-allow-sender-button").click();
@@ -313,24 +315,24 @@ test("a sender list refuses strangers before the conversation, and Allow lets a 
   assert.deepEqual((await hooks())[0].senders?.allowed, [{ value: "111", label: "Ilia" }, { value: "999", label: "" }]);
   assert.deepEqual(await (await update(999)).json(), { accepted: true, attachments: 0 }, "an allowed sender gets through");
 
-  await page.getByTestId("webhooks-edit-button").click();
-  await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
+  await page.getByTestId("webhooks-tab-access").click();
   assert.equal(await page.getByTestId("webhooks-allowed-senders-input").inputValue(), "111 Ilia\n999");
-  await page.getByTestId("webhooks-cancel-button").click();
+  await page.getByTestId("webhooks-back-button").click();
 });
 
 test("creating on a twin uses its targets and address and keeps only one copy", async () => {
   const twin = environment.nodes[1];
   const twinSession = await signIn(environment, twin);
-  await page.getByTestId("webhooks-new-button").click();
-  await page.getByTestId("webhooks-name-input").fill("Twin only");
   const owner = page.getByTestId("webhooks-owner-select");
   await owner.selectOption(twin.nodeId);
-  await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#webhooksSave")!.disabled);
+  await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("#webhooksNew")!.disabled && document.querySelector<HTMLSelectElement>("#webhooksProject")!.options.length > 0);
+  await page.getByTestId("webhooks-new-button").click();
+  await page.getByTestId("webhooks-name-input").fill("Twin only");
   assert.equal(await page.getByTestId("webhooks-model-select").inputValue(), "", "changing owner clears previous model choices");
   await page.getByTestId("webhooks-harness-select").selectOption("pi");
   await page.getByTestId("webhooks-model-select").selectOption("dev-environment|dev-model");
   await page.getByTestId("webhooks-effort-select").selectOption("medium");
+  await page.getByTestId("webhooks-tab-access").click();
   await page.getByTestId("webhooks-attachments-toggle").check();
   await page.getByTestId("webhooks-save-button").click();
   await page.getByTestId("webhooks-reveal").waitFor({ state: "visible" });
@@ -341,13 +343,18 @@ test("creating on a twin uses its targets and address and keeps only one copy", 
   const remoteHooks = () => api<{ webhooks: Hook[] }>(twin, twinSession, "GET", "/webhooks");
   assert.deepEqual((await remoteHooks()).body.webhooks.map(hook => hook.name), ["Twin only"]);
   await page.getByTestId("webhooks-reveal-done-button").click();
+  await page.getByTestId("webhooks-back-button").click();
   await page.getByTestId("webhooks-list").getByText("Twin only", { exact: true }).waitFor();
-  await page.getByTestId("webhooks-edit-button").click();
+  await page.getByTestId("webhooks-open-button").click();
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
-  assert.equal(await owner.isDisabled(), true, "editing cannot move or clone a webhook");
+  assert.equal(await owner.isVisible(), false, "editing cannot move or clone a webhook");
+  await page.getByTestId("webhooks-tab-access").click();
   assert.equal(await page.getByTestId("webhooks-attachments-toggle").isChecked(), true);
+  await page.getByTestId("webhooks-tab-setup").click();
   await page.getByTestId("webhooks-name-input").fill("Twin renamed");
   await page.getByTestId("webhooks-save-button").click();
+  await until(async () => (await remoteHooks()).body.webhooks[0]?.name === "Twin renamed", "the twin webhook is renamed");
+  await page.getByTestId("webhooks-back-button").click();
   await page.getByTestId("webhooks-list").getByText("Twin renamed", { exact: true }).waitFor();
   const remote = (await remoteHooks()).body.webhooks[0];
   assert.equal(remote.name, "Twin renamed");
