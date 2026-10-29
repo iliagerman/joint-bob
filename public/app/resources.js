@@ -1364,7 +1364,7 @@ async function shareSelectedServers() {
 
 const KIND_LABELS = { skill: "skill", plugin: "plugin", mcp: "MCP" };
 const GIT_STATUS_LABELS = { available: "Not installed", imported: "Installed", edited: "Edited here", removed: "Removed here", gone: "Gone upstream" };
-const git = { sources: [], loaded: false, selectedId: null, selectedOwner: null, chosen: new Set(), sourcePage: 0, itemPage: 0 };
+const git = { sources: [], credentials: [], loaded: false, selectedId: null, selectedOwner: null, chosen: new Set(), sourcePage: 0, itemPage: 0 };
 const GIT_SOURCES_PER_PAGE = 3;
 
 const shortCommit = (commit) => (commit || "").slice(0, 8);
@@ -1478,6 +1478,7 @@ function gitSourceRow(source) {
   name.textContent = source.label;
   head.append(name, badge(source.ref || "default branch"), badge(shortCommit(source.commit)));
   if (source.ownerNodeId) head.append(badge(`from ${source.ownerName}`, "origin-scoped"));
+  if (source.usesGitLabCredential) head.append(badge("GitLab credential", "harness"));
   if (source.updateAvailable && !source.ownerNodeId) head.append(badge("update", "update"));
   const actions = document.createElement("span");
   actions.className = "resources-row-actions";
@@ -1642,10 +1643,19 @@ function fitGitPage() {
   try { renderGit(); } finally { refitting = false; }
 }
 
+function renderGitCredentials(accounts) {
+  const select = elements.resourcesGitCredential;
+  const previous = select.value;
+  select.replaceChildren(new Option("No saved credentials", ""), ...accounts.map((account) => new Option(account.label, account.id)));
+  if (accounts.some((account) => account.id === previous)) select.value = previous;
+}
+
 async function loadGit() {
   try {
-    const body = await api("/api/resources/git");
+    const [body, credentials] = await Promise.all([api("/api/resources/git"), api("/api/resources/git/credentials")]);
     git.sources = body.sources;
+    git.credentials = credentials.accounts;
+    renderGitCredentials(git.credentials);
     git.loaded = true;
     const current = selectedSource();
     if (current) git.chosen = installedKeys(current); else selectSource(git.sources[0]);
@@ -1658,7 +1668,7 @@ async function addRepository() {
   if (!url) { elements.resourcesGitUrl.focus(); return; }
   await gitAction(elements.resourcesGitAddButton, async () => {
     setStatus(`Cloning ${url}…`);
-    const body = await api("/api/resources/git", { method: "POST", body: JSON.stringify({ url, ref: elements.resourcesGitRef.value.trim() || null }) });
+    const body = await api("/api/resources/git", { method: "POST", body: JSON.stringify({ url, ref: elements.resourcesGitRef.value.trim() || null, gitlabAccountId: elements.resourcesGitCredential.value || null }) });
     storeSource(body.source);
     selectSource(body.source);
     git.sourcePage = Math.floor(git.sources.indexOf(selectedSource()) / GIT_SOURCES_PER_PAGE);

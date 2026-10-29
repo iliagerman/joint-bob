@@ -14,6 +14,7 @@ import { reloadSharedSkills } from "./realtime.js";
 import { replicationPeers, signedPeerPost } from "./replication-v2.js";
 import { announceSkillChanges, ensureLegacySkillSyncPaused } from "./skill-sharing.js";
 import { app } from "./state.js";
+import { listSecretAccounts } from "../secrets.js";
 
 /*
  * Repositories this node shares go to the nodes picked for them as offers: the URL, the commit
@@ -25,7 +26,7 @@ import { app } from "./state.js";
 
 const UPDATE_CHECK_INTERVAL = 6 * 60 * 60_000;
 const idSchema = z.string().uuid();
-const addSchema = z.object({ url: z.string().min(1).max(2048), ref: z.string().max(200).nullable().optional() }).strict();
+const addSchema = z.object({ url: z.string().min(1).max(2048), ref: z.string().max(200).nullable().optional(), gitlabAccountId: z.string().uuid().nullable().optional() }).strict();
 const selectionSchema = z.object({ keys: z.array(z.string().min(1).max(2048)).max(2000) }).strict();
 const optionsSchema = z.object({ autoUpdate: z.boolean().optional(), recipients: z.array(z.string().uuid()).max(100).optional() }).strict();
 const offerSchema = z.object({
@@ -184,8 +185,14 @@ async function validRecipients(nodeIds: string[]): Promise<string[]> {
 
 export function registerGitResourceRoutes(): void {
   app.get("/api/resources/git", route(async () => ({ sources: await withNames(await listGitSources()) })));
+  app.get("/api/resources/git/credentials", route(async () => ({
+    accounts: (await listSecretAccounts()).filter((account) => account.provider === "gitlab" && !account.readOnly).map(({ id, label }) => ({ id, label })),
+  })));
   app.post("/api/resources/git", route(async (request) => {
     const body = addSchema.parse(request.body);
+    if (body.gitlabAccountId && !(await listSecretAccounts()).some((account) => account.id === body.gitlabAccountId && account.provider === "gitlab" && !account.readOnly)) {
+      throw new GitResourceError("GitLab credential is not available", 404);
+    }
     return { source: (await withNames([await addGitSource(body)]))[0] };
   }));
   app.put("/api/resources/git/:id/selection", route(async (request) => {

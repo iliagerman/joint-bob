@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { launchChrome } from "./launch-chrome.js";
-import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 /** Set JOINT_BOB_UI_SCREENSHOTS to a directory to keep a picture of the tab for review. */
 async function keep(page: { screenshot(options: { path: string }): Promise<unknown> }, name: string): Promise<void> {
@@ -35,7 +35,14 @@ test("Resources → Git repos adds a repository, installs the ticked items, and 
 
     const environment = await seedDevEnvironment(root, 1); const node = environment.nodes[0];
     const resources = path.join(environment.home, "JointBob/.agent-resources");
-    server = await startDevNode(environment, node); browser = await launchChrome({ headless: true });
+    server = await startDevNode(environment, node);
+    const session = await signIn(environment, node);
+    const credential = await api<{ account: { id: string } }>(node, session, "POST", "/secrets/accounts", { label: "KMS GitLab", provider: "gitlab", variables: [
+      { name: "GITLAB_URL", kind: "value", value: "https://gitlab.example.test" },
+      { name: "GITLAB_TOKEN", kind: "value", value: "synthetic-gitlab-token" },
+    ] });
+    assert.equal(credential.status, 201, JSON.stringify(credential.body));
+    browser = await launchChrome({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -46,19 +53,33 @@ test("Resources → Git repos adds a repository, installs the ticked items, and 
     await page.getByTestId("resources-summary").getByText(/not what open conversations have loaded/).waitFor();
     assert.equal(await page.getByTestId("resources-node-select").isVisible(), false, "Git repositories are explicitly scoped to this node");
     await page.getByTestId("resources-git-sources").getByText(/No repositories yet/).waitFor();
+    const credentialSelect = page.getByTestId("resources-git-credential");
+    await credentialSelect.selectOption(credential.body.account.id);
+    assert.equal(await credentialSelect.locator("option:checked").textContent(), "KMS GitLab");
+    await page.getByTestId("resources-git-url").fill(`file://${repository}`);
+    await page.getByTestId("resources-git-add-button").click();
+    await page.getByTestId("resources-status").getByText(/GitLab credential host does not match/).waitFor();
+    const expectedCredentialRejection = errors.findIndex((error) => error.includes("400 (Bad Request)"));
+    assert.notEqual(expectedCredentialRejection, -1, "mismatched repository host is rejected");
+    errors.splice(expectedCredentialRejection, 1);
+    await page.getByTestId("resources-git-credential").selectOption("");
 
     await page.getByTestId("resources-git-url").fill(`file://${repository}`);
     await page.getByTestId("resources-git-ref").fill("main");
     await page.getByTestId("resources-git-add-button").click();
     await page.getByTestId("resources-status").getByText(/2 skills, 1 plugin, 1 MCP server/).waitFor();
     assert.equal(await page.getByTestId("resources-git-source").count(), 1);
-    assert.equal(await page.getByTestId("resources-git-item").count(), 4);
+    assert.equal(await page.getByTestId("resources-git-item").count(), 2);
+    assert.equal(await page.getByTestId("resources-git-items-pager").getByTestId("resources-page-label").textContent(), "1–2 of 4");
     const alpha = page.getByTestId("resources-git-item").filter({ hasText: "alpha" });
     await alpha.getByText("Not installed", { exact: true }).waitFor();
     await alpha.getByText("Not installed on this node", { exact: false }).waitFor();
     assert.equal(await page.getByTestId("resources-git-apply").isDisabled(), true);
 
-    for (const name of ["alpha", "docs", "kit"]) await page.getByTestId("resources-git-item").filter({ hasText: name }).getByTestId("resources-git-item-select").check();
+    await alpha.getByTestId("resources-git-item-select").check();
+    await page.getByTestId("resources-git-items-pager").getByTestId("resources-page-next").click();
+    for (const name of ["docs", "kit"]) await page.getByTestId("resources-git-item").filter({ hasText: name }).getByTestId("resources-git-item-select").check();
+    await page.getByTestId("resources-git-items-pager").getByTestId("resources-page-previous").click();
     await alpha.getByText("Selected to install · not installed yet", { exact: false }).waitFor();
     await page.getByTestId("resources-git-apply").getByText("Install 3 selected").waitFor();
     await page.getByTestId("resources-git-apply").click();
@@ -67,11 +88,14 @@ test("Resources → Git repos adds a repository, installs the ticked items, and 
     assert.match(await readFile(path.join(resources, "shared/skills/alpha/SKILL.md"), "utf8"), /v1/);
     assert.ok((await lstat(path.join(resources, "claude/plugins/kit/.claude-plugin/plugin.json"))).isFile());
     assert.deepEqual(Object.keys(JSON.parse(await readFile(path.join(resources, "mcp/config.json"), "utf8")).mcpServers), ["docs"]);
-    for (const name of ["alpha", "docs", "kit"]) await page.getByTestId("resources-git-item").filter({ hasText: name }).getByText("Installed", { exact: true }).waitFor();
-    const alphaText = await page.getByTestId("resources-git-item").filter({ hasText: "alpha" }).innerText();
+    await alpha.getByText("Installed", { exact: true }).waitFor();
+    const alphaText = await alpha.innerText();
     assert.match(alphaText, /Installed here · eligible for new runs: Claude, Kiro, Pi/, alphaText);
+    await page.getByTestId("resources-git-items-pager").getByTestId("resources-page-next").click();
+    for (const name of ["docs", "kit"]) await page.getByTestId("resources-git-item").filter({ hasText: name }).getByText("Installed", { exact: true }).waitFor();
     await page.getByTestId("resources-git-item").filter({ hasText: "docs" }).getByText(/Installed here · eligible for new runs: Claude, Kiro/).waitFor();
     await page.getByTestId("resources-git-item").filter({ hasText: "kit" }).getByText(/Installed here · eligible for new runs: Claude/).waitFor();
+    await page.getByTestId("resources-git-items-pager").getByTestId("resources-page-previous").click();
     await assert.rejects(lstat(path.join(resources, "shared/skills/beta")), { code: "ENOENT" });
 
     await write(repository, "skills/alpha/SKILL.md", "---\nname: alpha\ndescription: Alpha skill\n---\nv2\n");

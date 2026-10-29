@@ -38,6 +38,7 @@ const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 const keyPath = path.join(dataDir, "secret.key");
 const askPassPath = path.join(dataDir, "github-askpass.sh");
+const gitlabAskPassPath = path.join(dataDir, "gitlab-askpass.sh");
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let database: DatabaseSync | undefined;
 
@@ -470,6 +471,12 @@ function secretFilePath(accountId: string, name: string, value: string): string 
   return filePath;
 }
 
+function ensureGitlabAskPassHelper(): string {
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  writeFileSync(gitlabAskPassPath, '#!/bin/sh\ncase "$1" in\n  *Username*) printf "%s\\n" "oauth2" ;;\n  *) printf "%s\\n" "$GITLAB_TOKEN" ;;\nesac\n', { mode: 0o700 });
+  return gitlabAskPassPath;
+}
+
 /** `git push` cannot read an environment variable, so it gets a helper script that prints one. */
 function ensureAskPassHelper(): string {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -479,6 +486,23 @@ function ensureAskPassHelper(): string {
 
 /** GitHub is a provider, not a code path: this reads the already-resolved variable map and
     fans one token out to every name the tooling expects. No token means no GitHub variables. */
+export function gitlabGitEnvironment(accountId: string, repositoryUrl: string): NodeJS.ProcessEnv {
+  const row = visibleAccountRow(accountId);
+  if (row.provider !== "gitlab") throw new Error("Select a GitLab secret account");
+  const variables = Object.fromEntries(storedVariables(row).map(({ name, value }) => [name, value]));
+  if (!variables.GITLAB_URL || !variables.GITLAB_TOKEN) throw new Error("GitLab account needs GITLAB_URL and GITLAB_TOKEN");
+
+  let gitlab: URL, repository: URL;
+  try { gitlab = new URL(variables.GITLAB_URL); repository = new URL(repositoryUrl); }
+  catch { throw new Error("GitLab credential host does not match the repository URL"); }
+  if (gitlab.protocol !== "https:" || gitlab.username || gitlab.password || gitlab.pathname !== "/" || gitlab.search || gitlab.hash
+    || repository.protocol !== "https:" || repository.origin !== gitlab.origin) {
+    throw new Error("GitLab credential host does not match the repository URL");
+  }
+
+  return { GITLAB_TOKEN: variables.GITLAB_TOKEN, GIT_ASKPASS: ensureGitlabAskPassHelper(), GIT_TERMINAL_PROMPT: "0" };
+}
+
 function applyGitHubEnvironment(values: NodeJS.ProcessEnv): void {
   // The gh CLI reads GH_TOKEN while most other GitHub tooling reads GITHUB_TOKEN, so one pasted token fills both.
   const token = values.GH_TOKEN ?? values.GITHUB_TOKEN;

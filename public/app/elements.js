@@ -123,6 +123,7 @@ export const elements = {
   resourcesGitCount: document.querySelector("#resourcesGitCount"),
   resourcesGitUrl: document.querySelector("#resourcesGitUrl"),
   resourcesGitRef: document.querySelector("#resourcesGitRef"),
+  resourcesGitCredential: document.querySelector("#resourcesGitCredential"),
   resourcesGitAddButton: document.querySelector("#resourcesGitAddButton"),
   resourcesGitSources: document.querySelector("#resourcesGitSources"),
   resourcesGitSourcesPager: document.querySelector("#resourcesGitSourcesPager"),

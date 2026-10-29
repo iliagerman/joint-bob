@@ -98,6 +98,28 @@ test("git URLs accept GitHub shorthand and refuse embedded credentials", () => {
   assert.throws(() => normalizeGitUrl("ext::sh -c touch% /tmp/x"), /git repository URL|https, ssh or file/);
 });
 
+test("GitLab credential references stay out of resource views and sharing offers", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "git-resource-credential-"));
+  const dataDir = path.join(fixture, "data");
+  const id = "9a560e1a-2456-4a64-80ac-e122d0fe2e10";
+  try {
+    const directory = path.join(dataDir, "git-resources");
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, "sources.json"), JSON.stringify({ version: 1, sources: [{
+      id, url: "https://gitlab.example.test/group/repo.git", ref: null, gitlabAccountId: "local-secret-account-id", commit: "a".repeat(40),
+      ownerNodeId: null, autoUpdate: false, recipients: ["peer"], deliveries: {}, latestCommit: null, checkedAt: null,
+      checkError: null, installed: [], lastError: null, addedAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+    }] }));
+
+    const [source] = await listGitSources({ dataDir });
+    assert.equal(source.usesGitLabCredential, true);
+    assert.equal("gitlabAccountId" in source, false);
+    assert.deepEqual(await gitOffersFor("peer", { dataDir }), [{
+      id, url: "https://gitlab.example.test/group/repo.git", ref: null, commit: "a".repeat(40), keys: [],
+    }]);
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
 test("discovers skills, plugins and MCP servers; a plugin's own MCP servers travel with it", async () => {
   const fixture = await mkdtemp(path.join(os.tmpdir(), "git-resources-discover-"));
   try {

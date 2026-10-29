@@ -38,7 +38,7 @@ const providerHints = {
   zai: "ZAI_API_KEY for Z.AI tools and SDKs.",
   grafana: "GRAFANA_API_KEY for Grafana APIs. Use a scoped service account token where possible.",
   datadog: "DD_API_KEY for Datadog tools and SDKs. Add DD_APP_KEY separately if your integration needs one.",
-  gitlab: "GitLab.com or self-managed GitLab credentials. Set GITLAB_URL to your instance URL and GITLAB_TOKEN to an access token. For read-only investigation, grant read_repository and read_api, restricted to the required projects. These variables do not automatically configure git authentication.",
+  gitlab: "GitLab.com or self-managed GitLab credentials. Set GITLAB_URL to your instance URL and GITLAB_TOKEN to an access token. For repository access, grant read_repository and select this account when adding the Git repo.",
   jira: "Jira Cloud credentials. Set JIRA_URL to your site URL (https://your-team.atlassian.net), JIRA_EMAIL to your Atlassian email, and JIRA_API_TOKEN to an API token. Attached agents use these with the Jira REST API.",
   postgres: "DATABASE_URL for PostgreSQL clients. Paste the full connection URL.",
   mssql: "MSSQL_CONNECTION_STRING for Microsoft SQL Server clients. Paste the connection string.",

@@ -71,6 +71,16 @@ test("a git repository's picked skills, plugins and MCP servers install, update,
     };
 
     assert.equal((await api(a, sa, "POST", "/resources/git", { url: "https://user:secret@example.invalid/repo.git" })).status, 400);
+    const credential = await api<{ account: { id: string } }>(a, sa, "POST", "/secrets/accounts", { label: "GitLab fixture", provider: "gitlab", variables: [
+      { name: "GITLAB_URL", kind: "value", value: "https://gitlab.example.test" },
+      { name: "GITLAB_TOKEN", kind: "value", value: "synthetic-gitlab-token" },
+    ] });
+    assert.equal(credential.status, 201, JSON.stringify(credential.body));
+    const availableCredentials = await api<{ accounts: Array<{ id: string; label: string }> }>(a, sa, "GET", "/resources/git/credentials");
+    assert.deepEqual(availableCredentials.body.accounts, [{ id: credential.body.account.id, label: "GitLab fixture" }]);
+    const mismatchedCredential = await api(a, sa, "POST", "/resources/git", { url, ref: "main", gitlabAccountId: credential.body.account.id });
+    assert.equal(mismatchedCredential.status, 400);
+    assert.match(JSON.stringify(mismatchedCredential.body), /GitLab credential host does not match/);
     const added = await api<{ source: SourceBody }>(a, sa, "POST", "/resources/git", { url, ref: "main" });
     assert.equal(added.status, 200, JSON.stringify(added.body));
     const id = added.body.source.id;

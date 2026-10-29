@@ -11,6 +11,7 @@ import { backupRemovedSkill, markReceived, receivedOwner, skillSuppressed, unlin
 import { validateSkillName } from "./skill-sharing.js";
 import { markReceivedResource } from "./resource-activation.js";
 import { parseResourceFrontmatter } from "./skills.js";
+import { gitlabGitEnvironment } from "./secrets.js";
 
 /*
  * Git repositories as a source of skills, Claude plugins and MCP servers.
@@ -47,6 +48,8 @@ export interface GitResourceSource {
   id: string;
   url: string;
   ref: string | null;
+  /** Local-only secret account reference; never included in repository offers to other nodes. */
+  gitlabAccountId?: string;
   commit: string;
   /** Set on a repository another node shares with this one; it follows that node's commit and selection. */
   ownerNodeId: string | null;
@@ -65,7 +68,7 @@ export interface GitResourceSource {
 
 export type GitItemStatus = "available" | "imported" | "edited" | "removed" | "gone";
 export interface GitItemView extends GitResourceItem { status: GitItemStatus }
-export interface GitSourceView extends GitResourceSource { label: string; updateAvailable: boolean; items: GitItemView[] }
+export interface GitSourceView extends Omit<GitResourceSource, "gitlabAccountId"> { usesGitLabCredential: boolean; label: string; updateAvailable: boolean; items: GitItemView[] }
 
 export interface GitApplyResult { installed: string[]; unchanged: string[]; removed: string[]; kept: string[]; errors: string[]; backups: string[]; skillsChanged: boolean }
 
@@ -152,11 +155,16 @@ export function normalizeGitRef(input: string | null | undefined): string | null
 }
 
 /** A repository's own hooks, filters and helper protocols never run here. */
-async function git(args: string[], cwd?: string, timeout = 180_000): Promise<string> {
+async function git(args: string[], cwd?: string, timeout = 180_000, credentials?: NodeJS.ProcessEnv): Promise<string> {
+  const environment: NodeJS.ProcessEnv = { ...process.env, ...credentials, GIT_TERMINAL_PROMPT: "0", GIT_LFS_SKIP_SMUDGE: "1" };
+  if (credentials?.GITLAB_TOKEN) {
+    delete environment.GH_TOKEN;
+    delete environment.GITHUB_TOKEN;
+    delete environment.PI_GITHUB_TOKEN;
+  }
   try {
     const { stdout } = await exec("git", ["-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never", "-c", "core.fsmonitor=false", ...args], {
-      cwd, timeout, maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_LFS_SKIP_SMUDGE: "1" },
+      cwd, timeout, maxBuffer: 16 * 1024 * 1024, env: environment,
     });
     return stdout.trim();
   } catch (error) {
@@ -167,26 +175,26 @@ async function git(args: string[], cwd?: string, timeout = 180_000): Promise<str
 
 async function headCommit(checkout: string): Promise<string> { return git(["rev-parse", "HEAD"], checkout); }
 
-async function cloneInto(checkout: string, url: string, ref: string | null): Promise<string> {
+async function cloneInto(checkout: string, url: string, ref: string | null, credentials?: NodeJS.ProcessEnv): Promise<string> {
   await rm(checkout, { recursive: true, force: true });
   await mkdir(path.dirname(checkout), { recursive: true });
   try {
-    await git(["clone", "--depth", "1", "--no-tags", "--single-branch", ...(ref ? ["--branch", ref] : []), "--", url, checkout]);
+    await git(["clone", "--depth", "1", "--no-tags", "--single-branch", ...(ref ? ["--branch", ref] : []), "--", url, checkout], undefined, 180_000, credentials);
     return await headCommit(checkout);
   } catch (error) { await rm(checkout, { recursive: true, force: true }); throw error; }
 }
 
 /** Moves a clone to a commit: the tip of its ref, or an exact commit a sharing node chose. */
-async function checkoutCommit(checkout: string, url: string, ref: string | null, commit?: string): Promise<string> {
+async function checkoutCommit(checkout: string, url: string, ref: string | null, commit?: string, credentials?: NodeJS.ProcessEnv): Promise<string> {
   try { await lstat(path.join(checkout, ".git")); }
-  catch { await cloneInto(checkout, url, ref); }
+  catch { await cloneInto(checkout, url, ref, credentials); }
   if (commit && await headCommit(checkout).catch(() => "") === commit) return commit;
-  try { await git(["fetch", "--depth", "1", "--no-tags", "origin", commit ?? ref ?? "HEAD"], checkout); }
+  try { await git(["fetch", "--depth", "1", "--no-tags", "origin", commit ?? ref ?? "HEAD"], checkout, 180_000, credentials); }
   catch (error) {
     if (!commit) throw error;
     // A server that refuses to send one commit by name sends the branch's history instead.
     const shallow = await exists(path.join(checkout, ".git/shallow"));
-    await git(["fetch", "--no-tags", ...(shallow ? ["--unshallow"] : []), "origin", ref ?? "HEAD"], checkout);
+    await git(["fetch", "--no-tags", ...(shallow ? ["--unshallow"] : []), "origin", ref ?? "HEAD"], checkout, 180_000, credentials);
   }
   await git(["checkout", "--quiet", "--detach", "--force", commit ?? "FETCH_HEAD"], checkout);
   await git(["clean", "-ffdxq"], checkout);
@@ -194,9 +202,9 @@ async function checkoutCommit(checkout: string, url: string, ref: string | null,
 }
 
 /** The commit the ref points at on the remote now, without fetching anything. */
-export async function remoteCommit(url: string, ref: string | null): Promise<string> {
+export async function remoteCommit(url: string, ref: string | null, credentials?: NodeJS.ProcessEnv): Promise<string> {
   if (ref && commitPattern.test(ref)) return ref;
-  const output = await git(["ls-remote", "--", url, ...(ref ? [ref] : ["HEAD"])]);
+  const output = await git(["ls-remote", "--", url, ...(ref ? [ref] : ["HEAD"])], undefined, 180_000, credentials);
   const lines = output.split("\n").map((line) => line.split("\t")).filter((parts) => parts.length === 2 && commitPattern.test(parts[0]));
   const wanted = ref ? [`refs/heads/${ref}`, `refs/tags/${ref}^{}`, `refs/tags/${ref}`, ref] : ["HEAD"];
   for (const name of wanted) { const found = lines.find(([, refName]) => refName === name); if (found) return found[0]; }
@@ -567,7 +575,8 @@ async function sourceView(source: GitResourceSource, options: GitResourceOptions
   for (const installed of source.installed) {
     if (!discovered.some((item) => item.key === installed.key)) items.push({ key: installed.key, kind: installed.kind, name: installed.name, description: "No longer in the repository", path: installed.key.split(":").slice(1).join(":"), status: "gone" });
   }
-  return { ...source, label: label(source.url), updateAvailable: Boolean(source.latestCommit && source.latestCommit !== source.commit), items };
+  const { gitlabAccountId, ...publicSource } = source;
+  return { ...publicSource, usesGitLabCredential: Boolean(gitlabAccountId), label: label(source.url), updateAvailable: Boolean(source.latestCommit && source.latestCommit !== source.commit), items };
 }
 
 export async function listGitSources(options: GitResourceOptions = {}): Promise<GitSourceView[]> {
@@ -581,15 +590,21 @@ export async function gitSourceView(id: string, ownerNodeId: string | null = nul
 
 /* ---- Operations on this node's own repositories ---- */
 
-export function addGitSource(input: { url: string; ref?: string | null }, options: GitResourceOptions = {}): Promise<GitSourceView> {
+export function addGitSource(input: { url: string; ref?: string | null; gitlabAccountId?: string | null }, options: GitResourceOptions = {}): Promise<GitSourceView> {
   const url = normalizeGitUrl(input.url), ref = normalizeGitRef(input.ref);
   return withGitResourceMutation(async () => {
     const store = await readStore(options);
     if (store.sources.some((source) => !source.ownerNodeId && source.url === url && source.ref === ref)) throw new GitResourceError("That repository is already added", 409);
     const now = new Date().toISOString();
-    const source: GitResourceSource = { id: randomUUID(), url, ref, commit: "", ownerNodeId: null, autoUpdate: false, recipients: [], deliveries: {},
+    const gitlabAccountId = input.gitlabAccountId || undefined;
+    let credentials: NodeJS.ProcessEnv | undefined;
+    if (gitlabAccountId) {
+      try { credentials = gitlabGitEnvironment(gitlabAccountId, url); }
+      catch (error) { throw new GitResourceError((error as Error).message, 400); }
+    }
+    const source: GitResourceSource = { id: randomUUID(), url, ref, ...(gitlabAccountId ? { gitlabAccountId } : {}), commit: "", ownerNodeId: null, autoUpdate: false, recipients: [], deliveries: {},
       latestCommit: null, checkedAt: now, checkError: null, installed: [], lastError: null, addedAt: now, updatedAt: now };
-    source.commit = await cloneInto(checkoutOf(source, options), url, ref);
+    source.commit = await cloneInto(checkoutOf(source, options), url, ref, credentials);
     source.latestCommit = source.commit;
     store.sources.push(source);
     await writeStore(store, options);
@@ -614,7 +629,7 @@ export function checkGitSource(id: string, options: GitResourceOptions = {}): Pr
     const store = await readStore(options);
     const source = findSource(store, id);
     source.checkedAt = new Date().toISOString();
-    try { source.latestCommit = await remoteCommit(source.url, source.ref); source.checkError = null; }
+    try { source.latestCommit = await remoteCommit(source.url, source.ref, source.gitlabAccountId ? gitlabGitEnvironment(source.gitlabAccountId, source.url) : undefined); source.checkError = null; }
     catch (error) { source.checkError = (error as Error).message; }
     await writeStore(store, options);
     return sourceView(source, options);
@@ -627,7 +642,7 @@ export function updateGitSource(id: string, options: GitResourceOptions = {}): P
     const store = await readStore(options);
     const source = findSource(store, id);
     const previousCommit = source.commit;
-    source.commit = await checkoutCommit(checkoutOf(source, options), source.url, source.ref);
+    source.commit = await checkoutCommit(checkoutOf(source, options), source.url, source.ref, undefined, source.gitlabAccountId ? gitlabGitEnvironment(source.gitlabAccountId, source.url) : undefined);
     source.latestCommit = source.commit;
     source.checkedAt = new Date().toISOString();
     source.checkError = null;

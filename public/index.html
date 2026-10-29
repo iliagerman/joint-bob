@@ -1620,6 +1620,9 @@
             <label>Bring skills, Claude plugins and MCP servers from a git repository
               <span class="folder-input-row resources-git-add-row"><input id="resourcesGitUrl" type="text" autocomplete="off" spellcheck="false" placeholder="https://github.com/owner/repo, git@host:owner/repo.git or owner/repo" data-testid="resources-git-url" /><input id="resourcesGitRef" type="text" autocomplete="off" spellcheck="false" placeholder="Branch or tag" aria-label="Branch or tag (optional)" data-testid="resources-git-ref" /><button class="ghost" type="button" id="resourcesGitAddButton" data-testid="resources-git-add-button">Add repository</button></span>
             </label>
+            <label>GitLab credential
+              <select id="resourcesGitCredential" data-testid="resources-git-credential"><option value="">No saved credentials</option></select>
+            </label>
             <div class="resources-list" id="resourcesGitSources" data-testid="resources-git-sources"></div>
             <div class="resources-pager" id="resourcesGitSourcesPager" data-testid="resources-git-sources-pager" hidden></div>
             <div class="resources-list resources-page" id="resourcesGitItems" data-testid="resources-git-items"></div>
@@ -1628,7 +1631,7 @@
               <button class="ghost" type="button" id="resourcesGitSelectAllButton" data-testid="resources-git-select-all">Select all installable</button>
               <button class="primary" type="button" id="resourcesGitApplyButton" data-testid="resources-git-apply" disabled>Apply selection</button>
             </div>
-            <p class="settings-hint">Installing copies skills into managed skills, plugins for Claude, and MCP servers for Claude and Kiro. Unchecking installed items removes them; edited copies are kept. Remotes are checked every six hours. Shared nodes follow this node's commit and selection.</p>
+            <p class="settings-hint">Installing copies skills into managed skills, plugins for Claude, and MCP servers for Claude and Kiro. A selected GitLab credential is used only for its configured HTTPS host and stays on this node. Shared nodes need their own Git access. Unchecking installed items removes them; edited copies are kept. Remotes are checked every six hours. Shared nodes follow this node's commit and selection.</p>
           </section>
           <section class="resources-paths" id="resourcesPathsPanel" role="tabpanel" data-testid="resources-paths-panel" hidden>
             <p>Additional to managed and native defaults. Enter one absolute file or folder per line; replace lines or add multiple folders (up to 20) per type. Project-scoped folders are additional and more specific than these global lists.</p>

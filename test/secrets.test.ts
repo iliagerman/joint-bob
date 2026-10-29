@@ -116,6 +116,24 @@ test("GitLab credentials stay redacted, retain edits and export only when attach
   });
 });
 
+test("GitLab repository credentials are host-bound and supplied through askpass", async () => {
+  await withSecrets("gitlab-git-auth", async (secrets) => {
+    const token = "synthetic-gitlab-token";
+    const account = await secrets.saveSecretAccount({ label: "KMS GitLab", provider: "gitlab", variables: [
+      { name: "GITLAB_URL", kind: "value", value: "https://kmsgit.example.test" },
+      { name: "GITLAB_TOKEN", kind: "value", value: token },
+    ] });
+
+    assert.throws(() => secrets.gitlabGitEnvironment(account.id, "https://other.example.test/group/repo.git"), /does not match/);
+    const environment = secrets.gitlabGitEnvironment(account.id, "https://kmsgit.example.test/group/repo.git");
+    const username = await exec(environment.GIT_ASKPASS!, ["Username for https://kmsgit.example.test:"] , { env: { ...process.env, ...environment } });
+    const password = await exec(environment.GIT_ASKPASS!, ["Password for https://kmsgit.example.test:"] , { env: { ...process.env, ...environment } });
+    assert.equal(username.stdout.trim(), "oauth2");
+    assert.equal(password.stdout.trim(), token);
+    assert.equal(environment.GIT_TERMINAL_PROMPT, "0");
+  });
+});
+
 test("Jira credentials stay redacted, retain edits and export only when attached", async () => {
   await withSecrets("jira", async (secrets) => {
     const variables = [

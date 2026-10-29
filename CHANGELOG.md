@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Added saved GitLab credential selection for Git repos, restricted to the matching HTTPS host and kept local to each node.
 - Added GitLab to Settings → Secrets with its orange Tanuki logo, saving its URL and access token as the account's variables.
 
 ## 2.171.0 — 2026-10-28
