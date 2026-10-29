@@ -21,6 +21,9 @@ let log = null;
 let explainPull = null;
 let askAi = null;
 let logLoading = null;
+let logError = null;
+let logRequest = 0;
+let expandedSteps = new Set();
 
 function node(tag, className = "", text = "") {
   const element = document.createElement(tag);
@@ -315,7 +318,12 @@ async function openDetail(index) {
     jobId = null;
     log = null;
     logLoading = null;
-    if (tab === "pipelines") jobId = response.jobs.find((job) => job.conclusion === "failure")?.id ?? response.jobs[0]?.id;
+    logError = null;
+    expandedSteps = new Set();
+    if (tab === "pipelines") {
+      jobId = response.jobs.find((job) => job.conclusion === "failure")?.id ?? response.jobs[0]?.id;
+      for (const step of response.jobs.find((job) => job.id === jobId)?.steps ?? []) if (jobFailed(step)) expandedSteps.add(step.number);
+    }
     renderDetail();
     hosting.scrollTop = 0;
     status("");
@@ -330,9 +338,11 @@ async function openDetail(index) {
 const jobFailed = (job) => job?.status === "completed" && job.conclusion === "failure";
 
 function renderDetail() {
+  const focusedTask = document.activeElement?.closest(".git-hosting-step")?.dataset.testid;
   hosting.replaceChildren(backButton());
   if (tab === "pulls") renderPullDetail();
   else renderRunDetail();
+  if (focusedTask) hosting.querySelector(`[data-testid="${CSS.escape(focusedTask)}"] .git-hosting-step-toggle`)?.focus({ preventScroll: true });
 }
 
 function commentEntry(entry, label) {
@@ -464,7 +474,7 @@ function runContext() {
 async function jobContext(job) {
   if (log?.jobId !== job.id) await loadLog(job.id);
   const tail = log?.jobId === job.id ? log.text.slice(-60_000) : "";
-  return `${runContext()}\n\nSelected job: ${job.name} (${job.status === "completed" ? job.conclusion : job.status})\n\nLog${tail.length === log?.text.length ? "" : " (end only)"}:\n${tail || "(not available)"}`;
+  return `${runContext()}\n\nSelected job: ${job.name} (${job.status === "completed" ? job.conclusion : job.status})\n\nLog${tail.length === log?.text.length ? "" : " (end only)"}:\n${tail || log?.unavailable || logError || "(not available)"}`;
 }
 
 function renderRunDetail() {
@@ -559,50 +569,82 @@ function renderJob(job) {
   head.append(askButton("Ask AI about this job", async () => ({ label: `job ${job.name}`, text: await jobContext(job), placeholder: "Why did this job fail?" }), "git-hosting-ask-job"));
   section.append(head);
   const steps = node("ol", "git-hosting-steps");
-  for (const step of job.steps) {
-    const item = node("li", `git-hosting-step is-${tone(step.status, step.conclusion)}`);
-    item.append(jobMark(step), node("span", "git-hosting-step-name", step.name), node("span", "git-hosting-note", span(step.started_at, step.completed_at) || step.conclusion || step.status));
-    steps.append(item);
-  }
+  for (const step of job.steps) steps.append(renderStep(job, step));
   section.append(steps);
-  const logButton = button(log?.jobId === job.id ? "Reload log" : "View full job log", () => { void loadLog(job.id); }, "ghost compact", "git-hosting-job-log");
-  logButton.disabled = logLoading === job.id;
-  section.append(logButton);
-  if (logLoading === job.id) section.append(spinner("Loading log…"));
-  if (log?.jobId === job.id) {
-    const view = renderLog(`${log.text}${log.truncated ? "\n… log truncated at 1 MiB" : ""}`);
-    section.append(view);
-    section.logView = view;
-  }
   return section;
+}
+
+function renderStep(job, step) {
+  const open = expandedSteps.has(step.number);
+  const item = node("li", `git-hosting-step is-${tone(step.status, step.conclusion)}`);
+  item.dataset.testid = `git-hosting-step-${step.number}`;
+  const toggle = button("", () => {
+    if (open) expandedSteps.delete(step.number);
+    else expandedSteps.add(step.number);
+    renderDetail();
+    if (!open && !log && !logError && logLoading !== job.id) void loadLog(job.id);
+  }, "git-hosting-step-toggle", `git-hosting-step-toggle-${step.number}`);
+  toggle.setAttribute("aria-expanded", String(open));
+  const chevron = node("span", "git-hosting-chevron", open ? "▾" : "▸");
+  chevron.setAttribute("aria-hidden", "true");
+  toggle.append(chevron, jobMark(step), node("span", "git-hosting-step-name", step.name), node("span", "git-hosting-note", span(step.started_at, step.completed_at) || step.conclusion || step.status));
+  item.append(toggle);
+  if (open) item.append(renderStepLog(job, step));
+  return item;
+}
+
+function renderStepLog(job, step) {
+  const output = node("div", "git-hosting-step-output");
+  if (logLoading === job.id) { output.append(spinner("Loading task log…")); return output; }
+  if (logError) output.append(errorState(logError, () => { void loadLog(job.id); }));
+  else if (!log) return output;
+  else if (log.unavailable) output.append(node("p", "git-hosting-note", log.unavailable));
+  else {
+    const text = log.steps.find((entry) => entry.number === step.number)?.text;
+    if (text) output.append(renderLog(text));
+    else output.append(node("p", "git-hosting-note", "No timestamped output available for this task."));
+    if (log.truncated) output.append(node("p", "git-hosting-note", "Job log limited to the first 1 MiB; task output may be incomplete or omitted."));
+    output.append(node("p", "git-hosting-note", "Matched by GitHub's task timestamps. Adjacent tasks may share boundary lines."));
+  }
+  const tools = node("div", "git-hosting-meta");
+  if (!logError) tools.append(button("Reload task log", () => { void loadLog(job.id); }, "ghost compact", `git-hosting-step-reload-${step.number}`));
+  const external = githubLink(job.html_url ? `${job.html_url.split("#")[0]}#step:${step.number}:1` : null, "View task on GitHub ↗");
+  if (external) { external.dataset.testid = `git-hosting-step-github-${step.number}`; tools.append(external); }
+  output.append(tools);
+  return output;
 }
 
 function selectJob(id) {
   jobId = id;
   log = null;
   logLoading = null;
+  logError = null;
+  logRequest++;
+  const job = detail.jobs.find((job) => job.id === id);
+  expandedSteps = new Set(job.steps.filter(jobFailed).map((step) => step.number));
   renderDetail();
   if (window.matchMedia("(max-width: 700px)").matches) hosting.querySelector(".git-hosting-job").scrollIntoView({ block: "start" });
-  if (jobFailed(detail.jobs.find((job) => job.id === id))) void loadLog(id);
+  if (jobFailed(job)) void loadLog(id);
 }
 
 async function loadLog(id) {
+  const version = generation;
+  const request = ++logRequest;
+  const current = () => validView("pipelines", version) && jobId === id && request === logRequest && detail;
   logLoading = id;
-  if (detail && tab === "pipelines") renderDetail();
+  logError = null;
+  renderDetail();
   try {
     const response = await api(url("github", { op: "log", id }));
-    if (jobId !== id || tab !== "pipelines" || !detail) return;
+    if (!current()) return;
     log = { jobId: id, ...response };
-    logLoading = null;
-    renderDetail();
-    const view = hosting.querySelector(".git-hosting-log");
-    (view?.firstErrorLine ?? view)?.scrollIntoView({ block: "nearest" });
-    status("");
+    detail.jobs = detail.jobs.map((job) => job.id === id ? response.job : job);
   } catch (error) {
-    if (logLoading === id) logLoading = null;
-    if (jobId === id && detail && tab === "pipelines") renderDetail();
-    status(error.message); toast(error.message, 8000);
+    if (!current()) return;
+    logError = error.message;
   }
+  logLoading = null;
+  renderDetail();
 }
 
 window.addEventListener("resize", () => { if (tab === "pipelines" && detail) requestAnimationFrame(drawEdges); });

@@ -4519,7 +4519,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-hosting-rows { border: 1px solid var(--line); border-radius: var(--radius-ctl); overflow: hidden; }
 .git-hosting-row { display: flex; align-items: start; gap: 12px; width: 100%; min-height: 68px; padding: 14px; border: 0; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--text); text-align: left; }
 .git-hosting-row:last-child { border-bottom: 0; }
-.git-hosting-row:hover, .git-hosting-step:hover { background: var(--field); }
+.git-hosting-row:hover, .git-hosting-step-toggle:hover { background: var(--field); }
 .git-hosting-row[hidden] { display: none; }
 .git-hosting-indicator { color: #3fb950; font-size: 18px; }
 .git-hosting-indicator.is-failed { color: #f85149; }
@@ -4613,7 +4613,12 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .git-hosting-job-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .git-hosting-job-head h4 { margin: 0 auto 0 0; }
 .git-hosting-steps { list-style: none; margin: 12px 0; padding: 0; }
-li.git-hosting-step { display: flex; align-items: center; gap: 10px; padding: 7px 8px; font-size: 12px; }
+li.git-hosting-step { display: block; padding: 0; font-size: 12px; }
+.git-hosting-step-toggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.git-hosting-step-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.git-hosting-step-output { min-width: 0; padding: 0 12px 12px 30px; }
+.git-hosting-step-output .git-hosting-log { margin: 0 0 10px; }
+li.git-hosting-step .git-hosting-step-output .git-hosting-note { margin: 8px 0; }
 li.git-hosting-step.is-failure { background: color-mix(in srgb, #f85149 10%, transparent); }
 .git-hosting-step-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 li.git-hosting-step .git-hosting-note { margin: 0; }

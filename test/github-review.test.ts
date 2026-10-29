@@ -273,32 +273,92 @@ test("PR details and stories respect the configured file limit", async () => {
   } finally { updateSettings({ syncthing: { endpoint: original.syncthing.endpoint }, gitPullFileLimit: original.gitPullFileLimit }); }
 });
 
+test("job logs are grouped by task timestamps, preserving boundary lines and continuations", async () => {
+  await fixture("https://github.com/acme/widget.git", async (dir) => {
+    const text = [
+      "2026-10-29T12:00:00.1000000Z setup output",
+      "2026-10-29T12:00:02.1000000Z compile output",
+      "2026-10-29T12:00:04.1000000Z shared boundary",
+      "2026-10-29T12:00:05.1000000Z FAIL test output",
+      "  stack continuation",
+      "2026-10-29T12:00:06.9000000Z test cleanup",
+    ].join("\n");
+    const steps = [
+      { number: 1, name: "Set up job", status: "completed", started_at: "2026-10-29T12:00:00Z", completed_at: "2026-10-29T12:00:01Z" },
+      { number: 2, name: "Compile", status: "completed", started_at: "2026-10-29T12:00:02Z", completed_at: "2026-10-29T12:00:04Z" },
+      { number: 3, name: "Test", status: "completed", started_at: "2026-10-29T12:00:04Z", completed_at: "2026-10-29T12:00:06Z" },
+      { number: 4, name: "Skip", status: "completed", started_at: null, completed_at: null },
+    ];
+    const github = await createGitHubReview(dir, "test-token", async (input) => String(input).endsWith("/logs")
+      ? new Response(text)
+      : Response.json({ status: "completed", steps }));
+    const result = await github.log(17);
+    assert.equal(result.text, text, "AI context retains the whole job log");
+    assert.deepEqual(result.job, { status: "completed", steps }, "log reload carries the latest task list");
+    assert.deepEqual(result.steps, [
+      { number: 1, text: "2026-10-29T12:00:00.1000000Z setup output" },
+      { number: 2, text: "2026-10-29T12:00:02.1000000Z compile output\n2026-10-29T12:00:04.1000000Z shared boundary" },
+      { number: 3, text: "2026-10-29T12:00:04.1000000Z shared boundary\n2026-10-29T12:00:05.1000000Z FAIL test output\n  stack continuation\n2026-10-29T12:00:06.9000000Z test cleanup" },
+      { number: 4, text: "" },
+    ]);
+  });
+});
+
+for (const redirected of [false, true]) test(`unpublished running job logs return an unavailable state (${redirected ? "blob" : "API"} 404)`, async () => {
+  await fixture("https://github.com/acme/widget.git", async (dir) => {
+    const github = await createGitHubReview(dir, "test-token", async (input) => {
+      const url = String(input);
+      if (url.endsWith("/jobs/17")) return Response.json({ status: "in_progress", steps: [] });
+      if (url.endsWith("/logs") && redirected) return new Response(null, { status: 302, headers: { Location: "https://results.blob.core.windows.net/job.txt" } });
+      return new Response("Not found", { status: 404 });
+    });
+    const result = await github.log(17);
+    assert.match(result.unavailable ?? "", /not available yet/i);
+    assert.equal(result.text, "");
+    assert.deepEqual(result.steps, []);
+  });
+});
+
+test("missing completed logs differ from unavailable running logs and permission failures", async () => {
+  await fixture("https://github.com/acme/widget.git", async (dir) => {
+    let status = 404;
+    const github = await createGitHubReview(dir, "test-token", async (input) => String(input).endsWith("/jobs/17")
+      ? Response.json({ status: "completed", steps: [] })
+      : new Response("Not found", { status }));
+    assert.match((await github.log(17)).unavailable ?? "", /expired|deleted|still be being published/i);
+    for (status of [403, 500]) await assert.rejects(github.log(17), new RegExp(`HTTP ${status}`));
+  });
+});
+
 test("job logs follow HTTPS redirects without forwarding the GitHub token", async () => {
   await fixture("git@github.com:acme/widget.git", async (dir) => {
     const calls: Array<{ url: string; authorization: string | undefined }> = [];
     const fakeFetch: typeof fetch = async (input, init) => {
       const url = String(input);
       calls.push({ url, authorization: (init?.headers as Record<string, string> | undefined)?.Authorization });
+      if (url.endsWith("/jobs/17")) return Response.json({ status: "completed", steps: [] });
       if (url.endsWith("/logs")) return new Response(null, { status: 302, headers: { Location: "https://results.blob.core.windows.net/job.txt" } });
       return new Response("workflow output");
     };
     const github = await createGitHubReview(dir, "test-token", fakeFetch);
-    assert.deepEqual(await github.log(17), { text: "workflow output", truncated: false });
-    assert.equal(calls.length, 2);
+    assert.deepEqual(await github.log(17), { job: { status: "completed", steps: [] }, text: "workflow output", truncated: false, steps: [] });
+    assert.equal(calls.length, 3);
     assert.equal(calls[0].authorization, "Bearer test-token");
-    assert.equal(calls[1].authorization, undefined);
+    assert.equal(calls[1].authorization, "Bearer test-token");
+    assert.equal(calls[2].authorization, undefined);
   });
 });
 
 test("job logs reject redirects outside GitHub's signed artifact host", async () => {
   await fixture("git@github.com:acme/widget.git", async (dir) => {
     let calls = 0;
-    const github = await createGitHubReview(dir, "test-token", async () => {
+    const github = await createGitHubReview(dir, "test-token", async (input) => {
       calls += 1;
+      if (String(input).endsWith("/jobs/17")) return Response.json({ status: "completed", steps: [] });
       return new Response(null, { status: 302, headers: { Location: "https://attacker.example/job.txt" } });
     });
     await assert.rejects(github.log(17), /redirect host is not trusted/);
-    assert.equal(calls, 1);
+    assert.equal(calls, 2);
   });
 });
 

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed GitHub pipeline job logs to open per task, with failed tasks expanded first; a task's log loads only when you open it, and a log GitHub has not published yet shows a clear message instead of an error.
+
 ## 2.175.0 — 2026-10-29
 
 - Added a Resources button to each webhook to manage private files, tools, skills, and editable memory; agents can read and update that webhook's memory, and Git skills have an explicit update action.

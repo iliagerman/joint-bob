@@ -116,7 +116,8 @@ function assertBody(body: string): void {
   if (!body.trim() || body.length > 65536) throw new GitReviewError(400, "Comment must contain 1 to 65536 characters");
 }
 
-interface GithubJob { id: number; name: string; status: string; conclusion: string | null; steps: Array<{ name: string; status: string; conclusion: string | null }> }
+interface GithubStep { number: number; name: string; status: string; conclusion: string | null; started_at: string | null; completed_at: string | null }
+interface GithubJob { id: number; name: string; status: string; conclusion: string | null; steps: GithubStep[] }
 interface WorkflowRun { id: number; path: string; head_sha: string; [key: string]: unknown }
 interface WorkflowJob { name?: string; needs?: string | string[] }
 
@@ -198,10 +199,28 @@ function workflowGroups(detail: WorkflowRun, jobs: GithubJob[], definitions: Rec
   return { run: detail, jobs, dependencies, groups, ...(unmatched.length ? { graphWarning: `${unmatched.length} jobs could not be matched to workflow definitions; their dependencies are not shown` } : {}), truncated: jobs.length < total };
 }
 
-async function downloadJobLog(url: string, token: string | undefined, request: typeof fetch): Promise<{ text: string; truncated: boolean }> {
+function taskLogs(steps: GithubStep[], text: string): Array<{ number: number; text: string }> {
+  let timestamp = NaN;
+  const lines = text.split("\n").map((line) => {
+    const prefix = line.match(/^(\d{4}-\d\d-\d\dT[\d:.]+Z) /);
+    if (prefix) timestamp = Date.parse(prefix[1]);
+    return { line, timestamp };
+  });
+  return steps.map((step) => {
+    if (!step.started_at || step.conclusion === "skipped") return { number: step.number, text: "" };
+    const start = Date.parse(step.started_at);
+    // GitHub rounds step times to seconds, but log lines have fractional timestamps.
+    // Include the entire final second rather than silently dropping boundary output.
+    const end = step.completed_at ? Date.parse(step.completed_at) + 1000 : Infinity;
+    return { number: step.number, text: lines.filter(({ timestamp }) => timestamp >= start && timestamp < end).map(({ line }) => line).join("\n") };
+  });
+}
+
+async function downloadJobLog(url: string, token: string | undefined, request: typeof fetch): Promise<{ text: string; truncated: boolean } | null> {
   let first: Response;
   try { first = await request(url, { redirect: "manual", signal: AbortSignal.timeout(30_000), headers: { Accept: "application/vnd.github+json", ...(token ? { Authorization: `Bearer ${token}` } : {}) } }); }
   catch { throw new GitReviewError(502, "Could not reach GitHub logs"); }
+  if (first.status === 404) return null;
   if (first.status !== 302 && !first.ok) throw new GitReviewError(502, `GitHub log request failed (HTTP ${first.status})`);
   const location = first.status === 302 ? first.headers.get("location") : null;
   if (first.status === 302) {
@@ -212,6 +231,7 @@ async function downloadJobLog(url: string, token: string | undefined, request: t
   let download: Response;
   try { download = location ? await request(location, { signal: AbortSignal.timeout(30_000) }) : first; }
   catch { throw new GitReviewError(502, "Could not download GitHub logs"); }
+  if (download.status === 404) return null;
   if (!download.ok || !download.body) throw new GitReviewError(502, `GitHub log download failed (HTTP ${download.status})`);
   const reader = download.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -231,9 +251,17 @@ export async function createGitHubReview(cwd: string, credentials: Credentials, 
   const token = tokenFor(credentials, { owner, host });
   const base = `/repos/${owner}/${repo}`;
   const call: GithubCall = (route, method, body) => githubRequest(base, token, request, route, method, body);
-  const log = (id: number) => {
+  const log = async (id: number) => {
     assertId(id, "job");
-    return downloadJobLog(`${API}${base}/actions/jobs/${id}/logs`, token, request);
+    const job = await call(`/actions/jobs/${id}`) as GithubJob;
+    const output = await downloadJobLog(`${API}${base}/actions/jobs/${id}/logs`, token, request);
+    if (!output) return {
+      job, text: "", truncated: false, steps: [],
+      unavailable: job.status === "completed"
+        ? "GitHub has no downloadable log for this job. It may have expired, been deleted, or still be being published."
+        : "Task logs are not available yet. GitHub publishes downloadable logs after the job finishes. Open GitHub to view live output.",
+    };
+    return { job, ...output, steps: taskLogs(job.steps, output.text) };
   };
   return {
     repository: { owner, repo },
