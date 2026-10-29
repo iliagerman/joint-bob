@@ -31,6 +31,20 @@
 .gsv-seg i { display: block; width: 0; height: 4px; border-radius: 2px; background: var(--accent); }
 .gsv-seg { background: linear-gradient(var(--line), var(--line)) center / 100% 4px no-repeat; }
 .gsv-card, .gsv-seg:focus-visible { outline-offset: 2px; }
+.gsv-rows { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.gsv-rows li { padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--panel); font-size: clamp(13px, 1.6vw, 16px); line-height: 1.45; }
+.gsv-rows li p { margin: 4px 0 0; color: var(--muted); }
+.gsv-rows code, .gsv-files code { font: 12px/1.5 var(--mono); }
+.gsv-files { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.gsv-delta { float: right; font: 12px/1.5 var(--mono); }
+.gsv-more { color: var(--muted); }
+.gsv-instead { margin: 4px 0 0; color: var(--muted); font-size: .85em; }
+.gsv-priority { display: inline-block; padding: 0 8px; border-radius: 99px; font: 700 10px/1.7 var(--mono); text-transform: uppercase; background: var(--field); }
+.gsv-priority.is-high { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+.gsv-priority.is-medium { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); }
+.gsv-card b { display: block; margin-bottom: 4px; }
+.gsv-stage { align-items: flex-start; }
+.gsv-stage > * { margin-block: auto; }
 @media (prefers-reduced-motion: reduce) { .gsv-item { transition: none; transform: none; } }
 .git-story .gsv-suggest { display: flex; flex-direction: column; gap: 8px; grid-column: 1 / -1; margin: 6px 0 0; padding: 8px 12px; border: 1px dashed var(--line); border-radius: var(--radius-card); background: var(--panel); font-size: 13px; line-height: 1.5; }
 .git-story .gsv-suggest p { margin: 0; }

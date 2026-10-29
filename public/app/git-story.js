@@ -1,9 +1,10 @@
-import { api, apiLines } from "./api.js";
+import { api, apiBlob, apiLines } from "./api.js";
 import { openDiffDialog } from "./git-diff-view.js";
 import { h, s } from "./git-story-dom.js";
 import { diagramLegend, mountStoryDiagram } from "./git-story-diagram.js";
 import { toast } from "./shell.js";
-import { playStoryVideo, storyVoiceConfigured, VOICE_SETUP } from "./git-story-video.js";
+import { exportStoryHtml } from "./git-story-export.js";
+import { playStoryVideo } from "./git-story-video.js";
 
 // A change story explains a conversation's commits and pending files. A separate read-only
 // reviewer writes it; nothing here is posted to the conversation.
@@ -472,24 +473,38 @@ function storyHead() {
     !draft ? videoSuggestion() : null);
 }
 
-// Optional: an animated walkthrough of the saved story, with a narrator voice when an ElevenLabs key is set up.
+// An animated walkthrough of the saved story for reviewing it, also saved as one HTML file. The voice is
+// optional: this computer's speech voice by default, ElevenLabs when a key is set up.
+const VOICE_SETUP = [
+  "Create a free account at elevenlabs.io, open Developers → API Keys, and create a key. Allow it to use Text to Speech.",
+  "In Joint Bob open Settings → Secrets, press + to add a custom account named ElevenLabs, and add a variable named ELEVENLABS_API_KEY with your key.",
+  "Attach that account to a workspace or this project under Secret accounts, then reopen the story.",
+];
+
+async function elevenConfigured() {
+  try { return (await api(story.ctx.apiUrl("story-voice"))).configured; } catch { return false; }
+}
+
 function videoSuggestion() {
   if (story.voice === null) {
     story.voice = false;
-    void storyVoiceConfigured(story.ctx.apiUrl).then((configured) => { if (configured) { story.voice = true; renderStory(); } });
+    void elevenConfigured().then((configured) => { if (configured) { story.voice = true; renderStory(); } });
   }
   const { saved } = shown();
-  const play = (voice) => playStoryVideo({ story: saved.story, facts: saved.facts, apiUrl: story.ctx.apiUrl, voice, host: story.ctx.container.closest("dialog") ?? document.body });
+  const narrate = story.voice ? (text) => apiBlob(story.ctx.apiUrl("story-voice"), { method: "POST", body: JSON.stringify({ text }) }) : null;
+  const play = (voice) => playStoryVideo({ story: saved.story, facts: saved.facts, host: story.ctx.container.closest("dialog") ?? document.body, narrate, notify: toast, voice });
+  const save = async () => { try { await exportStoryHtml(saved.story, saved.facts); } catch (error) { toast(`Could not save the HTML file: ${error.message}`); } };
   return h("div", { class: "gsv-suggest", "data-testid": "git-story-video-suggestion" },
-    h("p", {}, h("b", {}, "Watch this story as a video. "), "An animated walkthrough of the flow and examples, made from this story. A narrator voice is optional."),
+    h("p", {}, h("b", {}, "Walk through this story as a video. "), "Animated flow, worked examples, files, design decisions and the review checklist, with an optional narrator."),
     h("div", { class: "gsv-suggest-row" },
-      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-play", onclick: () => play(story.voice) }, story.voice ? "▶ Play with voice" : "▶ Play video"),
-      story.voice ? h("button", { class: "ghost compact gs-boxed", type: "button", onclick: () => play(false) }, "Play without voice") : null,
-      story.voice ? h("span", { class: "gs-muted gs-small" }, "Narration by ElevenLabs.") : null),
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-play", onclick: () => play(true) }, "▶ Play with voice"),
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-silent", onclick: () => play(false) }, "Play without voice"),
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-export", onclick: save }, "Save as HTML file"),
+      h("span", { class: "gs-muted gs-small" }, story.voice ? "Narration by ElevenLabs, falling back to this computer's voice." : "Narration uses this computer's voice.")),
     story.voice ? null : h("details", { "data-testid": "git-story-voice-setup" },
-      h("summary", {}, "Add a narrator voice with ElevenLabs (optional)"),
+      h("summary", {}, "Want a better voice? Add ElevenLabs (optional)"),
       h("ol", {}, VOICE_SETUP.map((step) => h("li", {}, step))),
-      h("p", { class: "gs-muted gs-small" }, "Each scene's text is sent to ElevenLabs and the audio is saved on this machine, so replays cost nothing.")));
+      h("p", { class: "gs-muted gs-small" }, "Each scene's text is sent to ElevenLabs and the audio is saved on this machine, so replays cost nothing. If ElevenLabs fails, the video switches to this computer's voice.")));
 }
 
 function storySections() {

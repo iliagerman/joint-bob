@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import type { Page } from "playwright";
 import { nativeUiFixture } from "./native-ui-fixture.js";
@@ -462,7 +465,13 @@ test("Story tab explains commits picked from past pushes or history, without the
   await page.getByTestId("git-story-title").waitFor();
 });
 
+// A stand-in for the computer's voice: records what is spoken and finishes each line quickly.
+const FAKE_SPEECH = `window.__spoken = [];
+window.SpeechSynthesisUtterance = function (text) { this.text = text; };
+Object.defineProperty(window, "speechSynthesis", { value: { speak(utterance) { window.__spoken.push(utterance.text); setTimeout(() => { utterance.onstart?.(); setTimeout(() => utterance.onend?.(), 300); }, 10); }, cancel() {}, pause() {}, resume() {} } });`;
+
 async function openSavedStory(page: Page, environment: { username: string; password: string }, url: string, voice: { configured: boolean; narration?: number }) {
+  await page.addInitScript(FAKE_SPEECH);
   await page.route("**/api/projects/*/git/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/status")) return route.fulfill({ json: status });
@@ -478,11 +487,10 @@ async function openSavedStory(page: Page, environment: { username: string; passw
   await page.getByTestId("git-review-tab-story").click();
 }
 
-test("Story tab suggests an animated video and explains how to add the ElevenLabs voice", { timeout: 120_000 }, async (t) => {
+test("Story tab suggests a developer walkthrough that speaks with the computer's voice and explains the ElevenLabs upgrade", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await openSavedStory(page, environment, node.url, { configured: false });
   await page.getByTestId("git-story-video-suggestion").waitFor();
-  assert.equal(await page.getByTestId("git-story-video-play").innerText(), "▶ Play video");
   await page.getByTestId("git-story-voice-setup").locator("summary").click();
   assert.match(await page.getByTestId("git-story-voice-setup").innerText(), /ELEVENLABS_API_KEY/);
 
@@ -490,23 +498,54 @@ test("Story tab suggests an animated video and explains how to add the ElevenLab
   const video = page.getByTestId("git-story-video");
   await video.waitFor();
   assert.match(await video.innerText(), /Greeting with an empty-name error/);
-  await page.getByRole("button", { name: "Scene 2" }).click();
-  await page.locator(".gsv-card.is-on").first().waitFor();
-  assert.match(await video.innerText(), /The page greets the user by name/);
-  // An example step lights up the real flow diagram.
-  await page.getByRole("button", { name: "Scene 5" }).click();
+  assert.equal(await page.getByTestId("git-story-video-voice").innerText(), "Voice: this computer");
+  assert.match(await page.evaluate(() => (window as unknown as { __spoken: string[] }).__spoken[0]), /Greeting with an empty-name error/);
+  const names = await page.locator(".gsv-seg").count();
+  assert.ok(names >= 10, "flow, evolution, example steps, files, decisions, checks and tests each get a scene");
+  await page.getByRole("button", { name: "Scene 4" }).click();
+  await page.locator(".gsv-diagram .gs-node").first().waitFor();
+  await page.getByRole("button", { name: "Scene 7" }).click();
   await page.locator(".gsv-diagram .gs-node.is-current").first().waitFor();
+  await page.getByRole("button", { name: `Scene ${names - 2}` }).click();
+  await page.locator(".gsv-priority.is-high").waitFor();
   await page.keyboard.press("Escape");
   assert.equal(await video.count(), 0);
+
+  await page.getByTestId("git-story-video-silent").click();
+  await video.waitFor();
+  assert.equal(await page.getByTestId("git-story-video-voice").innerText(), "Voice off");
 });
 
-test("Story video falls back to silent playback and says why when the narration fails", { timeout: 120_000 }, async (t) => {
+test("Story video switches to the computer's voice and says why when ElevenLabs fails", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await openSavedStory(page, environment, node.url, { configured: true, narration: 502 });
-  await page.getByTestId("git-story-video-play").waitFor();
-  assert.equal(await page.getByTestId("git-story-video-play").innerText(), "▶ Play with voice");
   await page.getByTestId("git-story-video-play").click();
-  await page.locator(".toast-message", { hasText: "Narration stopped: ElevenLabs refused the narration (401)" }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Voice off" }).count(), 1);
-  assert.match(await page.getByTestId("git-story-video").innerText(), /Greeting with an empty-name error/);
+  await page.locator(".toast-message", { hasText: "ElevenLabs narration failed" }).waitFor();
+  await page.getByText("Voice: this computer").waitFor();
+  assert.match(await page.evaluate(() => (window as unknown as { __spoken: string[] }).__spoken[0]), /Greeting with an empty-name error/);
+});
+
+test("Story saves as one HTML file with the walkthrough and the review notes", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await openSavedStory(page, environment, node.url, { configured: false });
+  const download = page.waitForEvent("download");
+  await page.getByTestId("git-story-video-export").click();
+  const file = path.join(mkdtempSync(path.join(os.tmpdir(), "story-export-")), "story.html");
+  await (await download).saveAs(file);
+  const standalone = await page.context().newPage();
+  await standalone.addInitScript(FAKE_SPEECH);
+  const errors: string[] = [];
+  standalone.on("pageerror", (error) => errors.push(error.message));
+  await standalone.goto(`file://${file}`);
+  await standalone.waitForTimeout(500);
+  assert.deepEqual(errors, []);
+  const notes = await standalone.locator(".gsn").innerText();
+  assert.match(notes, /review checklist[\s\S]*Empty names never reach the server/i);
+  assert.match(notes, /rejects an empty name/);
+  await standalone.locator("#play").click();
+  await standalone.locator(".gsv").waitFor();
+  await standalone.getByRole("button", { name: "Scene 7" }).click();
+  await standalone.locator(".gsv-diagram .gs-node.is-current").first().waitFor();
+  assert.ok((await standalone.evaluate(() => (window as unknown as { __spoken: string[] }).__spoken.length)) >= 1);
+  assert.deepEqual(errors, []);
 });

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a Save as HTML file button to saved Git stories, which saves the walkthrough and review notes as one file that opens without the app; the walkthrough now also covers files, design decisions, the review checklist and tests, and speaks with this computer's voice when ElevenLabs is not set up or fails.
+
 ## 2.176.0 — 2026-10-29
 
 - Changed GitHub pipeline job logs to open per task, with failed tasks expanded first; a task's log loads only when you open it, and a log GitHub has not published yet shows a clear message instead of an error.
