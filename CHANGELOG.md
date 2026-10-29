@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.177.1 — 2026-10-29
 
-- Changed conversation actions such as marking done, renaming, recolouring, classifying, moving, and removing to show on the list the moment you choose them; if the server refuses, the conversation returns to how it was and an error explains why.
+- Changed conversation actions such as marking done, renaming, recolouring, labelling, moving, removing, and the review and ntfy toggles to show on the list at once; the change holds through list refreshes until the server confirms it, and if the server refuses, the conversation returns to how it was with an error.
+- Changed quick notes, worktrees, and tickets to leave their lists at once when you delete them.
+- Made conversation lists load faster: a project's list is no longer rebuilt from every transcript each time a different screen or machine asks for it, and machines spend less time on replication and signed requests.
 
 ## 2.177.0 — 2026-10-29
 
