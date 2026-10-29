@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, stat, writeFile, rename, rm, lstat } from "node:fs/promises";
+import { mkdir, realpath, stat, writeFile, rename, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { resolveDataDirectory } from "./data-directory.js";
@@ -30,7 +30,9 @@ export function ensureWebhookResourceSchema(db: DatabaseSync): void {
     id TEXT PRIMARY KEY, webhook_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('file','tool')),
     current_version_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     UNIQUE(webhook_id, id));
-  CREATE INDEX IF NOT EXISTS webhook_resources_owner ON webhook_resources(webhook_id, kind);`);
+  CREATE INDEX IF NOT EXISTS webhook_resources_owner ON webhook_resources(webhook_id, kind);
+  CREATE TABLE IF NOT EXISTS webhook_memory_settings (
+    webhook_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0);`);
 }
 
 function resourceRoot(webhookId: string, options: WebhookResourceOptions): string {
@@ -38,7 +40,7 @@ function resourceRoot(webhookId: string, options: WebhookResourceOptions): strin
   return path.join(options.root ?? resolveDataDirectory(), "webhook-resources", webhookId);
 }
 
-async function safeDirectory(webhookId: string, options: WebhookResourceOptions): Promise<string> {
+export async function ensureWebhookResourceDirectory(webhookId: string, options: WebhookResourceOptions = {}): Promise<string> {
   const root = resourceRoot(webhookId, options);
   const parent = path.dirname(root);
   await mkdir(parent, { recursive: true, mode: 0o700 });
@@ -90,7 +92,7 @@ export async function saveWebhookResource(db: DatabaseSync, webhookId: string, i
   if (!existing && activeRows(db, webhookId, input.kind).length >= MAX_RESOURCES[input.kind]) throw new WebhookResourceError(`A webhook can have at most ${MAX_RESOURCES[input.kind]} ${input.kind} resources`);
   const id = existing ? String(existing.id) : randomUUID();
   const versionId = randomUUID();
-  const directory = await safeDirectory(webhookId, options);
+  const directory = await ensureWebhookResourceDirectory(webhookId, options);
   const fileName = `${versionId}-${input.name.replace(/[^A-Za-z0-9._-]/g, "_")}`;
   const target = path.join(directory, fileName);
   const temporary = `${target}.tmp`;
@@ -116,14 +118,27 @@ export async function removeWebhookResource(db: DatabaseSync, webhookId: string,
   if (!result.changes) throw new WebhookResourceError("Webhook resource not found", 404);
 }
 
+export function setWebhookMemoryEnabled(db: DatabaseSync, webhookId: string, enabled: boolean): void {
+  ensureWebhookResourceSchema(db);
+  if (!db.prepare("SELECT 1 FROM webhooks WHERE id=?").get(webhookId)) throw new WebhookResourceError("Webhook not found", 404);
+  db.prepare(`INSERT INTO webhook_memory_settings(webhook_id,enabled) VALUES(?,?)
+    ON CONFLICT(webhook_id) DO UPDATE SET enabled=excluded.enabled`).run(webhookId, enabled ? 1 : 0);
+}
+
+export function webhookMemoryEnabled(db: DatabaseSync, webhookId: string): boolean {
+  ensureWebhookResourceSchema(db);
+  const row = db.prepare("SELECT enabled FROM webhook_memory_settings WHERE webhook_id=?").get(webhookId) as { enabled: number } | undefined;
+  return row?.enabled === 1;
+}
+
 export function snapshotWebhookResources(db: DatabaseSync, webhookId: string, ownerNodeId: string): WebhookResourceSnapshot {
   ensureWebhookResourceSchema(db);
-  return { webhookId, ownerNodeId, resources: activeRows(db, webhookId).map(row => ({ id: String(row.id), versionId: String(row.version_id), description: String(row.description), usage: row.usage === null ? null : String(row.usage), mimeType: String(row.mime_type), bytes: Number(row.byte_count) })), skillVersionIds: [], memoryEnabled: false };
+  return { webhookId, ownerNodeId, resources: activeRows(db, webhookId).map(row => ({ id: String(row.id), versionId: String(row.version_id), description: String(row.description), usage: row.usage === null ? null : String(row.usage), mimeType: String(row.mime_type), bytes: Number(row.byte_count) })), skillVersionIds: [], memoryEnabled: webhookMemoryEnabled(db, webhookId) };
 }
 
 export async function resolveWebhookResources(db: DatabaseSync, snapshot: WebhookResourceSnapshot, options: WebhookResourceOptions = {}): Promise<{ files: WebhookResourceRecord[]; tools: WebhookResourceRecord[]; skillRoots: string[] }> {
   ensureWebhookResourceSchema(db);
-  const root = await safeDirectory(snapshot.webhookId, options);
+  const root = await ensureWebhookResourceDirectory(snapshot.webhookId, options);
   const files: WebhookResourceRecord[] = [], tools: WebhookResourceRecord[] = [];
   for (const saved of snapshot.resources) {
     const row = db.prepare(`SELECT r.id,v.webhook_id,v.kind,v.name,v.description,v.usage,v.version_id,v.mime_type,v.byte_count,v.relative_path,v.created_at
