@@ -326,6 +326,16 @@ export async function discoverGitItems(checkout: string): Promise<GitResourceIte
   return items.sort((left, right) => order[left.kind] - order[right.kind] || left.name.localeCompare(right.name) || left.key.localeCompare(right.key));
 }
 
+/** Runs only the existing hook-disabled Git transport for webhook-private skill imports. */
+export async function withGitSkillCheckout<T>(urlInput: string, refInput: string | null, expectedCommit: string | null, action: (checkout: string, commit: string, skills: GitResourceItem[]) => Promise<T>, options: GitResourceOptions = {}): Promise<T> {
+  const checkout = path.join(resolveDataDirectory(options.dataDir), "webhook-git-staging", randomUUID());
+  try {
+    const commit = await checkoutCommit(checkout, normalizeGitUrl(urlInput), normalizeGitRef(refInput), expectedCommit ?? undefined);
+    const skills = (await discoverGitItems(checkout)).filter(item => item.kind === "skill" && !item.error);
+    return await action(checkout, commit, skills);
+  } finally { await rm(checkout, { recursive: true, force: true }); }
+}
+
 /* ---- Digests ---- */
 
 async function treeFiles(directory: string, relative = "", files: string[] = []): Promise<string[]> {

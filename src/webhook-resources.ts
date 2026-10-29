@@ -133,7 +133,11 @@ export function webhookMemoryEnabled(db: DatabaseSync, webhookId: string): boole
 
 export function snapshotWebhookResources(db: DatabaseSync, webhookId: string, ownerNodeId: string): WebhookResourceSnapshot {
   ensureWebhookResourceSchema(db);
-  return { webhookId, ownerNodeId, resources: activeRows(db, webhookId).map(row => ({ id: String(row.id), versionId: String(row.version_id), description: String(row.description), usage: row.usage === null ? null : String(row.usage), mimeType: String(row.mime_type), bytes: Number(row.byte_count) })), skillVersionIds: [], memoryEnabled: webhookMemoryEnabled(db, webhookId) };
+  const skillTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='webhook_skills'").get();
+  const skillVersionIds = skillTable
+    ? (db.prepare("SELECT current_version_id FROM webhook_skills WHERE webhook_id=? ORDER BY created_at,id").all(webhookId) as Array<{ current_version_id: string }>).map(row => row.current_version_id)
+    : [];
+  return { webhookId, ownerNodeId, resources: activeRows(db, webhookId).map(row => ({ id: String(row.id), versionId: String(row.version_id), description: String(row.description), usage: row.usage === null ? null : String(row.usage), mimeType: String(row.mime_type), bytes: Number(row.byte_count) })), skillVersionIds, memoryEnabled: webhookMemoryEnabled(db, webhookId) };
 }
 
 export async function resolveWebhookResources(db: DatabaseSync, snapshot: WebhookResourceSnapshot, options: WebhookResourceOptions = {}): Promise<{ files: WebhookResourceRecord[]; tools: WebhookResourceRecord[]; skillRoots: string[] }> {
@@ -152,5 +156,14 @@ export async function resolveWebhookResources(db: DatabaseSync, snapshot: Webhoo
     (item.kind === "tool" ? tools : files).push(item);
     void row;
   }
-  return { files, tools, skillRoots: [] };
+  const skillRoots: string[] = [];
+  for (const versionId of snapshot.skillVersionIds) {
+    const skill = db.prepare("SELECT relative_path FROM webhook_skill_versions WHERE webhook_id=? AND version_id=?").get(snapshot.webhookId, versionId) as { relative_path: string } | undefined;
+    if (!skill) throw new WebhookResourceError("A webhook skill version is no longer available", 409);
+    const folder = path.join(root, skill.relative_path);
+    const info = await lstat(folder);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new WebhookResourceError("A webhook skill version is unavailable", 409);
+    skillRoots.push(folder);
+  }
+  return { files, tools, skillRoots };
 }

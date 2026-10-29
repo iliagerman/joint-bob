@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added private files and tools for webhooks, each with a description and up to 4 MiB; a webhook keeps the version it was accepted with, so editing a file later does not change what it already runs with.
+- Added private skills for webhooks, from an uploaded folder, a Git repo at a chosen commit, or an existing skill; removing one stops future runs from using it, while a run already accepted keeps its copy.
 - Added a memory file for each webhook, up to 200,000 bytes, that is kept when memory is turned off and back on; a save that would overwrite an edit made since you opened it is refused so you can reload and reconcile.
 
 ## 2.173.0 — 2026-10-29
