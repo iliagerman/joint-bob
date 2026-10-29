@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.172.0 — 2026-10-29
 
-- Added saved GitLab credential selection for Git repos, restricted to the matching HTTPS host and kept local to each node.
-- Added GitLab to Settings → Secrets with its orange Tanuki logo, saving its URL and access token as the account's variables.
+- Added a GitLab credential picker when adding a Git repo in Resources; it uses a saved GitLab account only for repos on that account's HTTPS host, and the choice stays on this node.
+- Added GitLab's orange Tanuki logo to its account in Settings → Secrets.
 
 ## 2.171.0 — 2026-10-28
 
