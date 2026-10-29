@@ -908,6 +908,55 @@ test("takeover honors a live queue refusal but survives a connection lost during
   }
 });
 
+test("cancelling a takeover during transcript fetch releases its source fence", { timeout: 60_000 }, async () => {
+  const project = nodeA.projects.find(candidate => candidate.name === "Infra Scripts")!;
+  const target = (await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`)).body.sessions.find(row => row.harnessId === "claude")!;
+  seedOwnershipRow(nodeA, "claude", target.id, nodeB.nodeId, "owned", null);
+  await stopDevNode(servers[1]);
+  let entered!: () => void, cancelled!: () => void;
+  const fetching = new Promise<void>(resolve => { entered = resolve; });
+  const released = new Promise<void>(resolve => { cancelled = resolve; });
+  let owner = { engine: "claude", sessionId: target.id, ownerNodeId: nodeB.nodeId, epoch: 1, status: "owned", transferToNodeId: null as string | null };
+  const peer = createServer((request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    if (request.url?.startsWith("/api/cluster/v2/runtime/sessions/ownership?")) response.end(JSON.stringify({ ownership: owner }));
+    else if (request.url === "/api/cluster/v2/runtime/sessions/queue-transfer") {
+      owner = { ...owner, status: "transferring", transferToNodeId: nodeA.nodeId };
+      response.end(JSON.stringify({ events: [{ id: randomUUID(), originNodeId: nodeB.nodeId, entityType: "conversation.ownership", entityKey: `claude:${target.id}`, operation: "upsert", payload: { ...owner, originNodeId: nodeB.nodeId }, createdAt: new Date().toISOString() }] }));
+    } else if (request.url?.startsWith("/api/cluster/v2/transcripts?")) entered();
+    else if (request.url === "/api/cluster/v2/runtime/sessions/queue-transfer/cancel") {
+      owner = { ...owner, epoch: 2, status: "owned", transferToNodeId: null };
+      response.end(JSON.stringify({ accepted: true, current: owner }));
+      cancelled();
+    } else { response.statusCode = 404; response.end("{}"); }
+  });
+  await new Promise<void>(resolve => peer.listen(Number(new URL(nodeB.url).port), "127.0.0.1", resolve));
+  try {
+    const controller = new AbortController();
+    const pending = fetch(`${nodeA.url}/api/projects/${project.id}/sessions/take-ownership`, {
+      method: "POST", headers: { Cookie: sessionA.cookie, "X-CSRF-Token": sessionA.csrfToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ peerId: nodeA.nodeId, sessionId: target.id, sessionPath: target.path }), signal: controller.signal,
+    });
+    const aborted = assert.rejects(pending, /abort/i);
+    await fetching;
+    const concurrent = await api(nodeA, sessionA, "POST", `/projects/${project.id}/sessions/take-ownership`, { peerId: nodeA.nodeId, sessionId: target.id, sessionPath: target.path });
+    assert.notEqual(concurrent.status, 200, "a second request cannot cancel the first request's fence");
+    controller.abort();
+    await aborted;
+    await released;
+    const deadline = Date.now() + 5_000;
+    while (readOwnershipRow(nodeA, "claude", target.id)?.status !== "owned" && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+    const actual = readOwnershipRow(nodeA, "claude", target.id);
+    assert.equal(actual?.owner_node_id, nodeB.nodeId);
+    assert.equal(actual?.status, "owned", "cancelled transfer restores replicated source ownership");
+  } finally {
+    peer.closeAllConnections();
+    await new Promise<void>(resolve => peer.close(() => resolve()));
+    servers[1] = await startDevNode(environment, nodeB);
+    sessionB = await signIn(environment, nodeB);
+  }
+});
+
 test("taking over an empty conversation succeeds when its owner also has no transcript", async () => {
   const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
   const twin = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;

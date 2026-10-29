@@ -86,13 +86,16 @@ function waitForProjectFiles(projectId, destination, report) {
 }
 
 function waitForLockOwnershipSync(projectId, destination) {
-  elements.conversationLockTakeButton.disabled = true;
+  elements.conversationLockTakeButton.textContent = "Cancel transfer";
+  elements.conversationLockTakeButton.disabled = false;
   const report = (text) => { elements.conversationLockStatus.textContent = text; };
   const engine = state.projects.find((project) => project.id === projectId)?.syncStatus?.engine;
   if (!engine) return countdownOwnershipWait(report);
   // The status this page can read is this node's; for another destination only the grace period is left.
   return destination.local ? waitForProjectFiles(projectId, destination, report) : countdownOwnershipWait(report, "files");
 }
+
+let takeoverController = null;
 
 // Takeover continues the conversation on this node's own filesystem: the
 // transcript and the project's files are expected here already, and only the
@@ -101,26 +104,40 @@ async function takeLockedConversationOwnership() {
   const session = activeChatSession();
   if (shared.ownershipWait || shared.ownershipTaking || state.activeTaskId || !state.activeProjectId || !session) return;
   const projectId = state.activeProjectId;
+  const owner = state.conversationLock;
   const destination = state.sessionNodes.find((node) => node.id === state.activeNodeId);
   if (!destination?.mapped) throw new Error("Map project first on this node");
   const proceed = await waitForLockOwnershipSync(projectId, destination);
-  if (!proceed) return;
+  if (!proceed) { resetOwnershipWait(); return; }
   shared.ownershipTaking = true;
   elements.conversationLockStatus.textContent = "Taking ownership…";
-  try {
-    const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/take-ownership`, {
-      method: "POST", body: JSON.stringify({ peerId: destination.id, sessionId: session.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
+  const transfer = async (historyOwnerNodeId) => {
+    takeoverController = new AbortController();
+    shared.ownershipTaking = true;
+    renderConversationLock();
+    const result = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/take-ownership`, {
+      method: "POST", body: JSON.stringify({ peerId: destination.id, sessionId: session.id, sessionPath: session.path, sessionName: shortSessionTitle(session), ...(historyOwnerNodeId ? { historyOwnerNodeId } : {}) }),
+      signal: takeoverController.signal,
     });
     state.activeNodeId = destination.id;
     state.activeSessionId = null;
     if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id, activeSessionId: null });
     resetOwnershipWait();
     openSession(result.sessionPath, shortSessionTitle(session));
-    toast(result.pendingPeerIds?.length ? "Ownership taken; offline nodes will update when they return" : "Ownership taken");
-  } catch (error) {
+    toast(result.saved ? `Ownership taken using ${owner.nodeName}'s history. Backup: ${result.saved}` : result.pendingPeerIds?.length ? "Ownership taken; offline nodes will update when they return" : "Ownership taken", result.saved ? 12000 : 8000);
+  };
+  try { await transfer(); }
+  catch (error) {
     resetOwnershipWait();
-    if (!await reconcileTranscriptConflict(error, { projectId, engine: session.harnessId, sessionId: session.id })) throw error;
-  }
+    if (error.name === "AbortError") { toast("Cancellation requested. Reopen the conversation to check which machine owns it; the transfer may already have completed.", 12000); return; }
+    if (!await reconcileTranscriptConflict(error, { projectId, engine: session.harnessId, sessionId: session.id,
+      transfer: { ownerName: owner.nodeName, destinationName: destination.name, accept: () => transfer(owner.nodeId) },
+    })) throw error;
+  } finally { takeoverController = null; resetOwnershipWait(); }
 }
 
-elements.conversationLockTakeButton.addEventListener("click", () => takeLockedConversationOwnership().catch((error) => { resetOwnershipWait(); toast(error.message, 8000); }));
+elements.conversationLockTakeButton.addEventListener("click", () => {
+  if (shared.ownershipWait && !shared.ownershipTaking) { shared.ownershipWait.resolve(false); return; }
+  if (takeoverController) { takeoverController.abort(); return; }
+  void takeLockedConversationOwnership().catch((error) => { resetOwnershipWait(); toast(error.message, 8000); });
+});

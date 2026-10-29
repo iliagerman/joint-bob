@@ -19,7 +19,7 @@ import { ensureConversationRecord } from "../src/conversation-records.js";
 import { resolveDataDirectory } from "../src/data-directory.js";
 import { getHarness } from "../src/harnesses.js";
 import { markPeerReachable, resetPeerAvailability } from "../src/server/peer-availability.js";
-import { acceptOwnerTranscript, catchUpSharedTranscript, flushSharedTranscripts, resetSharedTranscriptPulls, setTranscriptStallTimeout, sharedTranscriptInventory, sharedTranscriptStatus } from "../src/server/shared-transcripts.js";
+import { acceptOwnerTranscript, assertSharedTranscriptReady, catchUpSharedTranscript, flushSharedTranscripts, resetSharedTranscriptPulls, setTranscriptStallTimeout, sharedTranscriptInventory, sharedTranscriptStatus } from "../src/server/shared-transcripts.js";
 import { addProject, removeProject } from "../src/store.js";
 
 const hash = (bytes: string): string => createHash("sha256").update(bytes).digest("hex");
@@ -83,6 +83,59 @@ test("transcript inventory hashes only the advertised bytes when the owner appen
   assert.equal(entries.length, 1);
   assert.equal(entries[0].size, Buffer.byteLength(f.content));
   assert.equal(entries[0].hash, hash(f.content), "the advertised hash must describe exactly the advertised size");
+});
+
+test("takeover keeps a local history that strictly extends the owner's current snapshot", async (t) => {
+  const f = await fixture(t);
+  await mkdir(path.dirname(f.destination), { recursive: true });
+  const extended = f.content + JSON.stringify({ type: "message", id: "local-later", parentId: "first", message: { role: "user", content: [{ type: "text", text: "Preserve this later message" }] } }) + "\n";
+  await writeFile(f.destination, extended);
+  const app = express();
+  const queries: Array<Record<string, unknown>> = [];
+  app.get("/api/cluster/v2/transcripts", (request, response) => {
+    queries.push(request.query);
+    response.json({ entries: [{ engine: "pi", sessionId: f.sessionId, relativePath: path.basename(f.destination), size: Buffer.byteLength(f.content), hash: hash(f.content) }] });
+  });
+  app.get("/api/cluster/v2/transcripts/file", (_request, response) => response.status(206).end(f.content));
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); return new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  recordPeerEndpoint(f.db, { kind: "twin", id: f.relationshipId }, { nodeId: f.peer, name: "Older owner", url: `http://127.0.0.1:${address.port}` });
+  await assertSharedTranscriptReady(f.project.id, f.destination, f.peer);
+  assert.equal(await readFile(f.destination, "utf8"), extended, "all owner bytes and the newer local messages survive");
+  assert.equal(queries[0].sessionId, f.sessionId, "read the named conversation afresh, not cached project inventory");
+  await writeFile(f.destination, extended.replace("Synthetic turn", "Different local turn"));
+  await assert.rejects(assertSharedTranscriptReady(f.project.id, f.destination, f.peer), /Divergent transcript requires review/, "different history still requires review");
+});
+
+test("cancelling a takeover stops its transcript download without replacing local history", { timeout: 10_000 }, async (t) => {
+  const f = await fixture(t);
+  await mkdir(path.dirname(f.destination), { recursive: true });
+  await writeFile(f.destination, f.content);
+  const advertised = f.content + '{"type":"message","id":"later"}\n';
+  let started!: () => void;
+  const arrived = new Promise<void>(resolve => { started = resolve; });
+  const app = express();
+  app.get("/api/cluster/v2/transcripts", (_request, response) => response.json({ entries: [{ engine: "pi", sessionId: f.sessionId, relativePath: path.basename(f.destination), size: Buffer.byteLength(advertised), hash: hash(advertised) }] }));
+  app.get("/api/cluster/v2/transcripts/file", (_request, response) => {
+    response.status(206).write(f.content);
+    started(); // Hold the remaining bytes until the caller cancels.
+  });
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); return new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  recordPeerEndpoint(f.db, { kind: "twin", id: f.relationshipId }, { nodeId: f.peer, name: "Held owner", url: `http://127.0.0.1:${address.port}` });
+  const controller = new AbortController();
+  const pending = assertSharedTranscriptReady(f.project.id, f.destination, f.peer, controller.signal);
+  const rejected = assert.rejects(pending, /Synthetic transfer cancellation/);
+  await Promise.race([arrived, pending.then(() => { throw new Error("Download ended before cancellation"); })]);
+  controller.abort(new Error("Synthetic transfer cancellation"));
+  await rejected;
+  assert.equal(await readFile(f.destination, "utf8"), f.content, "cancelled download leaves destination bytes untouched");
 });
 
 for (const fail of [false, true]) {

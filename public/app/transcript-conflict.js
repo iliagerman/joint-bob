@@ -9,11 +9,30 @@ export function isTranscriptConflict(error) {
   return /Divergent transcript requires review/.test(error?.message || error || "");
 }
 
-export async function reconcileTranscriptConflict(error, { projectId, engine, sessionId } = {}) {
+async function reconcileTransferHistory(transfer) {
+  const choice = await chooseOption({
+    eyebrow: "Conversation history", title: "Choose history for the transfer",
+    message: `The transfer did not complete. You can transfer ${transfer.ownerName}'s history to ${transfer.destinationName} instead of combining the two histories.`,
+    options: [
+      { value: "keep", label: "Decide later", hint: "Leave both histories untouched. Do not retry the transfer." },
+      { value: "owner", label: `Use ${transfer.ownerName}'s history and transfer to ${transfer.destinationName}`, hint: `Back up ${transfer.destinationName}'s history, replace it with ${transfer.ownerName}'s, then move permission to continue.` },
+    ],
+  });
+  if (choice !== "owner") return;
+  if (!await confirmAction({
+    eyebrow: "Conversation history", title: `Transfer using ${transfer.ownerName}'s history?`,
+    message: `${transfer.destinationName}'s version will be backed up first. Its unique messages will not appear in the active conversation. No prompt will be sent.`,
+    confirmLabel: "Back up and transfer",
+  })) return;
+  await transfer.accept();
+}
+
+export async function reconcileTranscriptConflict(error, { projectId, engine, sessionId, transfer } = {}) {
   if (!isTranscriptConflict(error)) return false;
   if (showing) return true;
   showing = true;
   try {
+    if (transfer) { await reconcileTransferHistory(transfer); return true; }
     const matches = [];
     let lookupError = "";
     if (projectId && engine && sessionId) {

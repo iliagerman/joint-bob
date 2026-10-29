@@ -80,6 +80,48 @@ test("conversation conflicts offer safe choices and require explicit replacement
     await page.getByText(/Created \[Local fork\] Original/).waitFor();
     assert.deepEqual(forked, [{ projectId: "project", engine: "pi", sessionId: "session" }]);
     assert.equal(accepted.length, 2, "forking never replaces the original history");
+    // A remotely detected transfer conflict must not depend on this page's local
+    // conflict list. Choosing the Mac copy replaces only after a second confirmation.
+    await page.route("**/api/twins/twin/sharing", route => route.fulfill({ json: { conflicts: [] } }));
+    await page.reload();
+    await page.locator(".project-card").first().waitFor();
+    const transfers: unknown[] = [];
+    await page.route("**/api/projects/project/sessions/take-ownership", async route => {
+      transfers.push(route.request().postDataJSON());
+      await route.fulfill({ json: { saved: "/backup/homeserver.jsonl" } });
+    });
+    const transferConflict = async () => {
+      await page.evaluate(`(() => {
+        const modulePath = "/app/transcript-conflict.js";
+        window.transferConflictDone = import(modulePath).then(({ reconcileTranscriptConflict }) => reconcileTranscriptConflict("Divergent transcript requires review", {
+          projectId: "project", engine: "pi", sessionId: "session",
+          transfer: { ownerName: "Mac", destinationName: "Homeserver", accept: async () => {
+            const apiPath = "/app/api.js";
+            const { api } = await import(apiPath);
+            await api("/api/projects/project/sessions/take-ownership", { method: "POST", body: JSON.stringify({ peerId: "destination", sessionId: "session", sessionPath: "pi:session", historyOwnerNodeId: "mac" }) });
+          } },
+        }));
+      })()`);
+      await choice.waitFor({ state: "visible" }).catch(error => { throw new Error(`${error.message}\nPage errors: ${JSON.stringify(errors)}`); });
+    };
+    await transferConflict();
+    await choice.getByText("Use Mac's history and transfer to Homeserver", { exact: true }).waitFor();
+    const useMac = choice.locator('input[value="owner"]');
+    assert.equal(await useMac.isEnabled(), true, "remote conflict offers the source copy even with no local conflict rows");
+    await useMac.check();
+    await page.getByTestId("choice-accept-button").click();
+    await page.getByTestId("confirm-cancel-button").click();
+    await page.locator("#confirmDialog").waitFor({ state: "hidden" });
+    await page.evaluate("window.transferConflictDone");
+    assert.deepEqual(transfers, [], "cancelling never retries or replaces history");
+    await transferConflict();
+    await choice.locator('input[value="owner"]').check();
+    await page.getByTestId("choice-accept-button").click();
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith("/sessions/take-ownership") && response.request().method() === "POST"),
+      page.getByTestId("confirm-accept-button").click(),
+    ]);
+    assert.equal(transfers.length, 1);
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

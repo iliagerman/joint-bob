@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Added a Save as HTML file button to saved Git stories, which saves the walkthrough and review notes as one file that opens without the app; the walkthrough now also covers files, design decisions, the review checklist and tests, and speaks with this computer's voice when ElevenLabs is not set up or fails.
 - Fixed Git story failures blaming the reviewer; the error now says what went wrong, and an Error details section with a Copy error details button gives the same report the server logs.
+- Added a Cancel transfer button while taking over a conversation, and a choice to use the owner's history when the transfer finds conflicting history.
 
 ## 2.176.0 — 2026-10-29
 

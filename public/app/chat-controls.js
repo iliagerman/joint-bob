@@ -56,8 +56,10 @@ export function renderConversationLock() {
       ? `This conversation is owned by ${lock.nodeName}. Anything you send from here is rejected until you take ownership.`
       : `This conversation is owned by ${lock.nodeName}. Open it there to continue \u2014 a ticket conversation stays on its node.`;
   elements.conversationLockTakeButton.hidden = !takeable;
-  elements.conversationLockTakeButton.disabled = !takeable || shared.ownershipTaking || Boolean(shared.ownershipWait);
-  elements.conversationLockTakeButton.title = takeable ? `Move ownership to this node from ${lock.nodeName}` : "";
+  const transferring = shared.ownershipTaking || Boolean(shared.ownershipWait);
+  elements.conversationLockTakeButton.disabled = !takeable;
+  elements.conversationLockTakeButton.textContent = transferring ? "Cancel transfer" : "Take ownership";
+  elements.conversationLockTakeButton.title = transferring ? "Cancel this ownership transfer" : takeable ? `Move ownership to this node from ${lock.nodeName}` : "";
 }
 
 export function sendSocket(payload) {

@@ -10,9 +10,9 @@ import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { createByTheWayLease, deleteByTheWayLease, getByTheWayLease, getByTheWayLeaseByToken, listByTheWayLeases } from "../../by-the-way-leases.js";
 import { type ClusterPeer, getClusterNode } from "../../cluster.js";
-import { assertSharedTranscriptReady } from '../shared-transcripts.js';
+import { acceptOwnerTranscript, assertSharedTranscriptReady } from '../shared-transcripts.js';
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
-import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
+import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership } from "../../conversation-ownership.js";
 import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
 import { dropBrowserConversationGrants } from "../../browser-store.js";
 import { markConversationReviewed, markConversationsReviewed } from "../../conversation-reviews.js";
@@ -439,10 +439,42 @@ app.post(["/api/cluster/sessions/queue-transfer", "/api/cluster/v2/runtime/sessi
     const fenced = { ...current, status: "transferring" as const, transferToNodeId: destination };
     const result = await compareAndSetConversationOwnership(current, fenced, local.id);
     if (!result.accepted) throw new Error("Conversation owner changed during queue transfer");
-    if (promptQueueIsDraining(key)) throw new Error("Queue dispatch is settling; retry transfer");
+    if (promptQueueIsDraining(key)) {
+      await compareAndSetConversationOwnership(fenced, { ...fenced, epoch: fenced.epoch + 1, status: "owned", transferToNodeId: null }, local.id);
+      throw new Error("Queue dispatch is settling; retry transfer");
+    }
     response.json({ events: [ownershipEvent(fenced, local.id), ...queuedPromptSnapshot(key)] });
   } catch (error) { next(error); }
 });
+
+// The source arbitrates completion against cancellation using the exact fence.
+// A destination must not commit independently at the same epoch as a cancellation.
+app.post(["/api/cluster/sessions/queue-transfer/cancel", "/api/cluster/v2/runtime/sessions/queue-transfer/cancel", "/api/cluster/sessions/queue-transfer/complete", "/api/cluster/v2/runtime/sessions/queue-transfer/complete"], async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const { projectId, record } = z.object({ projectId: z.string().min(1), record: ownershipSchema }).parse(request.body);
+    if (!await getConversationRecord(projectId, record.engine, record.sessionId)) { sendError(response, 404, "Conversation not found in this project"); return; }
+    const local = await getClusterNode();
+    if (record.ownerNodeId !== local.id || record.status !== "transferring" || record.transferToNodeId !== response.locals.machineNodeId) {
+      sendError(response, 403, "Only the transfer destination may cancel its fence"); return;
+    }
+    const restored = { ...record, ownerNodeId: request.path.endsWith("/complete") ? record.transferToNodeId! : local.id, epoch: record.epoch + 1, status: "owned" as const, transferToNodeId: null };
+    response.json(await compareAndSetConversationOwnership(record, restored, local.id));
+  } catch (error) { next(error); }
+});
+
+async function settleQueueTransfer(projectId: string, record: ConversationOwnership, peers: ClusterPeer[], action: "cancel" | "complete"): Promise<OwnershipApplyResult> {
+  const source = peers.find(peer => peer.id === record.ownerNodeId);
+  if (!source) throw new Error(`Cannot ${action} transfer: source node is unavailable`);
+  const response = await runtimeFetch(`${source.url}/api/cluster/sessions/queue-transfer/${action}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, record }), signal: AbortSignal.timeout(TAKEOVER_PEER_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`Could not ${action} transfer (${response.status})`);
+  const result = await response.json() as OwnershipApplyResult;
+  if (result.current) await receiveReplicationBatch({ events: [ownershipEvent(result.current, source.id)] });
+  return result;
+}
 
 function peerIsUnreachable(error: unknown): boolean {
   return error instanceof TypeError || error instanceof DOMException && ["TimeoutError", "AbortError"].includes(error.name);
@@ -480,6 +512,7 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
   // and its durable outbox event fence the old owner when it reconnects.
   if (!source || unavailable.has(source.id)) return unavailable;
   let snapshot: { events: ReplicationEvent[] };
+  let acknowledged = false;
   try {
     const response = await runtimeFetch(`${source.url}/api/cluster/sessions/queue-transfer`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -490,22 +523,26 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
       const refusal = await response.json().catch(() => ({})) as { error?: string };
       throw new TaskWorktreeError(`Queue transfer was not acknowledged by its owner${refusal.error ? `: ${refusal.error}` : "; wait for dispatch to finish and retry"}`);
     }
+    acknowledged = true;
     snapshot = await response.json() as { events: ReplicationEvent[] };
+    // The source answers with this conversation's ownership and queue, and nothing else.
+    const db = await clusterV2Database();
+    const events = snapshot.events.filter(event => ["conversation.ownership", "conversation.queue"].includes(event.entityType)
+      && event.originNodeId === source.id && mayReplicateEvent(db, localId, source.id, event));
+    await receiveReplicationBatch({ ...snapshot, events });
   } catch (error) {
-    if (!peerIsUnreachable(error)) throw error;
-    if (requireOnline) throw new TaskWorktreeError("Conversation owner became unavailable during transfer");
-    unavailable.add(source.id);
-    return unavailable;
+    if (peerIsUnreachable(error) && !requireOnline) { unavailable.add(source.id); return unavailable; }
+    if (acknowledged || peerIsUnreachable(error)) {
+      await settleQueueTransfer(projectId, { ...previous, status: "transferring", transferToNodeId: localId }, peers, "cancel");
+    }
+    throw error;
   }
-  // The previous owner answers with this conversation's ownership and queue, and nothing else.
-  const db = await clusterV2Database();
-  const events = (Array.isArray(snapshot.events) ? snapshot.events : []).filter((event) => ["conversation.ownership", "conversation.queue"].includes(event.entityType)
-    && event.originNodeId === source.id && mayReplicateEvent(db, localId, source.id, event));
-  await receiveReplicationBatch({ ...snapshot, events });
   return unavailable;
 }
 
-export async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>, requireOnline = false): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
+const transferringSessions = new Set<string>();
+
+export async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>, requireOnline = false, signal?: AbortSignal): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[]; saved?: string }> {
   const [local, sessions, peers] = await Promise.all([getClusterNode(), listProjectScopeSessions(project), listRuntimePeers(project.id)]);
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
@@ -514,11 +551,54 @@ export async function takeLocalSessionOwnership(project: ProjectRecord, payload:
   const engine: ConversationEngine = matching.harnessId;
   const sessionId = matching.id;
   if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
+  const key = `${engine}:${sessionId}`;
+  if (transferringSessions.has(key)) throw new TaskWorktreeError("A transfer is already in progress for this conversation");
+  transferringSessions.add(key);
+  try {
+  signal?.throwIfAborted();
   const unavailable = await synchronizeQueueBeforeTakeover(project.id, engine, sessionId, local.id, peers, requireOnline);
-  // An unreachable owner cannot refresh the transcript; takeover continues from the local copy.
-  const currentOwner = (await getConversationOwnership(engine, sessionId))?.ownerNodeId;
-  if (!matching.draft && !(currentOwner && unavailable.has(currentOwner))) await assertSharedTranscriptReady(project.id, matching.path);
-  const ownership = await takeConversationOwnership(engine, sessionId, local.id);
+  const expected = await getConversationOwnership(engine, sessionId);
+  let saved: string | undefined;
+  let ownership: ConversationOwnership;
+  let committing = false;
+  try {
+    signal?.throwIfAborted();
+    // An explicit history choice is bound to the owner the person selected.
+    if (payload.historyOwnerNodeId && (expected?.ownerNodeId !== payload.historyOwnerNodeId || unavailable.has(payload.historyOwnerNodeId))) throw new TaskWorktreeError("The selected history owner changed or is unavailable; check again");
+    if (!matching.draft && !(expected && unavailable.has(expected.ownerNodeId))) {
+      try { await assertSharedTranscriptReady(project.id, matching.path, undefined, signal); }
+      catch (error) {
+        if (!payload.historyOwnerNodeId || !(error instanceof Error) || !/Divergent transcript requires review/.test(error.message)) throw error;
+        signal?.throwIfAborted();
+        const live = findHarnessSession(project.id, engine, sessionId);
+        if (live && harnessSessionBusy(live)) throw new TaskWorktreeError("This conversation is running on this machine; stop it first");
+        ({ saved } = await acceptOwnerTranscript(payload.historyOwnerNodeId, project.id, engine, sessionId, signal));
+        if (live) disposeHarnessSession(live);
+        await assertSharedTranscriptReady(project.id, matching.path, undefined, signal);
+      }
+    }
+    signal?.throwIfAborted();
+    committing = true;
+    if (expected?.status === "transferring" && expected.ownerNodeId !== local.id && !unavailable.has(expected.ownerNodeId)) {
+      const result = await settleQueueTransfer(project.id, expected, peers, "complete");
+      if (!result.accepted || result.current?.ownerNodeId !== local.id) throw new TaskWorktreeError("Conversation transfer was cancelled or ownership changed; check again");
+      ownership = result.current;
+    } else {
+      ownership = expected?.ownerNodeId === local.id && expected.status === "owned" ? expected
+        : { engine, sessionId, ownerNodeId: local.id, epoch: (expected?.epoch ?? 0) + 1, status: "owned", transferToNodeId: null };
+      const result = await compareAndSetConversationOwnership(expected, ownership, local.id);
+      if (!result.accepted) throw new TaskWorktreeError("Conversation ownership changed during transfer; check again");
+    }
+  } catch (error) {
+    if (committing) throw new TaskWorktreeError(`Transfer completion could not be confirmed. Reopen the conversation to check its owner. ${error instanceof Error ? error.message : error}`);
+    if (expected && expected.ownerNodeId !== local.id && (expected.status === "transferring" && expected.transferToNodeId === local.id || unavailable.has(expected.ownerNodeId))) {
+      // The owner may have fenced the queue even if its reply was lost.
+      const fence = { ...expected, status: "transferring" as const, transferToNodeId: local.id };
+      try { await settleQueueTransfer(project.id, fence, peers, "cancel"); }
+      catch (failure) { throw new Error(`${error instanceof Error ? error.message : error}. Transfer cancellation failed: ${failure instanceof Error ? failure.message : failure}`); }
+    }
+    throw error;
+  }
   const reachable = peers.filter((peer) => !unavailable.has(peer.id));
   const settled = await Promise.allSettled(reachable.map((peer) => applyOwnershipToPeer(peer, ownership, local.id)));
   const pendingPeerIds = [...unavailable];
@@ -526,13 +606,14 @@ export async function takeLocalSessionOwnership(project: ProjectRecord, payload:
     if (result.status === "rejected") {
       const error = result.reason;
       if (peerIsUnreachable(error)) { pendingPeerIds.push(reachable[index].id); continue; }
-      throw error;
+      throw new Error(`Ownership transferred, but peer acknowledgement failed: ${error instanceof Error ? error.message : error}`);
     }
     if (!result.value.accepted || !sameConversationOwnership(result.value.current ?? undefined, ownership)) {
-      throw new Error(`Peer rejected ownership state: ${JSON.stringify(result.value.current)}`);
+      throw new Error("Ownership transferred, but a peer reports a different owner; reopen the conversation to check");
     }
   }
-  return { sessionPath: matching.path, ownership, pendingPeerIds };
+  return { sessionPath: matching.path, ownership, pendingPeerIds, ...(saved ? { saved } : {}) };
+  } finally { transferringSessions.delete(key); }
 }
 
 app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, next) => {
@@ -652,6 +733,13 @@ app.get("/api/running", async (_request, response, next) => {
   }
 });
 
+function takeoverSignal(response: import("express").Response): AbortSignal {
+  const controller = new AbortController();
+  if (response.destroyed) controller.abort(new Error("Transfer cancelled by the caller"));
+  response.once("close", () => { if (!response.writableEnded) controller.abort(new Error("Transfer cancelled by the caller")); });
+  return controller.signal;
+}
+
 app.post(["/api/cluster/sessions/take-ownership", "/api/cluster/v2/runtime/sessions/take-ownership"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
@@ -659,7 +747,7 @@ app.post(["/api/cluster/sessions/take-ownership", "/api/cluster/v2/runtime/sessi
     const payload = routedSessionTakeOwnershipSchema.parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
-    response.json(await takeLocalSessionOwnership(project, payload));
+    response.json(await takeLocalSessionOwnership(project, payload, false, takeoverSignal(response)));
   } catch (error) {
     if (error instanceof TaskWorktreeError) { sendError(response, 409, error.message); return; }
     next(error);
@@ -672,12 +760,13 @@ app.post("/api/projects/:projectId/sessions/take-ownership", async (request, res
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const payload = sessionTakeOwnershipSchema.parse(request.body);
     const local = await getClusterNode();
-    if (payload.peerId === local.id) { response.json(await takeLocalSessionOwnership(project, { ...payload, projectId: project.id })); return; }
+    const signal = takeoverSignal(response);
+    if (payload.peerId === local.id) { response.json(await takeLocalSessionOwnership(project, { ...payload, projectId: project.id }, false, signal)); return; }
     const peer = await getRuntimePeer(payload.peerId);
     if (!peer) { sendError(response, 404, "Peer not found"); return; }
     const routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/take-ownership`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(35_000),
+      body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
     });
     response.status(routed.status).json(await routed.json());
   } catch (error) { next(error); }

@@ -11,6 +11,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode } from "./dev-nodes.js";
+import { signedNodeRequest } from "./signed-node-request.js";
 
 async function eventually(check: () => Promise<void>, timeout = 60_000): Promise<void> {
   const deadline = Date.now() + timeout;
@@ -147,14 +148,72 @@ test("one transcript the twin cannot take does not hold back the rest of the pro
     assert.deepEqual(await conflicts(), [{ engine: "pi", sessionId: blocked }], "fork does not silently settle the conflict");
     assert.equal((await api(right, sb, "POST", forkEndpoint, { ...settle, sessionId: waiting })).status, 409, "an ordinary remote conversation cannot use the conflict-only fork");
     assert.equal((await api(right, sb, "POST", `/twins/${invitation.body.relationshipId}/transcript-conflicts/accept`, settle)).status, 400, "replacing local history needs explicit confirmation");
-    const settled = await api<{ saved: string }>(right, sb, "POST", `/twins/${invitation.body.relationshipId}/transcript-conflicts/accept`, { ...settle, confirmReplaceLocal: true });
-    assert.equal(settled.status, 200);
+    // A failed transfer must release its source fence, even when the history conflict
+    // exists only on the destination. The user's explicit choice then transfers the owner copy.
+    // These synthetic files predate any recorded conversation. Register them on
+    // both nodes, as real chat creation/replication does before an ownership move.
+    for (const [environment, node] of [[a, left], [b, right]] as const) execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      import { ensureConversationRecord } from "./src/conversation-records.ts";
+      await ensureConversationRecord(${JSON.stringify(projectId)}, "pi", ${JSON.stringify(blocked)}, ${JSON.stringify(left.nodeId)});
+    `], { cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: node.dataDir }, stdio: "pipe" });
+    execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      import { takeConversationOwnership } from "./src/conversation-ownership.ts";
+      await takeConversationOwnership("pi", ${JSON.stringify(blocked)}, ${JSON.stringify(left.nodeId)});
+    `], { cwd: process.cwd(), env: { ...process.env, HOME: a.home, JOINT_BOB_DATA_DIR: left.dataDir }, stdio: "pipe" });
+    await eventually(async () => {
+      assert.equal(query<{ owner_node_id: string }>(right, "SELECT owner_node_id FROM conversation_ownership WHERE session_id=?", blocked)[0]?.owner_node_id, left.nodeId);
+    });
+    const transfer = { peerId: right.nodeId, sessionId: blocked, sessionPath: path.join(b.home, ".pi", "sessions", `${blocked}.jsonl`) };
+    const endpoint = `/projects/${projectId}/sessions/take-ownership`;
+    await eventually(async () => {
+      const listing = await api<{ sessions: Array<{ id: string }> }>(right, sb, "GET", `/projects/${projectId}/sessions`);
+      assert.ok(listing.body.sessions.some(session => session.id === blocked), "the destination lists the registered conversation before takeover");
+    });
+    const failed = await api<{ error: string }>(right, sb, "POST", endpoint, transfer);
+    assert.notEqual(failed.status, 200);
+    assert.match(failed.body.error, /Divergent transcript/);
+    for (const node of [left, right]) {
+      assert.deepEqual(query(node, "SELECT owner_node_id,status,transfer_to_node_id FROM conversation_ownership WHERE session_id=?", blocked).map(row => ({ ...row as object })), [{ owner_node_id: left.nodeId, status: "owned", transfer_to_node_id: null }], "failed transfer restores the original owner on both nodes");
+    }
+    assert.match(await readFile(transfer.sessionPath, "utf8"), /Local edit/, "failed transfer preserves destination history");
+    const wrongOwner = await api(right, sb, "POST", endpoint, { ...transfer, historyOwnerNodeId: randomUUID() });
+    assert.notEqual(wrongOwner.status, 200, "approval for a different owner cannot replace history");
+    const settled = await api<{ saved: string; ownership: { ownerNodeId: string } }>(right, sb, "POST", endpoint, { ...transfer, historyOwnerNodeId: left.nodeId });
+    assert.equal(settled.status, 200, JSON.stringify(settled.body));
+    assert.equal(settled.body.ownership.ownerNodeId, right.nodeId, "the selected owner history moves with execution");
     assert.match(await readFile(path.join(b.home, ".pi", "sessions", `${blocked}.jsonl`), "utf8"), /Newest turn/, "the owner's history is installed");
     assert.match(await readFile(settled.body.saved, "utf8"), /Local edit/, "the twin's own version is saved first");
     await eventually(async () => {
       assert.deepEqual(query(right, "SELECT error FROM cluster_v2_transcript_errors WHERE project_id=?", projectId), [], "the project no longer reports the conversation");
       assert.deepEqual(await conflicts(), []);
     });
+    // Cancellation is an exact-state operation. A delayed cancel must not undo a
+    // later successful transfer, even when the old fence is still in flight.
+    const fencedOwner = await signedNodeRequest(a, left, right, "POST", "/api/cluster/v2/runtime/sessions/queue-transfer", { projectId, engine: "pi", sessionId: blocked });
+    assert.equal(fencedOwner.status, 200);
+    const record = (await fencedOwner.json() as { events: Array<{ entityType: string; payload: Record<string, unknown> }> }).events.find(event => event.entityType === "conversation.ownership")!.payload;
+    const cancel = { projectId, record: { engine: record.engine, sessionId: record.sessionId, ownerNodeId: record.ownerNodeId, epoch: record.epoch, status: record.status, transferToNodeId: record.transferToNodeId } };
+    const cancelled = await signedNodeRequest(a, left, right, "POST", "/api/cluster/v2/runtime/sessions/queue-transfer/cancel", cancel);
+    assert.equal(cancelled.status, 200);
+    assert.equal((await cancelled.json() as { current: { status: string } }).current.status, "owned");
+    const retried = await api(left, sa, "POST", `/projects/${projectId}/sessions/take-ownership`, { peerId: left.nodeId, sessionId: blocked, sessionPath: path.join(a.home, ".pi", "sessions", `${blocked}.jsonl`) });
+    assert.equal(retried.status, 200, JSON.stringify(retried.body));
+    const late = await signedNodeRequest(a, left, right, "POST", "/api/cluster/v2/runtime/sessions/queue-transfer/cancel", cancel);
+    assert.equal(late.status, 200);
+    assert.equal((await late.json() as { accepted: boolean }).accepted, false, "stale cancellation does not undo completed takeover");
+    assert.equal(query<{ owner_node_id: string }>(right, "SELECT owner_node_id FROM conversation_ownership WHERE session_id=?", blocked)[0]?.owner_node_id, left.nodeId);
+    const raceFence = await signedNodeRequest(b, right, left, "POST", "/api/cluster/v2/runtime/sessions/queue-transfer", { projectId, engine: "pi", sessionId: blocked });
+    assert.equal(raceFence.status, 200);
+    const snapshot = await raceFence.json() as { events: Array<{ entityType: string; payload: Record<string, unknown> }> };
+    const { originNodeId: _origin, ...raceRecord } = snapshot.events.find(event => event.entityType === "conversation.ownership")!.payload;
+    const outcomes = await Promise.all(["cancel", "complete"].map(async action => {
+      const response = await signedNodeRequest(b, right, left, "POST", `/api/cluster/v2/runtime/sessions/queue-transfer/${action}`, { projectId, record: raceRecord });
+      assert.equal(response.status, 200);
+      return response.json() as Promise<{ accepted: boolean; current: { status: string; ownerNodeId: string } }>;
+    }));
+    assert.equal(outcomes.filter(outcome => outcome.accepted).length, 1, "source chooses exactly one of racing completion and cancellation");
+    assert.deepEqual(outcomes[0].current, outcomes[1].current, "both outcomes report the same authoritative owner, never split brain");
+    assert.equal(outcomes[0].current.status, "owned");
   } finally {
     await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });

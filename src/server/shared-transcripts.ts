@@ -232,13 +232,14 @@ function oneAtATime<T>(peer:string,engine:string,sessionId:string,action:()=>Pro
  activeReceives.set(key,settled);
  return run;
 }
-function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
- return oneAtATime(peer.nodeId,entry.engine,entry.sessionId,()=>receiveTranscriptNow(db,peer,projectId,entry));
+function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry,signal?:AbortSignal):Promise<void>{
+ return oneAtATime(peer.nodeId,entry.engine,entry.sessionId,()=>receiveTranscriptNow(db,peer,projectId,entry,signal));
 }
-function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
- return withProjectRuntime(projectId,()=>receiveTranscriptInRuntime(db,peer,projectId,entry));
+function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry,signal?:AbortSignal):Promise<void>{
+ return withProjectRuntime(projectId,()=>receiveTranscriptInRuntime(db,peer,projectId,entry,signal));
 }
-async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
+async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry,signal?:AbortSignal):Promise<void>{
+ signal?.throwIfAborted();
  const adapter=getHarness(entry.engine),root=path.resolve(adapter.sync.transcriptRoot()),destination=path.resolve(root,entry.relativePath);
  if(!within(root,destination)||!confinedToRuntime(currentRuntime(),destination)||!adapter.paths.ownsTranscript(destination)||(adapter.paths.sessionId(destination)??adapter.paths.sessionId(`${entry.engine}:${destination}`))!==entry.sessionId)throw new Error('Invalid shared transcript identity');
  const receipt=db.prepare('SELECT path,hash FROM cluster_v2_transcript_receipts WHERE peer_id=? AND project_id=? AND engine=? AND session_id=?').get(peer.nodeId,projectId,entry.engine,entry.sessionId) as {path:string;hash:string}|undefined;
@@ -274,18 +275,18 @@ async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,proj
   let source:Readable=Readable.from([]);
   if(bytes<entry.size){
    guard.touch();
-   const response=await peerGet(peer,target,{Range:`bytes=${bytes}-${entry.size-1}`},guard.signal);
+   const response=await peerGet(peer,target,{Range:`bytes=${bytes}-${entry.size-1}`},signal?AbortSignal.any([signal,guard.signal]):guard.signal);
    if(!response.body)throw new Error('Empty transcript response');
    if(resumed&&response.status!==206)throw new Error('Transcript transfer could not be resumed');
    source=Readable.fromWeb(response.body as never);
   }
   const sink=(await open(partial,resumed?constants.O_WRONLY|constants.O_APPEND|constants.O_NOFOLLOW:'wx',0o600)).createWriteStream();
   try{
-   await pipeline(source,new Transform({transform(chunk,_encoding,callback){guard.touch();bytes+=chunk.length;if(bytes>entry.size){callback(new Error('Transcript exceeds advertised size'));return;}hash.update(chunk);callback(null,chunk);}}),sink);
+   await pipeline(source,new Transform({transform(chunk,_encoding,callback){guard.touch();bytes+=chunk.length;if(bytes>entry.size){callback(new Error('Transcript exceeds advertised size'));return;}hash.update(chunk);callback(null,chunk);}}),sink,{signal});
   }catch(error){
    // What arrived before the connection dropped is kept for the next attempt.
    keep=bytes<=entry.size;
-   throw guard.signal.aborted?guard.signal.reason:error;
+   throw signal?.aborted?signal.reason:guard.signal.aborted?guard.signal.reason:error;
   }
   if(bytes!==entry.size||hash.digest('hex')!==entry.hash)throw new Error('Transcript changed during transfer');
   // A local copy changed since the last receipt may contain unsent work. Repair
@@ -310,6 +311,7 @@ async function receiveTranscriptInRuntime(db:DatabaseSync,peer:PeerEndpoint,proj
   // deletion may arrive while its transcript downloads or while tombstones are read.
   if((await deletedConversationKeys(projectId)).has(`${entry.engine}:${entry.sessionId}`))return;
   await sharedTranscriptProject(peer.nodeId,projectId);
+  signal?.throwIfAborted();
   await rename(partial,destination);
   // Rename yields to other requests; a deletion may have committed while it ran.
   await sharedTranscriptProject(peer.nodeId,projectId);
@@ -346,10 +348,11 @@ export async function forkConflictedTranscript(peerId:string,projectId:string,en
  }));
 }
 
-export function assertSharedTranscriptReady(projectId:string,sessionPath:string,ownerNodeId?:string):Promise<void>{
- return withProjectRuntime(projectId,()=>assertSharedTranscriptReadyNow(projectId,sessionPath,ownerNodeId));
+export function assertSharedTranscriptReady(projectId:string,sessionPath:string,ownerNodeId?:string,signal?:AbortSignal):Promise<void>{
+ return withProjectRuntime(projectId,()=>assertSharedTranscriptReadyNow(projectId,sessionPath,ownerNodeId,signal));
 }
-async function assertSharedTranscriptReadyNow(projectId:string,sessionPath:string,ownerNodeId?:string):Promise<void>{
+async function assertSharedTranscriptReadyNow(projectId:string,sessionPath:string,ownerNodeId?:string,signal?:AbortSignal):Promise<void>{
+ signal?.throwIfAborted();
  const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);
  const adapter=harnessForSessionPath(sessionPath),sessionId=adapter.paths.sessionId(sessionPath);
  if(!sessionId)throw new Error('Conversation has no transcript identity');
@@ -358,13 +361,15 @@ async function assertSharedTranscriptReadyNow(projectId:string,sessionPath:strin
  if(!sourceId||sourceId===local.id)return;
  const peer=replicationPeers(db,local.id).find(peer=>peer.nodeId===sourceId);
  if(!peer||!mayShareProject(db,local.id,peer.nodeId,projectId))throw new Error('Conversation owner is unavailable');
- const target='/api/cluster/v2/transcripts?'+new URLSearchParams({projectId});
- const payload=inventorySchema.parse(await(await peerGet(peer,target)).json());
+ const target='/api/cluster/v2/transcripts?'+new URLSearchParams({projectId,engine:adapter.id,sessionId});
+ const payload=inventorySchema.parse(await(await peerGet(peer,target,{},signal?AbortSignal.any([signal,AbortSignal.timeout(30000)]):undefined)).json());
  const entry=payload.entries.find(entry=>entry.engine===adapter.id&&entry.sessionId===sessionId);
  if(!entry)throw new Error('Conversation transcript is not available on its owner');
- await receiveTranscript(db,peer,projectId,entry);
- const receipt=db.prepare('SELECT path,hash FROM cluster_v2_transcript_receipts WHERE peer_id=? AND project_id=? AND engine=? AND session_id=?').get(peer.nodeId,projectId,entry.engine,entry.sessionId) as {path:string;hash:string}|undefined;
- if(!receipt||receipt.hash!==entry.hash||await fileHash(receipt.path,await stat(receipt.path))!==entry.hash)throw new Error('Conversation transcript is not synchronized on this node');
+ await receiveTranscript(db,peer,projectId,entry,signal);
+ // A destination may already have later entries. It is ready when it holds
+ // every advertised owner byte; requiring equal lengths strands a safe extension.
+ const destination=path.resolve(adapter.sync.transcriptRoot(),entry.relativePath),info=await stat(destination);
+ if(info.size<entry.size||await fileHash(destination,{mtimeMs:info.mtimeMs,size:entry.size})!==entry.hash)throw new Error('Conversation transcript is not synchronized on this node');
 }
 
 /** Pulls one conversation from the peer that just ended a run in it, instead of waiting up
@@ -420,12 +425,13 @@ export function sharedTranscriptStatus(db:DatabaseSync,local:string,peer:string)
 }
 /** The reviewed answer for a conversation both machines continued: take its owner's history.
     This machine's version is saved next to the kept copy first, so nothing is lost. */
-export async function acceptOwnerTranscript(peerId:string,projectId:string,engine:string,sessionId:string):Promise<{saved:string}>{
+export async function acceptOwnerTranscript(peerId:string,projectId:string,engine:string,sessionId:string,signal?:AbortSignal):Promise<{saved:string}>{
  const db=await clusterV2Database();ensureSchema(db);
- return oneAtATime(peerId,engine,sessionId,()=>acceptOwnerTranscriptNow(db,peerId,projectId,engine,sessionId));
+ return oneAtATime(peerId,engine,sessionId,()=>acceptOwnerTranscriptNow(db,peerId,projectId,engine,sessionId,signal));
 }
 /** For a caller that already holds this conversation's turn in oneAtATime. */
-async function acceptOwnerTranscriptNow(db:DatabaseSync,peerId:string,projectId:string,engine:string,sessionId:string):Promise<{saved:string}>{
+async function acceptOwnerTranscriptNow(db:DatabaseSync,peerId:string,projectId:string,engine:string,sessionId:string,signal?:AbortSignal):Promise<{saved:string}>{
+ signal?.throwIfAborted();
  await sharedTranscriptProject(peerId,projectId);
  const row=db.prepare(`SELECT ${conflictColumns} FROM cluster_v2_transcript_conflicts WHERE ${conflictKey}`).get(peerId,projectId,engine,sessionId) as ConflictRow|undefined;
  if(!row)throw new ClusterV2HttpError(404,'This conversation no longer needs review');
@@ -444,6 +450,7 @@ async function acceptOwnerTranscriptNow(db:DatabaseSync,peerId:string,projectId:
   await copyFile(row.artifact,temporary,constants.COPYFILE_EXCL);
   const current=await stat(row.path);
   if(current.size!==existing.size||current.mtimeMs!==existing.mtimeMs)throw new ClusterV2HttpError(409,'This machine\'s copy changed since it was compared; check again');
+  signal?.throwIfAborted();
   await rename(temporary,row.path);
  }finally{await rm(temporary,{force:true});}
  db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_receipts VALUES(?,?,?,?,?,?)').run(peerId,projectId,engine,sessionId,row.path,row.remoteHash);
