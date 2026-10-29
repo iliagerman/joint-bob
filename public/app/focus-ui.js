@@ -9,6 +9,9 @@ import { refreshRowMenuAnchor } from "./row-menu.js";
 import { toast } from "./shell.js";
 import { initializeMobileProjectControls, syncMobileProjectControls, mobileFocusViewport } from "./focus-project-controls.js";
 import { installCreationGestures } from "./focus-creation-gestures.js";
+import { createSearchableSelect } from "./searchable-select.js";
+import { sendSocket } from "./chat-controls.js";
+import { openNewSecretAccount } from "./secrets.js";
 
 const fab = document.querySelector("#focusControlsButton");
 const menu = document.querySelector("#focusControls");
@@ -20,6 +23,41 @@ const toolbarHome = document.createComment("Chat toolbar location");
 let enabled = false;
 let preferred = false;
 let position = null;
+
+// Each action button lives in exactly one container, chosen by the view. Captured before any move.
+const actionButtons = Object.fromEntries([
+  "focusMarkDone", "focusAddSecret", "focusAutoRespond", "focusTools", "focusNewConversation", "focusNewNote",
+  "focusRecents", "focusRunning", "focusReviews", "focusProjects", "focusConversations", "focusCosts", "focusSettings",
+].map(id => [id, document.getElementById(id)]));
+const chatPlacement = {
+  "#focusChatDock": ["focusMarkDone", "focusNewNote", "focusNewConversation", "focusAddSecret", "focusAutoRespond", "focusConversations"],
+  "#focusChatMore": ["focusTools", "focusRecents", "focusRunning", "focusReviews"],
+  "#focusChatLinks": ["focusProjects", "focusCosts", "focusSettings"],
+  ".focus-global-actions": [],
+  ".focus-navigation": [],
+};
+const viewPlacement = {
+  "#focusChatDock": ["focusMarkDone", "focusAddSecret", "focusAutoRespond"],
+  "#focusChatMore": ["focusTools"],
+  "#focusChatLinks": [],
+  ".focus-global-actions": ["focusNewConversation", "focusNewNote", "focusRecents", "focusRunning", "focusReviews"],
+  ".focus-navigation": ["focusProjects", "focusConversations", "focusCosts", "focusSettings"],
+};
+
+const harnessPicker = createSearchableSelect({ id: "focusHarness", testid: "focus-harness", label: "Harness", prompt: "Choose a harness", placeholder: "Search harnesses", emptyText: "No harnesses found" });
+const modelPicker = createSearchableSelect({ id: "focusModel", testid: "focus-model", label: "Model", prompt: "Choose a model", placeholder: "Search models", emptyText: "No models found" });
+const effortPicker = createSearchableSelect({ id: "focusEffort", testid: "focus-effort", label: "Effort", prompt: "Choose an effort level", placeholder: "Search effort levels", emptyText: "No effort levels found" });
+document.querySelector("#focusHarnessSelect").append(harnessPicker.root);
+document.querySelector("#focusModelSelect").append(modelPicker.root);
+document.querySelector("#focusEffortSelect").append(effortPicker.root);
+harnessPicker.onChange(value => chooseSelectValue(elements.chatHarnessSelect, value));
+effortPicker.onChange(value => chooseSelectValue(elements.reasoningLevelSelect, value));
+modelPicker.onChange(key => {
+  const sent = key === BOB_AUTO.value
+    ? sendSocket({ type: "setModel", modelId: "bob-auto" })
+    : sendSocket({ type: "setModel", ...modelIdentity(key) });
+  if (!sent) toast("Not connected");
+});
 
 function currentView() {
   return ["projects", "sessions", "chat", "board", "canvas"].find(view => document.body.classList.contains(`view-${view}`)) || "projects";
@@ -34,24 +72,34 @@ function showMenu(show = menu.hidden) {
   if (!enabled) return;
   menu.hidden = !show;
   fab.setAttribute("aria-expanded", String(show));
-  if (show) { fab.hidden = false; showSection(""); }
+  if (show) { fab.hidden = false; syncQuickActionLabels(); showSection(""); }
   else if (menu.contains(document.activeElement)) fab.focus();
 }
 function showSection(section) {
   menu.dataset.section = section;
   const inChat = currentView() === "chat";
-  document.querySelector("#focusBack").hidden = !section;
-  document.querySelector("#focusChatQuickActions").hidden = !inChat || Boolean(section);
-  context.hidden = Boolean(section);
+  const home = !section;
+  document.querySelector("#focusBack").hidden = home;
+  document.querySelector("#focusChatQuickActions").hidden = !inChat || !home;
+  document.querySelector("#focusChatDock").hidden = !inChat || !home;
+  document.querySelector(".focus-global-actions").hidden = !home || inChat;
+  document.querySelector(".focus-navigation").hidden = !home || inChat;
+  context.hidden = !home;
   chatHost.hidden = section !== "tools";
-  nodeList.hidden = !["node", "agent", "effort"].includes(section);
   document.querySelector("#focusTools").setAttribute("aria-expanded", String(section === "tools"));
-  document.querySelector("#focusNode").setAttribute("aria-expanded", String(section === "node"));
   document.querySelector("#focusContextTitle").textContent = section
-    ? { tools: "Tools & actions", node: "Runs on", agent: "Agent", effort: "Effort" }[section]
+    ? "Tools & actions"
     : { projects: "Projects", sessions: "This project", chat: "This conversation", board: "Project board", canvas: "Canvas" }[currentView()];
   elements.chatMoreMenu.open = section === "tools";
   placeMenu();
+}
+
+/** Moves each action button into the container for the current view. */
+function placeActions() {
+  const placement = currentView() === "chat" ? chatPlacement : viewPlacement;
+  for (const [selector, ids] of Object.entries(placement)) {
+    document.querySelector(selector).replaceChildren(...ids.map(id => actionButtons[id]));
+  }
 }
 function proxyAction(label, target, icon) {
   const button = document.createElement("button");
@@ -87,6 +135,7 @@ function syncView() {
   if (!enabled) return;
   const view = currentView();
   showMenu(false);
+  placeActions();
   document.querySelector("#focusConversations").disabled = !state.activeProjectId;
   showSection("");
   context.replaceChildren();
@@ -106,44 +155,52 @@ function syncView() {
 
 export function syncQuickActionLabels() {
   if (!enabled) return;
-  const agentLabel = document.querySelector("#focusAgentLabel");
-  const modelLabel = document.querySelector("#focusModelLabel");
-  const effortLabel = document.querySelector("#focusEffortLabel");
-  const nodeLabel = document.querySelector("#focusNodeLabel");
-  if (!agentLabel || !modelLabel || !effortLabel || !nodeLabel) return;
-
-  const harness = state.harnesses.find(h => h.id === state.engine);
-  agentLabel.textContent = harness?.label || "Agent";
-  modelLabel.textContent = state.activeModelLabel || "Model";
-  effortLabel.textContent = state.thinkingLevel || "Effort";
-  const activeNode = state.sessionNodes.find(n => n.id === state.activeNodeId);
-  nodeLabel.textContent = activeNode?.name || "Node";
-  document.querySelector("#focusAgent").disabled = elements.chatHarnessSelect.disabled;
-  document.querySelector("#focusEffort").disabled = elements.reasoningLevelSelect.disabled;
-  document.querySelector("#focusNode").disabled = elements.chatNodeSelect.disabled;
+  harnessPicker.setOptions(selectOptions(elements.chatHarnessSelect));
+  harnessPicker.setValue(elements.chatHarnessSelect.value);
+  harnessPicker.disabled = elements.chatHarnessSelect.disabled;
+  modelPicker.setOptions(modelOptions());
+  modelPicker.setValue(state.routing?.active && state.routing.mode === "auto" ? BOB_AUTO.value : state.activeModelKey);
+  modelPicker.disabled = elements.modelButton.disabled;
+  effortPicker.setOptions(selectOptions(elements.reasoningLevelSelect));
+  effortPicker.setValue(elements.reasoningLevelSelect.value);
+  effortPicker.disabled = elements.reasoningLevelSelect.disabled;
+  renderNodeSegments();
+  document.querySelector("#focusMarkDoneLabel").textContent = elements.chatDoneButton.querySelector(".chat-action-label").textContent;
+  document.querySelector("#focusMarkDone").disabled = elements.chatDoneButton.disabled;
 }
 
-/** Show the toolbar selects as buttons; their native pickers cannot open while the toolbar is hidden. */
-function showSelectOptions(select, section) {
-  nodeList.replaceChildren(...Array.from(select.options, option => {
+/** Sets a toolbar select and fires its change, so the toolbar's own handler does the work. */
+function chooseSelectValue(select, value) {
+  select.value = value;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+function selectOptions(select) {
+  return Array.from(select.options).filter(option => !option.disabled).map(option => ({ value: option.value, label: option.textContent }));
+}
+const BOB_AUTO = { value: "bob-auto", label: "Bob auto", detail: "The classifier picks the model and reasoning" };
+/** Bob auto is offered whenever routing is on, as in the model dialog; its classifier stays in that dialog. */
+function modelOptions() {
+  const models = state.models
+    .filter(model => model.harnessId === state.engine)
+    .map(model => ({ value: `${model.provider}/${model.id}`, label: model.label, detail: model.providerLabel }));
+  return state.routing?.active ? [BOB_AUTO, ...models] : models;
+}
+function modelIdentity(key) {
+  const model = state.models.find(candidate => `${candidate.provider}/${candidate.id}` === key);
+  return { provider: model.provider, modelId: model.id };
+}
+/** Runs-on choices as segments. Choosing one keeps the menu open. */
+function renderNodeSegments() {
+  nodeList.replaceChildren(...Array.from(elements.chatNodeSelect.options, option => {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = option.textContent;
-    button.dataset.testid = `focus-${section}-option`;
-    button.disabled = option.disabled;
-    button.setAttribute("aria-pressed", String(option.selected));
-    button.addEventListener("click", () => {
-      if (!option.selected) {
-        select.value = option.value;
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-      if (section === "node") showMenu(false);
-      else showSection("");
-    });
+    button.dataset.testid = "focus-node-option";
+    button.disabled = option.disabled || elements.chatNodeSelect.disabled;
+    button.setAttribute("aria-pressed", String(option.value === elements.chatNodeSelect.value));
+    button.addEventListener("click", () => { chooseSelectValue(elements.chatNodeSelect, option.value); renderNodeSegments(); });
     return button;
   }));
-  showSection(section);
-  document.querySelector("#focusBack").focus();
 }
 
 /** Layout only: never reload a session or change the user's panel-collapse preferences.
@@ -201,10 +258,7 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   document.querySelector("#conversationSearchCreateButton").onclick = start;
   decorateControls();
   document.querySelector("#focusMarkDone").onclick = () => { showMenu(false); elements.chatDoneButton.click(); };
-  document.querySelector("#focusAgent").onclick = () => showSelectOptions(elements.chatHarnessSelect, "agent");
-  document.querySelector("#focusModel").onclick = () => { showMenu(false); elements.modelButton.click(); };
-  document.querySelector("#focusEffort").onclick = () => showSelectOptions(elements.reasoningLevelSelect, "effort");
-  document.querySelector("#focusNode").onclick = () => showSelectOptions(elements.chatNodeSelect, "node");
+  document.querySelector("#focusAddSecret").onclick = () => { showMenu(false); openNewSecretAccount(); };
   document.querySelector("#focusAutoRespond").onclick = () => { showMenu(false); elements.autoRespondButton.click(); };
   document.querySelector("#focusTools").onclick = (event) => { event.stopPropagation(); showSection("tools"); document.querySelector("#focusBack").focus(); };
   document.querySelector("#focusBack").onclick = backToControls;
@@ -243,7 +297,7 @@ function decorateControls() {
   for (const [id, icon] of Object.entries({
     focusBack: "back", focusClose: "close",
     focusNewConversation: "chat", focusNewNote: "pencil", focusRecents: "clock", focusReviews: "archive", focusRunning: "play",
-    focusProjects: "folder", focusConversations: "chat", focusSettings: "sliders",
+    focusProjects: "folder", focusConversations: "chat", focusSettings: "sliders", focusAddSecret: "key",
   })) {
     const svg = menuIcon(icon);
     svg.classList.add("focus-action-icon");

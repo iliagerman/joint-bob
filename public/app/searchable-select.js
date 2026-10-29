@@ -35,10 +35,10 @@ export function createSearchableSelect({ id, testid, label, prompt = "Choose…"
     trigger.classList.toggle("empty", !label);
   };
 
-  // Inside a dialog the card clips and scrolls, so the list is placed fixed beside the trigger and
-  // floats over the dialog: opening it never resizes the dialog.
+  // Inside a dialog or the focus menu the card clips and scrolls, so the list is placed fixed beside the trigger and
+  // floats over it: opening it never resizes the dialog or the menu.
   function place() {
-    if (!popover.closest("dialog")) return;
+    if (!popover.closest("dialog, #focusControls")) return;
     const rect = trigger.getBoundingClientRect();
     const gap = 4;
     const above = window.innerHeight - rect.bottom - gap < popover.offsetHeight && rect.top - gap > window.innerHeight - rect.bottom;

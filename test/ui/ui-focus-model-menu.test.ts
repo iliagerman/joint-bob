@@ -3,7 +3,7 @@ import test from "node:test";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 import { api, signIn } from "../dev-nodes.js";
 
-test("mobile direct model picker and effort controls support click and tap", { timeout: 120_000 }, async t => {
+test("mobile menu model and effort dropdowns are searchable and keep the controls open", { timeout: 120_000 }, async t => {
   const fixture = await nativeUiFixture(t);
   await api(fixture.node, await signIn(fixture.environment, fixture.node), "PUT", "/preferences", { focusUiEnabled: true });
   const context = await fixture.page.context().browser()!.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: "block" });
@@ -27,31 +27,33 @@ test("mobile direct model picker and effort controls support click and tap", { t
     await page.evaluate(async () => {
       const { state } = await import(new URL("/app/state.js", location.href).href);
       const { renderReasoningOptions } = await import(new URL("/app/composer-dialogs.js", location.href).href);
-      state.models = [{ harnessId: state.engine, provider: "fixture", id: "test-model", label: "Test model" }];
+      state.models = [
+        { harnessId: state.engine, provider: "fixture", id: "test-model", label: "Test model" },
+        { harnessId: state.engine, provider: "fixture", id: "other-model", label: "Other model" },
+      ];
       state.availableThinkingLevels = ["low", "high"];
       state.thinkingLevel = "low";
       renderReasoningOptions();
+      document.querySelector<HTMLButtonElement>("#modelButton")!.disabled = false;
       const { syncQuickActionLabels } = await import(new URL("/app/focus-ui.js", location.href).href);
       syncQuickActionLabels();
-      document.querySelector<HTMLButtonElement>("#modelButton")!.disabled = false;
     });
     await page.getByTestId("focus-model")[activate]();
-    await page.getByTestId("model-dialog").waitFor();
-    assert.equal(await page.locator("#focusControls").isVisible(), false, `${activate}: direct picker replaces the controls menu`);
-    await page.getByTestId("model-option-fixture-test-model")[activate]();
-    await page.getByTestId("model-dialog").waitFor({ state: "hidden" });
-    await page.getByTestId("focus-controls-button")[activate]();
+    await page.getByTestId("focus-model-search").fill("test");
+    assert.equal(await page.getByTestId("focus-model-option").count(), 1, `${activate}: search narrows the model list`);
+    assert.equal(await page.locator("#focusControls").isVisible(), true, `${activate}: the model list opens inside the menu`);
+    await page.getByTestId("focus-model-option").filter({ hasText: "Test model" })[activate]();
+    assert.equal(await page.locator("#focusControls").isVisible(), true, `${activate}: choosing a model keeps the menu open`);
     await page.getByTestId("focus-effort")[activate]();
-    await page.locator('#focusControls[data-section="effort"]').waitFor();
-    assert.equal(await page.locator("#focusControls").getAttribute("data-section"), "effort");
-    await page.getByTestId("focus-effort-option").filter({ hasText: /^high$/i })[activate]();
+    await page.getByTestId("focus-effort-option").filter({ hasText: /^high$/ })[activate]();
     await page.waitForFunction(() => document.querySelector<HTMLSelectElement>("#reasoningLevelSelect")!.value === "high");
     assert.equal(await page.getByTestId("chat-reasoning-select").inputValue(), "high");
-    assert.equal(await page.locator("#focusControls").isVisible(), true, "reasoning selection also keeps the menu open");
+    assert.equal(await page.locator("#focusControls").isVisible(), true, `${activate}: choosing effort keeps the menu open`);
     await page.getByTestId("focus-close")[activate]();
     await page.locator("#focusControls").waitFor({ state: "hidden" });
   }
-  const messages = await page.evaluate(() => (window as Window & { controlMessages: unknown[] }).controlMessages);
+  // The socket's keepalive ping fires on a timer; only the control messages are under test.
+  const messages = await page.evaluate(() => (window as Window & { controlMessages: { type: string }[] }).controlMessages.filter(message => message.type !== "ping"));
   assert.deepEqual(messages, Array.from({ length: 2 }, () => [
     { type: "setModel", provider: "fixture", modelId: "test-model" }, { type: "setThinking", level: "high" },
   ]).flat());

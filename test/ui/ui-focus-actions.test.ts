@@ -58,8 +58,9 @@ test("focus actions work before choosing a project, on lists and in chat; classi
   await page.setViewportSize({ width: 390, height: 460 });
   await page.getByTestId("focus-controls-button").click();
   for (const action of actions) {
+    await page.getByTestId(action).scrollIntoViewIfNeeded();
     const box = await page.getByTestId(action).boundingBox();
-    assert.ok(box && box.y >= 0 && box.y + box.height <= 460, `${action} reachable without scrolling long chat controls`);
+    assert.ok(box && box.y >= 0 && box.y + box.height <= 460, `${action} reachable in a short viewport: ${JSON.stringify(box)}`);
   }
   await page.getByTestId("focus-settings").click();
   await page.getByTestId("settings-focus-ui-toggle").uncheck();

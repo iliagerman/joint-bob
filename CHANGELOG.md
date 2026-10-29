@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Reworked the mobile chat menu: harness, model, and effort open as searchable lists inside the menu, and Mark done, Auto respond, Add secret, and Conversations sit in a pinned bottom row.
+
 ## 2.172.0 — 2026-10-29
 
 - Added a GitLab credential picker when adding a Git repo in Resources; it uses a saved GitLab account only for repos on that account's HTTPS host, and the choice stays on this node.

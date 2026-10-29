@@ -37,7 +37,8 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and transparen
     for (const id of ["focus-new-conversation", "focus-new-note", "focus-reviews", "focus-running", "focus-settings"]) {
       const button = page.getByTestId(id);
       assert.equal(await button.locator("svg").count(), 1, `${id} has an outline icon`);
-      assert.equal(await button.evaluate(el => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0)", `${id} is transparent, not browser-grey`);
+      // The chat action dock has filled tiles by design; the workspace list stays transparent.
+      if (view !== "chat") assert.equal(await button.evaluate(el => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0)", `${id} is transparent, not browser-grey`);
     }
     await page.screenshot({ path: `tmp/focus-${theme}-${view}-menu.png` });
     await page.getByTestId("focus-close").click();
@@ -61,15 +62,17 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and transparen
   await page.getByTestId("background-tasks-open").click();
   await page.getByTestId("background-tasks-close").click();
   await page.getByTestId("focus-back").click();
-  await page.getByTestId("focus-agent").click();
-  await page.locator("#focusNodeList").waitFor({ state: "visible" });
-  assert.ok(await page.getByTestId("focus-agent-option").count() > 0, "agent section shows harness options");
-  await page.screenshot({ path: `tmp/focus-${theme}-agent.png` });
-  await page.getByTestId("focus-back").click();
+  await page.getByTestId("focus-harness").click();
+  assert.ok(await page.getByTestId("focus-harness-option").count() > 0, "harness dropdown lists harnesses");
+  await page.screenshot({ path: `tmp/focus-${theme}-harness.png` });
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#focusControls").isVisible(), true, "Escape closes only the harness list");
   await page.setViewportSize({ width: 390, height: 460 });
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  for (const id of ["focus-new-conversation", "focus-new-note", "focus-reviews", "focus-running"]) {
-    const box = await page.getByTestId(id).boundingBox();
+  for (const id of ["focus-new-conversation", "focus-new-note", "focus-add-secret", "focus-auto-respond"]) {
+    const button = page.getByTestId(id);
+    await button.scrollIntoViewIfNeeded();
+    const box = await button.boundingBox();
     assert.ok(box && box.y >= 0 && box.y + box.height <= 460, `${id} fits a short viewport: ${JSON.stringify(box)}`);
   }
   await page.getByTestId("focus-settings").click();

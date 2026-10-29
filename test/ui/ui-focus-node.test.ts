@@ -23,7 +23,7 @@ test("mobile focus menu names the execution node and switches it", { timeout: 12
     const { renderChatSessionControls } = await import(new URL("/app/chat-controls.js", location.href).href);
     state.sessionNodes = [
       ...state.sessionNodes,
-      { id: "laptop-node", name: "Laptop", online: true, mapped: true, local: false },
+      { id: "laptop-node", name: "Laptop", online: true, mapped: true, local: false, runner: true },
       { id: "attic-node", name: "Attic", online: false, mapped: true, local: false },
     ];
     renderChatSessionControls();
@@ -37,19 +37,20 @@ test("mobile focus menu names the execution node and switches it", { timeout: 12
       recorded.nodeChoices.push(select.value);
     }, true);
   });
-  // Switch to the laptop, then back to this node.
-  for (const [activate, from, to, name] of [["click", 0, 1, fixture.node.name], ["tap", 1, 0, "Laptop"]] as const) {
+  // Switch to the laptop, then back to this node. Choosing keeps the menu open; closing it is a separate tap.
+  for (const [activate, from, to] of [["click", 0, 1], ["tap", 1, 0]] as const) {
     await page.getByTestId("focus-controls-button")[activate]();
-    // The recorded choice never moves the conversation, so it still runs here.
-    assert.equal(await page.getByTestId("focus-node").innerText(), fixture.node.name, `${activate}: the button names the node this conversation runs on`);
-    await page.getByTestId("focus-node")[activate]();
     const options = page.getByTestId("focus-node-option");
     await options.first().waitFor();
     assert.equal(await page.locator("#focusControls").isVisible(), true, `${activate}: the nodes are listed inside the menu`);
     assert.deepEqual(await options.allInnerTexts(), [`${fixture.node.name} · local`, "Laptop", "Attic · offline"]);
-    assert.deepEqual(await options.evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-pressed"))), [0, 1, 2].map(index => String(index === from)), `${activate}: ${name} is marked as the current node`);
+    assert.deepEqual(await options.evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-pressed"))), [0, 1, 2].map(index => String(index === from)), `${activate}: the current node is marked`);
     assert.equal(await options.nth(2).isDisabled(), true, `${activate}: a node that is switched off cannot be chosen`);
     await options.nth(to)[activate]();
+    assert.equal(await page.locator("#focusControls").isVisible(), true, `${activate}: choosing a node keeps the menu open`);
+    // A tap is confirmed by the tap-gesture timer, so the mark can arrive after the tap returns.
+    await page.waitForFunction(pressed => [...document.querySelectorAll("[data-testid='focus-node-option']")].map(button => button.getAttribute("aria-pressed")).join(",") === pressed, [0, 1, 2].map(index => String(index === to)).join(","));
+    await page.getByTestId("focus-close")[activate]();
     await page.locator("#focusControls").waitFor({ state: "hidden" });
   }
   const localNodeId = await page.evaluate(async () => (await import(new URL("/app/state.js", location.href).href)).state.sessionNodes.find((node: { local: boolean }) => node.local).id);

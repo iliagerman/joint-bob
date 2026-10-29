@@ -48,16 +48,21 @@
       <div class="focus-context-scroll">
         <div id="focusContextActions"></div>
         <div id="focusChatQuickActions" hidden>
-          <button type="button" id="focusMarkDone" class="focus-quick-action" data-testid="focus-mark-done" title="Mark conversation done"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.3 2.4 2.4 4.8-5"/></svg>Mark done</button>
-          <button type="button" id="focusAgent" class="focus-quick-action focus-agent-btn" data-testid="focus-agent" title="Select agent"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span id="focusAgentLabel">Agent</span></button>
-          <button type="button" id="focusModel" class="focus-quick-action focus-model-btn" data-testid="focus-model" title="Select model"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v14a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M12 2a3 3 0 0 1 3 3v14a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M12 2v20M9 5h6M9 19h6"/></svg><span id="focusModelLabel">Model</span></button>
-          <button type="button" id="focusEffort" class="focus-quick-action focus-effort-btn" data-testid="focus-effort" title="Select reasoning level"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span id="focusEffortLabel">Effort</span></button>
-          <button type="button" id="focusNode" class="focus-quick-action focus-node-btn" data-testid="focus-node" title="Select execution node"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span id="focusNodeLabel">Node</span></button>
-          <button type="button" id="focusAutoRespond" class="focus-quick-action focus-auto-respond-btn" data-testid="focus-auto-respond" title="Auto respond"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 13-5"/><path d="M18 3.5V7h-3.5"/><path d="M19.5 12a7.5 7.5 0 0 1-13 5"/><path d="M6 20.5V17h3.5"/></svg>Auto respond</button>
-          <button type="button" id="focusTools" class="focus-quick-action focus-tools-btn" data-testid="focus-tools" title="More tools & actions"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 5 5-5 5"/><path d="M12.5 17h6.5"/></svg>Tools</button>
+          <div class="focus-setting"><span class="focus-setting-label">Harness</span><span id="focusHarnessSelect"></span></div>
+          <div class="focus-setting"><span class="focus-setting-label">Model</span><span id="focusModelSelect"></span></div>
+          <div class="focus-setting"><span class="focus-setting-label">Effort</span><span id="focusEffortSelect"></span></div>
+          <div class="focus-setting"><span class="focus-setting-label">Runs on</span><div id="focusNodeList"></div></div>
+          <div id="focusChatMore" class="focus-more">
+            <button type="button" id="focusTools" data-testid="focus-tools" title="More tools & actions"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 5 5-5 5"/><path d="M12.5 17h6.5"/></svg>Tools</button>
+          </div>
+          <div id="focusChatLinks" class="focus-links"></div>
         </div>
         <div id="focusChatControls" hidden></div>
-        <div id="focusNodeList" hidden></div>
+      </div>
+      <div id="focusChatDock" class="focus-dock" aria-label="Quick actions" hidden>
+        <button type="button" id="focusMarkDone" data-testid="focus-mark-done" title="Mark conversation done"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.3 2.4 2.4 4.8-5"/></svg><span id="focusMarkDoneLabel">Mark done</span></button>
+        <button type="button" id="focusAddSecret" data-testid="focus-add-secret" title="Add secret account">Add secret</button>
+        <button type="button" id="focusAutoRespond" data-testid="focus-auto-respond" title="Auto respond"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 13-5"/><path d="M18 3.5V7h-3.5"/><path d="M19.5 12a7.5 7.5 0 0 1-13 5"/><path d="M6 20.5V17h3.5"/></svg>Auto respond<span class="focus-state" aria-hidden="true"></span></button>
       </div>
       <div class="focus-global-actions" aria-label="Workspace actions">
         <button type="button" id="focusNewConversation" data-testid="focus-new-conversation">New conversation…</button>
@@ -69,7 +74,7 @@
       <div class="focus-navigation">
         <button type="button" id="focusProjects" data-testid="focus-projects">All projects</button>
         <button type="button" id="focusConversations" data-testid="focus-conversations">Conversations</button>
-        <button type="button" data-usage-open data-testid="focus-usage-open" data-shortcut-hint="costs"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg>Costs</button>
+        <button type="button" id="focusCosts" data-usage-open data-testid="focus-usage-open" data-shortcut-hint="costs"><svg class="focus-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 8.5h-4.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H9M12 6.5v11"/></svg>Costs</button>
         <button type="button" id="focusSettings" data-testid="focus-settings">Settings</button>
       </div>
 
