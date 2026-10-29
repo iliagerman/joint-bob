@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed Git stories and conversation reviews failing or leaving out turns when a conversation had an empty segment; they now include every real turn and skip the empty ones.
+
 ## 2.177.1 — 2026-10-29
 
 - Changed conversation actions such as marking done, renaming, recolouring, labelling, moving, removing, and the review and ntfy toggles to show on the list at once; the change holds through list refreshes until the server confirms it, and if the server refuses, the conversation returns to how it was with an error.

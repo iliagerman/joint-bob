@@ -74,7 +74,8 @@ export async function loadConversationMessages(project: ProjectRecord, conversat
   const messages: ChatMessage[] = [];
   let lastHarness: string = session.harnessId;
   for (const entry of entries) {
-    if (!entry.path) continue;
+    // A recorded segment without a local transcript is a draft placeholder, not a file.
+    if (!entry.path || entry.path.startsWith("draft:")) continue;
     for (const message of await getHarness(entry.engine).sessions.loadMessages(transcriptProject, entry.path, options)) {
       messages.push(message);
       if (message.role === "assistant") lastHarness = message.attribution?.harnessId ?? entry.engine;

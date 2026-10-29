@@ -25,7 +25,8 @@ export async function conversationReviewContext(project: ProjectRecord, conversa
   const messages = [];
   let lastHarness = session.harnessId;
   for (const entry of entries) {
-    if (!entry.path) continue;
+    // File discovery uses the same recorded segments as stories, including empty drafts.
+    if (!entry.path || entry.path.startsWith("draft:")) continue;
     const loaded = await getHarness(entry.engine).sessions.loadMessages(project, entry.path);
     for (const message of loaded) {
       if (message.role !== "user" && message.role !== "assistant") continue;
