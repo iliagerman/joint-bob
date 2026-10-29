@@ -118,13 +118,23 @@ export async function startServer(): Promise<{ server: Server; baseUrl: string }
  * survives to keep draining the queue the way an in-process close would. */
 export async function spawnNode(root: string, port: number, extraEnv: Record<string, string> = {}): Promise<ChildProcess> {
   const env = { ...process.env, ...environment(root), PORT: String(port), JOINT_BOB_INSECURE_COOKIE: "1", ...extraEnv };
-  const child = spawn(process.execPath, serverArgs(env), { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, serverArgs(env), { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
   return waitForDevNode(child, "queued prompt", `http://127.0.0.1:${port}`);
 }
 
 export async function killNode(child: ChildProcess | undefined): Promise<void> {
-  if (!child || child.exitCode !== null) return;
-  await new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.kill("SIGKILL"); });
+  if (!child || child.pid === undefined) return;
+  if (process.platform === "win32") {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    await new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.kill("SIGKILL"); });
+    return;
+  }
+  const exiting = child.exitCode === null && child.signalCode === null
+    ? new Promise<void>((resolve) => child.once("exit", () => resolve()))
+    : Promise.resolve();
+  try { process.kill(-child.pid, "SIGKILL"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  await exiting;
 }
 
 export function stopServer(server: Server | undefined): Promise<void> {
