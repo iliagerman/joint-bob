@@ -2,7 +2,10 @@ import { api } from "./api.js";
 import { sendSocket } from "./chat-controls.js";
 import { classificationPicker } from "./classification.js";
 import { elements } from "./elements.js";
+import { syncChatTitleFromSessions } from "./layout.js";
+import { changeSessionOptimistically } from "./optimistic-sessions.js";
 import { loadProjects } from "./project-selection.js";
+import { renderSessions } from "./session-list.js";
 import { PROJECT_COLORS } from "./session-rows.js";
 import { fillResourceFields, projectResourceFields, resourceFieldsValue } from "./settings.js";
 import { toast } from "./shell.js";
@@ -31,12 +34,16 @@ elements.conversationClassificationForm.addEventListener("submit", async (event)
   const target = pendingClassification;
   try {
     const { projectId, sessionId, engine } = target;
-    await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/classification`, {
+    const value = classification.value();
+    const save = () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/classification`, {
       method: "PUT",
-      body: JSON.stringify({ sessionId, engine, classification: classification.value() }),
+      body: JSON.stringify({ sessionId, engine, classification: value }),
     });
+    // The row shows the label at once. The dialog stays until the save is confirmed, so a
+    // refused custom label is still there to correct.
+    if (state.activeProjectId === projectId) await changeSessionOptimistically({ id: sessionId }, { patch: { classification: value || undefined } }, save, renderSessions);
+    else await save();
     if (pendingClassification === target) elements.conversationClassificationDialog.close();
-    if (state.activeProjectId === projectId) await refreshSessionsQuietly();
     toast("Conversation classification saved");
   } catch (error) {
     toast(error.message, 8000);
@@ -125,12 +132,17 @@ export async function saveSessionColor(sessionId, engine, color) {
 }
 
 async function renameSession(sessionId, engine, title) {
-  await saveSessionTitle(sessionId, engine, title);
+  const save = () => saveSessionTitle(sessionId, engine, title);
+  // A cleared name falls back to the harness's own title, which only the server knows.
+  if (!title) { await save(); await refreshSessionsQuietly(); return; }
+  // The chat header shows the new name too when this is the open conversation.
+  const render = () => { renderSessions(); syncChatTitleFromSessions(elements.sessionTitle.textContent); };
+  await changeSessionOptimistically({ id: sessionId }, { patch: { title } }, save, render);
   // Only the open conversation has a socket, so a renamed row elsewhere just reloads the list.
-  if (sessionId === state.activeSessionId && title) {
+  if (sessionId === state.activeSessionId) {
     sendSocket({ type: "rename", name: title });
   }
-  await refreshSessionsQuietly();
+  void refreshSessionsQuietly();
 }
 
 /** The dialog is shared, so it remembers which conversation it was opened for. */
@@ -188,13 +200,14 @@ elements.cancelConversationColorButton.addEventListener("click", () => elements.
 elements.conversationColorForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const color = selectedSessionColor(elements.conversationColorSwatches);
+  const { colorSessionId: sessionId, colorSessionEngine: engine } = state;
   elements.conversationColorDialog.close();
   try {
-    await saveSessionColor(state.colorSessionId, state.colorSessionEngine, color);
-    await refreshSessionsQuietly();
+    await changeSessionOptimistically({ id: sessionId }, { patch: { color: color || undefined } }, () => saveSessionColor(sessionId, engine, color), renderSessions);
+    void refreshSessionsQuietly();
     toast(color ? "Conversation colour saved" : "Conversation colour cleared");
   } catch (error) {
-    toast(error.message, 8000);
+    toast(`Could not save the colour: ${error.message}`, 8000);
   }
 });
 elements.renameForm.addEventListener("submit", async (event) => {
@@ -205,6 +218,6 @@ elements.renameForm.addEventListener("submit", async (event) => {
     await renameSession(state.renameSessionId, state.renameSessionEngine, title);
     toast(title ? "Conversation renamed" : "Original title restored");
   } catch (error) {
-    toast(error.message, 8000);
+    toast(`Could not rename the conversation: ${error.message}`, 8000);
   }
 });

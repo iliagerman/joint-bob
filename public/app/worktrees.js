@@ -10,6 +10,12 @@ import { state } from "./state.js";
 let editing = null;
 let loadGeneration = 0;
 const cleanupAfter = new Map();
+/** Worktrees being deleted leave the list at once; a listing fetched meanwhile must not bring them back. */
+const deletingWorktreeIds = new Set();
+
+export function worktreeDeleting(worktreeId) {
+  return deletingWorktreeIds.has(worktreeId);
+}
 
 function worktreesUrl(projectId, suffix = "") {
   return `/api/projects/${encodeURIComponent(projectId)}/worktrees${suffix}`;
@@ -20,8 +26,9 @@ export async function loadWorktrees() {
   if (!projectId || state.canvasPaneMode) return;
   const generation = ++loadGeneration;
   // Listing must stay fast even when checking finished worktrees takes seconds.
-  const { worktrees } = await api(worktreesUrl(projectId));
+  const { worktrees: listed } = await api(worktreesUrl(projectId));
   if (generation !== loadGeneration || state.activeProjectId !== projectId) return;
+  const worktrees = listed.filter((worktree) => !deletingWorktreeIds.has(worktree.id));
   const changed = JSON.stringify(worktrees) !== JSON.stringify(state.worktrees);
   state.worktrees = worktrees;
   if (changed) renderSessions();
@@ -228,9 +235,20 @@ async function deleteWorktree(worktree) {
     destructive: true,
   });
   if (!confirmed) return;
-  await api(worktreesUrl(state.activeProjectId, `/${encodeURIComponent(worktree.id)}`), { method: "DELETE" });
+  const projectId = state.activeProjectId;
+  deletingWorktreeIds.add(worktree.id);
+  state.worktrees = state.worktrees.filter((candidate) => candidate.id !== worktree.id);
+  renderSessions();
+  try {
+    await api(worktreesUrl(projectId, `/${encodeURIComponent(worktree.id)}`), { method: "DELETE" });
+  } catch (error) {
+    deletingWorktreeIds.delete(worktree.id);
+    void loadWorktrees().catch((loadError) => console.warn(loadError));
+    throw new Error(`Could not delete ${worktree.name}: ${error.message}`);
+  }
   state.collapsedWorktreeIds.delete(worktree.id);
-  await loadWorktrees();
+  try { await loadWorktrees(); }
+  finally { deletingWorktreeIds.delete(worktree.id); }
 }
 
 function renderWorktreeSwatches(selected) {

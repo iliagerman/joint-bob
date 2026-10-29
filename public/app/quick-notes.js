@@ -307,6 +307,9 @@ export function renderQuickNotes() {
   if (failedRuns.children.length > 1) list.append(failedRuns);
 }
 
+/** Notes being deleted leave the list at once; a list fetched meanwhile must not bring them back. */
+const deletingNoteIds = new Set();
+
 export async function refreshQuickNotes(projectId) {
   if (projectId !== undefined) filterProjectId = projectId;
   if (!state.activeProjectId) { state.quickNotes = []; renderQuickNotes(); return; }
@@ -316,7 +319,7 @@ export async function refreshQuickNotes(projectId) {
   const projectIds = filterProjectId === "*" ? state.projects.map((project) => project.id) : [filterProjectId];
   const bodies = await Promise.all(projectIds.map((id) => api(`/api/projects/${encodeURIComponent(id)}/quick-notes`)));
   if (requestId !== notesRequestId || state.activeProjectId !== activeProjectId) return;
-  state.quickNotes = bodies.flatMap((body) => body.notes).sort((left, right) => (left.ownerNodeId || "").localeCompare(right.ownerNodeId || "") || (left.position ?? 0) - (right.position ?? 0) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  state.quickNotes = bodies.flatMap((body) => body.notes).filter((note) => !deletingNoteIds.has(note.id)).sort((left, right) => (left.ownerNodeId || "").localeCompare(right.ownerNodeId || "") || (left.position ?? 0) - (right.position ?? 0) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   renderQuickNotes();
 }
 
@@ -624,9 +627,19 @@ searchInput.addEventListener("input", renderQuickNotes);
 document.querySelector("#cancelQuickNoteButton").addEventListener("click", () => dialog.close());
 async function removeNote(note) {
   if (!await confirmAction({ title: `Delete "${note.title}"?`, confirmLabel: "Delete note", destructive: true })) return;
-  await api(`/api/quick-notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
+  deletingNoteIds.add(note.id);
+  state.quickNotes = state.quickNotes.filter((candidate) => candidate.id !== note.id);
   if (editingId === note.id) dialog.close();
-  await refreshQuickNotes();
+  renderQuickNotes();
+  try {
+    await api(`/api/quick-notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
+  } catch (error) {
+    deletingNoteIds.delete(note.id);
+    void refreshQuickNotes().catch((refreshError) => console.warn("Could not reload quick notes", refreshError));
+    throw new Error(`Could not delete the note: ${error.message}`);
+  }
+  try { await refreshQuickNotes(); }
+  finally { deletingNoteIds.delete(note.id); }
 }
 
 convertButton.addEventListener("click", () => {

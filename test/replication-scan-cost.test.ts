@@ -40,3 +40,28 @@ test("polling a twin reads only new and due events, not the delivered history", 
     db.close();
   }
 });
+
+// A visitor's home node takes only that visitor's own events. Judged one by one, every other
+// event of the outbox came back a hundred at a time and was refused, on every flush.
+test("a peer limited to some accounts is searched only for their events", async () => {
+  const db = new DatabaseSync(path.join(resolveDataDirectory(), "node.db"));
+  ensureReplicationSchema(db);
+  const peer = "scan-accounts-peer", visitor = "0123456789abcdef0123456789abcdef";
+  const at = new Date("2026-05-01T00:00:00.000Z");
+  db.exec("BEGIN");
+  for (let i = 0; i < 20_000; i++) enqueueReplicationEvent(db, { originNodeId: "local", entityType: "user.recent", entityKey: `scan-accounts-${i}`, operation: "upsert", payload: { username: "fedcba9876543210fedcba9876543210", projectId: "scan" } });
+  const own = enqueueReplicationEvent(db, { originNodeId: "local", entityType: "user.recent", entityKey: "scan-accounts-own", operation: "upsert", payload: { username: visitor, projectId: "scan" } });
+  db.exec("COMMIT");
+  try {
+    let judged = 0;
+    const accept = (event: { payload: unknown }) => { judged++; return (event.payload as { username?: string }).username === visitor; };
+    assert.deepEqual((await eventsForPeer(peer, at, accept, [visitor])).map((event) => event.id), [own.id], "the visitor's own event is found");
+    assert.equal(judged, 1, "other accounts' events are never handed to the sharing check");
+    assert.deepEqual(await eventsForPeer(`${peer}-none`, at, accept, []), [], "a peer with no accounts gets nothing");
+    assert.equal(judged, 1);
+  } finally {
+    db.prepare("DELETE FROM replication_deliveries WHERE peer_id IN (?, ?)").run(peer, `${peer}-none`);
+    db.prepare("DELETE FROM replication_outbox WHERE entity_key LIKE 'scan-accounts-%'").run();
+    db.close();
+  }
+});

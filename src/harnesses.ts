@@ -29,8 +29,16 @@ function projectCacheKey(project: HarnessProject, harnessId: HarnessId): string 
   const includedPaths = [...new Set(project.includedSessionPaths ?? [])].sort();
   const includedIds = [...new Set(project.includedSessionIds ?? [])].sort();
   const recordIds = [...new Set(project.recordSessionIds ?? [])].sort();
-  return `${project.id}:${harnessId}:${project.historyDays ?? 0}:${JSON.stringify([...new Set(paths)].sort())}:${JSON.stringify(includedPaths)}:${JSON.stringify(includedIds)}:${JSON.stringify(recordIds)}`;
+  return `${project.id}:${harnessId}:${project.historyDays ?? 0}:${project.includeUnstarted ? 1 : 0}:${JSON.stringify([...new Set(paths)].sort())}:${JSON.stringify(includedPaths)}:${JSON.stringify(includedIds)}:${JSON.stringify(recordIds)}`;
 }
+
+/**
+ * A project is listed in several scopes at once: a viewer's list with their pins and recents,
+ * internal runs with none, a peer asking for every transcript, a chat being opened. Each scope
+ * keeps its own answer. With one answer per project those callers evicted each other, and every
+ * switch read the project's transcripts from disk again.
+ */
+const SCOPES_PER_PROJECT = 6;
 
 export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> {
   private entries = new Map<string, CatalogEntry>();
@@ -89,7 +97,14 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
   }
 
   async refresh(projectId: string, changedFiles: string[]): Promise<void> {
-    const entries = [...this.entries.entries()].filter(([, entry]) => entry.project.id === projectId);
+    let entries = [...this.entries.entries()].filter(([, entry]) => entry.project.id === projectId);
+    if (!changedFiles.length) {
+      // A refresh that names no files rescans each scope it touches. Only the scope listed last
+      // is rescanned now; the others are dropped and listed again when they are asked for.
+      const latest = new Map(entries.map(([key, entry]) => [entry.harnessId, key]));
+      for (const [key, entry] of entries) if (latest.get(entry.harnessId) !== key) this.entries.delete(key);
+      entries = entries.filter(([key, entry]) => latest.get(entry.harnessId) === key);
+    }
     await Promise.all(entries.map(async ([key, entry]) => {
       const adapter = this.adapters.find((candidate) => candidate.id === entry.harnessId);
       if (!adapter) return;
@@ -113,10 +128,14 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
   private async listAdapter(adapter: HarnessAdapter, project: HarnessProject): Promise<SessionSummary[]> {
     const key = projectCacheKey(project, adapter.id);
     const cached = this.entries.get(key);
-    if (cached) return cached.sessions;
-    for (const [cachedKey, entry] of this.entries) {
-      if (entry.project.id === project.id && entry.harnessId === adapter.id) this.entries.delete(cachedKey);
+    if (cached) {
+      // Map order is use order, so the scope listed longest ago is the one evicted.
+      this.entries.delete(key);
+      this.entries.set(key, cached);
+      return cached.sessions;
     }
+    const scopes = [...this.entries].filter(([, entry]) => entry.project.id === project.id && entry.harnessId === adapter.id);
+    for (const [cachedKey] of scopes.slice(0, Math.max(0, scopes.length - SCOPES_PER_PROJECT + 1))) this.entries.delete(cachedKey);
     const sessions = adapter.sessions.list(project);
     const entry = { project, harnessId: adapter.id, sessions };
     this.entries.set(key, entry);

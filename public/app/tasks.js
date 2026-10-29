@@ -577,10 +577,22 @@ async function saveTaskFromDialog() {
   renderBoardView();
 }
 
+/** The card leaves the board at once; a refusal puts it back where it was. */
 async function deleteTask(taskId) {
-  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+  const projectId = state.activeProjectId;
+  const index = state.tasks.findIndex((item) => item.id === taskId);
+  const task = state.tasks[index];
   state.tasks = state.tasks.filter((item) => item.id !== taskId);
   renderBoardView();
+  try {
+    await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+  } catch (error) {
+    if (task && state.activeProjectId === projectId && !state.tasks.some((item) => item.id === taskId)) {
+      state.tasks = [...state.tasks.slice(0, index), task, ...state.tasks.slice(index)];
+      renderBoardView();
+    }
+    throw error;
+  }
 }
 
 async function deleteEditingTask() {

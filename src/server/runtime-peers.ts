@@ -24,21 +24,31 @@ export async function disconnectRevokedRuntimeSockets():Promise<void>{
  for(const [socket,scope]of runtimeSockets)if(scope.peer!==local.id&&!mayShareProject(db,local.id,scope.peer,scope.projectId))socket.close(1008,'Project sharing was revoked');
 }
 
+type Endpoint=ReturnType<typeof replicationPeers>[number];
+function runtimeVisible(db:DatabaseSync,local:string,peer:Endpoint,projectId?:string):boolean{
+ return projectId?mayShareProject(db,local,peer.nodeId,projectId):isTrustedTwin(db,local,peer.nodeId)||sharedProjectIds(db,local,peer.nodeId).length>0;
+}
+function runtimePeer(db:DatabaseSync,peer:Endpoint){
+ const activity=db.prepare('SELECT created_at,updated_at,last_seen_at FROM cluster_v2_peer_activity WHERE node_id=?').get(peer.nodeId) as {created_at:string;updated_at:string;last_seen_at:string|null};
+ return {id:peer.nodeId,name:peer.name,url:peer.url,token:'',signedAuthentication:true,
+  createdAt:activity.created_at,updatedAt:activity.updated_at,pairedAt:activity.created_at,lastSeenAt:activity.last_seen_at,invitedByNodeId:null};
+}
 export async function listRuntimePeers(projectId?:string): Promise<ClusterPeer[]> {
  const db=await clusterV2Database(),local=await getClusterNode();
- return replicationPeers(db,local.id).filter(peer=>projectId?mayShareProject(db,local.id,peer.nodeId,projectId):isTrustedTwin(db,local.id,peer.nodeId)||sharedProjectIds(db,local.id,peer.nodeId).length>0).map(peer=>{
-  const activity=db.prepare('SELECT created_at,updated_at,last_seen_at FROM cluster_v2_peer_activity WHERE node_id=?').get(peer.nodeId) as {created_at:string;updated_at:string;last_seen_at:string|null};
-  return {id:peer.nodeId,name:peer.name,url:peer.url,token:'',signedAuthentication:true,
-   createdAt:activity.created_at,updatedAt:activity.updated_at,pairedAt:activity.created_at,lastSeenAt:activity.last_seen_at,invitedByNodeId:null};
- });
+ return replicationPeers(db,local.id).filter(peer=>runtimeVisible(db,local.id,peer,projectId)).map(peer=>runtimePeer(db,peer));
 }
-export async function getRuntimePeer(id:string):Promise<ClusterPeer|undefined>{return (await listRuntimePeers()).find(peer=>peer.id===id);}
+// One peer is judged alone: listing them all ran the sharing check of every project for every peer.
+export async function getRuntimePeer(id:string):Promise<ClusterPeer|undefined>{
+ const db=await clusterV2Database(),local=await getClusterNode(),peer=replicationPeers(db,local.id).find(peer=>peer.nodeId===id);
+ return peer&&runtimeVisible(db,local.id,peer)?runtimePeer(db,peer):undefined;
+}
 
 export async function runtimeFetch(input:string|URL,init:RequestInit={}):Promise<globalThis.Response>{
- const url=new URL(input),peer=(await listRuntimePeers()).find(peer=>new URL(peer.url).origin===url.origin);
+ const url=new URL(input),local=await getClusterNode(),db=await clusterV2Database(),method=init.method??"GET";
+ const endpoint=replicationPeers(db,local.id).find(peer=>new URL(peer.url).origin===url.origin&&runtimeVisible(db,local.id,peer));
+ const peer=endpoint&&runtimePeer(db,endpoint);
  if(!peer||!url.pathname.startsWith("/api/cluster/"))throw new Error("No authorized runtime peer for request");
  url.pathname=url.pathname.replace("/api/cluster/","/api/cluster/v2/runtime/");
- const local=await getClusterNode(),db=await clusterV2Database(),method=init.method??"GET";
  if(init.body!==undefined&&typeof init.body!=="string")throw new Error("Runtime requests require a serialized JSON body");
  let serialized=init.body??"";
  if(url.pathname.endsWith('/sessions/runtime-snapshot')){

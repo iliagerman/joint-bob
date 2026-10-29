@@ -31,20 +31,27 @@ export function signClusterRequest(
   return encodeAuthorization(envelope, signature);
 }
 
+// Every signed request used to delete expired nonces, look its own up and insert it: three
+// statements and a commit per request. Expired ones now go once a minute, and one insert both
+// checks and records the nonce; an expired row with the same nonce is taken over.
+const NONCE_PRUNE_MS = 60_000;
+const noncesPrunedAt = new WeakMap<DatabaseSync, number>();
 function consumeNonce(db: DatabaseSync, senderNodeId: string, nonce: string, now: number): void {
   ensureClusterProtocolSchema(db);
-  db.exec("SAVEPOINT cluster_v2_nonce");
-  try {
+  const prunedAt = noncesPrunedAt.get(db);
+  if (prunedAt === undefined || now - prunedAt >= NONCE_PRUNE_MS || now < prunedAt) {
     db.prepare("DELETE FROM cluster_v2_request_nonces WHERE expires_at < ?").run(now);
-    const exists = db.prepare("SELECT 1 FROM cluster_v2_request_nonces WHERE sender_node_id = ? AND nonce = ?").get(senderNodeId, nonce);
-    if (exists) throw new ClusterProtocolError("Cluster request replayed");
-    db.prepare("INSERT INTO cluster_v2_request_nonces (sender_node_id, nonce, expires_at) VALUES (?, ?, ?)").run(senderNodeId, nonce, now + NONCE_TTL_MS);
-    db.exec("RELEASE cluster_v2_nonce");
-  } catch (error) {
-    db.exec("ROLLBACK TO cluster_v2_nonce; RELEASE cluster_v2_nonce");
-    throw error;
+    noncesPrunedAt.set(db, now);
   }
+  const recorded = db.prepare(`INSERT INTO cluster_v2_request_nonces (sender_node_id, nonce, expires_at) VALUES (?, ?, ?)
+    ON CONFLICT(sender_node_id, nonce) DO UPDATE SET expires_at = excluded.expires_at WHERE cluster_v2_request_nonces.expires_at < ?`).run(senderNodeId, nonce, now + NONCE_TTL_MS, now);
+  if (!Number(recorded.changes)) throw new ClusterProtocolError("Cluster request replayed");
 }
+
+// The last-seen time feeds a 90-second "online" test, and this process learns of each contact
+// at once through peerContacted; writing it for every request only added a commit.
+const SEEN_WRITE_MS = 5_000;
+const seenWrittenAt = new WeakMap<DatabaseSync, Map<string, number>>();
 
 export function verifyClusterRequest(
   db: DatabaseSync,
@@ -57,7 +64,13 @@ export function verifyClusterRequest(
 ): string {
   const envelope = verifyRequest(recipientNodeId, method, target, rawBody, authorization, (sender) => pinnedClusterPublicKey(db, sender), now);
   consumeNonce(db, envelope.senderNodeId, envelope.nonce, now);
-  recordSignedPeerSeen(db,envelope.senderNodeId,new Date(now).toISOString());
+  const seen = seenWrittenAt.get(db) ?? new Map<string, number>();
+  seenWrittenAt.set(db, seen);
+  const written = seen.get(envelope.senderNodeId);
+  if (written === undefined || now - written >= SEEN_WRITE_MS || now < written) {
+    recordSignedPeerSeen(db,envelope.senderNodeId,new Date(now).toISOString());
+    seen.set(envelope.senderNodeId, now);
+  }
   // A peer that was away and is now calling in is asked again without waiting out its backoff.
   peerContacted(envelope.senderNodeId, now);
   return envelope.senderNodeId;

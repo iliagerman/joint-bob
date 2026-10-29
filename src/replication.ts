@@ -122,10 +122,10 @@ const SCAN_BUDGET_MS = 40;
 const SCAN_WINDOW = 2_000;
 
 /** One transaction per pass: each delivery row committed on its own costs a disk sync, and a pass has a time budget. */
-function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
+function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean, accounts?: string[]): ReplicationEvent[] {
   db.exec("BEGIN IMMEDIATE");
   try {
-    const selected = allocateEventsForPeer(db, peerId, at, filter);
+    const selected = allocateEventsForPeer(db, peerId, at, filter, accounts);
     db.exec("COMMIT");
     return selected;
   } catch (error) {
@@ -134,7 +134,7 @@ function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, fi
   }
 }
 
-function allocateEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
+function allocateEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean, accounts?: string[]): ReplicationEvent[] {
   const selected: ReplicationEvent[] = [];
   const now = Date.parse(at), started = Date.now();
   const newest = (db.prepare("SELECT max(rowid) id FROM replication_outbox").get() as { id: number | null }).id ?? 0;
@@ -155,9 +155,13 @@ function allocateEventsForPeer(db: DatabaseSync, peerId: string, at: string, fil
       if (selected.length === 100) break;
     }
   }
+  // A peer that takes only some accounts' events has the rest skipped by the query itself: judged
+  // here, every other event came back a hundred at a time and was refused, on every pass.
   const page = db.prepare(`SELECT o.rowid cursor, o.* FROM replication_outbox o
-    WHERE o.rowid>? AND o.rowid<=? AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)
+    WHERE o.rowid>? AND o.rowid<=?${accounts ? " AND json_extract(o.payload,'$.username') IN (SELECT value FROM json_each(?))" : ""}
+    AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)
     ORDER BY o.rowid LIMIT 100`);
+  const accountsJson = accounts ? [JSON.stringify(accounts)] : [];
   const allocate = db.prepare(`INSERT OR IGNORE INTO replication_deliveries
     (event_id,peer_id,attempts,next_attempt_at,delivered_at,last_error) VALUES (?,?,0,?,NULL,NULL)`);
   // After a restart the existing history is searched behind newly appended events.
@@ -173,7 +177,7 @@ function allocateEventsForPeer(db: DatabaseSync, peerId: string, at: string, fil
     let cursor = from;
     while (cursor < to && selected.length < 100 && Date.now() - started < SCAN_BUDGET_MS) {
       const upTo = Math.min(to, cursor + SCAN_WINDOW);
-      const rows = page.all(cursor, upTo, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
+      const rows = page.all(cursor, upTo, ...accountsJson, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
       for (const row of rows) {
         if (Date.now() - started >= SCAN_BUDGET_MS) return cursor;
         cursor = row.cursor;
@@ -211,9 +215,11 @@ export async function pendingEventsForPeer(peerId:string,filter:(event:Replicati
 }
 
 /** The next due events for one peer. `filter` is the sharing check: only events it
-    accepts are allocated a delivery row, so a peer never queues data it may not see. */
-export async function eventsForPeer(peerId: string, now: Date, filter: (event: ReplicationEvent) => boolean): Promise<ReplicationEvent[]> {
-  return selectiveEventsForPeer(await replicationDatabase(), peerId, now.toISOString(), filter);
+    accepts are allocated a delivery row, so a peer never queues data it may not see.
+    `accounts`, when given, limits the search to events whose payload names one of them;
+    `filter` must refuse every other event. */
+export async function eventsForPeer(peerId: string, now: Date, filter: (event: ReplicationEvent) => boolean, accounts?: string[]): Promise<ReplicationEvent[]> {
+  return selectiveEventsForPeer(await replicationDatabase(), peerId, now.toISOString(), filter, accounts);
 }
 export async function recordPeerReceipt(peerId: string, eventIds: string[]): Promise<void> { if (!eventIds.length) return; const db = await replicationDatabase(); db.exec("BEGIN IMMEDIATE"); try { const update = db.prepare("UPDATE replication_deliveries SET delivered_at = COALESCE(delivered_at, ?), last_error = NULL WHERE peer_id = ? AND event_id = ?"); for (const id of eventIds) update.run(new Date().toISOString(), peerId, id); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } }
 export async function recordPeerFailure(peerId: string, eventIds: string[], message: string, now = new Date()): Promise<void> { if (!eventIds.length) return; const db = await replicationDatabase(); db.exec("BEGIN IMMEDIATE"); try { const current = db.prepare("SELECT attempts FROM replication_deliveries WHERE peer_id = ? AND event_id = ? AND delivered_at IS NULL"); const update = db.prepare("UPDATE replication_deliveries SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE peer_id = ? AND event_id = ? AND delivered_at IS NULL"); for (const id of eventIds) { const row = current.get(peerId, id) as { attempts: number } | undefined; if (!row) continue; const attempts = row.attempts + 1; update.run(attempts, new Date(now.getTime() + Math.min(300, 2 ** Math.min(attempts, 8)) * 1000).toISOString(), message, peerId, id); } db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } }

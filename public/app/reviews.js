@@ -5,6 +5,7 @@ import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { shortSessionTitle } from "./layout.js";
+import { changeSessionOptimistically } from "./optimistic-sessions.js";
 import { renderProjects } from "./project-list.js";
 import { selectProject } from "./project-selection.js";
 import { rememberRecentSession } from "./recents.js";
@@ -27,12 +28,11 @@ function renderReviewCounts() {
 
 function markSessionReviewed(session) {
   if (session.reviewState !== "needs_review" || session.running) return;
-  session.reviewState = "reviewed";
-  renderReviewCounts();
-  void api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/reviewed`, {
+  const projectId = state.activeProjectId;
+  void changeSessionOptimistically(session, { patch: { reviewState: "reviewed" } }, () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/reviewed`, {
     method: "PUT",
     body: JSON.stringify({ sessionPath: session.path, updatedAt: session.updatedAt }),
-  }).catch((error) => toast(error.message)).finally(async () => {
+  }), renderReviewCounts).catch((error) => toast(error.message)).finally(async () => {
     await refreshSessionsQuietly();
     renderReviewCounts();
   });
@@ -46,19 +46,16 @@ async function markAllSessionsReviewed() {
   const targets = reviewableSessions();
   if (!state.activeProjectId || !targets.length) return;
   const sessions = targets.map((session) => ({ sessionPath: session.path, updatedAt: session.updatedAt }));
-  for (const session of targets) session.reviewState = "reviewed";
+  const request = api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/reviewed-all`, {
+    method: "PUT",
+    body: JSON.stringify({ sessions }),
+  });
+  // Every row shows reviewed at once and stays so through refreshes until the one request answers.
+  const results = await Promise.allSettled(targets.map((session) => changeSessionOptimistically(session, { patch: { reviewState: "reviewed" } }, () => request, renderReviewCounts)));
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure) toast(failure.reason.message);
+  await refreshSessionsQuietly();
   renderReviewCounts();
-  try {
-    await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/reviewed-all`, {
-      method: "PUT",
-      body: JSON.stringify({ sessions }),
-    });
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    await refreshSessionsQuietly();
-    renderReviewCounts();
-  }
 }
 
 /**

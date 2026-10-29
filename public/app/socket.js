@@ -15,6 +15,7 @@ import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { syncQuickActionLabels } from "./focus-ui.js";
 import { setMobileView, shortSessionTitle, syncChatTitleFromSessions } from "./layout.js";
+import { withPendingSessionChanges } from "./optimistic-sessions.js";
 import { refreshProjectsQuietly } from "./project-selection.js";
 import { loadRecentSessions } from "./recents.js";
 import { reviewableSessions, schedulePendingReviewsRefresh } from "./reviews.js";
@@ -751,13 +752,15 @@ async function refreshSessionSnapshot(projectId) {
   const reviewablePaths = () => reviewableSessions().map((session) => session.path).sort().join("\n");
   const previouslyReviewable = reviewablePaths();
   try {
+    const askedAt = performance.now();
     const body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
     // The active project can change mid-request; a late response must not
     // overwrite the newly selected project's conversations.
     if (state.activeProjectId !== projectId) return;
-    const newlyNeedsReview = body.sessions.some((session) => session.reviewState === "needs_review" && previousStates.get(session.path) !== "needs_review");
-    state.sessions = body.sessions;
-    if (body.sessions.some((session) => session.cronTaskId && !state.knownCronTaskIds.has(session.cronTaskId))) {
+    const sessions = withPendingSessionChanges(projectId, body.sessions, askedAt);
+    const newlyNeedsReview = sessions.some((session) => session.reviewState === "needs_review" && previousStates.get(session.path) !== "needs_review");
+    state.sessions = sessions;
+    if (sessions.some((session) => session.cronTaskId && !state.knownCronTaskIds.has(session.cronTaskId))) {
       try { await loadHiddenCronTasks(projectId); }
       catch (error) { console.warn("Could not load scheduled task visibility", error); }
       if (state.activeProjectId !== projectId) return;

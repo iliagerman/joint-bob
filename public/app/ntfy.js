@@ -2,6 +2,8 @@ import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { syncErrorReportingServices } from "./error-reporting-settings.js";
 import { openNtfyManager, syncNtfyManager } from "./ntfy-manage.js";
+import { changeSessionOptimistically } from "./optimistic-sessions.js";
+import { renderSessions } from "./session-list.js";
 import { toast } from "./shell.js";
 import { refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
@@ -164,12 +166,12 @@ elements.ntfyServiceAddButton.addEventListener("click", async () => {
  */
 export async function toggleSessionNtfy(session) {
   if (session.ntfyEnabled) {
-    await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/ntfy`, {
+    const projectId = state.activeProjectId;
+    await changeSessionOptimistically(session, { patch: { ntfyEnabled: false } }, () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/ntfy`, {
       method: "PUT",
       body: JSON.stringify({ sessionPath: session.path, enabled: false }),
-    });
-    session.ntfyEnabled = false;
-    await refreshSessionsQuietly();
+    }), renderSessions);
+    void refreshSessionsQuietly();
     toast("ntfy publishing stopped");
     return;
   }

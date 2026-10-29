@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed conversation actions such as marking done, renaming, recolouring, classifying, moving, and removing to show on the list the moment you choose them; if the server refuses, the conversation returns to how it was and an error explains why.
+
 ## 2.177.0 — 2026-10-29
 
 - Added a Save as HTML file button to saved Git stories, which saves the walkthrough and review notes as one file that opens without the app.

@@ -9,6 +9,7 @@ import { hideCommandAutocomplete } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { setMobileView } from "./layout.js";
 import { addOptimisticSession } from "./new-session.js";
+import { withPendingSessionChanges } from "./optimistic-sessions.js";
 import { renderProjects } from "./project-list.js";
 import { refreshQuickNotes, renderQuickNotes, showConversations } from "./quick-notes.js";
 import { openListedSession, refreshPendingReviews } from "./reviews.js";
@@ -202,7 +203,7 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   // must never paint one project's conversations under another.
   if (state.activeProjectId !== projectId) return;
   const renderStarted = performance.now();
-  state.sessions = body.sessions;
+  state.sessions = withPendingSessionChanges(projectId, body.sessions, requestStarted);
   if (body.sessions.some((session) => session.cronTaskId)) {
     try { await loadHiddenCronTasks(projectId); }
     catch (error) { console.warn("Could not load scheduled task visibility", error); }

@@ -8,6 +8,7 @@ import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { filteredSessions, normalizedQuery, selectedProject, sessionDisplayState, setMobileView, shortSessionTitle, updateChatFilterCounts } from "./layout.js";
 import { toggleSessionNtfy } from "./ntfy.js";
+import { changeSessionOptimistically } from "./optimistic-sessions.js";
 import { keepListScroll, renderProjects } from "./project-list.js";
 import { syncRecentSessionActivity } from "./recents.js";
 import { openListedSession, reviewableSessions } from "./reviews.js";
@@ -17,7 +18,7 @@ import { openSecretScope } from "./secrets.js";
 import { labelIcon, labelOptionText } from "./classification.js";
 import { openConversationClassificationDialog, openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
 import { autoRespondBadge, isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
-import { loadWorktrees, otherWorktreesSection, worktreeBadge, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
+import { loadWorktrees, otherWorktreesSection, worktreeBadge, worktreeDeleting, worktreeSectionHeader, worktreesHeading } from "./worktrees.js";
 import { confirmAction, enableNotifications, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
 import { chooseTransferDestination } from "./session-transfer.js";
@@ -87,7 +88,7 @@ export function renderSessions() {
   // enough metadata to group them instead of misfiling them in the project folder.
   const worktrees = new Map(state.worktrees.map((worktree) => [worktree.id, worktree]));
   for (const session of state.sessions) {
-    if (session.worktree && !worktrees.has(session.worktree.id)) worktrees.set(session.worktree.id, session.worktree);
+    if (session.worktree && !worktrees.has(session.worktree.id) && !worktreeDeleting(session.worktree.id)) worktrees.set(session.worktree.id, session.worktree);
   }
   // A sub-agent conversation stays with its root's group, whatever folder it ran in.
   const worktreeRows = new Map();
@@ -509,47 +510,63 @@ async function transferSessionFromRow(session, sessionActive) {
   const choice = await chooseTransferDestination(session, state.activeProjectId);
   if (!choice) return;
   const destination = state.projects.find((project) => project.id === choice.projectId);
-  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/transfer`, {
+  const projectId = state.activeProjectId;
+  const transfer = () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/transfer`, {
     method: "POST",
     body: JSON.stringify({ engine: sessionEngine(session), sessionId: session.id, destinationProjectId: choice.projectId, mode: choice.mode }),
   });
-  if (choice.mode === "move" && sessionActive) clearActiveSession();
-  await refreshSessionsQuietly();
+  if (choice.mode === "move") {
+    // A moved conversation leaves this list at once; a refusal brings it back.
+    if (sessionActive) clearActiveSession();
+    try {
+      await changeSessionOptimistically(session, { remove: true }, transfer, renderSessions);
+    } catch (error) {
+      if (sessionActive && state.activeProjectId === projectId && !state.activeSessionPath) openListedSession(session);
+      throw new Error(`Could not move the conversation: ${error.message}`);
+    }
+  } else {
+    await transfer();
+  }
+  void refreshSessionsQuietly();
   toast(`Conversation ${choice.mode === "move" ? "moved" : "copied"} to ${destination?.name ?? "the project"}`);
 }
 
-/** Closing a conversation out is list housekeeping, so it works on read-only rows too. */
+/**
+ * Closing a conversation out is list housekeeping, so it works on read-only rows too. The row
+ * moves at once; the server also clears out worktrees left with only done conversations,
+ * which can take seconds, and reports what it removed or kept when it is finished.
+ */
 async function toggleSessionDone(session) {
   const done = !session.doneAt;
   const projectId = state.activeProjectId;
-  const result = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/done`, {
-    method: "PUT",
-    body: JSON.stringify({ sessionId: session.conversationId || session.id, engine: sessionEngine(session), done }),
-  });
-  session.doneAt = done ? new Date().toISOString() : undefined;
-  if (state.activeProjectId === projectId) {
-    // A list refresh during cleanup may have replaced the row's session object.
-    for (const current of state.sessions) {
-      if ((current.conversationId || current.id) === (session.conversationId || session.id)) current.doneAt = session.doneAt;
-    }
-    state.worktreeCleanupReasons = result.retainedWorktrees || {};
+  const engine = sessionEngine(session);
+  toast(done ? "Conversation marked done" : "Conversation reopened");
+  let result;
+  try {
+    result = await changeSessionOptimistically(session, { patch: { doneAt: done ? new Date().toISOString() : undefined } }, () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/done`, {
+      method: "PUT",
+      body: JSON.stringify({ sessionId: session.conversationId || session.id, engine, done }),
+    }), renderSessions);
+  } catch (error) {
+    throw new Error(`${done ? "Could not mark the conversation done" : "Could not reopen the conversation"}: ${error.message}`);
   }
+  if (state.activeProjectId !== projectId) return;
+  state.worktreeCleanupReasons = result.retainedWorktrees || {};
   const deleted = result.deletedWorktreeIds?.length;
-  if (deleted && state.activeProjectId === projectId) await loadWorktrees();
+  if (deleted) await loadWorktrees();
   renderSessions();
   const retained = result.retainedWorktrees?.[session.worktree?.id];
-  toast(retained || (deleted ? "Conversation marked done; empty worktrees deleted" : done ? "Conversation marked done" : "Conversation reopened"));
+  if (retained || deleted) toast(retained || "Empty worktrees deleted");
 }
 
 async function toggleSessionReviewNotifications(session) {
   const enabled = !session.reviewNotificationsEnabled;
   if (enabled && !await enableNotifications()) return;
-  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/review-notifications`, {
+  const projectId = state.activeProjectId;
+  await changeSessionOptimistically(session, { patch: { reviewNotificationsEnabled: enabled } }, () => api(`/api/projects/${encodeURIComponent(projectId)}/sessions/review-notifications`, {
     method: "PUT",
     body: JSON.stringify({ sessionPath: session.path, enabled }),
-  });
-  session.reviewNotificationsEnabled = enabled;
-  renderSessions();
+  }), renderSessions);
   toast(enabled ? "Review notifications enabled" : "Review notifications disabled");
 }
 
@@ -576,9 +593,17 @@ async function removeSessionFromRow(session, sessionActive) {
   });
   if (!confirmed) return;
   const taskQuery = session.taskId ? `&taskId=${encodeURIComponent(session.taskId)}` : "";
-  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionId=${encodeURIComponent(session.id)}&engine=${sessionEngine(session)}${taskQuery}`, { method: "DELETE" });
+  const projectId = state.activeProjectId;
+  const url = `/api/projects/${encodeURIComponent(projectId)}/sessions?sessionId=${encodeURIComponent(session.id)}&engine=${sessionEngine(session)}${taskQuery}`;
+  // The row and the open chat go at once; a refusal brings both back.
   if (sessionActive) clearActiveSession();
-  await refreshSessionsQuietly();
+  try {
+    await changeSessionOptimistically(session, { remove: true }, () => api(url, { method: "DELETE" }), renderSessions);
+  } catch (error) {
+    if (sessionActive && state.activeProjectId === projectId && !state.activeSessionPath) openListedSession(session);
+    throw new Error(`Could not remove the conversation: ${error.message}`);
+  }
+  void refreshSessionsQuietly();
 }
 for (const button of elements.chatFilters.querySelectorAll("button[data-filter]")) {
   button.addEventListener("click", () => {

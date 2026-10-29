@@ -103,6 +103,16 @@ export function visitorEventRoute(db: DatabaseSync, _local: string, peer: string
   return !project || visitedNodeSeesProject(db, _local, peer, account, project);
 }
 
+/** The accounts whose events visitorEventRoute can send to a peer: visitors here whose home it
+    is, and our people signed in on it. Every other event is refused for that peer. */
+export function visitorEventAccounts(db: DatabaseSync, peer: string): string[] {
+  const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'account_roaming_nodes')").all() as unknown as Array<{ name: string }>).map((row) => row.name));
+  const accounts = new Set<string>();
+  if (tables.has("users")) for (const row of db.prepare("SELECT account_id FROM users WHERE home_node_id = ?").all(peer) as unknown as Array<{ account_id: string }>) accounts.add(row.account_id);
+  if (tables.has("account_roaming_nodes")) for (const row of db.prepare("SELECT account_id FROM account_roaming_nodes WHERE node_id = ?").all(peer) as unknown as Array<{ account_id: string }>) accounts.add(row.account_id);
+  return [...accounts];
+}
+
 /** Whether a node one of our people signed in to can show them this project: one shared
     with that node, or their own project here that isn't hidden from other nodes. A pin or
     recent about any other project stays home, title and path included. */

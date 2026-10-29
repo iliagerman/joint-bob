@@ -14,7 +14,7 @@ import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
 import { signedPost } from "./cluster-v2.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { isTrustedTwin } from "../cluster-sharing-policy.js";
-import { accountEventPeers, mayReplicateEvent, visitorEventRoute, presentReplicationPeers, sendReplicationV2, signedPeerPost } from "./replication-v2.js";
+import { accountEventPeers, mayReplicateEvent, visitorEventAccounts, visitorEventRoute, presentReplicationPeers, sendReplicationV2, signedPeerPost } from "./replication-v2.js";
 import { peerAway } from "../peer-presence.js";
 import { settled, warnOnChange } from "./quiet-log.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
@@ -430,7 +430,11 @@ export async function flushReplicationOutbox(): Promise<void> {
     const own = accountEventPeers(db);
     for (const peer of presentReplicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId) || own.has(peer.nodeId))) {
       const twin = isTrustedTwin(db, local.id, peer.nodeId);
-      const events = await eventsForPeer(peer.nodeId, new Date(), (event) => event.originNodeId === local.id && (twin || visitorEventRoute(db, local.id, peer.nodeId, event)) && mayReplicateEvent(db, local.id, peer.nodeId, event));
+      // Any other peer takes only its accounts' events. Without the query narrowed to them, the
+      // whole outbox was judged and refused for it on every flush.
+      const accounts = twin ? undefined : visitorEventAccounts(db, peer.nodeId);
+      if (accounts && !accounts.length) continue;
+      const events = await eventsForPeer(peer.nodeId, new Date(), (event) => event.originNodeId === local.id && (twin || visitorEventRoute(db, local.id, peer.nodeId, event)) && mayReplicateEvent(db, local.id, peer.nodeId, event), accounts);
       if (!events.length) continue;
       try {
         const receipt = replicationReceiptSchema.parse(await sendReplicationV2(peer, events));
