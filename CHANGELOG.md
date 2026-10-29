@@ -3,11 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.176.0 — 2026-10-29
 
 - Changed GitHub pipeline job logs to open per task, with failed tasks expanded first; a task's log loads only when you open it, and a log GitHub has not published yet shows a clear message instead of an error.
 - Added a Watch video button to saved Git stories that plays the story as an animated walkthrough, with an optional narrator voice from ElevenLabs once a project ElevenLabs key is set up.
-- Changed each webhook to open on one tabbed page for setup, access, files, skills, memory, and calls; files, skills, and memory now apply as you change them, and a new webhook holds its files and skills until you create it.
+- Changed each webhook to open on one tabbed page for setup, access, files, skills, memory, and calls, replacing the separate Resources page; files, skills, and memory apply as you change them, and a new webhook holds its files and skills until you create it.
+- Added a type and description for each file staged on a webhook before it is added, and Edit and Preview modes for a webhook's memory.
 
 ## 2.175.0 — 2026-10-29
 
