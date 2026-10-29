@@ -7,6 +7,8 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
@@ -27,7 +29,7 @@ jobs:
         id: version
         run: |
           node scripts/prepare-release.mjs --metadata-only
-      # Published tags skip redundant tests; main pushes always validate their latest commit.
+      # Published tags skip redundant tests; main pushes run fast checks unless publishing.
       - name: Decide whether to publish
         id: publish
         env:
@@ -37,32 +39,52 @@ jobs:
 
   test:
     needs: version
-    if: github.ref == 'refs/heads/main' || needs.version.outputs.publish == 'true'
+    if: github.ref == 'refs/heads/main' || needs.version.outputs.publish == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    name: test (${{ matrix.shard }}/4)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    # A newer push replaces this run's tests instead of queueing a second full suite behind them.
+    # Each shard cancels only its predecessor when a newer commit arrives.
     concurrency:
-      group: test-${{ github.ref }}
+      group: test-${{ github.ref }}-${{ matrix.shard }}
       cancel-in-progress: true
+    env:
+      TEST_SHARD_INDEX: ${{ matrix.shard }}
+      TEST_SHARD_COUNT: 4
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.1
+          cache: npm
+          cache-dependency-path: npm-shrinkwrap.json
       - name: Reject private dependency URLs before installation
         run: node scripts/check-public-dependencies.mjs package-lock.json npm-shrinkwrap.json
       - run: npm ci
-      - run: npm run typecheck
+      - name: Typecheck
+        if: matrix.shard == 1
+        run: npm run typecheck
       - name: Install native synchronization test dependency
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends syncthing
       # The agent CLIs under bin/ run from dist, and tests run them.
       - run: npm run build
-      - name: Run test suite
+      - name: Run fast test suite
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.publish != 'true'
+        timeout-minutes: 30
+        env:
+          FILE_SYNC_SEEDS: 40
+        run: node scripts/ci-test.mjs
+      - name: Run full test suite
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main' || needs.version.outputs.publish == 'true'
         timeout-minutes: 30
         run: node scripts/ci-test.mjs
 
   release:
     needs: [version, test]
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -77,6 +99,8 @@ jobs:
         with:
           node-version: 24.22.1
           registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: npm-shrinkwrap.json
       - name: Validate release version
         id: release
         env:

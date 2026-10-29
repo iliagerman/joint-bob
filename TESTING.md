@@ -20,10 +20,16 @@ disposable configuration and data, loopback listeners, and discovery, relays,
 NAT traversal, and automatic upgrades disabled. They stop those instances on
 cleanup; they never use a running production Syncthing service.
 
-CI runs `node scripts/ci-test.mjs`: the whole suite once, four files at a time, then
-only the files that failed, one at a time and once. A test that passes alone but not
-under load still needs fixing; the rerun only keeps it from costing another full pass.
-Pass file paths to run a subset the same way: `node scripts/ci-test.mjs test/a.test.ts`.
+CI divides all `test/*.test.ts` files deterministically across four parallel workers.
+Each worker runs four files at a time, then reruns only its failed files, one at a time.
+A test that passes alone but not under load still needs fixing; the rerun only keeps it
+from costing another full pass. Ordinary pushes to `main` use 40 deterministic seeds
+for file-sync property tests. The daily 06:00 UTC run, manual runs, and publishable
+releases use each suite's full default seed count. Full tests gate every package release.
+
+Run the complete suite locally with `node scripts/ci-test.mjs`, or pass file paths to
+run a subset. `node scripts/ci-test.mjs --list` prints the selected files without running
+tests. Set both `TEST_SHARD_INDEX` (1-based) and `TEST_SHARD_COUNT` to run one shard.
 
 `npm run test:ui` points `HOME` at a throwaway directory, but `test/setup.mjs` pins
 `PLAYWRIGHT_BROWSERS_PATH` to the real cache before it does, so a downloaded Chromium

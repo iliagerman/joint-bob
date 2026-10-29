@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Runs the full suite once, then reruns only the files whose tests failed, one at a time.
+// Runs selected files once, then reruns only the files whose tests failed, one at a time.
 // Repeating the whole suite to get past one timing-sensitive test cost a full pass each time.
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
@@ -7,6 +7,24 @@ import { readdirSync } from "node:fs";
 const CONCURRENCY = Number(process.env.TEST_CONCURRENCY || 4);
 // More failing files than this is a real breakage, not a flaky test; rerunning them only delays the report.
 const MAX_RERUN_FILES = 8;
+
+function shardSettings() {
+  const index = process.env.TEST_SHARD_INDEX;
+  const count = process.env.TEST_SHARD_COUNT;
+  if (index === undefined && count === undefined) return { index: 1, count: 1 };
+  if (index === undefined || count === undefined) throw new Error("TEST_SHARD_INDEX and TEST_SHARD_COUNT must both be set");
+  const shardIndex = Number(index);
+  const shardCount = Number(count);
+  if (!Number.isInteger(shardIndex) || !Number.isInteger(shardCount) || shardIndex < 1 || shardIndex > shardCount) {
+    throw new Error("TEST_SHARD_INDEX and TEST_SHARD_COUNT must be integers with 1 <= index <= count");
+  }
+  return { index: shardIndex, count: shardCount };
+}
+
+function selectShard(files) {
+  const { index, count } = shardSettings();
+  return files.filter((_, fileIndex) => fileIndex % count === index - 1);
+}
 
 function runTests(files, concurrency) {
   return new Promise((resolve, reject) => {
@@ -30,9 +48,26 @@ function failedFiles(output) {
   return [...files];
 }
 
-const requested = process.argv.slice(2);
+const args = process.argv.slice(2);
+const listOnly = args[0] === "--list";
+const requested = listOnly ? args.slice(1) : args;
 const all = requested.length ? requested : readdirSync("test").filter((file) => file.endsWith(".test.ts")).sort().map((file) => `test/${file}`);
-const first = await runTests(all, CONCURRENCY);
+let selected;
+try {
+  selected = selectShard(all);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
+if (listOnly) {
+  console.log(selected.join("\n"));
+  process.exit(0);
+}
+if (!selected.length) {
+  console.log("No test files assigned to this shard.");
+  process.exit(0);
+}
+const first = await runTests(selected, CONCURRENCY);
 if (first.code === 0) process.exit(0);
 
 const failed = failedFiles(first.output);

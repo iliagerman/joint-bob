@@ -65,7 +65,22 @@ async function fixture(t: TestContext, release: Record<string, unknown> | null =
 
 test("main pushes run tests even when the version is already published", async () => {
   const workflow = parse(await readFile(".github/workflows/release.yml", "utf8"));
-  assert.equal(workflow.jobs.test.if, "github.ref == 'refs/heads/main' || needs.version.outputs.publish == 'true'");
+  assert.equal(workflow.jobs.test.if, "github.ref == 'refs/heads/main' || needs.version.outputs.publish == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'");
+});
+
+test("CI shards fast main checks and reserves full seeds for nightly and publishable runs", async () => {
+  const workflow = parse(await readFile(".github/workflows/release.yml", "utf8"));
+  const testJob = workflow.jobs.test;
+  assert.deepEqual(workflow.on.schedule, [{ cron: "0 6 * * *" }]);
+  assert.equal(testJob.strategy["fail-fast"], false);
+  assert.deepEqual(testJob.strategy.matrix.shard, [1, 2, 3, 4]);
+  assert.equal(testJob.concurrency.group, "test-${{ github.ref }}-${{ matrix.shard }}");
+  assert.equal(testJob.steps.find((step: { name?: string }) => step.name === "Typecheck").if, "matrix.shard == 1");
+  assert.deepEqual(workflow.jobs.release.needs, ["version", "test"]);
+  assert.equal(testJob.steps.find((step: { name?: string }) => step.name === "Run fast test suite").env.FILE_SYNC_SEEDS, 40);
+  assert.equal(testJob.steps.find((step: { name?: string }) => step.name === "Run fast test suite").if, "github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.publish != 'true'");
+  assert.equal(testJob.steps.find((step: { name?: string }) => step.name === "Run full test suite").if, "github.event_name != 'push' || github.ref != 'refs/heads/main' || needs.version.outputs.publish == 'true'");
+  assert.equal(workflow.jobs.release.if, "github.event_name != 'schedule'");
 });
 
 test("a main push prepares the package version for automatic publication", async (t) => {
