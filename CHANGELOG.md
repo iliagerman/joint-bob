@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.174.0 — 2026-10-29
 
 - Added private files and tools for webhooks, each with a description and up to 4 MiB; a webhook keeps the version it was accepted with, so editing a file later does not change what it already runs with.
 - Added private skills for webhooks, from an uploaded folder, a Git repo at a chosen commit, or an existing skill; removing one stops future runs from using it, while a run already accepted keeps its copy.
