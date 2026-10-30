@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Story mode · podcast explainer mock</title>
+<style>
+  :root { color-scheme: dark; --bg:#101315; --panel:#1b2023; --line:#343d41; --text:#ecf0ed; --muted:#9ba8a7; --mint:#a3dfbd; --amber:#f3bd72; --red:#ed948d; font-family:"Avenir Next","Segoe UI",sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--text); background:radial-gradient(circle at 10% 0%,#23372f 0,transparent 35%),var(--bg); }
+  button,select,textarea,input { font:inherit; color:inherit; }
+  button { cursor:pointer; }
+  button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible { outline:2px solid var(--mint); outline-offset:2px; }
+  .page { max-width:1180px; margin:auto; padding:30px clamp(14px,4vw,48px) 60px; }
+  .eyebrow { margin:0 0 9px; color:var(--mint); font:700 11px/1.2 ui-monospace,monospace; letter-spacing:.16em; text-transform:uppercase; }
+  h1 { font-size:clamp(28px,4vw,42px); line-height:1.05; letter-spacing:-.05em; margin:0 0 8px; font-weight:650; }
+  .sub { color:var(--muted); margin:0 0 22px; font-size:14px; line-height:1.55; max-width:800px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+  .tab { border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:10px 15px; text-align:left; font-size:13px; }
+  .tab small { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
+  .tab[aria-selected="true"] { border-color:var(--mint); background:#2c4437; color:#ddf8e5; }
+  .note { border-left:2px solid #647e6e; background:#242d2a; padding:10px 14px; margin:0 0 14px; font-size:13px; line-height:1.55; color:#c3ceca; max-width:900px; }
+  .note b { color:var(--mint); }
+
+  /* player */
+  .player { background:var(--panel); border:1px solid #45504e; border-radius:14px; overflow:hidden; box-shadow:0 30px 90px #0008; }
+  .stage-wrap { position:relative; width:100%; aspect-ratio:16/9; background:#12171a; overflow:hidden; }
+  .stage { position:absolute; left:0; top:0; width:960px; height:540px; transform-origin:0 0; font-family:"Segoe Print","Bradley Hand","Comic Sans MS",cursive; }
+  .stage svg.actors { position:absolute; inset:0; width:960px; height:540px; pointer-events:none; }
+  .ground { position:absolute; left:30px; right:30px; top:470px; height:2px; background:#3b4649; border-radius:2px; }
+  .title-chip { position:absolute; left:26px; top:18px; font:700 11px/1 ui-monospace,monospace; letter-spacing:.14em; text-transform:uppercase; color:var(--mint); }
+  .scene-chip { position:absolute; right:26px; top:18px; font:11px/1 ui-monospace,monospace; color:var(--muted); }
+  .vis { position:absolute; left:300px; top:60px; width:440px; height:340px; font-family:"Avenir Next","Segoe UI",sans-serif; }
+  .vis [data-step] { opacity:0; transform:translateY(10px); transition:opacity .45s,transform .45s; }
+  .vis [data-step].in { opacity:1; transform:none; }
+  .abs { position:absolute; }
+  .board { background:#1d2a25; border:3px solid #5b6b63; border-radius:6px; padding:12px 16px; font-size:17px; line-height:1.4; color:#e8efe9; font-family:"Segoe Print","Bradley Hand","Comic Sans MS",cursive; }
+  .board h4 { margin:0 0 5px; font-size:18px; color:var(--amber); font-weight:600; }
+  .shot { background:#0e1214; border:1px solid #4b5759; border-radius:9px; overflow:hidden; box-shadow:0 14px 40px #000a; }
+  .shot .chrome { display:flex; gap:5px; align-items:center; padding:7px 10px; background:#242b2e; border-bottom:1px solid var(--line); font:10px ui-monospace,monospace; color:var(--muted); }
+  .shot .chrome i { width:8px; height:8px; border-radius:50%; background:#515d5f; display:inline-block; }
+  .shot .body { padding:12px 14px; font-size:12px; line-height:1.55; }
+  .shot .tag { position:absolute; right:-8px; top:-10px; background:var(--amber); color:#1b2023; font:700 10px/1 ui-monospace,monospace; padding:4px 7px; border-radius:4px; letter-spacing:.08em; }
+  .err { background:#3a2523; border:1px solid #76504c; color:#f3c6c1; border-radius:6px; padding:9px 11px; font:11px/1.5 ui-monospace,monospace; }
+  .ok { background:#223a2b; border:1px solid #3f6a50; color:#cdeed9; border-radius:6px; padding:9px 11px; font:11px/1.5 ui-monospace,monospace; }
+  .log { background:#0b1012; border:1px solid #2e3a3d; border-radius:6px; padding:9px 11px; font:11px/1.6 ui-monospace,monospace; color:#c9d7d0; white-space:pre; }
+  .node { padding:9px 13px; border:2px solid #6e7f77; border-radius:8px; background:#1f2a26; color:#e8efe9; font-size:15px; line-height:1.3; text-align:center; }
+  .node.bad { border-color:var(--red); background:#3a2523; }
+  .node.good { border-color:var(--mint); background:#223a2b; }
+  .node small { display:block; font:10px ui-monospace,monospace; color:var(--muted); margin-top:3px; }
+  .arrow { color:#9fb3aa; font-size:26px; line-height:1; }
+  .opt { padding:12px 14px; border:2px dashed #6e7f77; border-radius:10px; font-size:15px; line-height:1.4; background:#1f2a26; }
+  .opt small { color:#c3d4cb; font-size:13px; }
+  .opt.no { border-color:var(--red); opacity:.6; text-decoration:line-through; text-decoration-color:var(--red); }
+  .opt.yes { border:2px solid var(--mint); background:#223a2b; }
+  .tl { height:3px; background:#4d5a57; }
+  .tick { width:14px; height:14px; border-radius:50%; background:#34403c; border:2px solid #6e7f77; }
+  .tick.on { background:var(--mint); border-color:var(--mint); }
+  .tlabel { text-align:center; font:700 12px ui-monospace,monospace; color:#e8efe9; }
+  .tlabel small { display:block; font:400 11px ui-monospace,monospace; color:var(--muted); margin-top:2px; }
+
+  .caption { padding:14px 22px 6px; min-height:84px; font-size:16px; line-height:1.55; color:#e7eee9; border-top:1px solid var(--line); }
+  .who { display:inline-block; margin-right:8px; font:700 11px/1 ui-monospace,monospace; letter-spacing:.1em; text-transform:uppercase; color:var(--mint); }
+  .who.cohost { color:#8fc3f0; }
+  .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 18px 16px; }
+  .cbtn { border:1px solid #515d5f; background:#293137; border-radius:6px; padding:8px 12px; font-size:13px; }
+  .cbtn.primary { background:var(--mint); border-color:var(--mint); color:#102018; font-weight:700; min-width:84px; }
+  .dots { display:flex; gap:6px; flex:1; min-width:160px; }
+  .dot { flex:1; height:6px; border-radius:4px; background:#33403f; border:0; padding:0; }
+  .dot.on { background:#5d8a74; }
+  .dot.done { background:var(--mint); }
+  .ctl-label { color:var(--muted); font-size:12px; display:flex; align-items:center; gap:6px; }
+  .voice-badge { font:11px ui-monospace,monospace; color:var(--muted); border:1px solid var(--line); border-radius:20px; padding:4px 9px; }
+  .voice-badge b { color:var(--mint); font-weight:600; }
+  select { background:#141a1b; border:1px solid #45504e; border-radius:6px; padding:6px 8px; font-size:12px; }
+
+  /* settings */
+  .settings { background:var(--panel); border:1px solid #45504e; border-radius:14px; padding:26px clamp(16px,3vw,36px); max-width:840px; }
+  .settings h2 { margin:0 0 4px; font-size:22px; letter-spacing:-.03em; }
+  .settings .hint { color:var(--muted); font-size:13px; line-height:1.55; margin:0 0 18px; }
+  fieldset { border:1px solid var(--line); border-radius:10px; margin:0 0 16px; padding:14px 16px 16px; }
+  legend { padding:0 8px; color:var(--mint); font:700 11px ui-monospace,monospace; letter-spacing:.12em; text-transform:uppercase; }
+  label.f { display:block; font-size:12px; color:var(--muted); margin:10px 0 5px; }
+  select.wide { width:100%; }
+  textarea { width:100%; background:#141a1b; border:1px solid #45504e; border-radius:7px; padding:10px 12px; font-size:13px; min-height:170px; resize:vertical; line-height:1.5; }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .checkbox-row { display:flex; gap:9px; align-items:flex-start; font-size:13px; line-height:1.45; margin:9px 0; }
+  .checkbox-row input { margin-top:3px; }
+  .status-line { font:11px/1.5 ui-monospace,monospace; color:var(--mint); margin-top:6px; }
+  .status-line.warn { color:var(--amber); }
+  .actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px; }
+  .toast { color:var(--mint); font:12px ui-monospace,monospace; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="eyebrow">Story mode · Kokoro podcast mock</p>
+  <h1>Explain it like a podcast</h1>
+  <p class="sub">Two hosts walk a teammate through one decision. Each line is real Kokoro-82M audio, generated on CPU and played from <code>mockups/story-audio/</code>. Flows, comparisons, timelines and screenshots appear on the slide when the host talks about them. No ElevenLabs and no Mac speech engine.</p>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div id="notes"></div>
+
+  <div id="playerView" class="player">
+    <div class="stage-wrap" id="stageWrap">
+      <div class="stage" id="stage">
+        <div class="title-chip" id="titleChip"></div>
+        <div class="scene-chip" id="sceneChip"></div>
+        <div class="ground"></div>
+        <div class="vis" id="visual"></div>
+        <svg class="actors" id="actors" viewBox="0 0 960 540"></svg>
+      </div>
+    </div>
+    <div class="caption" aria-live="polite"><span class="who" id="who"></span><span id="caption"></span></div>
+    <div class="controls">
+      <button class="cbtn" id="prevBtn" type="button" aria-label="Previous line">⏮</button>
+      <button class="cbtn primary" id="playBtn" type="button">▶ Play</button>
+      <button class="cbtn" id="nextBtn" type="button" aria-label="Next line">⏭</button>
+      <div class="dots" id="dots"></div>
+      <label class="ctl-label">Speed <select id="speed"><option value="1">1×</option><option value="1.25">1.25×</option><option value="0.8">0.8×</option></select></label>
+      <button class="cbtn" id="muteBtn" type="button">Sound on</button>
+      <span class="voice-badge">Maya <b>af_heart</b> · Jonah <b>am_michael</b> · Kokoro on this node</span>
+    </div>
+  </div>
+
+  <div id="settingsView" class="settings hidden">
+    <h2>Story mode</h2>
+    <p class="hint">Settings → Story mode, on this node. The instructions steer every story. Narration runs here with Kokoro, so no API key is needed.</p>
+
+    <fieldset>
+      <legend>Format</legend>
+      <label class="f" for="sFormat">Format</label>
+      <select id="sFormat" class="wide"><option>Two-host podcast</option><option>One presenter</option></select>
+      <div class="checkbox-row"><input id="sDiagrams" type="checkbox" checked><label for="sDiagrams">Draw flows, comparisons and timelines on the slide when a host talks about them</label></div>
+      <div class="checkbox-row"><input id="sShots" type="checkbox" checked><label for="sShots">Capture screenshots of the screens an episode talks about</label></div>
+      <label class="f" for="sInstr">Story instructions</label>
+      <textarea id="sInstr">Make a short podcast for teammates who did not follow the work. Two hosts: Maya explains, Jonah asks the questions a teammate would ask.
+- Start with the symptom a user saw, in one or two lines.
+- Spend most of the time on WHY: what we considered, what we rejected, and the constraint that decided it.
+- Show the logic with a diagram, comparison or timeline whenever a sentence describes a sequence or a choice.
+- Use a screenshot or log only when the screen itself proves the point.
+- Name real files, commits and versions, but explain them in plain words.
+- End with what still does not work.
+- 12 to 18 lines in total, each under 35 words. Friendly, no hype.</textarea>
+      <div class="status-line">Sent to the story writer with every request. Empty uses the built-in podcast instructions.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Narration · Kokoro</legend>
+      <div class="checkbox-row"><input id="sVoiceOn" type="checkbox" checked><label for="sVoiceOn">Narrate stories with Kokoro on this node</label></div>
+      <div class="status-line">onnx-community/Kokoro-82M-v1.0-ONNX · q8 · CPU · Apache-2.0 · downloads once, on first use</div>
+      <div class="row2">
+        <div><label class="f" for="sHost">Host voice</label><select id="sHost" class="wide"><option>af_heart · Maya, American</option><option>af_bella · American</option><option>bf_emma · British</option></select></div>
+        <div><label class="f" for="sCohost">Co-host voice</label><select id="sCohost" class="wide"><option>am_michael · Jonah, American</option><option>am_adam · American</option><option>bm_george · British</option></select></div>
+      </div>
+      <label class="f" for="sSpeed">Speaking speed</label>
+      <select id="sSpeed" class="wide"><option>0.9×</option><option selected>1.0×</option><option>1.1×</option></select>
+      <div class="status-line">Lines are cached per story and voice, so replays cost nothing. This Mac took about 3 seconds per line on CPU.</div>
+      <div class="status-line warn">Changing a voice re-generates that episode on this node. Test voices plays the sample clips made with af_heart and am_michael.</div>
+    </fieldset>
+
+    <div class="actions">
+      <button class="cbtn primary" id="sSave" type="button">Save</button>
+      <button class="cbtn" id="sTest" type="button">Test voices</button>
+      <button class="cbtn" id="sReset" type="button">Restore default instructions</button>
+      <span class="toast" id="sToast"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================== stick figure ============================== */
+const NS = 'http://www.w3.org/2000/svg';
+const GROUND = 470;
+const el = (tag, attrs = {}, parent) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (parent) parent.appendChild(n); return n; };
+const lerp = (a, b, k) => a + (b - a) * k;
+const rad = d => d * Math.PI / 180;
+
+// angle 0 = straight down, positive = toward the way the figure faces
+const POSES = {
+  idle:    { rU: 12,  rL: 8,   lU: -12, lL: -8,  lean: 0,  hop: 0 },
+  point:   { rU: 100, rL: 0,   lU: -10, lL: -6,  lean: 3,  hop: 0 },
+  wave:    { rU: 160, rL: 20,  lU: -10, lL: -6,  lean: 0,  hop: 0 },
+  think:   { rU: 40,  rL: 125, lU: -10, lL: -6,  lean: -2, hop: 0 },
+  shrug:   { rU: 35,  rL: -70, lU: -35, lL: 70,  lean: 0,  hop: 0 },
+  cheer:   { rU: 165, rL: 5,   lU: -165, lL: -5, lean: 0,  hop: 1 },
+  present: { rU: 75,  rL: 35,  lU: -20, lL: -10, lean: 2,  hop: 0 }
+};
+
+function seg(line, x0, y0, a, len) {
+  const x1 = x0 + Math.sin(rad(a)) * len, y1 = y0 + Math.cos(rad(a)) * len;
+  line.setAttribute('x1', x0); line.setAttribute('y1', y0); line.setAttribute('x2', x1); line.setAttribute('y2', y1);
+  return [x1, y1];
+}
+
+class Stick {
+  constructor(layer, { x, face, color, label }) {
+    this.x = x; this.face = face; this.speaking = false;
+    this.target = POSES.idle; this.cur = { ...POSES.idle };
+    this.g = el('g', { stroke: color, 'stroke-width': 5, 'stroke-linecap': 'round', fill: 'none' }, layer);
+    this.limbs = {};
+    for (const k of ['rU', 'rL', 'lU', 'lL', 'torso', 'legA', 'legB', 'legA2', 'legB2']) this.limbs[k] = el('line', {}, this.g);
+    this.head = el('circle', { r: 15, fill: '#12171a' }, this.g);
+    this.eyeA = el('circle', { r: 1.8, fill: color, stroke: 'none' }, this.g);
+    this.eyeB = el('circle', { r: 1.8, fill: color, stroke: 'none' }, this.g);
+    this.mouth = el('line', { 'stroke-width': 3 }, this.g);
+    this.tag = el('text', { 'text-anchor': 'middle', fill: color, stroke: 'none', 'font-size': 12, 'font-family': 'ui-monospace,monospace' }, layer);
+    this.tag.textContent = label;
+  }
+  pose(name) { this.target = POSES[name]; }
+  update(s, speaking) {
+    this.speaking = speaking;
+    for (const key in this.target) this.cur[key] = lerp(this.cur[key], this.target[key], 0.12);
+    this.draw(s / 1000);
+  }
+  draw(s) {
+    const c = this.cur;
+    const sway = Math.sin(s * 2) * 2;
+    const hop = c.hop > .5 ? Math.abs(Math.sin(s * 7)) * 16 : 0;
+    const hipY = GROUND - 52 - hop, neckY = hipY - 40, shY = neckY + 8;
+    this.g.setAttribute('transform', `translate(${this.x},0) scale(${this.face},1)`);
+    const sx = Math.sin(rad(c.lean)) * 8;
+    const torso = this.limbs.torso;
+    torso.setAttribute('x1', 0); torso.setAttribute('y1', hipY); torso.setAttribute('x2', sx); torso.setAttribute('y2', neckY);
+    const gesture = this.speaking ? Math.sin(s * 6) * 8 : 0;
+    const rU = c.rU + gesture + sway, lU = c.lU - sway;
+    const [rx, ry] = seg(this.limbs.rU, sx, shY, rU, 24);
+    seg(this.limbs.rL, rx, ry, rU + c.rL, 22);
+    const [lx, ly] = seg(this.limbs.lU, sx, shY, lU, 24);
+    seg(this.limbs.lL, lx, ly, lU + c.lL, 22);
+    const [ax, ay] = seg(this.limbs.legA, 0, hipY, 18, 27);
+    seg(this.limbs.legA2, ax, ay, 8, 27);
+    const [bx, by] = seg(this.limbs.legB, 0, hipY, -18, 27);
+    seg(this.limbs.legB2, bx, by, -8, 27);
+    const hx = sx + Math.sin(rad(c.lean)) * 4, hy = neckY - 18;
+    this.head.setAttribute('cx', hx); this.head.setAttribute('cy', hy);
+    this.eyeA.setAttribute('cx', hx + 5); this.eyeA.setAttribute('cy', hy - 3);
+    this.eyeB.setAttribute('cx', hx + 11); this.eyeB.setAttribute('cy', hy - 3);
+    const open = this.speaking ? 2 + Math.abs(Math.sin(s * 14)) * 4 : 0;
+    this.mouth.setAttribute('x1', hx + 4); this.mouth.setAttribute('x2', hx + 11);
+    this.mouth.setAttribute('y1', hy + 6); this.mouth.setAttribute('y2', hy + 6 + open * .5);
+    this.tag.setAttribute('x', this.x); this.tag.setAttribute('y', GROUND + 22);
+  }
+}
+
+/* ============================== slide helpers ============================== */
+// Slide elements carry data-step; a line with r = n shows every element whose step is <= n.
+const node = (t, s = '', cls = '') => `<div class="node ${cls}">${t}${s ? `<small>${s}</small>` : ''}</div>`;
+const box = (inner, x, y, w, step) => `<div class="abs" data-step="${step}" style="left:${x}px;top:${y}px;width:${w}px">${inner}</div>`;
+const arrow = (x, y, step, ch = '→') => `<div class="abs arrow" data-step="${step}" style="left:${x}px;top:${y}px">${ch}</div>`;
+const opt = (title, why, x, y, w, step, yes) => `<div class="abs opt ${yes ? 'yes' : 'no'}" data-step="${step}" style="left:${x}px;top:${y}px;width:${w}px">${title}<br><small>${why}</small></div>`;
+const board = (title, body, x, y, w, step) => `<div class="abs board" data-step="${step}" style="left:${x}px;top:${y}px;width:${w}px"><h4>${title}</h4>${body}</div>`;
+const shot = (url, inner, x, y, w, step, tag = 'SCREENSHOT') => `<div class="abs shot" data-step="${step}" style="left:${x}px;top:${y}px;width:${w}px"><span class="tag">${tag}</span><div class="chrome"><i></i><i></i><i></i><span style="margin-left:6px">${url}</span></div><div class="body">${inner}</div></div>`;
+function timeline(stops, y) {
+  const x0 = 70, span = 120;
+  let h = `<div class="abs tl" data-step="1" style="left:${x0}px;top:${y}px;width:${span * (stops.length - 1)}px"></div>`;
+  stops.forEach((s, i) => {
+    const x = x0 + i * span;
+    h += `<div class="abs tick" data-step="${i + 1}" style="left:${x - 7}px;top:${y - 6}px"></div>`;
+    h += `<div class="abs tlabel" data-step="${i + 1}" style="left:${x - 55}px;top:${y + 16}px;width:110px">${s.t}<small>${s.s}</small></div>`;
+  });
+  return h;
+}
+
+/* ============================== episodes ============================== */
+// say(who, segment index, reveal step, text, pose?)
+const say = (who, seg, r, text, pose) => ({ who, seg, r, text, pose });
+
+const EPISODES = [
+  {
+    id: 'deploy-busy-machine',
+    tab: ['Why a busy machine waits', 'exit 75 and retries, explained'],
+    title: 'Why a busy machine is retried, not forced',
+    notes: `<b>Format: two-host podcast.</b> Maya explains; Jonah asks what a teammate would ask. The slide changes when the line that needs it starts. Subject: why a node answers exit 75 and each machine retries on its own (commit 2d765411). Visuals used: flows, comparisons, a timeline and a log.`,
+    segments: [
+      { title: 'Two machines, one deploy', html: () =>
+        box(node('Homeserver', 'new version', 'good'), 20, 60, 150, 1) +
+        box(node('Mac', 'still on old version', 'bad'), 270, 60, 150, 1) +
+        box(node('Deploy', 'started last week'), 135, 170, 170, 2) +
+        shot('deploy log', '<div class="log">deploy  mac        exit 75\ndeploy  homeserver ok</div>', 60, 250, 320, 3, 'DEPLOY LOG') },
+      { title: 'What the Mac was doing', html: () =>
+        box(node('Resumed turn', 'agent still writing', 'bad'), 0, 110, 124, 1) +
+        arrow(132, 128, 2) +
+        box(node('Deploy asks', 'update now'), 158, 110, 124, 2) +
+        arrow(290, 128, 3) +
+        box(node('Node says no', 'busy · exit 75', 'bad'), 316, 110, 124, 3) +
+        board('Why not restart', 'The turn is still writing. A restart cuts it off in the middle.', 0, 230, 440, 3) },
+      { title: 'Three options', html: () =>
+        opt('Wait for everyone', 'one busy machine blocks the rest', 60, 20, 320, 1, false) +
+        opt('Force restart', 'cuts off the running turn and its work', 60, 130, 320, 2, false) +
+        opt('Update each machine alone, retry the busy one', 'nothing blocked, nothing cut off', 60, 240, 320, 3, true) },
+      { title: 'The retry loop', html: () =>
+        board('Retry loop', 'Same check every three minutes. No person needed.', 20, 40, 410, 1) +
+        timeline([{ t: '0:00', s: 'busy' }, { t: '3:00', s: 'busy' }, { t: '6:00', s: 'busy' }, { t: '9:00', s: 'update lands' }], 170) },
+      { title: 'What the log says', html: () =>
+        shot('deploy log', '<div class="log">mac    update refused: turn in progress\nmac    exit 75 (busy, retry)</div>', 50, 60, 340, 1, 'DEPLOY LOG') +
+        board('Why the line exists', 'A silent skip looks like success. The refusal is the signal.', 50, 200, 340, 2) },
+    ],
+    lines: [
+      say('host', 0, 3, "Last week a deploy stopped halfway, and nobody touched it. Jonah, what did you see?"),
+      say('cohost', 0, 3, "The homeserver got the new version. The Mac did not. The deploy log just said exit 75, which looks like a crash, but it isn't."),
+      say('host', 0, 3, "Exactly. Today: why exit 75 is the right answer, and why we don't just force the update."),
+      say('host', 1, 1, "The Mac was not idle. It was finishing a turn that had been interrupted earlier, a conversation an agent was still writing to."),
+      say('cohost', 1, 2, "So the deploy is asking to restart a machine in the middle of a sentence."),
+      say('host', 1, 3, "Right. The agent has a resumed turn running. The deploy asks to update. The node says no, busy."),
+      say('cohost', 2, 1, "Why not just wait for it? Or force it?"),
+      say('host', 2, 2, "Waiting means one busy machine holds back every other machine. Forcing cuts off the running turn, and that turn's work is lost."),
+      say('cohost', 2, 3, "So each machine updates on its own."),
+      say('host', 2, 3, "Yes. The homeserver updates now. The Mac retries by itself, and nothing waits for a person."),
+      say('host', 3, 1, "The retry runs every three minutes. Each attempt asks the node: are you still busy?"),
+      say('cohost', 3, 2, "And when the turn finishes?"),
+      say('host', 3, 4, "The next attempt passes, the update lands, and the log shows it."),
+      say('cohost', 4, 1, "What does the refusal look like in the log?"),
+      say('host', 4, 1, "A line that says update refused, turn in progress, exit 75. That line is deliberate. A silent skip would look like success."),
+      say('cohost', 4, 2, "And the catch?"),
+      say('host', 4, 2, "A machine that never finishes its turn never updates. That trade-off is visible on purpose."),
+    ],
+  },
+  {
+    id: 'story-draft-turns',
+    tab: ['Why Story skips draft turns', 'the cause, the choice, the fix'],
+    title: 'Why Story skips draft turns instead of loosening the path check',
+    notes: `<b>Format: two-host podcast.</b> Same hosts, a different question: why not just loosen the check? Visuals used: an error screenshot, a cause flow, a comparison, a simplified diff and a commit timeline. Subject: the Story failure fixed in b818b0ac, with the ownership-wait change from 34f9401f.`,
+    segments: [
+      { title: 'The symptom', html: () =>
+        shot('Story · Change story', '<div class="err">Claude session path is outside Claude projects<br>stage: collect sources</div>', 40, 50, 380, 1, 'ERROR') +
+        board('First guess', 'The path check is blocking us. Loosen it?', 40, 200, 380, 2) },
+      { title: 'Where the path came from', html: () =>
+        box(node('Claude cleanup', 'transcripts older than 30 days'), 0, 40, 190, 1) +
+        arrow(200, 58, 2) +
+        box(node('Transcript deleted', 'no file on disk', 'bad'), 250, 40, 190, 2) +
+        arrow(335, 100, 3, '↓') +
+        box(node('Draft placeholder kept', 'nothing behind it', 'bad'), 250, 130, 190, 3) +
+        arrow(200, 148, 4, '←') +
+        box(node('Story loader', 'passes the id on'), 0, 130, 190, 4) +
+        arrow(80, 190, 5, '↓') +
+        box(node('File reader', 'path must be inside Claude projects', 'bad'), 0, 220, 190, 5) +
+        board('Correct refusal', 'The check did its job.', 250, 230, 190, 5) },
+      { title: 'Why not loosen the check', html: () =>
+        opt('Loosen the path check', 'the reader opens any file it likes', 20, 70, 200, 1, false) +
+        opt('Keep the check strict', 'only real turns are read; placeholders are skipped', 240, 70, 190, 2, true) +
+        board('Why it matters', 'The check is the only thing between the reader and every file on the machine.', 20, 220, 410, 2) },
+      { title: 'What we shipped', html: () =>
+        shot('loader · simplified diff', '<div class="log">- readTranscript(segment.id)\n+ if (segment.draft) continue\n+ readTranscript(segment.id)</div>', 20, 40, 400, 1, 'SIMPLIFIED DIFF') +
+        shot('Story', '<div class="ok">The story says what is missing: turns removed by cleanup do not come back.</div>', 20, 200, 400, 2, 'AFTER') },
+      { title: 'The side fix', html: () =>
+        board('Three small steps', 'Each commit answers one question: why it failed, why the fix is safe, what slowed it.', 20, 40, 410, 1) +
+        timeline([{ t: 'cc522b32', s: 'visible reasons' }, { t: 'b818b0ac', s: 'skip placeholders' }, { t: '34f9401f', s: 'scope waits' }], 190) },
+    ],
+    lines: [
+      say('host', 0, 1, "Story failed twice on one conversation, with a message about a path. Jonah, what was your first guess?"),
+      say('cohost', 0, 2, "The path check is blocking us. Let's loosen it and move on."),
+      say('host', 0, 2, "That is the tempting answer. Let's see why it is the wrong one."),
+      say('host', 1, 2, "Claude Code deletes transcripts older than thirty days. Our records of those conversations stay, marked as drafts, with a placeholder instead of a file."),
+      say('cohost', 1, 3, "So the placeholder points at nothing."),
+      say('host', 1, 5, "Right. The loader handed that placeholder to the file reader, and the reader refused it, correctly."),
+      say('cohost', 2, 1, "Still, the check is in the way."),
+      say('host', 2, 2, "The check is the only thing stopping the reader from opening any file it likes. Loosen it, and it protects nothing."),
+      say('host', 3, 1, "So the loader now skips draft placeholders, and keeps every real turn it has. The path check stays exactly as strict."),
+      say('cohost', 3, 1, "And does the story say what is missing?"),
+      say('host', 3, 2, "Yes. Turns that the cleanup removed do not come back, and the story says so up front."),
+      say('cohost', 4, 2, "Did anything else change along the way?"),
+      say('host', 4, 3, "Ownership waits were waiting on every file in the conversation. Now they wait only on the conversation's own files, so a busy folder cannot stall a story."),
+      say('host', 4, 3, "So: find the real reason, fix that, and do not weaken the guard."),
+    ],
+  },
+];
+
+/* ============================== player ============================== */
+const stage = document.getElementById('stage');
+const visual = document.getElementById('visual');
+const actorsLayer = document.getElementById('actors');
+const audio = new Audio();
+const S = { ep: null, lines: [], line: -1, seg: -1, playing: false, finished: false, speed: 1, muted: false, actors: {} };
+const NAMES = { host: 'Maya', cohost: 'Jonah' };
+
+function showEpisode(ep) {
+  pauseAudio();
+  S.ep = ep;
+  S.lines = ep.lines.map((ln, i) => ({ ...ln, file: `story-audio/${ep.id}-${String(i + 1).padStart(2, '0')}.mp3` }));
+  actorsLayer.innerHTML = '';
+  S.actors = {
+    host: new Stick(actorsLayer, { x: 190, face: 1, color: '#a3dfbd', label: 'Maya' }),
+    cohost: new Stick(actorsLayer, { x: 770, face: -1, color: '#8fc3f0', label: 'Jonah' }),
+  };
+  document.getElementById('titleChip').textContent = ep.title;
+  const dots = document.getElementById('dots');
+  dots.innerHTML = '';
+  ep.segments.forEach((sg, i) => {
+    const d = document.createElement('button');
+    d.type = 'button'; d.className = 'dot'; d.title = sg.title; d.setAttribute('aria-label', `Part ${i + 1}: ${sg.title}`);
+    d.onclick = () => goLine(S.lines.findIndex(ln => ln.seg === i));
+    dots.appendChild(d);
+  });
+  S.seg = -1; S.line = -1;
+  goLine(0);
+}
+
+function buildSegment(k) {
+  S.seg = k;
+  visual.innerHTML = S.ep.segments[k].html();
+}
+
+function reveal(n) {
+  visual.querySelectorAll('[data-step]').forEach(n2 => n2.classList.toggle('in', Number(n2.dataset.step) <= n));
+}
+
+function setSpeaker(who, pose) {
+  for (const k of ['host', 'cohost']) {
+    const a = S.actors[k];
+    a.pose(k === who ? (pose || 'present') : 'idle');
+  }
+}
+
+function goLine(i) {
+  if (i < 0 || i >= S.lines.length) return;
+  const ln = S.lines[i];
+  if (ln.seg !== S.seg) buildSegment(ln.seg);
+  S.line = i;
+  S.finished = false;
+  reveal(ln.r);
+  for (const k of ['host', 'cohost']) S.actors[k].speaking = false;
+  setSpeaker(ln.who, ln.pose);
+  const who = document.getElementById('who');
+  who.textContent = NAMES[ln.who];
+  who.className = 'who' + (ln.who === 'cohost' ? ' cohost' : '');
+  document.getElementById('caption').textContent = ln.text;
+  document.getElementById('sceneChip').textContent = `${ln.seg + 1} / ${S.ep.segments.length} · ${S.ep.segments[ln.seg].title}`;
+  document.querySelectorAll('.dot').forEach((d, n) => { d.classList.toggle('done', n < ln.seg); d.classList.toggle('on', n === ln.seg); });
+  S.actors[ln.who].speaking = S.playing;
+  audio.src = ln.file;
+  audio.playbackRate = S.speed;
+  audio.muted = S.muted;
+  if (S.playing) audio.play();
+}
+
+function pauseAudio() { S.playing = false; audio.pause(); }
+
+function setPlaying(on) {
+  S.playing = on;
+  document.getElementById('playBtn').textContent = on ? '⏸ Pause' : S.finished ? '↺ Replay' : '▶ Play';
+  for (const k of ['host', 'cohost']) S.actors[k].speaking = on && S.line >= 0 && S.lines[S.line].who === k;
+  if (on) audio.play(); else audio.pause();
+}
+
+audio.onended = () => {
+  if (S.line < S.lines.length - 1) { goLine(S.line + 1); return; }
+  S.finished = true;
+  setPlaying(false);
+};
+
+function tick(now) {
+  for (const k of ['host', 'cohost']) S.actors[k].update(now, S.playing && S.lines[S.line]?.who === k);
+  requestAnimationFrame(tick);
+}
+
+function fit() { const w = document.getElementById('stageWrap').clientWidth; stage.style.transform = `scale(${w / 960})`; }
+new ResizeObserver(fit).observe(document.getElementById('stageWrap'));
+
+/* ============================== page wiring ============================== */
+const tabs = document.getElementById('tabs');
+function renderTabs(active) {
+  tabs.innerHTML = '';
+  for (const ep of EPISODES) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'tab'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', active === ep.id);
+    b.innerHTML = `${ep.tab[0]}<small>${ep.tab[1]}</small>`;
+    b.onclick = () => show(ep.id);
+    tabs.appendChild(b);
+  }
+  const s = document.createElement('button');
+  s.type = 'button'; s.className = 'tab'; s.setAttribute('aria-selected', active === 'settings');
+  s.innerHTML = 'Settings section<small>instructions + Kokoro voices</small>';
+  s.onclick = () => show('settings');
+  tabs.appendChild(s);
+}
+
+function show(id) {
+  pauseAudio();
+  renderTabs(id);
+  const isSettings = id === 'settings';
+  document.getElementById('playerView').classList.toggle('hidden', isSettings);
+  document.getElementById('settingsView').classList.toggle('hidden', !isSettings);
+  const notes = document.getElementById('notes');
+  if (isSettings) {
+    notes.innerHTML = `<div class="note"><b>Settings → Story mode.</b> Instructions, format, and narration with Kokoro: host and co-host voices plus speed. The model runs on the node that writes the story. No key is stored.</div>`;
+    return;
+  }
+  const ep = EPISODES.find(e => e.id === id);
+  notes.innerHTML = `<div class="note">${ep.notes}</div>`;
+  S.finished = false;
+  showEpisode(ep);
+  setPlaying(false);
+}
+
+document.getElementById('playBtn').onclick = () => {
+  if (S.finished) { goLine(0); setPlaying(true); return; }
+  setPlaying(!S.playing);
+};
+document.getElementById('prevBtn').onclick = () => goLine(S.line - 1);
+document.getElementById('nextBtn').onclick = () => goLine(S.line + 1);
+document.getElementById('speed').onchange = e => { S.speed = parseFloat(e.target.value); audio.playbackRate = S.speed; };
+document.getElementById('muteBtn').onclick = e => {
+  S.muted = !S.muted; audio.muted = S.muted;
+  e.target.textContent = S.muted ? 'Sound off' : 'Sound on';
+};
+document.getElementById('sSave').onclick = () => { const t = document.getElementById('sToast'); t.textContent = 'Saved (mock)'; setTimeout(() => t.textContent = '', 1800); };
+document.getElementById('sReset').onclick = () => { const t = document.getElementById('sToast'); t.textContent = 'Defaults restored (mock)'; setTimeout(() => t.textContent = '', 1800); };
+document.getElementById('sTest').onclick = () => {
+  const first = new Audio('story-audio/deploy-busy-machine-01.mp3');
+  first.onended = () => new Audio('story-audio/deploy-busy-machine-02.mp3').play();
+  first.play();
+};
+
+fit();
+renderTabs('deploy-busy-machine');
+show('deploy-busy-machine');
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
