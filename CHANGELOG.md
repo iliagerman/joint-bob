@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.177.3 — 2026-10-30
 
 - Fixed taking over a worktree conversation waiting for every worktree's files in the project; it now waits only for its own worktree's files, and a failed file check shows an error instead of taking over.
 
