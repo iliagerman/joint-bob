@@ -101,7 +101,7 @@
       <section class="panel view-panel" id="projectsPanel" aria-label="Projects">
         <header class="panel-bar">
           <div class="brand">
-            <div class="brand-mark" aria-hidden="true"><img src="/icon.svg" alt="" width="32" height="32" /></div>
+            <div class="brand-mark" id="brandMark" role="button" tabindex="0" aria-label="Appearance: themes and font size" title="Appearance: themes and font size" aria-haspopup="dialog" data-testid="appearance-open"><img src="/icon.svg" alt="" width="32" height="32" /></div>
             <div class="brand-copy">
               <strong>Joint Bob</strong>
               <span>agent workspace</span>
@@ -488,6 +488,31 @@
         <button class="primary compact" id="installBannerButton" type="button">Install</button>
       </div>
     </div>
+
+    <dialog id="appearanceDialog" data-testid="appearance-dialog">
+      <form class="dialog-card appearance-card" method="dialog">
+        <div>
+          <span class="eyebrow">Quick access</span>
+          <h2>Appearance</h2>
+        </div>
+        <div class="appearance-group">
+          <h3>Color theme</h3>
+          <div class="appearance-choices" id="appearanceThemes"></div>
+        </div>
+        <div class="appearance-group">
+          <h3>Font size <output id="appearanceGlobalValue" data-testid="appearance-global-value"></output></h3>
+          <div class="appearance-choices" id="appearancePresets"></div>
+        </div>
+        <div class="appearance-group">
+          <h3>Per section</h3>
+          <div id="appearanceSections"></div>
+        </div>
+        <div class="dialog-actions">
+          <button class="ghost" id="appearanceResetButton" type="button" data-testid="appearance-reset-button">Reset</button>
+          <button class="primary" id="appearanceCloseButton" type="button" data-testid="appearance-close-button">Done</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="canvasShortcutDialog" data-testid="canvas-shortcut-dialog">
       <form class="dialog-card" method="dialog">
