@@ -142,6 +142,21 @@ export class PiSession implements HarnessSession {
     });
   }
 
+  async checkpointPoolAttempt(): Promise<unknown> {
+    if (this.isBusy()) throw new Error("Cannot checkpoint a busy Pi session");
+    const settings = this.settings();
+    return { leafId: this.handle.session.sessionManager.getLeafId(), settings: { ...settings, enabledTools: [...settings.enabledTools!] } };
+  }
+
+  async restorePoolAttempt(checkpoint: unknown): Promise<void> {
+    if (this.isBusy()) throw new Error("Cannot restore a busy Pi session");
+    const value = checkpoint as { leafId: string | null; settings: HarnessModelSettings };
+    const manager = this.handle.session.sessionManager;
+    if (value.leafId) manager.branch(value.leafId); else manager.resetLeaf();
+    await this.configure(value.settings);
+    if (value.leafId) manager.branch(value.leafId); else manager.resetLeaf();
+  }
+
   async configure(settings: HarnessModelSettings): Promise<void> {
     if (service.sessionIsBusy(this.handle)) throw new Error("Pi session is busy");
     const currentModel = this.handle.session.model;

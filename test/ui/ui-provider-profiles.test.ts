@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { Locator, Page } from "playwright-core";
 import { nativeUiFixture } from "./native-ui-fixture.js";
+
+async function choose(page: Page | Locator, testid: string, search: string, label: string): Promise<void> {
+  await page.getByTestId(testid).click();
+  await page.getByTestId(`${testid}-search`).fill(search);
+  await page.getByTestId(`${testid}-option`).filter({ hasText: label }).first().click();
+}
 
 test("subscription profiles sit apart from harness setup, page, and save choices for many workspaces at once", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
@@ -39,11 +46,11 @@ test("subscription profiles sit apart from harness setup, page, and save choices
   const workspaceRows = page.locator('[data-testid="provider-assignment-row"][data-scope="workspace"]');
   assert.ok(await workspaceRows.count() >= 2, "the seeded workspaces each have a row");
   const workspaceCell = (index: number) => workspaceRows.nth(index).getByTestId("provider-assignment-openai-codex");
-  await defaultRow.getByTestId("provider-assignment-openai-codex").selectOption({ label: "Account 1" });
+  await choose(defaultRow, "provider-assignment-openai-codex", "Account 1", "Account 1");
   await page.getByTestId("provider-assignments-pending").filter({ hasText: "1 unsaved change" }).waitFor();
-  assert.equal(await workspaceCell(0).locator("option").first().innerText(), "Use my default · Account 1");
-  await workspaceCell(0).selectOption({ label: "Account 2" });
-  await workspaceCell(1).selectOption({ label: "Account 3" });
+  assert.match(await workspaceCell(0).innerText(), /Use my default · Account 1/);
+  await choose(workspaceRows.nth(0), "provider-assignment-openai-codex", "Account 2", "Account 2");
+  await choose(workspaceRows.nth(1), "provider-assignment-openai-codex", "Account 3", "Account 3");
   await page.getByTestId("provider-assignments-pending").filter({ hasText: "3 unsaved changes" }).waitFor();
   const workspaceIds = await workspaceRows.evaluateAll((rows) => rows.slice(0, 2).map((row) => (row as HTMLElement).dataset.scopeId));
 
@@ -61,11 +68,11 @@ test("subscription profiles sit apart from harness setup, page, and save choices
   await page.getByTestId("settings-tab-engines").click();
   await reload;
   await page.getByTestId("provider-assignments-pending").filter({ hasText: "All choices saved" }).waitFor();
-  assert.equal(await workspaceCell(0).locator("option:checked").innerText(), "Account 2");
-  assert.equal(await workspaceCell(1).locator("option:checked").innerText(), "Account 3");
+  assert.equal((await workspaceCell(0).innerText()).trim(), "Account 2");
+  assert.equal((await workspaceCell(1).innerText()).trim(), "Account 3");
 
   await page.getByTestId("provider-override-provider").selectOption("openai-codex");
-  await page.getByTestId("provider-override-profile").selectOption({ label: "Account 4" });
+  await choose(page, "provider-override-profile", "Account 4", "Account 4");
   await page.getByTestId("provider-override-add").click();
   await page.getByTestId("confirm-accept-button").click();
   const override = page.getByTestId("provider-override-row").filter({ hasText: "Account 4" });
@@ -80,7 +87,9 @@ test("subscription profiles sit apart from harness setup, page, and save choices
   assert.match(await page.locator("#confirmDialog").innerText(), /Every user on this node/);
   await page.getByTestId("confirm-accept-button").click();
   await page.getByTestId("provider-profile-row").filter({ hasText: "Account 2" }).filter({ hasText: "Shared for automation" }).waitFor();
-  assert.equal(await workspaceCell(0).locator("option:checked").innerText(), "Account 2 — automation only, choose another");
+  assert.match(await workspaceCell(0).innerText(), /Account 2 — unavailable, choose another/);
   assert.match(await workspaceCell(0).getAttribute("class") ?? "", /invalid/);
-  assert.equal(await defaultRow.getByTestId("provider-assignment-openai-codex").locator("option").filter({ hasText: /^Account 2$/ }).count(), 0);
+  await defaultRow.getByTestId("provider-assignment-openai-codex").click();
+  await defaultRow.getByTestId("provider-assignment-openai-codex-search").fill("Account 2");
+  assert.equal(await defaultRow.getByTestId("provider-assignment-openai-codex-option").count(), 0);
 });

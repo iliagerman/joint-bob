@@ -2,7 +2,7 @@ import { withClaudeProfile } from "../../provider-profiles/execution.js";
 import { claudeSubscriptionEnvironment, runtimeExec } from "../../account-runtime.js";
 import { execFile } from "../../subprocess.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { appendFile, access } from "node:fs/promises";
+import { appendFile, access, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
   claudeConfigPath,
@@ -35,6 +35,7 @@ const execute = promisify(execFile);
 type Listener = (event: HarnessEvent) => void;
 /** Text spoken so far in the running turn, and the tool names its bubbles carry. */
 interface TurnTranscript { assistant: string; tools: Map<string, { name: string; startedAt: number }> }
+interface ClaudePoolCheckpoint { nativeFile: string | undefined; nativeContents: Buffer | null; transcript: ChatMessage[]; contextUsage: ContextUsage | undefined; pendingTitle: string | undefined }
 
 // Checks the shape only: the CLI owns the catalogue and rejects unknown models itself, and
 // discovering it here would launch the CLI on every settings change.
@@ -201,6 +202,34 @@ class ClaudeSession implements HarnessSession {
     if (!this.nativeFile) return undefined;
     this.nativeFile = await ensureLocalClaudeTranscript(this.options.cwd, this.id);
     return this.id;
+  }
+
+  async checkpointPoolAttempt(): Promise<unknown> {
+    if (this.running) throw new Error("Cannot checkpoint a busy Claude session");
+    let nativeContents: Buffer | null = null;
+    if (this.nativeFile) {
+      try { nativeContents = await readFile(this.nativeFile); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+    return { nativeFile: this.nativeFile, nativeContents, transcript: structuredClone(this.transcript),
+      contextUsage: this.contextUsage ? structuredClone(this.contextUsage) : undefined, pendingTitle: this.pendingTitle } satisfies ClaudePoolCheckpoint;
+  }
+
+  async restorePoolAttempt(checkpoint: unknown): Promise<void> {
+    if (this.running) throw new Error("Cannot restore a busy Claude session");
+    const value = checkpoint as ClaudePoolCheckpoint;
+    if (!value.nativeFile) await rm(this.nativeFile ?? claudeSessionFilePath(this.options.cwd, this.id), { force: true });
+    else if (value.nativeContents) {
+      await writeFile(value.nativeFile, value.nativeContents);
+      const now = new Date();
+      await utimes(value.nativeFile, now, now);
+    } else await rm(value.nativeFile, { force: true });
+    if (this.nativeFile && this.nativeFile !== value.nativeFile) await rm(this.nativeFile, { force: true });
+    this.nativeFile = value.nativeFile;
+    this.transcript = structuredClone(value.transcript);
+    this.contextUsage = value.contextUsage ? structuredClone(value.contextUsage) : undefined;
+    this.pendingTitle = value.pendingTitle;
+    this.stopReason = undefined;
   }
 
   async prompt(input: HarnessPrompt): Promise<void> {

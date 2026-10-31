@@ -37,6 +37,20 @@ Choose the inherit option to remove a choice at that level. Members without an a
 
 The selection takes effect on the next turn. An already-running turn keeps its existing account. Switching a conversation can send its prior transcript to a different provider account, so Joint Bob asks for confirmation before saving the selection.
 
+## Subscription pools and failover
+
+A subscription pool groups private profiles you own. Arrange its members in failover order and choose a fallback model for each provider represented in a mixed-provider pool. Pool selectors are searchable wherever a profile can be chosen. The simulation in Settings is local to the page: marking a member unavailable changes neither saved pool data nor real provider quotas.
+
+For a turn, Joint Bob tries profiles from the current provider first, preserving the pool order within each provider. Pi can switch providers; after a switch it uses the configured classifier mapping for the current difficulty when available, otherwise that provider's pool fallback model. Claude Code stays on Claude, and Kiro cannot use pools.
+
+A retry is allowed only for a recognized subscription quota, authentication, or availability failure before any assistant output or tool execution. The failed attempt is rolled back before the next candidate runs. Generic failures, user cancellation, or failures after output/tool start are returned without retry; no attempt falls back to ambient credentials or a different account. Quota availability is simulated only for that turn and does not disable a member on later turns.
+
+## Cluster assignments and relay
+
+A pool owner can assign their pool to a cluster after every current member confirms pool-protocol support. That assignment overrides personal choices only for work shared through that cluster; other work continues to use each person's normal scope precedence. Only the pool owner can change or clear the assignment. New members must support pools while an assignment is active.
+
+Cluster members receive a signed, non-secret pool manifest, not provider credentials. When a turn needs a profile held on another node, the manager revalidates the current cluster assignment and membership before the holder lends a short-lived access token over the signed peer channel. The refresh credential stays on the profile holder; the borrowed token is kept in memory and never becomes a cluster manifest.
+
 ## Automation assignments
 
 Schedules, webhooks, and automatic replies have a **Run with profile** dropdown. **Use my current profile** is the default and resolves the creator's personal conversation → project → workspace → default selection for the turn's provider when it runs. An explicit profile assignment remains pinned until edited and can refer to the creator's private profile or any shared automation profile on this node.

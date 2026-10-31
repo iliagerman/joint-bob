@@ -10,6 +10,7 @@ import { getSharingCluster, listSharingClusterMembers, listSharingMemberships } 
 import { listTwinUpdateTargets } from "../twin-updates.js";
 import { signedPeerPost } from "./replication-v2.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
+import { getClusterSubscriptionPool } from "../provider-profiles/pool-sharing.js";
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterRequestRawBody, isClusterOriginUrl, sendError, assertRelayChannelSender } from "./http-auth.js";
 import { listDifficultyClassifiers } from "../classifiers/registry.js";
@@ -35,7 +36,7 @@ const publicKey = z.string().max(4096).superRefine((value, context) => {
   catch { context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid Ed25519 public key" }); }
 });
 const nodeSchema = z.object({ nodeId: uuid, name: z.string().trim().min(1).max(80), url: origin, publicKey }).strict();
-const joinRequestSchema = z.object({ invitationId: uuid, clusterId: uuid, requestId: uuid, member: nodeSchema, classifierIds: z.array(z.string().trim().min(1).max(80)).max(50), signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/) }).strict();
+const joinRequestSchema = z.object({ invitationId: uuid, clusterId: uuid, requestId: uuid, member: nodeSchema, classifierIds: z.array(z.string().trim().min(1).max(80)).max(50), features: z.array(z.string().trim().min(1).max(80)).max(20).optional(), signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/) }).strict();
 const redeemSchema = z.object({ request: joinRequestSchema, secret: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict();
 const positive = z.number().int().safe().positive();
 const invitationSchema = z.object({
@@ -45,6 +46,7 @@ const invitationSchema = z.object({
     manager: nodeSchema,
     managerEpoch: positive,
     expiresAt: positive,
+    requiredFeatures: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
   }).strict(),
   signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
   secret: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -171,8 +173,9 @@ export function mapV2Error(error: unknown, response: Response, next: NextFunctio
   if (/invalid .*?(secret|proof|fingerprint|signature)/i.test(message)) { sendError(response, 401, "Unauthorized"); return; }
   if (/Unknown manager transfer/i.test(message)) { sendError(response, 404, "Unknown manager transfer"); return; }
   if (/Unknown (cluster|membership snapshot)/i.test(message)) { sendError(response, 404, "Unknown cluster"); return; }
-  if (/older|not a member|permission|Only (the named successor|the current manager|an older)/i.test(message)) { sendError(response, 403, "Forbidden"); return; }
-  if (/authority|pending|conflict|limit|at most|transfer|Already active|active member|requires migration/i.test(message)) { sendError(response, 409, message); return; }
+  if (/not found/i.test(message)) { sendError(response, 404, message); return; }
+  if (/older|not a member|permission|feature support|pool owner|Only (the named successor|the current manager|an older)/i.test(message)) { sendError(response, 403, "Forbidden"); return; }
+  if (/authority|pending|conflict|different pool|assignment|limit|at most|transfer|Already active|active member|requires migration/i.test(message)) { sendError(response, 409, message); return; }
   next(error);
 }
 
@@ -190,6 +193,8 @@ export async function redeemV2Membership(request: Request, response: Response, n
       const sender = verifyClusterRequest(db, local.id, request.method, request.originalUrl, raw, request.header("authorization"));
       if (sender !== payload.request.member.nodeId) throw new ClusterProtocolError("Invalid cluster request");
       assertRelayChannelSender(request, sender);
+      const activePool = getClusterSubscriptionPool(db, payload.request.clusterId);
+      if (activePool && !payload.request.features?.includes("subscription-pools-v1")) throw new ClusterV2HttpError(403, "Pool protocol support is required to join this cluster");
       const snapshot = redeemMembershipInvitation(db, local.id, payload.request as MembershipJoinRequest, payload.secret);
       db.exec("RELEASE cluster_v2_bootstrap");
       // Routing configurations are shared explicitly and are never part of the join:

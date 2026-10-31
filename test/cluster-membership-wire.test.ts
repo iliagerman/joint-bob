@@ -75,6 +75,21 @@ test("joining no longer requires any routing classifier", () => {
   } finally { manager.close(); receiver.close(); }
 });
 
+test("an active subscription pool makes new invitations require pool-protocol support", () => {
+  const manager = db(), receiver = db();
+  try {
+    createMembershipCluster(manager, local(A, "Alpha", 4001), { id: CLUSTER, name: "Team" });
+    const invitation = createMembershipInvitation(manager, A, A, CLUSTER, 1, 1000, ["subscription-pools-v1"]);
+    const request = prepareMembershipJoin(receiver, local(B, "Beta", 4002), invitation, clusterPublicKeyFingerprint(invitation.body.manager.publicKey), REQUEST, 1000);
+    assert.deepEqual(invitation.body.requiredFeatures, ["subscription-pools-v1"]);
+    assert.deepEqual(request.features, ["subscription-pools-v1"]);
+    const unsupported = { invitationId: request.invitationId, clusterId: request.clusterId, requestId: request.requestId, member: request.member, classifierIds: request.classifierIds };
+    const legacyRequest = { ...unsupported, signature: signClusterMessage(receiver, B, "membership-join", JSON.stringify(unsupported)) };
+    assert.throws(() => redeemMembershipInvitation(manager, A, legacyRequest, invitation.secret, 1000), /required.*feature|pool protocol/i);
+    assert.equal(listSharingClusterMembers(manager, CLUSTER).length, 1);
+  } finally { manager.close(); receiver.close(); }
+});
+
 test("proof, secret, expiry, and consumed invitation rules are transactional", () => {
   const manager = db(), receiver = db();
   try {

@@ -1,6 +1,6 @@
 # Subscription pools design
 
-Status: proposed, awaiting review.
+Status: implementation-ready. The user approved implementation and asked to proceed without more questions.
 
 ## Intent
 
@@ -53,7 +53,7 @@ Private pools and personal pool selections follow the profile's existing twin sy
 
 ### Failover and model choice
 
-Fail over only for a recognized subscription-specific quota, revoked/cancelled login, missing profile credential, or unreachable profile source. Do not treat user cancellation, model errors, generic provider errors, or arbitrary network errors as a reason to switch accounts. Try each eligible profile at most once per turn. If all candidates fail, show an error and do not use another account.
+Fail over only for a recognized subscription-specific quota, revoked/cancelled login, missing profile credential, or unreachable profile source. Do not treat user cancellation, model errors, generic provider errors, or arbitrary network errors as a reason to switch accounts. Try each eligible profile at most once per turn. Before retrying, restore the session to its exact pre-turn state so failed attempts leave no duplicate prompt or transcript entry. If all candidates fail, show an error and do not use another account.
 
 Pi is the cross-provider path. Extend its profile credential broker so both Claude/Anthropic and OpenAI Codex profiles can back a Pi model. On provider change, keep the current classifier level and use that provider's classifier mapping when one exists. Otherwise use the pool's searchable fallback-model setting for that provider. Never reuse a model ID from the previous provider. Claude Code can try other Claude profiles but cannot switch to OpenAI mid-conversation; Kiro is outside this feature because it has no subscription profiles today.
 
@@ -71,14 +71,14 @@ Keep pool management within Settings → Harnesses, alongside subscription profi
 - Selection resolution covers every existing scope and preserves profile behavior when no pool is selected.
 - A cluster assignment overrides personal choices only for cluster-shared projects; multiple conflicting assignments fail closed.
 - Same-provider candidates precede cross-provider candidates; each is attempted once.
-- Recognized subscription failures before output/tool execution advance to the next candidate. Generic errors do not. Any failure after output or tool execution is surfaced without replay.
+- Recognized subscription failures before output/tool execution advance to the next candidate, with session history restored between attempts. Generic errors do not. Any failure after output or tool execution is surfaced without replay.
 - Cross-provider selection uses a compatible classifier mapping or configured provider default, never a model ID from the previous provider.
 - Cluster token requests reject nonmembers, unshared profiles, stale assignments, and revoked access. Refresh tokens never leave the profile owner node.
 - Relay payloads contain no credentials; recipient stores no borrowed credential on disk.
 - Join/startup pull and change-triggered push converge pool manifests without a timer.
 - All pool-related dropdowns are searchable and use the existing Settings control style.
 
-## Implementation calls for review
+## Implementation calls
 
 - Pools contain only profiles owned by their creator. Supporting multiple users contributing profiles to one pool needs a separate, explicit profile-grant flow.
 - A cluster-shared pool exposes its member profiles to cluster work only. It never broadens the existing node-wide automation-sharing flag.

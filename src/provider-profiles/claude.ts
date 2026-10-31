@@ -4,6 +4,7 @@ import { currentRuntime, spawnInRuntime, runInRuntime, ensureOsAccount, type Run
 import { runtimeForAccount } from "../project-runtime.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { getSettings } from "../settings.js";
+import { poolProfileContext } from "./context.js";
 import type { ProviderProfile } from "./store.js";
 
 export function profileRuntime(profile: ProviderProfile): RuntimeAccount { return runtimeForAccount(profile.owner); }
@@ -74,7 +75,7 @@ export async function prepareClaudeProfile(profile: ProviderProfile, identity?: 
 export async function prepareClaudeExecution(profile: ProviderProfile): Promise<{ directory: string; dispose: () => Promise<void> }> {
   const runtime = currentRuntime();
   if (runtime.name) await ensureOsAccount(runtime);
-  const identity = JSON.parse(await ipc(profileRuntime(profile), { action: "identity", directory: profileDirectory(profile) }));
+  const identity = poolProfileContext()?.clusterId ? undefined : JSON.parse(await ipc(profileRuntime(profile), { action: "identity", directory: profileDirectory(profile) }));
   const directory = path.join(runtimeDirectory(runtime), "provider-profile-turns", randomUUID());
   const settings = runInRuntime(runtime, () => getSettings().claude);
   const projects = settings.sessionPath || path.join(settings.configPath || path.join(runtime.home, ".claude"), "projects");

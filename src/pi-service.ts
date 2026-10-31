@@ -685,11 +685,17 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   const logicalId = hooks.conversationId;
   hooks.conversationId = async (id) => (conversationId = await logicalId(id));
   let selected: import("./provider-profiles/store.js").ProviderProfile | undefined;
-  hooks.modelCredential = async (provider) => provider === "openai-codex" && selected
-    ? profiles.refreshedProfileCredential(selected) : nodePiCredential(provider);
+  hooks.modelCredential = async (provider) => {
+    if (!selected) return nodePiCredential(provider);
+    const providerId = selected.provider === "claude" ? "anthropic" : "openai-codex";
+    if (provider !== providerId) throw new Error("Selected pool profile does not match the Pi model provider");
+    return profiles.profileAccessCredential(selected);
+  };
   hooks.modelCredentialList = async () => {
     const entries = await nodePiCredentialList() as Array<{ providerId: string; type: "oauth" | "api_key" }>;
-    return selected ? [...entries.filter((entry) => entry.providerId !== "openai-codex"), { providerId: "openai-codex", type: "oauth" }] : entries;
+    if (!selected) return entries;
+    const providerId = selected.provider === "claude" ? "anthropic" : "openai-codex";
+    return [...entries.filter((entry) => entry.providerId !== providerId), { providerId, type: "oauth" }];
   };
   const runtime = currentRuntime();
   const handle = runtime.name
@@ -699,9 +705,12 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       sessionId: options.sessionId, safeguardsEnabled: options.safeguardsEnabled, defaults: piSessionDefaults(),
     }, hooks);
   handle.withModelProfile = async (provider, work) => {
+    const previous = selected;
     selected = await profiles.projectProviderProfile(options.projectId, conversationId, provider);
-    if (selected) await profiles.refreshedProfileCredential(selected);
-    return useProviderProfile(selected, work);
+    try {
+      if (selected) await profiles.profileAccessCredential(selected);
+      return await useProviderProfile(selected, work);
+    } finally { selected = previous; }
   };
   return handle;
 }

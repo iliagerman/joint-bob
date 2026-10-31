@@ -2087,7 +2087,8 @@ textarea { flex: 1; resize: none; max-height: 160px; min-height: 46px; border: 1
   bottom: max(8px, env(safe-area-inset-bottom));
   z-index: 40;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 2px;
   padding: 5px;
   border: 1px solid var(--line);
@@ -4133,7 +4134,42 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .profile-matrix thead .profile-brand { width: 13px; height: 13px; margin-right: 6px; vertical-align: -2px; }
 .profile-matrix-scope { width: 30%; color: var(--text); font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
 .profile-matrix-scope .row-menu-icon { width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; }
+.profile-matrix .searchable-select { width: 100%; min-width: 0; }
+.profile-matrix .searchable-select-trigger { width: 100%; min-height: 34px; }
+.profile-matrix .searchable-select-trigger.changed { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.profile-matrix .searchable-select-trigger.invalid { border-color: var(--danger); color: var(--danger); }
+.provider-profiles .searchable-select-popover { z-index: 1200; }
 .profile-matrix select { width: 100%; min-height: 34px; }
+.pool-form { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.pool-form > label { min-width: 0; }
+.pool-form input { min-width: 0; }
+.pool-member-editors { display: grid; gap: 7px; }
+.pool-member-editor { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto auto; align-items: center; gap: 6px; }
+.pool-fallback-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+.pool-fallback-field { display: grid; gap: 6px; min-width: 0; }
+.pool-fallback-field .searchable-select, .pool-fallback-field input { width: 100%; min-width: 0; }
+.subscription-pool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.subscription-pool-card { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.pool-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pool-card-head h4 { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 13px; }
+.pool-card-members { display: grid; gap: 6px; }
+.pool-card-member { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-width: 0; }
+.pool-card-member strong { overflow-wrap: anywhere; font-size: 12px; }
+.pool-card-member .profile-pill { margin-left: auto; }
+.cluster-pool-list { display: grid; gap: 8px; }
+.cluster-pool-row { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(200px, 1fr) auto; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.cluster-pool-row .searchable-select { min-width: 0; }
+.cluster-pool-row > .profile-status-detail { grid-column: 2 / -1; }
+.pool-simulation-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+.pool-simulation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.pool-simulation-card { display: grid; justify-items: start; gap: 7px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); color: var(--text); text-align: left; cursor: pointer; }
+.pool-simulation-card.unavailable { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); background: color-mix(in srgb, var(--amber) 8%, var(--panel)); }
+@media (max-width: 700px) {
+  .pool-member-editor { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .pool-member-editor .searchable-select { grid-column: 1 / -1; }
+  .cluster-pool-row { grid-template-columns: minmax(0, 1fr); }
+  .cluster-pool-row > .profile-status-detail { grid-column: auto; }
+}
 .profile-matrix select.changed { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
 .profile-matrix select.invalid { border-color: var(--danger); color: var(--danger); }
 .profile-matrix-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -5263,6 +5299,10 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 #autoRespondDialog textarea { width: 100%; resize: vertical; }
 .session-auto-badge { display: inline-block; padding: 0 6px; border-radius: 999px; border: 1px solid var(--accent, #2563eb); color: var(--accent, #2563eb); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .session-auto-badge.stopped { border-color: #b9770e; color: #b9770e; }
+
+.activity-modes { display: flex; flex: none; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px 14px; }
+/* The card's grid rows are fixed, so the tab strip keeps its row but has no height in the story view. */
+.git-review-card.is-story-view .git-review-tabs { height: 0; min-height: 0; padding: 0; border: 0; overflow: hidden; visibility: hidden; }
 
 /* Appearance: quick-access font scales per section (set by app/appearance.js) and extra color themes. */
 #projectsPanel { zoom: var(--ui-zoom-projects, 1); }

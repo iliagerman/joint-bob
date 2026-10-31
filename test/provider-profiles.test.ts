@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { settingsDatabase } from "../src/settings-store.js";
-import { createProviderProfile, listProviderProfiles, deleteProviderProfile, setProviderProfileSelection, resolveProviderProfile, providerProfile } from "../src/provider-profiles/store.js";
+import { createProviderProfile, listProviderProfiles, deleteProviderProfile, setProviderProfileSelection, resolveProviderProfile, providerProfile, profileSelectionSchema } from "../src/provider-profiles/store.js";
 import { getClusterNode } from "../src/cluster.js";
 
 // Profile writes are stamped with this node's identity for twin sync.
@@ -80,4 +80,11 @@ test("deleting a selected profile is refused instead of silently falling back", 
   setProviderProfileSelection("delete-owner", { provider: "openai-codex", scope: "default", scopeId: "", profileId: null });
   deleteProviderProfile("delete-owner", profile.id);
   assert.throws(() => providerProfile("delete-owner", profile.id), /not found/);
+});
+
+test("profile selection schema accepts a pool choice without a profile choice", () => {
+  const poolId = "00000000-0000-4000-8000-000000000001";
+  const parsed = profileSelectionSchema.safeParse({ provider: "claude", scope: "default", scopeId: "", profileId: null, poolId });
+  assert.equal(parsed.success, true);
+  if (parsed.success) assert.equal(parsed.data.poolId, poolId);
 });

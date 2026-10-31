@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added subscription pools, which group your own Claude and OpenAI subscriptions in a failover order, can be assigned to a cluster, and move a turn to the next subscription when a quota or sign-in failure happens before any reply starts.
+
 ## 2.181.0 — 2026-10-31
 
 - Added an Appearance dialog, opened by clicking the Joint Bob logo, with Midnight, Graphite and Sepia color themes and font size presets.

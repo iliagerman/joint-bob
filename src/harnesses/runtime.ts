@@ -18,6 +18,7 @@ export interface HarnessSession {
   status(): SessionStatus; isBusy(): boolean; queuedPrompts(): string[]; settings(): HarnessModelSettings;
   subscribe(listener: (event: HarnessEvent) => void): () => void;
   preflight(): Promise<void>; prompt(input: HarnessPrompt): Promise<void>;
+  checkpointPoolAttempt?(): Promise<unknown>; restorePoolAttempt?(checkpoint: unknown): Promise<void>;
   configure(settings: HarnessModelSettings): Promise<void>;
   tools(): HarnessTool[]; setTools(names: string[]): Promise<void>;
   compact(instructions?: string, beforeStart?: () => Promise<void>): Promise<void>; rename(name: string): Promise<void>;

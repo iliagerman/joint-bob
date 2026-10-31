@@ -67,7 +67,13 @@ function isMember(db: DatabaseSync, clusterId: string, node: string): boolean {
 /** Clusters whose non-twin members may receive this event. Twins already get it directly. */
 function hubClusters(db: DatabaseSync, local: string, event: ReplicationEvent): string[] {
   // A person's account events go to their own nodes directly (replication-v2.ts).
-  if (["account", "twins", "twins-only"].includes(EVENT_SCOPES[event.entityType] ?? "")) return [];
+  const scope = EVENT_SCOPES[event.entityType] ?? "";
+  if (["account", "twins", "twins-only"].includes(scope)) return [];
+  if (scope === "cluster") {
+    const clusterId = (event.payload as { clusterId?: unknown } | null)?.clusterId;
+    if (typeof clusterId !== "string" || !listSharingMemberships(db, local).some((membership) => membership.clusterId === clusterId)) return [];
+    return otherMembers(db, clusterId, local).some((member) => mayReplicateEvent(db, local, member, event)) ? [clusterId] : [];
+  }
   if (!replicationEventProject(db, event)) return [];
   return listSharingMemberships(db, local).map((membership) => membership.clusterId).filter((clusterId) =>
     otherMembers(db, clusterId, local).some((member) => !isTrustedTwin(db, local, member) && mayReplicateEvent(db, local, member, event)));

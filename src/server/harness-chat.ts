@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { runWithAutomationProfile } from "./automation-profile.js";
 import { resourceOwner, ownerAsActor } from "../ownership.js";
-import { runAsAccount } from "../account-context.js";
+import { actingAccount, runAsAccount } from "../account-context.js";
 import { withoutAutomationProfile } from "../provider-profiles/context.js";
 import { filterPersonalAssistantTools, personalAssistantContext, personalAssistantSettings, personalAssistantToolBaseline } from "../personal-assistants.js";
 import { revokeBrowserAgentTokens } from "../browser-agent.js";
@@ -11,6 +11,12 @@ import { stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
 import { getClusterNode } from "../cluster.js";
+import { clusterV2Database } from "../cluster-v2-store.js";
+import { resolveClusterSubscriptionPools, type ClusterSubscriptionPoolAssignment } from "../provider-profiles/pool-sharing.js";
+import { poolCandidates, resolveSubscriptionChoice } from "../provider-profiles/pools.js";
+import { withPoolProfile, type PoolProfileContext } from "../provider-profiles/context.js";
+import { classifyPoolAttemptFailure, resolvePoolModelSettings, runPoolAttempts } from "../provider-profiles/pool-execution.js";
+import type { ProfileProvider } from "../provider-profiles/store.js";
 import { getConversationRecord, ensureConversationRecord, listConversationSegments } from "../conversation-records.js";
 import type { DifficultyClassification } from "../classifiers/contract.js";
 import type { UsageDifficulty } from "../usage-types.js";
@@ -161,6 +167,38 @@ function currentSettings(connection: HarnessChatConnection): QueuedSettings {
 }
 function selectedHarness(settings: QueuedSettings): HarnessId { return settings.harnessId ?? harnessForProvider(settings.provider).id; }
 
+interface TurnSubscriptionPool { id: string; fallbackModels: Partial<Record<ProfileProvider, string>>; candidates: PoolProfileContext[]; sameProviderOnly: boolean }
+function profileProviderForRuntime(provider: string): ProfileProvider | undefined {
+  if (provider === "anthropic" || provider === "claude") return "claude";
+  return provider === "openai-codex" ? provider : undefined;
+}
+async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<TurnSubscriptionPool | undefined> {
+  const engine = queued.settings?.harnessId ?? connection.engine;
+  const preferred = profileProviderForRuntime(queued.settings?.provider ?? connection.shared.session.settings().provider);
+  const local = await getClusterNode(), db = await clusterV2Database();
+  const assignments = resolveClusterSubscriptionPools(db, local.id, connection.project.id);
+  if (assignments.length) {
+    const signatures = new Set(assignments.map(({ poolOwnerNodeId, poolId, manifest }) => JSON.stringify([poolOwnerNodeId, poolId, manifest])));
+    if (signatures.size > 1) throw new Error("This project has conflicting cluster subscription pools");
+    if (engine === "kiro") throw new Error("Subscription pools are not supported by Kiro");
+    const assignment = assignments[0];
+    if (!assignment.manifest) throw new Error("The cluster pool manifest is unavailable");
+    return { id: assignment.poolId, fallbackModels: assignment.manifest.fallbackModels, sameProviderOnly: engine === "claude",
+      candidates: assignment.manifest.members.map((member) => ({ profileId: member.profileId, provider: member.provider, label: member.label,
+        poolId: assignment.poolId, clusterId: assignment.clusterId, poolOwnerNodeId: assignment.poolOwnerNodeId })) };
+  }
+  if (queued.automationProfile?.profileId || !preferred) return undefined;
+  const accountId = queued.automationProfile?.accountId ?? actingAccount()?.accountId ?? queued.author?.accountId ?? connection.author?.accountId;
+  if (!accountId) return undefined;
+  const choice = resolveSubscriptionChoice(accountId, preferred, {
+    projectId: connection.project.id, workspaceId: connection.project.type!, conversationId: connection.conversationId,
+  }, queued.automationProfile ? "automation" : "interactive");
+  if (choice?.kind !== "pool") return undefined;
+  const profiles = poolCandidates(choice.pool, preferred);
+  return { id: choice.pool.id, fallbackModels: choice.pool.fallbackModels, sameProviderOnly: engine === "claude",
+    candidates: profiles.map((profile) => ({ profileId: profile.id, provider: profile.provider, label: profile.label, poolId: choice.pool.id, profile })) };
+}
+
 async function writable(connection: HarnessChatConnection): Promise<void> {
   if (flags.updatePreparing) throw new Error("An update is being prepared");
   const local = await getClusterNode();
@@ -243,13 +281,14 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   void drainHarnessPromptQueue(connection).catch(promptQueueFailed(connection));
 }
 
-async function applyQueuedSettings(connection: HarnessChatConnection, settings: QueuedSettings): Promise<void> {
+async function applyQueuedSettings(connection: HarnessChatConnection, settings: QueuedSettings, poolActive = false): Promise<void> {
   const target = selectedHarness(settings);
   const runtime = await getHarnessRuntime(target);
-  await runtime.validateSettings(runtimeSettings(settings));
+  if (!poolActive) await runtime.validateSettings(runtimeSettings(settings));
   const readiness = await runtime.readiness(connection.cwd);
   if (readiness.length) throw new Error(readiness.join("\n"));
   if (target !== connection.engine) await switchHarness(connection, target, true);
+  if (poolActive) return;
   await connection.shared.session.configure(runtimeSettings(settings));
   if (settings.enabledTools !== undefined || settings.claudeTools) await connection.shared.session.setTools(runtimeSettings(settings).enabledTools ?? []);
 }
@@ -267,7 +306,7 @@ function routingClassifierInput(connection: HarnessChatConnection, queued: Queue
     configuration is this node's own choice; manual picks always win; any failure keeps
     the conversation's current settings and never blocks the prompt. In manual mode
     nothing routes: the hand-picked model stands until Bob auto is selected. */
-async function routePromptByDifficulty(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<UsageDifficulty> {
+async function routePromptByDifficulty(connection: HarnessChatConnection, queued: QueuedPrompt, poolActive = false): Promise<UsageDifficulty> {
   const base: UsageDifficulty = { turnId: queued.id, projectId: connection.project.id, conversationId: connection.conversationId, sessionId: connection.shared.session.id, engine: connection.engine, occurredAt: new Date().toISOString(), status: "not-classified", level: null, confidence: null, startedAt: null, endedAt: null };
   const result = (status: string, extra: Partial<UsageDifficulty> = {}): UsageDifficulty => ({ ...base, status, ...extra });
   if (queued.systemEventId) return result("internal");
@@ -320,7 +359,7 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
     const settings = fallback ? { provider: fallback.provider, modelId: fallback.modelId, reasoning: fallback.thinkingLevel } : null;
     if (settings) {
       try {
-        await (await getHarnessRuntime(connection.engine)).validateSettings(settings);
+        if (!poolActive) await (await getHarnessRuntime(connection.engine)).validateSettings(settings);
         await connection.shared.session.configure(settings);
         recordQueueSettings(key, currentSettings(connection));
         publish(connection, { type: "promptRouted", queueId: queued.id, skipped: "low confidence", fallback: "harness default", level: classification.level, confidence: classification.confidence, provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.reasoning });
@@ -344,7 +383,7 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   };
   if (!automaticRoutingModelAllowed(settings.provider, settings.modelId)) return skip("model not allowed", "classified", classification.level, classification.confidence);
   try {
-    await (await getHarnessRuntime(connection.engine)).validateSettings(settings);
+    if (!poolActive) await (await getHarnessRuntime(connection.engine)).validateSettings(settings);
     await connection.shared.session.configure(settings);
     recordQueueSettings(key, currentSettings(connection));
   } catch (error) {
@@ -353,6 +392,14 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   }
   publish(connection, { type: "promptRouted", queueId: queued.id, level: classification.level, confidence: classification.confidence, mapped: true, provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.reasoning, classifierId: classifier.id });
   return result("classified", { ...configured, classifierId: classifier.id, level: classification.level, confidence: classification.confidence, mapped: true });
+}
+
+function poolCandidateSettings(connection: HarnessChatConnection, pool: TurnSubscriptionPool, candidate: PoolProfileContext, initial: HarnessModelSettings, difficulty: UsageDifficulty): HarnessModelSettings {
+  const policy = difficulty.level === null ? null : activeRoutingConfig(routingConfigDatabase(), conversationOwner(connection));
+  const configured = policy?.policy.harnesses.pi?.levels[String(difficulty.level)] ?? null;
+  const mapping = configured ? { provider: configured.provider ?? getHarness(connection.engine).configuration?.fixedProvider ?? initial.provider,
+    modelId: configured.modelId, reasoning: configured.thinkingLevel } : undefined;
+  return resolvePoolModelSettings(connection.engine, candidate.provider, initial, mapping, pool.fallbackModels[candidate.provider]);
 }
 
 /** A failed fetch must not block the conversation; the turn runs on the HEAD this node has. */
@@ -383,12 +430,14 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
   markHarnessInput(shared);
   const preparationStartedAt = new Date().toISOString();
   let enteredPrompt = false;
+  let pool: TurnSubscriptionPool | undefined;
   try {
-    if (queued.settings) await applyQueuedSettings(connection, queued.settings);
-    const difficulty = await routePromptByDifficulty(connection, queued);
+    pool = await resolveTurnSubscriptionPool(connection, queued);
+    if (queued.settings) await applyQueuedSettings(connection, queued.settings, Boolean(pool));
+    const difficulty = await routePromptByDifficulty(connection, queued, Boolean(pool));
     await writable(connection);
     await catchUpProjectGit(connection);
-    await connection.shared.session.preflight();
+    if (!pool) await connection.shared.session.preflight();
     const attachments = await queuedAttachments(connection.cwd, queued, getSettings().digestAttachments ? describeImage : undefined);
     await writable(connection);
     const latest = listQueuedPrompts(queueKey(connection)).find(({ id }) => id === queued.id);
@@ -424,7 +473,7 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
       const text = `${assistantContext ? `${assistantContext}${toolPolicy}\n\n` : ""}${connection.handoffContext ?? ""}${authored}`;
       const finishSilentReview = queued.requestId && (isScheduledPromptText(queued.promptText) || isSilentWebhookRequest(queued.requestId))
         ? await silentScheduledReview(connection.project, connection.engine, connection.shared.session.id, queued.requestId) : undefined;
-      await connection.shared.session.prompt({ text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
+      const promptInput = { text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
         armAutoCompactAfterPrompt(connection.shared.session);
         if (claimed) return;
         claimed = claimQueuedPrompt(queued.id, currentSettings(connection));
@@ -434,7 +483,34 @@ async function dispatchWithProfile(connection: HarnessChatConnection, queued: Qu
         connection.shared.scheduledTurn = isScheduledPromptText(queued.promptText);
         if (!queued.systemEventId) publish(connection, { type: "promptStarted", queueId: queued.id, scheduled: connection.shared.scheduledTurn });
         refreshHarnessPromptQueue(connection);
-      } });
+      } };
+      if (!pool) await connection.shared.session.prompt(promptInput);
+      else {
+        const session = connection.shared.session;
+        if (!session.checkpointPoolAttempt || !session.restorePoolAttempt) throw new Error("This harness cannot safely retry a subscription pool attempt");
+        const checkpoint = await session.checkpointPoolAttempt();
+        const initialSettings = queued.settings ? runtimeSettings(queued.settings) : session.settings();
+        const preferred = profileProviderForRuntime(initialSettings.provider);
+        await runPoolAttempts(pool.candidates, preferred, async (candidate) => {
+          const settings = poolCandidateSettings(connection, pool!, candidate, initialSettings, difficulty);
+          let started = false;
+          const unsubscribe = session.subscribe((event) => {
+            if (["textDelta", "thinkingDelta", "toolStart", "assistantFinal"].includes(String(event.type))) started = true;
+          });
+          try {
+            await withPoolProfile(candidate, async () => {
+              await session.configure(settings);
+              await session.preflight();
+              await session.prompt(promptInput);
+            });
+          } catch (error) {
+            const failure = classifyPoolAttemptFailure(error, started);
+            if (failure) throw failure;
+            throw error;
+          } finally { unsubscribe(); }
+        }, async () => session.restorePoolAttempt!(checkpoint), pool.sameProviderOnly);
+        recordQueueSettings(queueKey(connection), currentSettings(connection));
+      }
       if (!claimed) throw new Error("Harness did not start the queued prompt");
       if (finishSilentReview) await finishSilentReview();
       outcome = "completed";

@@ -2,7 +2,7 @@ import { chmod, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { ModelRuntime, readStoredCredential } from "../pi-sdk.js";
 import { actingAccount, asNode } from "../account-context.js";
-import { automationProfileContext } from "./context.js";
+import { automationProfileContext, poolProfileContext } from "./context.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { adminAccountId } from "../ownership.js";
 import { getProject } from "../store.js";
@@ -10,8 +10,10 @@ import { profileLogins } from "./login.js";
 import { claudeOAuthIdentity } from "./claude-identity.js";
 import { prepareClaudeProfile, readLegacyClaudeCredential, removeLegacyClaudeCredential } from "./claude.js";
 import { withProfileAuthority } from "./broker.js";
-import { borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
+import { borrowClusterCredential, borrowTwinCredential, MIN_TOKEN_VALIDITY_MS, twinLoginHolder, type BorrowedCredential } from "./twin-login.js";
 import { accessibleProviderProfile, providerProfile, resolveProviderProfile, type ProfileProvider, type ProviderProfile } from "./store.js";
+
+export { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, poolCandidates, resolveSubscriptionChoice, setSubscriptionPoolSelection, updateSubscriptionPool } from "./pools.js";
 
 export type ProfileCredential = NonNullable<ReturnType<typeof readStoredCredential>>;
 const runtimes = new Map<string, Promise<ModelRuntime>>();
@@ -33,18 +35,24 @@ export async function profileModelRuntime(profile: ProviderProfile): Promise<Mod
 }
 
 export async function projectProviderProfile(projectId: string, conversationId: string | undefined, provider: string): Promise<ProviderProfile | undefined> {
+  const targetProvider = provider === "anthropic" ? "claude" : provider;
+  const poolProfile = poolProfileContext();
+  if (poolProfile) {
+    if (poolProfile.provider !== targetProvider) throw new Error("Selected pool profile does not match the turn's provider");
+    return poolProfile.profile ?? { id: poolProfile.profileId, owner: "", label: poolProfile.label, provider: poolProfile.provider, createdAt: "", shared: false };
+  }
   const automation = automationProfileContext();
   const accountId = automation?.accountId ?? actingAccount()?.accountId;
   if (automation?.profileId) {
     const profile = accessibleProviderProfile(automation.accountId, automation.profileId, "automation");
-    if (profile.provider !== provider) throw new Error("Selected automation profile does not match the turn's provider");
+    if (profile.provider !== targetProvider) throw new Error("Selected automation profile does not match the turn's provider");
     return profile;
   }
-  if (provider !== "claude" && provider !== "openai-codex") return undefined;
+  if (targetProvider !== "claude" && targetProvider !== "openai-codex") return undefined;
   if (!accountId) return undefined;
   const project = await asNode(() => getProject(projectId));
   if (!project) throw new Error("Project not found");
-  const profile = resolveProviderProfile(accountId, provider, { projectId: project.id, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive")?.profile;
+  const profile = resolveProviderProfile(accountId, targetProvider, { projectId: project.id, workspaceId: project.type!, conversationId }, automation ? "automation" : "interactive")?.profile;
   if (!profile && accountId !== adminAccountId()) throw new Error("Select your own subscription profile on this node. No other user's account was used.");
   return profile;
 }
@@ -88,7 +96,7 @@ async function migrateClaudeProfile(profile: ProviderProfile): Promise<void> {
 /** Only the access token crosses into a turn's execution runtime. */
 export async function claudeProfileAccessToken(profile: ProviderProfile): Promise<string> {
   if (profile.provider !== "claude") throw new Error("Expected Claude profile");
-  return (await localProfileCredential(profile) ?? await borrowTwinCredential(profile)).access;
+  return (await profileAccessCredential(profile)).access;
 }
 
 /**
@@ -145,9 +153,15 @@ export async function startProfileLogin(owner: string, id: string) {
 }
 
 /** The SDK's file lock serializes renewal across sessions and processes. Never use ambient keys. */
+export async function profileAccessCredential(profile: ProviderProfile): Promise<ProfileOAuthCredential | BorrowedCredential> {
+  const pool = poolProfileContext();
+  if (pool?.clusterId) return borrowClusterCredential(profile, pool);
+  return await localProfileCredential(profile) ?? borrowTwinCredential(profile);
+}
+
 export async function refreshedProfileCredential(profile: ProviderProfile): Promise<ProfileOAuthCredential | BorrowedCredential> {
   if (profile.provider !== "openai-codex") throw new Error("This profile is not an OpenAI profile");
-  return await localProfileCredential(profile) ?? borrowTwinCredential(profile);
+  return profileAccessCredential(profile);
 }
 
 /** Where a turn on this node would get the profile's token: here, from a twin, or nowhere. */

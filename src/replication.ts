@@ -20,7 +20,9 @@ import { applyClusterRoutingEvent, ensureRoutingPolicySchema } from "./routing-p
 import { applyUsageDifficultyEvent, applyUsageEvent, ensureUsageSchema } from "./usage-ledger.js";
 import { isTwinOrigin, translateLegacyAccountEvent } from "./account-keys.js";
 import { applyMessageAuthorEvent } from "./message-authors.js";
-import { applyProviderProfileEvent, applyProviderSelectionEvent } from "./provider-profiles/store.js";
+import { applyProviderProfileEvent, applyProviderPoolSelectionEvent, applyProviderSelectionEvent } from "./provider-profiles/store.js";
+import { applySubscriptionPoolEvent } from "./provider-profiles/pools.js";
+import { applyClusterSubscriptionPoolEvent } from "./provider-profiles/pool-sharing.js";
 import { applyStoryEvent } from "./story-replication.js";
 
 export interface ReplicationEvent {
@@ -372,6 +374,9 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "usage.difficulty": applyUsageDifficultyEvent,
   "provider.profile": applyProviderProfileEvent,
   "provider.selection": applyProviderSelectionEvent,
+  "provider.pool": applySubscriptionPoolEvent,
+  "provider.poolSelection": applyProviderPoolSelectionEvent,
+  "provider.poolAssignment": applyClusterSubscriptionPoolEvent,
   story: applyStoryEvent,
 };
 

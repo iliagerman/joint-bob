@@ -45,7 +45,7 @@ export function replicationEventProject(db: DatabaseSync, event: ReplicationEven
 
 /** Where each event type may go. A type without a scope goes nowhere, so a new event
     type has to be placed here before it can leave the node. */
-export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twins" | "twins-only" | "separate">> = {
+export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twins" | "twins-only" | "cluster" | "separate">> = {
   // Shared project state: nodes the project is shared with.
   "name.override": "project",
   "project.lock": "project",
@@ -73,6 +73,9 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
   // Subscription profile names and choices: the administrator's twins, never a visited node.
   "provider.profile": "twins-only",
   "provider.selection": "twins-only",
+  "provider.pool": "twins-only",
+  "provider.poolSelection": "twins-only",
+  "provider.poolAssignment": "cluster",
   // Routing configurations have their own distribution (routing-configs.ts).
   "cluster.routing": "separate",
 };
@@ -80,7 +83,7 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
 /** Event types an older node doesn't know. It rejects a whole batch over one unknown type,
     so these go only to peers that have accepted this node's account snapshot, which only an
     upgraded node can. The periodic full scan offers them again once a peer upgrades. */
-const NEWER_EVENT_TYPES = new Set(["conversation.author"]);
+const NEWER_EVENT_TYPES = new Set(["conversation.author", "provider.pool", "provider.poolSelection"]);
 
 function peerUnderstands(db: DatabaseSync, peer: string, entityType: string): boolean {
   if (!NEWER_EVENT_TYPES.has(entityType)) return true;
@@ -168,6 +171,14 @@ export function mayReplicateEvent(db: DatabaseSync, local: string, peer: string,
   if (nodesBlockedBetween(db, local, peer) || nodesBlockedBetween(db, local, event.originNodeId, peer)) return false;
   if (scope === "twins-only") return isTrustedTwin(db, local, peer) && twinHoldsAccount(db, event);
   if (scope === "account" || scope === "twins") return isTrustedTwin(db, local, peer) ? twinHoldsAccount(db, event) : visitorEventRoute(db, local, peer, event);
+  if (scope === "cluster") {
+    const clusterId = (event.payload as { clusterId?: unknown } | null)?.clusterId;
+    if (typeof clusterId !== "string") return false;
+    const state = db.prepare("SELECT manager_node_id,closed FROM sharing_clusters WHERE id=?").get(clusterId) as { manager_node_id: string | null; closed: number } | undefined;
+    if (!state || state.closed || state.manager_node_id !== event.originNodeId) return false;
+    const member = (nodeId: string) => Boolean(db.prepare("SELECT 1 FROM sharing_memberships WHERE cluster_id=? AND node_id=?").get(clusterId, nodeId));
+    return member(local) && member(peer);
+  }
   const project = replicationEventProject(db, event);
   // Data outside any project stays on the user's own machines: twins only.
   // With several people here nothing says whose it is, so it stays.

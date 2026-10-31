@@ -12,8 +12,9 @@ export const profileProviderSchema = z.enum(["claude", "openai-codex"]);
 export type ProfileProvider = z.infer<typeof profileProviderSchema>;
 export const profileInputSchema = z.object({ label: z.string().trim().min(1).max(80), provider: profileProviderSchema }).strict();
 const scopeSchema = z.enum(["default", "workspace", "project", "conversation"]);
-export const profileSelectionSchema = z.object({ provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable() }).strict().superRefine((value, ctx) => {
+export const profileSelectionSchema = z.object({ provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable(), poolId: z.string().uuid().nullable().optional() }).strict().superRefine((value, ctx) => {
   if ((value.scope === "default") !== (value.scopeId === "")) ctx.addIssue({ code: "custom", message: "Only the default scope has an empty scopeId" });
+  if (value.profileId && value.poolId) ctx.addIssue({ code: "custom", message: "Choose either a profile or a pool" });
 });
 export type ProfileSelection = z.infer<typeof profileSelectionSchema>;
 export interface ProviderProfile { id: string; owner: string; label: string; provider: ProfileProvider; createdAt: string; shared: boolean }
@@ -35,13 +36,13 @@ export function ensureProviderProfileSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS provider_profiles (
     id TEXT PRIMARY KEY, owner TEXT NOT NULL, label TEXT NOT NULL, provider TEXT NOT NULL, created_at TEXT NOT NULL
   ); CREATE TABLE IF NOT EXISTS provider_profile_selections (
-    owner TEXT NOT NULL, provider TEXT NOT NULL, scope TEXT NOT NULL, scope_id TEXT NOT NULL, profile_id TEXT NOT NULL,
+    owner TEXT NOT NULL, provider TEXT NOT NULL, scope TEXT NOT NULL, scope_id TEXT NOT NULL, profile_id TEXT NOT NULL, pool_id TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(owner,provider,scope,scope_id)
   );`);
   // Twins keep the newest write of each profile and choice. A deleted profile and a
   // cleared choice (empty profile_id) stay as tombstones so an older copy cannot revive them.
   addColumns(db, "provider_profiles", [["shared", "INTEGER NOT NULL DEFAULT 0"], ["deleted", "INTEGER NOT NULL DEFAULT 0"], ["updated_at", "TEXT NOT NULL DEFAULT ''"], ["origin_node_id", "TEXT NOT NULL DEFAULT ''"]]);
-  addColumns(db, "provider_profile_selections", [["updated_at", "TEXT NOT NULL DEFAULT ''"], ["origin_node_id", "TEXT NOT NULL DEFAULT ''"]]);
+  addColumns(db, "provider_profile_selections", [["pool_id", "TEXT NOT NULL DEFAULT ''"], ["updated_at", "TEXT NOT NULL DEFAULT ''"], ["origin_node_id", "TEXT NOT NULL DEFAULT ''"]]);
 }
 function addColumns(db: DatabaseSync, table: string, columns: Array<[string, string]>): void {
   const present = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name));
@@ -92,13 +93,22 @@ function writeProfile(db: DatabaseSync, profile: ProviderProfile & { deleted: bo
   enqueueReplicationEvent(db, { originNodeId: at.originNodeId, entityType: "provider.profile", entityKey: profile.id, operation: "upsert",
     payload: { username: profile.owner, id: profile.id, label: profile.label, provider: profile.provider, createdAt: profile.createdAt, shared: profile.shared, deleted: profile.deleted, ...at } });
 }
+function writeSelectionRow(db: DatabaseSync, owner: string, value: ProfileSelection, at: Stamp): void {
+  db.prepare(`INSERT INTO provider_profile_selections (owner,provider,scope,scope_id,profile_id,pool_id,updated_at,origin_node_id) VALUES(?,?,?,?,?,?,?,?)
+    ON CONFLICT(owner,provider,scope,scope_id) DO UPDATE SET profile_id=excluded.profile_id, pool_id=excluded.pool_id, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
+    .run(owner, value.provider, value.scope, value.scopeId, value.profileId ?? "", value.poolId ?? "", at.updatedAt, at.originNodeId);
+}
 function writeSelection(db: DatabaseSync, owner: string, value: ProfileSelection, at: Stamp, publish = true): void {
-  db.prepare(`INSERT INTO provider_profile_selections (owner,provider,scope,scope_id,profile_id,updated_at,origin_node_id) VALUES(?,?,?,?,?,?,?)
-    ON CONFLICT(owner,provider,scope,scope_id) DO UPDATE SET profile_id=excluded.profile_id, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
-    .run(owner, value.provider, value.scope, value.scopeId, value.profileId ?? "", at.updatedAt, at.originNodeId);
+  writeSelectionRow(db, owner, { ...value, poolId: null }, at);
   if (!publish) return;
   enqueueReplicationEvent(db, { originNodeId: at.originNodeId, entityType: "provider.selection", entityKey: JSON.stringify([owner, value.provider, value.scope, value.scopeId]), operation: "upsert",
-    payload: { username: owner, ...value, ...at } });
+    payload: { username: owner, provider: value.provider, scope: value.scope, scopeId: value.scopeId, profileId: value.profileId, ...at } });
+}
+function writePoolSelection(db: DatabaseSync, owner: string, value: ProfileSelection, at: Stamp, publish = true): void {
+  writeSelectionRow(db, owner, { ...value, profileId: null }, at);
+  if (!publish) return;
+  enqueueReplicationEvent(db, { originNodeId: at.originNodeId, entityType: "provider.poolSelection", entityKey: JSON.stringify([owner, value.provider, value.scope, value.scopeId]), operation: "upsert",
+    payload: { username: owner, provider: value.provider, scope: value.scope, scopeId: value.scopeId, poolId: value.poolId ?? null, ...at } });
 }
 
 function fromRow(row: Record<string, unknown>): ProviderProfile {
@@ -113,6 +123,11 @@ export function providerProfile(owner: string, id: string): ProviderProfile {
   if (!row) throw new Error("Provider profile not found on this node");
   return fromRow(row);
 }
+export function providerProfileById(id: string): ProviderProfile {
+  const row = database().prepare("SELECT * FROM provider_profiles WHERE id=? AND deleted=0").get(id) as Record<string, unknown> | undefined;
+  if (!row) throw new Error("Provider profile not found on this node");
+  return fromRow(row);
+}
 export function createProviderProfile(owner: string, input: unknown): ProviderProfile {
   const parsed = profileInputSchema.parse(input);
   const db = database();
@@ -122,6 +137,10 @@ export function createProviderProfile(owner: string, input: unknown): ProviderPr
 }
 export function setProviderProfileShared(owner: string, id: string, shared: boolean): ProviderProfile {
   const profile = providerProfile(owner, id), db = database();
+  const poolTablesExist = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subscription_pool_members'").get();
+  if (shared && poolTablesExist && db.prepare("SELECT 1 FROM subscription_pool_members m JOIN subscription_pools p ON p.id=m.pool_id WHERE m.profile_id=? AND p.deleted=0 LIMIT 1").get(id)) {
+    throw new Error("Remove this profile from its pools before sharing it for automation");
+  }
   transaction(db, () => writeProfile(db, { ...profile, shared, deleted: false }, stamp(db, origin(db))));
   return providerProfile(owner, id);
 }
@@ -150,26 +169,45 @@ export function twinProviderProfile(id: string): ProviderProfile | undefined {
 export function deleteProviderProfile(owner: string, id: string): void {
   const profile = providerProfile(owner, id), db = database();
   if (db.prepare("SELECT 1 FROM provider_profile_selections WHERE profile_id=? LIMIT 1").get(id)) throw new Error("Remove this profile's selections before deleting it");
+  const poolTablesExist = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subscription_pool_members'").get();
+  if (poolTablesExist && db.prepare("SELECT 1 FROM subscription_pool_members m JOIN subscription_pools p ON p.id=m.pool_id WHERE m.profile_id=? AND p.deleted=0 LIMIT 1").get(id)) throw new Error("Remove this profile from its pools before deleting it");
   transaction(db, () => writeProfile(db, { ...profile, deleted: true }, stamp(db, origin(db))));
 }
 export function listProviderProfileSelections(owner: string): ProfileSelection[] {
   return database().prepare("SELECT provider,scope,scope_id AS scopeId,profile_id AS profileId FROM provider_profile_selections WHERE owner=? AND profile_id<>''").all(owner) as unknown as ProfileSelection[];
 }
+export function listSubscriptionSelections(owner: string): Array<ProfileSelection & { poolId: string | null }> {
+  const rows = database().prepare("SELECT provider,scope,scope_id AS scopeId,profile_id AS profileId,pool_id AS poolId FROM provider_profile_selections WHERE owner=? AND (profile_id<>'' OR pool_id<>'')").all(owner) as Array<Record<string, unknown>>;
+  return rows.map((row) => {
+    const selection = profileSelectionSchema.parse({ ...row, profileId: String(row.profileId) || null, poolId: String(row.poolId) || null });
+    return { ...selection, poolId: selection.poolId ?? null };
+  });
+}
 export function setProviderProfileSelection(owner: string, input: unknown): void {
   const value = profileSelectionSchema.parse(input);
+  if (value.poolId) throw new Error("Use the pool store to select a subscription pool");
   const db = database();
   if (value.profileId !== null && accessibleProviderProfile(owner, value.profileId, "interactive").provider !== value.provider) throw new Error("Profile provider does not match selection provider");
   transaction(db, () => writeSelection(db, owner, value, stamp(db, origin(db))));
 }
+export function setProviderPoolSelection(owner: string, input: unknown): void {
+  const value = profileSelectionSchema.parse(input);
+  if (!value.poolId || value.profileId !== null) throw new Error("Choose one subscription pool");
+  const db = database();
+  const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subscription_pools'").get();
+  if (!table || !db.prepare("SELECT 1 FROM subscription_pools WHERE owner=? AND id=? AND deleted=0").get(owner, value.poolId)) throw new Error("Subscription pool not found on this node");
+  transaction(db, () => writePoolSelection(db, owner, value, stamp(db, origin(db))));
+}
 export function resolveProviderProfile(owner: string, provider: ProfileProvider, scope: ProfileScope, usage: ProfileUsage = "interactive"): { profile: ProviderProfile; source: ProfileSelection["scope"] } | undefined {
-  const selections = listProviderProfileSelections(owner).filter((entry) => entry.provider === provider);
+  const selections = listSubscriptionSelections(owner).filter((entry) => entry.provider === provider);
   const targets: Array<[ProfileSelection["scope"], string]> = [
     ...(scope.conversationId ? [["conversation", JSON.stringify([scope.projectId, scope.conversationId])] as ["conversation", string]] : []),
     ["project", scope.projectId], ["workspace", scope.workspaceId], ["default", ""],
   ];
   for (const [source, id] of targets) {
     const match = selections.find((entry) => entry.scope === source && entry.scopeId === id);
-    if (match) return { profile: accessibleProviderProfile(owner, match.profileId!, usage), source };
+    if (match?.poolId) throw new Error("Selected subscription pool requires pool-aware execution");
+    if (match?.profileId) return { profile: accessibleProviderProfile(owner, match.profileId, usage), source };
   }
   return undefined;
 }
@@ -177,6 +215,7 @@ export function resolveProviderProfile(owner: string, provider: ProfileProvider,
 const stampSchema = { username: z.string().regex(/^[0-9a-f]{32}$/), updatedAt: z.string().datetime(), originNodeId: z.string().min(1).max(100) };
 const profileEventSchema = z.object({ ...stampSchema, id: z.string().uuid(), label: z.string().trim().min(1).max(80), provider: profileProviderSchema, createdAt: z.string().datetime(), shared: z.boolean(), deleted: z.boolean() }).strict();
 const selectionEventSchema = z.object({ ...stampSchema, provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable() }).strict();
+const poolSelectionEventSchema = z.object({ ...stampSchema, provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), poolId: z.string().uuid().nullable() }).strict();
 
 /** Only the administrator's own profiles arrive, from their twins. Returns false to reject. */
 function acceptedPayload<T extends { username: string; originNodeId: string }>(db: DatabaseSync, event: ReplicationEvent, schema: z.ZodType<T>): T | false {
@@ -205,5 +244,15 @@ export function applyProviderSelectionEvent(db: DatabaseSync, event: Replication
   if (event.entityKey !== JSON.stringify([value.username, value.provider, value.scope, value.scopeId])) return false;
   const held = db.prepare("SELECT updated_at,origin_node_id FROM provider_profile_selections WHERE owner=? AND provider=? AND scope=? AND scope_id=?").get(value.username, value.provider, value.scope, value.scopeId) as { updated_at: string; origin_node_id: string } | undefined;
   if (newer(value, held)) writeSelection(db, value.username, { provider: value.provider, scope: value.scope, scopeId: value.scopeId, profileId: value.profileId }, value, false);
+  return true;
+}
+
+export function applyProviderPoolSelectionEvent(db: DatabaseSync, event: ReplicationEvent): boolean {
+  ensureProviderProfileSchema(db);
+  const value = acceptedPayload(db, event, poolSelectionEventSchema);
+  if (!value || (value.scope === "default") !== (value.scopeId === "")) return false;
+  if (event.entityKey !== JSON.stringify([value.username, value.provider, value.scope, value.scopeId])) return false;
+  const held = db.prepare("SELECT updated_at,origin_node_id FROM provider_profile_selections WHERE owner=? AND provider=? AND scope=? AND scope_id=?").get(value.username, value.provider, value.scope, value.scopeId) as { updated_at: string; origin_node_id: string } | undefined;
+  if (newer(value, held)) writePoolSelection(db, value.username, { provider: value.provider, scope: value.scope, scopeId: value.scopeId, profileId: null, poolId: value.poolId }, value, false);
   return true;
 }
