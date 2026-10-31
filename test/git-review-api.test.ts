@@ -243,7 +243,7 @@ test("git status on a non-repository project returns 400", { timeout: 120_000 },
   }
 });
 
-test("story mode settings and voice are served by the node, and a podcast needs a saved story", { timeout: 120_000 }, async () => {
+test("story mode settings, narration status and podcast routes answer what a project can use", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-story-mode-api-"));
   const sync = await fakeSyncthing();
   let node: StartedNode | undefined;
@@ -251,29 +251,43 @@ test("story mode settings and voice are served by the node, and a podcast needs 
     node = await startNode(root, sync.url);
     const headers = await session(node);
     const view = await jsonBody(await fetch(`${node.baseUrl}/api/story-settings`, { headers })) as {
-      settings: { locations: string[]; hostVoice: string; moods: boolean }; defaultInstructions: string; locations: Array<{ id: string; label: string }>; voices: Array<{ id: string; label: string }>; voice: { available: boolean };
+      settings: { locations: string[]; hostVoice: string; moods: boolean; voiceProvider: string; elevenHostVoice: string }; defaultInstructions: string;
+      locations: Array<{ id: string; label: string }>; voices: Array<{ id: string; label: string }>; voice: { allowed: boolean; installed: boolean; installing: boolean };
     };
     assert.equal(view.locations.length, 9);
     assert.equal(view.settings.locations.length, 9);
     assert.ok(view.voices.some((voice) => voice.id === "af_heart" && voice.label === "Heart · American, female"));
     assert.match(view.defaultInstructions, /Maya explains, Jonah asks/);
-    assert.equal(view.voice.available, true);
+    assert.equal(view.settings.voiceProvider, "auto");
+    assert.equal(view.settings.elevenHostVoice, "EXAVITQu4vr4xnSDxMaL");
+    assert.equal(view.voice.installed, false, "a fresh data directory has no local voice");
+    assert.equal(view.voice.installing, false);
 
-    const saved = await fetch(`${node.baseUrl}/api/story-settings`, { method: "PUT", headers, body: JSON.stringify({ ...view.settings, locations: ["classroom"], moods: false, hostVoice: "bf_emma" }) });
+    const saved = await fetch(`${node.baseUrl}/api/story-settings`, { method: "PUT", headers, body: JSON.stringify({ ...view.settings, locations: ["classroom"], moods: false, hostVoice: "bf_emma", voiceProvider: "elevenlabs" }) });
     assert.equal(saved.status, 200);
     const reread = await jsonBody(await fetch(`${node.baseUrl}/api/story-settings`, { headers })) as typeof view;
     assert.deepEqual(reread.settings.locations, ["classroom"]);
     assert.equal(reread.settings.moods, false);
     assert.equal(reread.settings.hostVoice, "bf_emma");
+    assert.equal(reread.settings.voiceProvider, "elevenlabs");
     const refused = await fetch(`${node.baseUrl}/api/story-settings`, { method: "PUT", headers, body: JSON.stringify({ ...view.settings, locations: ["moon"] }) });
     assert.equal(refused.status, 400);
-
-    assert.deepEqual(await jsonBody(await fetch(`${node.baseUrl}/api/story-voice`, { headers })), { available: true, reason: null });
-    assert.equal((await fetch(`${node.baseUrl}/api/story-voice`, { method: "POST", headers, body: JSON.stringify({ text: "Hello", who: "nobody" }) })).status >= 400, true);
+    const badVoice = await fetch(`${node.baseUrl}/api/story-settings`, { method: "PUT", headers, body: JSON.stringify({ ...view.settings, elevenHostVoice: "not a voice" }) });
+    assert.equal(badVoice.status, 400);
 
     const created = await fetch(`${node.baseUrl}/api/projects`, { method: "POST", headers, body: JSON.stringify({ name: "Podcast", type: "work", synced: true }) });
     const project = (await created.json() as { project: { id: string; path: string } }).project;
     await gitCmd(project.path, ["init", "-b", "main"]);
+
+    // With no local voice and no ElevenLabs key the project is told what to add, and narration is refused with that reason.
+    const noVoice = await jsonBody(await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-voice`, { headers })) as { provider: string | null; available: boolean; reason: string };
+    assert.equal(noVoice.provider, null);
+    assert.equal(noVoice.available, false);
+    assert.match(noVoice.reason, /ELEVENLABS_API_KEY/);
+    const speak = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-voice`, { method: "POST", headers, body: JSON.stringify({ text: "Hello", who: "host" }) });
+    assert.equal(speak.status, 409);
+    assert.match((await jsonBody(speak) as { error: string }).error, /ELEVENLABS_API_KEY/);
+
     const missing = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-podcast?threadId=unknown`, { headers });
     assert.equal(missing.status, 404);
     const ask = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-podcast`, { method: "POST", headers, body: JSON.stringify({ threadId: "unknown", question: "Why?" }) });

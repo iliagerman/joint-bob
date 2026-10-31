@@ -27,3 +27,10 @@ test("empty instructions fall back to the default and a voice reads as a name wi
   assert.equal(voiceLabel("af_heart"), "Heart · American, female");
   assert.equal(voiceLabel("bm_george"), "George · British, male");
 });
+
+test("the narrator choice and ElevenLabs voice IDs are checked before they are saved", () => {
+  assert.equal(updateStorySettings({ ...DEFAULT_STORY_SETTINGS, voiceProvider: "elevenlabs" }).voiceProvider, "elevenlabs");
+  assert.throws(() => updateStorySettings({ ...DEFAULT_STORY_SETTINGS, voiceProvider: "azure" }));
+  assert.throws(() => updateStorySettings({ ...DEFAULT_STORY_SETTINGS, elevenHostVoice: "bad id!" }), /ElevenLabs voice ID/);
+  updateStorySettings(DEFAULT_STORY_SETTINGS);
+});

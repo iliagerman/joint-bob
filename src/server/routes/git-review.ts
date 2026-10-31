@@ -25,6 +25,7 @@ import {
   type GitReviewThread,
 } from "../../git-review-threads.js";
 import { askStoryScript, generateStoryScript, loadStoryScript } from "../story-podcast.js";
+import { narrateStoryText, narrationProvider, NARRATION_LIMIT } from "../story-voice.js";
 import { getStorySettings, storySettingsSchema } from "../../story-settings.js";
 import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StoryProgress, type StorySources } from "../git-change-story.js";
 import { getProject } from "../../store.js";
@@ -109,6 +110,7 @@ async function proxyGitJson(response: Response, peer: ClusterPeer, clusterRoute:
     response.end();
     return;
   }
+  if (routed.ok && contentType?.startsWith("audio/")) { response.status(routed.status).send(Buffer.from(await routed.arrayBuffer())); return; }
   response.status(routed.status).send(await routed.text());
 }
 
@@ -758,6 +760,52 @@ app.post("/api/projects/:projectId/git/story-podcast", async (request, response,
     await withOwningNode(request, response, "/api/cluster/git/story-podcast", {}, async () => {
       const cwd = await reviewCwd(projectId, queryOptional(request, "taskId"), queryOptional(request, "repository"));
       await sendStory(request, response, (onProgress) => performPodcast(projectId, cwd, input, onProgress, queryOptional(request, "repository")));
+      return SENT;
+    }, request);
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+// ---- Story narration ----
+
+const narrationRequest = z.object({ text: z.string().trim().min(1).max(NARRATION_LIMIT), who: z.enum(["host", "cohost"]) }).strict();
+
+// Which engine narrates this project's stories, if any: this node's Kokoro, or the project's own ElevenLabs key.
+function storyVoiceView(projectId: string) {
+  const { provider, reason } = narrationProvider(projectId);
+  return { provider, available: provider !== null, reason };
+}
+
+async function sendNarration(response: Response, projectId: string, input: z.infer<typeof narrationRequest>): Promise<void> {
+  const audio = await narrateStoryText(projectId, input.text, input.who);
+  response.type(audio.mime).send(audio.bytes);
+}
+
+app.get("/api/cluster/git/story-voice", (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    response.json(storyVoiceView(queryString(request, "projectId")));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.get("/api/projects/:projectId/git/story-voice", async (request, response, next) => {
+  try {
+    await withOwningNode(request, response, "/api/cluster/git/story-voice", {}, async () => storyVoiceView(request.params.projectId));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.post("/api/cluster/git/story-voice", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    await sendNarration(response, queryString(request, "projectId"), narrationRequest.parse(request.body));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.post("/api/projects/:projectId/git/story-voice", async (request, response, next) => {
+  try {
+    const { projectId } = request.params;
+    const input = narrationRequest.parse(request.body);
+    await withOwningNode(request, response, "/api/cluster/git/story-voice", {}, async () => {
+      await sendNarration(response, projectId, input);
       return SENT;
     }, request);
   } catch (error) { handleGitError(response, error, next); }

@@ -26,6 +26,9 @@ export function voiceLabel(id: string): string {
   return `${name[0].toUpperCase()}${name.slice(1)} · ${prefix[0] === "a" ? "American" : "British"}, ${prefix[1] === "f" ? "female" : "male"}`;
 }
 
+export const VOICE_PROVIDER_CHOICES = ["auto", "kokoro", "elevenlabs"] as const;
+const ELEVEN_VOICE_ID = /^[A-Za-z0-9]{16,32}$/;
+
 export const DEFAULT_STORY_INSTRUCTIONS = `Make a short podcast for teammates who did not follow the work. Two hosts: Maya explains, Jonah asks the questions a teammate would ask.
 - Start with the symptom a user saw, in one or two lines.
 - Spend most of the time on WHY: what we considered, what we rejected, and the constraint that decided it.
@@ -55,8 +58,13 @@ export const storySettingsSchema = z.object({
   /** Viewers may ask follow-up questions that continue the story. */
   ask: z.boolean(),
   narrate: z.boolean(),
+  /** auto: Kokoro when this node can run it, otherwise ElevenLabs when the project has a key. */
+  voiceProvider: z.enum(VOICE_PROVIDER_CHOICES),
   hostVoice: z.enum(KOKORO_VOICES),
   cohostVoice: z.enum(KOKORO_VOICES),
+  /** ElevenLabs voice IDs, from the account's voice library. */
+  elevenHostVoice: z.string().regex(ELEVEN_VOICE_ID, "Use an ElevenLabs voice ID"),
+  elevenCohostVoice: z.string().regex(ELEVEN_VOICE_ID, "Use an ElevenLabs voice ID"),
   speed: z.number().min(0.7).max(1.3),
 }).strict().refine((settings) => !settings.backdrops || settings.locations.length > 0, { message: "Choose at least one location, or turn locations off", path: ["locations"] });
 export type StorySettings = z.infer<typeof storySettingsSchema>;
@@ -71,8 +79,11 @@ export const DEFAULT_STORY_SETTINGS: StorySettings = {
   maxCodeLines: 12,
   ask: true,
   narrate: true,
+  voiceProvider: "auto",
   hostVoice: "af_heart",
   cohostVoice: "am_michael",
+  elevenHostVoice: "EXAVITQu4vr4xnSDxMaL",
+  elevenCohostVoice: "CwhRBWXzGAHq8TQ4Fs17",
   speed: 1,
 };
 

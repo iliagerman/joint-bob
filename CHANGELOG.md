@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Changed narration so local voice (Kokoro) is installed only on request, and only on a computer with at least 8 GB of memory and 4 cores; smaller computers never download it, and projects can narrate with their own ElevenLabs key instead (ELEVENLABS_API_KEY secret).
+- Fixed the local voice install never downloading GPU libraries on Linux; the Kokoro package is no longer a dependency of Joint Bob itself.
+- Added ElevenLabs as a story narrator for projects that bring their own key, and a Narrator choice in Settings → Story mode to pick between it and local voice.
+
 ## 2.179.0 — 2026-10-31
 
 - Changed the app icon, tab icon, install icon, notification icon and splash screen to a hand-inked Snufkin hat with curling smoke, replacing the joint and ember.

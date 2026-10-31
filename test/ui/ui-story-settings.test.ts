@@ -6,7 +6,7 @@ import { nativeUiFixture } from "./native-ui-fixture.js";
 const LOCATIONS = ["podcast", "classroom", "lecture", "coffeehouse", "street", "train", "server", "matrix", "rooftop"];
 const defaults = {
   instructions: "Make a short podcast.", backdrops: true, locations: LOCATIONS, moods: true, codeSlides: true, codeWriteup: true, maxCodeLines: 12,
-  ask: true, narrate: true, hostVoice: "af_heart", cohostVoice: "am_michael", speed: 1,
+  ask: true, narrate: true, voiceProvider: "auto", hostVoice: "af_heart", cohostVoice: "am_michael", elevenHostVoice: "EXAVITQu4vr4xnSDxMaL", elevenCohostVoice: "CwhRBWXzGAHq8TQ4Fs17", speed: 1,
 };
 
 // A stand-in for audio playback: this Chrome cannot decode a clip, so each one "plays" briefly and then ends.
@@ -25,7 +25,8 @@ async function openStorySettings(page: Page, url: string, username: string, pass
   await page.waitForFunction(() => (document.getElementById("storyInstructions") as HTMLTextAreaElement).value !== "");
 }
 
-async function mockStoryApi(page: Page, voice: { available: boolean; reason: string | null }) {
+async function mockStoryApi(page: Page, local: { available: boolean; reason: string | null }) {
+  const voice = { allowed: true, installed: local.available, installing: false, installError: null, reason: local.reason };
   let settings = { ...defaults };
   const puts: Array<Record<string, unknown>> = [];
   const spoken: Array<Record<string, unknown>> = [];
@@ -37,7 +38,7 @@ async function mockStoryApi(page: Page, voice: { available: boolean; reason: str
     }
     return route.fulfill({ json: reply() });
   });
-  await page.route("**/api/story-voice", (route) => {
+  await page.route("**/api/story-settings/test-voice", (route) => {
     spoken.push(route.request().postDataJSON());
     return route.fulfill({ contentType: "audio/wav", body: "RIFF" });
   });
@@ -52,7 +53,7 @@ test("Settings → Story mode saves instructions, places, code and voices on thi
 
   assert.equal(await page.getByTestId("story-instructions").inputValue(), "Make a short podcast.");
   assert.equal(await page.locator("#storyLocations input:checked").count(), 9);
-  assert.match(await page.getByTestId("story-voice-status").innerText(), /Kokoro is ready on this node/);
+  assert.match(await page.getByTestId("story-voice-status").innerText(), /Local voice is installed on this node/);
   assert.equal(await page.getByTestId("story-host-voice").inputValue(), "af_heart");
 
   await page.getByTestId("story-instructions-reset").click();
@@ -68,7 +69,7 @@ test("Settings → Story mode saves instructions, places, code and voices on thi
   await page.getByTestId("story-save-status").getByText("Saved on this node").waitFor();
   assert.deepEqual(puts, [{
     instructions: "Explain it like a lecture.", backdrops: true, locations: LOCATIONS.filter((id) => id !== "rooftop"), moods: false, codeSlides: true, codeWriteup: false,
-    maxCodeLines: 8, ask: true, narrate: true, hostVoice: "af_heart", cohostVoice: "bf_emma", speed: 1.1,
+    maxCodeLines: 8, ask: true, narrate: true, voiceProvider: "auto", hostVoice: "af_heart", cohostVoice: "bf_emma", elevenHostVoice: "EXAVITQu4vr4xnSDxMaL", elevenCohostVoice: "CwhRBWXzGAHq8TQ4Fs17", speed: 1.1,
   }]);
 
   // Switching the places off hides the list, and the choice survives a reload of the tab.
@@ -84,9 +85,9 @@ test("Settings → Story mode saves instructions, places, code and voices on thi
   assert.deepEqual(spoken.map((request) => request.who), ["host", "cohost"]);
 });
 
-test("Settings → Story mode says plainly when Kokoro is not installed", { timeout: 120_000 }, async (t) => {
+test("Settings → Story mode says plainly when local voice is not installed", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  await mockStoryApi(page, { available: false, reason: "Kokoro is not installed on this node. Run npm install kokoro-js." });
+  await mockStoryApi(page, { available: false, reason: "Local voice is not installed on this node." });
   await openStorySettings(page, node.url, environment.username, environment.password);
   assert.match(await page.getByTestId("story-voice-status").innerText(), /not installed on this node/);
   assert.equal(await page.getByTestId("story-test-voices").isDisabled(), true);

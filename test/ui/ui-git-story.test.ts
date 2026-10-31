@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { Page } from "playwright";
+import type { Page, Route } from "playwright";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
 const facts = {
@@ -539,13 +539,14 @@ async function openSavedStory(page: Page, environment: { username: string; passw
   await page.addInitScript(FAKE_SPEECH);
   await page.addInitScript(FAKE_AUDIO);
   const settings = { ...storySettings, ...fixture.settings };
-  await page.route("**/api/story-settings", (route) => route.fulfill({ json: { settings, defaultInstructions: "default", locations: LOCATIONS.map((id) => ({ id, label: id })), voices: [{ id: "af_heart", label: "Heart" }], voice: { available: fixture.kokoro, reason: fixture.kokoro ? null : "Kokoro is not installed on this node." } } }));
-  await page.route("**/api/story-voice", async (route) => {
-    if (route.request().method() === "GET") return route.fulfill({ json: { available: fixture.kokoro, reason: null } });
+  await page.route("**/api/story-settings", (route) => route.fulfill({ json: { settings, defaultInstructions: "default", locations: LOCATIONS.map((id) => ({ id, label: id })), voices: [{ id: "af_heart", label: "Heart" }], voice: { allowed: true, installed: fixture.kokoro, installing: false, installError: null, reason: null } } }));
+  // The narrator belongs to the project, so the project's narration route answers it.
+  const narration = async (route: Route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { provider: fixture.kokoro ? "kokoro" : null, available: fixture.kokoro, reason: fixture.kokoro ? null : "This project has no ElevenLabs key." } });
     fixture.spoken?.push(route.request().postDataJSON());
-    if (fixture.narration) return route.fulfill({ status: fixture.narration, json: { error: "Kokoro could not speak the line." } });
+    if (fixture.narration) return route.fulfill({ status: fixture.narration, json: { error: "The narrator could not speak the line." } });
     return route.fulfill({ contentType: "audio/wav", body: "RIFF" });
-  });
+  };
   await page.route("**/api/projects/*/git/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/status")) return route.fulfill({ json: status });
@@ -553,6 +554,7 @@ async function openSavedStory(page: Page, environment: { username: string; passw
     if (path.endsWith("/guide-latest")) return route.fulfill({ json: { latest: null } });
     if (path.endsWith("/story-latest")) return route.fulfill({ json: { latest: { thread, saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } }, commits: [] } });
     if (path.endsWith("/story-podcast") && route.request().method() === "GET") return route.fulfill({ json: { script: fixture.script ?? null } });
+    if (path.endsWith("/story-voice")) return narration(route);
     if (path.endsWith("/story-podcast")) {
       const body = route.request().postDataJSON() as { question?: string };
       fixture.podcastPosts?.push(body);
@@ -566,11 +568,11 @@ async function openSavedStory(page: Page, environment: { username: string; passw
   await page.getByTestId("git-review-tab-story").click();
 }
 
-test("Story tab suggests a developer walkthrough that speaks with the computer's voice when Kokoro is not ready", { timeout: 120_000 }, async (t) => {
+test("Story tab suggests a developer walkthrough that speaks with the computer's voice when no narrator is ready", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await openSavedStory(page, environment, node.url, { kokoro: false });
   await page.getByTestId("git-story-video-suggestion").waitFor();
-  assert.match(await page.getByTestId("git-story-video-suggestion").innerText(), /Narration uses this computer's voice\. Kokoro narration is set up in Settings → Story mode/);
+  assert.match(await page.getByTestId("git-story-video-suggestion").innerText(), /Narration uses this computer's voice\.[\s\S]*Want spoken narration\?/);
 
   await page.getByTestId("git-story-video-play").click();
   const video = page.getByTestId("git-story-video");
@@ -594,12 +596,12 @@ test("Story tab suggests a developer walkthrough that speaks with the computer's
   assert.equal(await page.getByTestId("git-story-video-voice").innerText(), "Voice off");
 });
 
-test("Story video narrates with Kokoro and switches to the computer's voice, saying why, when Kokoro fails", { timeout: 120_000 }, async (t) => {
+test("Story video narrates with the project's narrator and switches to the computer's voice, saying why, when it fails", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const spoken: Array<Record<string, unknown>> = [];
   await openSavedStory(page, environment, node.url, { kokoro: true, narration: 502, spoken });
   await page.getByTestId("git-story-video-play").click();
-  await page.locator(".toast-message", { hasText: "Kokoro narration failed" }).waitFor();
+  await page.locator(".toast-message", { hasText: "Narration failed" }).waitFor();
   await page.getByText("Voice: this computer").waitFor();
   assert.equal(spoken[0].who, "host");
   assert.match(await page.evaluate(() => (window as unknown as { __spoken: string[] }).__spoken[0]), /Greeting with an empty-name error/);

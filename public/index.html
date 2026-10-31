@@ -1684,13 +1684,23 @@
             <label class="checkbox-row"><input id="storyAsk" type="checkbox" data-testid="story-ask" /> Let viewers ask follow-up questions; each answer continues the story as new chapters</label>
           </fieldset>
           <fieldset class="phase-settings">
-            <legend>Narration with Kokoro</legend>
+            <legend>Narration</legend>
             <p id="storyVoiceStatus" class="settings-hint" role="status" data-testid="story-voice-status"></p>
-            <label class="checkbox-row"><input id="storyNarrate" type="checkbox" data-testid="story-narrate" /> Narrate stories with Kokoro on this node</label>
-            <label>Host voice (Maya)<select id="storyHostVoice" data-testid="story-host-voice"></select></label>
-            <label>Co-host voice (Jonah)<select id="storyCohostVoice" data-testid="story-cohost-voice"></select></label>
+            <label class="checkbox-row"><input id="storyNarrate" type="checkbox" data-testid="story-narrate" /> Narrate stories</label>
+            <label>Narrator<select id="storyVoiceProvider" data-testid="story-voice-provider">
+              <option value="auto">Automatic: local voice when this computer has it, otherwise the project's ElevenLabs key</option>
+              <option value="kokoro">Local voice (Kokoro) only</option>
+              <option value="elevenlabs">ElevenLabs only, with the project's ELEVENLABS_API_KEY</option>
+            </select></label>
+            <p class="settings-hint">Local voice is Kokoro-82M on this computer's CPU. It needs no key and is offered only on computers with at least 8 GB of memory and 4 cores; smaller computers never download it. Installing it downloads the package once, from the public npm registry, without GPU libraries.</p>
+            <button class="ghost compact" type="button" id="storyInstallLocal" data-testid="story-install-local">Install local voice</button>
+            <label>Local voice for Maya<select id="storyHostVoice" data-testid="story-host-voice"></select></label>
+            <label>Local voice for Jonah<select id="storyCohostVoice" data-testid="story-cohost-voice"></select></label>
+            <label>ElevenLabs voice ID for Maya<input id="storyElevenHost" type="text" maxlength="32" autocomplete="off" data-testid="story-eleven-host" /></label>
+            <label>ElevenLabs voice ID for Jonah<input id="storyElevenCohost" type="text" maxlength="32" autocomplete="off" data-testid="story-eleven-cohost" /></label>
+            <p class="settings-hint">ElevenLabs uses the ELEVENLABS_API_KEY secret attached to each project, so each project brings its own key: Settings → Secrets, a custom account named ElevenLabs with that variable, attached to the project. Voice IDs are listed in your ElevenLabs voice library.</p>
             <label>Speaking speed<input id="storySpeed" type="number" min="0.7" max="1.3" step="0.05" data-testid="story-speed" /></label>
-            <p class="settings-hint">Kokoro-82M runs on this node and needs no key. The model downloads once, on first use, and each line is kept after it is spoken, so replays are instant. Changing a voice or the speed speaks the lines again.</p>
+            <p class="settings-hint">Each line is kept after it is spoken, so replays are instant. Changing a voice or the speed speaks the lines again.</p>
             <button class="ghost compact" type="button" id="storyTestVoices" data-testid="story-test-voices">Test voices</button>
           </fieldset>
           <div class="settings-actions">
