@@ -642,29 +642,16 @@ h2 { font-size: 17px; line-height: 1.25; }
 .app-boot-mark { width: 192px; height: 192px; filter: drop-shadow(0 18px 28px rgba(20, 22, 24, 0.18)); }
 .boot-tile { fill: #141618; }
 .boot-smoke {
-  stroke: #37cfab;
   transform-box: fill-box;
-  transform-origin: center;
+  transform-origin: bottom center;
   animation: boot-smoke-rise 2.4s ease-out infinite;
 }
-.boot-smoke-right { animation-delay: 280ms; }
-.boot-joint {
+.boot-smoke-wisp { animation-delay: 280ms; }
+.boot-hat {
   transform-box: fill-box;
-  transform-origin: center;
+  transform-origin: bottom center;
+  animation: boot-hat-settle 700ms cubic-bezier(0.22, 0.9, 0.28, 1) both;
 }
-.boot-joint rect { fill: #f7f3e8; }
-.boot-joint path { stroke: #d8d2c4; stroke-width: 12; }
-.boot-joint-left { animation: boot-joint-left 700ms cubic-bezier(0.22, 0.9, 0.28, 1) both; }
-.boot-joint-right { animation: boot-joint-right 700ms cubic-bezier(0.22, 0.9, 0.28, 1) both; }
-.boot-ember {
-  fill: #37cfab;
-  stroke: #141618;
-  stroke-width: 12;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: boot-ember-pulse 1.4s ease-in-out 600ms infinite;
-}
-.boot-ember-core { fill: #f7f3e8; stroke: none; }
 .app-boot-wordmark {
   margin-top: 16px;
   color: #f7f3e8;
@@ -683,25 +670,17 @@ h2 { font-size: 17px; line-height: 1.25; }
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
-@keyframes boot-joint-left {
-  from { opacity: 0; transform: translate(-34px, 18px) rotate(-31deg); }
-  to { opacity: 1; transform: rotate(-22deg); }
-}
-@keyframes boot-joint-right {
-  from { opacity: 0; transform: translate(34px, 18px) rotate(31deg); }
-  to { opacity: 1; transform: rotate(22deg); }
+@keyframes boot-hat-settle {
+  from { opacity: 0; transform: translateY(-20px) rotate(-4deg); }
+  to { opacity: 1; transform: none; }
 }
 @keyframes boot-smoke-rise {
   0%, 24% { opacity: 0; transform: translateY(14px) scale(0.92); }
   48% { opacity: 0.9; }
   100% { opacity: 0; transform: translateY(-16px) scale(1.04); }
 }
-@keyframes boot-ember-pulse {
-  0%, 100% { opacity: 0.72; transform: scale(0.88); }
-  50% { opacity: 1; transform: scale(1.08); }
-}
 @media (prefers-reduced-motion: reduce) {
-  .boot-smoke, .boot-joint, .boot-ember { animation: none; }
+  .boot-smoke, .boot-hat { animation: none; }
 }
 body:not(.booting) .app-boot,
 html.by-the-way-pane .app-boot { display: none; }

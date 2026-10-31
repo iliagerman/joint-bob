@@ -13,9 +13,7 @@ test("public product surfaces use Joint Bob", async () => {
   const icon = await readFile("public/icon.svg", "utf8");
   assert.match(icon, /aria-label="Joint Bob icon"/);
   assert.match(icon, /id="smoke"/);
-  assert.match(icon, /id="joint-left"/);
-  assert.match(icon, /id="joint-right"/);
-  assert.match(icon, /id="ember"/);
+  assert.match(icon, /id="hat"/);
 });
 
 test("every PWA icon has its declared dimensions", async () => {
