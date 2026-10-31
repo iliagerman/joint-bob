@@ -4,7 +4,7 @@ import { mountStoryDiagram } from "./git-story-diagram.js";
 // An animated walkthrough built from a saved story, for developers who need to review the change:
 // the flow diagram, worked examples, the files, the design decisions and the review checklist.
 // It has no dependency on the rest of the app, so the same code runs in the exported HTML file.
-// Narration is optional: ElevenLabs when the app supplies `narrate`, otherwise (or when ElevenLabs
+// Narration is optional: Kokoro when the app supplies `narrate`, otherwise (or when Kokoro
 // fails) the computer's own voice through speechSynthesis.
 
 const NARRATION_LIMIT = 2_400;
@@ -113,12 +113,12 @@ export function storyScenes(story, facts) {
 const seconds = (narration, items) => Math.max(MIN_SCENE_SECONDS, narration.split(/\s+/).length * SECONDS_PER_WORD, 3 + items * SECONDS_PER_ITEM);
 
 /**
- * Opens the player in `host`. `narrate(text)` returns an ElevenLabs audio Blob and is absent when no key is set up;
+ * Opens the player in `host`. `narrate(text)` returns a Kokoro audio Blob and is absent when Kokoro is not ready;
  * `notify(message)` shows why a voice was dropped. `voice` false starts silent.
  */
 export function playStoryVideo({ story, facts, host, narrate = null, notify = () => {}, voice = true }) {
   const scenes = storyScenes(story, facts);
-  const player = { index: 0, elapsed: 0, duration: 0, playing: true, voice, engine: narrate ? "eleven" : "system", token: 0, frame: 0, last: 0, revealed: 0, items: [], speaking: false, heard: false };
+  const player = { index: 0, elapsed: 0, duration: 0, playing: true, voice, engine: narrate ? "kokoro" : "system", token: 0, frame: 0, last: 0, revealed: 0, items: [], speaking: false, heard: false };
   const audio = new Audio();
   const audios = new Map();
   const urls = [];
@@ -142,7 +142,7 @@ export function playStoryVideo({ story, facts, host, narrate = null, notify = ()
     if (document.getElementById("gsvStyles")) return;
     document.head.append(h("link", { id: "gsvStyles", rel: "stylesheet", href: new URL("../git-story-video.css", import.meta.url).href }));
   }
-  function showVoice() { voiceButton.textContent = !player.voice ? "Voice off" : player.engine === "eleven" ? "Voice: ElevenLabs" : "Voice: this computer"; }
+  function showVoice() { voiceButton.textContent = !player.voice ? "Voice off" : player.engine === "kokoro" ? "Voice: Kokoro" : "Voice: this computer"; }
   function silence() { audio.pause(); audio.removeAttribute("src"); window.speechSynthesis?.cancel(); player.speaking = false; }
   function close() { player.token += 1; cancelAnimationFrame(player.frame); silence(); urls.forEach((url) => URL.revokeObjectURL(url)); overlay.remove(); }
   function toggle() {
@@ -156,7 +156,7 @@ export function playStoryVideo({ story, facts, host, narrate = null, notify = ()
     if (!audios.has(index)) audios.set(index, narrate(scenes[index].narration).then((blob) => { const url = URL.createObjectURL(blob); urls.push(url); return url; }));
     return audios.get(index);
   }
-  async function playEleven(index, token) {
+  async function playKokoro(index, token) {
     const url = await fetchNarration(index);
     if (token !== player.token) return;
     audio.src = url;
@@ -188,12 +188,12 @@ export function playStoryVideo({ story, facts, host, narrate = null, notify = ()
   async function startVoice(index, token) {
     silence();
     if (!player.voice) return;
-    if (player.engine === "eleven") {
-      try { await playEleven(index, token); return; } catch (error) {
+    if (player.engine === "kokoro") {
+      try { await playKokoro(index, token); return; } catch (error) {
         if (token !== player.token) return;
         audios.delete(index);
         player.engine = "system";
-        notify(`ElevenLabs narration failed: ${error.message} Using this computer's voice instead.`);
+        notify(`Kokoro narration failed: ${error.message} Using this computer's voice instead.`);
       }
     }
     if (token === player.token) speak(index, token);

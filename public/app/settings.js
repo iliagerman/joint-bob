@@ -16,6 +16,7 @@ import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadNtfyServicesPanel } from "./ntfy.js";
 import { loadErrorReportingSettings } from "./error-reporting-settings.js";
+import { loadStorySettings } from "./story-settings.js";
 import { loadMfaSettings } from "./mfa.js";
 import { loadRoutingConfigs, saveDirtyRoutingConfig } from "./routing-configs.js";
 import { showResourcesPanel } from "./resources.js";
@@ -100,7 +101,7 @@ function renderClientLogs() {
 }
 
 // These panels guard their own loading and do not depend on Save settings.
-const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users", "settingsPanel-file-sync", "settingsPanel-automation-tags"].includes(panel.id);
+const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users", "settingsPanel-file-sync", "settingsPanel-automation-tags", "settingsPanel-story"].includes(panel.id);
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(requested) {
@@ -125,6 +126,7 @@ function selectSettingsTab(requested) {
   if (name === "resources") showResourcesPanel();
   if (name === "file-sync") void loadFileSyncSettings(); // settings-page (P4)
   if (name === "engines") void loadProviderProfiles().catch((error) => toast(error.message));
+  if (name === "story") void loadStorySettings().catch((error) => toast(error.message));
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
   if (name === "conversations") void loadSummaryModelSettings().catch((error) => toast(error.message));
   if (name === "users") void loadUsers().catch((error) => toast(error.message));

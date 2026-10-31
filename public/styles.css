@@ -4227,6 +4227,8 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 
 /* The Shortcuts tab in Settings. */
 .settings-hint { margin: 0; color: var(--muted); font-size: 12px; }
+.settings-actions { display: flex; align-items: center; gap: 10px; }
+.story-locations { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 12px; margin-left: 26px; }
 .canvas-keymap-leader { border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 12px; }
 .canvas-keymap-leader h3, .shortcut-conversation-keys h3 { margin: 0 0 6px; color: var(--text); font-size: 13px; }
 .canvas-keymap-leader p { margin: 8px 0 6px; }

@@ -507,16 +507,58 @@ const FAKE_SPEECH = `window.__spoken = [];
 window.SpeechSynthesisUtterance = function (text) { this.text = text; };
 Object.defineProperty(window, "speechSynthesis", { value: { speak(utterance) { window.__spoken.push(utterance.text); setTimeout(() => { utterance.onstart?.(); setTimeout(() => utterance.onend?.(), 300); }, 10); }, cancel() {}, pause() {}, resume() {} } });`;
 
-async function openSavedStory(page: Page, environment: { username: string; password: string }, url: string, voice: { configured: boolean; narration?: number }) {
+const LOCATIONS = ["podcast", "classroom", "lecture", "coffeehouse", "street", "train", "server", "matrix", "rooftop"];
+const storySettings = { instructions: "", backdrops: true, locations: LOCATIONS, moods: true, codeSlides: true, codeWriteup: true, maxCodeLines: 12, ask: true, narrate: true, hostVoice: "af_heart", cohostVoice: "am_michael", speed: 1 };
+const recapItems = [["What changed", "Empty names are rejected."], ["Why", "Users saw a blank greeting."], ["What we give up", "Nothing."], ["How you notice", "An error shows."]].map(([label, text]) => ({ label, text }));
+const script = {
+  title: "Greeting with an empty-name error",
+  chapters: [
+    { title: "What went wrong", location: "server", mood: "tension", visual: { kind: "flow", nodes: [{ label: "Type a name", sub: "form", tone: "neutral" }, { label: "Name empty?", sub: "", tone: "bad" }], note: { title: "Result", text: "A blank greeting." } },
+      lines: [{ who: "host", text: "Today we look at the greeting.", reveal: 1 }, { who: "cohost", text: "What went wrong?", reveal: 2 }] },
+    { title: "The guard", location: "matrix", mood: "insight", visual: { kind: "code", file: "app.ts", lines: ["-// committed", "+if (!name) throw new Error(\"Enter a name\");"], steps: [{ from: 1, to: 1, note: "The old line goes." }, { from: 2, to: 2, note: "A new guard rejects empty names." }] },
+      lines: [{ who: "host", text: "The old line goes away.", reveal: 1 }, { who: "host", text: "A guard rejects empty names.", reveal: 2 }] },
+    { title: "Recap", location: "rooftop", mood: "resolved", visual: { kind: "recap", items: recapItems }, lines: [{ who: "host", text: "That is the whole change.", reveal: 4 }] },
+  ],
+  writeup: { changed: ["app.ts rejects an empty name."], how: ["The greeting checks the name first."], why: ["A blank greeting looked broken."], rejected: [{ option: "A dialog", why: "It steals focus." }], limits: ["Only checks for empty text."] },
+  followUps: [],
+  generatedAt: new Date().toISOString(),
+};
+const answered = {
+  ...script,
+  chapters: [...script.chapters, { title: "Why a guard", location: "coffeehouse", mood: "calm", question: "Why a guard?", visual: { kind: "compare", options: [{ title: "A guard", why: "Fails fast.", verdict: "yes" }, { title: "A default", why: "Hides the mistake.", verdict: "no" }] },
+    lines: [{ who: "cohost", text: "Why a guard and not a default?", reveal: 1 }, { who: "host", text: "A default would hide the mistake.", reveal: 2 }] }],
+  followUps: [{ question: "Why a guard?", answer: "A default would hide the mistake." }],
+};
+
+// A stand-in for audio playback: this Chrome cannot decode a clip, so each one "plays" briefly and then ends.
+const FAKE_AUDIO = `window.Audio = class { constructor(src = "") { this.src = src; } pause() {} play() { setTimeout(() => this.onended?.(), 60); return Promise.resolve(); } removeAttribute() { this.src = ""; } hasAttribute() { return Boolean(this.src); } };`;
+
+interface StoryFixture { kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
+
+async function openSavedStory(page: Page, environment: { username: string; password: string }, url: string, fixture: StoryFixture) {
   await page.addInitScript(FAKE_SPEECH);
+  await page.addInitScript(FAKE_AUDIO);
+  const settings = { ...storySettings, ...fixture.settings };
+  await page.route("**/api/story-settings", (route) => route.fulfill({ json: { settings, defaultInstructions: "default", locations: LOCATIONS.map((id) => ({ id, label: id })), voices: [{ id: "af_heart", label: "Heart" }], voice: { available: fixture.kokoro, reason: fixture.kokoro ? null : "Kokoro is not installed on this node." } } }));
+  await page.route("**/api/story-voice", async (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { available: fixture.kokoro, reason: null } });
+    fixture.spoken?.push(route.request().postDataJSON());
+    if (fixture.narration) return route.fulfill({ status: fixture.narration, json: { error: "Kokoro could not speak the line." } });
+    return route.fulfill({ contentType: "audio/wav", body: "RIFF" });
+  });
   await page.route("**/api/projects/*/git/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/status")) return route.fulfill({ json: status });
     if (path.endsWith("/scope")) return route.fulfill({ json: { paths: ["app.ts", "app.test.ts"], lastHarness: "claude" } });
     if (path.endsWith("/guide-latest")) return route.fulfill({ json: { latest: null } });
     if (path.endsWith("/story-latest")) return route.fulfill({ json: { latest: { thread, saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } }, commits: [] } });
-    if (path.endsWith("/story-voice") && route.request().method() === "GET") return route.fulfill({ json: { configured: voice.configured } });
-    if (path.endsWith("/story-voice")) return route.fulfill({ status: voice.narration, json: { error: "ElevenLabs refused the narration (401): Invalid API key" } });
+    if (path.endsWith("/story-podcast") && route.request().method() === "GET") return route.fulfill({ json: { script: fixture.script ?? null } });
+    if (path.endsWith("/story-podcast")) {
+      const body = route.request().postDataJSON() as { question?: string };
+      fixture.podcastPosts?.push(body);
+      const lines = [{ type: "progress", stage: "Writing with the reviewer" }, { type: "done", script: body.question ? answered : script }];
+      return route.fulfill({ contentType: "application/x-ndjson", body: lines.map((line) => JSON.stringify(line)).join("\n") });
+    }
     return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
   });
   await mockReviewers(page);
@@ -524,12 +566,11 @@ async function openSavedStory(page: Page, environment: { username: string; passw
   await page.getByTestId("git-review-tab-story").click();
 }
 
-test("Story tab suggests a developer walkthrough that speaks with the computer's voice and explains the ElevenLabs upgrade", { timeout: 120_000 }, async (t) => {
+test("Story tab suggests a developer walkthrough that speaks with the computer's voice when Kokoro is not ready", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  await openSavedStory(page, environment, node.url, { configured: false });
+  await openSavedStory(page, environment, node.url, { kokoro: false });
   await page.getByTestId("git-story-video-suggestion").waitFor();
-  await page.getByTestId("git-story-voice-setup").locator("summary").click();
-  assert.match(await page.getByTestId("git-story-voice-setup").innerText(), /ELEVENLABS_API_KEY/);
+  assert.match(await page.getByTestId("git-story-video-suggestion").innerText(), /Narration uses this computer's voice\. Kokoro narration is set up in Settings → Story mode/);
 
   await page.getByTestId("git-story-video-play").click();
   const video = page.getByTestId("git-story-video");
@@ -553,18 +594,86 @@ test("Story tab suggests a developer walkthrough that speaks with the computer's
   assert.equal(await page.getByTestId("git-story-video-voice").innerText(), "Voice off");
 });
 
-test("Story video switches to the computer's voice and says why when ElevenLabs fails", { timeout: 120_000 }, async (t) => {
+test("Story video narrates with Kokoro and switches to the computer's voice, saying why, when Kokoro fails", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  await openSavedStory(page, environment, node.url, { configured: true, narration: 502 });
+  const spoken: Array<Record<string, unknown>> = [];
+  await openSavedStory(page, environment, node.url, { kokoro: true, narration: 502, spoken });
   await page.getByTestId("git-story-video-play").click();
-  await page.locator(".toast-message", { hasText: "ElevenLabs narration failed" }).waitFor();
+  await page.locator(".toast-message", { hasText: "Kokoro narration failed" }).waitFor();
   await page.getByText("Voice: this computer").waitFor();
+  assert.equal(spoken[0].who, "host");
   assert.match(await page.evaluate(() => (window as unknown as { __spoken: string[] }).__spoken[0]), /Greeting with an empty-name error/);
+});
+
+test("Story tab writes a podcast, moves between places, shows the code, and grows with a follow-up question", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const podcastPosts: Array<Record<string, unknown>> = [];
+  const spoken: Array<Record<string, unknown>> = [];
+  await openSavedStory(page, environment, node.url, { kokoro: true, script: null, podcastPosts, spoken });
+  await page.getByTestId("git-story-podcast-play").click();
+  const podcast = page.getByTestId("git-story-podcast");
+  await podcast.waitFor();
+  assert.equal(podcastPosts.length, 1);
+  assert.equal(podcastPosts[0].threadId, "story-1");
+  assert.equal((podcastPosts[0].settings as typeof storySettings).hostVoice, "af_heart");
+  assert.equal(podcastPosts[0].question, undefined);
+
+  // Chapters carry a place each, and the slide builds as the lines are spoken.
+  assert.match(await page.locator(".gsp-scene-chip").innerText(), /1 \/ 3 · Server room/);
+  assert.equal(await page.locator(".gsp-chap").count(), 3);
+  await page.locator(".gsp-chap", { hasText: "The guard" }).click();
+  assert.match(await page.locator(".gsp-scene-chip").innerText(), /The matrix/);
+  await page.locator(".gsp-hl.is-on").waitFor();
+  assert.match(await page.locator(".gsp-callout.is-on").innerText(), /The old line goes/);
+  assert.equal(await page.locator(".gsp-cl.add").count(), 1);
+  await page.locator(".gsp-chap", { hasText: "Recap" }).click();
+  assert.match(await page.locator(".gsp-scene-chip").innerText(), /Rooftop at dawn/);
+  await page.locator(".gsp-rc.is-on").first().waitFor();
+
+  // Each line is its own clip, and a finished clip moves on to the next line.
+  await page.locator(".gsp-chap", { hasText: "What went wrong" }).click();
+  await page.locator(".gsp-play").click();
+  await page.locator(".gsp-play", { hasText: "Replay" }).waitFor();
+  assert.deepEqual(spoken.slice(0, 2), [{ text: "Today we look at the greeting.", who: "host" }, { text: "What went wrong?", who: "cohost" }]);
+
+  // The written section explains the code line by line.
+  await page.getByTestId("git-story-podcast-writeup-tab").click();
+  const writeup = page.getByTestId("git-story-podcast-writeup");
+  assert.match(await writeup.innerText(), /app\.ts rejects an empty name[\s\S]*A dialog: It steals focus[\s\S]*line 2 A new guard rejects empty names/);
+  await page.getByRole("button", { name: "Podcast", exact: true }).click();
+
+  // A question continues the story: its answer becomes new chapters and joins the written section.
+  await page.getByTestId("git-story-podcast-question").fill("Why a guard?");
+  await page.getByTestId("git-story-podcast-ask").click();
+  await page.locator(".gsp-chap.is-question").waitFor();
+  assert.deepEqual(podcastPosts[1].question, "Why a guard?");
+  assert.equal(await page.locator(".gsp-chap").count(), 4);
+  assert.match(await page.locator(".gsp-scene-chip").innerText(), /4 \/ 4 · Coffee house/);
+  await page.getByTestId("git-story-podcast-writeup-tab").click();
+  assert.match(await writeup.innerText(), /Your follow-up questions[\s\S]*Why a guard\? A default would hide the mistake/i);
+
+  await page.keyboard.press("Escape");
+  assert.equal(await podcast.count(), 0);
+});
+
+test("Story podcast follows the settings: one studio, no code slides, no mood, and a saved script plays without the writer", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const podcastPosts: Array<Record<string, unknown>> = [];
+  await openSavedStory(page, environment, node.url, { kokoro: false, script, settings: { backdrops: false, moods: false, codeSlides: false, ask: false, codeWriteup: false }, podcastPosts });
+  await page.getByTestId("git-story-podcast-play").click();
+  await page.getByTestId("git-story-podcast").waitFor();
+  assert.deepEqual(podcastPosts, []);
+  assert.equal(await page.locator(".gsp-chap").count(), 2, "the code chapter is dropped");
+  assert.match(await page.locator(".gsp-scene-chip").innerText(), /Podcast studio/);
+  assert.equal(await page.getByTestId("git-story-podcast-question").isVisible(), false);
+  assert.equal(await page.locator(".gsp-play").innerText(), "▶ Play");
+  await page.getByTestId("git-story-podcast-writeup-tab").click();
+  assert.equal(await page.locator(".gsp-wcode").count(), 0);
 });
 
 test("Story saves as one HTML file with the walkthrough and the review notes", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  await openSavedStory(page, environment, node.url, { configured: false });
+  await openSavedStory(page, environment, node.url, { kokoro: false });
   const download = page.waitForEvent("download");
   await page.getByTestId("git-story-video-export").click();
   const file = path.join(mkdtempSync(path.join(os.tmpdir(), "story-export-")), "story.html");

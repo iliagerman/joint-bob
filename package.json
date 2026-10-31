@@ -85,5 +85,9 @@
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "kokoro-js": "^1.2.1"
   }
 }

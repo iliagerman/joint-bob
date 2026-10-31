@@ -738,6 +738,7 @@
           <option value="workspaces">Workspaces</option>
           <option value="engines">Harnesses</option>
           <option value="git">Git</option>
+          <option value="story">Story mode</option>
           <option value="classifiers">Classifiers</option>
           <option value="resources" data-admin-only>Resources</option>
           <option value="file-sync" data-admin-only>File sync</option>
@@ -767,6 +768,7 @@
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces"><span class="settings-tab-icon" style="--tile:#06b6d4" aria-hidden="true">🗂️</span><span class="settings-tab-label">Workspaces</span></button>
           <button class="settings-tab" type="button" data-settings-tab="git" role="tab" id="settingsTab-git" aria-controls="settingsPanel-git" aria-selected="false" tabindex="-1" data-testid="settings-tab-git"><span class="settings-tab-icon" style="--tile:#f97316" aria-hidden="true">🌿</span><span class="settings-tab-label">Git</span></button>
           <div class="settings-group-label" role="presentation">Agents</div>
+          <button class="settings-tab" type="button" data-settings-tab="story" role="tab" id="settingsTab-story" aria-controls="settingsPanel-story" aria-selected="false" tabindex="-1" data-testid="settings-tab-story"><span class="settings-tab-icon" style="--tile:#ec4899" aria-hidden="true">🎙</span><span class="settings-tab-label">Story mode</span></button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines"><span class="settings-tab-icon" style="--tile:#a855f7" aria-hidden="true">🤖</span><span class="settings-tab-label">Harnesses</span></button>
           <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers"><span class="settings-tab-icon" style="--tile:#14b8a6" aria-hidden="true">🧭</span><span class="settings-tab-label">Classifiers</span></button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets"><span class="settings-tab-icon" style="--tile:#37cfab" aria-hidden="true">🔑</span><span class="settings-tab-label">Secrets</span></button>
@@ -1643,6 +1645,47 @@
           <p class="settings-hint" data-admin-only>Maximum changed files in worktree PRs, PR details, and PR explanations on this node. Default 1,000; GitHub lists at most 3,000. Save settings to apply.</p>
           <label data-admin-only>PR timeout (seconds)<input type="number" id="settingsGitPullTimeoutSeconds" min="60" max="3600" step="1" value="360" required data-testid="settings-git-pull-timeout-seconds" /></label>
           <p class="settings-hint" data-admin-only>How long a worktree command waits for this node before it reports that the outcome is unknown. Default 360 seconds. Applies to conversations that start after you save.</p>
+        </section>
+        <section class="settings-panel" id="settingsPanel-story" role="tabpanel" aria-labelledby="settingsTab-story" tabindex="0" data-testid="settings-panel-story" hidden>
+          <p>Story mode turns a change story into a podcast: two hosts explain what changed, how it works and why, in places that follow the mood of each chapter. Saved on this node, which writes the story and speaks it.</p>
+          <fieldset class="phase-settings">
+            <legend>Story instructions</legend>
+            <label class="sr-only" for="storyInstructions">Story instructions</label>
+            <textarea id="storyInstructions" rows="12" maxlength="6000" data-testid="story-instructions"></textarea>
+            <p class="settings-hint">Sent to the writer with every story and every follow-up answer. Empty uses the default instructions.</p>
+            <button class="ghost compact" type="button" id="storyInstructionsReset" data-testid="story-instructions-reset">Restore default instructions</button>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Locations and mood</legend>
+            <label class="checkbox-row"><input id="storyBackdrops" type="checkbox" data-testid="story-backdrops" /> Move the story between locations as it unfolds, instead of one podcast studio</label>
+            <div id="storyLocations" class="story-locations" data-testid="story-locations"></div>
+            <label class="checkbox-row"><input id="storyMoods" type="checkbox" data-testid="story-moods" /> Let the setting follow the mood: rain and red light while it is broken, a light bulb when it clicks, sunrise when it is solved</label>
+            <p class="settings-hint">The writer picks a location and a mood for every chapter. A location you turn off is replaced by the podcast studio.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Code</legend>
+            <label class="checkbox-row"><input id="storyCodeSlides" type="checkbox" data-testid="story-code-slides" /> Show code snippets on the slides, with the important lines highlighted and explained step by step</label>
+            <label class="checkbox-row"><input id="storyCodeWriteup" type="checkbox" data-testid="story-code-writeup" /> Include the code, with a line-by-line explanation, in the written implementation and reasoning</label>
+            <label>Max lines per snippet<input id="storyMaxCodeLines" type="number" min="4" max="24" step="1" data-testid="story-max-code-lines" /></label>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Follow-up questions</legend>
+            <label class="checkbox-row"><input id="storyAsk" type="checkbox" data-testid="story-ask" /> Let viewers ask follow-up questions; each answer continues the story as new chapters</label>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Narration with Kokoro</legend>
+            <p id="storyVoiceStatus" class="settings-hint" role="status" data-testid="story-voice-status"></p>
+            <label class="checkbox-row"><input id="storyNarrate" type="checkbox" data-testid="story-narrate" /> Narrate stories with Kokoro on this node</label>
+            <label>Host voice (Maya)<select id="storyHostVoice" data-testid="story-host-voice"></select></label>
+            <label>Co-host voice (Jonah)<select id="storyCohostVoice" data-testid="story-cohost-voice"></select></label>
+            <label>Speaking speed<input id="storySpeed" type="number" min="0.7" max="1.3" step="0.05" data-testid="story-speed" /></label>
+            <p class="settings-hint">Kokoro-82M runs on this node and needs no key. The model downloads once, on first use, and each line is kept after it is spoken, so replays are instant. Changing a voice or the speed speaks the lines again.</p>
+            <button class="ghost compact" type="button" id="storyTestVoices" data-testid="story-test-voices">Test voices</button>
+          </fieldset>
+          <div class="settings-actions">
+            <button class="primary" type="button" id="storySave" data-testid="story-save">Save Story mode</button>
+            <span id="storySaveStatus" class="settings-hint" role="status" data-testid="story-save-status"></span>
+          </div>
         </section>
         <section class="settings-panel" id="settingsPanel-classifiers" role="tabpanel" aria-labelledby="settingsTab-classifiers" tabindex="0" hidden>
           <p>Named routing configurations choose the model and reasoning for each prompt by difficulty. Each node keeps its own configurations, picks the active one independently, and can share one with the eligible nodes of its clusters. The classifier's API key comes from the matching variable on an attached secret account.</p>

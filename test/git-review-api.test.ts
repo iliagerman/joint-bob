@@ -242,3 +242,46 @@ test("git status on a non-repository project returns 400", { timeout: 120_000 },
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("story mode settings and voice are served by the node, and a podcast needs a saved story", { timeout: 120_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-story-mode-api-"));
+  const sync = await fakeSyncthing();
+  let node: StartedNode | undefined;
+  try {
+    node = await startNode(root, sync.url);
+    const headers = await session(node);
+    const view = await jsonBody(await fetch(`${node.baseUrl}/api/story-settings`, { headers })) as {
+      settings: { locations: string[]; hostVoice: string; moods: boolean }; defaultInstructions: string; locations: Array<{ id: string; label: string }>; voices: Array<{ id: string; label: string }>; voice: { available: boolean };
+    };
+    assert.equal(view.locations.length, 9);
+    assert.equal(view.settings.locations.length, 9);
+    assert.ok(view.voices.some((voice) => voice.id === "af_heart" && voice.label === "Heart · American, female"));
+    assert.match(view.defaultInstructions, /Maya explains, Jonah asks/);
+    assert.equal(view.voice.available, true);
+
+    const saved = await fetch(`${node.baseUrl}/api/story-settings`, { method: "PUT", headers, body: JSON.stringify({ ...view.settings, locations: ["classroom"], moods: false, hostVoice: "bf_emma" }) });
+    assert.equal(saved.status, 200);
+    const reread = await jsonBody(await fetch(`${node.baseUrl}/api/story-settings`, { headers })) as typeof view;
+    assert.deepEqual(reread.settings.locations, ["classroom"]);
+    assert.equal(reread.settings.moods, false);
+    assert.equal(reread.settings.hostVoice, "bf_emma");
+    const refused = await fetch(`${node.baseUrl}/api/story-settings`, { method: "PUT", headers, body: JSON.stringify({ ...view.settings, locations: ["moon"] }) });
+    assert.equal(refused.status, 400);
+
+    assert.deepEqual(await jsonBody(await fetch(`${node.baseUrl}/api/story-voice`, { headers })), { available: true, reason: null });
+    assert.equal((await fetch(`${node.baseUrl}/api/story-voice`, { method: "POST", headers, body: JSON.stringify({ text: "Hello", who: "nobody" }) })).status >= 400, true);
+
+    const created = await fetch(`${node.baseUrl}/api/projects`, { method: "POST", headers, body: JSON.stringify({ name: "Podcast", type: "work", synced: true }) });
+    const project = (await created.json() as { project: { id: string; path: string } }).project;
+    await gitCmd(project.path, ["init", "-b", "main"]);
+    const missing = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-podcast?threadId=unknown`, { headers });
+    assert.equal(missing.status, 404);
+    const ask = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-podcast`, { method: "POST", headers, body: JSON.stringify({ threadId: "unknown", question: "Why?" }) });
+    assert.equal(ask.status, 404);
+    assert.match((await jsonBody(ask) as { error: string }).error, /Story not found/);
+  } finally {
+    if (node) await stopNode(node);
+    sync.server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

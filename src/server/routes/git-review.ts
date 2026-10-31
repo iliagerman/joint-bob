@@ -24,7 +24,8 @@ import {
   type GitReviewSelection,
   type GitReviewThread,
 } from "../../git-review-threads.js";
-import { narrateStoryText, NARRATION_LIMIT, storyVoiceKey } from "../story-voice.js";
+import { askStoryScript, generateStoryScript, loadStoryScript } from "../story-podcast.js";
+import { getStorySettings, storySettingsSchema } from "../../story-settings.js";
 import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StoryProgress, type StorySources } from "../git-change-story.js";
 import { getProject } from "../../store.js";
 import { genericSecretEnvironment, githubAccountsForProject } from "../../secrets.js";
@@ -596,7 +597,9 @@ const wantsStream = (request: Request) => Boolean(request.get("accept")?.include
 
 // Streams progress lines and a final "done" (or "error") line when the client asks for
 // NDJSON. Once the stream has started, failures travel as a line, not an HTTP status.
-async function sendStory(request: Request, response: Response, run: (onProgress?: (event: StoryProgress) => void) => Promise<unknown>): Promise<void> {
+type JobProgress = StoryProgress | { type: "progress"; stage: string };
+
+async function sendStory(request: Request, response: Response, run: (onProgress?: (event: JobProgress) => void) => Promise<unknown>): Promise<void> {
   const streaming = wantsStream(request);
   if (streaming) {
     response.status(200).setHeader("Content-Type", NDJSON);
@@ -610,6 +613,7 @@ async function sendStory(request: Request, response: Response, run: (onProgress?
     const result = await run((event) => {
       if (event.type === "facts") stage = "Writing with the reviewer";
       if (event.type === "checking") stage = "Checking and saving the story";
+      if (event.type === "progress") stage = event.stage;
       if (streaming) send(event);
     });
     if (streaming) send({ type: "done", ...result as object });
@@ -622,7 +626,7 @@ async function sendStory(request: Request, response: Response, run: (onProgress?
       message, `Status: ${status}`, `Stage: ${stage}`, `Server: ${hostname()}`, `Time: ${new Date().toISOString()}`,
       `Project: ${request.params.projectId ?? queryString(request, "projectId")}`,
       `Conversation: ${request.body.conversationId ?? "none"}`,
-      `Reviewer: ${request.body.harnessId} / ${request.body.modelId}`,
+      ...(request.body.harnessId ? [`Reviewer: ${request.body.harnessId} / ${request.body.modelId}`] : []),
     ].join("\n");
     const failure = { type: "error", status, error: message, details };
     console.error(`Change story failed\n${details}`, error);
@@ -668,18 +672,6 @@ app.get("/api/projects/:projectId/git/pushes", async (request, response, next) =
   } catch (error) { handleGitError(response, error, next); }
 });
 
-// Optional narration for the story video. The ElevenLabs key is a project secret on this node.
-app.get("/api/projects/:projectId/git/story-voice", (request, response) => {
-  response.json({ configured: Boolean(storyVoiceKey(request.params.projectId)) });
-});
-
-app.post("/api/projects/:projectId/git/story-voice", async (request, response, next) => {
-  try {
-    const { text } = z.object({ text: z.string().trim().min(1).max(NARRATION_LIMIT) }).parse(request.body);
-    response.type("audio/mpeg").send(await narrateStoryText(storyVoiceKey(request.params.projectId), text));
-  } catch (error) { handleGitError(response, error, next); }
-});
-
 app.get("/api/cluster/git/story-latest", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
@@ -694,6 +686,80 @@ app.get("/api/projects/:projectId/git/story-latest", async (request, response, n
     const threadId = queryOptional(request, "threadId");
     await withOwningNode(request, response, "/api/cluster/git/story-latest", { conversationId, threadId }, async () =>
       latestStory(request.params.projectId, await reviewCwd(request.params.projectId, queryOptional(request, "taskId"), queryOptional(request, "repository")), conversationId ?? null, threadId, queryOptional(request, "repository")));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+// ---- Story podcast ----
+
+const podcastRequest = z.object({
+  threadId: z.string().min(1).max(240),
+  /** A follow-up question; the answer is added to the story as new chapters. */
+  question: z.string().trim().min(1).max(500).optional(),
+  /** Writes the script again instead of replaying the saved one. */
+  regenerate: z.boolean().default(false),
+  /** The settings of the node the viewer is using; this node's own are used when absent. */
+  settings: storySettingsSchema.optional(),
+}).strict();
+
+function podcastStory(projectId: string, threadId: string, repository?: string): { thread: GitReviewThread; saved: SavedChangeStory } {
+  const thread = getGitReviewThread(threadId);
+  if (!thread || thread.projectId !== projectId || thread.messages[0]?.text !== CHANGE_STORY_MARKER || !sameRepository(thread.selection, repository)) throw new GitReviewError(404, "Story not found");
+  return { thread, saved: JSON.parse(thread.messages[1].text) as SavedChangeStory };
+}
+
+async function performPodcast(projectId: string, cwd: string, input: z.infer<typeof podcastRequest>, onProgress?: (event: JobProgress) => void, repository?: string): Promise<unknown> {
+  const { thread, saved } = podcastStory(projectId, input.threadId, repository);
+  const settings = input.settings ?? getStorySettings();
+  let script = await loadStoryScript(projectId, thread.id);
+  if (input.question) {
+    if (!script) throw new GitReviewError(409, "Write the podcast before asking a follow-up question");
+    onProgress?.({ type: "progress", stage: "Writing the answer" });
+    script = await askStoryScript(thread, cwd, saved, script, input.question, settings);
+  } else if (!script || input.regenerate) {
+    onProgress?.({ type: "progress", stage: "Writing the podcast" });
+    script = await generateStoryScript(thread, cwd, saved, settings);
+  }
+  return { script };
+}
+
+app.get("/api/cluster/git/story-podcast", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const projectId = queryString(request, "projectId");
+    const { thread } = podcastStory(projectId, queryString(request, "threadId"), queryOptional(request, "repository"));
+    response.json({ script: await loadStoryScript(projectId, thread.id) });
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.get("/api/projects/:projectId/git/story-podcast", async (request, response, next) => {
+  try {
+    const threadId = queryString(request, "threadId");
+    await withOwningNode(request, response, "/api/cluster/git/story-podcast", { threadId }, async () => {
+      const { thread } = podcastStory(request.params.projectId, threadId, queryOptional(request, "repository"));
+      return { script: await loadStoryScript(request.params.projectId, thread.id) };
+    });
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.post("/api/cluster/git/story-podcast", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const projectId = queryString(request, "projectId");
+    const cwd = await reviewCwd(projectId, queryOptional(request, "taskId"), queryOptional(request, "repository"));
+    const input = podcastRequest.parse(request.body);
+    await sendStory(request, response, (onProgress) => performPodcast(projectId, cwd, input, onProgress, queryOptional(request, "repository")));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.post("/api/projects/:projectId/git/story-podcast", async (request, response, next) => {
+  try {
+    const { projectId } = request.params;
+    const input = podcastRequest.parse(request.body);
+    await withOwningNode(request, response, "/api/cluster/git/story-podcast", {}, async () => {
+      const cwd = await reviewCwd(projectId, queryOptional(request, "taskId"), queryOptional(request, "repository"));
+      await sendStory(request, response, (onProgress) => performPodcast(projectId, cwd, input, onProgress, queryOptional(request, "repository")));
+      return SENT;
+    }, request);
   } catch (error) { handleGitError(response, error, next); }
 });
 

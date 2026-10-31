@@ -5,6 +5,7 @@ import { diagramLegend, mountStoryDiagram } from "./git-story-diagram.js";
 import { toast } from "./shell.js";
 import { exportStoryHtml } from "./git-story-export.js";
 import { playStoryVideo } from "./git-story-video.js";
+import { playStoryPodcast } from "./git-story-podcast.js";
 
 // A change story explains a conversation's commits and pending files. A separate read-only
 // reviewer writes it; nothing here is posted to the conversation.
@@ -35,8 +36,10 @@ const story = {
   pullNumber: null,
   pullUrl: null,
   pullDraft: "",
-  // Whether the server holds an ElevenLabs key; null until asked.
+  // Whether Kokoro will narrate the video on this node; null until asked.
   voice: null,
+  // The podcast being written: { stage } while the writer works, { error, details } when it failed.
+  podcast: null,
 };
 
 // Where the reader was in a story, so closing the Git view and opening it again lands on the same page.
@@ -98,6 +101,7 @@ export function resetStory(ctx) {
   story.pullUrl = null;
   story.pullDraft = "";
   story.voice = null;
+  story.podcast = null;
 }
 
 export function selectStoryPull(number, url = null) {
@@ -494,38 +498,85 @@ function storyHead() {
     !draft ? videoSuggestion() : null);
 }
 
-// An animated walkthrough of the saved story for reviewing it, also saved as one HTML file. The voice is
-// optional: this computer's speech voice by default, ElevenLabs when a key is set up.
-const VOICE_SETUP = [
-  "Create a free account at elevenlabs.io, open Developers → API Keys, and create a key. Allow it to use Text to Speech.",
-  "In Joint Bob open Settings → Secrets, press + to add a custom account named ElevenLabs, and add a variable named ELEVENLABS_API_KEY with your key.",
-  "Attach that account to a workspace or this project under Secret accounts, then reopen the story.",
-];
+// An animated walkthrough of the saved story for reviewing it, also saved as one HTML file, and the same story
+// told as a podcast. Narration is Kokoro on this node when it is ready, otherwise this computer's speech voice.
+async function kokoroNarrates() {
+  try { const { settings, voice } = await api("/api/story-settings"); return settings.narrate && voice.available; } catch { return false; }
+}
 
-async function elevenConfigured() {
-  try { return (await api(story.ctx.apiUrl("story-voice"))).configured; } catch { return false; }
+const speakLine = (text, who) => apiBlob("/api/story-voice", { method: "POST", body: JSON.stringify({ text, who }) });
+
+// Streams the writer's progress and returns the script it saved.
+async function requestPodcast(body, onProgress) {
+  let script = null;
+  await apiLines(story.ctx.apiUrl("story-podcast"), { method: "POST", body: JSON.stringify(body) }, (line) => {
+    if (line.type === "error") throw Object.assign(new Error(line.error), { details: line.details });
+    if (line.type === "progress") onProgress(line.stage);
+    if (line.type === "done") script = line.script;
+  });
+  if (!script) throw new Error("The connection closed before the podcast finished. If the writer completed it, it is saved; try again.");
+  return script;
+}
+
+async function listenAsPodcast() {
+  const threadId = shown().thread.id;
+  story.podcast = { stage: "Reading the story" };
+  renderStory();
+  try {
+    const [{ settings, voice }, saved] = await Promise.all([api("/api/story-settings"), api(story.ctx.apiUrl("story-podcast", { threadId }))]);
+    const write = (extra, onProgress) => requestPodcast({ threadId, settings, ...extra }, onProgress);
+    const script = saved.script ?? await write({}, (stage) => { story.podcast.stage = stage; renderStory(); });
+    story.podcast = null;
+    renderStory();
+    playStoryPodcast({
+      script, settings, host: story.ctx.container.closest("dialog") ?? document.body, notify: toast,
+      narrate: settings.narrate && voice.available ? speakLine : null,
+      ask: settings.ask ? (question, onProgress) => write({ question }, onProgress) : null,
+      rewrite: (onProgress) => write({ regenerate: true }, onProgress),
+    });
+  } catch (error) {
+    story.podcast = { error: error.message, details: error.details ?? error.message };
+    renderStory();
+  }
+}
+
+async function copyPodcastError() {
+  try {
+    await navigator.clipboard.writeText(story.podcast.details);
+    toast("Error details copied");
+  } catch (error) {
+    toast(`Could not copy error details: ${error.message}. Select the text under Error details to copy it manually.`, 6000);
+  }
+}
+
+function podcastStatus() {
+  const { podcast } = story;
+  if (!podcast) return null;
+  if (!podcast.error) return h("p", { class: "gs-muted gs-small", role: "status", "data-testid": "git-story-podcast-writing" }, `Writing the podcast… ${podcast.stage}`);
+  return h("div", { class: "gs-small", role: "alert", "data-testid": "git-story-podcast-error" },
+    h("p", {}, `The podcast could not be written. ${podcast.error}`),
+    h("details", {}, h("summary", {}, "Error details"), h("pre", { class: "gs-small", style: "white-space:pre-wrap;overflow-wrap:anywhere", "data-testid": "git-story-podcast-error-details" }, podcast.details)),
+    h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-podcast-copy-error", onclick: copyPodcastError }, "Copy error details"));
 }
 
 function videoSuggestion() {
   if (story.voice === null) {
     story.voice = false;
-    void elevenConfigured().then((configured) => { if (configured) { story.voice = true; renderStory(); } });
+    void kokoroNarrates().then((narrates) => { if (narrates) { story.voice = true; renderStory(); } });
   }
   const { saved } = shown();
-  const narrate = story.voice ? (text) => apiBlob(story.ctx.apiUrl("story-voice"), { method: "POST", body: JSON.stringify({ text }) }) : null;
+  const narrate = story.voice ? (text) => speakLine(text, "host") : null;
   const play = (voice) => playStoryVideo({ story: saved.story, facts: saved.facts, host: story.ctx.container.closest("dialog") ?? document.body, narrate, notify: toast, voice });
   const save = async () => { try { await exportStoryHtml(saved.story, saved.facts); } catch (error) { toast(`Could not save the HTML file: ${error.message}`); } };
   return h("div", { class: "gsv-suggest", "data-testid": "git-story-video-suggestion" },
-    h("p", {}, h("b", {}, "Walk through this story as a video. "), "Animated flow, worked examples, files, design decisions and the review checklist, with an optional narrator."),
+    h("p", {}, h("b", {}, "Walk through this story as a video or listen to it as a podcast. "), "The video covers the animated flow, worked examples, files, design decisions and the review checklist. The podcast has two hosts who explain what changed, how it works and why, and you can ask them questions."),
     h("div", { class: "gsv-suggest-row" },
+      h("button", { class: "primary compact", type: "button", disabled: Boolean(story.podcast && !story.podcast.error), "data-testid": "git-story-podcast-play", onclick: () => void listenAsPodcast() }, "🎙 Listen as a podcast"),
       h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-play", onclick: () => play(true) }, "▶ Play with voice"),
       h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-silent", onclick: () => play(false) }, "Play without voice"),
       h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-export", onclick: save }, "Save as HTML file"),
-      h("span", { class: "gs-muted gs-small" }, story.voice ? "Narration by ElevenLabs, falling back to this computer's voice." : "Narration uses this computer's voice.")),
-    story.voice ? null : h("details", { "data-testid": "git-story-voice-setup" },
-      h("summary", {}, "Want a better voice? Add ElevenLabs (optional)"),
-      h("ol", {}, VOICE_SETUP.map((step) => h("li", {}, step))),
-      h("p", { class: "gs-muted gs-small" }, "Each scene's text is sent to ElevenLabs and the audio is saved on this machine, so replays cost nothing. If ElevenLabs fails, the video switches to this computer's voice.")));
+      h("span", { class: "gs-muted gs-small" }, story.voice ? "Narration by Kokoro, falling back to this computer's voice." : "Narration uses this computer's voice. Kokoro narration is set up in Settings → Story mode.")),
+    podcastStatus());
 }
 
 function storySections() {

@@ -13,6 +13,9 @@ import { sendError } from "../http-auth.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ntfyServiceSchema, pushSubscribeSchema, pushUnsubscribeSchema, sharedNtfyServiceSchema } from "../schemas.js";
 import { app } from "../state.js";
+import { GitReviewError } from "../../git-review.js";
+import { DEFAULT_STORY_INSTRUCTIONS, KOKORO_VOICES, STORY_LOCATIONS, STORY_LOCATION_LABELS, getStorySettings, storySettingsSchema, updateStorySettings, voiceLabel } from "../../story-settings.js";
+import { NARRATION_LIMIT, narrateStoryText, storyVoiceStatus } from "../story-voice.js";
 import { getClusterNode } from "../../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
@@ -188,6 +191,44 @@ app.put("/api/error-reporting", (request, response, next) => {
     response.json(updateErrorReportingSettings(request.body));
   } catch (error) {
     if (error instanceof ErrorReportingSettingsError) { sendError(response, 400, error.message); return; }
+    next(error);
+  }
+});
+
+// Story mode: what the podcast looks like and which voices narrate it. Saved on this node.
+function storySettingsView() {
+  return {
+    settings: getStorySettings(),
+    defaultInstructions: DEFAULT_STORY_INSTRUCTIONS,
+    locations: STORY_LOCATIONS.map((id) => ({ id, label: STORY_LOCATION_LABELS[id] })),
+    voices: KOKORO_VOICES.map((id) => ({ id, label: voiceLabel(id) })),
+    voice: storyVoiceStatus(),
+  };
+}
+
+app.get("/api/story-settings", (_request, response) => {
+  response.json(storySettingsView());
+});
+
+app.put("/api/story-settings", (request, response) => {
+  const parsed = storySettingsSchema.safeParse(request.body);
+  if (!parsed.success) { sendError(response, 400, `Invalid story settings: ${parsed.error.issues[0].path.join(".")} ${parsed.error.issues[0].message}`); return; }
+  updateStorySettings(parsed.data);
+  response.json(storySettingsView());
+});
+
+app.get("/api/story-voice", (_request, response) => {
+  response.json(storyVoiceStatus());
+});
+
+const storyVoiceRequest = z.object({ text: z.string().trim().min(1).max(NARRATION_LIMIT), who: z.enum(["host", "cohost"]) }).strict();
+
+app.post("/api/story-voice", async (request, response, next) => {
+  try {
+    const { text, who } = storyVoiceRequest.parse(request.body);
+    response.type("audio/wav").send(await narrateStoryText(text, who));
+  } catch (error) {
+    if (error instanceof GitReviewError) { sendError(response, error.status, error.message); return; }
     next(error);
   }
 });
