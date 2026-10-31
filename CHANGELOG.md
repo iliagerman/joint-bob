@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.180.1 — 2026-10-31
+
+- Fixed the new icon reading as a sailboat at small sizes: the app icon, tab icon and splash now show a solid Snufkin with a hat, face and pipe that stays recognizable at tab-icon size.
+
 ## 2.180.0 — 2026-10-31
 
 - Changed story narration so local voice is no longer installed automatically; it is installed on request from Settings → Story mode, and only on a computer with at least 8 GB of memory and 4 cores, so other machines never download it.
