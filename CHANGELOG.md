@@ -3,9 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.178.0 — 2026-10-31
 
-- Added a Listen as a podcast button to saved Git stories, where two hosts explain what changed, how it works and why, take your follow-up questions, and are narrated by Kokoro when it is ready.
+- Added a Listen as a podcast button to saved Git stories, where two hosts explain what changed, how it works and why, with the hosts walking, pointing and reacting on screen.
+- Added podcast chapters set in a place such as a studio, classroom, lecture hall, train or server room, each with its own mood and one slide: flow, comparison, timeline, panel, code or recap.
+- Added code slides in podcast stories that show only lines found in the changed files, so no code is shown that the change does not contain.
+- Added follow-up questions to a podcast story, which add new chapters to the same story and to its written implementation and reasoning section.
+- Changed podcast narration to use Kokoro on this computer instead of ElevenLabs; a computer without it plays the story silently and says so.
+- Added a Story mode tab in Settings for podcast instructions, places, mood effects, code on slides and in the written section, voices and speed.
 
 ## 2.177.3 — 2026-10-30
 
