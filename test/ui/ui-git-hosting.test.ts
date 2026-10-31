@@ -63,9 +63,12 @@ test("GitHub PR and pipeline tabs show list-first navigation and mobile workflow
   await page.waitForFunction(() => document.querySelector("#gitReviewStatus")?.textContent?.includes("Submitted"));
   assert.deepEqual(writes, [{ action: "review", number: 42, body: "Looks good", event: "APPROVE" }]);
   await page.getByTestId("git-hosting-explain-pull").click();
-  await page.getByTestId("git-review-tab-story").waitFor();
-  assert.equal(await page.getByTestId("git-review-tab-story").getAttribute("aria-selected"), "true");
+  await page.getByTestId("git-story").waitFor();
+  assert.equal(await page.locator("#gitReviewTitle").innerText(), "Story");
+  assert.equal(await page.getByTestId("git-review-tab-changes").isVisible(), false, "the story has no Git tabs");
   assert.match(await page.locator("#gitReviewGenerate").innerText(), /PR #42/);
+  await page.getByTestId("git-review-close-button").click();
+  await page.getByTestId("chat-git-button").click();
   await page.getByTestId("git-review-tab-pulls").click();
   await page.getByTestId("git-hosting-pull-row").click();
   await page.getByTestId("git-hosting-close").click();

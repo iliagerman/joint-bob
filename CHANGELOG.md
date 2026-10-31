@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added subscription pools, which group your own Claude and OpenAI subscriptions in a failover order, can be assigned to a cluster, and move a turn to the next subscription when a quota or sign-in failure happens before any reply starts.
+- Changed Story to its own view, opened from the activity panel and the phone menu, where Activity overview plays the same story as a video instead of a Git tab.
 
 ## 2.181.0 — 2026-10-31
 

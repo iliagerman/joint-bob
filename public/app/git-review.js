@@ -5,7 +5,7 @@ import { api } from "./api.js";
 import { projectGitUrl } from "./project-git-url.js";
 import { elements } from "./elements.js";
 import { renderSideBySideDiff } from "./git-diff-view.js";
-import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyCommitsToExplain, storyHasSaved, storyHidesScope, storyIsBeingWritten, storyIsFresh, storyIsMissing, storyPicking, storyPullNumber, storyPullUrl, selectStoryPull } from "./git-story.js";
+import { generateStory, loadStory, refitStory, renderStory, resetStory, storyChrome, storyCommitCount, storyCommitsToExplain, storyHasSaved, storyHidesScope, storyIsBeingWritten, storyIsMissing, playStory, storyPicking, storyPullNumber, storyPullUrl, selectStoryPull } from "./git-story.js";
 import { fillModelOptions, fillThinkingOptions, selectedModel, selectModel } from "./git-reviewer-options.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -117,7 +117,7 @@ export async function openGitReview(conversationId = null, { tab = "changes", ow
 
 function applyTab(tab) {
   git.tab = tab;
-  for (const [name, button] of [["changes", elements.gitReviewTabChanges], ["story", elements.gitReviewTabStory], ["history", elements.gitReviewTabHistory], ["reviews", elements.gitReviewTabReviews], ["pulls", elements.gitReviewTabPulls], ["pipelines", elements.gitReviewTabPipelines]]) {
+  for (const [name, button] of [["changes", elements.gitReviewTabChanges], ["history", elements.gitReviewTabHistory], ["reviews", elements.gitReviewTabReviews], ["pulls", elements.gitReviewTabPulls], ["pipelines", elements.gitReviewTabPipelines]]) {
     const active = name === tab;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-selected", String(active));
@@ -132,6 +132,9 @@ function applyTab(tab) {
   elements.gitReviewStoryCommitsLabel.hidden = !storyTab || !git.conversationId;
   elements.gitReviewHosting.hidden = !hosting;
   elements.gitReviewDialog.querySelector(".git-review-card").classList.toggle("is-hosting", hosting);
+  // The story is its own feature: it keeps the dialog's reviewer bar but none of Git's tabs.
+  elements.gitReviewDialog.querySelector(".git-review-card").classList.toggle("is-story-view", storyTab);
+  elements.gitReviewTitle.textContent = storyTab ? "Story" : "Git";
   renderAmbiguity();
   syncStoryChrome();
 }
@@ -674,8 +677,6 @@ function renderGuide() {
 
 // The Story tab shares the reviewer bar with review comments; its label and status follow the story.
 function syncStoryChrome() {
-  elements.gitReviewStoryDot.hidden = !storyHasSaved();
-  elements.gitReviewStoryDot.classList.toggle("is-outdated", storyHasSaved() && !storyIsFresh());
   const commits = storyCommitCount();
   elements.gitReviewStoryCommitsText.textContent = commits ? `Include this conversation's commits (${commits})` : "Include this conversation's commits (none found)";
   if (git.tab !== "story") {
@@ -750,13 +751,15 @@ function reopenStory() {
  * The toolbar's Story button. A saved story opens where the reader left it. Only a conversation with
  * no story gets one written, from its own commits, the pending files it claimed, and its turns.
  */
-export async function openConversationStory(conversationId) {
+export async function openConversationStory(conversationId, intent = null) {
   if (!state.activeProjectId) { toast("Open a project conversation first"); return; }
   // A story still being written keeps arriving in the closed view; opening must not start another.
-  if (git.conversationId === conversationId && storyIsBeingWritten()) { reopenStory(); return; }
+  if (git.conversationId === conversationId && storyIsBeingWritten()) { reopenStory(); if (intent) void playStory(intent); return; }
   const loaded = openGitReview(conversationId, { tab: "story", ownScope: true });
   await git.storyLoad;
-  if (git.conversationId !== conversationId || !storyIsMissing()) { await loaded; return; }
+  if (git.conversationId !== conversationId) { await loaded; return; }
+  if (!storyIsMissing()) { await loaded; if (intent && storyHasSaved()) void playStory(intent); return; }
+  if (intent) void playStory(intent);
   await generateStory(async () => {
     // Status, the files the coding agent says it changed, and the reviewer pickers.
     await loaded;
@@ -836,14 +839,17 @@ elements.chatGitButton.addEventListener("click", () => {
   const session = activeChatSession();
   void openGitReview(session?.conversationId ?? session?.id ?? null);
 });
-elements.chatStoryButton.addEventListener("click", () => {
+// Story (the podcast) and Activity overview (the video) open the conversation's story on its own, not as a Git tab.
+function startConversationStory(intent) {
   const session = activeChatSession();
   if (!session) { toast("Open a conversation first"); return; }
-  openConversationStory(session.conversationId ?? session.id).catch((error) => toast(error.message));
-});
+  openConversationStory(session.conversationId ?? session.id, intent).catch((error) => toast(error.message));
+}
+for (const button of [elements.activityStoryButton, elements.navStoryButton]) button.addEventListener("click", () => startConversationStory("podcast"));
+for (const button of [elements.activityOverviewButton, elements.navOverviewButton]) button.addEventListener("click", () => startConversationStory("video"));
 elements.gitReviewCloseButton.addEventListener("click", () => elements.gitReviewDialog.close());
 elements.gitReviewDialog.addEventListener("close", () => { git.viewRequest += 1; git.scopeRequest += 1; git.selection = null; git.thread = null; });
-for (const button of [elements.gitReviewTabChanges, elements.gitReviewTabStory, elements.gitReviewTabHistory, elements.gitReviewTabReviews, elements.gitReviewTabPulls, elements.gitReviewTabPipelines]) {
+for (const button of [elements.gitReviewTabChanges, elements.gitReviewTabHistory, elements.gitReviewTabReviews, elements.gitReviewTabPulls, elements.gitReviewTabPipelines]) {
   button.addEventListener("click", () => { applyTab(button.dataset.gitTab); elements.gitReviewAskForm.hidden = true; void loadCurrentTab(); });
 }
 elements.gitReviewAskButton.addEventListener("click", () => { void openAsk(); });

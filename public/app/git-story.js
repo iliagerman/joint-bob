@@ -40,6 +40,8 @@ const story = {
   voice: null,
   // The podcast being written: { stage } while the writer works, { error, details } when it failed.
   podcast: null,
+  // What to start once the story is ready: "podcast" or "video", set by the Story and Activity overview buttons.
+  intent: null,
 };
 
 // Where the reader was in a story, so closing the Git view and opening it again lands on the same page.
@@ -102,6 +104,7 @@ export function resetStory(ctx) {
   story.pullDraft = "";
   story.voice = null;
   story.podcast = null;
+  story.intent = null;
 }
 
 export function selectStoryPull(number, url = null) {
@@ -220,6 +223,7 @@ export async function generateStory(payload) {
         story.draft = null;
       } else return;
       changed();
+      if (finished && story.intent) void playStory(story.intent);
     });
     if (request === story.request && !finished) throw new Error("The connection closed before the story finished. If the reviewer completed it, it is saved; reopen the Story tab to check.");
   } catch (error) {
@@ -564,21 +568,35 @@ function podcastStatus() {
     h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-podcast-copy-error", onclick: copyPodcastError }, "Copy error details"));
 }
 
+function playVideo(voice) {
+  const { saved } = shown();
+  const narrate = story.voice?.narrates ? (text) => speakLine(text, "host") : null;
+  playStoryVideo({ story: saved.story, facts: saved.facts, host: story.ctx.container.closest("dialog") ?? document.body, narrate, notify: toast, voice });
+}
+
+/** Starts the podcast or the Activity overview video of the saved story, or does so as soon as it is written. */
+export async function playStory(kind) {
+  if (!story.latest) { story.intent = kind; return; }
+  story.intent = null;
+  if (kind === "podcast") { await listenAsPodcast(); return; }
+  story.voice ??= await loadNarrator();
+  playVideo(true);
+}
+
 function videoSuggestion() {
   if (story.voice === null) {
     story.voice = { narrates: false, provider: null, reason: null };
     void loadNarrator().then((voice) => { story.voice = voice; renderStory(); });
   }
   const { saved } = shown();
-  const narrate = story.voice.narrates ? (text) => speakLine(text, "host") : null;
-  const play = (voice) => playStoryVideo({ story: saved.story, facts: saved.facts, host: story.ctx.container.closest("dialog") ?? document.body, narrate, notify: toast, voice });
+  const play = (voice) => playVideo(voice);
   const save = async () => { try { await exportStoryHtml(saved.story, saved.facts); } catch (error) { toast(`Could not save the HTML file: ${error.message}`); } };
   return h("div", { class: "gsv-suggest", "data-testid": "git-story-video-suggestion" },
-    h("p", {}, h("b", {}, "Walk through this story as a video or listen to it as a podcast. "), "The video covers the animated flow, worked examples, files, design decisions and the review checklist. The podcast has two hosts who explain what changed, how it works and why, and you can ask them questions."),
+    h("p", {}, h("b", {}, "Watch the activity overview or listen to this story as a podcast. "), "The activity overview covers the animated flow, worked examples, files, design decisions and the review checklist. The podcast has two hosts who explain what changed, how it works and why, and you can ask them questions."),
     h("div", { class: "gsv-suggest-row" },
       h("button", { class: "primary compact", type: "button", disabled: Boolean(story.podcast && !story.podcast.error), "data-testid": "git-story-podcast-play", onclick: () => void listenAsPodcast() }, "🎙 Listen as a podcast"),
-      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-play", onclick: () => play(true) }, "▶ Play with voice"),
-      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-silent", onclick: () => play(false) }, "Play without voice"),
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-play", onclick: () => play(true) }, "▶ Activity overview with voice"),
+      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-silent", onclick: () => play(false) }, "Activity overview without voice"),
       h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-export", onclick: save }, "Save as HTML file"),
       h("span", { class: "gs-muted gs-small" }, story.voice.narrates ? `Narrated by ${story.voice.provider === "elevenlabs" ? "ElevenLabs" : "Kokoro"}, falling back to this computer's voice.` : "Narration uses this computer's voice.")),
     story.voice.narrates ? null : voiceSetup(),

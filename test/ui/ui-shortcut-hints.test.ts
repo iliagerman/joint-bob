@@ -108,7 +108,7 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
 });
 
 test("chat controls advertise shortcuts", async () => {
-  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-add-to-canvas-button", "chat-rename-button", "chat-cron-button", "background-tasks-open", "chat-files-button", "chat-session-menu-button", "chat-done-button", "chat-auto-respond-button", "chat-git-button", "chat-story-button"]) {
+  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-add-to-canvas-button", "chat-rename-button", "chat-cron-button", "background-tasks-open", "chat-files-button", "chat-session-menu-button", "chat-done-button", "chat-auto-respond-button", "chat-git-button", "activity-story-button"]) {
     const control = page.getByTestId(id);
     const host = await control.evaluate((element) => element.closest("[data-shortcut-hint]")?.getAttribute("data-shortcut-hint"));
     assert.ok(host, `${id} needs a shortcut hint`);
@@ -341,15 +341,15 @@ test("chat shortcuts focus selectors and open actions", async () => {
   // so these only prove the key presses the button, with its own handler held back.
   const pressed = await page.evaluate(() => {
     const seen: string[] = [];
-    for (const id of ["chatGitButton", "chatStoryButton", "chatDoneButton"]) {
+    for (const id of ["chatGitButton", "chatDoneButton"]) {
       document.getElementById(id)!.addEventListener("click", (event) => { event.stopImmediatePropagation(); seen.push(id); }, { capture: true });
     }
     (window as unknown as { pressedChatButtons: string[] }).pressedChatButtons = seen;
     return seen.length;
   });
   assert.equal(pressed, 0);
-  for (const key of ["G", "E", "D"]) await page.keyboard.press(`Control+Alt+Shift+${key}`);
-  assert.deepEqual(await page.evaluate(() => (window as unknown as { pressedChatButtons: string[] }).pressedChatButtons), ["chatGitButton", "chatStoryButton", "chatDoneButton"]);
+  for (const key of ["G", "D"]) await page.keyboard.press(`Control+Alt+Shift+${key}`);
+  assert.deepEqual(await page.evaluate(() => (window as unknown as { pressedChatButtons: string[] }).pressedChatButtons), ["chatGitButton", "chatDoneButton"]);
   await page.keyboard.press("Control+Alt+Shift+A");
   await page.locator("#rowMenu:popover-open").waitFor();
   await page.keyboard.press("Escape");

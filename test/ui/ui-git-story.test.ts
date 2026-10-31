@@ -79,6 +79,29 @@ async function openGit(page: Page, environment: { username: string; password: st
   throw new Error("The conversation never became active");
 }
 
+// The story is its own view, not a Git tab. This opens it as the app does for a story the reader already has,
+// without choosing the podcast or the Activity overview, so a test sees the story page itself.
+async function openStoryView(page: Page, environment: { username: string; password: string }, url: string) {
+  await page.goto(url);
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card").first().click();
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await page.evaluate(async () => {
+      const { activeChatSession } = await import("/app/terminal.js");
+      const { openGitReview } = await import("/app/git-review.js");
+      const session = activeChatSession();
+      if (session) await openGitReview(session.conversationId ?? session.id, { tab: "story" });
+    });
+    if (await page.locator("#gitReviewContext").textContent() === "Conversation changes") return;
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(250);
+  }
+  throw new Error("The conversation never became active");
+}
+
 async function mockReviewers(page: Page) {
   await page.route("**/api/harnesses", (route) => route.fulfill({ json: { harnesses: [
     { id: "pi", label: "Pi", runtimeConfigured: true, ready: true, defaults: { modelId: "gpt-6-sol", thinkingLevel: "xhigh" }, configuration: { fixedProvider: "openai-codex", thinkingLevels: ["low", "xhigh"] } },
@@ -110,8 +133,7 @@ test("Story tab writes a story out of band, explains it in four sections, and op
     return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
   });
   await mockReviewers(page);
-  await openGit(page, environment, node.url);
-  await page.getByTestId("git-review-tab-story").click();
+  await openStoryView(page, environment, node.url);
   await page.getByTestId("git-story-empty").waitFor();
   assert.match(await page.getByTestId("git-review-story-commits").locator("..").innerText(), /\(1\)/);
   assert.equal(await page.getByTestId("git-review-generate").innerText(), "Generate story");
@@ -129,7 +151,6 @@ test("Story tab writes a story out of band, explains it in four sections, and op
   const { conversationId, ...request } = posts.at(-1) as { conversationId: string };
   assert.ok(conversationId);
   assert.deepEqual(request, { scope: "conversation", paths: ["app.ts", "app.test.ts"], includeCommits: true, harnessId: "pi", provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "medium" });
-  assert.equal(await page.getByTestId("git-review-story-dot").isVisible(), true);
 
   // The dialog never scrolls the page; the story fits inside it.
   const fit = await page.evaluate(() => ({ page: document.scrollingElement!.scrollHeight <= innerHeight, card: (() => { const card = document.querySelector(".git-review-card")!; return card.scrollHeight <= card.clientHeight + 1; })() }));
@@ -178,8 +199,8 @@ test("Story tab writes a story out of band, explains it in four sections, and op
   assert.equal(prPayload.pullUrl, "https://github.com/acme/widget/pull/42");
   assert.deepEqual(prPayload.paths, []);
   await page.getByTestId("git-story-title").waitFor();
-  await page.getByTestId("git-review-tab-changes").click();
-  assert.equal(await page.getByTestId("git-review-generate").innerText(), "Generate review comments");
+  assert.equal(await page.getByTestId("git-review-tab-changes").isVisible(), false, "the story has no Git tabs");
+  assert.equal(await page.locator("#gitReviewTitle").innerText(), "Story");
 });
 
 test("Story failures show and copy server diagnostics instead of blaming the reviewer", { timeout: 150_000 }, async (t) => {
@@ -203,8 +224,7 @@ test("Story failures show and copy server diagnostics instead of blaming the rev
     return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
   });
   await mockReviewers(page);
-  await openGit(page, environment, node.url);
-  await page.getByTestId("git-review-tab-story").click();
+  await openStoryView(page, environment, node.url);
   for (const format of ["stream", "json"]) {
     streamed = format === "stream";
     await page.getByTestId("git-review-generate").click();
@@ -249,8 +269,7 @@ test("Story tab opens each section while the reviewer is still writing the rest"
   }, lines);
   const section = (name: string, data: unknown) => ({ type: "section", section: name, data });
   await mockReviewers(page);
-  await openGit(page, environment, node.url);
-  await page.getByTestId("git-review-tab-story").click();
+  await openStoryView(page, environment, node.url);
   await page.getByTestId("git-story-generate").click();
   await page.getByTestId("git-story-writing").waitFor();
   await page.waitForFunction(() => Boolean((window as unknown as { storyStream?: unknown }).storyStream));
@@ -285,7 +304,6 @@ test("Story tab opens each section while the reviewer is still writing the rest"
   await page.getByTestId("git-story-progress").waitFor({ state: "detached" });
   assert.equal(await page.getByTestId("git-story-file").count(), 2, "the reader stays on the section they were reading");
   assert.equal(await page.getByTestId("git-review-generate").innerText(), "Regenerate story");
-  assert.equal(await page.getByTestId("git-review-story-dot").isVisible(), true);
 });
 
 test("Story tab opens on the first finished section even when the overview is still being written", { timeout: 150_000 }, async (t) => {
@@ -310,8 +328,7 @@ test("Story tab opens on the first finished section even when the overview is st
     return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
   });
   await mockReviewers(page);
-  await openGit(page, environment, node.url);
-  await page.getByTestId("git-review-tab-story").click();
+  await openStoryView(page, environment, node.url);
   await page.getByTestId("git-story-generate").click();
   await page.getByTestId("git-story-writing").waitFor();
   await page.waitForFunction(() => Boolean((window as unknown as { storyStream?: unknown }).storyStream));
@@ -325,7 +342,7 @@ test("Story tab opens on the first finished section even when the overview is st
   assert.equal(await page.getByTestId("git-story-writing").count(), 0);
 });
 
-test("the toolbar Story button writes a conversation's first story once, and a jump to the chat leads back to the same page", { timeout: 150_000 }, async (t) => {
+test("the activity panel Story button writes a conversation's first story once, and a jump to the chat leads back to the same page", { timeout: 150_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const posts: Array<Record<string, unknown>> = [];
   let latest: unknown = null;
@@ -345,9 +362,10 @@ test("the toolbar Story button writes a conversation's first story once, and a j
   await mockReviewers(page);
   await openGit(page, environment, node.url);
   await page.getByTestId("git-review-close-button").click();
+  if (await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded") !== "true") await page.getByTestId("chat-activity-toggle").click();
 
   // No story yet: one click writes it from the files the conversation claimed and its commits.
-  await page.getByTestId("chat-story-button").click();
+  await page.getByTestId("activity-story-button").click();
   await page.getByTestId("git-story-title").waitFor();
   const { conversationId, ...request } = posts[0] as { conversationId: string };
   assert.ok(conversationId);
@@ -375,7 +393,7 @@ test("the toolbar Story button writes a conversation's first story once, and a j
 
   // Closing and using the button again opens the saved story on the same page; nothing is written twice.
   await page.getByTestId("git-review-close-button").click();
-  await page.getByTestId("chat-story-button").click();
+  await page.getByTestId("activity-story-button").click();
   await page.getByTestId("git-story-title").waitFor();
   await page.getByTestId("git-story-phase").nth(1).waitFor();
   assert.match(await page.getByTestId("git-story-panel").innerText(), /Errors show inline instead of in a dialog/);
@@ -394,10 +412,7 @@ test("Story tab marks a saved story outdated and offers Regenerate", { timeout: 
     return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
   });
   await mockReviewers(page);
-  await openGit(page, environment, node.url);
-  await page.waitForFunction(() => !document.querySelector("#gitReviewStoryDot")?.hidden);
-  assert.match(await page.getByTestId("git-review-story-dot").getAttribute("class") ?? "", /is-outdated/);
-  await page.getByTestId("git-review-tab-story").click();
+  await openStoryView(page, environment, node.url);
   await page.getByTestId("git-story-outdated").waitFor();
   assert.match(await page.getByTestId("git-story-outdated").innerText(), /2 new turns and 1 changed file[\s\S]*app\.ts[\s\S]*Regenerate/);
   assert.equal(await page.getByTestId("git-review-generate").innerText(), "Regenerate story");
@@ -438,8 +453,7 @@ test("Story tab explains commits picked from past pushes or history, without the
     return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
   });
   await mockReviewers(page);
-  await openGit(page, environment, node.url);
-  await page.getByTestId("git-review-tab-story").click();
+  await openStoryView(page, environment, node.url);
   await page.getByTestId("git-story-empty").waitFor();
   // Nothing in this conversation to explain: generating it is off, picking is the way forward.
   await page.waitForFunction(() => (document.querySelector("[data-testid=git-story-generate]") as HTMLButtonElement | null)?.disabled === true);
@@ -447,7 +461,7 @@ test("Story tab explains commits picked from past pushes or history, without the
   await page.getByTestId("git-story-pick").click();
   await page.getByTestId("git-story-push").first().waitFor();
   assert.equal(await page.locator("#gitReviewToolbar").isVisible(), false, "the conversation scope toolbar is hidden while picking");
-  assert.equal(await page.getByTestId("git-story-push").count(), 2);
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=git-story-push]").length === 2);
   assert.match(await page.getByTestId("git-story-push").first().innerText(), /Pushed to origin\/main[\s\S]*2 commits[\s\S]*chore\(release\): 2\.40\.0 · feat\(git\): add Story tab/);
   assert.equal(await page.getByTestId("git-review-generate").isDisabled(), true);
 
@@ -533,7 +547,7 @@ const answered = {
 // A stand-in for audio playback: this Chrome cannot decode a clip, so each one "plays" briefly and then ends.
 const FAKE_AUDIO = `window.Audio = class { constructor(src = "") { this.src = src; } pause() {} play() { setTimeout(() => this.onended?.(), 60); return Promise.resolve(); } removeAttribute() { this.src = ""; } hasAttribute() { return Boolean(this.src); } };`;
 
-interface StoryFixture { kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
+interface StoryFixture { via?: "story" | "overview"; kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
 
 async function openSavedStory(page: Page, environment: { username: string; password: string }, url: string, fixture: StoryFixture) {
   await page.addInitScript(FAKE_SPEECH);
@@ -564,8 +578,19 @@ async function openSavedStory(page: Page, environment: { username: string; passw
     return route.fulfill({ status: 404, json: { error: "Unexpected Git request" } });
   });
   await mockReviewers(page);
-  await openGit(page, environment, url);
-  await page.getByTestId("git-review-tab-story").click();
+  if (!fixture.via) { await openStoryView(page, environment, url); return; }
+  await page.goto(url);
+  await page.getByTestId("login-username-input").fill(environment.username);
+  await page.getByTestId("login-password-input").fill(environment.password);
+  await page.getByTestId("login-submit-button").click();
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card").first().click();
+  if (await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded") !== "true") await page.getByTestId("chat-activity-toggle").click();
+  // The conversation becomes active a moment after its card is clicked.
+  for (let attempt = 0; attempt < 40 && !(await page.locator("#gitReviewDialog[open]").count()); attempt += 1) {
+    await page.getByTestId(fixture.via === "overview" ? "activity-overview-button" : "activity-story-button").click();
+    await page.waitForTimeout(250);
+  }
 }
 
 test("Story tab suggests a developer walkthrough that speaks with the computer's voice when no narrator is ready", { timeout: 120_000 }, async (t) => {
@@ -696,4 +721,19 @@ test("Story saves as one HTML file with the walkthrough and the review notes", {
   await standalone.locator(".gsv-diagram .gs-node.is-current").first().waitFor();
   assert.ok((await standalone.evaluate(() => (window as unknown as { __spoken: string[] }).__spoken.length)) >= 1);
   assert.deepEqual(errors, []);
+});
+
+test("Activity overview plays the saved story as a video from the activity panel, and the phone menu offers Story and Overview", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await openSavedStory(page, environment, node.url, { kokoro: false, via: "overview" });
+  const video = page.getByTestId("git-story-video");
+  await video.waitFor();
+  assert.match(await video.innerText(), /Greeting with an empty-name error/);
+  assert.equal(await page.locator("#gitReviewTitle").innerText(), "Story");
+  await page.keyboard.press("Escape");
+  await page.getByTestId("git-review-close-button").click();
+  await page.setViewportSize({ width: 390, height: 800 });
+  assert.equal(await page.getByTestId("nav-story-button").isVisible(), true);
+  assert.equal(await page.getByTestId("nav-overview-button").isVisible(), true);
+  assert.equal(await page.getByTestId("nav-overview-button").getAttribute("aria-label"), "Activity overview");
 });

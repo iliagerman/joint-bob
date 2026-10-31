@@ -15,7 +15,7 @@ export const CHAT_SHORTCUT_CONTROLS = {
   markDone: "chatDoneButton",
   autoRespond: "autoRespondButton",
   git: "chatGitButton",
-  explainConversation: "chatStoryButton",
+  explainConversation: "activityStoryButton",
   activity: "activityToggleButton",
   savedCommands: "savedCommandsButton",
 };
