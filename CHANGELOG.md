@@ -3,11 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.180.0 — 2026-10-31
 
-- Changed narration so local voice (Kokoro) is installed only on request, and only on a computer with at least 8 GB of memory and 4 cores; smaller computers never download it, and projects can narrate with their own ElevenLabs key instead (ELEVENLABS_API_KEY secret).
-- Fixed the local voice install never downloading GPU libraries on Linux; the Kokoro package is no longer a dependency of Joint Bob itself.
-- Added ElevenLabs as a story narrator for projects that bring their own key, and a Narrator choice in Settings → Story mode to pick between it and local voice.
+- Changed story narration so local voice is no longer installed automatically; it is installed on request from Settings → Story mode, and only on a computer with at least 8 GB of memory and 4 cores, so other machines never download it.
+- Added ElevenLabs as a story narrator for projects with an ElevenLabs API key secret, and a Narrator choice in Settings → Story mode (automatic, local voice or ElevenLabs) with the ElevenLabs voice IDs.
+- Changed narration to report a conflict instead of guessing when two ElevenLabs accounts are set up at the same level.
+- Changed saved stories and their podcasts to expire two days after they are written, and saved reviews to be kept for a week; expired podcast scripts and spoken lines are deleted.
+- Changed saved stories, their podcast scripts and follow-up answers to be shared with the other machines the project is shared with, in any order and without duplicates.
 
 ## 2.179.0 — 2026-10-31
 
@@ -21,7 +23,6 @@ Every deployment is a version. The newest section must always match the
 - Added follow-up questions to a podcast story, which add new chapters to the same story and to its written implementation and reasoning section.
 - Changed podcast narration to use Kokoro on this computer instead of ElevenLabs; a computer without it plays the story silently and says so.
 - Added a Story mode tab in Settings for podcast instructions, places, mood effects, code on slides and in the written section, voices and speed.
-- Changed saved stories and their podcasts to be kept for two days and then deleted, and to be shared with the other machines the project is shared with.
 
 ## 2.177.3 — 2026-10-30
 
