@@ -2602,6 +2602,7 @@ fieldset:has(> .ntfy-manage) { min-inline-size: 0; }
 .secret-provider-icon.cloudflare { color: #f38020; }
 .secret-provider-icon.openai { color: #10a37f; }
 .secret-provider-icon.zai { color: #5c68d7; }
+.secret-provider-icon.elevenlabs { color: #6b7280; }
 .secret-provider-icon.grafana { color: #f46800; }
 .secret-provider-icon.datadog { color: #8a55ad; }
 .secret-provider-icon.jira { color: #2684ff; }

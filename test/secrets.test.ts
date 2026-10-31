@@ -209,7 +209,7 @@ test("certificate accounts validate matching PEM files and expose private file p
 test("new provider types retain encrypted values and export their chosen variable", async () => {
   await withSecrets("more-providers", async (secrets) => {
     for (const [provider, variable] of [
-      ["openai", "OPENAI_API_KEY"], ["zai", "ZAI_API_KEY"], ["grafana", "GRAFANA_API_KEY"],
+      ["openai", "OPENAI_API_KEY"], ["elevenlabs", "ELEVENLABS_API_KEY"], ["zai", "ZAI_API_KEY"], ["grafana", "GRAFANA_API_KEY"],
       ["datadog", "DD_API_KEY"], ["postgres", "DATABASE_URL"],
       ["mssql", "MSSQL_CONNECTION_STRING"], ["mongodb", "MONGODB_URI"],
     ] as const) {
@@ -568,5 +568,23 @@ test("project-owned accounts are attached on creation, keep their owner, and can
     // A global account carries no owner at all.
     const global = await secrets.saveSecretAccount({ label: "Global", provider: "custom", variables: [{ name: "G", kind: "value", value: "g" }] });
     assert.equal("projectId" in global, false);
+  });
+});
+
+test("the ElevenLabs key comes from an account of type ElevenLabs, at the narrowest level that has one", async () => {
+  await withSecrets("elevenlabs", async (secrets) => {
+    assert.equal(secrets.elevenLabsKey("project-a"), undefined);
+    const key = (value: string) => [{ name: "ELEVENLABS_API_KEY", kind: "value" as const, value }];
+    // A custom account with the same variable is not an ElevenLabs account.
+    const custom = await secrets.saveSecretAccount({ label: "Custom eleven", provider: "custom", variables: key("custom-key") });
+    await secrets.setScopeSecretAccounts("project", "project-a", [custom.id]);
+    assert.equal(secrets.elevenLabsKey("project-a"), undefined);
+    const first = await secrets.saveSecretAccount({ label: "Eleven one", provider: "elevenlabs", variables: key("typed-key") });
+    await secrets.setScopeSecretAccounts("project", "project-a", [custom.id, first.id]);
+    assert.deepEqual(secrets.elevenLabsKey("project-a"), { key: "typed-key" });
+    const second = await secrets.saveSecretAccount({ label: "Eleven two", provider: "elevenlabs", variables: key("other-key") });
+    await secrets.setScopeSecretAccounts("project", "project-a", [first.id, second.id]);
+    assert.deepEqual(secrets.elevenLabsKey("project-a"), { conflict: 2 });
+    assert.match(secrets.agentCredentialContext("project-a"), /ElevenLabs/i);
   });
 });

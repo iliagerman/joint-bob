@@ -55,6 +55,8 @@ export const EVENT_SCOPES: Readonly<Record<string, "project" | "account" | "twin
   "conversation.queue": "project",
   "conversation.routing": "project",
   "conversation.goal": "project",
+  // A saved story and its podcast: the nodes the project is shared with.
+  story: "project",
   "conversation.author": "project",
   "model.usage": "project",
   "usage.difficulty": "project",

@@ -7,8 +7,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolveDataDirectory } from "../data-directory.js";
 import { GitReviewError } from "../git-review.js";
-import { genericSecretEnvironment } from "../secrets.js";
+import { elevenLabsKey } from "../secrets.js";
 import { getStorySettings, type StorySettings } from "../story-settings.js";
+import { storyVoiceDirectory } from "../story-scripts.js";
 
 // Local voice is Kokoro-82M on this node's CPU. It is installed only on request and only on nodes with enough
 // memory and cores, so a small machine never downloads it. Without it a project can narrate with its own ElevenLabs key.
@@ -18,7 +19,6 @@ const KOKORO_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
 const KOKORO_PACKAGES = ["kokoro-js@1.2.1", "@huggingface/transformers@3.8.1"];
 const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 const ELEVEN_MODEL = "eleven_flash_v2_5";
-const ELEVEN_KEY = "ELEVENLABS_API_KEY";
 export const NARRATION_LIMIT = 2_500;
 
 export type VoiceProvider = "kokoro" | "elevenlabs";
@@ -103,29 +103,27 @@ function loadKokoro(): Promise<KokoroEngine> {
 // One line is spoken at a time: the model is CPU-bound and parallel lines would only slow each other down.
 let queue: Promise<unknown> = Promise.resolve();
 
-export function storyVoiceKey(projectId: string): string | undefined {
-  return genericSecretEnvironment(projectId)[ELEVEN_KEY];
-}
 
 /** Which engine narrates for this project right now, or why none can. */
 export function narrationProvider(projectId: string, settings: StorySettings = getStorySettings()): { provider: VoiceProvider | null; reason: string | null } {
   const kokoro = localVoiceStatus();
   const kokoroReady = kokoro.allowed && kokoro.installed;
-  const elevenKey = () => Boolean(storyVoiceKey(projectId));
-  if (settings.voiceProvider === "kokoro") return kokoroReady ? { provider: "kokoro", reason: null } : { provider: null, reason: kokoro.reason ?? "Local voice is not installed on this node. Install it in Settings → Story mode." };
-  if (settings.voiceProvider === "elevenlabs") return elevenKey() ? { provider: "elevenlabs", reason: null } : { provider: null, reason: noKeyReason() };
+  const eleven = elevenLabsKey(projectId);
+  const elevenReady = eleven !== undefined && "key" in eleven;
+  const elevenReason = eleven && "conflict" in eleven
+    ? `This project has ${eleven.conflict} ElevenLabs secret accounts at the same level. Keep one so the narrator is clear.`
+    : "This project has no ElevenLabs secret. Add a secret account of type ElevenLabs (Settings → Secrets) and attach it to the project.";
+  const localReason = kokoro.reason ?? "Local voice is not installed on this node. Install it in Settings → Story mode.";
+  if (settings.voiceProvider === "kokoro") return kokoroReady ? { provider: "kokoro", reason: null } : { provider: null, reason: localReason };
+  if (settings.voiceProvider === "elevenlabs") return elevenReady ? { provider: "elevenlabs", reason: null } : { provider: null, reason: elevenReason };
   if (kokoroReady) return { provider: "kokoro", reason: null };
-  if (elevenKey()) return { provider: "elevenlabs", reason: null };
-  return { provider: null, reason: kokoro.allowed ? "Local voice is not installed, and this project has no ElevenLabs key. Install local voice in Settings → Story mode, or add an ELEVENLABS_API_KEY secret to the project." : noKeyReason() };
-}
-
-function noKeyReason(): string {
-  return "This project has no ElevenLabs key. Add an ELEVENLABS_API_KEY secret to the project to narrate stories.";
+  if (elevenReady) return { provider: "elevenlabs", reason: null };
+  return { provider: null, reason: kokoro.allowed && !eleven ? `${localReason} Or attach a secret account of type ElevenLabs to the project.` : elevenReason };
 }
 
 function voiceFile(provider: VoiceProvider, voice: string, speed: number, text: string): string {
   const key = createHash("sha256").update(`${provider}\n${voice}\n${speed}\n${text}`).digest("hex");
-  return path.join(resolveDataDirectory(), "story-voice", `${key}.${provider === "kokoro" ? "wav" : "mp3"}`);
+  return path.join(storyVoiceDirectory(), `${key}.${provider === "kokoro" ? "wav" : "mp3"}`);
 }
 
 export interface NarrationAudio { bytes: Buffer; mime: "audio/wav" | "audio/mpeg" }
@@ -155,7 +153,7 @@ export async function narrateStoryText(projectId: string, text: string, who: "ho
   try { return { bytes: await readFile(file), mime }; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const bytes = provider === "kokoro"
     ? await speakWithKokoro(voice, settings.speed, text, file)
-    : await speakWithElevenLabs(storyVoiceKey(projectId)!, voice, text, file, fetchImpl);
+    : await speakWithElevenLabs((elevenLabsKey(projectId) as { key: string }).key, voice, text, file, fetchImpl);
   return { bytes, mime };
 }
 

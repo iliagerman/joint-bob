@@ -21,6 +21,7 @@ import { applyUsageDifficultyEvent, applyUsageEvent, ensureUsageSchema } from ".
 import { isTwinOrigin, translateLegacyAccountEvent } from "./account-keys.js";
 import { applyMessageAuthorEvent } from "./message-authors.js";
 import { applyProviderProfileEvent, applyProviderSelectionEvent } from "./provider-profiles/store.js";
+import { applyStoryEvent } from "./story-replication.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -101,7 +102,7 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   const payload = event.payload as Record<string, unknown> | null | undefined;
   if (!payload || typeof payload !== "object") return undefined;
   if (event.entityType === "name.override") return payload.scope === "projects" && typeof payload.key === "string" ? payload.key : undefined;
-  if (!["task", "project.lock", "conversation.record", "conversation.author", "conversation.queue", "conversation.goal", "conversation.routing", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered", "model.usage", "usage.difficulty"].includes(event.entityType)) return undefined;
+  if (!["task", "story", "project.lock", "conversation.record", "conversation.author", "conversation.queue", "conversation.goal", "conversation.routing", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered", "model.usage", "usage.difficulty"].includes(event.entityType)) return undefined;
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
@@ -371,6 +372,7 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "usage.difficulty": applyUsageDifficultyEvent,
   "provider.profile": applyProviderProfileEvent,
   "provider.selection": applyProviderSelectionEvent,
+  story: applyStoryEvent,
 };
 
 /** Every event type this node can apply. Each one needs a scope in replication-v2.ts. */

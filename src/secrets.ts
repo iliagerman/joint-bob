@@ -14,7 +14,7 @@ import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 import { ClusterV2HttpError } from "./cluster-v2-errors.js";
 import { applyGithubAccounts, assertGithubAccountsDistinct, assertGithubVariableNames, finalizeGithubVariables, githubAccount, githubAccountContext, githubAccountSummary, githubOwnerFromRemote, GITHUB_TOKEN_VARIABLE, type GithubAccount, type GithubAccountSummary } from "./github-credentials.js";
 
-export type SecretProvider = "aws" | "azure" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "zai" | "grafana" | "datadog" | "jira" | "gitlab" | "postgres" | "mssql" | "mongodb" | "custom" | "website" | "ssh" | "certificate";
+export type SecretProvider = "aws" | "azure" | "google" | "github" | "stripe" | "cloudflare" | "openai" | "elevenlabs" | "zai" | "grafana" | "datadog" | "jira" | "gitlab" | "postgres" | "mssql" | "mongodb" | "custom" | "website" | "ssh" | "certificate";
 export type SecretKind = "value" | "file";
 /** Attachment tiers, broadest first. Resolution merges them in this order. */
 export type SecretScopeType = "workspace" | "project" | "conversation";
@@ -122,7 +122,7 @@ function assertScope(scopeType: string, scopeId: string): asserts scopeType is S
 }
 
 function assertInput(input: SecretAccountInput): void {
-  if (!(["aws", "azure", "google", "github", "stripe", "cloudflare", "openai", "zai", "grafana", "datadog", "jira", "gitlab", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
+  if (!(["aws", "azure", "google", "github", "stripe", "cloudflare", "openai", "elevenlabs", "zai", "grafana", "datadog", "jira", "gitlab", "postgres", "mssql", "mongodb", "custom", "website", "ssh", "certificate"] as string[]).includes(input.provider)) throw new Error("Secret provider is invalid");
   if (!input.label.trim() || input.label.trim().length > 64 || /[\x00-\x1f\x7f]/.test(input.label)) throw new Error("Secret account label must be between 1 and 64 characters without control characters");
   if (input.variables.length < 1 || input.variables.length > 20) throw new Error("Secret accounts need between 1 and 20 variables");
   const names = new Set<string>();
@@ -561,6 +561,21 @@ function projectRepoOwner(project: string): string | undefined {
   } catch { return undefined; }
 }
 
+/**
+ * The API key of the ElevenLabs account attached to a project. The narrowest level that has one decides, and two at that
+ * level are a conflict the owner has to resolve, so no key is guessed.
+ */
+export function elevenLabsKey(project: string): { key: string } | { conflict: number } | undefined {
+  const accounts = resolved(project).filter(({ row }) => row.provider === "elevenlabs");
+  for (const scope of ["conversation", "project", "workspace"] as const) {
+    const here = accounts.filter((account) => account.scope === scope);
+    if (here.length > 1) return { conflict: here.length };
+    const key = here.length ? storedVariables(here[0].row).find(({ name }) => name === "ELEVENLABS_API_KEY")?.value : undefined;
+    if (key) return { key };
+  }
+  return undefined;
+}
+
 export function genericSecretEnvironment(project: string, conversation?: SecretConversation): NodeJS.ProcessEnv {
   const values: NodeJS.ProcessEnv = {};
   const accounts = resolved(project, conversation);
@@ -668,6 +683,7 @@ const providerHints: Record<SecretProvider, string> = {
   stripe: "use STRIPE_API_KEY to configure the Stripe CLI or SDK",
   cloudflare: "use configured Cloudflare API or Stream credentials (CLOUDFLARE_STREAM_*)",
   openai: "use OPENAI_API_KEY with OpenAI tools and SDKs",
+  elevenlabs: "use ELEVENLABS_API_KEY with ElevenLabs tools and SDKs",
   zai: "use ZAI_API_KEY with Z.AI tools and SDKs",
   grafana: "use GRAFANA_API_KEY with Grafana APIs",
   datadog: "use DD_API_KEY with Datadog tools and SDKs",

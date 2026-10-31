@@ -283,10 +283,10 @@ test("story mode settings, narration status and podcast routes answer what a pro
     const noVoice = await jsonBody(await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-voice`, { headers })) as { provider: string | null; available: boolean; reason: string };
     assert.equal(noVoice.provider, null);
     assert.equal(noVoice.available, false);
-    assert.match(noVoice.reason, /ELEVENLABS_API_KEY/);
+    assert.match(noVoice.reason, /ElevenLabs secret/);
     const speak = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-voice`, { method: "POST", headers, body: JSON.stringify({ text: "Hello", who: "host" }) });
     assert.equal(speak.status, 409);
-    assert.match((await jsonBody(speak) as { error: string }).error, /ELEVENLABS_API_KEY/);
+    assert.match((await jsonBody(speak) as { error: string }).error, /ElevenLabs secret/);
 
     const missing = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-podcast?threadId=unknown`, { headers });
     assert.equal(missing.status, 404);

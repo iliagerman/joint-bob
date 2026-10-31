@@ -588,7 +588,7 @@ function videoSuggestion() {
 // Narration needs one of two things: local voice on a computer big enough for it, or the project's own ElevenLabs key.
 const VOICE_SETUP = [
   "On a computer with at least 8 GB of memory and 4 cores, open Settings → Story mode and press Install local voice. Kokoro then runs on this computer and needs no key.",
-  "Or use your own ElevenLabs key: open Settings → Secrets, press + to add a custom account named ElevenLabs, add a variable named ELEVENLABS_API_KEY with your key, and attach that account to this project.",
+  "Or use your own ElevenLabs key: open Settings → Secrets, press + to add an account of type ElevenLabs, paste your key, and attach that account to this project.",
 ];
 
 function voiceSetup() {

@@ -21,6 +21,7 @@ Every deployment is a version. The newest section must always match the
 - Added follow-up questions to a podcast story, which add new chapters to the same story and to its written implementation and reasoning section.
 - Changed podcast narration to use Kokoro on this computer instead of ElevenLabs; a computer without it plays the story silently and says so.
 - Added a Story mode tab in Settings for podcast instructions, places, mood effects, code on slides and in the written section, voices and speed.
+- Changed saved stories and their podcasts to be kept for two days and then deleted, and to be shared with the other machines the project is shared with.
 
 ## 2.177.3 — 2026-10-30
 

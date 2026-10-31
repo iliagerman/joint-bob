@@ -116,6 +116,7 @@ export const brandIconPaths = {
   ],
   // Compact offline marks for the extra secret providers.
   zai: ["M3 4h18v3L9 17h12v3H3v-3L15 7H3z"],
+  elevenlabs: ["M8 3h3v18H8zM13 3h3v18h-3z"],
   grafana: ["M12 2 9.5 6.5l2.2 1.8 2.8-1.4 3.7 3-1.2 2.7 2 2.6-2.8 3.6-2.7-.9-2.4 1.8-4.5-1.9-.1-3.3-2.5-.9-2.8 2.3-3-2.7-3.6 2.4-2.2 0zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
   jira: ["M12 2 2 12l10 10 10-10L12 2zm0 6 4 4-4 4-4-4 4-4z"],
   datadog: ["M4 5h4v4H4zM10 3h4v4h-4zM16 5h4v4h-4zM3 11h4v4H3zM17 11h4v4h-4zM8 10h8l4 10H4z"],

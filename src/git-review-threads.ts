@@ -8,6 +8,8 @@ import type { HarnessId } from "./types.js";
 // Review threads are a convenience cache of explanations, not durable project state,
 // so they expire. A thread and its snapshot live this long after the last message.
 export const GIT_REVIEW_THREAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** A saved story, with its podcast, is kept for two days from the moment it is written. */
+export const GIT_STORY_TTL_MS = 2 * 24 * 60 * 60 * 1000;
 
 export interface GitReviewSelection {
   /** Project/task-relative repository root; absent means legacy root ("."). */
@@ -68,12 +70,8 @@ const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 let database: DatabaseSync | undefined;
 
-function reviewDatabase(): DatabaseSync {
-  if (database) return database;
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  database = new DatabaseSync(databasePath);
-  database.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
-  database.exec(`
+export function ensureGitReviewThreadSchema(db: DatabaseSync): void {
+  db.exec(`
     CREATE TABLE IF NOT EXISTS git_review_threads (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -92,6 +90,14 @@ function reviewDatabase(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS git_review_threads_project ON git_review_threads (project_id, expires_at);
     CREATE INDEX IF NOT EXISTS git_review_threads_conversation ON git_review_threads (conversation_id, expires_at);
   `);
+}
+
+function reviewDatabase(): DatabaseSync {
+  if (database) return database;
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  database = new DatabaseSync(databasePath);
+  database.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+  ensureGitReviewThreadSchema(database);
   return database;
 }
 
@@ -129,13 +135,15 @@ export interface CreateGitReviewThreadInput {
   snapshot: string;
   question: string;
   answer: string;
+  /** How long the thread lives; reviews keep GIT_REVIEW_THREAD_TTL_MS, a story passes GIT_STORY_TTL_MS. */
+  ttlMs?: number;
 }
 
 export function createGitReviewThread(input: CreateGitReviewThreadInput): GitReviewThread {
   const db = reviewDatabase();
   const now = new Date();
   const nowIso = now.toISOString();
-  const expiresAt = new Date(now.getTime() + GIT_REVIEW_THREAD_TTL_MS).toISOString();
+  const expiresAt = new Date(now.getTime() + (input.ttlMs ?? GIT_REVIEW_THREAD_TTL_MS)).toISOString();
   pruneExpired(db, nowIso);
   const messages: GitReviewMessage[] = [
     { role: "user", text: input.question, createdAt: nowIso },
@@ -176,6 +184,15 @@ export function createGitReviewThread(input: CreateGitReviewThreadInput): GitRev
     updatedAt: nowIso,
     expiresAt,
   };
+}
+
+/** Stores a thread that another machine made. A thread already here is left alone: stories do not change once written. */
+export function insertGitReviewThread(db: DatabaseSync, thread: GitReviewThread): void {
+  db.prepare(`
+    INSERT OR IGNORE INTO git_review_threads
+      (id, project_id, conversation_id, harness_id, provider, model_id, thinking_level, selection, snapshot, messages, created_at, updated_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(thread.id, thread.projectId, thread.conversationId, thread.harnessId, thread.provider, thread.modelId, thread.thinkingLevel, JSON.stringify(thread.selection), thread.snapshot, JSON.stringify(thread.messages), thread.createdAt, thread.updatedAt, thread.expiresAt);
 }
 
 export function getGitReviewThread(id: string): GitReviewThread | undefined {

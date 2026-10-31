@@ -25,7 +25,7 @@ let secretScopeTarget = null;
 let secretTypeFilter = "all";
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
-const providerLabels = { aws: "AWS", azure: "Azure service principal", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", openai: "OpenAI", zai: "Z.AI", grafana: "Grafana", datadog: "Datadog", jira: "Jira", gitlab: "GitLab", postgres: "PostgreSQL", mssql: "MS SQL", mongodb: "MongoDB", website: "Website", ssh: "SSH", certificate: "Certificate", custom: "Custom" };
+const providerLabels = { aws: "AWS", azure: "Azure service principal", google: "Google", github: "GitHub", stripe: "Stripe", cloudflare: "Cloudflare", openai: "OpenAI", elevenlabs: "ElevenLabs", zai: "Z.AI", grafana: "Grafana", datadog: "Datadog", jira: "Jira", gitlab: "GitLab", postgres: "PostgreSQL", mssql: "MS SQL", mongodb: "MongoDB", website: "Website", ssh: "SSH", certificate: "Certificate", custom: "Custom" };
 /** Shown under the provider picker so the choice explains itself before anything is typed. */
 const providerHints = {
   aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
@@ -35,6 +35,7 @@ const providerHints = {
   stripe: "A Stripe API key. STRIPE_API_KEY is exported to attached agent sessions for use with Stripe tools and SDKs. Use a restricted or test key when possible.",
   cloudflare: "Cloudflare Stream credentials. Add whichever values you use; all fields are optional.",
   openai: "OPENAI_API_KEY for OpenAI tools and SDKs.",
+  elevenlabs: "ELEVENLABS_API_KEY for ElevenLabs. Story mode uses it to narrate podcasts on projects that do not run local voice.",
   zai: "ZAI_API_KEY for Z.AI tools and SDKs.",
   grafana: "GRAFANA_API_KEY for Grafana APIs. Use a scoped service account token where possible.",
   datadog: "DD_API_KEY for Datadog tools and SDKs. Add DD_APP_KEY separately if your integration needs one.",
@@ -74,7 +75,7 @@ function secretProviderPresets(provider) {
   if (provider === "gitlab") return ["GITLAB_URL", "GITLAB_TOKEN"].map((name) => ({ name, kind: "value" }));
   if (provider === "jira") return ["JIRA_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"].map((name) => ({ name, kind: "value" }));
   if (provider === "cloudflare") return ["CLOUDFLARE_STREAM_API_TOKEN", "CLOUDFLARE_STREAM_ACCOUNT_ID", "CLOUDFLARE_STREAM_CUSTOMER_CODE", "CLOUDFLARE_STREAM_SIGNING_KEY_ID", "CLOUDFLARE_STREAM_SIGNING_PRIVATE_KEY", "CLOUDFLARE_API_KEY"].map((name) => ({ name, kind: "value" }));
-  const single = { openai: "OPENAI_API_KEY", zai: "ZAI_API_KEY", grafana: "GRAFANA_API_KEY", datadog: "DD_API_KEY", postgres: "DATABASE_URL", mssql: "MSSQL_CONNECTION_STRING", mongodb: "MONGODB_URI" }[provider];
+  const single = { openai: "OPENAI_API_KEY", elevenlabs: "ELEVENLABS_API_KEY", zai: "ZAI_API_KEY", grafana: "GRAFANA_API_KEY", datadog: "DD_API_KEY", postgres: "DATABASE_URL", mssql: "MSSQL_CONNECTION_STRING", mongodb: "MONGODB_URI" }[provider];
   if (single) return [{ name: single, kind: "value" }];
   if (provider === "website") return [{ name: "LOGIN_USERNAME", kind: "value" }, { name: "LOGIN_PASSWORD", kind: "value" }];
   if (provider === "certificate") return [{ name: "TLS_CERTIFICATE", kind: "file" }, { name: "TLS_PRIVATE_KEY", kind: "file" }];
