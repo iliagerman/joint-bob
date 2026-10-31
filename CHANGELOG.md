@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.179.0 — 2026-10-31
+
+- Changed the app icon, tab icon, install icon, notification icon and splash screen to a hand-inked Snufkin hat with curling smoke, replacing the joint and ember.
+
 ## 2.178.0 — 2026-10-31
 
 - Added a Listen as a podcast button to saved Git stories, where two hosts explain what changed, how it works and why, with the hosts walking, pointing and reacting on screen.
