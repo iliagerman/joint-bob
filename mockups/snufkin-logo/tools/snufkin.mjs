@@ -146,25 +146,67 @@ export function optionD() {
 }
 
 // ---------- app icon, favicon and boot splash ----------
-// Hat with smoke curling from its tip, centred on the dark tile. `lite` trims path detail so the
-// inline splash stays small.
-export function iconParts({ lite = false } = {}) {
-  const hat = new Drawing(61);
-  Object.assign(hat, { s: 1.28, tx: -35, ty: 104, ws: 1.25, lite });
-  drawHat(hat);
-  const [x, y] = hat.tf([HAT_TIP])[0];
-  const at = (offsets) => offsets.map(([dx, dy]) => [x + dx, y + dy]);
-  const smoke = new Drawing(71), wisp = new Drawing(72);
-  smoke.lite = wisp.lite = lite;
-  smoke.ink(at([[-2, 2], [22, -24], [0, -48], [28, -74], [12, -100], [40, -122]]), { w: 8.5, color: TEAL, taper: [0.08, 0.6], wob: 1.4 });
-  wisp.ink(at([[8, 0], [32, -14], [30, -36]]), { w: 5, color: TEAL, opacity: 0.65, taper: [0.1, 0.6] });
-  return { hat: hat.paths(), smoke: smoke.paths(), wisp: wisp.paths() };
+// Solid-colour Snufkin (hat, face, pipe, shoulders) so the mark still reads as a person at 16-32px,
+// where thin outlines collapse into a bare triangle. `lite` trims path detail for the inline splash.
+const MARK = { teal: TEAL, tealShade: "#23a086", tealDeep: "#0f6b58", skin: "#f7f3e8", skinShade: "#d8d2c4", hair: "#8d8878", coat: "#2b3236" };
+
+export function markParts({ lite = false } = {}) {
+  const view = (d) => { Object.assign(d, { s: 1.05, tx: 11.5, ty: -15.5, lite }); return d; };
+  const body = view(new Drawing(101));
+  const hat = view(new Drawing(102));
+  const smoke = view(new Drawing(103));
+  const wisp = view(new Drawing(104));
+  const c = MARK;
+
+  // coat and shoulders, bleeding off the bottom of the tile
+  body.fill([[60,540],[86,452],[132,408],[196,384],[238,374],[268,392],[318,384],[372,402],[420,440],[452,540]], c.coat);
+  body.hatch([[60,540],[86,452],[132,408],[196,384],[214,420],[196,470],[170,540]], { angle: 52, gap: 9, w: 2.2, opacity: 0.45 });
+  body.ink([[60,540],[86,452],[132,408],[196,384],[238,374]], { w: 12, taper: [0.05, 0.3] });
+  body.ink([[268,392],[318,384],[372,402],[420,440],[452,540]], { w: 12, taper: [0.25, 0.05] });
+  body.fill([[232,370],[218,396],[258,404],[266,376]], c.skinShade);
+  body.fill([[270,384],[268,414],[316,404],[312,378]], c.skinShade);
+  body.ink([[272,414],[282,452],[286,540]], { w: 8, taper: [0.05, 0.2], color: c.skinShade });
+  // neck and head
+  body.fill([[246,336],[238,376],[300,386],[298,350]], c.skinShade);
+  const head = [[198,250],[308,250],[316,266],[332,284],[351,303],[323,310],[324,317],[316,324],[321,333],[310,350],[284,356],[262,350],[236,338],[208,318],[190,284]];
+  body.fill(head, c.skin);
+  body.ink([[306,250],[316,266],[332,284],[351,303],[323,310],[324,317],[316,324],[321,333],[310,350],[286,357]], { w: 10, color: c.skin, taper: [0.04, 0.2] });
+  body.fill([[190,284],[222,262],[240,300],[234,336],[208,318]], c.hair);
+  body.ink([[198,254],[190,284],[208,318],[236,336]], { w: 8, color: c.hair, taper: [0.05, 0.3] });
+  body.fill(disc(298, 273, 5.5), BG);
+  body.ink([[286,261],[298,255],[312,258]], { w: 6.5, color: BG, taper: [0.2, 0.3] });
+  body.ink([[316,326],[304,329],[296,326]], { w: 5, color: BG, taper: [0.1, 0.5] });
+  // pipe
+  body.ink([[317,331],[336,338],[356,346]], { w: 10, color: c.skin, taper: [0.1, 0.1] });
+  body.fill([[350,350],[348,326],[372,322],[376,348],[362,358]], c.skin);
+  body.fill(disc(361, 326, 5.5), c.teal);
+
+  smoke.ink([[364,316],[388,298],[392,276],[412,256],[404,232],[426,212],[418,188],[438,166]], { w: 14, color: c.teal, taper: [0.08, 0.6], wob: 1.4 });
+  wisp.ink([[374,314],[398,300],[404,284]], { w: 8, color: c.teal, opacity: 0.65, taper: [0.1, 0.6] });
+
+  // hat: solid crown with a shaded side, dark band and a fold, wide brim
+  const crown = H([[118,250],[148,198],[176,140],[214,90],[250,52],[274,36],[298,42],[306,60],[296,78],[298,112],[318,162],[352,210],[374,252]]);
+  hat.fill(crown.map((p, i) => (i === 0 ? [p[0] + 26, p[1]] : i === crown.length - 1 ? [p[0] - 24, p[1]] : p)), c.teal);
+  hat.fill(H([[262,70],[296,78],[298,112],[318,162],[352,210],[374,252],[322,246],[286,206],[262,150]]), c.tealShade);
+  hat.ink(crown, { w: 11, color: c.teal, taper: [0.03, 0.04] });
+  hat.ink(H([[212,160],[228,118],[252,84],[272,66]]), { w: 6, color: c.tealDeep, taper: [0.1, 0.5] });
+  hat.fill(H([[126,236],[250,214],[356,234],[362,250],[250,236],[122,254]]), c.tealDeep);
+  const brim = H([[80,262],[128,238],[200,230],[262,229],[324,234],[362,250],[380,270],[352,268],[300,256],[250,254],[190,258],[128,272]]);
+  hat.fill(brim, c.teal);
+  hat.hatch(H([[80,262],[128,272],[190,258],[250,254],[250,244],[190,246],[128,252]]), { color: c.tealDeep, angle: 70, gap: 7, w: 2.4, opacity: 0.8, inset: 1.5 });
+  hat.ink(brim, { w: 11, color: c.teal, closed: true, pressure: 0.3 });
+  return { body: body.paths(), smoke: smoke.paths(), wisp: wisp.paths(), hat: hat.paths() };
 }
 
 export function iconSvg() {
-  const { hat, smoke, wisp } = iconParts();
+  const { body, smoke, wisp, hat } = markParts();
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Joint Bob icon">
+  <defs><clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath></defs>
   <rect width="512" height="512" rx="112" fill="${BG}"/>
+  <g clip-path="url(#tile)">
+  <g id="figure">
+  ${body}
+  </g>
   <g id="smoke">
   ${smoke}
   ${wisp}
@@ -172,20 +214,25 @@ export function iconSvg() {
   <g id="hat">
   ${hat}
   </g>
+  </g>
 </svg>
 `;
 }
 
 // Inline splash mark: same drawing, with classes the boot CSS animates.
 export function bootSvg() {
-  const { hat, smoke, wisp } = iconParts({ lite: true });
+  const { body, smoke, wisp, hat } = markParts({ lite: true });
   const asClass = (paths, cls) => paths.replace("<path ", `<path class="${cls}" `);
   return `<svg class="app-boot-mark" viewBox="0 0 512 512" aria-hidden="true">
+          <defs><clipPath id="boot-clip"><rect width="512" height="512" rx="112"/></clipPath></defs>
           <rect class="boot-tile" width="512" height="512" rx="112"/>
+          <g clip-path="url(#boot-clip)">
+          ${body}
           ${asClass(smoke, "boot-smoke boot-smoke-main")}
           ${asClass(wisp, "boot-smoke boot-smoke-wisp")}
           <g class="boot-hat">
           ${hat}
+          </g>
           </g>
         </svg>`;
 }
