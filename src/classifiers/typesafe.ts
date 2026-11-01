@@ -92,17 +92,22 @@ function choiceFromAnswer(answer: ChoiceAnswer): DifficultyClassification | null
   return { level, score: level, confidence: Math.min(1, Math.max(0, confidence)) };
 }
 
-async function postOnce(text: string, apiKey: string, context: string | DifficultyClassifierContext, fetchImpl: typeof fetch): Promise<Response> {
-  return fetchImpl(TYPESAFE_ENDPOINT, {
+/** A System One server: Jev, or a Laya server, which answers the same requests. */
+export interface SystemOneTarget { endpoint: string; model: string; stateCharacters: number; timeoutMs: number }
+
+const JEV: SystemOneTarget = { endpoint: TYPESAFE_ENDPOINT, model: TYPESAFE_MODEL, stateCharacters: STATE_CHARACTER_LIMIT, timeoutMs: REQUEST_TIMEOUT_MS };
+
+async function postOnce(target: SystemOneTarget, text: string, apiKey: string, context: string | DifficultyClassifierContext, fetchImpl: typeof fetch): Promise<Response> {
+  return fetchImpl(target.endpoint, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}), "Content-Type": "application/json" },
     body: JSON.stringify({
-      // Keep the newest context, especially the current prompt, when long messages exceed Jev's state budget.
-      state: text.slice(-STATE_CHARACTER_LIMIT),
-      model: TYPESAFE_MODEL,
+      // Keep the newest context, especially the current prompt, when long messages exceed the state budget.
+      state: text.slice(-target.stateCharacters),
+      model: target.model,
       questions: { complexity: questionFor(context) },
     }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(target.timeoutMs),
   });
 }
 
@@ -110,11 +115,17 @@ async function postOnce(text: string, apiKey: string, context: string | Difficul
     Harness-owned option descriptions become the Choice criteria.
     Returns null on any failure: network error, timeout, non-2xx status, or a malformed answer. */
 export async function classifyWithTypesafe(text: string, apiKey: string, context: string | DifficultyClassifierContext = "", fetchImpl: typeof fetch = fetch): Promise<DifficultyClassification | null> {
-  if (!text.trim() || !apiKey) return null;
+  if (!apiKey) return null;
+  return classifyWithSystemOne(JEV, text, apiKey, context, fetchImpl);
+}
+
+/** The same classification against any System One server; an empty key sends no Authorization header. */
+export async function classifyWithSystemOne(target: SystemOneTarget, text: string, apiKey: string, context: string | DifficultyClassifierContext = "", fetchImpl: typeof fetch = fetch): Promise<DifficultyClassification | null> {
+  if (!text.trim()) return null;
   let response: Response | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     try {
-      const candidate = await postOnce(text, apiKey, context, fetchImpl);
+      const candidate = await postOnce(target, text, apiKey, context, fetchImpl);
       if (candidate.ok || (candidate.status !== 429 && candidate.status < 500) || attempt === MAX_ATTEMPTS) {
         response = candidate;
         break;

@@ -67,6 +67,7 @@ import "./app/composer.js";
 import "./app/saved-commands.js";
 import "./app/secrets.js";
 import "./app/browser-login.js";
+import "./app/guardian-review.js";
 import "./app/usage-dashboard.js";
 import "./app/appearance.js";
 import "./app/conversation-sharing.js";

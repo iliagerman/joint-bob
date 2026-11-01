@@ -33,6 +33,7 @@ import { labelIconsValue, loadLabelIcons } from "./label-icons.js";
 import { createSettingsSearch } from "./settings-search.js";
 // settings-page (P4): Settings → File sync.
 import { loadFileSyncSettings } from "./file-sync-settings.js";
+import { loadGuardianSettings } from "./guardian-settings.js";
 
 /** Compares two "major.minor.patch" strings; anything else never counts as newer. */
 function isNewerVersion(candidate, baseline) {
@@ -101,7 +102,7 @@ function renderClientLogs() {
 }
 
 // These panels guard their own loading and do not depend on Save settings.
-const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users", "settingsPanel-file-sync", "settingsPanel-automation-tags", "settingsPanel-story"].includes(panel.id);
+const ownLoading = (panel) => ["settingsPanel-cluster", "settingsPanel-relay", "settingsPanel-webhooks", "settingsPanel-browser", "settingsPanel-node", "settingsPanel-users", "settingsPanel-file-sync", "settingsPanel-automation-tags", "settingsPanel-story", "settingsPanel-guardian"].includes(panel.id);
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(requested) {
@@ -122,6 +123,7 @@ function selectSettingsTab(requested) {
   if (name === "automation-tags") void loadAutomationTags();
   if (name === "notifications") { void loadNtfyServicesPanel(); void loadErrorReportingSettings(); }
   if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
+  if (name === "guardian" || name === "classifiers") void loadGuardianSettings().catch((error) => toast(error.message));
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
   if (name === "file-sync") void loadFileSyncSettings(); // settings-page (P4)

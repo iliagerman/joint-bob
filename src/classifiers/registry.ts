@@ -1,7 +1,8 @@
 import type { DifficultyClassifier } from "./contract.js";
+import { layaClassifier } from "./laya.js";
 import { typesafeClassifier } from "./typesafe.js";
 
-const classifiers: DifficultyClassifier[] = [typesafeClassifier];
+const classifiers: DifficultyClassifier[] = [typesafeClassifier, layaClassifier];
 
 export function listDifficultyClassifiers(): DifficultyClassifier[] {
   return [...classifiers];

@@ -283,6 +283,10 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
 }
 
 export function handleSocketPayload(payload, scrollOnReady = false) {
+  if (payload.type === "guardianReviews" || payload.type === "guardianBlocked") {
+    document.dispatchEvent(new CustomEvent("guardian-event", { detail: payload }));
+    return;
+  }
   if (payload.type === "conversationChatStream") {
     document.dispatchEvent(new CustomEvent("conversation-chat-stream", { detail: payload }));
     return;
@@ -305,6 +309,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const openingDraft = state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath);
     state.conversationLock = payload.ownership ?? null;
     state.conversationReadOnly = payload.readOnly === true;
+    document.dispatchEvent(new CustomEvent("guardian-event", { detail: { type: "guardianReviews", reviews: payload.guardianReviews || [] } }));
     setAutoRespond(payload.autoRespond ?? null, payload.autoRespondDecision ?? null, payload.autoRespondDefaults);
     state.conversationCommands = payload.conversationCommands || null;
     if (!payload.engine) throw new Error("Ready payload is missing its harness engine");
@@ -713,6 +718,7 @@ const INVALIDATION_HANDLERS = {
     scheduleRunningRefresh();
   },
   browserSessionsChanged: () => document.dispatchEvent(new Event("browserSessionsChanged")),
+  guardianReviewsChanged: (payload) => document.dispatchEvent(new CustomEvent("guardian-elsewhere", { detail: payload })),
   instructionsChanged: () => document.dispatchEvent(new Event("instructions-changed")),
   projectsChanged: () => refreshProjectsQuietly(),
   pinsChanged: () => loadPins().catch((error) => console.warn(error)),

@@ -358,11 +358,11 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   const classifier = getDifficultyClassifier(policy.policy.classifierId);
   if (!classifier) return skip("unknown classifier", "unavailable");
   const apiKey = genericSecretEnvironment(connection.project.id)[classifier.variableName];
-  if (!apiKey) return skip("classifier key missing", "unavailable");
+  if (!apiKey && !classifier.keyOptional) return skip("classifier key missing", "unavailable");
   let classification: DifficultyClassification | null = null;
   try {
     const input = routingClassifierInput(connection, queued, policy.policy.contextMessages ?? 10);
-    classification = await classifier.classify(input, apiKey, { options: configuredOptions });
+    classification = await classifier.classify(input, apiKey ?? "", { options: configuredOptions });
   } catch { classification = null; }
   if (!classification) return skip("classifier failed", "unavailable");
   if (classification.confidence < policy.policy.confidenceThreshold) {

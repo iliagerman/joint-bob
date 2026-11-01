@@ -64,9 +64,9 @@ async function classifiedRun(project: ProjectRecord, own: ConversationModel, mat
     if (!config || !options.length) return null;
     const classifier = getDifficultyClassifier(config.policy.classifierId);
     const apiKey = classifier ? genericSecretEnvironment(project.id)[classifier.variableName] : undefined;
-    if (!classifier || !apiKey) return null;
+    if (!classifier || (!apiKey && !classifier.keyOptional)) return null;
     const task = `Task: update a short running summary of a conversation with its newest messages.\n\n${material.slice(-CLASSIFIER_INPUT_LIMIT)}`;
-    const classification = await classifier.classify(task, apiKey, { options });
+    const classification = await classifier.classify(task, apiKey ?? "", { options });
     return routedSummaryModel(levels, classification, config.policy.confidenceThreshold, own, getHarness(own.harnessId as HarnessId).configuration?.fixedProvider);
   } catch (error) {
     console.warn("Summary classification failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");

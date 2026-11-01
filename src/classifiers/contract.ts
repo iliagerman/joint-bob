@@ -28,6 +28,8 @@ export interface DifficultyClassifier {
   label: string;
   /** Environment variable that carries the API key, resolved from attached secret accounts. */
   variableName: string;
+  /** The classifier runs without a key when none is attached (Laya on this machine). */
+  keyOptional?: boolean;
   /** A string is accepted for older classifiers that only use calibration text. */
   classify(text: string, apiKey: string, context?: string | DifficultyClassifierContext): Promise<DifficultyClassification | null>;
 }

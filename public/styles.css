@@ -5341,3 +5341,18 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
   --btn-bg: #e8dcc2; --btn-fg: #3b2f22; --btn-border: rgba(90, 65, 30, 0.25); --btn-bg-hover: #dfd1b2;
   --accent: #a4561f; --heading: #2b2118; --heading-soft: #8a4a1c;
 }
+
+/* Guardian: rules in Settings → Guardian and the review card above the composer. */
+.guardian-settings { display: grid; gap: 12px; }
+.guardian-settings:empty { display: none; }
+.guardian-rule { flex-wrap: wrap; }
+.guardian-rule > .checkbox-row { flex: 1 1 auto; align-items: flex-start; min-width: 0; }
+.guardian-rule > .checkbox-row input { margin-top: 3px; }
+.guardian-rule-copy { display: grid; gap: 2px; min-width: 0; }
+.guardian-rule-copy span { color: var(--muted); font-size: 12px; font-weight: 400; }
+.guardian-editor { display: grid; flex: 1 1 100%; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.guardian-rule > .guardian-editor:first-child { padding-top: 0; border-top: 0; }
+.guardian-review { display: grid; gap: 8px; margin: 0 var(--gap, 8px) 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--line)); border-radius: var(--radius-card); background: color-mix(in srgb, var(--amber) 8%, var(--header)); }
+.guardian-review pre { max-height: 40vh; margin: 0; padding: 10px 12px; overflow: auto; border-radius: var(--radius-ctl); background: var(--code-bg); color: var(--code-text); font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.guardian-review-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.guardian-review-foot .settings-hint { flex: 1 1 200px; }

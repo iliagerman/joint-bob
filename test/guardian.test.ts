@@ -153,3 +153,25 @@ test("with Guardian off and no relay rules nothing is asked", async () => {
   assert.deepEqual(await checkGuardian({ projectId: "p", conversationId: "c", harness: "pi", cwd: process.cwd(), canReplaceTool: true },
     { kind: "tool", tool: "bash", category: "commands", input: { command: "rm -rf /" } }), { action: "continue" });
 });
+
+test("the Laya classifier routes by difficulty through the saved Laya server, without a key", async (t) => {
+  const { layaClassifier } = await import("../src/classifiers/laya.js");
+  const bodies: Array<{ state: string; model: string }> = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      bodies.push(JSON.parse(body));
+      response.end(JSON.stringify({ answers: { complexity: { type: "choice", choice: "level_3", confidence: 0.8 } } }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  updateGuardianSettings({ ...DEFAULT_GUARDIAN_SETTINGS, layaUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}` });
+  t.after(() => updateGuardianSettings(DEFAULT_GUARDIAN_SETTINGS));
+  const classification = await layaClassifier.classify(`${"x".repeat(5_000)}fix the typo`, "", { options: [{ level: 3, description: "small edits" }] });
+  assert.deepEqual(classification, { level: 3, score: 3, confidence: 0.8 });
+  assert.equal(bodies[0].model, "multilingual");
+  assert.ok(bodies[0].state.endsWith("fix the typo") && bodies[0].state.length === 3_500, "the newest part of the prompt is what Laya reads");
+  assert.equal(layaClassifier.keyOptional, true);
+});
