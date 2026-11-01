@@ -75,6 +75,8 @@ function fixture(overrides: Record<string, any> = {}) {
     },
     getAutoRespond: async () => undefined,
     activeRoutingConfig: () => null, routingConfigDatabase: () => ({}),
+    // No cluster subscription pool is assigned to the project.
+    clusterV2Database: async () => ({}), resolveClusterSubscriptionPools: () => [],
     summaryPolicyNow: async () => ({ updates: "manual", writer: { source: "automatic" }, from: { kind: "node" } }),
     summaryPolicyView: () => ({ updates: "manual", writer: "automatic", from: "this machine" }),
     storedDigest: () => undefined, requestDigestQuietly: () => {}, conversationLiveModel: () => ({ harnessId: "pi" }),
