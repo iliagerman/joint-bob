@@ -640,7 +640,6 @@ h2 { font-size: 17px; line-height: 1.25; }
 }
 .app-boot-inner { display: grid; justify-items: center; }
 .app-boot-mark { width: 192px; height: 192px; filter: drop-shadow(0 18px 28px rgba(20, 22, 24, 0.18)); }
-.boot-tile { fill: #141618; }
 .boot-smoke {
   transform-box: fill-box;
   transform-origin: bottom center;
