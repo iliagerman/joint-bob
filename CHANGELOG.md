@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.190.0 — 2026-11-01
+
+- Changed local story voice to save each line as a small MP3 instead of a WAV, about an eighth of the size, which every browser plays.
+- Changed an already installed local voice to update itself to the MP3 format the next time you open story settings or a story, with Settings showing that it is updating; earlier WAV lines are not reused and are narrated again.
+
 ## 2.189.2 — 2026-11-01
 
 - Changed the webhook loading message to appear centered over the webhooks panel.
