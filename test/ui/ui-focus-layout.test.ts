@@ -19,6 +19,7 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and shared FAB
   await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
   await page.getByTestId("settings-cancel-button").click();
   const sharedStyles = new Map<string, string>();
+  assert.equal(await page.getByTestId("focus-controls-button").evaluate(el => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0)", "the menu button has no background behind the logo");
   for (const view of ["projects", "sessions", "chat"]) {
     if (view === "sessions") await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
     if (view === "chat") await page.locator("#sessionList .session-card").first().click();

@@ -21,7 +21,7 @@ test("logo FAB reflects the live cross-project review count and clears at zero",
   await page.getByTestId("login-submit-button").click();
   await page.locator("body.focus-ui .project-card").first().waitFor();
   const fab = page.getByTestId("focus-controls-button");
-  assert.equal(await fab.locator('img[src="/icon.svg"]').count(), 1, "FAB uses the actual Joint Bob logo");
+  assert.equal(await fab.locator('img[src="/icon-mark.svg"]').count(), 1, "FAB uses the Joint Bob logo mark");
   await page.waitForFunction(() => document.querySelector<HTMLImageElement>("#focusControlsButton img")!.naturalWidth > 0);
   await page.waitForFunction(() => document.querySelector("#focusPendingBadge")!.textContent === "2");
   assert.equal(await page.getByTestId("focus-pending-badge").isVisible(), true);

@@ -5369,9 +5369,9 @@ body:not(.node-admin) [data-admin-only] { display: none !important; }
 }
 
 /* The logo's teal follows the palette's accent: each rotation turns the logo's hue (166°) into the accent's. */
-:root[data-palette="midnight"] img[src="/icon.svg"] { filter: hue-rotate(50deg); }
-:root[data-palette="graphite"] img[src="/icon.svg"] { filter: hue-rotate(-132deg); }
-:root[data-palette="sepia"] img[src="/icon.svg"] { filter: hue-rotate(-141deg) saturate(.8); }
+:root[data-palette="midnight"] img[src^="/icon"] { filter: hue-rotate(50deg); }
+:root[data-palette="graphite"] img[src^="/icon"] { filter: hue-rotate(-132deg); }
+:root[data-palette="sepia"] img[src^="/icon"] { filter: hue-rotate(-141deg) saturate(.8); }
 
 /* Guardian: rules in Settings → Guardian and the review card above the composer. */
 .guardian-settings { display: grid; gap: 12px; }
