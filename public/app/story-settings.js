@@ -22,7 +22,7 @@ let pollTimer = null;
 
 function voiceText(voice) {
   if (!voice.allowed) return voice.reason;
-  if (voice.installing) return "Installing local voice. This takes a few minutes, once, and stays on this computer.";
+  if (voice.installing) return voice.outdated ? "Updating local voice to a smaller sound format. This takes a minute, once." : "Installing local voice. This takes a few minutes, once, and stays on this computer.";
   if (voice.installError) return `Installing local voice failed: ${voice.installError}`;
   if (voice.installed) return "Local voice is installed on this node. Its voice model downloads on the first narration.";
   return "Local voice is not installed on this node. Install it to narrate with Kokoro here, without a key.";

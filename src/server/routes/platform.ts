@@ -15,7 +15,7 @@ import { ntfyServiceSchema, pushSubscribeSchema, pushUnsubscribeSchema, sharedNt
 import { app } from "../state.js";
 import { GitReviewError } from "../../git-review.js";
 import { DEFAULT_STORY_INSTRUCTIONS, KOKORO_VOICES, STORY_LOCATIONS, STORY_LOCATION_LABELS, getStorySettings, storySettingsSchema, updateStorySettings, voiceLabel } from "../../story-settings.js";
-import { localVoiceStatus, startLocalVoiceInstall, testStoryVoice } from "../story-voice.js";
+import { localVoiceStatus, startLocalVoiceInstall, testStoryVoice, updateLocalVoice } from "../story-voice.js";
 import { getClusterNode } from "../../cluster.js";
 import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
@@ -197,6 +197,7 @@ app.put("/api/error-reporting", (request, response, next) => {
 
 // Story mode: how stories look and which voices narrate them. Saved on this node.
 function storySettingsView() {
+  updateLocalVoice();
   return {
     settings: getStorySettings(),
     defaultInstructions: DEFAULT_STORY_INSTRUCTIONS,

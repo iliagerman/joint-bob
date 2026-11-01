@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +16,11 @@ import { storyVoiceDirectory } from "../story-scripts.js";
 export const KOKORO_MIN_MEMORY_BYTES = 8 * 2 ** 30;
 export const KOKORO_MIN_CORES = 4;
 const KOKORO_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
-const KOKORO_PACKAGES = ["kokoro-js@1.2.1", "@huggingface/transformers@3.8.1"];
+// lamejs (LGPL) encodes lines as MP3; like Kokoro it lives only in this on-request runtime, never in Joint Bob's own packages.
+const KOKORO_PACKAGES = ["kokoro-js@1.2.1", "@huggingface/transformers@3.8.1", "@breezystack/lamejs@1.2.7"];
+// Changes whenever the runtime gains a package; an older install updates itself the next time a story checks its voice.
+const RUNTIME_VERSION = "2";
+const LOADER = `// Joint Bob local voice runtime ${RUNTIME_VERSION}\nexport { KokoroTTS } from "kokoro-js";\nexport { env } from "@huggingface/transformers";\nexport { Mp3Encoder } from "@breezystack/lamejs";\n`;
 const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 const ELEVEN_MODEL = "eleven_flash_v2_5";
 export const NARRATION_LIMIT = 2_500;
@@ -37,18 +41,28 @@ export function localVoiceAllowed(memoryBytes: number, cores: number): { allowed
 const runtimeDirectory = () => path.join(resolveDataDirectory(), "story-voice-runtime");
 const loaderFile = () => path.join(runtimeDirectory(), "load.mjs");
 
+function loaderState(): "missing" | "outdated" | "current" {
+  try {
+    return readFileSync(loaderFile(), "utf8") === LOADER ? "current" : "outdated";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+    throw error;
+  }
+}
+
 export function localVoiceInstalled(): boolean {
-  return existsSync(loaderFile());
+  return loaderState() === "current";
 }
 
 let installing: Promise<void> | undefined;
 let installError: string | null = null;
 
-export interface LocalVoiceStatus { allowed: boolean; installed: boolean; installing: boolean; installError: string | null; reason: string | null }
+export interface LocalVoiceStatus { allowed: boolean; installed: boolean; outdated: boolean; installing: boolean; installError: string | null; reason: string | null }
 
 export function localVoiceStatus(): LocalVoiceStatus {
   const { allowed, reason } = localVoiceAllowed(os.totalmem(), os.cpus().length);
-  return { allowed, installed: localVoiceInstalled(), installing: installing !== undefined, installError: installError, reason };
+  const state = loaderState();
+  return { allowed, installed: state === "current", outdated: state === "outdated", installing: installing !== undefined, installError: installError, reason };
 }
 
 // npm runs in the background; the Settings tab polls the status. CUDA is skipped: onnxruntime-node would otherwise
@@ -77,44 +91,49 @@ export async function startLocalVoiceInstall(): Promise<void> {
   installError = null;
   await mkdir(runtimeDirectory(), { recursive: true });
   installing = runNpmInstall()
-    .then(() => writeFile(loaderFile(), 'export { KokoroTTS } from "kokoro-js";\nexport { env } from "@huggingface/transformers";\n'))
+    .then(() => writeFile(loaderFile(), LOADER))
+    .then(() => { runtime = undefined; })
     .catch((error: Error) => { installError = error.message; })
     .finally(() => { installing = undefined; });
 }
 
 // The loader is a file inside the runtime, so kokoro-js and the cache settings share one copy of transformers.
-let engine: Promise<{ KokoroTTS: { from_pretrained(id: string, options: object): Promise<KokoroEngine> }; env: { cacheDir: string } }> | undefined;
+/** Brings an install from before MP3 encoding up to date. Only a computer that already had local voice is updated. */
+export function updateLocalVoice(): void {
+  const status = localVoiceStatus();
+  if (status.allowed && status.outdated && !status.installing) startLocalVoiceInstall().catch((error: Error) => { installError = error.message; });
+}
+
+type Mp3Encoder = new (channels: number, rate: number, kbps: number) => { encodeBuffer(samples: Int16Array): Int8Array; flush(): Int8Array };
+interface VoiceRuntime { KokoroTTS: { from_pretrained(id: string, options: object): Promise<KokoroEngine> }; env: { cacheDir: string }; Mp3Encoder: Mp3Encoder }
+let runtime: Promise<VoiceRuntime> | undefined;
 
 interface KokoroEngine {
   generate(text: string, options: { voice: string; speed: number }): Promise<{ audio: Float32Array; sampling_rate: number }>;
 }
 
-/** Kokoro's own WAV is 32-bit float, which Safari does not play; 16-bit PCM plays in every browser and is half the size. */
-export function pcm16Wav(samples: Float32Array, rate: number): Buffer {
-  const wav = Buffer.alloc(44 + samples.length * 2);
-  wav.write("RIFF", 0, "ascii");
-  wav.writeUInt32LE(36 + samples.length * 2, 4);
-  wav.write("WAVEfmt ", 8, "ascii");
-  wav.writeUInt32LE(16, 16);
-  wav.writeUInt16LE(1, 20);
-  wav.writeUInt16LE(1, 22);
-  wav.writeUInt32LE(rate, 24);
-  wav.writeUInt32LE(rate * 2, 28);
-  wav.writeUInt16LE(2, 32);
-  wav.writeUInt16LE(16, 34);
-  wav.write("data", 36, "ascii");
-  wav.writeUInt32LE(samples.length * 2, 40);
-  samples.forEach((sample, index) => wav.writeInt16LE(Math.round(Math.max(-1, Math.min(1, sample)) * 32767), 44 + index * 2));
-  return wav;
+/** MP3 at 48 kbps: about an eighth of the size of a WAV, and every browser plays it, Safari included. */
+export function toMp3(samples: Float32Array, rate: number, Encoder: Mp3Encoder): Buffer {
+  const pcm = Int16Array.from(samples, (sample) => Math.round(Math.max(-1, Math.min(1, sample)) * 32767));
+  const encoder = new Encoder(1, rate, 48);
+  const parts: Int8Array[] = [];
+  for (let start = 0; start < pcm.length; start += 1152) parts.push(encoder.encodeBuffer(pcm.subarray(start, start + 1152)));
+  parts.push(encoder.flush());
+  return Buffer.concat(parts.map((part) => Buffer.from(part.buffer, part.byteOffset, part.length)));
+}
+
+// The version in the URL makes a running server load the updated runtime instead of the copy it imported before.
+function loadRuntime(): Promise<VoiceRuntime> {
+  runtime ??= import(`${pathToFileURL(loaderFile()).href}?v=${RUNTIME_VERSION}`);
+  return runtime;
 }
 
 function loadKokoro(): Promise<KokoroEngine> {
-  engine ??= import(pathToFileURL(loaderFile()).href);
-  return engine.then(({ KokoroTTS, env }) => {
+  return loadRuntime().then(({ KokoroTTS, env }) => {
     env.cacheDir = path.join(resolveDataDirectory(), "kokoro-models");
     return KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q8", device: "cpu" });
   }).catch((error: Error) => {
-    engine = undefined;
+    runtime = undefined;
     throw new GitReviewError(502, `Kokoro could not start: ${error.message}`);
   });
 }
@@ -132,7 +151,9 @@ export function narrationProvider(projectId: string, settings: StorySettings = g
   const elevenReason = eleven && "conflict" in eleven
     ? `This project has ${eleven.conflict} ElevenLabs secret accounts at the same level. Keep one so the narrator is clear.`
     : "This project has no ElevenLabs secret. Add a secret account of type ElevenLabs (Settings → Secrets) and attach it to the project.";
-  const localReason = kokoro.reason ?? `Local voice is not installed on ${os.hostname()}, the computer that narrates this project. Install it there in Settings → Activity overview.`;
+  const localReason = kokoro.reason ?? (kokoro.outdated
+    ? `Local voice on ${os.hostname()} is being updated to a smaller sound format. It speaks again in a minute or two.`
+    : null) ?? `Local voice is not installed on ${os.hostname()}, the computer that narrates this project. Install it there in Settings → Activity overview.`;
   if (settings.voiceProvider === "kokoro") return kokoroReady ? { provider: "kokoro", reason: null } : { provider: null, reason: localReason };
   if (settings.voiceProvider === "elevenlabs") return elevenReady ? { provider: "elevenlabs", reason: null } : { provider: null, reason: elevenReason };
   if (kokoroReady) return { provider: "kokoro", reason: null };
@@ -141,12 +162,12 @@ export function narrationProvider(projectId: string, settings: StorySettings = g
 }
 
 function voiceFile(provider: VoiceProvider, voice: string, speed: number, text: string): string {
-  // "pcm16" keeps lines saved in the old 32-bit float format from being served again.
-  const key = createHash("sha256").update(`${provider}\n${voice}\n${speed}\n${text}${provider === "kokoro" ? "\npcm16" : ""}`).digest("hex");
-  return path.join(storyVoiceDirectory(), `${key}.${provider === "kokoro" ? "wav" : "mp3"}`);
+  // "mp3" keeps local voice lines saved as WAV before from being served again.
+  const key = createHash("sha256").update(`${provider}\n${voice}\n${speed}\n${text}${provider === "kokoro" ? "\nmp3" : ""}`).digest("hex");
+  return path.join(storyVoiceDirectory(), `${key}.mp3`);
 }
 
-export interface NarrationAudio { bytes: Buffer; mime: "audio/wav" | "audio/mpeg" }
+export interface NarrationAudio { bytes: Buffer; mime: "audio/mpeg" }
 
 /** The Settings tab's "Test voices": one sentence in Kokoro, which needs no project. */
 export async function testStoryVoice(who: "host" | "cohost"): Promise<NarrationAudio> {
@@ -156,8 +177,8 @@ export async function testStoryVoice(who: "host" | "cohost"): Promise<NarrationA
   const voice = who === "host" ? settings.hostVoice : settings.cohostVoice;
   const text = who === "host" ? "Hi, I'm Maya. I explain what changed and why." : "And I'm Jonah. I ask what a teammate would ask.";
   const file = voiceFile("kokoro", voice, settings.speed, text);
-  try { return { bytes: await readFile(file), mime: "audio/wav" }; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  return { bytes: await speakWithKokoro(voice, settings.speed, text, file), mime: "audio/wav" };
+  try { return { bytes: await readFile(file), mime: "audio/mpeg" }; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  return { bytes: await speakWithKokoro(voice, settings.speed, text, file), mime: "audio/mpeg" };
 }
 
 /** Audio of one line for Maya (`host`) or Jonah (`cohost`). Each line is made once and replayed from disk. */
@@ -169,7 +190,7 @@ export async function narrateStoryText(projectId: string, text: string, who: "ho
     ? (who === "host" ? settings.hostVoice : settings.cohostVoice)
     : (who === "host" ? settings.elevenHostVoice : settings.elevenCohostVoice);
   const file = voiceFile(provider, voice, settings.speed, text);
-  const mime = provider === "kokoro" ? "audio/wav" : "audio/mpeg";
+  const mime = "audio/mpeg";
   try { return { bytes: await readFile(file), mime }; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const bytes = provider === "kokoro"
     ? await speakWithKokoro(voice, settings.speed, text, file)
@@ -181,7 +202,7 @@ async function speakWithKokoro(voice: string, speed: number, text: string, file:
   const spoken = queue.then(async () => {
     const audio = await (await loadKokoro()).generate(text, { voice, speed });
     await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, pcm16Wav(audio.audio, audio.sampling_rate));
+    await writeFile(file, toMp3(audio.audio, audio.sampling_rate, (await loadRuntime()).Mp3Encoder));
   });
   queue = spoken.catch(() => undefined);
   await spoken;

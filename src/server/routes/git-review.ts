@@ -28,7 +28,7 @@ import {
 import { ACTIVITY_OVERVIEW_MARKER, askStoryScript, generateStoryScript, type OverviewSource } from "../story-podcast.js";
 import { publishStory } from "../../story-replication.js";
 import { loadStoryScript, pruneStoryFiles } from "../../story-scripts.js";
-import { localVoiceStatus, narrateStoryText, narrationProvider, NARRATION_LIMIT, startLocalVoiceInstall } from "../story-voice.js";
+import { localVoiceStatus, narrateStoryText, narrationProvider, NARRATION_LIMIT, startLocalVoiceInstall, updateLocalVoice } from "../story-voice.js";
 import { getStorySettings, storySettingsSchema, VOICE_PROVIDER_CHOICES } from "../../story-settings.js";
 import { CHANGE_STORY_MARKER, collectStorySources, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StoryProgress, type StorySources } from "../git-change-story.js";
 import { getProject } from "../../store.js";
@@ -843,6 +843,7 @@ const voiceProviderQuery = z.enum(VOICE_PROVIDER_CHOICES).optional();
 
 // Which engine narrates this project's stories, if any: this node's Kokoro, or the project's own ElevenLabs key.
 function storyVoiceView(projectId: string, voiceProvider?: z.infer<typeof voiceProviderQuery>) {
+  updateLocalVoice();
   const { provider, reason } = narrationProvider(projectId, { ...getStorySettings(), ...(voiceProvider ? { voiceProvider } : {}) });
   // `local` is the narrating computer's own Kokoro, which is what the first-use voice choice offers to install.
   return { provider, available: provider !== null, reason, local: localVoiceStatus() };

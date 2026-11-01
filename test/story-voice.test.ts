@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { GitReviewError } from "../src/git-review.js";
 import { resolveDataDirectory } from "../src/data-directory.js";
-import { KOKORO_MIN_CORES, KOKORO_MIN_MEMORY_BYTES, localVoiceAllowed, pcm16Wav, speakWithElevenLabs, testStoryVoice } from "../src/server/story-voice.js";
+import { KOKORO_MIN_CORES, KOKORO_MIN_MEMORY_BYTES, localVoiceAllowed, localVoiceStatus, speakWithElevenLabs, testStoryVoice, toMp3 } from "../src/server/story-voice.js";
 
 const GB = 2 ** 30;
 
@@ -37,14 +37,32 @@ test("ElevenLabs narration sends the key and the voice, and says why when it ref
   await assert.rejects(speakWithElevenLabs("bad", "EXAVITQu4vr4xnSDxMaL", "Refused", file, refuse), (error: GitReviewError) => error.status === 502 && /401.*Invalid API key/.test(error.message));
 });
 
-test("local voice lines are 16-bit PCM WAV, which every browser plays, with samples clamped to the 16-bit range", () => {
-  const wav = pcm16Wav(new Float32Array([0, 0.5, -1, 2]), 24_000);
-  assert.equal(wav.toString("ascii", 0, 4), "RIFF");
-  assert.equal(wav.toString("ascii", 8, 12), "WAVE");
-  assert.equal(wav.readUInt16LE(20), 1, "PCM, not 32-bit float");
-  assert.equal(wav.readUInt16LE(22), 1, "mono");
-  assert.equal(wav.readUInt32LE(24), 24_000);
-  assert.equal(wav.readUInt16LE(34), 16);
-  assert.equal(wav.readUInt32LE(40), 8);
-  assert.deepEqual([0, 1, 2, 3].map((index) => wav.readInt16LE(44 + index * 2)), [0, 16384, -32767, 32767]);
+test("local voice lines are encoded as mono MP3 at 48 kbps, from 16-bit samples clamped to range, in MP3-sized frames", () => {
+  const calls: Array<{ channels?: number; rate?: number; kbps?: number; samples?: number[] }> = [];
+  class FakeEncoder {
+    constructor(channels: number, rate: number, kbps: number) { calls.push({ channels, rate, kbps }); }
+    encodeBuffer(samples: Int16Array) { calls.push({ samples: [...samples.slice(0, 4)] }); return Int8Array.of(samples.length % 128); }
+    flush() { return Int8Array.of(9); }
+  }
+  const samples = new Float32Array(1152 + 10);
+  samples.set([0, 0.5, -1, 2]);
+  const mp3 = toMp3(samples, 24_000, FakeEncoder);
+  assert.deepEqual(calls[0], { channels: 1, rate: 24_000, kbps: 48 });
+  assert.deepEqual(calls[1].samples, [0, 16384, -32767, 32767]);
+  assert.equal(calls.length, 3, "one call per 1152-sample frame");
+  assert.deepEqual([...mp3], [1152 % 128, 10, 9]);
+});
+
+test("a local voice installed before MP3 encoding reads as outdated, not installed", async () => {
+  const loader = path.join(resolveDataDirectory(), "story-voice-runtime", "load.mjs");
+  await mkdir(path.dirname(loader), { recursive: true });
+  await writeFile(loader, 'export { KokoroTTS } from "kokoro-js";\nexport { env } from "@huggingface/transformers";\n');
+  try {
+    const status = localVoiceStatus();
+    assert.equal(status.installed, false);
+    assert.equal(status.outdated, true);
+  } finally {
+    await rm(path.dirname(loader), { recursive: true, force: true });
+  }
+  assert.equal(localVoiceStatus().outdated, false);
 });
