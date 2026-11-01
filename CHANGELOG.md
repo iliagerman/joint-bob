@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.190.1 — 2026-11-01
+
+- Changed Activity overview to wait up to three minutes while the open-source voice installs or updates, with the progress card saying so, and then play the movie with sound instead of silently.
+- Fixed a failed open-source voice install reporting "not installed"; Activity overview and story narration now say why it failed and how to try again.
+
 ## 2.190.0 — 2026-11-01
 
 - Changed local story voice to save each line as a small MP3 instead of a WAV, about an eighth of the size, which every browser plays.
