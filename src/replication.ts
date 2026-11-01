@@ -136,8 +136,23 @@ export function ensureOutboxAccountIndex(db: DatabaseSync): void {
   indexedDatabases.add(db);
 }
 
+/**
+ * Whether a pass for this peer would find nothing: it is caught up with the outbox, no search of
+ * older events is under way or due, and no delivery is due. The flush asks every two seconds for
+ * every peer, and each pass took the database's write lock to find that out; this is two indexed
+ * reads, and it leaves the lock to writers.
+ */
+function peerIdle(db: DatabaseSync, peerId: string, at: string): boolean {
+  const scan = unallocatedScan.get(peerId);
+  if (!scan || scan.older || scan.due || Date.parse(at) - scan.finishedAt >= FULL_SCAN_MS) return false;
+  const newest = (db.prepare("SELECT max(rowid) id FROM replication_outbox").get() as { id: number | null }).id ?? 0;
+  if (newest !== scan.tail) return false;
+  return !db.prepare("SELECT 1 FROM replication_deliveries WHERE peer_id=? AND delivered_at IS NULL AND next_attempt_at<=? LIMIT 1").get(peerId, at);
+}
+
 /** One transaction per pass: each delivery row committed on its own costs a disk sync, and a pass has a time budget. */
 function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean, accounts?: string[]): ReplicationEvent[] {
+  if (peerIdle(db, peerId, at)) return [];
   db.exec("BEGIN IMMEDIATE");
   try {
     const selected = allocateEventsForPeer(db, peerId, at, filter, accounts);

@@ -98,3 +98,32 @@ test("a visitor's search reads the account index, whatever the outbox holds", as
     db.close();
   }
 });
+
+// Every two seconds, for every peer, a pass took the write lock only to find nothing new.
+test("a pass with nothing new or due for the peer leaves the write lock alone", async () => {
+  const db = new DatabaseSync(path.join(resolveDataDirectory(), "node.db"));
+  ensureReplicationSchema(db);
+  const peer = "scan-idle-peer";
+  const at = (seconds: number) => new Date(Date.parse("2026-05-01T00:00:00.000Z") + seconds * 1000);
+  const first = enqueueReplicationEvent(db, { originNodeId: "local", entityType: "project.lock", entityKey: "scan-idle-1", operation: "upsert", payload: { projectId: "scan" } });
+  try {
+    // The first pass also searches the existing history; let it finish.
+    for (let second = 1; second < 60; second++) await eventsForPeer(peer, at(second), () => true);
+    db.prepare("UPDATE replication_deliveries SET delivered_at=? WHERE peer_id=?").run(at(60).toISOString(), peer);
+    const writer = new DatabaseSync(path.join(resolveDataDirectory(), "node.db"));
+    writer.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
+    try {
+      const started = performance.now();
+      assert.deepEqual(await eventsForPeer(peer, at(61), () => true), [], "nothing to do, and no wait for the lock another writer holds");
+      assert.ok(performance.now() - started < 1000);
+    } finally { writer.exec("ROLLBACK"); writer.close(); }
+    const next = enqueueReplicationEvent(db, { originNodeId: "local", entityType: "project.lock", entityKey: "scan-idle-2", operation: "upsert", payload: { projectId: "scan" } });
+    assert.deepEqual((await eventsForPeer(peer, at(62), () => true)).map((event) => event.id), [next.id], "a new event still goes out");
+    db.prepare("UPDATE replication_deliveries SET delivered_at=NULL, next_attempt_at=? WHERE peer_id=? AND event_id=?").run(at(62).toISOString(), peer, first.id);
+    assert.ok((await eventsForPeer(peer, at(63), () => true)).some((event) => event.id === first.id), "a due retry still goes out");
+  } finally {
+    db.prepare("DELETE FROM replication_deliveries WHERE peer_id=?").run(peer);
+    db.prepare("DELETE FROM replication_outbox WHERE entity_key LIKE 'scan-idle-%'").run();
+    db.close();
+  }
+});

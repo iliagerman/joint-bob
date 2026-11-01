@@ -20,6 +20,7 @@ import { announceReturn, resumeDeliveriesOnReturn } from "./server/peer-return.j
 import { runReplicationHousekeeping } from "./server/replication-housekeeping.js";
 import { removeAllDeletedTranscripts } from "./server/deleted-transcripts.js";
 import { flushSuccessionNotices } from "./server/succession.js";
+import { measureOperation } from "./server/performance-diagnostics.js";
 import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, sweepRuntimeLeases, sweepStaleConversations } from "./server/maintenance.js";
 import { runSyncCheck } from "./server/sync-check.js";
 import { installBackendErrorCapture } from "./server/error-capture.js";
@@ -179,19 +180,24 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     }).catch((error) => console.warn("Conversations cannot be placed in their projects; every change will reload every list", error));
     // Cluster work waits for startup reconciliation: run alongside it, it kept a restarting
     // node too busy to become ready within its release health check.
+    // Each pass is timed under its own name (cluster.flush.*), so scripts/perf-report.mjs shows
+    // which of them costs time; these run every two seconds and are where background cost hides.
+    const flush = (name: string, run: () => Promise<unknown>, failure: string): void => {
+      measureOperation(`cluster.flush.${name}`, run).catch((error) => console.warn(failure, error));
+    };
     const flushClusterWork = (): void => {
-      flushV2ClusterAdministration().catch((error) => console.warn("V2 cluster administration flush failed", error));
-      flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
-      flushHubDeliveries().catch((error) => console.warn("Hub delivery failed", error));
-      flushSuccessionNotices().catch((error) => console.warn("Succession notice delivery failed", error));
-      pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
-      flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
-      flushBudgetPolicies().catch((error) => console.warn("Budget policy delivery failed", error));
-      flushBlockNotices().catch((error) => console.warn("Block notice delivery failed", error));
-      flushAccountReplication().catch((error) => console.warn("Account delivery failed", error));
-      void import("./server/roaming.js").then(({ flushProfiles, sendSignInNotices }) => Promise.all([flushProfiles(), sendSignInNotices()])).catch((error) => console.warn("Profile delivery failed", error));
-      flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
-      reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
+      flush("administration", flushV2ClusterAdministration, "V2 cluster administration flush failed");
+      flush("replication", flushReplicationOutbox, "Replication flush failed");
+      flush("hubs", flushHubDeliveries, "Hub delivery failed");
+      flush("succession", flushSuccessionNotices, "Succession notice delivery failed");
+      flush("runtime_leases", pushRuntimeLeaseSnapshots, "Runtime lease push failed");
+      flush("routing", flushRoutingConfigDeliveries, "Routing configuration flush failed");
+      flush("budgets", flushBudgetPolicies, "Budget policy delivery failed");
+      flush("blocks", flushBlockNotices, "Block notice delivery failed");
+      flush("accounts", flushAccountReplication, "Account delivery failed");
+      flush("profiles", () => import("./server/roaming.js").then(({ flushProfiles, sendSignInNotices }) => Promise.all([flushProfiles(), sendSignInNotices()])), "Profile delivery failed");
+      flush("push_subscriptions", flushPushSubscriptionOutbox, "Push subscription flush failed");
+      flush("task_handoffs", reconcileTaskHandoffs, "Task handoff reconciliation failed");
     };
     let clusterStarted = false;
     const runClusterWork = (): void => {
