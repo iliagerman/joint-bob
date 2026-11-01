@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.185.0 — 2026-11-01
 
-- Added a "Hide from conversation history" option to webhooks, which hides the conversations they start from the history list while their calls stay visible in the webhook.
+- Added a "Hide from conversation history" option to webhooks, which hides the conversations they start, existing ones included, from the history list while their calls stay visible in the webhook.
+- Added [placeholder] completion for scheduled-task names and webhook names when no separate conversation-title template is set. The agent fills new conversation titles while preserving fixed text.
+- Fixed hidden webhook conversations so they no longer push other conversations out of the history list.
+- Kept names with unmatched or empty brackets as literal titles, so existing automations continue running.
+- Added immediate opening feedback for webhooks and stopped waiting for files, skills and memory before showing Setup.
 
 ## 2.184.1 — 2026-11-01
 
