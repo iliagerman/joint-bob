@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.189.1 — 2026-11-01
+
+- Fixed Activity overview narration staying silent on its first line in Safari; it now plays there.
+- Fixed narration that does not start within six seconds holding the movie on one line; it now stops with a notice instead.
+- Added a progress card while an Activity movie is written, showing the current step, the writer and the time so far, and the Overview buttons show that they are busy.
+
 ## 2.189.0 — 2026-11-01
 
 - Changed the mobile controls menu to show New chat, New note, Recent, Running, Review, All projects, Conversations, Costs and Settings as the same tiles in the same places on the projects, project and conversation screens. Harness, model, effort and other chat-only controls still appear only in a conversation.
