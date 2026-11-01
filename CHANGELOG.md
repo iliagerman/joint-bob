@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.191.0 — 2026-11-01
+
+- Changed closing the Activity overview movie to hide it instead of leaving it playing, with a dock in the corner that shows whether it is answering, has an answer ready, or is paused, and opens it again where it left off.
+- Changed pressing Overview again for the same conversation to bring back the movie already open instead of starting another.
+- Changed questions asked during a story to stop interrupting it: questions queue and are answered one at a time, pending ones appear as chips with a status line, and each answer is inserted at the next line break, after which the story resumes where it stopped.
+- Changed an answer that arrives after the story has ended to play right away, and an answer that arrives while the movie is hidden to wait behind the dock.
+- Changed Overview to reuse a movie already written from the conversation's recent change story instead of writing a new one.
+
 ## 2.190.4 — 2026-11-01
 
 - Fixed the mobile menu button showing a dark square behind the Joint Bob logo. The button now has no background, border or shadow, and the logo is drawn without its tile.
