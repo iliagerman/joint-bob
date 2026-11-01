@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.188.0 — 2026-11-01
+
+- Fixed Activity overviews and story narration failing with "Unsupported signed runtime route" whenever another machine owned the project.
+- Added a one-time question on each computer asking which voice narrates stories and Activity overviews: the open-source voice, ElevenLabs, or none. The answer is saved for that computer, and saving Activity overview settings counts as answering.
+
 ## 2.187.0 — 2026-11-01
 
 - Changed Activity overview to build its movie straight from the conversation and its changes, keeping its own saved record instead of depending on the written story.
