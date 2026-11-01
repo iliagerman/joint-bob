@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.189.2 — 2026-11-01
 
-- Fixed the webhook list jumping while a webhook opens; the loading message now appears centered over the list.
+- Changed the webhook loading message to appear centered over the webhooks panel.
 
 ## 2.189.1 — 2026-11-01
 
