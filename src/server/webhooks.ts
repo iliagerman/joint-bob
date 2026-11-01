@@ -8,17 +8,17 @@ import path from "node:path";
 import { getClusterNode } from "../cluster.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
-import { ensureConversationRecord } from "../conversation-records.js";
+import { ensureConversationRecord, setWebhookConversationHistory } from "../conversation-records.js";
 import { listDiscoveredHarnesses } from "../harnesses/registry.js";
 import { ensureSessionTitle } from "../names.js";
-import { bindWebhookTitle, titlePlaceholders } from "../webhook-title.js";
+import { bindWebhookTitle, automationTitleInstruction } from "../webhook-title.js";
 import { getProjectLock } from "../project-locks.js";
 import { getProject } from "../store.js";
 import { conversationScopeId, getScopeSecretAccounts, setScopeSecretAccounts, validateProjectSecretAccounts } from "../secrets.js";
 import { recordTurnFailure } from "../turn-failures.js";
 import { isHarnessId } from "../types.js";
 import {
-  MAX_PAYLOAD_CHARS, PAYLOAD_FILE_NAME, recordWebhookDelivery, WebhookError, webhookMessage, type Webhook, type WebhookAttachment, type WebhookCall,
+  MAX_PAYLOAD_CHARS, PAYLOAD_FILE_NAME, getWebhook, recordWebhookDelivery, WebhookError, webhookMessage, type Webhook, type WebhookAttachment, type WebhookCall,
 } from "../webhooks.js";
 import { persistTaskAttachments } from "./chat.js";
 import { markSilentWebhookRequest } from "./scheduled-review.js";
@@ -98,10 +98,8 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   const attachments = [...(call.attachments ?? [])];
   if (call.body.trim().length > MAX_PAYLOAD_CHARS) attachments.push({ name: PAYLOAD_FILE_NAME, mimeType: "text/plain", data: Buffer.from(call.body) });
   const placed = await placeAttachments(project.path, attachments);
-  const titleTemplate = webhook.target.kind === "project" ? webhook.titleTemplate : "";
-  const titleInstruction = titleTemplate && titlePlaceholders(titleTemplate).length
-    ? `Complete this conversation's title template using the webhook content: ${JSON.stringify(titleTemplate)}. Infer concise text for each bracketed placeholder. Run node "$JOINT_BOB_WEBHOOK_TITLE_CLI" status, then use its fill command with the placeholder replacements. Text outside brackets is fixed and is preserved by the server. Do this before the webhook's main work.`
-    : "";
+  const titleTemplate = webhook.target.kind === "project" ? webhook.titleTemplate || webhook.name : "";
+  const titleInstruction = automationTitleInstruction(titleTemplate);
   const message = [titleInstruction, webhookMessage(webhook, call), resourceContext, placed.listed].filter(Boolean).join("\n\n");
   const engine = webhook.target.engine ?? defaultEngine();
   let activeSessionId = webhook.target.kind === "conversation" ? webhook.target.sessionId : null;
@@ -141,11 +139,14 @@ async function deliverWithProfile(webhook: Webhook, call: WebhookCall): Promise<
   const sessionId = randomUUID();
   activeSessionId = sessionId;
   await ensureConversationRecord(project.id, engine, sessionId, local.id);
-  if (titleTemplate) bindWebhookTitle(project.id, sessionId, titleTemplate);
+  const current = getWebhook(db, webhook.id);
+  if (!current) throw new WebhookError(404, "Webhook was deleted before this conversation started");
+  bindWebhookConversation(db, webhook.id, project.id, sessionId, local.id, true);
+  setWebhookConversationHistory(db, project.id, sessionId, webhook.id, current.hideFromHistory, local.id);
+  if (titleInstruction) bindWebhookTitle(project.id, sessionId, titleTemplate);
   await ensureSessionTitle(sessionId, titleTemplate || webhook.name);
   broadcastToProject(project.id, { type: "sessionsChanged" });
   try {
-    bindWebhookConversation(db, webhook.id, project.id, sessionId, local.id);
     await attachSecrets(webhook, engine, sessionId);
     await queueConversationPrompt({ projectId: project.id, engine, sessionId, ...prompt });
   } catch (error) {

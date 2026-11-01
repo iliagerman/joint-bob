@@ -91,6 +91,7 @@ export interface AgentRunSummary {
 
 export interface SessionSummary {
   cronTaskId?: string;
+  webhookHistory?: { webhookId: string; hidden: boolean; updatedAt: string };
   silentReviewFrom?: string;
   silentReviewUntil?: string;
   usage?: import("./usage-types.js").UsageTotals;

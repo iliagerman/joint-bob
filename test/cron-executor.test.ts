@@ -8,6 +8,7 @@ import { ensureConversationRecord } from "../src/conversation-records.js";
 import { cronStore } from "../src/cron.js";
 import { queuedCronPrompt } from "../src/server/cron.js";
 import { server } from "../src/server/state.js";
+import { webhookConversationTitle } from "../src/webhook-title.js";
 
 test("scheduled executor queues its model and reasoning with the prompt so a busy conversation never fails", async (context) => {
   const endpoint = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -55,6 +56,37 @@ test("scheduled executor queues its model and reasoning with the prompt so a bus
     assert.deepEqual(requests, [
       { type: "prompt", message: "[Joint Bob scheduled task]\nReport", requestId: run.id, queueSettings: { harnessId: "pi", provider: "zai", modelId: "glm-5.3-flash", reasoning: "low" } },
     ]);
+  } finally {
+    for (const socket of endpoint.clients) socket.terminate();
+    await new Promise<void>(resolve => endpoint.close(() => resolve()));
+  }
+});
+
+test("new scheduled conversations bind name placeholders before sending the prompt", async (context) => {
+  const endpoint = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(endpoint, "listening");
+  context.mock.method(server, "address", () => endpoint.address());
+  const node = await getClusterNode(), sessionId = randomUUID();
+  await ensureConversationRecord("project", "pi", sessionId, node.id);
+  const task = cronStore().create({ projectId: "project", name: "Report - [SUMMARY]", prompt: "Summarize failures", engine: "pi", sessionId: null, ownerNodeId: node.id, enabled: true, schedule: { frequency: "hourly", hour: 0, minute: 0, weekday: 0, timezone: "UTC" } });
+  const run = cronStore().claim(task.id, node.id, task.nextRun)!;
+  let message = "", template: string | undefined;
+  endpoint.on("connection", socket => {
+    template = webhookConversationTitle("project", sessionId);
+    socket.send(JSON.stringify({ type: "ready", status: { model: { provider: "test", id: "test" }, thinkingLevel: "low" } }));
+    socket.on("message", raw => {
+      const request = JSON.parse(raw.toString());
+      message = request.message;
+      socket.send(JSON.stringify({ type: "userMessage", queued: true, requestId: run.id, queueId: "q" }));
+      socket.send(JSON.stringify({ type: "promptStarted", queueId: "q" }));
+      socket.send(JSON.stringify({ type: "promptCompleted", queueId: "q" }));
+    });
+  });
+  try {
+    await queuedCronPrompt(task, run, sessionId);
+    assert.equal(template, task.name);
+    assert.match(message, /JOINT_BOB_WEBHOOK_TITLE_CLI/);
+    assert.match(message, /\[Joint Bob scheduled task\]\nSummarize failures/);
   } finally {
     for (const socket of endpoint.clients) socket.terminate();
     await new Promise<void>(resolve => endpoint.close(() => resolve()));

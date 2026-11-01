@@ -19,6 +19,7 @@ export interface ConversationRecord {
   originNodeId: string;
   taskId: string | null;
   cronTaskId?: string;
+  webhookHistory?: { webhookId: string; hidden: boolean; updatedAt: string };
   /** Last reviewable activity before the silent run(s), or epoch for a new conversation. */
   silentReviewFrom?: string;
   /** Last transcript activity covered by those silent runs. */
@@ -54,7 +55,7 @@ function createConversationRecordTables(db: DatabaseSync): void {
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '', task_id TEXT,
     conversation_id TEXT, segment_index INTEGER NOT NULL DEFAULT 0, cron_task_id TEXT,
-    silent_review_from TEXT, silent_review_until TEXT, worktree TEXT, worktree_at TEXT,
+    silent_review_from TEXT, silent_review_until TEXT, worktree TEXT, worktree_at TEXT, webhook_history TEXT,
     PRIMARY KEY (project_id, engine, session_id)
   ); CREATE TABLE IF NOT EXISTS conversation_record_tombstones (
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -74,6 +75,7 @@ export function ensureConversationRecordSchema(db: DatabaseSync): void {
   if (!records.some((column) => column.name === "segment_index")) db.exec("ALTER TABLE conversation_records ADD COLUMN segment_index INTEGER NOT NULL DEFAULT 0");
   if (!records.some((column) => column.name === "worktree")) db.exec("ALTER TABLE conversation_records ADD COLUMN worktree TEXT");
   if (!records.some((column) => column.name === "worktree_at")) db.exec("ALTER TABLE conversation_records ADD COLUMN worktree_at TEXT");
+  if (!records.some((column) => column.name === "webhook_history")) db.exec("ALTER TABLE conversation_records ADD COLUMN webhook_history TEXT");
   for (const table of ["conversation_records", "conversation_record_tombstones"]) {
     const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string } | undefined;
     if (!row?.sql.includes("engine IN ('pi', 'claude')")) continue;
@@ -140,6 +142,7 @@ function row(record: Record<string, unknown>): ConversationRecord {
     projectId: String(record.project_id), engine: record.engine as ConversationEngine, sessionId: String(record.session_id), createdAt: String(record.created_at), updatedAt: String(record.updated_at), originNodeId: String(record.origin_node_id),
     taskId: record.task_id === null || record.task_id === undefined ? null : String(record.task_id),
     ...(record.cron_task_id ? { cronTaskId: String(record.cron_task_id) } : {}),
+    ...(record.webhook_history ? { webhookHistory: JSON.parse(String(record.webhook_history)) as ConversationRecord["webhookHistory"] } : {}),
     ...(record.silent_review_from ? { silentReviewFrom: String(record.silent_review_from) } : {}),
     ...(record.silent_review_until ? { silentReviewUntil: String(record.silent_review_until) } : {}),
     ...(conversationId ? { conversationId, segmentIndex: Number(record.segment_index ?? 0) } : {}),
@@ -218,6 +221,23 @@ export async function recordedConversationWorktrees(projectId: string): Promise<
     if (worktree) worktrees.set(`${record.engine}:${record.session_id}`, worktree);
   }
   return worktrees;
+}
+
+export function setWebhookConversationHistory(db: DatabaseSync, projectId: string, sessionId: string, webhookId: string, hidden: boolean, originNodeId: string): void {
+  const value = db.prepare("SELECT * FROM conversation_records WHERE project_id=? AND session_id=?").get(projectId, sessionId) as Record<string, unknown> | undefined;
+  if (!value) return; // A retained webhook binding may refer to a deleted conversation.
+  const existing = row(value);
+  if (existing.webhookHistory?.webhookId === webhookId && existing.webhookHistory.hidden === hidden) return;
+  const now = new Date(Math.max(Date.now(), Date.parse(existing.webhookHistory?.updatedAt ?? existing.updatedAt) + 1)).toISOString();
+  const webhookHistory = { webhookId, hidden, updatedAt: now };
+  const record = { ...existing, webhookHistory, updatedAt: now, originNodeId };
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE conversation_records SET webhook_history=?,updated_at=?,origin_node_id=? WHERE project_id=? AND engine=? AND session_id=?")
+      .run(JSON.stringify(webhookHistory), now, originNodeId, projectId, existing.engine, sessionId);
+    publish(db, "upsert", projectId, existing.engine, sessionId, record, now, originNodeId);
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
 export async function markCronConversation(projectId: string, engine: ConversationEngine, sessionId: string, cronTaskId: string, originNodeId: string): Promise<void> {
@@ -369,6 +389,8 @@ function payloadFor(event: ReplicationEvent): ConversationRecordPayload {
   if (event.entityType !== "conversation.record" || !["upsert", "delete"].includes(event.operation) || !value || typeof value !== "object" || Array.isArray(value)
     || typeof value.projectId !== "string" || !isHarnessId(value.engine) || typeof value.sessionId !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || value.originNodeId !== event.originNodeId || event.entityKey !== `${value.projectId}:${value.engine}:${value.sessionId}` || (event.operation === "upsert") !== Boolean(value.record)) throw new Error("Malformed conversation record replication payload");
   if (value.record && (value.record.projectId !== value.projectId || value.record.engine !== value.engine || value.record.sessionId !== value.sessionId || value.record.updatedAt !== value.updatedAt || value.record.originNodeId !== value.originNodeId || typeof value.record.createdAt !== "string" || (value.record.cronTaskId !== undefined && typeof value.record.cronTaskId !== "string") || !validSilentReviewBoundary(value.record) || (value.record.taskId !== undefined && value.record.taskId !== null && typeof value.record.taskId !== "string") || (value.record.conversationId !== undefined && typeof value.record.conversationId !== "string") || (value.record.segmentIndex !== undefined && typeof value.record.segmentIndex !== "number"))) throw new Error("Malformed conversation record replication payload");
+  const history = value.record?.webhookHistory;
+  if (history !== undefined && (!history || typeof history.webhookId !== "string" || typeof history.hidden !== "boolean" || typeof history.updatedAt !== "string" || !Number.isFinite(Date.parse(history.updatedAt)))) throw new Error("Malformed webhook history visibility");
   return value as ConversationRecordPayload;
 }
 
@@ -387,6 +409,7 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
     if (payload.record?.silentReviewUntil && payload.record.silentReviewFrom) db.prepare("UPDATE conversation_records SET silent_review_from = ?, silent_review_until = ? WHERE project_id = ? AND engine = ? AND session_id = ? AND (silent_review_until IS NULL OR silent_review_until < ?)")
       .run(payload.record.silentReviewFrom, payload.record.silentReviewUntil, projectId, payload.engine, payload.sessionId, payload.record.silentReviewUntil);
     applyRecordedWorktree(db, projectId, payload);
+    applyWebhookHistory(db, projectId, payload);
     return;
   }
   // Releases before the sub-agent fix still send these; they are never conversations.
@@ -409,6 +432,14 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
   db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id, conversation_id, segment_index, cron_task_id, silent_review_from, silent_review_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET created_at = excluded.created_at, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id, task_id = excluded.task_id, conversation_id = excluded.conversation_id, segment_index = excluded.segment_index, cron_task_id = COALESCE(excluded.cron_task_id, conversation_records.cron_task_id), silent_review_from = CASE WHEN excluded.silent_review_until > COALESCE(conversation_records.silent_review_until, '') THEN excluded.silent_review_from ELSE conversation_records.silent_review_from END, silent_review_until = CASE WHEN excluded.silent_review_until > COALESCE(conversation_records.silent_review_until, '') THEN excluded.silent_review_until ELSE conversation_records.silent_review_until END").run(projectId, payload.engine, payload.sessionId, payload.record.createdAt, payload.updatedAt, payload.originNodeId, payload.record.taskId ?? null, payload.record.conversationId ?? null, payload.record.segmentIndex ?? 0, payload.record.cronTaskId ?? null, payload.record.silentReviewFrom ?? null, payload.record.silentReviewUntil ?? null);
   db.prepare("DELETE FROM conversation_record_tombstones WHERE project_id = ? AND engine = ? AND session_id = ?").run(projectId, payload.engine, payload.sessionId);
   applyRecordedWorktree(db, projectId, payload);
+  applyWebhookHistory(db, projectId, payload);
+}
+
+function applyWebhookHistory(db: DatabaseSync, projectId: string, payload: ConversationRecordPayload): void {
+  const history = payload.record?.webhookHistory;
+  if (!history) return;
+  db.prepare("UPDATE conversation_records SET webhook_history=? WHERE project_id=? AND engine=? AND session_id=? AND (webhook_history IS NULL OR json_extract(webhook_history, '$.updatedAt') < ?)")
+    .run(JSON.stringify(history), projectId, payload.engine, payload.sessionId, history.updatedAt);
 }
 
 /**

@@ -83,6 +83,29 @@ test("webhooks have one chosen twin owner, route management there, and never fal
     }
     assert.deepEqual(executed.trim().split("\n"), [`pi:${b.nodeId}`], "the call executes exactly once, on the owner");
     assert.deepEqual((await local()).body.webhooks, [], "delivery still does not replicate the webhook");
+    const deliveries = await api<{ deliveries: Array<{ detail: string }> }>(b, authB, "GET", `/webhooks/${webhook.id}/deliveries`);
+    const runId = deliveries.body.deliveries.map(item => /Started conversation ([0-9a-f-]{36})/.exec(item.detail)?.[1]).find(Boolean)!;
+    assert.ok(runId);
+    const listedRun = async (machine: typeof a, auth: typeof authA) => {
+      const result = await api<{ sessions: Array<{ id: string }> }>(machine, auth, "GET", `/projects/${input.target.projectId}/sessions`);
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      return result.body.sessions.some(item => item.id === runId);
+    };
+    assert.equal(await listedRun(b, authB), true);
+    assert.equal((await api(a, authA, "PUT", `/webhooks/${webhook.id}${suffix}`, { ...input, hideFromHistory: true })).status, 200);
+    assert.equal(await listedRun(b, authB), false, "existing executions disappear on the owner");
+    const hideDeadline = Date.now() + 10_000;
+    while (await listedRun(a, authA)) {
+      assert.ok(Date.now() < hideDeadline, "history visibility reaches the twin");
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.equal((await api(a, authA, "PUT", `/webhooks/${webhook.id}${suffix}`, { ...input, hideFromHistory: false })).status, 200);
+    assert.equal(await listedRun(b, authB), true, "unhiding restores the same conversation");
+    const showDeadline = Date.now() + 10_000;
+    while (!(await listedRun(a, authA))) {
+      assert.ok(Date.now() < showDeadline, "unhiding reaches the twin");
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
     assert.equal((await api(a, authA, "PUT", `/webhooks/${webhook.id}${suffix}`, { ...input, enabled: false })).status, 200);
     assert.equal((await remote()).body.webhooks[0].enabled, false);
     const regenerated = await api<{ secret: string; bases: Array<{ base: string }> }>(a, authA, "POST", `/webhooks/${webhook.id}/regenerate${suffix}`, {});

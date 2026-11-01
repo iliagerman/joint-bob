@@ -266,7 +266,7 @@ export function orderSessionFamilies(sessions: SessionSummary[], rootLimit = Inf
   // allowance; an hourly task would otherwise push every other conversation out of the list.
   const kept = { ordinary: 0, scheduled: 0 };
   for (const root of roots) {
-    if (kept[root.cronTaskId ? "scheduled" : "ordinary"]++ < rootLimit) append(root);
+    if (kept[root.cronTaskId || root.webhookHistory?.hidden ? "scheduled" : "ordinary"]++ < rootLimit) append(root);
   }
   return ordered;
 }
@@ -340,6 +340,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
     if (record?.taskId && !session.taskId) session.taskId = record.taskId;
     if (record?.cronTaskId) session.cronTaskId = record.cronTaskId;
+    if (record?.webhookHistory) session.webhookHistory = record.webhookHistory;
     if (record?.silentReviewFrom) session.silentReviewFrom = record.silentReviewFrom;
     if (record?.silentReviewUntil) session.silentReviewUntil = record.silentReviewUntil;
   }
@@ -363,6 +364,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       draft: true,
       ...(record.taskId ? { taskId: record.taskId } : {}),
       ...(record.cronTaskId ? { cronTaskId: record.cronTaskId } : {}),
+      ...(record.webhookHistory ? { webhookHistory: record.webhookHistory } : {}),
       ...(record.silentReviewFrom ? { silentReviewFrom: record.silentReviewFrom } : {}),
       ...(record.silentReviewUntil ? { silentReviewUntil: record.silentReviewUntil } : {}),
     });
@@ -395,6 +397,8 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
   const ordered = [...byConversation.entries()].map(([conversationId, segments]) => {
     segments.sort((left, right) => left.segmentIndex - right.segmentIndex || (left.session.updatedAt ?? "").localeCompare(right.session.updatedAt ?? ""));
     const face = segments.at(-1)!.session;
+    const webhookHistory = segments.map(({ session }) => session.webhookHistory).filter(item => item !== undefined)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     const firstLive = segments.map((segment) => segment.session).find((session) => !session.draft);
     const createdAt = segments.map((segment) => segment.session.createdAt).filter(Boolean).sort().at(0);
     const segmentViews = segments.length > 1
@@ -404,6 +408,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       ...face,
       conversationId,
       ...(segments.some(({ session }) => session.cronTaskId) ? { cronTaskId: segments.find(({ session }) => session.cronTaskId)!.session.cronTaskId } : {}),
+      ...(webhookHistory ? { webhookHistory } : {}),
       ...(segmentViews ? { segments: segmentViews } : {}),
       // A switched conversation keeps the title of its first real segment; a fresh
       // segment's own title may be derived from the handoff envelope.

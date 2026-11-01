@@ -1375,6 +1375,7 @@
                 <label>Agent / model<select id="webhooksModel" data-testid="webhooks-model-select"></select></label>
                 <label>Effort<select id="webhooksEffort" data-testid="webhooks-effort-select"></select></label>
               </div>
+              <label class="checkbox-row webhooks-option"><input type="checkbox" id="webhooksHideFromHistory" data-testid="webhooks-hide-from-history-toggle" /><span><strong>Hide from conversation history</strong><span class="settings-hint">Hide existing and future conversations started by this webhook. Calls remain available here. Conversations it only adds messages to stay visible.</span></span></label>
               <label>Instructions
                 <textarea id="webhooksContext" rows="4" maxlength="10000" placeholder="Optional. For example: Triage new issues and reply with a plan." data-testid="webhooks-context-input"></textarea>
                 <span class="settings-hint">Goes ahead of the call's content in every message this webhook creates.</span>
@@ -1382,7 +1383,7 @@
               <div class="relay-form">
                 <label id="webhooksTitleTemplateLabel">Conversation title
                   <input id="webhooksTitleTemplate" maxlength="200" autocomplete="off" placeholder="pr-[PR_REVIEW]" data-testid="webhooks-title-template-input" />
-                  <span class="settings-hint">Optional, for new conversations only. The agent fills [placeholders] from the call; text outside brackets stays fixed. Blank uses the webhook name.</span>
+                  <span class="settings-hint">Optional, for new conversations only. The agent fills [placeholders] from the call; text outside brackets stays fixed. Blank uses the webhook name, including its [placeholders].</span>
                 </label>
                 <div><span class="webhooks-label">Tags</span><div id="webhooksAutomationTags" data-testid="webhooks-automation-tags"></div></div>
               </div>
@@ -3032,7 +3033,7 @@
             <span class="eyebrow">Schedule details</span>
             <h3 id="cronFormTitle">New scheduled task</h3>
           </div>
-          <label>Name<input name="name" required maxlength="120" autocomplete="off" data-testid="cron-name"></label>
+          <label>Name<input name="name" required maxlength="120" autocomplete="off" data-testid="cron-name"><span class="settings-hint">For new conversations, the agent fills [placeholders] in this name from the task. Text outside brackets stays fixed.</span></label>
           <label>Prompt<textarea name="prompt" required maxlength="100000" rows="4" data-testid="cron-prompt"></textarea></label>
           <fieldset class="relay-form-section"><legend>Tags</legend><div id="cronAutomationTags" data-testid="cron-automation-tags"></div></fieldset>
           <div class="cron-schedule-grid">

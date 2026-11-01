@@ -12,6 +12,7 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { automationWorkspaceIdentity, automationWorkspaceKey, snapshotAutomationTags } from "../automation-tags.js";
 import { transitionAutomationExecution } from "../automation-executions.js";
 import { ensureSessionTitle } from "../names.js";
+import { automationTitleInstruction, bindWebhookTitle } from "../webhook-title.js";
 import { getProjectLock } from "../project-locks.js";
 import { cancelQueuedPrompt, listQueuedPrompts } from "../prompt-queue.js";
 import { getProject } from "../store.js";
@@ -62,9 +63,11 @@ async function prepareConversation(task: CronTask): Promise<string> {
 
 export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: string): Promise<void> {
   const reasoning = task.reasoning ?? task.model?.reasoning;
+  const titleInstruction = task.sessionId ? "" : automationTitleInstruction(task.name);
+  if (titleInstruction) bindWebhookTitle(task.projectId, sessionId, task.name);
   await queueConversationPrompt({
     automationProfile: automationProfileContext(task),
-    projectId: task.projectId, engine: task.engine, sessionId, message: scheduledPromptText(task.prompt), requestId: run.id, label: "Scheduled", until: "completed",
+    projectId: task.projectId, engine: task.engine, sessionId, message: [titleInstruction, scheduledPromptText(task.prompt)].filter(Boolean).join("\n\n"), requestId: run.id, label: "Scheduled", until: "completed",
     // Model and reasoning ride along with the queued prompt instead of
     // configuring the live session here: unrelated scheduled tasks share a
     // conversation, and configuring one mid-turn throws "session is busy".

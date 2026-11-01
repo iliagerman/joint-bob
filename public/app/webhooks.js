@@ -22,6 +22,7 @@ const field = {
   owner: byId("webhooksOwner"), name: byId("webhooksName"), kind: byId("webhooksTargetKind"), project: byId("webhooksProject"), conversation: byId("webhooksConversation"),
   harness: byId("webhooksHarness"), model: byId("webhooksModel"), effort: byId("webhooksEffort"), titleTemplate: byId("webhooksTitleTemplate"),
   conversationLabel: byId("webhooksConversationLabel"), context: byId("webhooksContext"), enabled: byId("webhooksEnabled"),
+  hideFromHistory: byId("webhooksHideFromHistory"),
   attachments: byId("webhooksAttachments"), markForReview: byId("webhooksMarkForReview"), sendersEnabled: byId("webhooksSendersEnabled"), senders: byId("webhooksSenders"),
   senderFields: byId("webhooksSenderFields"), allowedSenders: byId("webhooksAllowedSenders"), save: byId("webhooksSave"), secretSearch: byId("webhooksSecretSearch"),
 };
@@ -31,6 +32,8 @@ let projects = [];
 let ownerRevision = 0;
 let ownerReady = false;
 let saving = false;
+let opening = false;
+const loadedTabs = new Set();
 let projectNames = new Map();
 let editing = null;
 let creating = false;
@@ -70,7 +73,7 @@ const memory = createWebhookMemory({ url: hookUrl, run, say, onEnabled: (on) => 
 /** The body a PUT or POST sends: everything about the webhook, so saving one setting keeps the others. */
 const hookBody = (hook, changes = {}) => JSON.stringify({
   providerProfileId: hook.providerProfileId ?? null,
-  name: hook.name, target: hook.target, context: hook.context, enabled: hook.enabled, attachments: hook.attachments, markForReview: hook.markForReview, senders: hook.senders, model: hook.model, reasoning: hook.reasoning, secretAccountIds: hook.secretAccountIds, titleTemplate: hook.titleTemplate, ...changes,
+  name: hook.name, target: hook.target, context: hook.context, enabled: hook.enabled, attachments: hook.attachments, markForReview: hook.markForReview, hideFromHistory: hook.hideFromHistory, senders: hook.senders, model: hook.model, reasoning: hook.reasoning, secretAccountIds: hook.secretAccountIds, titleTemplate: hook.titleTemplate, ...changes,
 });
 
 /** "123 Ilia" lines to `{ value, label }`; the first word is the value, the rest is the name. */
@@ -343,6 +346,7 @@ async function fillFields(hook) {
   field.enabled.checked = hook?.enabled ?? true;
   field.attachments.checked = hook?.attachments ?? false;
   field.markForReview.checked = hook?.markForReview ?? false;
+  field.hideFromHistory.checked = hook?.hideFromHistory ?? false;
   field.sendersEnabled.checked = Boolean(hook?.senders);
   field.senderFields.value = hook?.senders?.fields.join(", ") ?? "";
   field.allowedSenders.value = allowedText(hook?.senders?.allowed ?? []);
@@ -355,13 +359,29 @@ async function fillFields(hook) {
 // ---- detail view ----
 
 function showTab(name) {
+  if (saving) return;
   for (const panel of document.querySelectorAll("[data-webhook-panel]")) panel.hidden = panel.dataset.webhookPanel !== name;
   for (const button of document.querySelectorAll("[data-webhook-tab]")) {
     const active = button.dataset.webhookTab === name;
     button.setAttribute("aria-selected", String(active));
     button.tabIndex = active ? 0 : -1;
   }
-  if (name === "calls" && editing) void loadCalls();
+  if (name === "calls" && editing) void run(async () => { say("Loading calls…"); await loadCalls(); });
+  const loader = { files, skills, memory }[name];
+  if (loader && !loadedTabs.has(name)) void run(async () => {
+    const panel = document.querySelector(`[data-webhook-panel="${name}"]`);
+    panel.inert = true;
+    byId("webhooksBack").disabled = true;
+    say(`Loading ${name}…`);
+    try {
+      await loader.open(editing);
+      loadedTabs.add(name);
+      say("");
+    } finally {
+      panel.inert = false;
+      byId("webhooksBack").disabled = false;
+    }
+  });
 }
 
 function renderDetailHead() {
@@ -391,28 +411,39 @@ function renderLiveTabs() {
   byId("webhooksCallsTab").hidden = creating;
 }
 
-async function openHookTabs(hook) {
-  renderDetailHead();
-  renderLiveTabs();
-  await Promise.all([files.open(hook), skills.open(hook), memory.open(hook)]);
-}
-
 async function openDetail(hook = null, tab = "setup") {
-  if (!ownerReady || saving) return;
+  if (!ownerReady || saving || opening) return;
+  opening = true;
   creating = !hook;
   editing = hook;
-  say("");
+  loadedTabs.clear();
+  say("Opening webhook…");
+  listSection.setAttribute("aria-busy", "true");
+  field.owner.disabled = true;
+  for (const button of listSection.querySelectorAll("button")) button.disabled = true;
   reveal.hidden = true;
   try {
-    await loadProjects();
     await fillFields(hook);
-    await openHookTabs(hook);
-  } catch (error) { editing = null; creating = false; say(errorText(error), "error"); return; }
-  listSection.hidden = true;
-  form.hidden = false;
-  showTab(tab);
-  updateSavebar();
-  if (tab === "setup") field.name.focus();
+    // Reset staged files without fetching auxiliary tabs before Setup can open.
+    await files.open(null);
+    byId("webhooksCountFiles").textContent = "…";
+    byId("webhooksCountSkills").textContent = "…";
+    byId("webhooksMemoryDot").hidden = true;
+    renderDetailHead();
+    renderLiveTabs();
+    listSection.hidden = true;
+    form.hidden = false;
+    say("");
+    showTab(tab);
+    updateSavebar();
+    if (tab === "setup") field.name.focus();
+  } catch (error) { editing = null; creating = false; say(errorText(error), "error"); }
+  finally {
+    opening = false;
+    listSection.removeAttribute("aria-busy");
+    field.owner.disabled = false;
+    for (const button of listSection.querySelectorAll("button")) button.disabled = false;
+  }
 }
 
 function closeDetail() {
@@ -455,6 +486,7 @@ async function loadCalls() {
     deliveries = body.deliveries;
     byId("webhooksCallsTitle").textContent = `Recent calls to “${hook.name}” (newest first)`;
     await callsList.reload();
+    say("");
   } catch (error) { say(errorText(error), "error"); }
 }
 
@@ -492,7 +524,7 @@ function buildBody() {
   const senders = field.sendersEnabled.checked
     ? { fields: field.senderFields.value.split(/[\s,]+/).filter(Boolean), allowed: parseAllowed(field.allowedSenders.value) }
     : null;
-  return JSON.stringify({ providerProfileId: profilePicker.value(), tags: tagPicker.getValue(), name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: [...selectedSecretIds], titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
+  return JSON.stringify({ providerProfileId: profilePicker.value(), tags: tagPicker.getValue(), name: field.name.value, target, context: field.context.value, enabled: field.enabled.checked, attachments: field.attachments.checked, markForReview: field.markForReview.checked, hideFromHistory: field.hideFromHistory.checked, senders, model, reasoning: field.effort.value || null, secretAccountIds: [...selectedSecretIds], titleTemplate: field.kind.value === "project" ? field.titleTemplate.value : "" });
 }
 
 async function submit() {
@@ -523,7 +555,9 @@ async function submit() {
       files.attach(created.webhook);
       renderDetailHead();
       renderLiveTabs();
-      await Promise.all([refresh().then(syncEditing), skills.open(editing), memory.open(editing)]);
+      loadedTabs.delete("skills");
+      loadedTabs.delete("memory");
+      await refresh().then(syncEditing);
       await files.uploadStaged();
     }
   } catch (error) { say(errorText(error), "error"); }
@@ -576,7 +610,7 @@ function wire() {
 
 export async function loadWebhooks() {
   wire();
-  if (saving) return;
+  if (saving || opening) return;
   closeDetail();
   say("");
   try {

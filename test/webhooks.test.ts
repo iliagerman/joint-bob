@@ -81,6 +81,17 @@ test("title templates survive edits and address regeneration", () => {
   assert.equal(updateWebhook(db, webhook.id, input()).titleTemplate, "");
 });
 
+test("hiding webhook conversations is opt-in and persists through edits and regeneration", () => {
+  const db = new DatabaseSync(":memory:");
+  const { webhook } = createWebhook(db, input());
+  assert.equal(webhook.hideFromHistory, false);
+  const hidden = updateWebhook(db, webhook.id, input({ hideFromHistory: true }));
+  assert.equal(hidden.hideFromHistory, true);
+  assert.equal(regenerateWebhookSecret(db, webhook.id).webhook.hideFromHistory, true);
+  assert.equal(listWebhooks(db)[0].hideFromHistory, true);
+  assert.equal(updateWebhook(db, webhook.id, input()).hideFromHistory, false);
+});
+
 test("delivery history is counted and keeps only the latest calls", () => {
   const db = new DatabaseSync(":memory:");
   const { webhook } = createWebhook(db, input());

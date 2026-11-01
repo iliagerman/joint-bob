@@ -101,7 +101,8 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
     : []);
   // Viewer lists exclude hidden runs before review synchronization, badges, and notifications.
   // Internal snapshots still need them for scheduler readiness. Preserve review watermarks.
-  const sessions = catalog.filter((session) => (!session.cronTaskId || !hiddenCronTaskIds.has(session.cronTaskId))
+  const sessions = catalog.filter((session) => (!userId || !session.webhookHistory?.hidden)
+    && (!session.cronTaskId || !hiddenCronTaskIds.has(session.cronTaskId))
     && (!temporarySessionIds.has(session.id) || session.id === includeTemporarySessionId));
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
   const tasksById = new Map(tasks.map((task) => [task.id, task]));

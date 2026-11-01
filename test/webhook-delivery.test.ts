@@ -13,7 +13,7 @@ import { addProject } from "../src/store.js";
 import { conversationScopeId, getScopeSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "../src/secrets.js";
 import { listTurnFailures } from "../src/turn-failures.js";
 import { webhookConversationTitle } from "../src/webhook-title.js";
-import { createWebhook, webhookDeliveries, webhookInputSchema } from "../src/webhooks.js";
+import { createWebhook, updateWebhook, webhookDeliveries, webhookInputSchema } from "../src/webhooks.js";
 import { saveWebhookResource } from "../src/webhook-resources.js";
 
 // A machine whose agent has no model sign-in still accepts the call and lists a new
@@ -33,11 +33,13 @@ test("a webhook call whose agent cannot start leaves the reason in the new conve
     const project = await addProject("Webhook delivery", path.join(root, "project"), { writeInstructions: false });
     const db = await clusterV2Database();
     const { webhook } = createWebhook(db, webhookInputSchema.parse({ name: "Issues", target: { kind: "project", projectId: project.id, engine: "pi" } }));
+    updateWebhook(db, webhook.id, webhookInputSchema.parse({ name: webhook.name, target: webhook.target, hideFromHistory: true }));
     acceptWebhookCall(webhook, { method: "POST", headers: {}, query: "", body: '{"action":"opened"}' });
     for (let attempt = 0; attempt < 200 && !webhookDeliveries(db, webhook.id).length; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.deepEqual(webhookDeliveries(db, webhook.id).map(({ status, detail }) => [status, detail]), [["failed", "Pi model authentication unavailable on this node"]]);
     const records = await listConversationRecords(project.id);
     assert.equal(records.length, 1, "the call's conversation is listed");
+    assert.equal(records[0].webhookHistory?.hidden, true, "delivery uses current visibility, not its stale accepted snapshot");
     assert.deepEqual(listTurnFailures("pi", records[0].sessionId).map((failure) => failure.error), [
       'Webhook "Issues" could not start this conversation: Pi model authentication unavailable on this node',
     ]);
@@ -129,7 +131,7 @@ test("webhook model and effort travel with the queued turn for new and existing 
         { reasoning: "medium" },
         {},
       ]) {
-        const { webhook } = createWebhook(db, webhookInputSchema.parse({ name: "Configured", titleTemplate: "pr-[PR_REVIEW]", secretAccountIds: [selected.id], target: { kind, projectId: project.id, engine: "pi", ...(kind === "conversation" ? { sessionId: "existing" } : {}) }, ...settings }));
+        const { webhook } = createWebhook(db, webhookInputSchema.parse({ name: "Configured [EROR TITLE]", titleTemplate: Object.keys(settings).length ? "pr-[PR_REVIEW]" : "", secretAccountIds: [selected.id], target: { kind, projectId: project.id, engine: "pi", ...(kind === "conversation" ? { sessionId: "existing" } : {}) }, ...settings }));
         acceptWebhookCall(webhook, { method: "POST", headers: {}, query: "", body: "{}" });
         for (let attempt = 0; attempt < 200 && !webhookDeliveries(db, webhook.id).length; attempt++) await new Promise(resolve => setTimeout(resolve, 25));
         assert.equal(webhookDeliveries(db, webhook.id)[0]?.status, "delivered");
@@ -139,7 +141,7 @@ test("webhook model and effort travel with the queued turn for new and existing 
       [selected.id], [selected.id], [selected.id],
       [existing.id, selected.id].sort(), [existing.id, selected.id].sort(), [existing.id, selected.id].sort(),
     ], "secrets are attached before the socket opens, preserving existing conversation accounts");
-    assert.deepEqual(templates, ["pr-[PR_REVIEW]", "pr-[PR_REVIEW]", "pr-[PR_REVIEW]", undefined, undefined, undefined]);
+    assert.deepEqual(templates, ["pr-[PR_REVIEW]", "pr-[PR_REVIEW]", "Configured [EROR TITLE]", undefined, undefined, undefined]);
     for (const prompt of prompts.slice(0, 3)) assert.match(prompt.message, /JOINT_BOB_WEBHOOK_TITLE_CLI/);
     for (const prompt of prompts.slice(3)) assert.doesNotMatch(prompt.message, /JOINT_BOB_WEBHOOK_TITLE_CLI/);
     assert.deepEqual(prompts.map(prompt => prompt.queueSettings), [

@@ -38,8 +38,9 @@ import { Feature, isClusterOriginUrl, requireFeature, sendError } from "../http-
 import { listProjectSessionsWithReviewState } from "../sessions-helpers.js";
 import { app, flags, requestInterceptors, upgradeHandlers } from "../state.js";
 import { acceptWebhookCall } from "../webhooks.js";
+import { updateWebhookHistory } from "../webhook-history.js";
 import { snapshotWebhookResources, listWebhookResources, saveWebhookResource, removeWebhookResource, WebhookResourceError } from "../../webhook-resources.js";
-import { webhookMemoryAgentIdentity, runWebhookMemoryAgentCommand } from "../../webhook-agent.js";
+import { ensureWebhookAgentSchema, webhookMemoryAgentIdentity, runWebhookMemoryAgentCommand } from "../../webhook-agent.js";
 import { readWebhookMemory, writeWebhookMemory, setWebhookMemoryEnabled } from "../../webhook-memory.js";
 import { webhookMemoryEnabled } from "../../webhook-resources.js";
 import { listWebhookSkills, listSelectableWebhookSkills, uploadWebhookSkill, importExistingWebhookSkill, discoverWebhookGitSkills, importWebhookGitSkill, removeWebhookSkill } from "../../webhook-skills.js";
@@ -342,7 +343,10 @@ async function manage(command: Command): Promise<unknown> {
     const workspace = automationWorkspaceIdentity(db, local.id, tagProject.type ?? "personal");
     validateAutomationTagAssignments(db, workspace.workspaceId, command.input.tags, workspace.ownerNodeId);
     if (command.action === "create") return { ...createWebhook(db, command.input), bases: await urlBases() };
-    return { webhook: updateWebhook(db, command.id, command.input) };
+    ensureWebhookAgentSchema(db);
+    const webhook = updateWebhook(db, command.id, command.input);
+    await updateWebhookHistory(webhook);
+    return { webhook };
   }
   if (!getWebhook(db, command.id)) throw new WebhookError(404, "Webhook not found");
   if (command.action === "regenerate") return { ...regenerateWebhookSecret(db, command.id), bases: await urlBases() };

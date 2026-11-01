@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a "Hide from conversation history" option to webhooks, which hides the conversations they start from the history list while their calls stay visible in the webhook.
+
 ## 2.184.1 — 2026-11-01
 
 - Changed installing the local story voice to be limited to the node admin, and the Install button in Settings is now hidden from members.

@@ -22,12 +22,26 @@ export function ensureWebhookAgentSchema(db: DatabaseSync): void {
   CREATE TABLE IF NOT EXISTS webhook_memory_agent_tokens (
     token_hash TEXT PRIMARY KEY, webhook_id TEXT NOT NULL, project_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
     owner_node_id TEXT NOT NULL, expires_at INTEGER NOT NULL);`);
+  const columns = db.prepare("PRAGMA table_info(webhook_conversation_bindings)").all() as Array<{ name: string }>;
+  if (!columns.some(column => column.name === "created_conversation")) {
+    db.exec("ALTER TABLE webhook_conversation_bindings ADD COLUMN created_conversation INTEGER NOT NULL DEFAULT 0");
+    // A webhook may have changed targets. Only historical creation evidence can
+    // distinguish its new conversations from conversations it merely appended to.
+    db.exec(`UPDATE webhook_conversation_bindings AS b SET created_conversation=1 WHERE EXISTS (
+      SELECT 1 FROM webhook_deliveries d WHERE d.webhook_id=b.webhook_id AND
+      (d.detail='Started conversation ' || b.conversation_id OR d.detail LIKE 'Started conversation ' || b.conversation_id || ' with %'))`);
+    const tables = db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN ('automation_executions','conversation_records')").get() as { count: number };
+    if (tables.count === 2) db.exec(`UPDATE webhook_conversation_bindings AS b SET created_conversation=1 WHERE EXISTS (
+      SELECT 1 FROM automation_executions e JOIN conversation_records r ON r.project_id=e.project_id AND r.session_id=e.session_id
+      WHERE e.source_kind='webhook' AND e.source_id=b.webhook_id AND e.project_id=b.project_id AND e.session_id=b.conversation_id
+      AND r.created_at>=e.accepted_at)`);
+  }
 }
 
-export function bindWebhookConversation(db: DatabaseSync, webhookId: string, projectId: string, conversationId: string, ownerNodeId: string): void {
+export function bindWebhookConversation(db: DatabaseSync, webhookId: string, projectId: string, conversationId: string, ownerNodeId: string, createdConversation = false): void {
   ensureWebhookAgentSchema(db);
-  db.prepare("INSERT INTO webhook_conversation_bindings VALUES(?,?,?,?) ON CONFLICT(webhook_id,project_id,conversation_id) DO UPDATE SET owner_node_id=excluded.owner_node_id")
-    .run(webhookId, projectId, conversationId, ownerNodeId);
+  db.prepare("INSERT INTO webhook_conversation_bindings(webhook_id,project_id,conversation_id,owner_node_id,created_conversation) VALUES(?,?,?,?,?) ON CONFLICT(webhook_id,project_id,conversation_id) DO UPDATE SET owner_node_id=excluded.owner_node_id,created_conversation=MAX(webhook_conversation_bindings.created_conversation,excluded.created_conversation)")
+    .run(webhookId, projectId, conversationId, ownerNodeId, createdConversation ? 1 : 0);
 }
 
 export function webhookMemoryAgentEnvironment(db: DatabaseSync, projectId: string, conversationId: string, ownerNodeId: string): NodeJS.ProcessEnv {

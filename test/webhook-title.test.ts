@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  bindWebhookTitle, fillWebhookTitle, revokeWebhookTitleAgentTokens, titlePlaceholders,
+  automationTitleInstruction, bindWebhookTitle, fillWebhookTitle, revokeWebhookTitleAgentTokens, titlePlaceholders,
   webhookConversationTitle, webhookTitleAgentEnvironment, webhookTitleAgentIdentity, webhookTitleTemplateSchema,
 } from "../src/webhook-title.js";
 
@@ -16,6 +16,12 @@ test("agents fill bracketed descriptions without changing fixed title text", () 
   assert.throws(() => fillWebhookTitle("pr-[PR]", { PR: "\n42" }), /single-line/);
   assert.throws(() => fillWebhookTitle("pr-[PR]", { PR: "  " }), /nonempty/);
   assert.throws(() => fillWebhookTitle("pr-[PR]", { PR: "x".repeat(200) }), /200/);
+});
+
+test("legacy literal brackets do not abort automation and valid name placeholders request completion", () => {
+  assert.equal(automationTitleInstruction("Alerts [production"), "");
+  assert.equal(automationTitleInstruction("Report []"), "");
+  assert.match(automationTitleInstruction("log error - [EROR TITLE]"), /JOINT_BOB_WEBHOOK_TITLE_CLI/);
 });
 
 test("templates reject malformed brackets and keep blank templates optional", () => {

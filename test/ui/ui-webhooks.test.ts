@@ -16,7 +16,7 @@ import { type Browser, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
 import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
 
-interface Hook { id: string; name: string; titleTemplate: string; model: { provider: string; modelId: string } | null; reasoning: string | null; secretAccountIds: string[]; tags: { managedTagIds: string[]; manualTags: string[] }; target: { engine?: string }; enabled: boolean; attachments: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
+interface Hook { id: string; name: string; titleTemplate: string; model: { provider: string; modelId: string } | null; reasoning: string | null; secretAccountIds: string[]; tags: { managedTagIds: string[]; manualTags: string[] }; target: { engine?: string }; enabled: boolean; attachments: boolean; hideFromHistory: boolean; senders: { fields: string[]; allowed: Array<{ value: string; label: string }> } | null }
 
 let root: string;
 let environment: DevEnvironment;
@@ -128,6 +128,7 @@ test("a webhook made with Accept attachments keeps the option through turning of
   await page.getByTestId("webhooks-tags-manual").fill("Manual webhook label");
   await page.getByTestId("webhooks-tags-add-manual").click();
   await page.getByTestId("webhooks-name-input").fill("Deals");
+  await page.getByTestId("webhooks-hide-from-history-toggle").check();
   for (const viewport of [{ width: 1440, height: 700 }, { width: 390, height: 700 }]) {
     await page.setViewportSize(viewport);
     const layout = await page.locator("#webhooksSetupPanel").evaluate(element => {
@@ -166,8 +167,27 @@ test("a webhook made with Accept attachments keeps the option through turning of
   assert.deepEqual((await hooks())[0].model, { provider: "dev-environment", modelId: "dev-model" });
   assert.equal((await hooks())[0].reasoning, "high", "toggle keeps execution settings");
   assert.deepEqual((await hooks())[0].secretAccountIds, [webhookSecretId], "toggle keeps attached secret selections");
-  await page.getByTestId("webhooks-open-button").click();
+  assert.equal((await hooks())[0].hideFromHistory, true, "history setting survives toggling the webhook");
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const tagRoute = "**/api/workspaces/*/automation-tags";
+  await page.route(tagRoute, async route => { await blocked; await route.continue(); });
+  const auxiliary: string[] = [];
+  const capture = (request: import("playwright-core").Request) => {
+    if (/\/api\/webhooks\/[^/]+\/(resources|skills|memory)/.test(request.url())) auxiliary.push(request.url());
+  };
+  page.on("request", capture);
+  try {
+    await page.getByTestId("webhooks-open-button").click();
+    await page.getByTestId("webhooks-status").getByText("Opening webhook…").waitFor({ timeout: 2000 });
+    assert.equal(await page.getByTestId("webhooks-open-button").isDisabled(), true);
+    assert.equal(await page.getByTestId("webhooks-owner-select").isDisabled(), true);
+  } finally { release(); }
   await page.getByTestId("webhooks-form").waitFor({ state: "visible" });
+  await page.unroute(tagRoute);
+  page.off("request", capture);
+  assert.deepEqual(auxiliary, [], "Setup does not wait for files, skill inventory or memory");
+  assert.equal(await page.getByTestId("webhooks-hide-from-history-toggle").isChecked(), true);
   assert.equal(await page.getByTestId("webhooks-harness-select").inputValue(), "pi");
   assert.equal(await page.getByTestId("webhooks-title-template-input").inputValue(), "pr-[PR_REVIEW]");
   assert.equal(await page.getByTestId("webhooks-model-select").inputValue(), "dev-environment|dev-model");
