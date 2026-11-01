@@ -3,10 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.182.0 — 2026-11-01
 
 - Added subscription pools, which group your own Claude and OpenAI subscriptions in a failover order, can be assigned to a cluster, and move a turn to the next subscription when a quota or sign-in failure happens before any reply starts.
-- Changed Story to its own view, opened from the activity panel and the phone menu, where Activity overview plays the same story as a video instead of a Git tab.
+- Changed the Story button to leave the chat toolbar; the activity panel and the phone's bottom menu now offer Story (the podcast) and Activity overview (the video walk-through).
+- Changed Story to open in its own view that keeps the reviewer bar but has no Git tabs, and to start playing as soon as the story is ready.
 
 ## 2.181.0 — 2026-10-31
 
