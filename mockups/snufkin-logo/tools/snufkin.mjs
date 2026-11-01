@@ -226,6 +226,17 @@ export function markParts({ lite = false } = {}) {
   const band = [[168,338],[212,350],[256,358],[300,350],[348,338],[356,356],[306,372],[256,380],[206,372],[158,356]];
   hat.fill(band, c.tealDeep);
   hat.ink(band, { w: 5, color: c.tealDeep, closed: true });
+  // feather tucked into the band, sweeping up and back past the crown
+  const feather = [[178,352],[152,320],[120,280],[96,238],[82,194],[108,206],[136,236],[164,274],[194,322],[206,338]];
+  hat.fill(feather, c.skin);
+  hat.ink(feather, { w: 4, color: c.skin, closed: true });
+  const spine = [[188,346],[150,292],[116,242],[90,198]];
+  hat.ink(spine, { w: 4.5, color: c.tealDeep, taper: [0.05, 0.3] });
+  // fine barbs leaning toward the tip on both sides of the spine
+  for (const [x, y] of [[166,312],[148,290],[132,268],[118,246],[104,224]]) {
+    hat.ink([[x, y], [x - 20, y - 8]], { w: 2.4, color: c.skinShade, taper: [0.2, 0.5] });
+    hat.ink([[x, y], [x + 14, y - 14]], { w: 2.4, color: c.skinShade, taper: [0.2, 0.5] });
+  }
   // smoke curling off the drooping tip
   smoke.ink([[380,184],[404,160],[392,136],[416,110],[404,84],[430,62]], { w: 13, color: c.teal, taper: [0.08, 0.6], wob: 1.4 });
   wisp.ink([[392,176],[414,160],[416,138]], { w: 7, color: c.teal, opacity: 0.65, taper: [0.1, 0.6] });
