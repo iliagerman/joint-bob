@@ -1,7 +1,7 @@
 import { setTheme } from "./shell.js";
 
 // Appearance is per browser, not per account: a big screen wants larger text, a laptop does not.
-const STORAGE_KEY = "jointBobAppearance";
+const APPEARANCE_STORAGE_KEY = "jointBobAppearance";
 
 export const THEMES = [
   { id: "light", label: "Light", base: "light" },
@@ -39,7 +39,7 @@ function clampScale(value) {
 }
 
 function load() {
-  const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+  const stored = JSON.parse(localStorage.getItem(APPEARANCE_STORAGE_KEY) || "null");
   const settings = defaults();
   if (!stored) return settings;
   settings.theme = THEMES.some((theme) => theme.id === stored.theme) ? stored.theme : "";
@@ -51,7 +51,7 @@ function load() {
 let settings = load();
 
 function save() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(settings));
 }
 
 /** Scale vars on the root; styles.css applies them as `zoom` on each section. */

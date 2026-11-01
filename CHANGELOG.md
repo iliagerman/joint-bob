@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Changed installing the local story voice to be available only to admins.
+- Changed the appearance settings' saved browser data to be recognized as a display preference, with no change to how themes or text sizes look.
 
 ## 2.184.0 — 2026-11-01
 
