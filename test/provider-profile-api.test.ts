@@ -26,6 +26,15 @@ test("node-local profile API validates scopes, protects secrets, and refuses sel
     const listed = await api<{ profiles: Array<{ id: string }> }>(node, session, "GET", "/provider-profiles");
     assert.deepEqual(listed.body.profiles.map((item) => item.id), [id]);
     assert.doesNotMatch(JSON.stringify(listed.body), /refreshToken|accessToken|auth\.json/);
+    const kiro = await api<{ profile: { id: string; kiro: { startUrl: string; region: string } } }>(node, session, "POST", "/provider-profiles", {
+      provider: "kiro", label: "Standalone Kiro", kiro: { startUrl: "https://fixture.awsapps.com/start", region: "us-east-1" },
+    });
+    assert.equal(kiro.status, 201);
+    const kiroId = kiro.body.profile.id;
+    assert.equal(kiro.body.profile.kiro.region, "us-east-1");
+    assert.equal((await api(node, session, "POST", "/provider-profiles/pools", { name: "Must reject Kiro", profileIds: [kiroId] })).status, 400);
+    assert.equal((await api(node, session, "PUT", `/provider-profiles/${kiroId}/sharing`, { shared: true })).status, 400);
+    assert.equal((await api(node, session, "GET", `/provider-profiles/${kiroId}/providers`)).status, 400);
     const memberCreated = await api<{ oneTimePassword: string }>(node, session, "POST", "/users", { username: "profile-member", email: "profile-member@example.test" });
     assert.equal(memberCreated.status, 201);
     const login = await fetch(`${node.url}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "profile-member", password: memberCreated.body.oneTimePassword }) });
@@ -37,6 +46,11 @@ test("node-local profile API validates scopes, protects secrets, and refuses sel
     assert.deepEqual(memberList.body.profiles, []);
     for (const [method, endpoint, body] of [
       ["GET", `/provider-profiles/${id}/status`, undefined],
+      ["GET", `/provider-profiles/${kiroId}/status`, undefined],
+      ["POST", `/provider-profiles/${kiroId}/login`, {}],
+      ["DELETE", `/provider-profiles/${kiroId}/login`, undefined],
+      ["POST", `/provider-profiles/${kiroId}/logout`, {}],
+      ["DELETE", `/provider-profiles/${kiroId}`, undefined],
       ["GET", `/provider-profiles/${id}/providers`, undefined],
       ["POST", `/provider-profiles/${id}/providers/zai/login`, { methodId: "api_key" }],
       ["DELETE", `/provider-profiles/${id}/providers/zai`, undefined],

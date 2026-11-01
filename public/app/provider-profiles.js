@@ -91,7 +91,7 @@ export async function loadProviderProfiles({ keepPending = false } = {}) {
   const [body, poolBody, projectBody, workspaceBody, clusterBody, settingsBody] = await Promise.all([
     api("/api/provider-profiles"), api("/api/provider-profiles/pools"), api("/api/projects"), api("/api/workspaces"), api("/api/clusters"), api("/api/settings"),
   ]);
-  profiles = body.profiles; pools = poolBody.pools; selections = body.selections; projects = projectBody.projects; workspaces = workspaceBody.workspaces; clusters = clusterBody.clusters;
+  profiles = body.profiles.filter((profile) => profile.provider !== "kiro"); pools = poolBody.pools; selections = body.selections.filter((selection) => selection.provider !== "kiro"); projects = projectBody.projects; workspaces = workspaceBody.workspaces; clusters = clusterBody.clusters;
   conversationDefaultProvider = settingsBody.conversationDefaults.pi.provider;
   if (!keepPending) pending.clear();
   for (const id of profileStatuses.keys()) if (!profiles.some((profile) => profile.id === id)) profileStatuses.delete(id);

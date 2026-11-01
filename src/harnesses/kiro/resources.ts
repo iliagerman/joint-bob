@@ -173,21 +173,22 @@ export async function disableInheritedKiroResources(configPath: string): Promise
   await rename(temporary, file);
 }
 
-export async function kiroAgentProfile(options: HarnessOpenOptions, credentialContext?: string, enabledTools?: string[]): Promise<string> {
+export async function kiroAgentProfile(options: HarnessOpenOptions, credentialContext?: string, enabledTools?: string[], selectedConfigPath?: string): Promise<string> {
   if (!/^[a-zA-Z0-9_-]+$/.test(options.sessionId)) throw new Error("Kiro profile session ID must be safe");
   if (enabledTools !== undefined && (!Array.isArray(enabledTools) || enabledTools.some((name) => typeof name !== "string" || !kiroToolCategories.includes(name)))) {
     throw new Error("Unknown Kiro tool");
   }
   const runtime = configuredRuntime("kiro", defaults(runtimeHome()));
+  const configPath = selectedConfigPath ?? runtime.configPath;
   const name = `joint-bob-${options.sessionId}`;
-  const agents = path.join(runtime.configPath, "agents");
+  const agents = path.join(configPath, "agents");
   await mkdir(agents, { recursive: true, mode: 0o700 });
   const agentsInfo = await lstat(agents);
   if (agentsInfo.isSymbolicLink() || !agentsInfo.isDirectory()) throw new Error("Kiro agents path must be a real directory");
-  const relativeAgents = path.relative(path.resolve(runtime.configPath), path.resolve(agents));
+  const relativeAgents = path.relative(path.resolve(configPath), path.resolve(agents));
   if (relativeAgents.startsWith("..") || path.isAbsolute(relativeAgents)) throw new Error("Kiro agents path is outside KIRO_HOME");
   const strict = getSettings().strictResourceIsolation;
-  if (strict) await disableInheritedKiroResources(runtime.configPath);
+  if (strict) await disableInheritedKiroResources(configPath);
   const scoped = withProjectFolderResources(getScopedResourcePaths(options.projectId, options.conversationId ?? options.sessionId, "kiro"), options.cwd);
   const resources = agentResourcePaths();
   const memory = strict ? await prepareProjectMemory(options.projectId, options.sessionId) : undefined;

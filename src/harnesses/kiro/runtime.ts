@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { currentRuntime, runtimeExec, spawnInRuntime, usingServiceRuntime } from "../../account-runtime.js";
 import { execFile, spawn } from "../../subprocess.js";
 import { access } from "node:fs/promises";
@@ -26,6 +27,13 @@ import { guardKiroPrompt, kiroChecksTools, kiroPermission } from "../../guardian
 import { appendKiroRecord, initializeKiroSession, readKiroSession } from "./storage.js";
 import { createKiroConnection } from "./transport.js";
 import { kiroThinkingLevels as levels } from "./models.js";
+import { projectProviderProfile } from "../../provider-profiles/service.js";
+import { useProviderProfile } from "../../provider-profiles/execution.js";
+import type { ProviderProfile } from "../../provider-profiles/store.js";
+import { kiroProfileLaunch, prepareKiroProfile, kiroProfileEnvironment, kiroProfileLoginState, kiroProfileAuthBusy } from "../../kiro-profiles/native.js";
+import { actingAccount } from "../../account-context.js";
+import { adminAccountId } from "../../ownership.js";
+import { listAccessibleProviderProfiles } from "../../provider-profiles/store.js";
 
 const execute = promisify(execFile);
 type Listener = (event: HarnessEvent) => void;
@@ -50,6 +58,11 @@ function validate(settings: HarnessModelSettings): void {
   if (settings.enabledTools?.some((name) => !kiroToolCategories.includes(name))) throw new Error("Unknown Kiro tool");
 }
 
+function ownedKiroProfiles() {
+  const owner = actingAccount()?.accountId ?? adminAccountId();
+  return owner ? listAccessibleProviderProfiles(owner, "interactive").filter((profile) => profile.provider === "kiro") : [];
+}
+
 function runtimeSettings() {
   const configured = getSettings().runtimes.kiro;
   return configuredRuntime("kiro", configured);
@@ -62,6 +75,9 @@ class KiroSession implements HarnessSession {
   private transcript: ChatMessage[] = [];
   private model: HarnessModelSettings;
   private nativeSessionId: string | null = null;
+  private nativeProfileId: string | null = null;
+  private readonly profileContext = new AsyncLocalStorage<ProviderProfile | undefined>();
+  private get profile(): ProviderProfile | undefined { return this.profileContext.getStore(); }
   private title: string | undefined;
   private handoffPending = false;
   private readonly listeners = new Set<Listener>();
@@ -103,6 +119,7 @@ class KiroSession implements HarnessSession {
     const stored = await readKiroSession(this.aliasFile);
     this.transcript = stored.messages;
     this.nativeSessionId = stored.nativeSessionId;
+    this.nativeProfileId = stored.nativeProfileId;
     this.title = stored.title;
     this.handoffPending = stored.handoffPending;
     this.model = { provider: "kiro", modelId: stored.modelId, reasoning: stored.reasoning };
@@ -158,12 +175,24 @@ class KiroSession implements HarnessSession {
     for (const listener of this.listeners) listener(event);
   }
 
-  async preflight(): Promise<void> {
+  private async withProfile<T>(work: () => Promise<T>): Promise<T> {
+    const profile = await projectProviderProfile(this.options.projectId, this.options.conversationId ?? this.id, "kiro", "kiro");
+    return useProviderProfile(profile, () => this.profileContext.run(profile, async () => {
+      if (profile && kiroProfileAuthBusy(profile)) throw new Error(`Finish Kiro sign-in or sign-out before using profile ${profile.label}`);
+      if (profile && !(await kiroProfileLoginState(profile)).signedIn) throw new Error(`Sign in to Kiro profile ${profile.label} on this node. No other account was used.`);
+      return work();
+    }));
+  }
+
+  async preflight(): Promise<void> { return this.withProfile(() => this.checkReady()); }
+
+  private async checkReady(): Promise<void> {
     const settings = runtimeSettings();
     const env = await this.environment();
     // Kiro reads the folder it starts in, so these run as the project's account like the turn.
-    for (const args of [["--version"], ["whoami"]]) {
-      const launch = runtimeExec(settings.executable || "kiro-cli", args, env);
+    for (const args of this.profile ? [["--version"]] : [["--version"], ["whoami"]]) {
+      const native = this.profile ? await kiroProfileLaunch(this.profile, env, args) : { command: settings.executable || "kiro-cli", args, env };
+      const launch = runtimeExec(native.command, native.args, native.env);
       await execute(launch.command, launch.args, { cwd: usingServiceRuntime() ? this.options.cwd : undefined, env: launch.env, timeout: 5_000 });
     }
   }
@@ -171,15 +200,18 @@ class KiroSession implements HarnessSession {
   private async environment(): Promise<NodeJS.ProcessEnv> {
     const conversation = { engine: "kiro" as const, sessionId: this.id };
     const logicalConversationId = this.options.conversationId ?? this.id;
-    return {
+    const environment = {
       ...process.env,
       ...agentEnvironment(this.options.projectId, conversation),
       ...agentCapabilityEnvironment(this.options.projectId, "kiro", logicalConversationId, conversation),
       KIRO_HOME: runtimeSettings().configPath,
     };
+    return this.profile ? kiroProfileEnvironment(environment, await prepareKiroProfile(this.profile)) : environment;
   }
 
-  async prompt(input: HarnessPrompt): Promise<void> {
+  async prompt(input: HarnessPrompt): Promise<void> { return this.withProfile(() => this.promptWithProfile(input)); }
+
+  private async promptWithProfile(input: HarnessPrompt): Promise<void> {
     if (this.running) throw new Error("Kiro session is busy");
     this.running = true;
     this.currentInput = input;
@@ -234,7 +266,7 @@ class KiroSession implements HarnessSession {
     const env = await this.environment();
     this.throwIfCancelled();
     const credentialContext = agentCredentialContext(this.options.projectId, { engine: "kiro", sessionId: this.id });
-    const profile = await kiroAgentProfile({ ...this.options, accountIds: undefined }, credentialContext, this.trustedTools);
+    const profile = await kiroAgentProfile({ ...this.options, accountIds: undefined }, credentialContext, this.trustedTools, env.KIRO_HOME);
     this.throwIfCancelled();
     const args = ["acp", "--agent-engine", "v2", "--agent", profile, "--effort", this.model.reasoning];
     // With Guardian on, Kiro trusts no tool and asks before each call; serverRequest answers with
@@ -242,9 +274,15 @@ class KiroSession implements HarnessSession {
     this.guarded = await kiroChecksTools();
     if (!this.guarded) args.push(this.trustedTools === undefined ? "--trust-all-tools" : `--trust-tools=${this.trustedTools.join(",")}`);
     if (this.model.modelId !== "default") args.push("--model", this.model.modelId);
-    this.child = spawnInRuntime(currentRuntime(), settings.executable || "kiro-cli", args, {
+    const selectedProfileId = this.profile?.id ?? null;
+    if (this.nativeProfileId !== selectedProfileId) {
+      this.nativeSessionId = null;
+      this.handoffPending = this.transcript.length > 0;
+    }
+    const launch = this.profile ? await kiroProfileLaunch(this.profile, env, args) : { command: settings.executable || "kiro-cli", args, env };
+    this.child = spawnInRuntime(currentRuntime(), launch.command, launch.args, {
       cwd: this.options.cwd,
-      env,
+      env: launch.env,
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -280,7 +318,8 @@ class KiroSession implements HarnessSession {
     for (const metadata of this.pendingMetadata) this.handleMetadata(metadata);
     this.pendingMetadata = [];
     if (!this.aliasFile) this.aliasFile = await initializeKiroSession(this.options, this.settings());
-    this.queueRecord({ type: "native-session", id: this.nativeSessionId, timestamp: new Date().toISOString() });
+    this.nativeProfileId = this.profile?.id ?? null;
+    this.queueRecord({ type: "native-session", id: this.nativeSessionId, profileId: this.nativeProfileId, handoffPending: this.handoffPending, timestamp: new Date().toISOString() });
     this.emit({ type: "sessionFile", sessionId: this.id, sessionFile: this.file });
   }
 
@@ -579,7 +618,12 @@ class KiroSession implements HarnessSession {
   }
 
   async compact(instructions?: string, beforeStart?: () => Promise<void>): Promise<void> {
+    return this.withProfile(() => this.compactWithProfile(instructions, beforeStart));
+  }
+
+  private async compactWithProfile(instructions?: string, beforeStart?: () => Promise<void>): Promise<void> {
     if (!this.nativeSessionId) throw new Error("Kiro compaction requires an existing native session");
+    if (this.nativeProfileId !== (this.profile?.id ?? null)) throw new Error("Send a turn with the selected Kiro profile before compacting this conversation");
     if (this.running) throw new Error("Kiro session is busy");
     this.running = true;
     this.compacting = true;
@@ -678,7 +722,7 @@ const runtime: HarnessRuntime = {
     const settings = runtimeSettings();
     const executable = settings.executable || "kiro-cli";
     try {
-      await access(settings.configPath);
+      if (!ownedKiroProfiles().length) await access(settings.configPath);
       if (executable.includes("/") || executable.includes("\\")) await access(executable);
       const launch = runtimeExec(executable, ["--version"], { ...process.env, ...env, KIRO_HOME: settings.configPath });
       await execute(launch.command, launch.args, { cwd: usingServiceRuntime() ? cwd : undefined, env: launch.env, timeout: 5_000 });
@@ -695,7 +739,12 @@ const runtime: HarnessRuntime = {
       await execute(settings.executable || "kiro-cli", ["whoami"], { env: { ...process.env, KIRO_HOME: settings.configPath }, timeout: 5_000 });
       return [];
     } catch {
-      return ["Kiro is not signed in on this node"];
+      const problems = [];
+      for (const profile of ownedKiroProfiles()) {
+        try { if ((await kiroProfileLoginState(profile)).signedIn) return []; }
+        catch { problems.push(`Kiro profile ${profile.label} is unavailable on this node`); }
+      }
+      return problems.length ? problems : ["Kiro is not signed in on this node"];
     }
   },
 };

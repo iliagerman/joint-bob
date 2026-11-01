@@ -186,13 +186,13 @@ function profileProviderForRuntime(provider: string): ProfileProvider | undefine
 }
 async function resolveTurnSubscriptionPool(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<TurnSubscriptionPool | undefined> {
   const engine = queued.settings?.harnessId ?? connection.engine;
+  if (engine === "kiro") return undefined;
   const preferred = profileProviderForRuntime(queued.settings?.provider ?? connection.shared.session.settings().provider);
   const local = await getClusterNode(), db = await clusterV2Database();
   const assignments = resolveClusterSubscriptionPools(db, local.id, connection.project.id);
   if (assignments.length) {
     const signatures = new Set(assignments.map(({ poolOwnerNodeId, poolId, manifest }) => JSON.stringify([poolOwnerNodeId, poolId, manifest])));
     if (signatures.size > 1) throw new Error("This project has conflicting cluster subscription pools");
-    if (engine === "kiro") throw new Error("Subscription pools are not supported by Kiro");
     const assignment = assignments[0];
     if (!assignment.manifest) throw new Error("The cluster pool manifest is unavailable");
     return { id: assignment.poolId, fallbackModels: assignment.manifest.fallbackModels, sameProviderOnly: engine === "claude",

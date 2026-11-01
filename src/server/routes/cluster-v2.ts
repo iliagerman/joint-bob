@@ -6,7 +6,7 @@ import { pinnedClusterPublicKey, signClusterMessage, verifyClusterMessage } from
 import { applyMembershipSnapshot, closeMembershipCluster, createMembershipCluster, createMembershipInvitation, getMembershipSnapshot, removeMembershipMember, updateMembershipDescriptor, type MembershipInvitation, type SignedMembershipSnapshot } from "../../cluster-membership.js";
 import { getSharingCluster, listSharingClusterMembers, listSharingMemberships, setAutoShareProjects } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { applyClusterSubscriptionPoolEvent, getClusterSubscriptionPool, setClusterSubscriptionPool, clearClusterSubscriptionPool, clusterPoolProfileAuthorized, parseClusterSubscriptionPoolAssignment, type ClusterSubscriptionPoolAssignment, type ClusterSubscriptionPoolManifest } from "../../provider-profiles/pool-sharing.js";
+import { poolProfileProviderSchema, applyClusterSubscriptionPoolEvent, getClusterSubscriptionPool, setClusterSubscriptionPool, clearClusterSubscriptionPool, clusterPoolProfileAuthorized, parseClusterSubscriptionPoolAssignment, type ClusterSubscriptionPoolAssignment, type ClusterSubscriptionPoolManifest } from "../../provider-profiles/pool-sharing.js";
 import { getSubscriptionPool, listSubscriptionPools } from "../../provider-profiles/pools.js";
 import { providerProfile } from "../../provider-profiles/store.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
@@ -111,7 +111,7 @@ function poolManifest(owner: string, poolId: string): ClusterSubscriptionPoolMan
     fallbackModels: pool.fallbackModels,
     members: pool.members.map(({ profileId, position }) => {
       const profile = providerProfile(owner, profileId);
-      return { profileId, provider: profile.provider, label: profile.label, position };
+      return { profileId, provider: poolProfileProviderSchema.parse(profile.provider), label: profile.label, position };
     }),
   };
 }

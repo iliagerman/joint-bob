@@ -18,6 +18,7 @@ export interface KiroStoredSession {
   id: string;
   cwd: string;
   nativeSessionId: string | null;
+  nativeProfileId: string | null;
   modelId: string;
   reasoning: string;
   enabledTools?: string[];
@@ -107,6 +108,11 @@ function applyRecord(session: KiroStoredSession, value: KiroRecord, index: numbe
   session.updatedAt = timestamp(value.timestamp);
   if (value.type === "native-session") {
     session.nativeSessionId = nonempty(value.id, "native session record");
+    session.nativeProfileId = value.profileId === undefined || value.profileId === null ? null : nonempty(value.profileId, "profile ID");
+    if (value.handoffPending !== undefined) {
+      if (typeof value.handoffPending !== "boolean") throw new Error("Invalid Kiro handoff state");
+      session.handoffPending = value.handoffPending;
+    }
     return;
   }
   if (value.type === "handoff-completed") {
@@ -176,6 +182,7 @@ export async function readKiroSession(sessionPath: string): Promise<KiroStoredSe
     id: header.id as string,
     cwd: header.cwd as string,
     nativeSessionId: header.nativeSessionId as string | null,
+    nativeProfileId: null,
     modelId: header.modelId as string,
     reasoning: header.reasoning as string,
     enabledTools: header.enabledTools as string[] | undefined,
@@ -193,6 +200,7 @@ function validateAppendRecord(value: KiroRecord): void {
     id: "validation",
     cwd: "/",
     nativeSessionId: null,
+    nativeProfileId: null,
     modelId: "default",
     reasoning: "medium",
     handoffPending: false,

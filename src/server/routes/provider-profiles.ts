@@ -13,10 +13,11 @@ import { clusterManager, signedPost } from "../cluster-v2.js";
 import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { createProviderProfile, deleteProviderProfile, listProviderProfiles, listProviderProfileSelections, providerProfile, providerProfileById, profileSelectionSchema, setProviderProfileSelection, listSubscriptionSelections, listAccessibleProviderProfiles, setProviderProfileShared, twinProviderProfile } from "../../provider-profiles/store.js";
 import { createSubscriptionPool, deleteSubscriptionPool, getSubscriptionPool, listSubscriptionPools, setSubscriptionPoolSelection, updateSubscriptionPool, type SubscriptionPool } from "../../provider-profiles/pools.js";
-import { applyClusterSubscriptionPoolEvent, assignedClusterPoolsForOwner, clusterPoolProfileAuthorized, getClusterSubscriptionPool, parseClusterSubscriptionPoolAssignment, setClusterSubscriptionPool, type ClusterSubscriptionPoolManifest } from "../../provider-profiles/pool-sharing.js";
+import { poolProfileProviderSchema, applyClusterSubscriptionPoolEvent, assignedClusterPoolsForOwner, clusterPoolProfileAuthorized, getClusterSubscriptionPool, parseClusterSubscriptionPoolAssignment, setClusterSubscriptionPool, type ClusterSubscriptionPoolManifest } from "../../provider-profiles/pool-sharing.js";
 import { localProfileCredential, logoutProfile, profileAvailability, profileLoginState, startProfileLogin } from "../../provider-profiles/service.js";
 import { borrowTwinCredential, TWIN_PROFILE_TOKEN_PATH } from "../../provider-profiles/twin-login.js";
 import { profileLogins } from "../../provider-profiles/login.js";
+import { kiroProfileLoginStatus, cancelKiroProfileLogin } from "../../kiro-profiles/native.js";
 import { piProfileProviders, startPiProfileLogin, removePiProfileProvider } from "../../provider-profiles/pi-credentials.js";
 import { profileBusy } from "../../provider-profiles/execution.js";
 import { sendError } from "../http-auth.js";
@@ -37,12 +38,16 @@ function route(work: (request: Request, response: Response) => unknown) {
     catch (error) {
       if (error instanceof z.ZodError) { sendError(response, 400, "Invalid provider profile request"); return; }
       if (error instanceof Error && /login method unavailable|Expected Pi profile|Choose a provider/.test(error.message)) { sendError(response, 400, error.message); return; }
+      if (error instanceof Error && /Kiro profiles.*standalone/.test(error.message)) { sendError(response, 400, error.message); return; }
       if (error instanceof ClusterV2HttpError) { sendError(response, error.statusCode, error.message); return; }
       if (error instanceof Error && /not found/i.test(error.message)) { sendError(response, 404, error.message); return; }
       if (error instanceof Error && /selection|assignment|assigned|in progress|busy|pending sign-in|already signed in|finishing|automation only/i.test(error.message)) { sendError(response, 409, error.message); return; }
       next(error);
     }
   };
+}
+function loginStatus(selected: ReturnType<typeof providerProfile>) {
+  return selected.provider === "kiro" ? kiroProfileLoginStatus(selected) : profileLogins.status(selected.owner, selected.id);
 }
 function editable(id: string): void {
   if (profileBusy(id)) throw new Error("This profile is busy. Wait for its current turn to finish.");
@@ -55,7 +60,7 @@ function poolManifest(ownerId: string, pool: SubscriptionPool): ClusterSubscript
     fallbackModels: pool.fallbackModels,
     members: pool.members.map(({ profileId, position }) => {
       const profile = providerProfile(ownerId, profileId);
-      return { profileId, provider: profile.provider, label: profile.label, position };
+      return { profileId, provider: poolProfileProviderSchema.parse(profile.provider), label: profile.label, position };
     }),
   };
 }
@@ -131,24 +136,24 @@ app.get("/api/provider-profiles/:id/providers", route(async (request, response) 
 }));
 app.post("/api/provider-profiles/:id/providers/:providerId/login", route(async (request, response) => {
   const selected = profile(request, response); editable(selected.id);
-  if (profileLogins.status(owner(response), selected.id)?.state === "waiting") throw new Error("A login is in progress");
+  if (loginStatus(selected)?.state === "waiting") throw new Error("A login is in progress");
   const { methodId } = z.object({ methodId: z.enum(["api_key", "oauth"]) }).strict().parse(request.body);
   const providerId = z.string().min(1).max(200).parse(request.params.providerId);
   response.json({ login: await startPiProfileLogin(owner(response), selected.id, providerId, methodId) });
 }));
 app.delete("/api/provider-profiles/:id/providers/:providerId", route(async (request, response) => {
   const selected = profile(request, response); editable(selected.id);
-  if (profileLogins.status(owner(response), selected.id)?.state === "waiting") throw new Error("A login is in progress");
+  if (loginStatus(selected)?.state === "waiting") throw new Error("A login is in progress");
   await removePiProfileProvider(selected, z.string().min(1).max(200).parse(request.params.providerId));
   response.json({ ok: true });
 }));
 app.get("/api/provider-profiles/:id/status", route(async (request, response) => {
   const selected = profile(request, response);
-  response.json({ ...await profileAvailability(selected), provider: selected.provider, login: profileLogins.status(owner(response), selected.id) ?? null });
+  response.json({ ...await profileAvailability(selected), provider: selected.provider, login: loginStatus(selected) ?? null });
 }));
 app.get("/api/provider-profiles/:id/login", route((request, response) => {
   const selected = profile(request, response);
-  response.json({ login: profileLogins.status(owner(response), selected.id) ?? { state: "cancelled", message: "No sign-in is in progress on this node" } });
+  response.json({ login: loginStatus(selected) ?? { state: "cancelled", message: "No sign-in is in progress on this node" } });
 }));
 app.post("/api/provider-profiles/:id/login", route(async (request, response) => {
   const selected = profile(request, response); editable(selected.id);
@@ -160,21 +165,22 @@ app.put("/api/provider-profiles/:id/login", route((request, response) => {
   profileLogins.answer(owner(response), selected.id, body.answer);
   response.json({ ok: true });
 }));
-app.delete("/api/provider-profiles/:id/login", route((request, response) => {
+app.delete("/api/provider-profiles/:id/login", route(async (request, response) => {
   const selected = profile(request, response);
-  profileLogins.cancel(owner(response), selected.id);
+  if (selected.provider === "kiro") await cancelKiroProfileLogin(selected);
+  else profileLogins.cancel(owner(response), selected.id);
   response.json({ ok: true });
 }));
 app.post("/api/provider-profiles/:id/logout", route(async (request, response) => {
   const selected = profile(request, response); editable(selected.id);
-  if (profileLogins.status(owner(response), selected.id)?.state === "waiting") throw new Error("A login is in progress");
+  if (loginStatus(selected)?.state === "waiting") throw new Error("A login is in progress");
   await logoutProfile(selected);
   response.json({ ok: true });
 }));
 app.delete("/api/provider-profiles/:id", route(async (request, response) => {
   const selected = profile(request, response); editable(selected.id);
   if (listProviderProfileSelections(owner(response)).some((entry) => entry.profileId === selected.id)) throw new Error("Remove this profile's selections before deleting it");
-  if (profileLogins.status(owner(response), selected.id)?.state === "waiting") throw new Error("A login is in progress");
+  if (loginStatus(selected)?.state === "waiting") throw new Error("A login is in progress");
   const login = await profileLoginState(selected);
   if (!login.signedIn && login.message !== "Sign in on this node") throw new Error(login.message);
   await logoutProfile(selected);
@@ -240,6 +246,7 @@ app.post(TWIN_PROFILE_TOKEN_PATH, route(async (request, response) => {
   const body = z.object({ profileId: idSchema, check: z.literal(true).optional() }).strict().parse(request.body);
   const selected = twinProviderProfile(body.profileId);
   if (!selected) { sendError(response, 404, "Provider profile not found on this node"); return; }
+  if (selected.provider === "kiro") { sendError(response, 409, "Kiro profiles are standalone; their credentials stay on this node"); return; }
   if (body.check) { response.json({ signedIn: (await profileLoginState(selected)).signedIn }); return; }
   try {
     const credential = await localProfileCredential(selected);

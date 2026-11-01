@@ -126,6 +126,7 @@ function writePool(db: DatabaseSync, pool: SubscriptionPool, deleted: boolean, a
 }
 function poolProfiles(owner: string, profileIds: string[]): ProviderProfile[] {
   const profiles = profileIds.map((id) => providerProfile(owner, id));
+  if (profiles.some((profile) => profile.provider === "kiro")) throw new Error("Kiro profiles are standalone and cannot join subscription pools");
   if (profiles.some((profile) => profile.shared)) throw new Error("Automation-only profiles cannot be added to a subscription pool");
   return profiles;
 }

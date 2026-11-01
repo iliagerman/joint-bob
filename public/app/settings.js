@@ -1,5 +1,6 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { loadProviderProfiles } from "./provider-profiles.js";
+import { loadKiroProfiles } from "./kiro-profiles.js";
 import { brandIcon, menuIcon } from "./icons.js";
 import { applyAdminVisibility, isNodeAdmin, loadNodeBlocks, loadTerminalPolicy, loadUsers, saveChangedTerminalPolicy } from "./node-admin.js";
 import { loadMyNodes } from "./roaming.js";
@@ -127,7 +128,10 @@ function selectSettingsTab(requested) {
   if (name === "logs") renderClientLogs();
   if (name === "resources") showResourcesPanel();
   if (name === "file-sync") void loadFileSyncSettings(); // settings-page (P4)
-  if (name === "engines") void loadProviderProfiles().catch((error) => toast(error.message));
+  if (name === "engines") {
+    void loadProviderProfiles().catch((error) => toast(error.message));
+    void loadKiroProfiles().catch((error) => toast(error.message));
+  }
   if (name === "story") void loadStorySettings().catch((error) => toast(error.message));
   if (name === "git") void loadGitReviewerSettings().catch((error) => toast(error.message));
   if (name === "conversations") void loadSummaryModelSettings().catch((error) => toast(error.message));

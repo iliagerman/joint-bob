@@ -8,16 +8,25 @@ import { adminAccountId } from "../ownership.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, type ReplicationEvent } from "../replication.js";
 import { settingsDatabase } from "../settings-store.js";
 
-export const profileProviderSchema = z.enum(["claude", "openai-codex", "pi"]);
+export const profileProviderSchema = z.enum(["claude", "openai-codex", "pi", "kiro"]);
+export const kiroProfileConfigSchema = z.object({
+  startUrl: z.string().url().max(2048).refine((value) => { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password; }, "Use an HTTPS IAM Identity Center start URL"),
+  region: z.string().max(64).regex(/^[a-z]{2}(?:-[a-z]+)+-\d+$/),
+}).strict();
+function kiroConfigRequired(value: { provider: string; kiro?: unknown; shared?: boolean }, ctx: z.RefinementCtx): void {
+  if ((value.provider === "kiro") !== Boolean(value.kiro)) ctx.addIssue({ code: "custom", message: "Only Kiro profiles require IAM Identity Center settings" });
+  if (value.provider === "kiro" && value.shared) ctx.addIssue({ code: "custom", message: "Kiro profiles are private and standalone" });
+}
 export type ProfileProvider = z.infer<typeof profileProviderSchema>;
-export const profileInputSchema = z.object({ label: z.string().trim().min(1).max(80), provider: profileProviderSchema }).strict();
+export const profileInputSchema = z.object({ label: z.string().trim().min(1).max(80), provider: profileProviderSchema, kiro: kiroProfileConfigSchema.optional() }).strict().superRefine(kiroConfigRequired);
 const scopeSchema = z.enum(["default", "workspace", "project", "conversation"]);
 export const profileSelectionSchema = z.object({ provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable(), poolId: z.string().uuid().nullable().optional() }).strict().superRefine((value, ctx) => {
   if ((value.scope === "default") !== (value.scopeId === "")) ctx.addIssue({ code: "custom", message: "Only the default scope has an empty scopeId" });
   if (value.profileId && value.poolId) ctx.addIssue({ code: "custom", message: "Choose either a profile or a pool" });
+  if (value.provider === "kiro" && value.poolId) ctx.addIssue({ code: "custom", message: "Kiro profiles are standalone and cannot use subscription pools" });
 });
 export type ProfileSelection = z.infer<typeof profileSelectionSchema>;
-export interface ProviderProfile { id: string; owner: string; label: string; provider: ProfileProvider; createdAt: string; shared: boolean }
+export interface ProviderProfile { id: string; owner: string; label: string; provider: ProfileProvider; createdAt: string; shared: boolean; kiro?: z.infer<typeof kiroProfileConfigSchema> }
 export type ProfileUsage = "interactive" | "automation";
 export interface ProfileScope { projectId: string; workspaceId: string; conversationId?: string }
 type Stamp = { updatedAt: string; originNodeId: string };
@@ -42,6 +51,7 @@ export function ensureProviderProfileSchema(db: DatabaseSync): void {
   // Twins keep the newest write of each profile and choice. A deleted profile and a
   // cleared choice (empty profile_id) stay as tombstones so an older copy cannot revive them.
   addColumns(db, "provider_profiles", [["shared", "INTEGER NOT NULL DEFAULT 0"], ["deleted", "INTEGER NOT NULL DEFAULT 0"], ["updated_at", "TEXT NOT NULL DEFAULT ''"], ["origin_node_id", "TEXT NOT NULL DEFAULT ''"]]);
+  addColumns(db, "provider_profiles", [["kiro_config", "TEXT NOT NULL DEFAULT ''"]]);
   addColumns(db, "provider_profile_selections", [["pool_id", "TEXT NOT NULL DEFAULT ''"], ["updated_at", "TEXT NOT NULL DEFAULT ''"], ["origin_node_id", "TEXT NOT NULL DEFAULT ''"]]);
 }
 function addColumns(db: DatabaseSync, table: string, columns: Array<[string, string]>): void {
@@ -86,12 +96,12 @@ function newer(candidate: Stamp, held: { updated_at: string; origin_node_id: str
 }
 
 function writeProfile(db: DatabaseSync, profile: ProviderProfile & { deleted: boolean }, at: Stamp, publish = true): void {
-  db.prepare(`INSERT INTO provider_profiles (id,owner,label,provider,created_at,shared,deleted,updated_at,origin_node_id) VALUES(?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET label=excluded.label, shared=excluded.shared, deleted=excluded.deleted, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
-    .run(profile.id, profile.owner, profile.label, profile.provider, profile.createdAt, profile.shared ? 1 : 0, profile.deleted ? 1 : 0, at.updatedAt, at.originNodeId);
+  db.prepare(`INSERT INTO provider_profiles (id,owner,label,provider,created_at,shared,deleted,updated_at,origin_node_id,kiro_config) VALUES(?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET label=excluded.label, shared=excluded.shared, deleted=excluded.deleted, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id, kiro_config=excluded.kiro_config`)
+    .run(profile.id, profile.owner, profile.label, profile.provider, profile.createdAt, profile.shared ? 1 : 0, profile.deleted ? 1 : 0, at.updatedAt, at.originNodeId, profile.kiro ? JSON.stringify(profile.kiro) : "");
   if (!publish) return;
   enqueueReplicationEvent(db, { originNodeId: at.originNodeId, entityType: "provider.profile", entityKey: profile.id, operation: "upsert",
-    payload: { username: profile.owner, id: profile.id, label: profile.label, provider: profile.provider, createdAt: profile.createdAt, shared: profile.shared, deleted: profile.deleted, ...at } });
+    payload: { username: profile.owner, id: profile.id, label: profile.label, provider: profile.provider, createdAt: profile.createdAt, shared: profile.shared, deleted: profile.deleted, ...(profile.kiro ? { kiro: profile.kiro } : {}), ...at } });
 }
 function writeSelectionRow(db: DatabaseSync, owner: string, value: ProfileSelection, at: Stamp): void {
   db.prepare(`INSERT INTO provider_profile_selections (owner,provider,scope,scope_id,profile_id,pool_id,updated_at,origin_node_id) VALUES(?,?,?,?,?,?,?,?)
@@ -112,7 +122,7 @@ function writePoolSelection(db: DatabaseSync, owner: string, value: ProfileSelec
 }
 
 function fromRow(row: Record<string, unknown>): ProviderProfile {
-  return { id: String(row.id), owner: String(row.owner), label: String(row.label), provider: profileProviderSchema.parse(row.provider), createdAt: String(row.created_at), shared: row.shared === 1 };
+  return { id: String(row.id), owner: String(row.owner), label: String(row.label), provider: profileProviderSchema.parse(row.provider), createdAt: String(row.created_at), shared: row.shared === 1, ...(row.kiro_config ? { kiro: kiroProfileConfigSchema.parse(JSON.parse(String(row.kiro_config))) } : {}) };
 }
 
 export function listProviderProfiles(owner: string): ProviderProfile[] {
@@ -137,6 +147,7 @@ export function createProviderProfile(owner: string, input: unknown): ProviderPr
 }
 export function setProviderProfileShared(owner: string, id: string, shared: boolean): ProviderProfile {
   const profile = providerProfile(owner, id), db = database();
+  if (profile.provider === "kiro" && shared) throw new Error("Kiro profiles are private and standalone");
   const poolTablesExist = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subscription_pool_members'").get();
   if (shared && poolTablesExist && db.prepare("SELECT 1 FROM subscription_pool_members m JOIN subscription_pools p ON p.id=m.pool_id WHERE m.profile_id=? AND p.deleted=0 LIMIT 1").get(id)) {
     throw new Error("Remove this profile from its pools before sharing it for automation");
@@ -172,6 +183,7 @@ export function deleteProviderProfile(owner: string, id: string): void {
   const poolTablesExist = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subscription_pool_members'").get();
   if (poolTablesExist && db.prepare("SELECT 1 FROM subscription_pool_members m JOIN subscription_pools p ON p.id=m.pool_id WHERE m.profile_id=? AND p.deleted=0 LIMIT 1").get(id)) throw new Error("Remove this profile from its pools before deleting it");
   transaction(db, () => writeProfile(db, { ...profile, deleted: true }, stamp(db, origin(db))));
+  if (profile.provider === "kiro") rmSync(path.join(resolveDataDirectory(), "kiro-profile-auth", profile.id), { recursive: true, force: true });
 }
 export function listProviderProfileSelections(owner: string): ProfileSelection[] {
   return database().prepare("SELECT provider,scope,scope_id AS scopeId,profile_id AS profileId FROM provider_profile_selections WHERE owner=? AND profile_id<>''").all(owner) as unknown as ProfileSelection[];
@@ -213,7 +225,7 @@ export function resolveProviderProfile(owner: string, provider: ProfileProvider,
 }
 
 const stampSchema = { username: z.string().regex(/^[0-9a-f]{32}$/), updatedAt: z.string().datetime(), originNodeId: z.string().min(1).max(100) };
-const profileEventSchema = z.object({ ...stampSchema, id: z.string().uuid(), label: z.string().trim().min(1).max(80), provider: profileProviderSchema, createdAt: z.string().datetime(), shared: z.boolean(), deleted: z.boolean() }).strict();
+const profileEventSchema = z.object({ ...stampSchema, id: z.string().uuid(), label: z.string().trim().min(1).max(80), provider: profileProviderSchema, createdAt: z.string().datetime(), shared: z.boolean(), deleted: z.boolean(), kiro: kiroProfileConfigSchema.optional() }).strict().superRefine(kiroConfigRequired);
 const selectionEventSchema = z.object({ ...stampSchema, provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), profileId: z.string().uuid().nullable() }).strict();
 const poolSelectionEventSchema = z.object({ ...stampSchema, provider: profileProviderSchema, scope: scopeSchema, scopeId: z.string().max(700), poolId: z.string().uuid().nullable() }).strict();
 
@@ -231,9 +243,9 @@ export function applyProviderProfileEvent(db: DatabaseSync, event: ReplicationEv
   const held = db.prepare("SELECT owner,provider,deleted,updated_at,origin_node_id FROM provider_profiles WHERE id=?").get(value.id) as { owner: string; provider: string; deleted: number; updated_at: string; origin_node_id: string } | undefined;
   if (held && (held.owner !== value.username || held.provider !== value.provider)) return false;
   if (!newer(value, held)) return true;
-  writeProfile(db, { id: value.id, owner: value.username, label: value.label, provider: value.provider, createdAt: value.createdAt, shared: value.shared, deleted: value.deleted }, value, false);
+  writeProfile(db, { id: value.id, owner: value.username, label: value.label, provider: value.provider, createdAt: value.createdAt, shared: value.shared, deleted: value.deleted, ...(value.kiro ? { kiro: value.kiro } : {}) }, value, false);
   // The deleting twin removed its own sign-in; this node's sign-in for the profile goes too.
-  if (value.deleted && held?.deleted === 0) rmSync(path.join(resolveDataDirectory(), "provider-profile-auth", value.id), { recursive: true, force: true });
+  if (value.deleted && held?.deleted === 0) rmSync(path.join(resolveDataDirectory(), value.provider === "kiro" ? "kiro-profile-auth" : "provider-profile-auth", value.id), { recursive: true, force: true });
   return true;
 }
 
