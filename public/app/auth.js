@@ -13,7 +13,7 @@ import { renderQuickNotes } from "./quick-notes.js";
 import { loadProjects, startProjectSyncPolling } from "./project-selection.js";
 import { renderSessions } from "./session-list.js";
 import { showWhatsNew, syncSettingsAccess } from "./settings.js";
-import { setTheme, syncNotifyButton, updateInstallButton } from "./shell.js";
+import { syncNotifyButton, updateInstallButton } from "./shell.js";
 import { syncShortcutHints } from "./shortcut-hints.js";
 import { closeSocket, closeWatchSocket } from "./socket.js";
 import { BOOT_MINIMUM_MS, BOOT_REQUEST_TIMEOUT_MS, bootStartedAt, LEGACY_PREFERENCE_KEYS, shared, state } from "./state.js";
@@ -177,7 +177,6 @@ export async function initializeApplication() {
   const { applyTerminalDockPreference } = await import("./terminal.js");
   applyTerminalDockPreference(preferences.terminalDock);
   state.preferencesLoaded = false;
-  setTheme(preferences.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
   state.installDismissed = preferences.installDismissed;
   state.notificationsEnabled = preferences.notificationsEnabled;
   state.completionSound = preferences.completionSound;

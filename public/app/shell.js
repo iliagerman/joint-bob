@@ -116,7 +116,6 @@ export function toast(message, duration = 3200) {
 
 export function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  if (state.preferencesLoaded) savePreferencesInBackground({ theme });
 
   const isDark = theme === "dark";
   elements.themeToggleButton.textContent = isDark ? "☀ Switch to light theme" : "☾ Switch to dark theme";

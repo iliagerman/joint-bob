@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { setFocusUi } from "./focus-ui.js";
 import { applyTerminalDockPreference } from "./terminal.js";
 import { setPanelCollapsed } from "./layout.js";
-import { setTheme, toast } from "./shell.js";
+import { toast } from "./shell.js";
 import { syncShortcutHints } from "./shortcut-hints.js";
 import { state } from "./state.js";
 
@@ -13,7 +13,6 @@ export async function reloadTravellingPreferences() {
   const loaded = state.preferencesLoaded;
   state.preferencesLoaded = false; // applying what was saved is not a new edit
   try {
-    setTheme(preferences.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
     applyTerminalDockPreference(preferences.terminalDock);
     state.completionSound = preferences.completionSound;
     state.gitReviewer = preferences.gitReviewer;

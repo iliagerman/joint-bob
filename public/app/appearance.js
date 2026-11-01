@@ -1,6 +1,7 @@
 import { setTheme } from "./shell.js";
 
-// Appearance is per browser, not per account: a big screen wants larger text, a laptop does not.
+// Appearance (theme and text sizes) is per browser, not per account: a big screen wants larger text, a laptop does not,
+// and a phone's theme must not change the desktop's.
 const APPEARANCE_STORAGE_KEY = "jointBobAppearance";
 
 export const THEMES = [
@@ -166,6 +167,12 @@ logo.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   open();
+});
+// The Settings toggle flips plain light and dark, and is kept on this device like the palettes.
+document.querySelector("#themeToggleButton").addEventListener("click", () => {
+  settings.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  applyTheme();
+  save();
 });
 dialog.querySelector("#appearanceCloseButton").addEventListener("click", () => dialog.close());
 dialog.querySelector("#appearanceResetButton").addEventListener("click", () => {

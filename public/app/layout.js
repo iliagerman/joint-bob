@@ -3,7 +3,7 @@ import { conversationTask } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { projectMatchesClusters, sessionMatchesClusters } from "./cluster-filters.js";
 import { addSessionToCanvas } from "./session-list.js";
-import { formatDate, setTheme, toast } from "./shell.js";
+import { formatDate, toast } from "./shell.js";
 import { state } from "./state.js";
 import { focusTaskCard, renderBoardView } from "./tasks.js";
 
@@ -167,9 +167,6 @@ export function filteredProjects() {
     && (!query || `${project.name}\n${project.path}`.toLowerCase().includes(query)));
 }
 
-elements.themeToggleButton.addEventListener("click", () => {
-  setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
-});
 elements.navProjectsButton.addEventListener("click", () => setMobileView("projects"));
 elements.navSessionsButton.addEventListener("click", () => setMobileView("sessions"));
 elements.navBoardButton.addEventListener("click", () => {
