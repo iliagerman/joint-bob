@@ -25,13 +25,15 @@ import {
   type GitReviewSelection,
   type GitReviewThread,
 } from "../../git-review-threads.js";
-import { askStoryScript, generateStoryScript } from "../story-podcast.js";
+import { ACTIVITY_OVERVIEW_MARKER, askStoryScript, generateStoryScript, type OverviewSource } from "../story-podcast.js";
 import { publishStory } from "../../story-replication.js";
 import { loadStoryScript, pruneStoryFiles } from "../../story-scripts.js";
 import { narrateStoryText, narrationProvider, NARRATION_LIMIT } from "../story-voice.js";
-import { getStorySettings, storySettingsSchema } from "../../story-settings.js";
-import { CHANGE_STORY_MARKER, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StoryProgress, type StorySources } from "../git-change-story.js";
+import { getStorySettings, storySettingsSchema, VOICE_PROVIDER_CHOICES } from "../../story-settings.js";
+import { CHANGE_STORY_MARKER, collectStorySources, conversationCommits, generateChangeStory, storyFreshness, type SavedChangeStory, type StoryProgress, type StorySources } from "../git-change-story.js";
 import { getProject } from "../../store.js";
+import { getHarness } from "../../harnesses.js";
+import type { HarnessId } from "../../types.js";
 import { genericSecretEnvironment, githubAccountsForProject } from "../../secrets.js";
 import { githubAccountFor } from "../../github-credentials.js";
 import { createGitHubReview } from "../github-review.js";
@@ -343,7 +345,7 @@ app.get("/api/projects/:projectId/git/commit-diff", async (request, response, ne
 // ---- Review threads (list / delete) ----
 
 function reviewList(projectId: string, conversationId: string | undefined, repository?: string): unknown {
-  return { threads: (conversationId === undefined ? listGitReviewThreads(projectId) : listGitReviewThreads(projectId, conversationId)).filter((thread) => sameRepository(thread.selection, repository)) };
+  return { threads: (conversationId === undefined ? listGitReviewThreads(projectId) : listGitReviewThreads(projectId, conversationId)).filter((thread) => thread.question !== ACTIVITY_OVERVIEW_MARKER && sameRepository(thread.selection, repository)) };
 }
 
 function reviewDetail(projectId: string, threadId: string, repository?: string): unknown {
@@ -708,10 +710,48 @@ const podcastRequest = z.object({
   settings: storySettingsSchema.optional(),
 }).strict();
 
-function podcastStory(projectId: string, threadId: string, repository?: string): { thread: GitReviewThread; saved: SavedChangeStory } {
+// A podcast belongs to a saved story or to a saved Activity overview; both hold the facts and diffs it is written from.
+function podcastStory(projectId: string, threadId: string, repository?: string): { thread: GitReviewThread; saved: OverviewSource } {
   const thread = getGitReviewThread(threadId);
-  if (!thread || thread.projectId !== projectId || thread.messages[0]?.text !== CHANGE_STORY_MARKER || !sameRepository(thread.selection, repository)) throw new GitReviewError(404, "Story not found");
-  return { thread, saved: JSON.parse(thread.messages[1].text) as SavedChangeStory };
+  const marker = thread?.messages[0]?.text;
+  if (!thread || thread.projectId !== projectId || (marker !== CHANGE_STORY_MARKER && marker !== ACTIVITY_OVERVIEW_MARKER) || !sameRepository(thread.selection, repository)) throw new GitReviewError(404, "Story not found");
+  return { thread, saved: JSON.parse(thread.messages[1].text) as OverviewSource };
+}
+
+const overviewRequest = z.object({
+  conversationId: z.string().min(1).max(240),
+  /** Writes the movie again instead of replaying the saved one. */
+  regenerate: z.boolean().default(false),
+  /** The settings of the node the viewer is using; this node's own are used when absent. */
+  settings: storySettingsSchema.optional(),
+}).strict();
+
+// The Activity overview: the conversation's own commits and claimed pending files, written straight into a movie.
+// It keeps its own record, so no written story is made and none is shown.
+async function performOverview(projectId: string, cwd: string, input: z.infer<typeof overviewRequest>, onProgress?: (event: JobProgress) => void, repository?: string): Promise<unknown> {
+  pruneStoryFiles();
+  const project = await getProject(projectId);
+  if (!project) throw new GitReviewError(404, "Project not found");
+  const settings = input.settings ?? getStorySettings();
+  const existing = listGitReviewThreads(projectId, input.conversationId).find((thread) => thread.question === ACTIVITY_OVERVIEW_MARKER && sameRepository(thread.selection, repository));
+  let thread = existing ? getGitReviewThread(existing.id)! : undefined;
+  if (!thread) {
+    onProgress?.({ type: "progress", stage: "Reading conversation and changes" });
+    const { paths, lastHarness } = await discoverConversationFiles(project, cwd, input.conversationId);
+    const sources: StorySources = { scope: "conversation", pendingPaths: paths, includeCommits: true };
+    const collected = await collectStorySources(project, cwd, input.conversationId, sources);
+    const reviewer = getHarness(lastHarness as HarnessId).defaults;
+    const source = { facts: collected.facts, patches: collected.patches, fingerprint: collected.fingerprint, sources, generatedAt: new Date().toISOString() };
+    thread = createGitReviewThread({ projectId, conversationId: input.conversationId, harnessId: lastHarness as HarnessId, provider: reviewer.provider, modelId: reviewer.modelId, thinkingLevel: reviewer.thinkingLevel, selection: { scope: "worktree", repository: repositoryKey(repository) }, snapshot: "", question: ACTIVITY_OVERVIEW_MARKER, answer: JSON.stringify(source), ttlMs: GIT_STORY_TTL_MS });
+  }
+  const previous = loadStoryScript(projectId, thread.id);
+  let script = previous;
+  if (!script || input.regenerate) {
+    onProgress?.({ type: "progress", stage: "Writing the movie" });
+    script = await generateStoryScript(thread, cwd, JSON.parse(thread.messages[1].text) as OverviewSource, settings);
+  }
+  if (!existing || script !== previous) await publishStory(thread, script, (await getClusterNode()).id);
+  return { thread: storyThreadInfo(thread), script };
 }
 
 async function performPodcast(projectId: string, cwd: string, input: z.infer<typeof podcastRequest>, onProgress?: (event: JobProgress) => void, repository?: string): Promise<unknown> {
@@ -731,6 +771,28 @@ async function performPodcast(projectId: string, cwd: string, input: z.infer<typ
   if (script !== previous) await publishStory(thread, script, (await getClusterNode()).id);
   return { script };
 }
+
+app.post("/api/cluster/git/overview", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const projectId = queryString(request, "projectId");
+    const cwd = await reviewCwd(projectId, queryOptional(request, "taskId"), queryOptional(request, "repository"));
+    const input = overviewRequest.parse(request.body);
+    await sendStory(request, response, (onProgress) => performOverview(projectId, cwd, input, onProgress, queryOptional(request, "repository")));
+  } catch (error) { handleGitError(response, error, next); }
+});
+
+app.post("/api/projects/:projectId/git/overview", async (request, response, next) => {
+  try {
+    const { projectId } = request.params;
+    const input = overviewRequest.parse(request.body);
+    await withOwningNode(request, response, "/api/cluster/git/overview", {}, async () => {
+      const cwd = await reviewCwd(projectId, queryOptional(request, "taskId"), queryOptional(request, "repository"));
+      await sendStory(request, response, (onProgress) => performOverview(projectId, cwd, input, onProgress, queryOptional(request, "repository")));
+      return SENT;
+    }, request);
+  } catch (error) { handleGitError(response, error, next); }
+});
 
 app.get("/api/cluster/git/story-podcast", async (request, response, next) => {
   try {
@@ -775,30 +837,33 @@ app.post("/api/projects/:projectId/git/story-podcast", async (request, response,
 
 // ---- Story narration ----
 
-const narrationRequest = z.object({ text: z.string().trim().min(1).max(NARRATION_LIMIT), who: z.enum(["host", "cohost"]) }).strict();
+// `settings` are the viewer's own, so the voice they chose on their computer is the one used here.
+const narrationRequest = z.object({ text: z.string().trim().min(1).max(NARRATION_LIMIT), who: z.enum(["host", "cohost"]), settings: storySettingsSchema.optional() }).strict();
+const voiceProviderQuery = z.enum(VOICE_PROVIDER_CHOICES).optional();
 
 // Which engine narrates this project's stories, if any: this node's Kokoro, or the project's own ElevenLabs key.
-function storyVoiceView(projectId: string) {
-  const { provider, reason } = narrationProvider(projectId);
+function storyVoiceView(projectId: string, voiceProvider?: z.infer<typeof voiceProviderQuery>) {
+  const { provider, reason } = narrationProvider(projectId, { ...getStorySettings(), ...(voiceProvider ? { voiceProvider } : {}) });
   return { provider, available: provider !== null, reason };
 }
 
 async function sendNarration(response: Response, projectId: string, input: z.infer<typeof narrationRequest>): Promise<void> {
   pruneStoryFiles();
-  const audio = await narrateStoryText(projectId, input.text, input.who);
+  const audio = await narrateStoryText(projectId, input.text, input.who, input.settings);
   response.type(audio.mime).send(audio.bytes);
 }
 
 app.get("/api/cluster/git/story-voice", (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    response.json(storyVoiceView(queryString(request, "projectId")));
+    response.json(storyVoiceView(queryString(request, "projectId"), voiceProviderQuery.parse(queryOptional(request, "voiceProvider"))));
   } catch (error) { handleGitError(response, error, next); }
 });
 
 app.get("/api/projects/:projectId/git/story-voice", async (request, response, next) => {
   try {
-    await withOwningNode(request, response, "/api/cluster/git/story-voice", {}, async () => storyVoiceView(request.params.projectId));
+    const voiceProvider = voiceProviderQuery.parse(queryOptional(request, "voiceProvider"));
+    await withOwningNode(request, response, "/api/cluster/git/story-voice", { voiceProvider }, async () => storyVoiceView(request.params.projectId, voiceProvider));
   } catch (error) { handleGitError(response, error, next); }
 });
 

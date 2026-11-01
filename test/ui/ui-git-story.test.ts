@@ -548,7 +548,7 @@ const answered = {
 // A stand-in for audio playback: this Chrome cannot decode a clip, so each one "plays" briefly and then ends.
 const FAKE_AUDIO = `window.Audio = class { constructor(src = "") { this.src = src; } pause() {} play() { setTimeout(() => this.onended?.(), 60); return Promise.resolve(); } removeAttribute() { this.src = ""; } hasAttribute() { return Boolean(this.src); } };`;
 
-interface StoryFixture { via?: "story" | "overview"; kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
+interface StoryFixture { via?: "story" | "overview"; overviewPosts?: Array<Record<string, unknown>>; storyCalls?: string[]; kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
 
 async function openSavedStory(page: Page, environment: { username: string; password: string }, url: string, fixture: StoryFixture) {
   await page.addInitScript(FAKE_SPEECH);
@@ -564,10 +564,16 @@ async function openSavedStory(page: Page, environment: { username: string; passw
   };
   await page.route("**/api/projects/*/git/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/story-latest") || path.endsWith("/story")) fixture.storyCalls?.push(path);
     if (path.endsWith("/status")) return route.fulfill({ json: status });
     if (path.endsWith("/scope")) return route.fulfill({ json: { paths: ["app.ts", "app.test.ts"], lastHarness: "claude" } });
     if (path.endsWith("/guide-latest")) return route.fulfill({ json: { latest: null } });
     if (path.endsWith("/story-latest")) return route.fulfill({ json: { latest: { thread, saved, freshness: { fresh: true, newTurns: 0, changedPaths: [] } }, commits: [] } });
+    if (path.endsWith("/overview")) {
+      fixture.overviewPosts?.push(route.request().postDataJSON());
+      const lines = [{ type: "progress", stage: "Writing the movie" }, { type: "done", thread: { ...thread, id: "overview-1" }, script: fixture.script ?? script }];
+      return route.fulfill({ contentType: "application/x-ndjson", body: lines.map((line) => JSON.stringify(line)).join("\n") });
+    }
     if (path.endsWith("/story-podcast") && route.request().method() === "GET") return route.fulfill({ json: { script: fixture.script ?? null } });
     if (path.endsWith("/story-voice")) return narration(route);
     if (path.endsWith("/story-podcast")) {
@@ -588,7 +594,8 @@ async function openSavedStory(page: Page, environment: { username: string; passw
   await page.locator("#sessionList .session-card").first().click();
   if (await page.getByTestId("chat-activity-toggle").getAttribute("aria-expanded") !== "true") await page.getByTestId("chat-activity-toggle").click();
   // The conversation becomes active a moment after its card is clicked.
-  for (let attempt = 0; attempt < 40 && !(await page.locator("#gitReviewDialog[open]").count()); attempt += 1) {
+  const opened = () => fixture.via === "overview" ? (fixture.overviewPosts?.length ?? 0) > 0 : page.locator("#gitReviewDialog[open]").count();
+  for (let attempt = 0; attempt < 40 && !(await opened()); attempt += 1) {
     await page.getByTestId(fixture.via === "overview" ? "activity-overview-button" : "activity-story-button").click();
     await page.waitForTimeout(250);
   }
@@ -633,18 +640,20 @@ test("Story video narrates with the project's narrator and switches to the compu
   assert.match(await page.evaluate(() => (window as unknown as { __spoken: string[] }).__spoken[0]), /Greeting with an empty-name error/);
 });
 
-test("Story tab writes a podcast, moves between places, shows the code, and grows with a follow-up question", { timeout: 150_000 }, async (t) => {
+test("Activity overview writes the movie, moves between places, shows the code, and grows with a follow-up question", { timeout: 150_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const podcastPosts: Array<Record<string, unknown>> = [];
+  const overviewPosts: Array<Record<string, unknown>> = [];
+  const storyCalls: string[] = [];
   const spoken: Array<Record<string, unknown>> = [];
-  await openSavedStory(page, environment, node.url, { kokoro: true, script: null, podcastPosts, spoken });
-  await page.getByTestId("git-story-podcast-play").click();
+  await openSavedStory(page, environment, node.url, { kokoro: true, script: null, podcastPosts, overviewPosts, storyCalls, spoken, via: "overview" });
   const podcast = page.getByTestId("git-story-podcast");
   await podcast.waitFor();
-  assert.equal(podcastPosts.length, 1);
-  assert.equal(podcastPosts[0].threadId, "story-1");
-  assert.equal((podcastPosts[0].settings as typeof storySettings).hostVoice, "af_heart");
-  assert.equal(podcastPosts[0].question, undefined);
+  assert.equal(overviewPosts.length, 1);
+  assert.equal(typeof overviewPosts[0].conversationId, "string");
+  assert.equal((overviewPosts[0].settings as typeof storySettings).hostVoice, "af_heart");
+  assert.deepEqual(storyCalls, [], "the movie never asks for, or writes, the change story");
+  assert.equal(await page.locator("#gitReviewDialog[open]").count(), 0, "the movie does not open the Git or Story view");
 
   // Chapters carry a place each, and the slide builds as the lines are spoken.
   assert.match(await page.locator(".gsp-scene-chip").innerText(), /1 \/ 3 · Server room/);
@@ -662,7 +671,8 @@ test("Story tab writes a podcast, moves between places, shows the code, and grow
   await page.locator(".gsp-chap", { hasText: "What went wrong" }).click();
   await page.locator(".gsp-play").click();
   await page.locator(".gsp-play", { hasText: "Replay" }).waitFor();
-  assert.deepEqual(spoken.slice(0, 2), [{ text: "Today we look at the greeting.", who: "host" }, { text: "What went wrong?", who: "cohost" }]);
+  assert.deepEqual(spoken.slice(0, 2).map(({ text, who }) => ({ text, who })), [{ text: "Today we look at the greeting.", who: "host" }, { text: "What went wrong?", who: "cohost" }]);
+  assert.equal((spoken[0].settings as typeof storySettings).hostVoice, "af_heart", "the voice chosen in Settings travels with each line");
 
   // The written section explains the code line by line.
   await page.getByTestId("git-story-podcast-writeup-tab").click();
@@ -674,7 +684,8 @@ test("Story tab writes a podcast, moves between places, shows the code, and grow
   await page.getByTestId("git-story-podcast-question").fill("Why a guard?");
   await page.getByTestId("git-story-podcast-ask").click();
   await page.locator(".gsp-chap.is-question").waitFor();
-  assert.deepEqual(podcastPosts[1].question, "Why a guard?");
+  assert.equal(podcastPosts[0].question, "Why a guard?");
+  assert.equal(podcastPosts[0].threadId, "overview-1", "a follow-up continues the movie's own record");
   assert.equal(await page.locator(".gsp-chap").count(), 4);
   assert.match(await page.locator(".gsp-scene-chip").innerText(), /4 \/ 4 · Coffee house/);
   await page.getByTestId("git-story-podcast-writeup-tab").click();
@@ -684,12 +695,13 @@ test("Story tab writes a podcast, moves between places, shows the code, and grow
   assert.equal(await podcast.count(), 0);
 });
 
-test("Story podcast follows the settings: one studio, no code slides, no mood, and a saved script plays without the writer", { timeout: 150_000 }, async (t) => {
+test("Activity overview follows the settings: one studio, no code slides, no mood, and says why it is silent", { timeout: 150_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const podcastPosts: Array<Record<string, unknown>> = [];
-  await openSavedStory(page, environment, node.url, { kokoro: false, script, settings: { backdrops: false, moods: false, codeSlides: false, ask: false, codeWriteup: false }, podcastPosts });
-  await page.getByTestId("git-story-podcast-play").click();
+  await openSavedStory(page, environment, node.url, { kokoro: false, script, settings: { backdrops: false, moods: false, codeSlides: false, ask: false, codeWriteup: false }, podcastPosts, overviewPosts: [], via: "overview" });
   await page.getByTestId("git-story-podcast").waitFor();
+  await page.locator(".toast-message", { hasText: "plays without sound. This project has no ElevenLabs key." }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Sound on" }).count(), 0, "a silent movie offers no sound switch");
   assert.deepEqual(podcastPosts, []);
   assert.equal(await page.locator(".gsp-chap").count(), 2, "the code chapter is dropped");
   assert.match(await page.locator(".gsp-scene-chip").innerText(), /Podcast studio/);
@@ -724,19 +736,20 @@ test("Story saves as one HTML file with the walkthrough and the review notes", {
   assert.deepEqual(errors, []);
 });
 
-test("Activity overview plays the saved story as the stick-figure movie from the activity panel, and the phone menu offers Story and Overview", { timeout: 120_000 }, async (t) => {
+test("Activity overview plays the stick-figure movie from the activity panel without a story, and the phone menu offers Story and Overview", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
-  const podcastPosts: Array<Record<string, unknown>> = [];
-  await openSavedStory(page, environment, node.url, { kokoro: false, script: null, podcastPosts, via: "overview" });
+  const overviewPosts: Array<Record<string, unknown>> = [];
+  const storyCalls: string[] = [];
+  await openSavedStory(page, environment, node.url, { kokoro: false, script: null, overviewPosts, storyCalls, via: "overview" });
   const movie = page.getByTestId("git-story-podcast");
   await movie.waitFor();
-  assert.equal(podcastPosts.length, 1, "the movie is written from the saved story");
+  assert.equal(overviewPosts.length, 1, "the movie is written from the conversation itself");
+  assert.deepEqual(storyCalls, [], "no written story is requested or made");
   assert.match(await page.locator(".gsp-scene-chip").innerText(), /1 \/ 3 · Server room/);
   assert.equal(await page.getByTestId("git-story-video").count(), 0, "the older video walk-through does not open");
-  assert.equal(await page.locator("#gitReviewTitle").innerText(), "Story");
+  assert.equal(await page.locator("#gitReviewDialog[open]").count(), 0, "the Story view stays closed");
   await page.getByRole("button", { name: "Close Activity overview" }).click();
   await movie.waitFor({ state: "detached" });
-  await page.getByTestId("git-review-close-button").click();
   await page.setViewportSize({ width: 390, height: 800 });
   assert.equal(await page.getByTestId("nav-story-button").isVisible(), true);
   assert.equal(await page.getByTestId("nav-overview-button").isVisible(), true);

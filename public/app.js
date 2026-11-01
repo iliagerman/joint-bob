@@ -31,6 +31,7 @@ import "./app/project-files.js";
 import "./app/dashboards.js";
 import "./app/project-explorer.js";
 import "./app/git-review.js";
+import "./app/activity-overview.js";
 import "./app/api.js";
 import "./app/auth.js";
 import "./app/settings.js";

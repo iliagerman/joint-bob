@@ -5,7 +5,6 @@ import { diagramLegend, mountStoryDiagram } from "./git-story-diagram.js";
 import { toast } from "./shell.js";
 import { exportStoryHtml } from "./git-story-export.js";
 import { playStoryVideo } from "./git-story-video.js";
-import { playStoryPodcast } from "./git-story-podcast.js";
 
 // A change story explains a conversation's commits and pending files. A separate read-only
 // reviewer writes it; nothing here is posted to the conversation.
@@ -38,10 +37,6 @@ const story = {
   pullDraft: "",
   // The project's narrator for stories, { narrates, provider, reason }; null until asked.
   voice: null,
-  // The podcast being written: { stage } while the writer works, { error, details } when it failed.
-  podcast: null,
-  // True when Activity overview asked for the movie before the story was written; it plays once the story is ready.
-  wantsOverview: false,
 };
 
 // Where the reader was in a story, so closing the Git view and opening it again lands on the same page.
@@ -103,8 +98,6 @@ export function resetStory(ctx) {
   story.pullUrl = null;
   story.pullDraft = "";
   story.voice = null;
-  story.podcast = null;
-  story.wantsOverview = false;
 }
 
 export function selectStoryPull(number, url = null) {
@@ -223,7 +216,6 @@ export async function generateStory(payload) {
         story.draft = null;
       } else return;
       changed();
-      if (finished && story.wantsOverview) void playOverview();
     });
     if (request === story.request && !finished) throw new Error("The connection closed before the story finished. If the reviewer completed it, it is saved; reopen the Story tab to check.");
   } catch (error) {
@@ -502,78 +494,19 @@ function storyHead() {
     !draft ? videoSuggestion() : null);
 }
 
-// An animated walkthrough of the saved story for reviewing it, also saved as one HTML file, and the same story
-// told as a podcast. The narrator is Kokoro on this node or the project's ElevenLabs key; without either it is this computer's voice.
+// An animated walkthrough of the saved story for reviewing it, also saved as one HTML file. The narrator is Kokoro or the
+// project's ElevenLabs key, with the voice chosen in the viewer's own settings; without either it is this computer's voice.
 async function loadNarrator() {
   try {
-    const [{ settings }, voice] = await Promise.all([api("/api/story-settings"), api(story.ctx.apiUrl("story-voice"))]);
-    return { narrates: settings.narrate && voice.available, provider: voice.provider, reason: voice.reason };
+    const { settings } = await api("/api/story-settings");
+    const voice = await api(story.ctx.apiUrl("story-voice", { voiceProvider: settings.voiceProvider }));
+    return { narrates: settings.narrate && voice.available, provider: voice.provider, reason: voice.reason, settings };
   } catch (error) {
-    return { narrates: false, provider: null, reason: error.message };
+    return { narrates: false, provider: null, reason: error.message, settings: null };
   }
 }
 
-const speakLine = (text, who) => apiBlob(story.ctx.apiUrl("story-voice"), { method: "POST", body: JSON.stringify({ text, who }) });
-
-// Streams the writer's progress and returns the script it saved.
-async function requestPodcast(body, onProgress) {
-  let script = null;
-  await apiLines(story.ctx.apiUrl("story-podcast"), { method: "POST", body: JSON.stringify(body) }, (line) => {
-    if (line.type === "error") throw Object.assign(new Error(line.error), { details: line.details });
-    if (line.type === "progress") onProgress(line.stage);
-    if (line.type === "done") script = line.script;
-  });
-  if (!script) throw new Error("The connection closed before the podcast finished. If the writer completed it, it is saved; try again.");
-  return script;
-}
-
-async function listenAsPodcast() {
-  const threadId = shown().thread.id;
-  story.podcast = { stage: "Reading the story" };
-  renderStory();
-  try {
-    const [{ settings }, voice, saved] = await Promise.all([api("/api/story-settings"), api(story.ctx.apiUrl("story-voice")), api(story.ctx.apiUrl("story-podcast", { threadId }))]);
-    const write = (extra, onProgress) => requestPodcast({ threadId, settings, ...extra }, onProgress);
-    const script = saved.script ?? await write({}, (stage) => { story.podcast.stage = stage; renderStory(); });
-    story.podcast = null;
-    renderStory();
-    playStoryPodcast({
-      script, settings, host: story.ctx.container.closest("dialog") ?? document.body, notify: toast,
-      narrate: settings.narrate && voice.available ? speakLine : null,
-      ask: settings.ask ? (question, onProgress) => write({ question }, onProgress) : null,
-      rewrite: (onProgress) => write({ regenerate: true }, onProgress),
-    });
-  } catch (error) {
-    story.podcast = { error: error.message, details: error.details ?? error.message };
-    renderStory();
-  }
-}
-
-async function copyPodcastError() {
-  try {
-    await navigator.clipboard.writeText(story.podcast.details);
-    toast("Error details copied");
-  } catch (error) {
-    toast(`Could not copy error details: ${error.message}. Select the text under Error details to copy it manually.`, 6000);
-  }
-}
-
-function podcastStatus() {
-  const { podcast } = story;
-  if (!podcast) return null;
-  if (!podcast.error) return h("p", { class: "gs-muted gs-small", role: "status", "data-testid": "git-story-podcast-writing" }, `Writing the podcast… ${podcast.stage}`);
-  return h("div", { class: "gs-small", role: "alert", "data-testid": "git-story-podcast-error" },
-    h("p", {}, `The podcast could not be written. ${podcast.error}`),
-    h("details", {}, h("summary", {}, "Error details"), h("pre", { class: "gs-small", style: "white-space:pre-wrap;overflow-wrap:anywhere", "data-testid": "git-story-podcast-error-details" }, podcast.details)),
-    h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-podcast-copy-error", onclick: copyPodcastError }, "Copy error details"));
-}
-
-/** Activity overview: plays the saved story as the stick-figure movie, or does so as soon as the story is written. */
-export async function playOverview() {
-  if (!story.latest) { story.wantsOverview = true; return; }
-  story.wantsOverview = false;
-  await listenAsPodcast();
-}
+const speakLine = (text, who) => apiBlob(story.ctx.apiUrl("story-voice"), { method: "POST", body: JSON.stringify({ text, who, settings: story.voice.settings ?? undefined }) });
 
 function videoSuggestion() {
   if (story.voice === null) {
@@ -585,15 +518,13 @@ function videoSuggestion() {
   const play = (voice) => playStoryVideo({ story: saved.story, facts: saved.facts, host: story.ctx.container.closest("dialog") ?? document.body, narrate, notify: toast, voice });
   const save = async () => { try { await exportStoryHtml(saved.story, saved.facts); } catch (error) { toast(`Could not save the HTML file: ${error.message}`); } };
   return h("div", { class: "gsv-suggest", "data-testid": "git-story-video-suggestion" },
-    h("p", {}, h("b", {}, "Walk through this story as a video, or watch the Activity overview. "), "The video covers the animated flow, worked examples, files, design decisions and the review checklist. The Activity overview is a movie where two stick-figure hosts explain what changed, how it works and why, and you can ask them questions."),
+    h("p", {}, h("b", {}, "Walk through this story as a video. "), "The video covers the animated flow, worked examples, files, design decisions and the review checklist."),
     h("div", { class: "gsv-suggest-row" },
-      h("button", { class: "primary compact", type: "button", disabled: Boolean(story.podcast && !story.podcast.error), "data-testid": "git-story-podcast-play", onclick: () => void listenAsPodcast() }, "▶ Activity overview"),
-      h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-play", onclick: () => play(true) }, "▶ Play with voice"),
+      h("button", { class: "primary compact", type: "button", "data-testid": "git-story-video-play", onclick: () => play(true) }, "▶ Play with voice"),
       h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-silent", onclick: () => play(false) }, "Play without voice"),
       h("button", { class: "ghost compact gs-boxed", type: "button", "data-testid": "git-story-video-export", onclick: save }, "Save as HTML file"),
       h("span", { class: "gs-muted gs-small" }, story.voice.narrates ? `Narrated by ${story.voice.provider === "elevenlabs" ? "ElevenLabs" : "Kokoro"}, falling back to this computer's voice.` : "Narration uses this computer's voice.")),
-    story.voice.narrates ? null : voiceSetup(),
-    podcastStatus());
+    story.voice.narrates ? null : voiceSetup());
 }
 
 // Narration needs one of two things: local voice on a computer big enough for it, or the project's own ElevenLabs key.

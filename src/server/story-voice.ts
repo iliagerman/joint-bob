@@ -113,7 +113,7 @@ export function narrationProvider(projectId: string, settings: StorySettings = g
   const elevenReason = eleven && "conflict" in eleven
     ? `This project has ${eleven.conflict} ElevenLabs secret accounts at the same level. Keep one so the narrator is clear.`
     : "This project has no ElevenLabs secret. Add a secret account of type ElevenLabs (Settings → Secrets) and attach it to the project.";
-  const localReason = kokoro.reason ?? "Local voice is not installed on this node. Install it in Settings → Activity overview.";
+  const localReason = kokoro.reason ?? `Local voice is not installed on ${os.hostname()}, the computer that narrates this project. Install it there in Settings → Activity overview.`;
   if (settings.voiceProvider === "kokoro") return kokoroReady ? { provider: "kokoro", reason: null } : { provider: null, reason: localReason };
   if (settings.voiceProvider === "elevenlabs") return elevenReady ? { provider: "elevenlabs", reason: null } : { provider: null, reason: elevenReason };
   if (kokoroReady) return { provider: "kokoro", reason: null };
@@ -141,8 +141,8 @@ export async function testStoryVoice(who: "host" | "cohost"): Promise<NarrationA
 }
 
 /** Audio of one line for Maya (`host`) or Jonah (`cohost`). Each line is made once and replayed from disk. */
-export async function narrateStoryText(projectId: string, text: string, who: "host" | "cohost", fetchImpl: typeof fetch = fetch): Promise<NarrationAudio> {
-  const settings = getStorySettings();
+/** `settings` are the viewer's own voice choices; this node's are used when absent. Only the engine itself (Kokoro, a key) is this node's. */
+export async function narrateStoryText(projectId: string, text: string, who: "host" | "cohost", settings: StorySettings = getStorySettings(), fetchImpl: typeof fetch = fetch): Promise<NarrationAudio> {
   const { provider, reason } = narrationProvider(projectId, settings);
   if (!provider) throw new GitReviewError(409, reason!);
   const voice = provider === "kokoro"

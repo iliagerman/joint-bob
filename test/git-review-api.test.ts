@@ -293,6 +293,15 @@ test("story mode settings, narration status and podcast routes answer what a pro
     const ask = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-podcast`, { method: "POST", headers, body: JSON.stringify({ threadId: "unknown", question: "Why?" }) });
     assert.equal(ask.status, 404);
     assert.match((await jsonBody(ask) as { error: string }).error, /Story not found/);
+
+    // The Activity overview has its own route and needs a conversation; a voice query outside the known choices is refused.
+    const noConversation = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/overview`, { method: "POST", headers, body: JSON.stringify({}) });
+    assert.equal(noConversation.status, 400);
+    const badProvider = await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-voice?voiceProvider=azure`, { headers });
+    assert.equal(badProvider.status, 400);
+    const kokoroOnly = await jsonBody(await fetch(`${node.baseUrl}/api/projects/${project.id}/git/story-voice?voiceProvider=kokoro`, { headers })) as { available: boolean; reason: string };
+    assert.equal(kokoroOnly.available, false);
+    assert.match(kokoroOnly.reason, /Local voice is not installed on .+, the computer that narrates this project/);
   } finally {
     if (node) await stopNode(node);
     sync.server.close();
