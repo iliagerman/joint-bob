@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.182.1 — 2026-11-01
+
+- Changed the app icon, tab icon and splash back to a Snufkin hat, redrawn as a soft floppy hat with a drooping tip so it no longer looks like a sailboat at small sizes.
+
 ## 2.182.0 — 2026-11-01
 
 - Added subscription pools, which group your own Claude and OpenAI subscriptions in a failover order, can be assigned to a cluster, and move a turn to the next subscription when a quota or sign-in failure happens before any reply starts.
