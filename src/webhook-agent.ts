@@ -67,6 +67,7 @@ export function webhookMemoryAgentEnvironmentForConversation(projectId: string, 
   if (!existsSync(databaseFile)) return {};
   const db = new DatabaseSync(databaseFile);
   try {
+    db.exec("PRAGMA busy_timeout = 5000");
     const tables = db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN ('cluster_node','webhook_conversation_bindings')").get() as { count: number };
     if (tables.count !== 2) return {};
     const node = db.prepare("SELECT id FROM cluster_node WHERE singleton=1").get() as { id: string } | undefined;

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed webhook conversations failing to refresh their memory access while the database was busy with another save.
+
 ## 2.185.0 — 2026-11-01
 
 - Added a "Hide from conversation history" option to webhooks, which hides the conversations they start, existing ones included, from the history list while their calls stay visible in the webhook.

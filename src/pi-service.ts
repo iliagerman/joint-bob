@@ -639,11 +639,19 @@ export async function nodePiCredentialList(): Promise<Array<{ providerId: string
 
 export function piSessionHooks(options: PiSessionOptions): PiCoreHooks {
   const conversation = (sessionId: string): SecretConversation => ({ engine: "pi", sessionId });
-  const credentials = (sessionId: string, conversationId: string): PiCredentials => ({
-    environment: agentEnvironment(options.projectId, conversation(sessionId)),
-    capabilityEnvironment: agentCapabilityEnvironment(options.projectId, "pi", conversationId, conversation(sessionId)),
-    credentialContext: agentCredentialContext(options.projectId, conversation(sessionId)),
-  });
+  const credentials = (sessionId: string, conversationId: string): PiCredentials => {
+    try {
+      return {
+        environment: agentEnvironment(options.projectId, conversation(sessionId)),
+        capabilityEnvironment: agentCapabilityEnvironment(options.projectId, "pi", conversationId, conversation(sessionId)),
+        credentialContext: agentCredentialContext(options.projectId, conversation(sessionId)),
+      };
+    } catch (error) {
+      // Pi turns this exception into an assistant message and drops its original stack.
+      console.error(`Pi credential refresh failed in ${sessionId}`, error);
+      throw error;
+    }
+  };
   return {
     conversationId: async (sessionId) => options.conversationId
       ?? (await getConversationRecord(options.projectId, "pi", sessionId))?.conversationId
