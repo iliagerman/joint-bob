@@ -561,7 +561,7 @@ const answered = {
 // A stand-in for audio playback: this Chrome cannot decode a clip, so each one "plays" briefly and then ends.
 const FAKE_AUDIO = `window.Audio = class extends EventTarget { constructor(src = "") { super(); this.src = src; } pause() {} play() { if (!this.src) return Promise.reject(new Error("no source")); setTimeout(() => this.dispatchEvent(new Event("playing")), 5); setTimeout(() => this.onended?.(), 60); return Promise.resolve(); } removeAttribute() { this.src = ""; } hasAttribute() { return Boolean(this.src); } };`;
 
-interface StoryFixture { audioNeverStarts?: boolean; holdOverview?: Promise<void>; via?: "story" | "overview"; answerVoice?: string; settingsPuts?: Array<Record<string, unknown>>; installs?: number[]; overviewPosts?: Array<Record<string, unknown>>; storyCalls?: string[]; kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
+interface StoryFixture { voiceUpdatingChecks?: number; audioNeverStarts?: boolean; holdOverview?: Promise<void>; via?: "story" | "overview"; answerVoice?: string; settingsPuts?: Array<Record<string, unknown>>; installs?: number[]; overviewPosts?: Array<Record<string, unknown>>; storyCalls?: string[]; kokoro: boolean; narration?: number; script?: typeof script | null; settings?: Partial<typeof storySettings>; podcastPosts?: Array<Record<string, unknown>>; spoken?: Array<Record<string, unknown>> }
 
 async function openSavedStory(page: Page, environment: { username: string; password: string }, url: string, fixture: StoryFixture) {
   await page.addInitScript(FAKE_SPEECH);
@@ -575,6 +575,11 @@ async function openSavedStory(page: Page, environment: { username: string; passw
   });
   // The narrator belongs to the project, so the project's narration route answers it.
   const narration = async (route: Route) => {
+    // The open-source voice updating itself: unavailable for a few checks, then ready.
+    if (route.request().method() === "GET" && fixture.voiceUpdatingChecks) {
+      fixture.voiceUpdatingChecks -= 1;
+      return route.fulfill({ json: { provider: null, available: false, reason: "Local voice is being updated.", local: { allowed: true, installed: false, outdated: true, installing: true, installError: null, reason: null } } });
+    }
     if (route.request().method() === "GET") return route.fulfill({ json: { provider: fixture.kokoro ? "kokoro" : null, available: fixture.kokoro, reason: fixture.kokoro ? null : "This project has no ElevenLabs key.", local: { allowed: true, installed: fixture.kokoro, installing: false, installError: null, reason: null } } });
     fixture.spoken?.push(route.request().postDataJSON());
     if (fixture.narration) return route.fulfill({ status: fixture.narration, json: { error: "The narrator could not speak the line." } });
@@ -840,4 +845,16 @@ test("Activity overview says when the browser does not start the narration, and 
   await page.locator(".gsp-play").click();
   await page.locator(".toast-message", { hasText: "did not start the narration clip" }).waitFor({ timeout: 15_000 });
   await page.waitForFunction((text) => document.querySelector(".gsp-caption")?.textContent !== text, first, { timeout: 20_000 });
+});
+
+test("Activity overview waits while the open-source voice updates itself, then plays with sound instead of silently", { timeout: 150_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const spoken: Array<Record<string, unknown>> = [];
+  await openSavedStory(page, environment, node.url, { kokoro: true, script, voiceUpdatingChecks: 2, spoken, overviewPosts: [], via: "overview" });
+  await page.getByTestId("activity-overview-progress").filter({ hasText: "Updating the open-source voice" }).waitFor();
+  await page.getByTestId("git-story-podcast").waitFor();
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=activity-overview-progress]").length === 0);
+  for (let wait = 0; wait < 50 && !spoken.length; wait += 1) await page.waitForTimeout(100);
+  assert.ok(spoken.length > 0, "the first line is narrated once the voice is ready");
+  assert.equal(await page.locator(".toast-message", { hasText: "plays without sound" }).count(), 0);
 });

@@ -23,6 +23,21 @@ async function requestMovie(url, body, onStage) {
   return done;
 }
 
+// While the open-source voice installs or updates itself, the movie waits for it instead of playing silently.
+const VOICE_WAIT_MS = 180_000;
+const VOICE_CHECK_MS = 2_000;
+
+async function readyVoice(check, onStage) {
+  const started = Date.now();
+  let voice = await check();
+  while (!voice.available && voice.local.installing && Date.now() - started < VOICE_WAIT_MS) {
+    onStage(voice.local.outdated ? "Updating the open-source voice to a smaller sound format" : "Installing the open-source voice, once");
+    await new Promise((resolve) => setTimeout(resolve, VOICE_CHECK_MS));
+    voice = await check();
+  }
+  return voice;
+}
+
 // Writing a new movie takes a minute or more, so a card stays on screen with the current step and the time so far.
 function showProgress() {
   const stage = Object.assign(document.createElement("span"), { className: "overview-progress-stage", textContent: "Starting" });
@@ -63,7 +78,7 @@ async function openActivityOverview(conversationId, audio) {
   try {
     ({ thread, script } = await requestMovie(url("overview"), { conversationId, settings }, progress.stage));
     progress.stage("Checking the voice");
-    voice = await api(url("story-voice", { voiceProvider: settings.voiceProvider }));
+    voice = await readyVoice(() => api(url("story-voice", { voiceProvider: settings.voiceProvider })), progress.stage);
   } catch (error) {
     toast(`Could not write the Activity overview. ${error.message}`, 12000);
     return;

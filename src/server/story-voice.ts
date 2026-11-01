@@ -151,7 +151,9 @@ export function narrationProvider(projectId: string, settings: StorySettings = g
   const elevenReason = eleven && "conflict" in eleven
     ? `This project has ${eleven.conflict} ElevenLabs secret accounts at the same level. Keep one so the narrator is clear.`
     : "This project has no ElevenLabs secret. Add a secret account of type ElevenLabs (Settings → Secrets) and attach it to the project.";
-  const localReason = kokoro.reason ?? (kokoro.outdated
+  const localReason = kokoro.reason ?? (kokoro.installError
+    ? `Installing local voice on ${os.hostname()} failed: ${kokoro.installError} Try again in Settings → Activity overview.`
+    : null) ?? (kokoro.outdated
     ? `Local voice on ${os.hostname()} is being updated to a smaller sound format. It speaks again in a minute or two.`
     : null) ?? `Local voice is not installed on ${os.hostname()}, the computer that narrates this project. Install it there in Settings → Activity overview.`;
   if (settings.voiceProvider === "kokoro") return kokoroReady ? { provider: "kokoro", reason: null } : { provider: null, reason: localReason };
