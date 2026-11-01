@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.187.0 — 2026-11-01
+
+- Changed Activity overview to build its movie straight from the conversation and its changes, keeping its own saved record instead of depending on the written story.
+- Changed the story page so it no longer offers the stick-figure movie; Activity overview is the only place to play it.
+- Changed narration to use the voice chosen in Settings for every call.
+- Added a reason shown when an Activity overview movie has no sound, naming the computer that does the narration.
+
 ## 2.186.0 — 2026-11-01
 
 - Added Guardian in Settings → Guardian: yes/no rules that Jev or Laya checks before agents run commands, change files or send content to the AI, with ask, block or fix actions and reviews shown in the conversation.
